@@ -21,7 +21,7 @@
         }
         public DelGetValue? GetValue { get; private set; }
         
-        private T?[]? _baked = null;
+        private BakedValueStore<T?>? _baked = null;
         /// <summary>
         /// The default value to return when the tick method is not set.
         /// </summary>
@@ -48,24 +48,30 @@
         public override object? GetValueGeneric(float second)
             => GetValue != null ? GetValue(second) : DefaultValue;
         public T? GetValueBaked(float second)
-            => _baked is { Length: > 0 } ? _baked[Math.Clamp(GetBakedFrameIndex(second), 0, _baked.Length - 1)] : DefaultValue;
+            => _baked is { Count: > 0 } ? _baked.GetValue(Math.Clamp(GetBakedFrameIndex(second), 0, _baked.Count - 1)) : DefaultValue;
         public T? GetValueBaked(int frameIndex)
-            => _baked != null ? _baked[frameIndex] : DefaultValue;
+            => _baked is not null && (uint)frameIndex < (uint)_baked.Count
+                ? _baked.GetValue(frameIndex)
+                : DefaultValue;
 
         protected override void BakedChanged()
             => GetValue = !IsBaked ? GetValueMethod : GetValueBaked;
 
         public override void Bake(int framesPerSecond)
         {
-            _bakedFPS = Math.Max(0, framesPerSecond);
-            _bakedFrameCount = _bakedFPS <= 0 ? 0 : (int)Math.Ceiling(LengthInSeconds * _bakedFPS);
-            _baked = new T[BakedFrameCount];
+            SetBakeCadence(framesPerSecond);
             if (_bakedFPS <= 0)
+            {
+                _baked = EncodeBakedValues(Array.Empty<T?>());
                 return;
+            }
 
+            T?[] baked = new T?[BakedFrameCount];
             float invFPS = 1.0f / _bakedFPS;
             for (int i = 0; i < BakedFrameCount; ++i)
-                _baked[i] = GetValueMethod(i * invFPS);
+                baked[i] = GetValueMethod(i * invFPS);
+
+            _baked = EncodeBakedValues(baked);
         }
         protected override void OnProgressed(float delta) { }
     }

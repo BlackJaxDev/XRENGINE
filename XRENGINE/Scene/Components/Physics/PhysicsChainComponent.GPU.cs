@@ -34,14 +34,14 @@ public partial class PhysicsChainComponent
 
     private sealed class GpuDrivenRendererState(
         XRMeshRenderer renderer,
-        XRDataBuffer mappingBuffer,
+        XRDataBuffer<GPUDrivenBoneMappingData> mappingBuffer,
         GPUDrivenBoneMappingData[] mappingData,
         uint[] drivenBoneIndices,
         uint boneMatrixElementCount,
         bool drivesCompleteBonePalette)
     {
         public XRMeshRenderer Renderer { get; } = renderer;
-        public XRDataBuffer MappingBuffer { get; } = mappingBuffer;
+        public XRDataBuffer<GPUDrivenBoneMappingData> MappingBuffer { get; } = mappingBuffer;
         public GPUDrivenBoneMappingData[] MappingData { get; } = mappingData;
         public uint[] DrivenBoneIndices { get; } = drivenBoneIndices;
         public uint BoneMatrixElementCount { get; } = boneMatrixElementCount;
@@ -50,7 +50,7 @@ public partial class PhysicsChainComponent
     }
 
     private readonly record struct StandaloneInFlightReadback(
-        XRDataBuffer ReadbackBuffer,
+        XRDataBuffer<GPUParticleData> ReadbackBuffer,
         IntPtr Fence,
         int ParticleCount,
         int ExecutionGeneration,
@@ -67,11 +67,11 @@ public partial class PhysicsChainComponent
     private XRShader? _gpuDebugRenderShader;
     private XRShader? _gpuBonePaletteShader;
 
-    private XRDataBuffer? _particlesBuffer;
-    private XRDataBuffer? _particleStaticBuffer;
-    private XRDataBuffer? _transformMatricesBuffer;
-    private XRDataBuffer? _collidersBuffer;
-    private XRDataBuffer? _perTreeParamsBuffer;
+    private XRDataBuffer<GPUParticleData>? _particlesBuffer;
+    private XRDataBuffer<GPUParticleStaticData>? _particleStaticBuffer;
+    private XRDataBuffer<Matrix4x4>? _transformMatricesBuffer;
+    private XRDataBuffer<GPUColliderData>? _collidersBuffer;
+    private XRDataBuffer<GPUPerTreeParams>? _perTreeParamsBuffer;
     private XRDataBuffer? _gpuDebugPointsBuffer;
     private XRDataBuffer? _gpuDebugLinesBuffer;
     private XRMeshRenderer? _gpuDebugPointsRenderer;
@@ -119,7 +119,7 @@ public partial class PhysicsChainComponent
     private int _gpuDrivenRendererBindingGeneration;
     private readonly List<GpuDrivenRendererState> _gpuDrivenRenderers = [];
     private readonly List<StandaloneInFlightReadback> _standaloneReadbacks = [];
-    private readonly Stack<XRDataBuffer> _standaloneReadbackBufferPool = [];
+    private readonly Stack<XRDataBuffer<GPUParticleData>> _standaloneReadbackBufferPool = [];
 
     internal bool HasGpuDrivenRenderers => _gpuDrivenRenderers.Count > 0;
     internal int GpuDrivenRendererBindingGeneration => _gpuDrivenRendererBindingGeneration;
@@ -418,7 +418,7 @@ public partial class PhysicsChainComponent
         if (AbstractRenderer.Current is not OpenGLRenderer renderer)
             return;
 
-        XRDataBuffer readbackBuffer = AcquireStandaloneReadbackBuffer((uint)_totalParticleCount);
+        XRDataBuffer<GPUParticleData> readbackBuffer = AcquireStandaloneReadbackBuffer((uint)_totalParticleCount);
         if (!TryGetBufferId(_particlesBuffer, out uint sourceBufferId)
             || !TryGetBufferId(readbackBuffer, out uint destinationBufferId))
         {
@@ -507,6 +507,7 @@ public partial class PhysicsChainComponent
             renderer.RawGL.BindBuffer(GLEnum.ShaderStorageBuffer, bufferId);
             renderer.RawGL.GetBufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, byteSize, ptr);
             renderer.RawGL.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
+            XRBufferWriteTelemetry.RecordUpload(XRBufferResolvedRoute.Readback, (long)byteSize);
             GPUPhysicsChainDispatcher.RecordCpuReadbackBytes((long)byteSize, isBatched: false);
         }
     }
@@ -529,20 +530,21 @@ public partial class PhysicsChainComponent
         return status == GLEnum.AlreadySignaled || status == GLEnum.ConditionSatisfied;
     }
 
-    private XRDataBuffer AcquireStandaloneReadbackBuffer(uint particleCount)
+    private XRDataBuffer<GPUParticleData> AcquireStandaloneReadbackBuffer(uint particleCount)
     {
         uint elementCount = Math.Max(particleCount, 1u);
         while (_standaloneReadbackBufferPool.Count > 0)
         {
-            XRDataBuffer buffer = _standaloneReadbackBufferPool.Pop();
+            XRDataBuffer<GPUParticleData> buffer = _standaloneReadbackBufferPool.Pop();
             if (buffer.ElementCount >= elementCount)
                 return buffer;
 
             buffer.Dispose();
         }
 
-        var created = new XRDataBuffer("PhysicsChainStandaloneReadback", EBufferTarget.ShaderStorageBuffer, elementCount, EComponentType.Float, 16, false, false)
+        var created = new XRDataBuffer<GPUParticleData>("PhysicsChainStandaloneReadback", EBufferTarget.ShaderStorageBuffer, elementCount)
         {
+            DefaultMemoryPolicy = XRBufferMemoryPolicy.GpuToCpuReadback,
             DisposeOnPush = false,
             Usage = EBufferUsage.StreamRead,
         };
@@ -693,19 +695,19 @@ public partial class PhysicsChainComponent
         CleanupBuffers();
         PrepareGPUData();
 
-        _particlesBuffer = new XRDataBuffer("Particles", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_particlesData.Count, 1), EComponentType.Float, 16, false, false);
+        _particlesBuffer = new XRDataBuffer<GPUParticleData>("Particles", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_particlesData.Count, 1));
         _particlesBuffer.SetBlockIndex(0);
 
-        _particleStaticBuffer = new XRDataBuffer("ParticleStatic", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_particleStaticData.Count, 1), EComponentType.Float, 16, false, false);
+        _particleStaticBuffer = new XRDataBuffer<GPUParticleStaticData>("ParticleStatic", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_particleStaticData.Count, 1));
         _particleStaticBuffer.SetBlockIndex(1);
 
-        _transformMatricesBuffer = new XRDataBuffer("TransformMatrices", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_transformMatrices.Count, 1), EComponentType.Float, 16, false, false);
+        _transformMatricesBuffer = new XRDataBuffer<Matrix4x4>("TransformMatrices", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_transformMatrices.Count, 1));
         _transformMatricesBuffer.SetBlockIndex(3);
 
-        _collidersBuffer = new XRDataBuffer("Colliders", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_collidersData.Count, 1), EComponentType.Float, 12, false, false);
+        _collidersBuffer = new XRDataBuffer<GPUColliderData>("Colliders", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_collidersData.Count, 1));
         _collidersBuffer.SetBlockIndex(4);
 
-        _perTreeParamsBuffer = new XRDataBuffer("PerTreeParams", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_particleTreesData.Count, 1), EComponentType.Float, 24, false, false);
+        _perTreeParamsBuffer = new XRDataBuffer<GPUPerTreeParams>("PerTreeParams", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_particleTreesData.Count, 1));
         _perTreeParamsBuffer.SetBlockIndex(5);
 
         UpdateBufferData();
@@ -806,9 +808,9 @@ public partial class PhysicsChainComponent
             return;
 
         if (fullPush)
-            buffer.PushData();
+            buffer.CommitDirtyBytes(0u, buffer.Length);
         else if (byteLength > 0)
-            buffer.PushSubData(byteOffset, byteLength);
+            buffer.CommitDirtyBytes(checked((uint)byteOffset), byteLength);
     }
 
     private static void UpdatePreparedDirtyRange<T>(List<T> current, List<T> snapshot, ref int snapshotSignature, int currentSignature, out int dirtyStart, out int dirtyLength) where T : struct
@@ -1272,20 +1274,15 @@ public partial class PhysicsChainComponent
             return;
         }
 
-        XRDataBuffer mappingBuffer = new(
+        XRDataBuffer<GPUDrivenBoneMappingData> mappingBuffer = new(
             $"PhysicsChainBonePaletteMap_{renderer.GetHashCode():X}",
             EBufferTarget.ShaderStorageBuffer,
-            (uint)mappingData.Count,
-            EComponentType.Float,
-            8,
-            false,
-            false)
+            (uint)mappingData.Count)
         {
             Usage = EBufferUsage.StaticDraw,
             DisposeOnPush = false
         };
-        mappingBuffer.SetDataRaw(mappingData);
-        mappingBuffer.PushData();
+        mappingBuffer.SetData(CollectionsMarshal.AsSpan(mappingData));
 
         GPUDrivenBoneMappingData[] mappings = mappingData.ToArray();
         uint[] drivenIndices = drivenBoneIndices.ToArray();

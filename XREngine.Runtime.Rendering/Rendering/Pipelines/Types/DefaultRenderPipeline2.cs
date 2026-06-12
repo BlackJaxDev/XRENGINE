@@ -24,7 +24,7 @@ using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
-public partial class DefaultRenderPipeline2 : RenderPipeline
+public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNormalPrePassSettings
 {
     public enum DeferredDebugViewMode
     {
@@ -41,13 +41,43 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
     private readonly FarToNearRenderCommandSorter _farToNearSorter = new();
 
-    //TODO: these options below should not be controlled by this render pipeline object, 
-    // but rather in branches in the command chain.
-
     private readonly Lazy<XRMaterial> _voxelConeTracingVoxelizationMaterial;
     private readonly Lazy<XRMaterial> _motionVectorsMaterial;
     private readonly Lazy<XRMaterial> _depthNormalPrePassMaterial;
     private readonly Lazy<XRMaterial> _fullOverdrawCountMaterial;
+
+    private bool _forwardDepthPrePassEnabled = true;
+    [RenderPipelineCameraSetting(Order = 100)]
+    [Category("Forward Pre-Pass")]
+    [DisplayName("Forward Depth Pre-Pass")]
+    [Description("Renders forward opaque and masked geometry into depth+normal pre-pass targets before ambient occlusion and lighting.")]
+    public bool ForwardDepthPrePassEnabled
+    {
+        get => _forwardDepthPrePassEnabled;
+        set => SetField(ref _forwardDepthPrePassEnabled, value);
+    }
+
+    private bool _forwardPrePassSharesGBufferTargets = true;
+    [RenderPipelineCameraSetting(Order = 110)]
+    [Category("Forward Pre-Pass")]
+    [DisplayName("Share GBuffer Targets")]
+    [Description("When enabled, the forward pre-pass writes directly into the main GBuffer depth and normal textures instead of only using dedicated forward pre-pass targets.")]
+    public bool ForwardPrePassSharesGBufferTargets
+    {
+        get => _forwardPrePassSharesGBufferTargets;
+        set => SetField(ref _forwardPrePassSharesGBufferTargets, value);
+    }
+
+    private EDepthNormalPrePassResolution _forwardDepthNormalPrePassResolution = EDepthNormalPrePassResolution.Full;
+    [RenderPipelineCameraSetting(Order = 120)]
+    [Category("Forward Pre-Pass")]
+    [DisplayName("Depth+Normal Resolution")]
+    [Description("Resolution for the dedicated forward depth+normal pre-pass and contact-shadow copy targets. Shared GBuffer writes remain at the main internal resolution.")]
+    public EDepthNormalPrePassResolution ForwardDepthNormalPrePassResolution
+    {
+        get => _forwardDepthNormalPrePassResolution;
+        set => SetField(ref _forwardDepthNormalPrePassResolution, value);
+    }
 
     private DeferredDebugViewMode _deferredDebugView = DeferredDebugViewMode.Disabled;
     [Category("Debug")]
@@ -1124,6 +1154,49 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private static void ResizeTextureHalfInternalSize(XRTexture t)
     {
         (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        switch (t)
+        {
+            case XRTexture2D t2d:
+                t2d.Resize(w, h);
+                break;
+            case XRTexture2DArray t2da:
+                t2da.Resize(w, h);
+                break;
+        }
+    }
+
+    private (uint x, uint y) GetDesiredFBOSizeForwardDepthNormalPrePass()
+    {
+        uint divisor = ForwardDepthNormalPrePassResolution switch
+        {
+            EDepthNormalPrePassResolution.Half => 2u,
+            EDepthNormalPrePassResolution.Quarter => 4u,
+            _ => 1u,
+        };
+
+        return (System.Math.Max(1u, InternalWidth / divisor), System.Math.Max(1u, InternalHeight / divisor));
+    }
+
+    private bool NeedsRecreateTextureForwardDepthNormalPrePassSize(XRTexture t)
+    {
+        (uint w, uint h) = GetDesiredFBOSizeForwardDepthNormalPrePass();
+        switch (t)
+        {
+            case XRTexture2D t2d:
+                return t2d.Width != w || t2d.Height != h;
+            case XRTexture2DArray t2da:
+                return t2da.Width != w || t2da.Height != h;
+            case XRTexture2DView:
+            case XRTexture2DArrayView:
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    private void ResizeTextureForwardDepthNormalPrePassSize(XRTexture t)
+    {
+        (uint w, uint h) = GetDesiredFBOSizeForwardDepthNormalPrePass();
         switch (t)
         {
             case XRTexture2D t2d:

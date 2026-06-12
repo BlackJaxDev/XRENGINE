@@ -43,6 +43,8 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 
 ## Further Reading
 - [Audio Architecture](audio/audio-architecture.md)
+- [Animation Baked Value Compression](animation/baked-value-compression.md)
+- [VMD Animation Import Design](animation/vmd-animation-import.md)
 - [Cooked Asset Serialization - AOT And IO Design](assets/cooked-asset-aot-and-io.md)
 - [GPU-Driven Animation Design](../work/design/rendering/gpu/gpu-driven-animation.md)
 - [Modeling XRMesh Editing Architecture](modeling/xrmesh-editing.md)

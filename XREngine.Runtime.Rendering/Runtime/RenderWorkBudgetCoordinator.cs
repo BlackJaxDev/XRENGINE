@@ -158,6 +158,7 @@ internal static class RenderWorkBudgetCoordinator
         builder.Append("RenderWorkOldestTextureWaitMs: ").Append(snapshot.OldestTextureQueueWaitMilliseconds.ToString("F3")).AppendLine();
         builder.Append("RenderWorkLastShadowMs: ").Append(snapshot.LastShadowAtlasMilliseconds.ToString("F3")).AppendLine();
         builder.Append("RenderWorkStartupBoostActive: ").Append(snapshot.StartupBoostActive).AppendLine();
+        XRBufferWriteTelemetry.AppendProfilerSummary(builder);
     }
 
     private static void EnsureFrame()

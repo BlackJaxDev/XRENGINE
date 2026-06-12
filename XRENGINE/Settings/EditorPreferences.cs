@@ -1471,8 +1471,6 @@ namespace XREngine
         private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.Tasks;
         private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.Tasks;
         private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Compressed;
-        private bool _forwardDepthPrePassEnabled = true;
-        private bool _forwardPrePassSharesGBufferTargets = true;
         private int _glSubmitTraceLevel = 0;
         private bool _hiZCullTrace = XREngine.Rendering.RenderDiagnosticsFlags.HiZCullTrace;
         private bool _diagVendorUpscale = XREngine.Rendering.RenderDiagnosticsFlags.DiagVendorUpscale;
@@ -2454,24 +2452,6 @@ namespace XREngine
             set => SetField(ref _debugPrimitiveBufferFormat, value);
         }
 
-        [Category("Forward Pre-Pass")]
-        [DisplayName("Forward Depth Pre-Pass Enabled")]
-        [Description("When enabled, forward opaque/masked geometry is rendered into depth+normal targets before the AO pass. Disabling skips the pre-pass entirely.")]
-        public bool ForwardDepthPrePassEnabled
-        {
-            get => _forwardDepthPrePassEnabled;
-            set => SetField(ref _forwardDepthPrePassEnabled, value);
-        }
-
-        [Category("Forward Pre-Pass")]
-        [DisplayName("Share GBuffer Targets")]
-        [Description("When enabled, the forward pre-pass renders directly into the deferred GBuffer normal and depth targets instead of separate textures with a merge step. This is the default and recommended mode.")]
-        public bool ForwardPrePassSharesGBufferTargets
-        {
-            get => _forwardPrePassSharesGBufferTargets;
-            set => SetField(ref _forwardPrePassSharesGBufferTargets, value);
-        }
-
         [Category("Profiling")]
         [DisplayName("Enable Profiler UDP Sending")]
         [Description("When enabled, sends profiler telemetry over UDP to an external XREngine.Profiler instance on localhost. When disabled, zero overhead (no thread, no socket).")]
@@ -3075,8 +3055,6 @@ namespace XREngine
             DebugShapePopulationMode = source.DebugShapePopulationMode;
             DebugVisualizerPopulationMode = source.DebugVisualizerPopulationMode;
             DebugPrimitiveBufferFormat = source.DebugPrimitiveBufferFormat;
-            ForwardDepthPrePassEnabled = source.ForwardDepthPrePassEnabled;
-            ForwardPrePassSharesGBufferTargets = source.ForwardPrePassSharesGBufferTargets;
         }
 
         public void ApplyOverrides(EditorDebugOverrides overrides)
@@ -3234,10 +3212,6 @@ namespace XREngine
                 DebugVisualizerPopulationMode = vizPop.Value;
             if (overrides.DebugPrimitiveBufferFormatOverride is { HasOverride: true } bufFmt)
                 DebugPrimitiveBufferFormat = bufFmt.Value;
-            if (overrides.ForwardDepthPrePassEnabledOverride is { HasOverride: true } prePass)
-                ForwardDepthPrePassEnabled = prePass.Value;
-            if (overrides.ForwardPrePassSharesGBufferTargetsOverride is { HasOverride: true } shareTargets)
-                ForwardPrePassSharesGBufferTargets = shareTargets.Value;
         }
     }
 }

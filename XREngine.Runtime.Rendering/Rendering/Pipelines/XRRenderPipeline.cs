@@ -135,6 +135,17 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     protected abstract ViewportRenderCommandContainer GenerateCommandChain();
     protected abstract Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters();
 
+    protected virtual void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+    }
+
+    internal RenderPipelineResourceLayout BuildResourceLayout(RenderPipelineResourceProfile profile)
+    {
+        RenderPipelineResourceLayoutBuilder builder = new(profile);
+        DescribeResources(builder);
+        return builder.Build(profile);
+    }
+
     /// <summary>
     /// Compiles a code-authored render-pipeline script into the nested VPRC command-container layout used at runtime.
     /// </summary>
@@ -311,13 +322,17 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     // OpenGL (and most GPU APIs) disallow 0-sized textures. During startup or when a window is
     // minimized, the viewport can temporarily report 0; clamp to 1 to avoid invalid allocations.
     protected static uint InternalWidth
-        => (uint)Math.Max(1, TryState?.WindowViewport?.InternalWidth ?? 0);
+        => TryCurrentPipeline?.ResourceInternalWidth
+            ?? (uint)Math.Max(1, TryState?.WindowViewport?.InternalWidth ?? 0);
     protected static uint InternalHeight
-        => (uint)Math.Max(1, TryState?.WindowViewport?.InternalHeight ?? 0);
+        => TryCurrentPipeline?.ResourceInternalHeight
+            ?? (uint)Math.Max(1, TryState?.WindowViewport?.InternalHeight ?? 0);
     protected static uint FullWidth
-        => (uint)Math.Max(1, TryState?.WindowViewport?.Width ?? 0);
+        => TryCurrentPipeline?.ResourceDisplayWidth
+            ?? (uint)Math.Max(1, TryState?.WindowViewport?.Width ?? 0);
     protected static uint FullHeight
-        => (uint)Math.Max(1, TryState?.WindowViewport?.Height ?? 0);
+        => TryCurrentPipeline?.ResourceDisplayHeight
+            ?? (uint)Math.Max(1, TryState?.WindowViewport?.Height ?? 0);
 
     protected static bool NeedsRecreateTextureInternalSize(XRTexture t)
     {

@@ -34,7 +34,7 @@ namespace XREngine.Animation
         private bool _lerpConstrainedFPS = false;
         private LerpableKeyframe<TValue>? _prevKeyframe = null;
         private TValue _currentPosition;
-        private TValue[]? _baked = null;
+        private BakedValueStore<TValue>? _baked = null;
 
         /// <summary>
         /// The default value to return when no keyframes are set.
@@ -91,7 +91,7 @@ namespace XREngine.Animation
         public TValue GetValue(float second) => _getValue(second);
         public TValue GetValueBakedBySecond(float second)
         {
-            if (_baked is null || _baked.Length == 0)
+            if (_baked is null || _baked.Count == 0)
                 return DefaultValue;
 
             if (!TryGetCadenceFrameWindow(second, out int frame, out int nextFrame, out _, out _, out float frameFraction))
@@ -99,12 +99,12 @@ namespace XREngine.Animation
 
             if (LerpConstrainedFPS)
             {
-                if (frame == _baked.Length - 1)
+                if (frame == _baked.Count - 1)
                 {
                     if (Looped && frame != 0)
                     {
-                        TValue t1 = _baked[frame];
-                        TValue t2 = _baked[0];
+                        TValue t1 = _baked.GetValue(frame);
+                        TValue t2 = _baked.GetValue(0);
 
                         //TODO: interpolate values by creating tangents dynamically?
 
@@ -113,12 +113,12 @@ namespace XREngine.Animation
 
                         return LerpValues(t1, t2, lerpTime);
                     }
-                    return _baked[frame];
+                    return _baked.GetValue(frame);
                 }
                 else
                 {
-                    TValue t1 = _baked[frame];
-                    TValue t2 = _baked[nextFrame];
+                    TValue t1 = _baked.GetValue(frame);
+                    TValue t2 = _baked.GetValue(nextFrame);
 
                     //TODO: interpolate values by creating tangents dynamically?
 
@@ -130,7 +130,7 @@ namespace XREngine.Animation
             }
             else
             {
-                return _baked[frame];
+                return _baked.GetValue(frame);
             }
         }
 
@@ -140,8 +140,8 @@ namespace XREngine.Animation
         /// <param name="frame">The frame to get a value for.</param>
         /// <returns>The value at the specified frame.</returns>
         public TValue GetValueBakedByFrame(int frame)
-            => _baked is not null && _baked.IndexInRangeArray(frame)
-                ? _baked[frame.Clamp(0, _baked.Length - 1)]
+            => _baked is not null && (uint)frame < (uint)_baked.Count
+                ? _baked.GetValue(frame.Clamp(0, _baked.Count - 1))
                 : new TValue();
 
         /// <summary>
@@ -166,8 +166,8 @@ namespace XREngine.Animation
             => _getValue = !IsBaked ? (DelGetValue<TValue>)GetValueKeyframed : GetValueBakedBySecond;
         
         public TValue GetValueBaked(int frameIndex)
-            => _baked is null || _baked.Length == 0 ? new TValue() :
-            _baked[frameIndex.Clamp(0, _baked.Length - 1)];
+            => _baked is null || _baked.Count == 0 ? new TValue() :
+            _baked.GetValue(frameIndex.Clamp(0, _baked.Count - 1));
         
         public TValue GetValueKeyframed(float second)
         {
@@ -256,15 +256,19 @@ namespace XREngine.Animation
         }
         public override void Bake(int framesPerSecond)
         {
-            _bakedFPS = Math.Max(0, framesPerSecond);
-            _bakedFrameCount = _bakedFPS <= 0 ? 0 : (int)Math.Ceiling(LengthInSeconds * _bakedFPS);
-            _baked = new TValue[BakedFrameCount];
+            SetBakeCadence(framesPerSecond);
             if (_bakedFPS <= 0)
+            {
+                _baked = EncodeUnmanagedBakedValues(Array.Empty<TValue>());
                 return;
+            }
 
+            TValue[] baked = new TValue[BakedFrameCount];
             float invFPS = 1.0f / _bakedFPS;
             for (int i = 0; i < BakedFrameCount; ++i)
-                _baked[i] = GetValueKeyframed(i * invFPS);
+                baked[i] = GetValueKeyframed(i * invFPS);
+
+            _baked = EncodeUnmanagedBakedValues(baked);
         }
     }
     public abstract class LerpableKeyframe<T> : Keyframe where T : unmanaged

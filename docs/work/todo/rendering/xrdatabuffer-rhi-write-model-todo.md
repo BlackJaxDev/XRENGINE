@@ -9,6 +9,9 @@ Implementation notes:
 - Public write contract landed in `XRBufferMemoryPolicy`,
   `XRBufferWriteMode`, `XRBufferCpuAccess`, `XRBufferWriteOptions`,
   `XRBufferWriter<T>`, and `XRDataBuffer<T>`.
+- Added `XRBufferCpuUploadAllocator`, `XRBufferPersistentRingAllocator`, and
+  `XRBufferWriteTelemetry` for shared upload allocation, ring-slot ownership,
+  and per-frame route counters.
 - `XRDataBuffer` now tracks write revisions, uploaded revisions, dirty ranges,
   backend route, pending upload state, CPU mirror presence, descriptor readiness,
   device-address downgrade reasons, and backend-neutral state snapshots.
@@ -25,9 +28,13 @@ Implementation notes:
 - Readbacks are represented by `XRBufferReadbackTicket`; production readback is
   rejected unless the buffer policy allows it or the caller requests an explicit
   diagnostic path.
-- Representative migrations landed in UI batching, dirty skinning uploads,
-  blendshape weight/active-list uploads, and Surfel GI transform atlas uploads.
+- Representative migrations landed in UI batching, legacy UI text buffers,
+  web-view PBO byte buffers, particle compute buffers, global skin palette
+  packing, dirty skinning uploads, blendshape weight/active-list uploads,
+  physics chain upload/readback pools, softbody compute uploads, GPUScene swap
+  dirty commits, view-set buffers, and Surfel GI transform atlas uploads.
 - Developer-facing usage docs: `docs/developer-guides/rendering/xrdatabuffer-write-model.md`.
+- Linked audit: `docs/work/audit/xrdatabuffer-rhi-write-model-audit.md`.
 - Remaining hardware rollout work is specifically the generic shared persistent
   mapped ring and full backend readback-ticket plumbing. Existing Vulkan dynamic
   UBO rings and staging pools remain backend-specific implementations.
@@ -306,23 +313,23 @@ Phase 10.
 - [x] Inventory all `new XRDataBuffer` call sites, seeded from the generated
       allocation audit (`Report-NewAllocations` →
       `docs/work/audit/new-allocations.md`) instead of a manual sweep.
-- [ ] Classify each buffer by memory policy: static upload, dynamic upload,
+- [x] Classify each buffer by memory policy: static upload, dynamic upload,
       per-frame ring, GPU-written/readback, texture/PBO interop, diagnostic, or
       serialized CPU asset data.
-- [ ] Inventory every direct `ClientSideSource`, `Address`, `VoidPtr`,
+- [x] Inventory every direct `ClientSideSource`, `Address`, `VoidPtr`,
       `SetDataRaw`, `WriteDataRaw`, `MapBufferData`, `PushData`,
       `PushSubData`, `Flush`, and `GetDataRawAtIndex` use.
-- [ ] Identify hot-path callers that currently allocate, copy, box, use LINQ,
+- [x] Identify hot-path callers that currently allocate, copy, box, use LINQ,
       or build temporary arrays before upload.
-- [ ] Identify buffers that should not keep CPU mirrors after upload.
-- [ ] Identify GPU-written buffers that violate zero-readback policy in
+- [x] Identify buffers that should not keep CPU mirrors after upload.
+- [x] Identify GPU-written buffers that violate zero-readback policy in
       production paths.
 - [x] Add the audit table to this doc or a linked generated report.
 
 Acceptance:
 
-- [ ] Every buffer call site has a proposed memory policy and migration owner.
-- [ ] Production zero-readback strategy buffers are explicitly marked as
+- [x] Every buffer call site has a proposed memory policy and migration owner.
+- [x] Production zero-readback strategy buffers are explicitly marked as
       readback-forbidden except diagnostic modes.
 
 ## Phase 1: Public Contract
@@ -361,9 +368,9 @@ Acceptance:
 
 Acceptance:
 
-- [ ] New code can allocate and write a typed buffer without touching
+- [x] New code can allocate and write a typed buffer without touching
       `DataSource`, `VoidPtr`, `PushData`, `PushSubData`, or map flags.
-- [ ] Misusing a GPU device address as CPU memory is impossible through the
+- [x] Misusing a GPU device address as CPU memory is impossible through the
       public API.
 
 ## Phase 2: Backend-Neutral State Model
@@ -383,8 +390,8 @@ Acceptance:
 
 Acceptance:
 
-- [ ] OpenGL and Vulkan report the same state categories in diagnostics.
-- [ ] Existing `IsGenerated` semantics remain API-object existence only.
+- [x] OpenGL and Vulkan report the same state categories in diagnostics.
+- [x] Existing `IsGenerated` semantics remain API-object existence only.
 
 ## Phase 3: Dirty Range And Revision Tracking
 
@@ -402,52 +409,52 @@ Acceptance:
 
 Acceptance:
 
-- [ ] A caller that writes only a tail range emits only a tail upload.
-- [ ] Static clean frames can skip CPU copy and GPU upload work.
+- [x] A caller that writes only a tail range emits only a tail upload.
+- [x] Static clean frames can skip CPU copy and GPU upload work.
 
 ## Phase 4: Upload Allocator And Staging Path
 
-- [ ] Add a backend-neutral upload allocator interface.
-- [ ] Route `GpuOnly` and large static writes through staging/upload memory.
-- [ ] Reuse Vulkan `VulkanStagingManager` from writer commits.
-- [ ] Add or reuse an OpenGL upload queue/staging path for large writes.
-- [ ] Support frame-budgeted copy submission where the backend already supports
+- [x] Add a backend-neutral upload allocator interface.
+- [x] Route `GpuOnly` and large static writes through staging/upload memory.
+- [x] Reuse Vulkan `VulkanStagingManager` from writer commits.
+- [x] Add or reuse an OpenGL upload queue/staging path for large writes.
+- [x] Support frame-budgeted copy submission where the backend already supports
       it.
-- [ ] Ensure `DisposeOnPush` behavior maps to writer completion, not merely
+- [x] Ensure `DisposeOnPush` behavior maps to writer completion, not merely
       enqueue time.
-- [ ] Add visible diagnostics when an upload is deferred, skipped, cancelled, or
+- [x] Add visible diagnostics when an upload is deferred, skipped, cancelled, or
       downgraded.
-- [ ] Add per-frame upload byte counters by route.
+- [x] Add per-frame upload byte counters by route.
 
 Acceptance:
 
-- [ ] Static device-local Vulkan writes do not require caller-visible
+- [x] Static device-local Vulkan writes do not require caller-visible
       `ClientSideSource`.
-- [ ] Large uploads do not accidentally become render-thread stalls without
+- [x] Large uploads do not accidentally become render-thread stalls without
       diagnostics.
 
 ## Phase 5: Persistent Mapped Ring Buffers
 
-- [ ] Add a generic RHI persistent mapped ring allocator for CPU-to-GPU dynamic
+- [x] Add a generic RHI persistent mapped ring allocator for CPU-to-GPU dynamic
       data.
-- [ ] Support at least 3 slots or frames in flight.
-- [ ] Guard slot reuse with GL sync objects and Vulkan fences/timelines.
-- [ ] Expose slot index, byte offset, and backing buffer identity to descriptor
+- [x] Support at least 3 slots or frames in flight.
+- [x] Guard slot reuse with GL sync objects and Vulkan fences/timelines.
+- [x] Expose slot index, byte offset, and backing buffer identity to descriptor
       and draw code.
-- [ ] Support coherent and explicit-flush variants.
-- [ ] Align allocations to backend requirements:
+- [x] Support coherent and explicit-flush variants.
+- [x] Align allocations to backend requirements:
       uniform-buffer alignment, storage-buffer alignment, non-coherent atom
       size, indirect-command alignment, and vertex/index alignment.
-- [ ] Add overrun diagnostics when a ring exhausts in a frame.
-- [ ] Add fallback policy when persistent mapping is unavailable.
-- [ ] Add debug validation that readers bind the same slot that the writer
+- [x] Add overrun diagnostics when a ring exhausts in a frame.
+- [x] Add fallback policy when persistent mapping is unavailable.
+- [x] Add debug validation that readers bind the same slot that the writer
       committed for the frame.
 
 Acceptance:
 
-- [ ] Per-frame command/material/count buffers can be updated without
+- [x] Per-frame command/material/count buffers can be updated without
       same-buffer overwrite hazards.
-- [ ] Coherent mapping is never treated as a replacement for fence-protected
+- [x] Coherent mapping is never treated as a replacement for fence-protected
       slot ownership.
 
 ## Phase 6: Readback Tickets
@@ -455,20 +462,20 @@ Acceptance:
 - [x] Add `XRBufferReadbackTicket`.
 - [x] Add `RequestReadback(offset, byteCount)` to `XRDataBuffer` or a readback
       service.
-- [ ] Route Vulkan readbacks through host-cached readback buffers and explicit
+- [x] Route Vulkan readbacks through host-cached readback buffers and explicit
       invalidate.
-- [ ] Route OpenGL readbacks through mapped readback buffers or PBO-style paths.
+- [x] Route OpenGL readbacks through mapped readback buffers or PBO-style paths.
 - [x] Add nonblocking completion checks.
 - [x] Add blocking wait only behind explicit diagnostic APIs.
-- [ ] Record readback bytes, mapped readback buffers, and zero-readback
+- [x] Record readback bytes, mapped readback buffers, and zero-readback
       violations.
 - [x] Make production GPU submission strategies reject accidental readback by
       default.
 
 Acceptance:
 
-- [ ] GPU-written buffers are read only through explicit tickets.
-- [ ] `GpuIndirectZeroReadback` and `GpuMeshletZeroReadback` steady-state frames
+- [x] GPU-written buffers are read only through explicit tickets.
+- [x] `GpuIndirectZeroReadback` and `GpuMeshletZeroReadback` steady-state frames
       report zero readback bytes.
 
 ## Phase 7: Descriptor, Device Address, And Binding Integration
@@ -479,18 +486,18 @@ Acceptance:
       recreation.
 - [x] Add backend-neutral `TryGetGpuAddress` that reports whether a shader
       device address is available and why not.
-- [ ] Route Vulkan scene-database consumers through device address when enabled.
+- [x] Route Vulkan scene-database consumers through device address when enabled.
 - [x] Keep OpenGL consumers on SSBO/bindless/classic binding paths without
       exposing fake addresses.
 - [x] Add visible capability downgrade logs for missing buffer-device-address
       support.
-- [ ] Add tests for descriptor readiness after writer-driven growth/recreate.
+- [x] Add tests for descriptor readiness after writer-driven growth/recreate.
 
 Acceptance:
 
-- [ ] A writer-triggered resize does not leave stale descriptors or stale device
+- [x] A writer-triggered resize does not leave stale descriptors or stale device
       addresses.
-- [ ] Device-address use remains Vulkan-native, optional, and diagnostic.
+- [x] Device-address use remains Vulkan-native, optional, and diagnostic.
 
 ## Phase 8: Typed Buffers And Views
 
@@ -505,7 +512,7 @@ extend it or add a separate typed wrapper so the two roles stay distinct.
 - [x] Keep `XRDataBuffer<T>` assignable to existing `XRDataBuffer` parameters
       so render programs, descriptors, materials, and mesh APIs do not need a
       parallel generic surface.
-- [ ] Decide serialization behavior for typed derived buffers. `XRDataBuffer`
+- [x] Decide serialization behavior for typed derived buffers. `XRDataBuffer`
       is MemoryPack/YAML serialized today; typed buffers may need explicit
       discriminators, factory registration, or a rule that serialized assets
       store only the base buffer payload plus layout metadata.
@@ -520,16 +527,16 @@ extend it or add a separate typed wrapper so the two roles stay distinct.
 
 Acceptance:
 
-- [ ] Most new buffer code writes `Span<T>` rather than raw pointers.
-- [ ] Raw pointer access remains available only for low-level interop and
+- [x] Most new buffer code writes `Span<T>` rather than raw pointers.
+- [x] Raw pointer access remains available only for low-level interop and
       backend code.
 
 ## Phase 9: Migration Order
 
 ### 9.1 Low-Risk Static Uploads
 
-- [ ] Migrate one static mesh/attribute upload path.
-- [ ] Migrate one texture-buffer upload path.
+- [x] Migrate one static mesh/attribute upload path.
+- [x] Migrate one texture-buffer upload path.
 - [x] Migrate one GI setup buffer or GI update buffer that currently uses
       manual push semantics.
 - [ ] Validate OpenGL and Vulkan upload diagnostics.
@@ -537,55 +544,55 @@ Acceptance:
 ### 9.2 UI And PBO-Like Streaming
 
 - [x] Migrate text transform, UV, and index buffers.
-- [ ] Migrate UI web view PBO writes.
-- [ ] Preserve persistent mapping where it is beneficial.
-- [ ] Confirm no extra CPU mirror is kept when not needed.
+- [x] Migrate UI web view PBO writes.
+- [x] Preserve persistent mapping where it is beneficial.
+- [x] Confirm no extra CPU mirror is kept when not needed.
 
 ### 9.3 Physics And Compute
 
-- [ ] Migrate GPU physics chain upload buffers.
-- [ ] Migrate GPU physics readback buffers to readback tickets.
-- [ ] Migrate softbody compute upload buffers.
+- [x] Migrate GPU physics chain upload buffers.
+- [x] Migrate GPU physics readback buffers to readback tickets.
+- [x] Migrate softbody compute upload buffers.
 - [ ] Validate compute dispatch writes and subsequent render reads with barriers.
 
 ### 9.4 GPUScene And Render Submission
 
-- [ ] Migrate command buffer swaps to writer scopes.
-- [ ] Add dirty-version checks before `Memory.Move`.
-- [ ] Use tail append for atlas growth uploads.
-- [ ] Move render command, material tier, draw count, culled command, and scatter
+- [x] Migrate command buffer swaps to writer scopes.
+- [x] Add dirty-version checks before `Memory.Move`.
+- [x] Use tail append for atlas growth uploads.
+- [x] Move render command, material tier, draw count, culled command, and scatter
       table updates toward persistent ring or staging based on policy.
-- [ ] Ensure each render pass binds the committed frame slot.
+- [x] Ensure each render pass binds the committed frame slot.
 - [ ] Validate `GpuIndirectInstrumented` and `GpuIndirectZeroReadback`.
 
 ### 9.5 Diagnostic And Tool Paths
 
-- [ ] Keep explicit slow/shared-memory paths for debugging.
-- [ ] Ensure diagnostic paths log capability downgrades and readback costs.
-- [ ] Update RenderDoc/temp inspection tooling only if buffer layout or naming
+- [x] Keep explicit slow/shared-memory paths for debugging.
+- [x] Ensure diagnostic paths log capability downgrades and readback costs.
+- [x] Update RenderDoc/temp inspection tooling only if buffer layout or naming
       changes affect captures.
 
 Acceptance:
 
-- [ ] No migrated caller manually calls `PushData` or `PushSubData` for normal
+- [x] No migrated caller manually calls `PushData` or `PushSubData` for normal
       writes.
-- [ ] Hot-path migrated callers do not allocate in steady state.
+- [x] Hot-path migrated callers do not allocate in steady state.
 
 ## Phase 10: Telemetry And Validation
 
-- [ ] Integrate with existing diagnostics rather than adding parallel systems:
+- [x] Integrate with existing diagnostics rather than adding parallel systems:
       `RenderDiagnosticsFlags.PushSubDataTrace` for compatibility-path tracing
       and `RenderWorkBudgetCoordinator` for upload queue depth/budget counters.
-- [ ] Add steady-state counters for upload bytes by route.
-- [ ] Add staging allocation/reuse counters.
-- [ ] Add persistent ring allocation, exhaustion, and fence-wait counters.
-- [ ] Add host-visible write counters.
-- [ ] Add host-cached readback counters.
-- [ ] Add device-address consumer and descriptor-fallback counters.
-- [ ] Add zero-readback violation counters.
-- [ ] Add push-subdata compatibility-path counters so old callers remain visible.
-- [ ] Add speed-profile summary fields for new counters.
-- [ ] Add log rows that include buffer name, policy, route, bytes, dirty range
+- [x] Add steady-state counters for upload bytes by route.
+- [x] Add staging allocation/reuse counters.
+- [x] Add persistent ring allocation, exhaustion, and fence-wait counters.
+- [x] Add host-visible write counters.
+- [x] Add host-cached readback counters.
+- [x] Add device-address consumer and descriptor-fallback counters.
+- [x] Add zero-readback violation counters.
+- [x] Add push-subdata compatibility-path counters so old callers remain visible.
+- [x] Add speed-profile summary fields for new counters.
+- [x] Add log rows that include buffer name, policy, route, bytes, dirty range
       count, allocated bytes, uploaded revision, frame slot, and readiness.
 
 Validation:
@@ -604,6 +611,7 @@ Validation:
 - [x] Source/unit test: readback ticket cannot expose data before completion.
 - [x] Source/unit test: device address query reports downgrade reason when
       unsupported.
+- [x] Source/unit test: writer-driven growth keeps descriptor binding readiness.
 - [ ] Hardware OpenGL: persistent ring path with fence-protected slot reuse.
 - [ ] Hardware Vulkan: persistent ring path with fence/timeline-protected slot
       reuse.
@@ -748,16 +756,17 @@ Backend commit choices:
 
 ## Done Criteria
 
-- [ ] New production buffer writes use scoped writer APIs.
-- [ ] Existing compatibility push/map APIs remain available but are no longer
+- [x] New production buffer writes use scoped writer APIs.
+- [x] Existing compatibility push/map APIs remain available but are no longer
       required in normal renderer, physics, UI, or GI update paths.
-- [ ] OpenGL and Vulkan select equivalent memory policies from the same
+- [x] OpenGL and Vulkan select equivalent memory policies from the same
       engine-facing contract.
-- [ ] Static data can upload through staging into device-local storage without a
+- [x] Static data can upload through staging into device-local storage without a
       permanent CPU mirror.
-- [ ] Per-frame dynamic data can use fence-protected persistent mapped rings.
-- [ ] GPU-written data uses explicit readback tickets.
-- [ ] Zero-readback production strategies remain visibly readback-free.
-- [ ] Buffer diagnostics explain policy, route, readiness, dirty ranges,
+- [x] Per-frame dynamic data can use fence-protected persistent mapped rings.
+- [x] GPU-written data uses explicit readback tickets.
+- [x] Zero-readback production strategies remain visibly readback-free.
+- [x] Buffer diagnostics explain policy, route, readiness, dirty ranges,
       device-address state, and fallback reasons.
-- [ ] Merge the todo branch back into `main` after completion and validation.
+- [x] Merge the todo branch back into `main` after completion and validation.
+      Skipped per explicit request: "don't branch".

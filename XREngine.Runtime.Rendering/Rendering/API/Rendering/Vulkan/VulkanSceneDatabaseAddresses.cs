@@ -53,6 +53,7 @@ public unsafe partial class VulkanRenderer
         string reason)
     {
         string status = ResolveSceneDatabaseDeviceAddressStatus(buffer, resolvedAddress);
+        XRBufferWriteTelemetry.RecordDeviceAddressConsumer(consumed);
         if (consumed)
         {
             if (RenderDiagnosticsFlags.UploadStageLogging ||

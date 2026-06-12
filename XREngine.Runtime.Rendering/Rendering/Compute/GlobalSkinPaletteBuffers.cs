@@ -17,8 +17,8 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
 
     private ulong _frameId = ulong.MaxValue;
 
-    private XRDataBuffer? _globalSkinPalette;
-    private XRDataBuffer? _globalBlendshapeWeights;
+    private XRDataBuffer<SkinPaletteMatrix>? _globalSkinPalette;
+    private XRDataBuffer<float>? _globalBlendshapeWeights;
 
     private uint _skinPaletteCursorElements;
     private uint _blendCursorElements;
@@ -204,7 +204,7 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
     {
         if (pushSkinPalette && _globalSkinPaletteDirty)
         {
-            _globalSkinPalette?.PushSubData();
+            _globalSkinPalette?.CommitDirtyBytes(0u, _globalSkinPalette.Length);
             _globalSkinPaletteDirty = false;
         }
 
@@ -216,11 +216,11 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
                 {
                     int offset = checked((int)(_globalBlendDirtyStartElement * _globalBlendshapeWeights.ElementSize));
                     uint length = checked((_globalBlendDirtyEndElement - _globalBlendDirtyStartElement) * _globalBlendshapeWeights.ElementSize);
-                    _globalBlendshapeWeights.PushSubData(offset, length);
+                    _globalBlendshapeWeights.CommitDirtyBytes(checked((uint)offset), length);
                 }
                 else
                 {
-                    _globalBlendshapeWeights.PushSubData();
+                    _globalBlendshapeWeights.CommitDirtyBytes(0u, _globalBlendshapeWeights.Length);
                 }
             }
 
@@ -234,14 +234,10 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
     {
         if (_globalSkinPalette is null)
         {
-            _globalSkinPalette = new XRDataBuffer(
+            _globalSkinPalette = new XRDataBuffer<SkinPaletteMatrix>(
                 "GlobalSkinPaletteBuffer",
                 EBufferTarget.ShaderStorageBuffer,
-                requiredElements,
-                EComponentType.Float,
-                12,
-                false,
-                false)
+                requiredElements)
             {
                 Usage = EBufferUsage.StreamDraw,
                 DisposeOnPush = false,
@@ -259,14 +255,10 @@ internal sealed class GlobalSkinPaletteBuffers : IDisposable
     {
         if (_globalBlendshapeWeights is null)
         {
-            _globalBlendshapeWeights = new XRDataBuffer(
+            _globalBlendshapeWeights = new XRDataBuffer<float>(
                 "GlobalBlendshapeWeightsBuffer",
                 EBufferTarget.ShaderStorageBuffer,
-                requiredElements,
-                EComponentType.Float,
-                1,
-                false,
-                false)
+                requiredElements)
             {
                 Usage = EBufferUsage.DynamicDraw,
                 DisposeOnPush = false,

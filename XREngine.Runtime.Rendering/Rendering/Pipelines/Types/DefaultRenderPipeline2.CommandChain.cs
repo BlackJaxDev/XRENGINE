@@ -321,7 +321,7 @@ public partial class DefaultRenderPipeline2
     {
         BeginGpuScope(c, "Forward Pre-Pass");
         var prePassChoice = c.Add<VPRC_IfElse>();
-        prePassChoice.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
+        prePassChoice.ConditionEvaluator = () => ForwardDepthPrePassEnabled;
         {
             // When sharing GBuffer targets, skip the dedicated forward-only FBO
             // and render only into the merged GBuffer attachments.
@@ -346,13 +346,13 @@ public partial class DefaultRenderPipeline2
                 linearFilter: false);
 
             var shareIfElse = shareChoice.Add<VPRC_IfElse>();
-            shareIfElse.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
+            shareIfElse.ConditionEvaluator = () => ForwardPrePassSharesGBufferTargets;
             shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
             shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
             shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 ForwardContactPrePassCopyFBOName,
                 CreateForwardContactPrePassCopyFBO,
-                GetDesiredFBOSizeInternal)
+                GetDesiredFBOSizeForwardDepthNormalPrePass)
                 .UseLifetime(RenderResourceLifetime.Transient);
             shareChoice.Add<VPRC_BlitFrameBuffer>().SetOptions(
                 ForwardDepthPrePassMergeFBOName,
@@ -372,7 +372,7 @@ public partial class DefaultRenderPipeline2
     {
         BeginGpuScope(c, "Forward Pre-Pass GBuffer Restore");
         var restoreChoice = c.Add<VPRC_IfElse>();
-        restoreChoice.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
+        restoreChoice.ConditionEvaluator = () => ForwardDepthPrePassEnabled;
         {
             var restoreCommands = new ViewportRenderCommandContainer(this);
             restoreCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
@@ -1704,14 +1704,14 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardPrePassDepthStencilTextureName,
             CreateForwardPrePassDepthStencilTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
+            NeedsRecreateTextureForwardDepthNormalPrePassSize,
+            ResizeTextureForwardDepthNormalPrePassSize);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardContactDepthStencilTextureName,
             CreateForwardContactDepthStencilTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
+            NeedsRecreateTextureForwardDepthNormalPrePassSize,
+            ResizeTextureForwardDepthNormalPrePassSize);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             DeferredGBufferPreForwardDepthStencilTextureName,
@@ -1784,14 +1784,14 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardPrePassNormalTextureName,
             CreateForwardPrePassNormalTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
+            NeedsRecreateTextureForwardDepthNormalPrePassSize,
+            ResizeTextureForwardDepthNormalPrePassSize);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardContactNormalTextureName,
             CreateForwardContactNormalTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
+            NeedsRecreateTextureForwardDepthNormalPrePassSize,
+            ResizeTextureForwardDepthNormalPrePassSize);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             DeferredGBufferPreForwardNormalTextureName,
@@ -2222,7 +2222,7 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             ForwardDepthPrePassFBOName,
             CreateForwardDepthPrePassFBO,
-            GetDesiredFBOSizeInternal)
+            GetDesiredFBOSizeForwardDepthNormalPrePass)
             .UseLifetime(RenderResourceLifetime.Transient);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(

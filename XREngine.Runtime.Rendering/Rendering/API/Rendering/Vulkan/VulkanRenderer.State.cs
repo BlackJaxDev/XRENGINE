@@ -16,8 +16,8 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private readonly VulkanStateTracker _state = new();
-    private readonly VulkanResourcePlanner _resourcePlanner = new();
-    private readonly VulkanResourceAllocator _resourceAllocator = new();
+    private VulkanResourcePlanner _resourcePlanner = new();
+    private VulkanResourceAllocator _resourceAllocator = new();
     private readonly VulkanBarrierPlanner _barrierPlanner = new();
     private VulkanCompiledRenderGraph _compiledRenderGraph = VulkanCompiledRenderGraph.Empty;
     private FrameOpContext? _lastActiveFrameOpContext;
@@ -598,19 +598,34 @@ public unsafe partial class VulkanRenderer
         if (plannerSignature == _resourcePlannerSignature)
             return;
 
-        // Retire old physical Vulkan resources BEFORE UpdatePlan clears the allocator
-        // dictionaries. UpdatePlan wipes _physicalGroups / _physicalBufferGroups, which
-        // would orphan live VkImage/VkBuffer handles and leak GPU memory. Destruction is
-        // fence-retired so steady-state plan changes do not globally wait for all slots.
-        int retiredImageCount = _resourceAllocator.EnumeratePhysicalGroups().Count(static g => g.IsAllocated);
-        int retiredBufferCount = _resourceAllocator.EnumeratePhysicalBufferGroups().Count(static g => g.IsAllocated);
-        if (retiredImageCount > 0 || retiredBufferCount > 0)
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
-        _resourceAllocator.DestroyPhysicalImages(this);
-        _resourceAllocator.DestroyPhysicalBuffers(this);
+        VulkanResourcePlanner pendingPlanner = new();
+        VulkanResourceAllocator pendingAllocator = new();
+        try
+        {
+            pendingPlanner.Sync(context.ResourceRegistry);
+            ValidateVulkanResourcePlanMetadata(context.PassMetadata, pendingPlanner);
+            pendingAllocator.UpdatePlan(pendingPlanner.CurrentPlan);
+            pendingAllocator.RebuildPhysicalPlan(this, context.PassMetadata, pendingPlanner);
+            pendingAllocator.AllocatePhysicalImages(this);
+            pendingAllocator.AllocatePhysicalBuffers(this);
+        }
+        catch (Exception ex)
+        {
+            pendingAllocator.DestroyPhysicalImages(this);
+            pendingAllocator.DestroyPhysicalBuffers(this);
+            Debug.VulkanWarning(
+                "[VulkanResourcePlanner] Pending physical resource plan failed. Keeping active plan revision={0}. Reason={1}",
+                _resourcePlannerRevision,
+                ex.Message);
+            return;
+        }
 
-        _resourcePlanner.Sync(context.ResourceRegistry);
-        _resourceAllocator.UpdatePlan(_resourcePlanner.CurrentPlan);
+        VulkanResourceAllocator oldAllocator = _resourceAllocator;
+        int retiredImageCount = oldAllocator.EnumeratePhysicalGroups().Count(static g => g.IsAllocated);
+        int retiredBufferCount = oldAllocator.EnumeratePhysicalBufferGroups().Count(static g => g.IsAllocated);
+
+        _resourcePlanner = pendingPlanner;
+        _resourceAllocator = pendingAllocator;
 
         // Transition every newly-allocated physical image from VK_IMAGE_LAYOUT_UNDEFINED
         // to a usable initial layout so that the first render pass that references them
@@ -618,6 +633,11 @@ public unsafe partial class VulkanRenderer
         // images go to DEPTH_STENCIL_ATTACHMENT_OPTIMAL; colour images go to GENERAL
         // which is compatible with attachment, sampled, and storage usage.
         TransitionNewPhysicalImagesToInitialLayout();
+
+        if (retiredImageCount > 0 || retiredBufferCount > 0)
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
+        oldAllocator.DestroyPhysicalImages(this);
+        oldAllocator.DestroyPhysicalBuffers(this);
 
         _compiledRenderGraph = compiledGraph;
         _barrierPlanner.Rebuild(
@@ -629,6 +649,138 @@ public unsafe partial class VulkanRenderer
 
         _resourcePlannerSignature = plannerSignature;
         _resourcePlannerRevision++;
+    }
+
+    private static void ValidateVulkanResourcePlanMetadata(
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        VulkanResourcePlanner planner)
+    {
+        if (passMetadata is null || passMetadata.Count == 0)
+            return;
+
+        foreach (RenderPassMetadata pass in passMetadata)
+        {
+            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            {
+                string resourceName = usage.ResourceName;
+                if (string.IsNullOrWhiteSpace(resourceName)
+                    || resourceName.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (resourceName.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase))
+                {
+                    ValidateVulkanFrameBufferBinding(pass, usage, resourceName, planner);
+                    continue;
+                }
+
+                if (resourceName.StartsWith("tex::", StringComparison.OrdinalIgnoreCase))
+                {
+                    string textureName = resourceName["tex::".Length..];
+                    if (!string.IsNullOrWhiteSpace(textureName)
+                        && !planner.TryGetTextureDescriptor(textureName, out _))
+                    {
+                        Debug.VulkanWarningEvery(
+                            $"VulkanResourcePlanner.MissingTexture.{pass.PassIndex}.{textureName}",
+                            TimeSpan.FromSeconds(2),
+                            "[VulkanResourcePlanner] Pass '{0}' references missing declared texture '{1}'.",
+                            pass.Name,
+                            textureName);
+                    }
+                    continue;
+                }
+
+                if (resourceName.StartsWith("buf::", StringComparison.OrdinalIgnoreCase))
+                {
+                    string bufferName = resourceName["buf::".Length..];
+                    if (!string.IsNullOrWhiteSpace(bufferName)
+                        && !planner.TryGetBufferDescriptor(bufferName, out _))
+                    {
+                        Debug.VulkanWarningEvery(
+                            $"VulkanResourcePlanner.MissingBuffer.{pass.PassIndex}.{bufferName}",
+                            TimeSpan.FromSeconds(2),
+                            "[VulkanResourcePlanner] Pass '{0}' references missing declared buffer '{1}'.",
+                            pass.Name,
+                            bufferName);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void ValidateVulkanFrameBufferBinding(
+        RenderPassMetadata pass,
+        RenderPassResourceUsage usage,
+        string resourceName,
+        VulkanResourcePlanner planner)
+    {
+        string[] segments = resourceName.Split("::", StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+            return;
+
+        string frameBufferName = segments[1];
+        string slot = segments.Length >= 3 ? segments[2] : "color";
+        if (!planner.TryGetFrameBufferDescriptor(frameBufferName, out FrameBufferResourceDescriptor? descriptor)
+            || descriptor is null)
+        {
+            Debug.VulkanWarningEvery(
+                $"VulkanResourcePlanner.MissingFBO.{pass.PassIndex}.{frameBufferName}",
+                TimeSpan.FromSeconds(2),
+                "[VulkanResourcePlanner] Pass '{0}' references missing declared framebuffer '{1}'.",
+                pass.Name,
+                frameBufferName);
+            return;
+        }
+
+        foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
+        {
+            if (!MatchesVulkanFrameBufferSlot(attachment.Attachment, slot))
+                continue;
+
+            if (!planner.TryGetTextureDescriptor(attachment.ResourceName, out _))
+            {
+                Debug.VulkanWarningEvery(
+                    $"VulkanResourcePlanner.MissingFBOAttachment.{pass.PassIndex}.{frameBufferName}.{attachment.ResourceName}",
+                    TimeSpan.FromSeconds(2),
+                    "[VulkanResourcePlanner] Pass '{0}' framebuffer '{1}' references attachment '{2}' that is missing from declared textures.",
+                    pass.Name,
+                    frameBufferName,
+                    attachment.ResourceName);
+            }
+            return;
+        }
+
+        Debug.VulkanWarningEvery(
+            $"VulkanResourcePlanner.MissingFBOSlot.{pass.PassIndex}.{frameBufferName}.{slot}",
+            TimeSpan.FromSeconds(2),
+            "[VulkanResourcePlanner] Pass '{0}' framebuffer '{1}' has no attachment matching slot '{2}' for usage {3}.",
+            pass.Name,
+            frameBufferName,
+            slot,
+            usage.ResourceType);
+    }
+
+    private static bool MatchesVulkanFrameBufferSlot(EFrameBufferAttachment attachment, string slot)
+    {
+        if (slot.StartsWith("color", StringComparison.OrdinalIgnoreCase))
+        {
+            if (slot.Length > 5 && int.TryParse(slot.AsSpan(5), out int colorIndex))
+            {
+                EFrameBufferAttachment expected = (EFrameBufferAttachment)((int)EFrameBufferAttachment.ColorAttachment0 + colorIndex);
+                return attachment == expected;
+            }
+
+            return attachment is >= EFrameBufferAttachment.ColorAttachment0 and <= EFrameBufferAttachment.ColorAttachment31;
+        }
+
+        if (slot.Equals("depth", StringComparison.OrdinalIgnoreCase))
+            return attachment is EFrameBufferAttachment.DepthAttachment or EFrameBufferAttachment.DepthStencilAttachment;
+
+        if (slot.Equals("stencil", StringComparison.OrdinalIgnoreCase))
+            return attachment is EFrameBufferAttachment.StencilAttachment or EFrameBufferAttachment.DepthStencilAttachment;
+
+        return false;
     }
 
     private static ulong ComputeResourcePlannerSignature(

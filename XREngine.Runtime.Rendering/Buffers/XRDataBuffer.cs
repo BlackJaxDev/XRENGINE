@@ -118,7 +118,11 @@ namespace XREngine.Rendering
         public bool ShouldMap
         {
             get => _mapped;
-            set => SetField(ref _mapped, value);
+            set
+            {
+                if (SetField(ref _mapped, value))
+                    ReconcileDefaultMemoryPolicyFromLegacyHints();
+            }
         }
 
         public IEnumerable<VoidPtr> GetMappedAddresses()
@@ -129,14 +133,22 @@ namespace XREngine.Rendering
         public EBufferMapStorageFlags StorageFlags
         {
             get => _storageFlags;
-            set => SetField(ref _storageFlags, value);
+            set
+            {
+                if (SetField(ref _storageFlags, value))
+                    ReconcileDefaultMemoryPolicyFromLegacyHints();
+            }
         }
 
         private EBufferMapRangeFlags _rangeFlags = 0;
         public EBufferMapRangeFlags RangeFlags 
         {
             get => _rangeFlags;
-            set => SetField(ref _rangeFlags, value);
+            set
+            {
+                if (SetField(ref _rangeFlags, value))
+                    ReconcileDefaultMemoryPolicyFromLegacyHints();
+            }
         }
 
         private EBufferTarget _target = EBufferTarget.ArrayBuffer;
@@ -157,7 +169,11 @@ namespace XREngine.Rendering
         public EBufferUsage Usage
         {
             get => _usage;
-            set => SetField(ref _usage, value);
+            set
+            {
+                if (SetField(ref _usage, value))
+                    ReconcileDefaultMemoryPolicyFromLegacyHints();
+            }
         }
 
         private EComponentType _componentType;
@@ -361,7 +377,10 @@ namespace XREngine.Rendering
         /// Allocates and pushes the buffer to the GPU.
         /// </summary>
         public void PushData()
-            => PushDataRequested?.Invoke();
+        {
+            XRBufferWriteTelemetry.RecordUpload(XRBufferResolvedRoute.CompatibilityPush, Length);
+            PushDataRequested?.Invoke();
+        }
 
         /// <summary>
         /// Pushes the entire buffer to the GPU. Assumes the buffer has already been allocated using PushData.
@@ -373,7 +392,10 @@ namespace XREngine.Rendering
         /// Pushes the a portion of the buffer to the GPU. Assumes the buffer has already been allocated using PushData.
         /// </summary>
         public void PushSubData(int offset, uint length)
-            => PushSubDataRequested?.Invoke(offset, length);
+        {
+            XRBufferWriteTelemetry.RecordUpload(XRBufferResolvedRoute.CompatibilityPush, length);
+            PushSubDataRequested?.Invoke(offset, length);
+        }
 
         public void MapBufferData()
             => MapBufferDataRequested?.Invoke();

@@ -1,5 +1,6 @@
 using ImGuiNET;
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
@@ -52,6 +53,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     }
     private static readonly ConditionalWeakTable<XRTexture2DArray, Dictionary<int, XRTexture2DArrayView>> CascadePreviewViews = new();
     private static readonly ConditionalWeakTable<PipelinePostProcessState, PostProcessStageSelectorState> PostProcessStageSelectorStates = new();
+    private static readonly ConcurrentDictionary<Type, PropertyInfo[]> PipelineCameraSettingProperties = new();
     private static readonly List<XRViewport> BoundViewportScratch = [];
 
     /// <summary>
@@ -431,6 +433,9 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         DrawInternalResolutionSettings(component);
 
         ImGui.Separator();
+        if (DrawRenderPipelineCameraSettings(component))
+            ImGui.Separator();
+
         ImGui.TextDisabled("Render Pipeline Asset");
         var pipeline = component.Camera.RenderPipeline;
         ImGuiAssetUtilities.DrawAssetField<RenderPipeline>("CameraRenderPipeline", pipeline, asset =>
@@ -446,6 +451,154 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         ImGui.Separator();
         DrawForwardPlusDebugSection(component);
+    }
+
+    private static bool DrawRenderPipelineCameraSettings(CameraComponent component)
+    {
+        RenderPipeline pipeline = ResolveCameraEditorPipeline(component.Camera);
+        PropertyInfo[] properties = PipelineCameraSettingProperties.GetOrAdd(
+            pipeline.GetType(),
+            static type => type
+                .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                .Where(property => property.CanRead
+                    && property.CanWrite
+                    && property.GetIndexParameters().Length == 0
+                    && property.GetCustomAttribute<RenderPipelineCameraSettingAttribute>(inherit: true) is not null)
+                .OrderBy(property => property.GetCustomAttribute<RenderPipelineCameraSettingAttribute>(inherit: true)?.Order ?? 0)
+                .ThenBy(property => property.GetCustomAttribute<CategoryAttribute>(inherit: true)?.Category ?? string.Empty, StringComparer.Ordinal)
+                .ThenBy(GetPipelineSettingDisplayName, StringComparer.Ordinal)
+                .ToArray());
+
+        if (properties.Length == 0)
+            return false;
+
+        ImGui.Text("Render Pipeline Settings");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Settings exposed by the active render pipeline for this camera.");
+
+        ImGui.TextDisabled($"Pipeline: {pipeline.DebugName}");
+        ImGui.PushID("RenderPipelineCameraSettings");
+
+        string? currentCategory = null;
+        foreach (PropertyInfo property in properties)
+        {
+            string category = property.GetCustomAttribute<CategoryAttribute>(inherit: true)?.Category ?? "Pipeline";
+            if (!string.Equals(category, currentCategory, StringComparison.Ordinal))
+            {
+                if (currentCategory is not null)
+                    ImGui.Spacing();
+
+                ImGui.SeparatorText(category);
+                currentCategory = category;
+            }
+
+            DrawPipelineCameraSettingProperty(pipeline, property);
+        }
+
+        DrawForwardDepthNormalPrePassHint(pipeline);
+
+        ImGui.PopID();
+        return true;
+    }
+
+    private static void DrawPipelineCameraSettingProperty(RenderPipeline pipeline, PropertyInfo property)
+    {
+        Type propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+        string displayName = GetPipelineSettingDisplayName(property);
+
+        ImGui.PushID(property.Name);
+        try
+        {
+            if (propertyType == typeof(bool))
+            {
+                bool value = property.GetValue(pipeline) is bool current && current;
+                if (ImGui.Checkbox(displayName, ref value))
+                {
+                    using var _ = Undo.TrackChange(displayName, pipeline);
+                    property.SetValue(pipeline, value);
+                }
+                DrawPipelineSettingTooltip(property);
+            }
+            else if (propertyType.IsEnum)
+            {
+                DrawPipelineEnumSetting(pipeline, property, propertyType, displayName);
+            }
+            else
+            {
+                ImGui.TextDisabled($"{displayName}: unsupported {propertyType.Name}");
+                DrawPipelineSettingTooltip(property);
+            }
+        }
+        finally
+        {
+            ImGui.PopID();
+        }
+    }
+
+    private static void DrawPipelineEnumSetting(RenderPipeline pipeline, PropertyInfo property, Type enumType, string displayName)
+    {
+        object? current = property.GetValue(pipeline);
+        Array values = Enum.GetValues(enumType);
+        string currentLabel = current is not null ? GetEnumDisplayName(enumType, current) : "<unset>";
+
+        ImGui.SetNextItemWidth(180.0f);
+        if (ImGui.BeginCombo(displayName, currentLabel))
+        {
+            foreach (object option in values)
+            {
+                bool selected = Equals(current, option);
+                string optionLabel = GetEnumDisplayName(enumType, option);
+                if (ImGui.Selectable(optionLabel, selected) && !selected)
+                {
+                    using var _ = Undo.TrackChange(displayName, pipeline);
+                    property.SetValue(pipeline, option);
+                    current = option;
+                }
+
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+        DrawPipelineSettingTooltip(property);
+    }
+
+    private static void DrawPipelineSettingTooltip(PropertyInfo property)
+    {
+        string? description = property.GetCustomAttribute<DescriptionAttribute>(inherit: true)?.Description;
+        if (!string.IsNullOrWhiteSpace(description) && ImGui.IsItemHovered())
+            ImGui.SetTooltip(description);
+    }
+
+    private static string GetPipelineSettingDisplayName(PropertyInfo property)
+        => property.GetCustomAttribute<DisplayNameAttribute>(inherit: true)?.DisplayName ?? property.Name;
+
+    private static string GetEnumDisplayName(Type enumType, object value)
+    {
+        string? name = Enum.GetName(enumType, value);
+        if (string.IsNullOrWhiteSpace(name))
+            return value.ToString() ?? string.Empty;
+
+        FieldInfo? field = enumType.GetField(name);
+        return field?.GetCustomAttribute<DisplayNameAttribute>(inherit: false)?.DisplayName
+            ?? field?.GetCustomAttribute<DescriptionAttribute>(inherit: false)?.Description
+            ?? name;
+    }
+
+    private static void DrawForwardDepthNormalPrePassHint(RenderPipeline pipeline)
+    {
+        if (pipeline is not IForwardDepthNormalPrePassSettings settings)
+            return;
+
+        if (!settings.ForwardDepthPrePassEnabled)
+        {
+            ImGui.TextDisabled("Forward pre-pass is disabled; share and resolution settings are inactive.");
+            return;
+        }
+
+        if (settings.ForwardPrePassSharesGBufferTargets && settings.ForwardDepthNormalPrePassResolution != EDepthNormalPrePassResolution.Full)
+            ImGui.TextDisabled("Shared GBuffer writes stay full resolution; this resolution affects the dedicated/contact pre-pass targets.");
     }
 
     private static readonly string[] ForwardPlusDebugModeNames =
@@ -1337,11 +1490,14 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         ImGui.PopID();
     }
 
-    private static RenderPipeline ResolvePostProcessingEditorPipeline(XRCamera camera)
+    private static RenderPipeline ResolveCameraEditorPipeline(XRCamera camera)
         => camera.Viewports
             .Select(viewport => viewport.RenderPipeline)
             .FirstOrDefault(pipeline => pipeline is not null)
             ?? camera.RenderPipeline;
+
+    private static RenderPipeline ResolvePostProcessingEditorPipeline(XRCamera camera)
+        => ResolveCameraEditorPipeline(camera);
 
     private static void DrawSchemaStageSelector(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, CameraComponent component)
     {

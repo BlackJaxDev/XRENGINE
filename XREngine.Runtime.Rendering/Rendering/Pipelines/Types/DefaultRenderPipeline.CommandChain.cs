@@ -149,8 +149,8 @@ public partial class DefaultRenderPipeline
     private static bool HasRenderPassCommands(int renderPass)
         => CurrentRenderingPipeline?.MeshRenderCommands.HasRenderingCommands(renderPass) == true;
 
-    private static bool ShouldRunForwardDepthPrePass()
-        => RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled
+    private bool ShouldRunForwardDepthPrePass()
+        => ForwardDepthPrePassEnabled
         && (HasRenderPassCommands((int)EDefaultRenderPass.OpaqueForward)
             || HasRenderPassCommands((int)EDefaultRenderPass.MaskedForward));
 
@@ -236,23 +236,6 @@ public partial class DefaultRenderPipeline
 
     private void AppendDeferredGBufferPass(ViewportRenderCommandContainer c)
     {
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            DeferredGBufferFBOName,
-            CreateDeferredGBufferFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateDeferredGBufferFbo);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            MsaaGBufferFBOName,
-            CreateMsaaGBufferFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateMsaaFbo);
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            MsaaLightingFBOName,
-            CreateMsaaLightingFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateMsaaFbo);
-
         using (c.AddUsing<VPRC_BindFBOByName>(x =>
         {
             x.FrameBufferName = DeferredGBufferFBOName;
@@ -309,13 +292,13 @@ public partial class DefaultRenderPipeline
                 linearFilter: false);
 
             var shareIfElse = shareChoice.Add<VPRC_IfElse>();
-            shareIfElse.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
+            shareIfElse.ConditionEvaluator = () => ForwardPrePassSharesGBufferTargets;
             shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
             shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
             shareChoice.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 ForwardContactPrePassCopyFBOName,
                 CreateForwardContactPrePassCopyFBO,
-                GetDesiredFBOSizeInternal)
+                GetDesiredFBOSizeForwardDepthNormalPrePass)
                 .UseLifetime(RenderResourceLifetime.Transient);
             shareChoice.Add<VPRC_BlitFrameBuffer>().SetOptions(
                 ForwardDepthPrePassMergeFBOName,
@@ -374,13 +357,9 @@ public partial class DefaultRenderPipeline
     {
         c.Add<VPRC_SyncLightProbeResources>();
 
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            LightingAccumFBOName,
-            CreateLightingAccumFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateLightingAccumFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
+        // AO modes still replace AmbientOcclusionIntensityTexture during command execution
+        // and invalidate LightCombineFBO. Keep the combine quad command-owned until AO is
+        // migrated into generation ownership so it can be rebuilt after AO refreshes.
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             LightCombineFBOName,
             CreateLightCombineFBO,
@@ -463,39 +442,8 @@ public partial class DefaultRenderPipeline
             GetDesiredFBOSizeInternal);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            ForwardPassFBOName,
-            CreateForwardPassFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateForwardPassFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             SceneCopyFBOName,
             CreateSceneCopyFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            TransparentSceneCopyFBOName,
-            CreateTransparentSceneCopyFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            DeferredTransparencyBlurFBOName,
-            CreateDeferredTransparencyBlurFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            TransparentAccumulationFBOName,
-            CreateTransparentAccumulationFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            TransparentResolveFBOName,
-            CreateTransparentResolveFBO,
             GetDesiredFBOSizeInternal)
             .UseLifetime(RenderResourceLifetime.Transient);
 
@@ -522,26 +470,6 @@ public partial class DefaultRenderPipeline
             CreateSurfelGICompositeFBO,
             GetDesiredFBOSizeInternal)
             .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            HistoryCaptureFBOName,
-            CreateHistoryCaptureFBO,
-            GetDesiredFBOSizeInternal);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            TemporalInputFBOName,
-            CreateTemporalInputFBO,
-            GetDesiredFBOSizeInternal);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            TemporalAccumulationFBOName,
-            CreateTemporalAccumulationFBO,
-            GetDesiredFBOSizeInternal);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            HistoryExposureFBOName,
-            CreateHistoryExposureFBO,
-            GetDesiredFBOSizeInternal);
 
         using (c.AddUsing<VPRC_BindFBOByName>(x =>
         {
@@ -649,12 +577,6 @@ public partial class DefaultRenderPipeline
 
     private void AppendVelocityPass(ViewportRenderCommandContainer c)
     {
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            VelocityFBOName,
-            CreateVelocityFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
         c.Add<VPRC_SetClears>().Set(ColorF4.Black, null, null);
         using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(VelocityFBOName, true, true, false, false)))
         {
@@ -863,66 +785,12 @@ public partial class DefaultRenderPipeline
 
     private void AppendAntiAliasingResourceCaching(ViewportRenderCommandContainer c)
     {
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            FxaaOutputTextureName,
-            CreateFxaaOutputTexture,
-            NeedsRecreatePostProcessTextureFullSize,
-            ResizeTextureFullSize);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            PostProcessOutputFBOName,
-            CreatePostProcessOutputFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreatePostProcessOutputFbo);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            FinalPostProcessOutputTextureName,
-            CreateFinalPostProcessOutputTexture,
-            NeedsRecreatePostProcessTextureInternalSize,
-            ResizeTextureInternalSize);
-
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             FinalPostProcessFBOName,
             CreateFinalPostProcessFBO,
             GetDesiredFBOSizeInternal,
             NeedsRecreateFinalPostProcessFbo)
             .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            FinalPostProcessOutputFBOName,
-            CreateFinalPostProcessOutputFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateFinalPostProcessOutputFbo);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            FxaaFBOName,
-            CreateFxaaFBO,
-            GetDesiredFBOSizeFull,
-            NeedsRecreateFxaaFbo);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            TsrOutputTextureName,
-            CreateTsrOutputTexture,
-            NeedsRecreatePostProcessTextureFullSize,
-            ResizeTextureFullSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            TsrHistoryColorTextureName,
-            CreateTsrHistoryColorTexture,
-            NeedsRecreatePostProcessTextureFullSize,
-            ResizeTextureFullSize);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            TsrHistoryColorFBOName,
-            CreateTsrHistoryColorFBO,
-            GetDesiredFBOSizeFull,
-            NeedsRecreateTsrHistoryColorFbo);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            TsrUpscaleFBOName,
-            CreateTsrUpscaleFBO,
-            GetDesiredFBOSizeFull,
-            NeedsRecreateTsrUpscaleFbo);
     }
 
     private void AppendFxaaTsrUpscaleChain(ViewportRenderCommandContainer c)

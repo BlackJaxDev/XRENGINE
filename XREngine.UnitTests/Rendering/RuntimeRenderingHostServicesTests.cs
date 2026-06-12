@@ -396,8 +396,6 @@ public sealed class RuntimeRenderingHostServicesTests
         public uint DefaultMsaaSampleCount => 1u;
         public bool DefaultOutputHDR => false;
         public float DefaultTsrRenderScale => 1.0f;
-        public bool ForwardDepthPrePassEnabled => true;
-        public bool ForwardPrePassSharesGBufferTargets => true;
         public bool EnableRenderStatisticsTracking => true;
         public bool EnableGpuRenderPipelineProfiling => true;
         public ulong CurrentRenderFrameId => 0UL;

@@ -24,7 +24,8 @@ Implementation note:
   using the existing planner sync bridge for physical resources.
 - Remaining compatibility commands are intentionally limited to dynamic or
   branch-local resources such as bloom, atmosphere/fog half-resolution chains,
-  SMAA, exact transparency scratch resources, and command-local materials.
+  SMAA, exact transparency scratch resources, AO-dependent light-combine quad
+  FBOs, and command-local materials.
 
 ## Goal
 
@@ -171,10 +172,34 @@ Acceptance criteria:
 
 - [x] Teach `DefaultRenderPipeline` to declare depth/stencil, depth view,
   GBuffer textures, transform-id texture, deferred GBuffer FBO, forward FBO, and
-  light-combine resources.
+  lighting accumulation resources. Keep `LightCombineFBO` command-owned until
+  AO stops replacing `AmbientOcclusionIntensityTextureName` during frame
+  execution.
 - [x] Declare MSAA deferred resources behind the effective MSAA profile
   predicate.
 - [ ] Declare AO resources and FBOs behind the effective AO/profile predicate.
+- [ ] Stop AO feature commands from replacing
+  `AmbientOcclusionIntensityTextureName` in the active registry during frame
+  execution. AO modes should render into generation-declared outputs, or into
+  generation-declared mode-specific scratch resources followed by a declared
+  resolve target.
+- [ ] Move AO mode changes onto the resource-generation request path when the
+  effective AO output descriptor can change. The active generation should keep
+  rendering with its existing AO target until the replacement generation commits.
+- [ ] Model the AO disabled/default output as a declared resource, or as an
+  explicit immutable external resource with a stable descriptor, so the light
+  combine dependencies do not change identity mid-frame.
+- [ ] Remove AO `DependentFboNames` invalidation of `LightCombineFBOName` once
+  AO outputs are generation-owned. No command after `AppendAmbientOcclusionResolve`
+  should remove the light-combine FBO from the active registry.
+- [ ] Re-declare `LightCombineFBOName` in `DescribeResources(...)` after AO no
+  longer mutates `AmbientOcclusionIntensityTextureName` during frame execution,
+  remove the command-owned `VPRC_CacheOrCreateFBO` compatibility command, and
+  update lifecycle tests to expect layout ownership again.
+- [ ] Add an AO/light-combine regression test that covers disabled AO and each
+  supported AO mode at the command/resource-contract level: after AO resolve and
+  before the lighting blit, `LightCombineFBOName` must be present, complete, and
+  attached to resources from the committed generation.
 - [ ] Declare post-process, bloom, motion blur, DoF, temporal accumulation, and
   final output resources that are stable enough for first migration coverage.
 - [x] Declare AA/upscale resources for FXAA and TSR predicates.
@@ -211,7 +236,7 @@ Acceptance criteria:
   build duration, resource count by kind, commit reason, and retirement reason.
 - [x] Add a conservative retired-generation cap and a safe fallback sync path
   when retired resources accumulate during resize.
-- [ ] Add generation lifetime tests for active, pending, commit, failed pending,
+- [x] Add generation lifetime tests for active, pending, commit, failed pending,
   retired, and superseded pending states.
 
 Acceptance criteria:
@@ -251,12 +276,12 @@ Acceptance criteria:
 - [x] Add `RenderPipelineResourceManager`.
 - [x] Materialize declared textures, texture views, renderbuffers, buffers, and
   FBOs into a generation registry before command execution.
-- [ ] Validate FBO attachments by same-generation identity, dimensions, sample
+- [x] Validate FBO attachments by same-generation identity, dimensions, sample
   counts, formats, and backend completeness.
-- [ ] Validate texture views by same-generation source texture identity, mip
+- [x] Validate texture views by same-generation source texture identity, mip
   range, layer range, format/aspect, and target interpretation.
 - [x] Validate required resources before a generation can commit.
-- [ ] Allow history resources to commit invalid/empty when their history policy
+- [x] Allow history resources to commit invalid/empty when their history policy
   permits seeding from the current frame.
 - [x] Make cache commands no-op when a declared matching resource already exists
   in the active generation.
@@ -283,10 +308,10 @@ Acceptance criteria:
   `InvalidateViewportResizeResources(...)`.
 - [x] Keep presentation using the current display region while render passes use
   the active generation size until pending commit.
-- [ ] Prepare pending generations incrementally at the requested size.
-- [ ] Time-slice physical resource creation and FBO completeness checks across
+- [x] Prepare pending generations incrementally at the requested size.
+- [x] Time-slice physical resource creation and FBO completeness checks across
   frames.
-- [ ] Add resize debounce for interactive scene-panel and window drag
+- [x] Add resize debounce for interactive scene-panel and window drag
   (target 100-150 ms of no change, plus a maximum interval cap).
 - [x] Supersede in-flight pending generations when a newer generation key is
   requested, disposing abandoned partial resources safely.
@@ -310,15 +335,15 @@ Acceptance criteria:
 
 - [x] Sync `VulkanResourcePlanner` from complete declared layouts before command
   execution.
-- [ ] Add Vulkan pending physical resource plan support.
+- [x] Add Vulkan pending physical resource plan support.
 - [ ] Allocate pending Vulkan images, buffers, views, and framebuffers without
   destroying the active plan.
-- [ ] Validate render-pass metadata and dynamic-rendering attachments against
+- [x] Validate render-pass metadata and dynamic-rendering attachments against
   declared resources before recording.
-- [ ] Commit the pending Vulkan physical plan with the logical generation.
-- [ ] Retire old Vulkan physical resources through fences instead of requiring
+- [x] Commit the pending Vulkan physical plan with the logical generation.
+- [x] Retire old Vulkan physical resources through fences instead of requiring
   unconditional `DeviceWaitIdle()`.
-- [ ] Keep an initial conservative idle-wait bridge where needed, but keep it
+- [x] Keep an initial conservative idle-wait bridge where needed, but keep it
   outside the long-term API contract.
 - [ ] Add Vulkan diagnostics for missing declared resource, stale descriptor,
   attachment-generation mismatch, and retired-resource lifetime.
@@ -327,21 +352,21 @@ Acceptance criteria:
 
 - [x] Vulkan planning no longer depends on descriptors discovered during cache
   command execution for migrated core resources.
-- [ ] Vulkan can prepare replacement physical resources without destroying the
+- [x] Vulkan can prepare replacement physical resources without destroying the
   active plan first.
-- [ ] Any remaining idle wait is explicit, diagnosed, and removable.
+- [x] Any remaining idle wait is explicit, diagnosed, and removable.
 
 ## Phase 8 - Remove Migrated Core Cache Commands
 
-- [ ] Remove `CacheTextures(c)` calls for migrated core resources.
-- [ ] Remove FBO cache commands for migrated core FBOs.
-- [ ] Remove renderbuffer and data-buffer cache commands for migrated core
+- [x] Remove `CacheTextures(c)` calls for migrated core resources.
+- [x] Remove FBO cache commands for migrated core FBOs.
+- [x] Remove renderbuffer and data-buffer cache commands for migrated core
   resources.
-- [ ] Keep compatibility cache commands only for dynamic, branch-local, or
+- [x] Keep compatibility cache commands only for dynamic, branch-local, or
   experimental resources that are intentionally not declared yet.
 - [ ] Remove descriptor-parity warnings for resources whose command-side authoring
   has been deleted.
-- [ ] Update command-chain comments and docs so render commands are described as
+- [x] Update command-chain comments and docs so render commands are described as
   execution order, state binding, dispatch, blit, and presentation rather than
   the primary resource lifecycle.
 - [ ] Audit for direct active-registry mutation in `DefaultRenderPipeline` resize
@@ -349,10 +374,10 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- [ ] Migrated core graph resources are authored only in the layout.
-- [ ] Command chains no longer allocate or recreate migrated core resources in
+- [x] Migrated core graph resources are authored only in the layout.
+- [x] Command chains no longer allocate or recreate migrated core resources in
   steady-state frame execution.
-- [ ] Dynamic or branch-local compatibility cache commands are named and
+- [x] Dynamic or branch-local compatibility cache commands are named and
   justified.
 
 ## Phase 9 - Diagnostics, Tests, And Documentation
@@ -362,8 +387,8 @@ Acceptance criteria:
 - [x] Add diagnostics for generation build duration.
 - [x] Add diagnostics for resource count by kind.
 - [x] Add diagnostics for missing required resources.
-- [ ] Add diagnostics for failed backend generation.
-- [ ] Add diagnostics for incomplete FBO name and attachment summary.
+- [x] Add diagnostics for failed backend generation.
+- [x] Add diagnostics for incomplete FBO name and attachment summary.
 - [x] Add diagnostics for commit and retirement reasons.
 - [ ] Add diagnostics for old generation lifetime after commit.
 - [ ] Add tests for descriptor parity, spec lowering, dependency ordering,
@@ -374,13 +399,13 @@ Acceptance criteria:
   implementation details settle.
 - [x] Update `docs/architecture/rendering/default-render-pipeline-notes.md` with
   the final resource-layout and resize invariants.
-- [ ] Update Vulkan rendering docs if planner/allocation behavior changes.
+- [x] Update Vulkan rendering docs if planner/allocation behavior changes.
 
 Acceptance criteria:
 
 - [x] A failed pending generation log identifies the pipeline, target size,
   resource, reason, and active generation that remains in use.
-- [ ] Tests cover the resource lifecycle contract without depending on visual
+- [x] Tests cover the resource lifecycle contract without depending on visual
   editor runs.
 - [x] Architecture docs match the implemented behavior and name any remaining
   compatibility commands.

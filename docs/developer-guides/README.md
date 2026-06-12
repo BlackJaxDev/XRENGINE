@@ -17,6 +17,7 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Networking](networking/networking.md)
 - [Physics](physics/physics-api.md)
 - [Rendering](rendering/skinning.md)
+- [Rendering Buffer Writes](rendering/xrdatabuffer-write-model.md)
 - [Runtime](runtime/engine-api.md)
 - [Scene](scene/scene-graph.md)
 - [Testing](testing/unit-testing-world.md)

@@ -7,13 +7,13 @@ namespace XREngine.Rendering.Commands
     public sealed partial class GPURenderPassCollection
     {
         private const int ViewConstantsRingSize = 3;
-        private XRDataBuffer? _viewDescriptorBuffer;
-        private XRDataBuffer? _viewConstantsBuffer;
-        private readonly XRDataBuffer?[] _viewConstantsRing = new XRDataBuffer?[ViewConstantsRingSize];
+        private XRDataBuffer<GPUViewDescriptor>? _viewDescriptorBuffer;
+        private XRDataBuffer<GPUViewConstants>? _viewConstantsBuffer;
+        private readonly XRDataBuffer<GPUViewConstants>?[] _viewConstantsRing = new XRDataBuffer<GPUViewConstants>?[ViewConstantsRingSize];
         private int _viewConstantsRingIndex = -1;
-        private XRDataBuffer? _commandViewMaskBuffer;
-        private XRDataBuffer? _perViewVisibleIndicesBuffer;
-        private XRDataBuffer? _perViewDrawCountBuffer;
+        private XRDataBuffer<GPUViewMask>? _commandViewMaskBuffer;
+        private XRDataBuffer<uint>? _perViewVisibleIndicesBuffer;
+        private XRDataBuffer<uint>? _perViewDrawCountBuffer;
         private GPUViewDescriptor[] _cachedViewDescriptors = Array.Empty<GPUViewDescriptor>();
         private uint _cachedViewDescriptorCount;
 
@@ -85,8 +85,8 @@ namespace XREngine.Rendering.Commands
                     _cachedViewDescriptors[i] = descriptors[(int)i];
                 _cachedViewDescriptorCount = requestedViewCount;
 
-                _viewDescriptorBuffer!.PushSubData(0, requestedViewCount * _viewDescriptorBuffer.ElementSize);
-                _viewConstantsBuffer!.PushSubData(0, requestedViewCount * _viewConstantsBuffer.ElementSize);
+                _viewDescriptorBuffer!.CommitDirtyBytes(0u, requestedViewCount * _viewDescriptorBuffer.ElementSize);
+                _viewConstantsBuffer!.CommitDirtyBytes(0u, requestedViewCount * _viewConstantsBuffer.ElementSize);
 
                 _activeViewCount = requestedViewCount;
                 _indirectSourceViewId = Math.Min(_indirectSourceViewId, requestedViewCount - 1u);
@@ -143,7 +143,7 @@ namespace XREngine.Rendering.Commands
             }
 
             uint byteLength = safeCount * _commandViewMaskBuffer.ElementSize;
-            _commandViewMaskBuffer.PushSubData(0, byteLength);
+            _commandViewMaskBuffer.CommitDirtyBytes(0u, byteLength);
 
             _commandViewMaskPreparedCount = safeCount;
             _activeCommandViewMask = default;
@@ -231,7 +231,7 @@ namespace XREngine.Rendering.Commands
 
             if (_viewDescriptorBuffer is null)
             {
-                _viewDescriptorBuffer = CreateStructBuffer(
+                _viewDescriptorBuffer = CreateStructBuffer<GPUViewDescriptor>(
                     "ViewDescriptorBuffer",
                     requestedViewCapacity,
                     GPUViewSetLayout.ViewDescriptorSize,
@@ -275,7 +275,7 @@ namespace XREngine.Rendering.Commands
             {
                 if (_viewConstantsRing[i] is null)
                 {
-                    _viewConstantsRing[i] = CreateStructBuffer(
+                    _viewConstantsRing[i] = CreateStructBuffer<GPUViewConstants>(
                         $"ViewConstantsBuffer.Ring{i}",
                         requestedViewCapacity,
                         GPUViewSetLayout.ViewConstantsSize,
@@ -295,7 +295,7 @@ namespace XREngine.Rendering.Commands
         {
             if (_commandViewMaskBuffer is null)
             {
-                _commandViewMaskBuffer = CreateStructBuffer(
+                _commandViewMaskBuffer = CreateStructBuffer<GPUViewMask>(
                     "CommandViewMaskBuffer",
                     commandCapacity,
                     GPUViewSetLayout.ViewMaskSize,
@@ -342,9 +342,9 @@ namespace XREngine.Rendering.Commands
             _perViewVisibleCapacity = requested;
         }
 
-        private static XRDataBuffer CreateStructBuffer(string name, uint elementCount, uint strideBytes, int bindingIndex)
+        private static XRDataBuffer<T> CreateStructBuffer<T>(string name, uint elementCount, uint strideBytes, int bindingIndex) where T : unmanaged
         {
-            var buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, EComponentType.Struct, strideBytes, false, false)
+            var buffer = new XRDataBuffer<T>(name, EBufferTarget.ShaderStorageBuffer, elementCount)
             {
                 Usage = EBufferUsage.DynamicCopy,
                 DisposeOnPush = false,
@@ -352,14 +352,16 @@ namespace XREngine.Rendering.Commands
                 BindingIndexOverride = (uint)bindingIndex,
                 PadEndingToVec4 = false
             };
+            if (buffer.ElementSize != strideBytes)
+                Debug.RenderingWarning($"View-set buffer '{name}' typed stride {buffer.ElementSize} does not match declared shader stride {strideBytes}.");
             buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
             buffer.Generate();
             return buffer;
         }
 
-        private static XRDataBuffer CreateUIntBuffer(string name, uint elementCount, int bindingIndex, bool resizable, bool cpuReadable = false)
+        private static XRDataBuffer<uint> CreateUIntBuffer(string name, uint elementCount, int bindingIndex, bool resizable, bool cpuReadable = false)
         {
-            var buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, EComponentType.UInt, 1, false, true)
+            var buffer = new XRDataBuffer<uint>(name, EBufferTarget.ShaderStorageBuffer, elementCount, integral: true)
             {
                 Usage = EBufferUsage.DynamicCopy,
                 DisposeOnPush = false,
@@ -377,7 +379,7 @@ namespace XREngine.Rendering.Commands
             return buffer;
         }
 
-        private static void ZeroStructRange<T>(XRDataBuffer buffer, uint startIndex, uint count) where T : struct
+        private static void ZeroStructRange<T>(XRDataBuffer<T> buffer, uint startIndex, uint count) where T : unmanaged
         {
             if (count == 0u)
                 return;
@@ -389,10 +391,10 @@ namespace XREngine.Rendering.Commands
 
             uint byteOffset = startIndex * buffer.ElementSize;
             uint byteLength = count * buffer.ElementSize;
-            buffer.PushSubData((int)byteOffset, byteLength);
+            buffer.CommitDirtyBytes(byteOffset, byteLength);
         }
 
-        private static void ZeroUIntRange(XRDataBuffer buffer, uint startIndex, uint count)
+        private static void ZeroUIntRange(XRDataBuffer<uint> buffer, uint startIndex, uint count)
         {
             if (count == 0u)
                 return;
@@ -403,7 +405,7 @@ namespace XREngine.Rendering.Commands
 
             uint byteOffset = startIndex * sizeof(uint);
             uint byteLength = count * sizeof(uint);
-            buffer.PushSubData((int)byteOffset, byteLength);
+            buffer.CommitDirtyBytes(byteOffset, byteLength);
         }
 
         private void FillCommandViewMaskRange(uint startIndex, uint count, GPUViewMask mask)
@@ -417,7 +419,7 @@ namespace XREngine.Rendering.Commands
 
             uint byteOffset = startIndex * _commandViewMaskBuffer.ElementSize;
             uint byteLength = count * _commandViewMaskBuffer.ElementSize;
-            _commandViewMaskBuffer.PushSubData((int)byteOffset, byteLength);
+            _commandViewMaskBuffer.CommitDirtyBytes(byteOffset, byteLength);
         }
 
         private void ResetPerViewDrawCounts(uint activeViewCount)

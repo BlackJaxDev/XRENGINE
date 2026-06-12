@@ -73,8 +73,6 @@ public static class RuntimeRenderingHostServiceDefaults
     public const uint DefaultMsaaSampleCount = 1u;
     public const bool DefaultOutputHDR = false;
     public const float DefaultTsrRenderScale = 1.0f;
-    public const bool ForwardDepthPrePassEnabled = true;
-    public const bool ForwardPrePassSharesGBufferTargets = true;
     public const bool EnableRenderStatisticsTracking = true;
     public const bool EnableGpuRenderPipelineProfiling = false;
     public const ulong CurrentRenderFrameId = 0UL;

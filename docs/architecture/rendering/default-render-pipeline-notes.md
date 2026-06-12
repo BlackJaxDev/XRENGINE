@@ -9,20 +9,23 @@ This document records bugs that were found and fixed in `DefaultRenderPipeline` 
 `DefaultRenderPipeline` declares stable pipeline-owned resources through
 `DescribeResources(...)`. `XRRenderPipelineInstance` materializes those specs
 into a pending `RenderResourceGeneration`, validates required resources,
-texture-view source identity, and framebuffer attachment identity/size/sample
-compatibility, then atomically commits the generation before frame command
-execution.
+texture-view source identity/ranges/aspect/target, and framebuffer attachment
+identity/size/sample/format/backend completeness, then atomically commits the
+generation before frame command execution.
 
 Resize, HDR-output changes, and AA/MSAA changes must request a replacement
-generation instead of emptying the active registry. A failed pending generation
-logs diagnostics and leaves the active generation rendering. Both OpenGL and
-Vulkan consume the same generation-owned descriptors; OpenGL creates concrete
-objects through the existing factories, while Vulkan sees the committed
-descriptors through the existing planner sync path.
+generation instead of emptying the active registry. Replacement generations are
+debounced during interactive resize and prepared incrementally while the active
+generation keeps rendering. A failed pending generation logs diagnostics and
+leaves the active generation rendering. Both OpenGL and Vulkan consume the same
+generation-owned descriptors; OpenGL creates concrete objects through the
+existing factories, while Vulkan stages a pending physical resource plan before
+swapping it into active renderer state.
 
 Compatibility cache commands still exist for dynamic or branch-local resources
 such as bloom chains, atmosphere/fog half-resolution chains, SMAA,
-exact-transparency scratch resources, and command-local fullscreen materials.
+exact-transparency scratch resources, AO-dependent deferred light-combine
+quad FBOs, and command-local fullscreen materials.
 Do not add new stable core render targets to cache commands without also adding
 them to the declared resource layout.
 

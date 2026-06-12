@@ -88,12 +88,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRRenderProgram? _spawnProgram;
         private XRRenderProgram? _shadeProgram;
 
-        private XRDataBuffer? _surfelBuffer;
-        private XRDataBuffer? _counterBuffer;
-        private XRDataBuffer? _freeStackBuffer;
-        private XRDataBuffer? _gridCountsBuffer;
-        private XRDataBuffer? _gridIndicesBuffer;
-        private XRDataBuffer? _transformAtlasBuffer;
+        private XRDataBuffer<SurfelGPU>? _surfelBuffer;
+        private XRDataBuffer<int>? _counterBuffer;
+        private XRDataBuffer<uint>? _freeStackBuffer;
+        private XRDataBuffer<uint>? _gridCountsBuffer;
+        private XRDataBuffer<uint>? _gridIndicesBuffer;
+        private XRDataBuffer<Matrix4x4>? _transformAtlasBuffer;
         private uint _transformAtlasElementCount;
 
         private bool _initialized;
@@ -320,14 +320,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             if (_surfelBuffer is null)
             {
-                _surfelBuffer = new XRDataBuffer(
+                _surfelBuffer = new XRDataBuffer<SurfelGPU>(
                     "SurfelGI_Surfels",
                     EBufferTarget.ShaderStorageBuffer,
-                    MaxSurfels,
-                    EComponentType.Struct,
-                    (uint)Marshal.SizeOf<SurfelGPU>(),
-                    false,
-                    false)
+                    MaxSurfels)
                 {
                     Usage = EBufferUsage.DynamicDraw,
                     BindingIndexOverride = 0u,
@@ -340,14 +336,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_counterBuffer is null)
             {
                 // 4 ints so it naturally aligns to a vec4 in std430.
-                _counterBuffer = new XRDataBuffer(
+                _counterBuffer = new XRDataBuffer<int>(
                     "SurfelGI_Counters",
                     EBufferTarget.ShaderStorageBuffer,
-                    4u,
-                    EComponentType.Int,
-                    1u,
-                    false,
-                    false)
+                    4u)
                 {
                     Usage = EBufferUsage.DynamicDraw,
                     BindingIndexOverride = 1u,
@@ -359,14 +351,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (_freeStackBuffer is null)
             {
-                _freeStackBuffer = new XRDataBuffer(
+                _freeStackBuffer = new XRDataBuffer<uint>(
                     "SurfelGI_FreeStack",
                     EBufferTarget.ShaderStorageBuffer,
-                    MaxSurfels,
-                    EComponentType.UInt,
-                    1u,
-                    false,
-                    false)
+                    MaxSurfels)
                 {
                     Usage = EBufferUsage.DynamicDraw,
                     BindingIndexOverride = 2u,
@@ -379,14 +367,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             uint cellCount = GridDimX * GridDimY * GridDimZ;
             if (_gridCountsBuffer is null)
             {
-                _gridCountsBuffer = new XRDataBuffer(
+                _gridCountsBuffer = new XRDataBuffer<uint>(
                     "SurfelGI_GridCounts",
                     EBufferTarget.ShaderStorageBuffer,
-                    cellCount,
-                    EComponentType.UInt,
-                    1u,
-                    false,
-                    false)
+                    cellCount)
                 {
                     Usage = EBufferUsage.DynamicDraw,
                     BindingIndexOverride = 3u,
@@ -398,14 +382,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (_gridIndicesBuffer is null)
             {
-                _gridIndicesBuffer = new XRDataBuffer(
+                _gridIndicesBuffer = new XRDataBuffer<uint>(
                     "SurfelGI_GridIndices",
                     EBufferTarget.ShaderStorageBuffer,
-                    cellCount * GridMaxPerCell,
-                    EComponentType.UInt,
-                    1u,
-                    false,
-                    false)
+                    cellCount * GridMaxPerCell)
                 {
                     Usage = EBufferUsage.DynamicDraw,
                     BindingIndexOverride = 4u,
@@ -590,14 +570,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             // Ensure atlas buffer exists and is large enough.
             if (_transformAtlasBuffer is null)
             {
-                _transformAtlasBuffer = new XRDataBuffer(
+                _transformAtlasBuffer = new XRDataBuffer<Matrix4x4>(
                     "SurfelGI_TransformAtlas",
                     EBufferTarget.ShaderStorageBuffer,
-                    commandCount,
-                    EComponentType.Float,
-                    16u, // Matrix4x4 = 16 floats
-                    false,
-                    false)
+                    commandCount)
                 {
                     Usage = EBufferUsage.DynamicDraw,
                     BindingIndexOverride = 6u,
@@ -625,7 +601,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             for (uint i = 0; i < commandCount; i++)
                 Memory.Move(dstAddr + i * dstStride, srcAddr + i * srcStride, dstStride);
 
-            _transformAtlasBuffer.PushSubData(0, commandCount * dstStride);
+            _transformAtlasBuffer.CommitDirtyBytes(0u, commandCount * dstStride);
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

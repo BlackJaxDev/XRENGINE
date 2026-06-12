@@ -97,9 +97,9 @@ namespace XREngine.Rendering.UI
         private const float DefaultMsdfFillBias = 0.5f;
 
         private readonly List<(Vector4 transform, Vector4 uvs)> _glyphs = [];
-        private XRDataBuffer? _uvsBuffer;
-        private XRDataBuffer? _transformsBuffer;
-        private XRDataBuffer? _rotationsBuffer;
+        private XRDataBuffer<Vector4>? _uvsBuffer;
+        private XRDataBuffer<Vector4>? _transformsBuffer;
+        private XRDataBuffer<float>? _rotationsBuffer;
         private readonly object _glyphLock = new();
         public bool _pushFull = false;
         public bool _dataChanged = false;
@@ -523,7 +523,7 @@ namespace XREngine.Rendering.UI
 
             meshRend.Buffers.Remove(transformsBindingName);
             _transformsBuffer?.Destroy();
-            _transformsBuffer = new(transformsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount, EComponentType.Float, 4, false, false)
+            _transformsBuffer = new(transformsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
             {
                 //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
                 //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
@@ -535,7 +535,7 @@ namespace XREngine.Rendering.UI
 
             meshRend.Buffers.Remove(uvsBindingName);
             _uvsBuffer?.Destroy();
-            _uvsBuffer = new(uvsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount, EComponentType.Float, 4, false, false)
+            _uvsBuffer = new(uvsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
             {
                 //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
                 //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
@@ -550,7 +550,7 @@ namespace XREngine.Rendering.UI
 
             if (AnimatableTransforms)
             {
-                _rotationsBuffer = new(rotationsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount, EComponentType.Float, 1, false, false)
+                _rotationsBuffer = new(rotationsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
                 {
                     //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
                     //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
@@ -622,9 +622,9 @@ namespace XREngine.Rendering.UI
         private void PushSubBuffers()
         {
             WriteData();
-            _transformsBuffer?.PushSubData();
-            _uvsBuffer?.PushSubData();
-            _rotationsBuffer?.PushSubData();
+            _transformsBuffer?.CommitDirtyBytes(0u, _transformsBuffer.Length);
+            _uvsBuffer?.CommitDirtyBytes(0u, _uvsBuffer.Length);
+            _rotationsBuffer?.CommitDirtyBytes(0u, _rotationsBuffer.Length);
         }
 
         /// <summary>
@@ -633,9 +633,9 @@ namespace XREngine.Rendering.UI
         private void PushBuffers()
         {
             WriteData();
-            _transformsBuffer?.PushData();
-            _uvsBuffer?.PushData();
-            _rotationsBuffer?.PushData();
+            _transformsBuffer?.CommitDirtyBytes(0u, _transformsBuffer.Length);
+            _uvsBuffer?.CommitDirtyBytes(0u, _uvsBuffer.Length);
+            _rotationsBuffer?.CommitDirtyBytes(0u, _rotationsBuffer.Length);
         }
 
         public void OnPoolableReset()

@@ -1,4 +1,6 @@
 using XREngine.Extensions;
+using MemoryPack;
+using System.ComponentModel;
 using System.Diagnostics;
 
 namespace XREngine.Animation
@@ -9,10 +11,12 @@ namespace XREngine.Animation
 
         public event Action<BasePropAnimBakeable>? BakedFPSChanged;
         public event Action<BasePropAnimBakeable>? BakedFrameCountChanged;
+        public event Action<BasePropAnimBakeable>? BakedValueCompressionAlgorithmChanged;
         public event Action<BasePropAnimBakeable>? IsBakedChanged;
 
         protected void OnBakedFPSChanged() => BakedFPSChanged?.Invoke(this);
         protected void OnBakedFrameCountChanged() => BakedFrameCountChanged?.Invoke(this);
+        protected void OnBakedValueCompressionAlgorithmChanged() => BakedValueCompressionAlgorithmChanged?.Invoke(this);
         protected void OnBakedChanged() => IsBakedChanged?.Invoke(this);
         
         public BasePropAnimBakeable(float lengthInSeconds, bool looped, bool useKeyframes = true)
@@ -34,6 +38,8 @@ namespace XREngine.Animation
 
         protected int _bakedFrameCount = 0;
         protected int _bakedFPS = 0;
+        protected EAnimationValueCompressionAlgorithm _bakedValueCompressionAlgorithm = EAnimationValueCompressionAlgorithm.None;
+        private EAnimationValueCompressionAlgorithm _encodedBakedValueCompressionAlgorithm = EAnimationValueCompressionAlgorithm.None;
         protected bool _isBaked = false;
         
         /// <summary>
@@ -92,10 +98,65 @@ namespace XREngine.Animation
         }
 
         /// <summary>
+        /// Compression algorithm requested for baked animation value arrays.
+        /// Bake implementations use this selector when encoding sampled values.
+        /// </summary>
+        [Category(BakeablePropAnimCategory)]
+        [DisplayName("Baked Value Compression")]
+        [Description(
+            "Compression algorithm requested when this property animation is baked to value samples. " +
+            "None stores raw values; other algorithms encode the in-memory baked sample payload.")]
+        public EAnimationValueCompressionAlgorithm BakedValueCompressionAlgorithm
+        {
+            get => _bakedValueCompressionAlgorithm;
+            set
+            {
+                if (SetField(ref _bakedValueCompressionAlgorithm, value))
+                {
+                    if (IsBaked)
+                        Bake(BakedFramesPerSecond);
+                    OnBakedValueCompressionAlgorithmChanged();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Compression algorithm currently used by the in-memory baked sample payload.
+        /// </summary>
+        [Browsable(false)]
+        [MemoryPackIgnore]
+        public EAnimationValueCompressionAlgorithm EncodedBakedValueCompressionAlgorithm
+        {
+            get => _encodedBakedValueCompressionAlgorithm;
+            private set => SetField(ref _encodedBakedValueCompressionAlgorithm, value);
+        }
+
+        /// <summary>
         /// Sets _bakedFrameCount using _lengthInSeconds and _bakedFPS.
         /// </summary>
         protected void SetBakedFrameCount()
             => _bakedFrameCount = (int)Math.Ceiling(_lengthInSeconds * _bakedFPS);
+
+        protected void SetBakeCadence(int framesPerSecond)
+        {
+            _bakedFPS = Math.Max(0, framesPerSecond);
+            _bakedFrameCount = _bakedFPS <= 0 ? 0 : (int)Math.Ceiling(LengthInSeconds * _bakedFPS);
+        }
+
+        private protected BakedValueStore<T> EncodeBakedValues<T>(T[] values)
+        {
+            BakedValueStore<T> store = BakedValueStore<T>.Encode(values, BakedValueCompressionAlgorithm);
+            EncodedBakedValueCompressionAlgorithm = store.Algorithm;
+            return store;
+        }
+
+        private protected BakedValueStore<T> EncodeUnmanagedBakedValues<T>(T[] values)
+            where T : unmanaged
+        {
+            BakedValueStore<T> store = BakedValueStore<T>.EncodeUnmanaged(values, BakedValueCompressionAlgorithm);
+            EncodedBakedValueCompressionAlgorithm = store.Algorithm;
+            return store;
+        }
 
         protected bool TryGetCadenceFrameWindow(float second, out int frame, out int nextFrame, out float floorSec, out float ceilSec, out float frameFraction)
         {
@@ -145,6 +206,16 @@ namespace XREngine.Animation
         /// However, this method takes up more space and does not support time dilation (speeding up and slowing down with proper in-betweens)
         /// </summary>
         public abstract void Bake(int framesPerSecond);
+
+        /// <summary>
+        /// Bakes this animation and records the requested value compression algorithm.
+        /// </summary>
+        public void Bake(int framesPerSecond, EAnimationValueCompressionAlgorithm compressionAlgorithm)
+        {
+            BakedValueCompressionAlgorithm = compressionAlgorithm;
+            Bake(framesPerSecond);
+        }
+
         protected abstract void BakedChanged();
 
         private AuthoredCadence GetEvaluationCadence()

@@ -102,6 +102,55 @@ public sealed class AnimationTimingTests
     }
 
     [Test]
+    public void Bake_WithCompressionAlgorithm_RecordsBakedValueCompressionAlgorithm()
+    {
+        var animation = new PropAnimFloat(24, 24.0f, looped: false, useKeyframes: true);
+
+        animation.Bake(24, EAnimationValueCompressionAlgorithm.RunLength);
+
+        animation.BakedValueCompressionAlgorithm.ShouldBe(EAnimationValueCompressionAlgorithm.RunLength);
+        animation.BakedFramesPerSecond.ShouldBe(24);
+    }
+
+    [TestCase(EAnimationValueCompressionAlgorithm.None)]
+    [TestCase(EAnimationValueCompressionAlgorithm.RunLength)]
+    [TestCase(EAnimationValueCompressionAlgorithm.Delta)]
+    [TestCase(EAnimationValueCompressionAlgorithm.DeltaRunLength)]
+    public void BakedEvaluation_CompressionAlgorithms_DecodeFrameValues(EAnimationValueCompressionAlgorithm algorithm)
+    {
+        var animation = CreateFrameIndexedFloatAnimation(4);
+
+        animation.Bake(4, algorithm);
+
+        animation.EncodedBakedValueCompressionAlgorithm.ShouldBe(algorithm);
+        for (int frame = 0; frame < 4; frame++)
+            animation.GetValueBakedByFrame(frame).ShouldBe(frame, 0.000001f);
+    }
+
+    [Test]
+    public void BakedEvaluation_ConstantCompression_DecodesConstantFrameValues()
+    {
+        var animation = new PropAnimFloat(4, 4.0f, looped: false, useKeyframes: true)
+        {
+            DefaultValue = 2.5f,
+        };
+
+        animation.Bake(4, EAnimationValueCompressionAlgorithm.Constant);
+
+        animation.EncodedBakedValueCompressionAlgorithm.ShouldBe(EAnimationValueCompressionAlgorithm.Constant);
+        for (int frame = 0; frame < 4; frame++)
+            animation.GetValueBakedByFrame(frame).ShouldBe(2.5f, 0.000001f);
+    }
+
+    [Test]
+    public void Bake_ManagedValueTrack_WithDeltaCompression_Throws()
+    {
+        var animation = new PropAnimString(4, 4.0f, looped: false, useKeyframes: true);
+
+        Should.Throw<NotSupportedException>(() => animation.Bake(4, EAnimationValueCompressionAlgorithm.Delta));
+    }
+
+    [Test]
     public void TickLong_24FpsLoopedClip_RemainsDriftFreeAfterTenMinutesAt90Hz()
     {
         var animation = CreateFrameIndexedFloatAnimation(24);

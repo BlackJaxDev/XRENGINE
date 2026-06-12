@@ -24,7 +24,7 @@ using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
-public partial class DefaultRenderPipeline : RenderPipeline
+public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormalPrePassSettings
 {
     public enum DeferredDebugViewMode
     {
@@ -41,13 +41,43 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
     private readonly FarToNearRenderCommandSorter _farToNearSorter = new();
 
-    //TODO: these options below should not be controlled by this render pipeline object, 
-    // but rather in branches in the command chain.
-
     private readonly Lazy<XRMaterial> _voxelConeTracingVoxelizationMaterial;
     private readonly Lazy<XRMaterial> _motionVectorsMaterial;
     private readonly Lazy<XRMaterial> _depthNormalPrePassMaterial;
     private readonly Lazy<XRMaterial> _fullOverdrawCountMaterial;
+
+    private bool _forwardDepthPrePassEnabled = true;
+    [RenderPipelineCameraSetting(Order = 100)]
+    [Category("Forward Pre-Pass")]
+    [DisplayName("Forward Depth Pre-Pass")]
+    [Description("Renders forward opaque and masked geometry into depth+normal pre-pass targets before ambient occlusion and lighting.")]
+    public bool ForwardDepthPrePassEnabled
+    {
+        get => _forwardDepthPrePassEnabled;
+        set => SetField(ref _forwardDepthPrePassEnabled, value);
+    }
+
+    private bool _forwardPrePassSharesGBufferTargets = true;
+    [RenderPipelineCameraSetting(Order = 110)]
+    [Category("Forward Pre-Pass")]
+    [DisplayName("Share GBuffer Targets")]
+    [Description("When enabled, the forward pre-pass writes directly into the main GBuffer depth and normal textures instead of only using dedicated forward pre-pass targets.")]
+    public bool ForwardPrePassSharesGBufferTargets
+    {
+        get => _forwardPrePassSharesGBufferTargets;
+        set => SetField(ref _forwardPrePassSharesGBufferTargets, value);
+    }
+
+    private EDepthNormalPrePassResolution _forwardDepthNormalPrePassResolution = EDepthNormalPrePassResolution.Full;
+    [RenderPipelineCameraSetting(Order = 120)]
+    [Category("Forward Pre-Pass")]
+    [DisplayName("Depth+Normal Resolution")]
+    [Description("Resolution for the dedicated forward depth+normal pre-pass and contact-shadow copy targets. Shared GBuffer writes remain at the main internal resolution.")]
+    public EDepthNormalPrePassResolution ForwardDepthNormalPrePassResolution
+    {
+        get => _forwardDepthNormalPrePassResolution;
+        set => SetField(ref _forwardDepthNormalPrePassResolution, value);
+    }
 
     private const float TemporalFeedbackMin = 0.16f;
     private const float TemporalFeedbackMax = 0.96f;
@@ -350,7 +380,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         => RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Msaa
         && RuntimeEngine.EffectiveSettings.MsaaSampleCount > 1u;
     private bool EnableFxaa => RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Fxaa;
-    private uint MsaaSampleCount => Math.Max(1u, RuntimeEngine.EffectiveSettings.MsaaSampleCount);
+    private uint MsaaSampleCount => ResolveEffectiveMsaaSampleCount();
 
     private bool NeedsRecreateMsaaTextureInternalSize(XRTexture texture)
     {
@@ -1150,6 +1180,49 @@ public partial class DefaultRenderPipeline : RenderPipeline
         }
     }
 
+    private (uint x, uint y) GetDesiredFBOSizeForwardDepthNormalPrePass()
+    {
+        uint divisor = ForwardDepthNormalPrePassResolution switch
+        {
+            EDepthNormalPrePassResolution.Half => 2u,
+            EDepthNormalPrePassResolution.Quarter => 4u,
+            _ => 1u,
+        };
+
+        return (System.Math.Max(1u, InternalWidth / divisor), System.Math.Max(1u, InternalHeight / divisor));
+    }
+
+    private bool NeedsRecreateTextureForwardDepthNormalPrePassSize(XRTexture t)
+    {
+        (uint w, uint h) = GetDesiredFBOSizeForwardDepthNormalPrePass();
+        switch (t)
+        {
+            case XRTexture2D t2d:
+                return t2d.Width != w || t2d.Height != h;
+            case XRTexture2DArray t2da:
+                return t2da.Width != w || t2da.Height != h;
+            case XRTexture2DView:
+            case XRTexture2DArrayView:
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    private void ResizeTextureForwardDepthNormalPrePassSize(XRTexture t)
+    {
+        (uint w, uint h) = GetDesiredFBOSizeForwardDepthNormalPrePass();
+        switch (t)
+        {
+            case XRTexture2D t2d:
+                t2d.Resize(w, h);
+                break;
+            case XRTexture2DArray t2da:
+                t2da.Resize(w, h);
+                break;
+        }
+    }
+
     private bool NeedsRecreateDeferredGBufferFbo(XRFrameBuffer fbo)
     {
         if (!fbo.IsLastCheckComplete || fbo.EffectiveSampleCount != 1u)
@@ -1547,7 +1620,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             ApplyAntiAliasingResolutionHint();
             CommandChain = GenerateCommandChain();
             foreach (var instance in Instances)
-                instance.DestroyCache();
+                instance.InvalidatePhysicalResources();
         }, "DefaultRenderPipeline: Rendering settings changed", true);
     }
 
@@ -1564,7 +1637,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             ApplyAntiAliasingResolutionHint();
 
             foreach (var instance in Instances)
-                InvalidateAntiAliasingResources(instance);
+                instance.InvalidatePhysicalResources();
 
             foreach (var window in RuntimeEngine.Windows)
             {
@@ -1582,11 +1655,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
         if (IsDestroyed || width <= 0 || height <= 0)
             return;
 
-        // Resize callbacks can land after early cache-or-create commands have already run
-        // for the current frame. Explicitly evict the post-process/present source chain so
-        // the next pass/frame rebuilds from fresh descriptors instead of presenting torn-down
-        // attachments from the pre-resize generation.
-        RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);
+        int internalWidth = Math.Max(1, instance.RenderState.WindowViewport?.InternalWidth ?? instance.LastWindowViewport?.InternalWidth ?? width);
+        int internalHeight = Math.Max(1, instance.RenderState.WindowViewport?.InternalHeight ?? instance.LastWindowViewport?.InternalHeight ?? height);
+        if (!instance.RequestResourceGeneration(width, height, internalWidth, internalHeight, "ViewportResized"))
+        {
+            // Compatibility fallback for pipelines without a declared layout.
+            RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);
+        }
 
         instance.RenderState.WindowViewport?.Window?.RequestRenderStateRecheck(resetCircuitBreaker: true);
     }
@@ -1873,14 +1948,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
             // Forward depth+normal pre-pass
             var prePassChoice = c.Add<VPRC_IfElse>();
             prePassChoice.Label = "Forward Depth Normal PrePass";
-            prePassChoice.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
+            prePassChoice.ConditionEvaluator = () => ForwardDepthPrePassEnabled;
             {
                 // When sharing GBuffer targets, skip the dedicated forward-only FBO
                 // and render only into the merged GBuffer attachments.
                 var shareChoice = new ViewportRenderCommandContainer(this);
                 var shareIfElse = shareChoice.Add<VPRC_IfElse>();
                 shareIfElse.Label = "Forward PrePass Shares GBuffer Targets";
-                shareIfElse.ConditionEvaluator = () => RuntimeEngine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
+                shareIfElse.ConditionEvaluator = () => ForwardPrePassSharesGBufferTargets;
                 shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
                 shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
                 prePassChoice.TrueCommands = shareChoice;
@@ -2600,44 +2675,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private void CacheTextures(ViewportRenderCommandContainer c)
     {
-        //BRDF, for PBR lighting
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            BRDFTextureName,
-            CreateBRDFTexture,
-            null,
-            null);
-
-        //Depth + Stencil GBuffer texture
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            DepthStencilTextureName,
-            CreateDepthStencilTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            ForwardPrePassDepthStencilTextureName,
-            CreateForwardPrePassDepthStencilTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            ForwardContactDepthStencilTextureName,
-            CreateForwardContactDepthStencilTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            DeferredGBufferPreForwardDepthStencilTextureName,
-            CreateDeferredGBufferPreForwardDepthStencilTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            ForwardContactDepthViewTextureName,
-            CreateForwardContactDepthViewTexture,
-            t => NeedsRecreateTextureView(t, ForwardContactDepthStencilTextureName),
-            t => RetargetTextureView(t, ForwardContactDepthStencilTextureName));
-
+        // Forward MSAA depth is still command-owned until the forward-only MSAA
+        // FBOs move into the declared layout.
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             ForwardPassMsaaDepthStencilTextureName,
             CreateForwardPassMsaaDepthStencilTexture,
@@ -2650,252 +2689,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
             t => NeedsRecreateTextureView(t, ForwardPassMsaaDepthStencilTextureName),
             t => RetargetTextureView(t, ForwardPassMsaaDepthStencilTextureName));
 
-        //Depth view texture
-        //This is a view of the depth/stencil texture that only shows the depth values.
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            DepthViewTextureName,
-            CreateDepthViewTexture,
-            t => NeedsRecreateTextureView(t, DepthStencilTextureName),
-            t => RetargetTextureView(t, DepthStencilTextureName));
-
-        //Stencil view texture
-        //This is a view of the depth/stencil texture that only shows the stencil values.
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            StencilViewTextureName,
-            CreateStencilViewTexture,
-            t => NeedsRecreateTextureView(t, DepthStencilTextureName),
-            t => RetargetTextureView(t, DepthStencilTextureName));
-
-        //History depth + view textures
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            HistoryDepthStencilTextureName,
-            CreateHistoryDepthStencilTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            HistoryDepthViewTextureName,
-            CreateHistoryDepthViewTexture,
-            t => NeedsRecreateTextureView(t, HistoryDepthStencilTextureName),
-            t => RetargetTextureView(t, HistoryDepthStencilTextureName));
-
-        //Albedo/Opacity GBuffer texture
-        //RGB = Albedo, A = Opacity
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            AlbedoOpacityTextureName,
-            CreateAlbedoOpacityTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        //Normal GBuffer texture
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            NormalTextureName,
-            CreateNormalTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            ForwardPrePassNormalTextureName,
-            CreateForwardPrePassNormalTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            ForwardContactNormalTextureName,
-            CreateForwardContactNormalTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            DeferredGBufferPreForwardNormalTextureName,
-            CreateDeferredGBufferPreForwardNormalTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        //RMSI GBuffer texture
-        //R = Roughness, G = Metallic, B = Specular, A = IOR
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            RMSETextureName,
-            CreateRMSETexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        //Transform ID GBuffer texture
-        //R32UI = per-draw/per-transform identifier
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            TransformIdTextureName,
-            CreateTransformIdTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        // TransformId visualization is rendered directly via a debug quad.
-
-        // MSAA deferred GBuffer textures (always cached so per-camera AA overrides work at runtime)
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            MsaaAlbedoOpacityTextureName,
-            CreateMsaaAlbedoOpacityTexture,
-            NeedsRecreateMsaaTextureInternalSize,
-            ResizeTextureInternalSize);
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            MsaaNormalTextureName,
-            CreateMsaaNormalTexture,
-            NeedsRecreateMsaaTextureInternalSize,
-            ResizeTextureInternalSize);
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            MsaaRMSETextureName,
-            CreateMsaaRMSETexture,
-            NeedsRecreateMsaaTextureInternalSize,
-            ResizeTextureInternalSize);
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            MsaaDepthStencilTextureName,
-            CreateMsaaDepthStencilTexture,
-            NeedsRecreateMsaaTextureInternalSize,
-            ResizeTextureInternalSize);
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            MsaaDepthViewTextureName,
-            CreateMsaaDepthViewTexture,
-            t => NeedsRecreateTextureView(t, MsaaDepthStencilTextureName),
-            t => RetargetTextureView(t, MsaaDepthStencilTextureName));
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            MsaaTransformIdTextureName,
-            CreateMsaaTransformIdTexture,
-            NeedsRecreateMsaaTextureInternalSize,
-            ResizeTextureInternalSize);
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            MsaaLightingTextureName,
-            CreateMsaaLightingTexture,
-            NeedsRecreateMsaaTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        //SSAO FBO texture, this is created later by the SSAO command
-        //c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-        //    AmbientOcclusionIntensityTextureName,
-        //    CreateSSAOTexture,
-        //    NeedsRecreateTextureInternalSize,
-        //    ResizeTextureInternalSize);
-
-        //Lighting texture
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            DiffuseTextureName,
-            CreateLightingTexture,
-            t =>
-                NeedsRecreateTextureInternalSize(t) ||
-                t is not IFrameBufferAttachement ||
-                (Stereo ? t is not XRTexture2DArray : t is not XRTexture2D),
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            LightingAccumTextureName,
-            CreateLightingAccumTexture,
-            t =>
-                NeedsRecreateTextureInternalSize(t) ||
-                t is not IFrameBufferAttachement ||
-                (Stereo ? t is not XRTexture2DArray : t is not XRTexture2D),
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            VelocityTextureName,
-            CreateVelocityTexture,
-            t =>
-                NeedsRecreateTextureInternalSize(t) ||
-                t is not IFrameBufferAttachement ||
-                (Stereo ? t is not XRTexture2DArray : t is not XRTexture2D),
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            HistoryColorTextureName,
-            CreateHistoryColorTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            TemporalColorInputTextureName,
-            CreateTemporalColorInputTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            TemporalExposureVarianceTextureName,
-            CreateTemporalExposureVarianceTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            HistoryExposureVarianceTextureName,
-            CreateHistoryExposureVarianceTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            MotionBlurTextureName,
-            CreateMotionBlurTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            DepthOfFieldTextureName,
-            CreateDepthOfFieldTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        // PostProcessOutput is the intermediate target used by the post-process quad before
-        // any optional AA/upscale pass. It must exist regardless of the selected AA mode
-        // because the matching FBO is created unconditionally later in the command chain.
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            PostProcessOutputTextureName,
-            CreatePostProcessOutputTexture,
-            NeedsRecreatePostProcessTextureInternalSize,
-            ResizeTextureInternalSize);
-
+        // Debug and experimental resources below are intentionally command-owned.
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             FullOverdrawCountTextureName,
             CreateFullOverdrawCountTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
-        if (EnableFxaa)
-        {
-            // FXAA output is full resolution (FXAA performs the upscale)
-            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-                FxaaOutputTextureName,
-                CreateFxaaOutputTexture,
-                NeedsRecreatePostProcessTextureFullSize,
-                ResizeTextureFullSize);
-        }
-
-        //HDR Scene texture
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            HDRSceneTextureName,
-            CreateHDRSceneTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            TransparentSceneCopyTextureName,
-            CreateTransparentSceneCopyTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            TransparentAccumTextureName,
-            CreateTransparentAccumTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            TransparentRevealageTextureName,
-            CreateTransparentRevealageTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
-
         CacheExactTransparencyTextures(c);
-
-        // 1x1 exposure value texture (GPU auto exposure)
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            AutoExposureTextureName,
-            CreateAutoExposureTexture,
-            null,
-            null);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             RestirGITextureName,
@@ -3072,11 +2873,6 @@ public partial class DefaultRenderPipeline : RenderPipeline
         var container = new ViewportRenderCommandContainer(this);
 
         container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            MotionBlurCopyFBOName,
-            CreateMotionBlurCopyFBO,
-            GetDesiredFBOSizeInternal);
-
-        container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             MotionBlurFBOName,
             CreateMotionBlurFBO,
             GetDesiredFBOSizeInternal);
@@ -3107,7 +2903,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             ForwardDepthPrePassFBOName,
             CreateForwardDepthPrePassFBO,
-            GetDesiredFBOSizeInternal)
+            GetDesiredFBOSizeForwardDepthNormalPrePass)
             .UseLifetime(RenderResourceLifetime.Transient);
 
         c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
@@ -3166,11 +2962,6 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private ViewportRenderCommandContainer CreateDepthOfFieldPassCommands()
     {
         var container = new ViewportRenderCommandContainer(this);
-
-        container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            DepthOfFieldCopyFBOName,
-            CreateDepthOfFieldCopyFBO,
-            GetDesiredFBOSizeInternal);
 
         container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             DepthOfFieldFBOName,
