@@ -49,15 +49,15 @@ public sealed class GPUSoftbodyDispatcher
     private XRRenderProgram? _finalizeProgram;
     private XRRenderProgram? _applyClusterProgram;
 
-    private XRDataBuffer? _particlesBuffer;
-    private XRDataBuffer? _solveScratchParticlesBuffer;
-    private XRDataBuffer? _constraintsBuffer;
-    private XRDataBuffer? _clustersBuffer;
-    private XRDataBuffer? _clusterMembersBuffer;
-    private XRDataBuffer? _clusterTransformsBuffer;
-    private XRDataBuffer? _collidersBuffer;
-    private XRDataBuffer? _renderBindingsBuffer;
-    private XRDataBuffer? _dispatchParamsBuffer;
+    private XRDataBuffer<GPUSoftbodyParticleData>? _particlesBuffer;
+    private XRDataBuffer<GPUSoftbodyParticleData>? _solveScratchParticlesBuffer;
+    private XRDataBuffer<GPUSoftbodyDistanceConstraintData>? _constraintsBuffer;
+    private XRDataBuffer<GPUSoftbodyClusterData>? _clustersBuffer;
+    private XRDataBuffer<GPUSoftbodyClusterMemberData>? _clusterMembersBuffer;
+    private XRDataBuffer<GPUSoftbodyClusterTransformData>? _clusterTransformsBuffer;
+    private XRDataBuffer<GPUSoftbodyColliderData>? _collidersBuffer;
+    private XRDataBuffer<GPUSoftbodyRenderBindingData>? _renderBindingsBuffer;
+    private XRDataBuffer<GPUSoftbodyDispatchData>? _dispatchParamsBuffer;
 
     private bool _enabled = true;
     private bool _initialized;
@@ -526,13 +526,12 @@ public sealed class GPUSoftbodyDispatcher
     private void SwapParticleBuffers()
         => (_particlesBuffer, _solveScratchParticlesBuffer) = (_solveScratchParticlesBuffer, _particlesBuffer);
 
-    private static void EnsureBufferCapacity<T>(ref XRDataBuffer? buffer, string name, uint elementCount) where T : struct
+    private static void EnsureBufferCapacity<T>(ref XRDataBuffer<T>? buffer, string name, uint elementCount) where T : unmanaged
     {
-        uint componentCount = (uint)(Marshal.SizeOf<T>() / sizeof(float));
         if (buffer is null || buffer.ElementCount < elementCount)
         {
             buffer?.Dispose();
-            buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, EComponentType.Float, componentCount, false, false)
+            buffer = new XRDataBuffer<T>(name, EBufferTarget.ShaderStorageBuffer, elementCount)
             {
                 DisposeOnPush = false,
                 Usage = EBufferUsage.DynamicDraw,
@@ -540,17 +539,21 @@ public sealed class GPUSoftbodyDispatcher
         }
     }
 
-    private static void UploadBufferData<T>(XRDataBuffer? buffer, List<T> data) where T : struct
+    private static void UploadBufferData<T>(XRDataBuffer? buffer, List<T> data) where T : unmanaged
     {
         if (buffer is null)
             return;
 
         if (data.Count == 0)
-            buffer.SetDataRaw(new T[] { default });
-        else
-            buffer.SetDataRaw(data);
+        {
+            using XRBufferWriter<T> emptyWriter = buffer.Alloc<T>(1u, XRBufferWriteMode.Discard);
+            emptyWriter.Span[0] = default;
+            return;
+        }
 
-        buffer.PushData();
+        ReadOnlySpan<T> source = CollectionsMarshal.AsSpan(data);
+        using XRBufferWriter<T> writer = buffer.Alloc<T>((uint)source.Length, XRBufferWriteMode.Discard);
+        source.CopyTo(writer.Span);
     }
 
     private static uint ComputeGroups(uint count)

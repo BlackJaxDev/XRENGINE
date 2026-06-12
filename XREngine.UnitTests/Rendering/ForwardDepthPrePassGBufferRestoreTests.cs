@@ -54,6 +54,35 @@ public sealed class ForwardDepthPrePassGBufferRestoreTests
             "blitStencil: false,");
     }
 
+    [TestCase("DefaultRenderPipeline")]
+    [TestCase("DefaultRenderPipeline2")]
+    public void ForwardDepthPrePass_SettingsArePipelineOwnedAndSizeDedicatedTargets(string pipelineName)
+    {
+        string constants = LoadPipelineFile($"{pipelineName}.cs").Replace("\r\n", "\n");
+        string textures = LoadPipelineFile($"{pipelineName}.Textures.cs").Replace("\r\n", "\n");
+        string commandChain = LoadPipelineFile($"{pipelineName}.CommandChain.cs").Replace("\r\n", "\n");
+        string pipelineSource = constants + "\n" + commandChain;
+
+        constants.ShouldContain("public bool ForwardDepthPrePassEnabled");
+        constants.ShouldContain("public bool ForwardPrePassSharesGBufferTargets");
+        constants.ShouldContain("public EDepthNormalPrePassResolution ForwardDepthNormalPrePassResolution");
+        constants.ShouldContain("[RenderPipelineCameraSetting(Order = 100)]");
+        constants.ShouldContain("GetDesiredFBOSizeForwardDepthNormalPrePass");
+
+        pipelineSource.ShouldContain("ConditionEvaluator = () => ForwardDepthPrePassEnabled");
+        pipelineSource.ShouldContain("ConditionEvaluator = () => ForwardPrePassSharesGBufferTargets");
+        pipelineSource.ShouldContain("ForwardDepthPrePassFBOName,\n            CreateForwardDepthPrePassFBO,\n            GetDesiredFBOSizeForwardDepthNormalPrePass");
+        pipelineSource.ShouldContain("ForwardContactPrePassCopyFBOName,\n                CreateForwardContactPrePassCopyFBO,\n                GetDesiredFBOSizeForwardDepthNormalPrePass");
+        pipelineSource.ShouldNotContain("EditorPreferences.Debug.ForwardDepthPrePassEnabled");
+        pipelineSource.ShouldNotContain("EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets");
+
+        textures.ShouldContain("GetDesiredFBOSizeForwardDepthNormalPrePass");
+        textures.ShouldContain("CreateForwardPrePassDepthStencilTexture");
+        textures.ShouldContain("CreateForwardContactDepthStencilTexture");
+        textures.ShouldContain("CreateForwardPrePassNormalTexture");
+        textures.ShouldContain("CreateForwardContactNormalTexture");
+    }
+
     private static void AssertContainsInOrder(string source, params string[] expected)
     {
         int previousIndex = -1;

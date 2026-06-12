@@ -100,7 +100,8 @@ public sealed class AnimationClipSerializationTests
     {
         PropAnimFloat animation = new(24, 24.0f, looped: true, useKeyframes: true)
         {
-            Name = "HipRotationX"
+            Name = "HipRotationX",
+            BakedValueCompressionAlgorithm = EAnimationValueCompressionAlgorithm.DeltaRunLength
         };
         animation.Keyframes.Add(
             new FloatKeyframe(0.0f, -0.5f, 0.0f, EVectorInterpType.Linear),
@@ -189,6 +190,7 @@ public sealed class AnimationClipSerializationTests
             if (expected.Animation is PropAnimFloat expectedFloat)
             {
                 PropAnimFloat actualFloat = actual.Animation.ShouldBeOfType<PropAnimFloat>();
+                actualFloat.BakedValueCompressionAlgorithm.ShouldBe(expectedFloat.BakedValueCompressionAlgorithm);
                 actualFloat.Keyframes.Count.ShouldBe(expectedFloat.Keyframes.Count);
 
                 for (int i = 0; i < expectedFloat.Keyframes.Count; i++)

@@ -158,8 +158,6 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public uint DefaultMsaaSampleCount => Engine.EffectiveSettings.MsaaSampleCount;
     public bool DefaultOutputHDR => Engine.Rendering.Settings.OutputHDR;
     public float DefaultTsrRenderScale => Engine.Rendering.Settings.TsrRenderScale;
-    public bool ForwardDepthPrePassEnabled => Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
-    public bool ForwardPrePassSharesGBufferTargets => Engine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
     public bool EnableRenderStatisticsTracking => Engine.Rendering.Stats.EnableTracking;
     public bool EnableGpuRenderPipelineProfiling => Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
     public ulong CurrentRenderFrameId => Engine.Rendering.State.RenderFrameId;

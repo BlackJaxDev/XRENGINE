@@ -2941,21 +2941,6 @@ internal sealed class RuntimeEditorPreferences
 
 internal sealed class RuntimeDebugPreferences
 {
-    private bool? _forwardDepthPrePassEnabled;
-    private bool? _forwardPrePassSharesGBufferTargets;
-
-    public bool ForwardDepthPrePassEnabled
-    {
-        get => _forwardDepthPrePassEnabled ?? RuntimeRenderingHostServices.Current.ForwardDepthPrePassEnabled;
-        set => _forwardDepthPrePassEnabled = value;
-    }
-
-    public bool ForwardPrePassSharesGBufferTargets
-    {
-        get => _forwardPrePassSharesGBufferTargets ?? RuntimeRenderingHostServices.Current.ForwardPrePassSharesGBufferTargets;
-        set => _forwardPrePassSharesGBufferTargets = value;
-    }
-
     public bool EnableGpuRenderPipelineProfiling { get; set; }
     public bool EnableExactTransparencyTechniques { get; set; }
     public int DepthPeelingMaxLayers { get; set; } = 4;

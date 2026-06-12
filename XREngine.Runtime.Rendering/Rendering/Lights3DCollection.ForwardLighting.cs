@@ -730,7 +730,7 @@ namespace XREngine.Scene
             bool forwardContactPrePass2DAvailable = false;
             bool forwardContactPrePassArrayAvailable = false;
             bool forwardContactPrePassAvailable = false;
-            if (RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled && currentPipeline is not null)
+            if (currentPipeline?.Pipeline is IForwardDepthNormalPrePassSettings { ForwardDepthPrePassEnabled: true })
             {
                 currentPipeline.TryGetTexture(DefaultRenderPipeline.ForwardContactDepthViewTextureName, out forwardContactDepthTexture);
                 currentPipeline.TryGetTexture(DefaultRenderPipeline.ForwardContactNormalTextureName, out forwardContactNormalTexture);

@@ -54,11 +54,12 @@ public partial class DefaultRenderPipeline
 
     private XRTexture CreateForwardPrePassDepthStencilTexture()
     {
+        (uint width, uint height) = GetDesiredFBOSizeForwardDepthNormalPrePass();
         if (Stereo)
         {
             var t = XRTexture2DArray.CreateFrameBufferTexture(
                 2,
-                InternalWidth, InternalHeight,
+                width, height,
                 EPixelInternalFormat.Depth24Stencil8,
                 EPixelFormat.DepthStencil,
                 EPixelType.UnsignedInt248,
@@ -74,7 +75,7 @@ public partial class DefaultRenderPipeline
         }
         else
         {
-            var t = XRTexture2D.CreateFrameBufferTexture(InternalWidth, InternalHeight,
+            var t = XRTexture2D.CreateFrameBufferTexture(width, height,
                 EPixelInternalFormat.Depth24Stencil8,
                 EPixelFormat.DepthStencil,
                 EPixelType.UnsignedInt248,
@@ -91,11 +92,12 @@ public partial class DefaultRenderPipeline
 
     private XRTexture CreateForwardContactDepthStencilTexture()
     {
+        (uint width, uint height) = GetDesiredFBOSizeForwardDepthNormalPrePass();
         if (Stereo)
         {
             var t = XRTexture2DArray.CreateFrameBufferTexture(
                 2,
-                InternalWidth, InternalHeight,
+                width, height,
                 EPixelInternalFormat.Depth24Stencil8,
                 EPixelFormat.DepthStencil,
                 EPixelType.UnsignedInt248,
@@ -111,7 +113,7 @@ public partial class DefaultRenderPipeline
         }
         else
         {
-            var t = XRTexture2D.CreateFrameBufferTexture(InternalWidth, InternalHeight,
+            var t = XRTexture2D.CreateFrameBufferTexture(width, height,
                 EPixelInternalFormat.Depth24Stencil8,
                 EPixelFormat.DepthStencil,
                 EPixelType.UnsignedInt248,
@@ -405,11 +407,12 @@ public partial class DefaultRenderPipeline
 
     private XRTexture CreateForwardPrePassNormalTexture()
     {
+        (uint width, uint height) = GetDesiredFBOSizeForwardDepthNormalPrePass();
         if (Stereo)
         {
             var t = XRTexture2DArray.CreateFrameBufferTexture(
                 2,
-                InternalWidth, InternalHeight,
+                width, height,
                 EPixelInternalFormat.RG16f,
                 EPixelFormat.Rg,
                 EPixelType.HalfFloat);
@@ -425,7 +428,7 @@ public partial class DefaultRenderPipeline
         else
         {
             var t = XRTexture2D.CreateFrameBufferTexture(
-                InternalWidth, InternalHeight,
+                width, height,
                 EPixelInternalFormat.RG16f,
                 EPixelFormat.Rg,
                 EPixelType.HalfFloat);
@@ -440,11 +443,12 @@ public partial class DefaultRenderPipeline
 
     private XRTexture CreateForwardContactNormalTexture()
     {
+        (uint width, uint height) = GetDesiredFBOSizeForwardDepthNormalPrePass();
         if (Stereo)
         {
             var t = XRTexture2DArray.CreateFrameBufferTexture(
                 2,
-                InternalWidth, InternalHeight,
+                width, height,
                 EPixelInternalFormat.RG16f,
                 EPixelFormat.Rg,
                 EPixelType.HalfFloat);
@@ -460,7 +464,7 @@ public partial class DefaultRenderPipeline
         else
         {
             var t = XRTexture2D.CreateFrameBufferTexture(
-                InternalWidth, InternalHeight,
+                width, height,
                 EPixelInternalFormat.RG16f,
                 EPixelFormat.Rg,
                 EPixelType.HalfFloat);

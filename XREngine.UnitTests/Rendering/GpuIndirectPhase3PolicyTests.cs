@@ -65,7 +65,7 @@ public sealed class GpuIndirectPhase3PolicyTests
         source.ShouldContain("temporalData.PrevViewProjection");
         source.ShouldContain("Fall back to temporal history only when no current-frame depth view is available.");
         source.ShouldContain("private bool ShouldBypassCurrentDepthGpuHiZRefine(in GpuHiZDepthInput depthInput)");
-        source.ShouldContain("RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled");
+        source.ShouldContain("IForwardDepthNormalPrePassSettings { ForwardDepthPrePassEnabled: true }");
         source.ShouldContain("RenderPass == (int)EDefaultRenderPass.OpaqueForward");
         source.ShouldContain("RenderPass == (int)EDefaultRenderPass.MaskedForward");
         source.ShouldContain("EGpuHiZSkipReason.MissingShaders");

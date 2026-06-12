@@ -152,8 +152,6 @@ public static class RuntimeRenderingHostServices
         public uint DefaultMsaaSampleCount => RuntimeRenderingHostServiceDefaults.DefaultMsaaSampleCount;
         public bool DefaultOutputHDR => RuntimeRenderingHostServiceDefaults.DefaultOutputHDR;
         public float DefaultTsrRenderScale => RuntimeRenderingHostServiceDefaults.DefaultTsrRenderScale;
-        public bool ForwardDepthPrePassEnabled => RuntimeRenderingHostServiceDefaults.ForwardDepthPrePassEnabled;
-        public bool ForwardPrePassSharesGBufferTargets => RuntimeRenderingHostServiceDefaults.ForwardPrePassSharesGBufferTargets;
         public bool EnableRenderStatisticsTracking => RuntimeRenderingHostServiceDefaults.EnableRenderStatisticsTracking;
         public bool EnableGpuRenderPipelineProfiling => RuntimeRenderingHostServiceDefaults.EnableGpuRenderPipelineProfiling;
         public ulong CurrentRenderFrameId => RuntimeRenderingHostServiceDefaults.CurrentRenderFrameId;

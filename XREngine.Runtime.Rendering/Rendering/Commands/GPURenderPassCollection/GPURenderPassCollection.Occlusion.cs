@@ -670,7 +670,7 @@ namespace XREngine.Rendering.Commands
             if (depthInput.History)
                 return false;
 
-            if (!RuntimeEngine.EditorPreferences.Debug.ForwardDepthPrePassEnabled)
+            if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is not IForwardDepthNormalPrePassSettings { ForwardDepthPrePassEnabled: true })
                 return false;
 
             return RenderPass == (int)EDefaultRenderPass.OpaqueForward ||

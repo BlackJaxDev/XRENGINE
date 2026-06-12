@@ -90,7 +90,7 @@ namespace XREngine.Rendering.UI
         private uint _backingWidth = 1;
         private uint _backingHeight = 1;
         private int _currentPboIndex;
-        private readonly XRDataBuffer?[] _pboBuffers = [null, null];
+        private readonly XRDataBuffer<byte>?[] _pboBuffers = [null, null];
         private GLFrameBuffer? _cachedGlFbo;
         
         // Cached mipmap to avoid allocation every frame
@@ -427,20 +427,16 @@ namespace XREngine.Rendering.UI
         private void UploadViaPbo(XRTexture2D texture, Mipmap2D mip, in WebFrame frame)
         {
             int byteLength = frame.ByteLength;
-            XRDataBuffer? pbo = _pboBuffers[_currentPboIndex];
+            XRDataBuffer<byte>? pbo = _pboBuffers[_currentPboIndex];
             _currentPboIndex = (_currentPboIndex + 1) & 1;
 
             if (pbo is null || pbo.Length != (uint)byteLength)
             {
                 pbo?.Destroy();
-                _pboBuffers[_currentPboIndex] = pbo = new XRDataBuffer(
+                _pboBuffers[_currentPboIndex] = pbo = new XRDataBuffer<byte>(
                     string.Empty,
                     EBufferTarget.PixelUnpackBuffer,
-                    (uint)byteLength,
-                    EComponentType.Byte,
-                    1,
-                    false,
-                    false)
+                    (uint)byteLength)
                 {
                     Resizable = false,
                     Usage = EBufferUsage.StreamDraw,
@@ -465,7 +461,7 @@ namespace XREngine.Rendering.UI
             pbo.Unbind();
         }
 
-        private static unsafe void CopyPixelsToPbo(IntPtr srcPtr, int byteLength, XRDataBuffer pbo)
+        private static unsafe void CopyPixelsToPbo(IntPtr srcPtr, int byteLength, XRDataBuffer<byte> pbo)
         {
             pbo.MapBufferData();
             var activelyMapping = pbo.ActivelyMapping;

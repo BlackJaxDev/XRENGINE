@@ -175,7 +175,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("const int forwardContactNormalUnit = 27;");
         source.ShouldContain("const int forwardContactDepthArrayUnit = 28;");
         source.ShouldContain("const int forwardContactNormalArrayUnit = 29;");
-        source.ShouldContain("Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled");
+        source.ShouldContain("IForwardDepthNormalPrePassSettings { ForwardDepthPrePassEnabled: true }");
         source.ShouldContain("DefaultRenderPipeline.ForwardContactDepthViewTextureName");
         source.ShouldContain("DefaultRenderPipeline.ForwardContactNormalTextureName");
         source.ShouldContain("program.Uniform(\"ForwardContactShadowsEnabled\", forwardContactPrePassAvailable);");

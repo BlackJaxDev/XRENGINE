@@ -56,11 +56,14 @@ silently corrupting the live registry.
 
 Commit is atomic from the pipeline's point of view: the pending generation must
 materialize every required resource, validate framebuffer attachment identity,
-validate framebuffer dimensions and sample counts, and validate texture-view
-source identity. On success, the pending generation becomes active, the legacy
-integer `ResourceGeneration` stamp increments, and the old generation is
-retired. On failure, the pending generation is disposed and the active
-generation keeps rendering.
+validate framebuffer dimensions, sample counts, declared formats, and backend
+completeness, and validate texture-view source identity, mip range, layer
+range, format/aspect, and target interpretation. History resources marked
+`SeedFromCurrentFrame` may commit without an initial concrete instance so they
+can be populated from the first committed frame. On success, the pending
+generation becomes active, the legacy integer `ResourceGeneration` stamp
+increments, and the old generation is retired. On failure, the pending
+generation is disposed and the active generation keeps rendering.
 
 ## Resize And Settings Changes
 
@@ -69,10 +72,21 @@ and AA settings changes request a new generation instead of emptying the active
 registry. The active generation remains available until the replacement
 generation commits.
 
-The current implementation materializes the pending generation synchronously on
-the render thread before command execution. This avoids black-frame registry
-gaps while preserving the future API shape for incremental preparation,
-debouncing, and backend-specific physical-resource staging.
+Resize-sized generation requests are debounced for 125 ms and capped at 300 ms
+of coalescing so interactive window and scene-panel drags do not rebuild every
+intermediate size. Initial generation is prepared immediately so the first frame
+has a complete registry. Replacement generations are materialized incrementally
+on the render thread, currently up to four declared specs or roughly 2 ms per
+slice, and commit only after the final slice validates required resources and
+FBO completeness. This avoids black-frame registry gaps while preserving the
+active generation during longer replacement builds.
+
+On GLFW/Silk.NET windows, the Windows move/resize modal loop can block the
+normal render tick until the user releases the mouse. `XRWindow` therefore
+processes pending framebuffer size changes and invokes the existing render
+callback from Silk's repaint path while `DoEvents()` is inside that modal loop.
+The workaround is window-pump level and remains renderer-independent: OpenGL
+and Vulkan still use their normal render and present paths.
 
 ## Default Pipeline Coverage
 
@@ -80,7 +94,7 @@ debouncing, and backend-specific physical-resource staging.
 
 - depth/stencil textures and depth/stencil views
 - GBuffer textures, transform IDs, and GBuffer FBOs
-- lighting accumulation, deferred light combine, HDR scene, BRDF, and
+- lighting accumulation, HDR scene, BRDF, and
   auto-exposure resources
 - deferred MSAA resources behind the effective MSAA predicate
 - forward depth-normal prepass resources behind the prepass predicate
@@ -97,19 +111,24 @@ scratch resources, and command-local fullscreen materials.
 
 An ambient-occlusion placeholder texture is declared so core FBOs can be
 materialized before the AO feature path runs. AO feature commands may replace it
-with the mode-specific AO target during execution; the registry invalidates
-dependent FBOs through the existing compatibility path.
+with the mode-specific AO target during execution; the deferred light-combine
+quad FBO therefore remains command-owned for now so the existing compatibility
+path can rebuild it after AO invalidates dependent FBOs.
 
 ## Backend Contract
 
 OpenGL materializes declared resources through the existing concrete resource
 factories and registry bindings.
 
-Vulkan consumes the same generation-owned descriptors through the existing
-registry and planner synchronization path after generation commit. The logical
-generation contract is backend-independent; deeper Vulkan physical-plan staging
-and fence-based retirement remain follow-up work. Any conservative idle bridge
-used during physical destruction should stay explicit and diagnosed.
+Vulkan consumes the same generation-owned descriptors by building a pending
+resource planner and allocator from the committed registry. The pending Vulkan
+plan validates render-pass metadata against declared textures, buffers, FBOs,
+and FBO attachment slots, then allocates the replacement physical images and
+buffers before swapping it into the active renderer state. If pending physical
+allocation fails, the active plan remains in use and the failure is logged.
+After a successful swap, old Vulkan physical resources are retired through the
+renderer's existing frame-slot destruction queues; any remaining conservative
+idle bridge stays explicit and diagnosed.
 
 ## Diagnostics And Tests
 
@@ -125,4 +144,6 @@ cache-command authoring is removed for migrated resources.
 Focused tests live in
 `XREngine.UnitTests/Rendering/RenderPipelineResourceLifecycleTests.cs` and cover
 layout ordering, missing attachment validation, default-pipeline resource
-coverage, MSAA predicates, and pending-registry materialization.
+coverage, MSAA predicates, pending-registry materialization, generation state
+transitions, FBO validation failures, texture-view validation failures, and
+seeded history resources.

@@ -260,9 +260,9 @@ public sealed class UIBatchCollector : IDisposable
     #region GPU Resources — Material Quads
 
     private XRMeshRenderer? _matQuadMesh;
-    private XRDataBuffer? _matQuadTransformBuf;  // binding 0: 4 × vec4 per instance (mat4 rows)
-    private XRDataBuffer? _matQuadColorBuf;      // binding 1: vec4 per instance
-    private XRDataBuffer? _matQuadBoundsBuf;     // binding 2: vec4 per instance
+    private XRDataBuffer<Vector4>? _matQuadTransformBuf;  // binding 0: 4 × vec4 per instance (mat4 rows)
+    private XRDataBuffer<Vector4>? _matQuadColorBuf;      // binding 1: vec4 per instance
+    private XRDataBuffer<Vector4>? _matQuadBoundsBuf;     // binding 2: vec4 per instance
     private uint _matQuadCapacity;
     private bool _matQuadNeedsPush;
 
@@ -273,10 +273,10 @@ public sealed class UIBatchCollector : IDisposable
     private sealed class TextGPUResources : IDisposable
     {
         public XRMeshRenderer? Mesh;
-        public XRDataBuffer? GlyphTransformsBuf;  // binding 0: vec4 per glyph
-        public XRDataBuffer? GlyphTexCoordsBuf;   // binding 1: vec4 per glyph
-        public XRDataBuffer? TextInstanceBuf;      // binding 2: 6 × vec4 per text (mat4 rows + color + bounds)
-        public XRDataBuffer? GlyphTextIndexBuf;    // binding 3: uint per glyph → text index
+        public XRDataBuffer<Vector4>? GlyphTransformsBuf;  // binding 0: vec4 per glyph
+        public XRDataBuffer<Vector4>? GlyphTexCoordsBuf;   // binding 1: vec4 per glyph
+        public XRDataBuffer<Vector4>? TextInstanceBuf;      // binding 2: 6 × vec4 per text (mat4 rows + color + bounds)
+        public XRDataBuffer<uint>? GlyphTextIndexBuf;       // binding 3: uint per glyph → text index
         public uint GlyphCapacity;
         public uint TextCapacity;
         public bool NeedsPush;
@@ -608,9 +608,9 @@ public sealed class UIBatchCollector : IDisposable
         _matQuadBoundsBuf?.Destroy();
 
         // Transform buffer: 4 vec4 rows per matrix, so elementCount = capacity * 4
-        _matQuadTransformBuf = new XRDataBuffer(
+        _matQuadTransformBuf = new XRDataBuffer<Vector4>(
             "QuadTransformBuffer", EBufferTarget.ShaderStorageBuffer,
-            _matQuadCapacity * 4, EComponentType.Float, 4, false, false)
+            _matQuadCapacity * 4)
         {
             Usage = EBufferUsage.StreamDraw,
             BindingIndexOverride = 0,
@@ -619,9 +619,9 @@ public sealed class UIBatchCollector : IDisposable
         mesh.Buffers["QuadTransformBuffer"] = _matQuadTransformBuf;
 
         // Color buffer: 1 vec4 per instance
-        _matQuadColorBuf = new XRDataBuffer(
+        _matQuadColorBuf = new XRDataBuffer<Vector4>(
             "QuadColorBuffer", EBufferTarget.ShaderStorageBuffer,
-            _matQuadCapacity, EComponentType.Float, 4, false, false)
+            _matQuadCapacity)
         {
             Usage = EBufferUsage.StreamDraw,
             BindingIndexOverride = 1,
@@ -630,9 +630,9 @@ public sealed class UIBatchCollector : IDisposable
         mesh.Buffers["QuadColorBuffer"] = _matQuadColorBuf;
 
         // Bounds buffer: 1 vec4 per instance
-        _matQuadBoundsBuf = new XRDataBuffer(
+        _matQuadBoundsBuf = new XRDataBuffer<Vector4>(
             "QuadBoundsBuffer", EBufferTarget.ShaderStorageBuffer,
-            _matQuadCapacity, EComponentType.Float, 4, false, false)
+            _matQuadCapacity)
         {
             Usage = EBufferUsage.StreamDraw,
             BindingIndexOverride = 2,
@@ -641,7 +641,7 @@ public sealed class UIBatchCollector : IDisposable
         mesh.Buffers["QuadBoundsBuffer"] = _matQuadBoundsBuf;
     }
 
-    private unsafe void UploadMaterialQuadData(List<MaterialQuadEntry> entries)
+    private void UploadMaterialQuadData(List<MaterialQuadEntry> entries)
     {
         uint count = (uint)entries.Count;
 
@@ -656,38 +656,31 @@ public sealed class UIBatchCollector : IDisposable
         }
 
         // Write transform data (4 × vec4 per instance = 16 floats per matrix)
-        float* tfmPtr = (float*)_matQuadTransformBuf!.ClientSideSource!.Address.Pointer;
-        float* colPtr = (float*)_matQuadColorBuf!.ClientSideSource!.Address.Pointer;
-        float* bndPtr = (float*)_matQuadBoundsBuf!.ClientSideSource!.Address.Pointer;
+        bool fullUpload = _matQuadNeedsPush;
+        uint transformElementCount = fullUpload ? _matQuadCapacity * 4u : count * 4u;
+        uint instanceElementCount = fullUpload ? _matQuadCapacity : count;
+        XRBufferWriter<Vector4> transformWriter = _matQuadTransformBuf!.Alloc<Vector4>(transformElementCount);
+        XRBufferWriter<Vector4> colorWriter = _matQuadColorBuf!.Alloc<Vector4>(instanceElementCount);
+        XRBufferWriter<Vector4> boundsWriter = _matQuadBoundsBuf!.Alloc<Vector4>(instanceElementCount);
+        Span<Vector4> transforms = transformWriter.Span;
+        Span<Vector4> colors = colorWriter.Span;
+        Span<Vector4> bounds = boundsWriter.Span;
+        int transformIndex = 0;
 
         for (int i = 0; i < entries.Count; i++)
         {
             ref readonly var e = ref System.Runtime.InteropServices.CollectionsMarshal.AsSpan(entries)[i];
 
             // Write matrix rows (row-major, shader transposes)
-            WriteMatrix4x4(ref tfmPtr, in e.WorldMatrix);
-
-            // Write color
-            WriteVector4(ref colPtr, in e.Color);
-
-            // Write bounds
-            WriteVector4(ref bndPtr, in e.UIXYWH);
+            WriteMatrix4x4(transforms, ref transformIndex, in e.WorldMatrix);
+            colors[i] = e.Color;
+            bounds[i] = e.UIXYWH;
         }
 
-        // Push to GPU
-        if (_matQuadNeedsPush)
-        {
-            _matQuadNeedsPush = false;
-            _matQuadTransformBuf.PushData();
-            _matQuadColorBuf.PushData();
-            _matQuadBoundsBuf.PushData();
-        }
-        else
-        {
-            _matQuadTransformBuf.PushSubData();
-            _matQuadColorBuf.PushSubData();
-            _matQuadBoundsBuf.PushSubData();
-        }
+        transformWriter.Commit();
+        colorWriter.Commit();
+        boundsWriter.Commit();
+        _matQuadNeedsPush = false;
     }
 
     #endregion
@@ -785,9 +778,9 @@ public sealed class UIBatchCollector : IDisposable
         gpu.GlyphTextIndexBuf?.Destroy();
 
         // Glyph transforms: vec4 per glyph
-        gpu.GlyphTransformsBuf = new XRDataBuffer(
+        gpu.GlyphTransformsBuf = new XRDataBuffer<Vector4>(
             "GlyphTransformsBuffer", EBufferTarget.ShaderStorageBuffer,
-            gpu.GlyphCapacity, EComponentType.Float, 4, false, false)
+            gpu.GlyphCapacity)
         {
             Usage = EBufferUsage.StreamDraw,
             BindingIndexOverride = 0,
@@ -796,9 +789,9 @@ public sealed class UIBatchCollector : IDisposable
         mesh.Buffers["GlyphTransformsBuffer"] = gpu.GlyphTransformsBuf;
 
         // Glyph tex coords: vec4 per glyph
-        gpu.GlyphTexCoordsBuf = new XRDataBuffer(
+        gpu.GlyphTexCoordsBuf = new XRDataBuffer<Vector4>(
             "GlyphTexCoordsBuffer", EBufferTarget.ShaderStorageBuffer,
-            gpu.GlyphCapacity, EComponentType.Float, 4, false, false)
+            gpu.GlyphCapacity)
         {
             Usage = EBufferUsage.StreamDraw,
             BindingIndexOverride = 1,
@@ -807,9 +800,9 @@ public sealed class UIBatchCollector : IDisposable
         mesh.Buffers["GlyphTexCoordsBuffer"] = gpu.GlyphTexCoordsBuf;
 
         // Text instance data: 6 vec4 per text (4 matrix rows + color + bounds)
-        gpu.TextInstanceBuf = new XRDataBuffer(
+        gpu.TextInstanceBuf = new XRDataBuffer<Vector4>(
             "TextInstanceBuffer", EBufferTarget.ShaderStorageBuffer,
-            gpu.TextCapacity * 6, EComponentType.Float, 4, false, false)
+            gpu.TextCapacity * 6)
         {
             Usage = EBufferUsage.StreamDraw,
             BindingIndexOverride = 2,
@@ -818,9 +811,9 @@ public sealed class UIBatchCollector : IDisposable
         mesh.Buffers["TextInstanceBuffer"] = gpu.TextInstanceBuf;
 
         // Glyph-to-text index: uint per glyph
-        gpu.GlyphTextIndexBuf = new XRDataBuffer(
+        gpu.GlyphTextIndexBuf = new XRDataBuffer<uint>(
             "GlyphTextIndexBuffer", EBufferTarget.ShaderStorageBuffer,
-            gpu.GlyphCapacity, EComponentType.UInt, 1, false, true)
+            gpu.GlyphCapacity, integral: true)
         {
             Usage = EBufferUsage.StreamDraw,
             BindingIndexOverride = 3,
@@ -1163,7 +1156,7 @@ public sealed class UIBatchCollector : IDisposable
         }
     }
 
-    private unsafe void FinalizeAndUploadTextData(TextBatchData batchData, TextGPUResources gpu, XRTexture2D atlas)
+    private void FinalizeAndUploadTextData(TextBatchData batchData, TextGPUResources gpu, XRTexture2D atlas)
     {
         uint totalGlyphs = (uint)batchData.TotalGlyphs;
         uint textCount = (uint)batchData.Entries.Count;
@@ -1187,31 +1180,38 @@ public sealed class UIBatchCollector : IDisposable
         if (resized)
             gpu.NeedsPush = true;
 
-        // Write data
-        float* glyphTfmPtr = (float*)gpu.GlyphTransformsBuf!.ClientSideSource!.Address.Pointer;
-        float* glyphUvPtr = (float*)gpu.GlyphTexCoordsBuf!.ClientSideSource!.Address.Pointer;
-        float* textInstPtr = (float*)gpu.TextInstanceBuf!.ClientSideSource!.Address.Pointer;
-        uint* glyphIdxPtr = (uint*)gpu.GlyphTextIndexBuf!.ClientSideSource!.Address.Pointer;
+        bool fullUpload = gpu.NeedsPush;
+        uint glyphElementCount = fullUpload ? gpu.GlyphCapacity : totalGlyphs;
+        uint textElementCount = fullUpload ? gpu.TextCapacity * 6u : textCount * 6u;
+        XRBufferWriter<Vector4> glyphTransformWriter = gpu.GlyphTransformsBuf!.Alloc<Vector4>(glyphElementCount);
+        XRBufferWriter<Vector4> glyphUvWriter = gpu.GlyphTexCoordsBuf!.Alloc<Vector4>(glyphElementCount);
+        XRBufferWriter<Vector4> textInstanceWriter = gpu.TextInstanceBuf!.Alloc<Vector4>(textElementCount);
+        XRBufferWriter<uint> glyphIndexWriter = gpu.GlyphTextIndexBuf!.Alloc<uint>(glyphElementCount);
+        Span<Vector4> glyphTransforms = glyphTransformWriter.Span;
+        Span<Vector4> glyphUvs = glyphUvWriter.Span;
+        Span<Vector4> textInstances = textInstanceWriter.Span;
+        Span<uint> glyphIndices = glyphIndexWriter.Span;
+        int glyphIndex = 0;
+        int textInstanceIndex = 0;
 
-        uint glyphOffset = 0;
         for (int t = 0; t < batchData.Entries.Count; t++)
         {
             ref readonly var entry = ref System.Runtime.InteropServices.CollectionsMarshal.AsSpan(batchData.Entries)[t];
 
             // Write text instance data (6 vec4): matrix rows + color + bounds
-            WriteMatrix4x4(ref textInstPtr, in entry.WorldMatrix);
-            WriteVector4(ref textInstPtr, in entry.TextColor);
-            WriteVector4(ref textInstPtr, in entry.UIXYWH);
+            WriteMatrix4x4(textInstances, ref textInstanceIndex, in entry.WorldMatrix);
+            textInstances[textInstanceIndex++] = entry.TextColor;
+            textInstances[textInstanceIndex++] = entry.UIXYWH;
 
             // Write glyph data
             for (int g = 0; g < entry.GlyphCount; g++)
             {
                 var (transform, uvs) = entry.Glyphs[g];
-                WriteVector4(ref glyphTfmPtr, in transform);
-                WriteVector4(ref glyphUvPtr, in uvs);
-                *glyphIdxPtr++ = (uint)t;
+                glyphTransforms[glyphIndex] = transform;
+                glyphUvs[glyphIndex] = uvs;
+                glyphIndices[glyphIndex] = (uint)t;
+                glyphIndex++;
             }
-            glyphOffset += (uint)entry.GlyphCount;
         }
 
         if (s_textUploadDiagCount++ < 40)
@@ -1230,22 +1230,11 @@ public sealed class UIBatchCollector : IDisposable
                 atlas.Height);
         }
 
-        // Push to GPU
-        if (gpu.NeedsPush)
-        {
-            gpu.NeedsPush = false;
-            gpu.GlyphTransformsBuf.PushData();
-            gpu.GlyphTexCoordsBuf.PushData();
-            gpu.TextInstanceBuf.PushData();
-            gpu.GlyphTextIndexBuf.PushData();
-        }
-        else
-        {
-            gpu.GlyphTransformsBuf.PushSubData();
-            gpu.GlyphTexCoordsBuf.PushSubData();
-            gpu.TextInstanceBuf.PushSubData();
-            gpu.GlyphTextIndexBuf.PushSubData();
-        }
+        glyphTransformWriter.Commit();
+        glyphUvWriter.Commit();
+        textInstanceWriter.Commit();
+        glyphIndexWriter.Commit();
+        gpu.NeedsPush = false;
     }
 
     #endregion
@@ -1307,19 +1296,12 @@ public sealed class UIBatchCollector : IDisposable
            state.ActiveTextDebugMode == debugMode;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static unsafe void WriteMatrix4x4(ref float* ptr, in Matrix4x4 m)
+    private static void WriteMatrix4x4(Span<Vector4> destination, ref int index, in Matrix4x4 m)
     {
-        // Write 16 floats (row-major layout matching C# Matrix4x4 memory order)
-        *ptr++ = m.M11; *ptr++ = m.M12; *ptr++ = m.M13; *ptr++ = m.M14;
-        *ptr++ = m.M21; *ptr++ = m.M22; *ptr++ = m.M23; *ptr++ = m.M24;
-        *ptr++ = m.M31; *ptr++ = m.M32; *ptr++ = m.M33; *ptr++ = m.M34;
-        *ptr++ = m.M41; *ptr++ = m.M42; *ptr++ = m.M43; *ptr++ = m.M44;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static unsafe void WriteVector4(ref float* ptr, in Vector4 v)
-    {
-        *ptr++ = v.X; *ptr++ = v.Y; *ptr++ = v.Z; *ptr++ = v.W;
+        destination[index++] = new Vector4(m.M11, m.M12, m.M13, m.M14);
+        destination[index++] = new Vector4(m.M21, m.M22, m.M23, m.M24);
+        destination[index++] = new Vector4(m.M31, m.M32, m.M33, m.M34);
+        destination[index++] = new Vector4(m.M41, m.M42, m.M43, m.M44);
     }
 
     private static uint NextPowerOf2(uint v)

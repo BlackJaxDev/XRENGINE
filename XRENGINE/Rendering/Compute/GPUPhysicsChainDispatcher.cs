@@ -89,7 +89,7 @@ public sealed class GPUPhysicsChainDispatcher
     private readonly List<GPUPhysicsChainRequest> _activeRequests = new();
     private readonly List<GPUPhysicsChainRequest> _dispatchGroup = [];
     private readonly List<InFlightDispatch> _inFlight = [];
-    private readonly Stack<XRDataBuffer> _readbackBufferPool = new();
+    private readonly Stack<XRDataBuffer<GPUParticleData>> _readbackBufferPool = new();
 
     // Shared GPU resources
     private XRShader? _mainPhysicsShader;
@@ -100,14 +100,14 @@ public sealed class GPUPhysicsChainDispatcher
     private XRRenderProgram? _gpuBonePaletteProgram;
 
     // Combined buffers for all components
-    private XRDataBuffer? _particlesBuffer;
-    private XRDataBuffer? _particleStaticBuffer;
-    private XRDataBuffer? _transformMatricesBuffer;
-    private XRDataBuffer? _collidersBuffer;
-    private XRDataBuffer? _perTreeParamsBuffer;
-    private XRDataBuffer? _gpuDrivenBonePaletteMappingsBuffer;
-    private XRDataBuffer? _gpuDrivenSkinPaletteBuffer;
-    private XRDataBuffer? _gpuDrivenBoneInvBindMatricesBuffer;
+    private XRDataBuffer<GPUParticleData>? _particlesBuffer;
+    private XRDataBuffer<GPUParticleStaticData>? _particleStaticBuffer;
+    private XRDataBuffer<Matrix4x4>? _transformMatricesBuffer;
+    private XRDataBuffer<GPUColliderData>? _collidersBuffer;
+    private XRDataBuffer<GPUPerTreeParams>? _perTreeParamsBuffer;
+    private XRDataBuffer<GPUDrivenBoneMappingData>? _gpuDrivenBonePaletteMappingsBuffer;
+    private XRDataBuffer<SkinPaletteMatrix>? _gpuDrivenSkinPaletteBuffer;
+    private XRDataBuffer<Matrix4x4>? _gpuDrivenBoneInvBindMatricesBuffer;
 
     // Combined data lists
     private readonly List<GPUParticleStaticData> _allParticleStaticData = [];
@@ -743,11 +743,11 @@ public sealed class GPUPhysicsChainDispatcher
         TotalColliderCount = colliderOffset;
 
         // Resize/create buffers as needed
-        bool particlesResized = EnsureBufferCapacity(ref _particlesBuffer, "Particles", (uint)Math.Max(TotalParticleCount, 1), 16);
-        bool particleStaticResized = EnsureBufferCapacity(ref _particleStaticBuffer, "ParticleStatic", (uint)Math.Max(TotalParticleCount, 1), 16);
-        bool transformMatricesResized = EnsureBufferCapacity(ref _transformMatricesBuffer, "TransformMatrices", (uint)_allTransformMatrices.Count, 16);
-        bool collidersResized = EnsureBufferCapacity(ref _collidersBuffer, "Colliders", (uint)Math.Max(TotalColliderCount, 1), 12);
-        bool perTreeParamsResized = EnsureBufferCapacity(ref _perTreeParamsBuffer, "PerTreeParams", (uint)Math.Max(_allPerTreeParams.Count, 1), 24);
+        bool particlesResized = EnsureBufferCapacity(ref _particlesBuffer, "Particles", (uint)Math.Max(TotalParticleCount, 1));
+        bool particleStaticResized = EnsureBufferCapacity(ref _particleStaticBuffer, "ParticleStatic", (uint)Math.Max(TotalParticleCount, 1));
+        bool transformMatricesResized = EnsureBufferCapacity(ref _transformMatricesBuffer, "TransformMatrices", (uint)Math.Max(_allTransformMatrices.Count, 1));
+        bool collidersResized = EnsureBufferCapacity(ref _collidersBuffer, "Colliders", (uint)Math.Max(TotalColliderCount, 1));
+        bool perTreeParamsResized = EnsureBufferCapacity(ref _perTreeParamsBuffer, "PerTreeParams", (uint)Math.Max(_allPerTreeParams.Count, 1));
 
         if (rebuildStaticParticleData || particleStaticResized || particlesResized)
         {
@@ -821,14 +821,10 @@ public sealed class GPUPhysicsChainDispatcher
             if (VerboseLogging)
                 XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] EnsureResidentParticleBuffer: Creating NEW resident buffer. RequestId={request.RequestId}, ParticleCount={particleCount}, ComponentHash={request.Component.GetHashCode():X}");
 
-            request.ResidentParticlesBuffer = new XRDataBuffer(
+            request.ResidentParticlesBuffer = new XRDataBuffer<GPUParticleData>(
                 $"PhysicsChainResidentParticles_{request.RequestId:X}",
                 EBufferTarget.ShaderStorageBuffer,
-                XRMath.NextPowerOfTwo((uint)particleCount),
-                EComponentType.Float,
-                16,
-                false,
-                false)
+                XRMath.NextPowerOfTwo((uint)particleCount))
             {
                 DisposeOnPush = false,
                 Usage = EBufferUsage.DynamicDraw,
@@ -876,14 +872,10 @@ public sealed class GPUPhysicsChainDispatcher
         int particleCount = Math.Max(request.ParticleStaticData.Count, 1);
         if (request.ResidentParticleStaticBuffer is null)
         {
-            request.ResidentParticleStaticBuffer = new XRDataBuffer(
+            request.ResidentParticleStaticBuffer = new XRDataBuffer<GPUParticleStaticData>(
                 $"PhysicsChainResidentStatic_{request.RequestId:X}",
                 EBufferTarget.ShaderStorageBuffer,
-                XRMath.NextPowerOfTwo((uint)particleCount),
-                EComponentType.Float,
-                16,
-                false,
-                false)
+                XRMath.NextPowerOfTwo((uint)particleCount))
             {
                 DisposeOnPush = false,
                 Usage = EBufferUsage.StaticDraw,
@@ -1076,14 +1068,14 @@ public sealed class GPUPhysicsChainDispatcher
         request.ResidentStaticDataVersion = int.MinValue;
     }
 
-    private static bool EnsureBufferCapacity(ref XRDataBuffer? buffer, string name, uint elementCount, uint componentCount)
+    private static bool EnsureBufferCapacity<T>(ref XRDataBuffer<T>? buffer, string name, uint elementCount) where T : unmanaged
     {
         if (elementCount == 0)
             elementCount = 1;
 
         if (buffer is null)
         {
-            buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, XRMath.NextPowerOfTwo(elementCount), EComponentType.Float, componentCount, false, false);
+            buffer = new XRDataBuffer<T>(name, EBufferTarget.ShaderStorageBuffer, XRMath.NextPowerOfTwo(elementCount));
             buffer.DisposeOnPush = false;
             buffer.Usage = EBufferUsage.DynamicDraw;
             return true;
@@ -1104,9 +1096,9 @@ public sealed class GPUPhysicsChainDispatcher
             return;
 
         if (fullPush)
-            buffer.PushData();
+            buffer.CommitDirtyBytes(0u, buffer.Length);
         else if (byteLength > 0)
-            buffer.PushSubData(byteOffset, byteLength);
+            buffer.CommitDirtyBytes(checked((uint)byteOffset), byteLength);
     }
 
     private static void OverwriteCombinedRange<T>(List<T> destination, IReadOnlyList<T> source, int destinationOffset, ref int dirtyStart, ref int dirtyEndExclusive)
@@ -1124,20 +1116,21 @@ public sealed class GPUPhysicsChainDispatcher
             dirtyEndExclusive = endExclusive;
     }
 
-    private XRDataBuffer AcquireReadbackBuffer(uint particleCount)
+    private XRDataBuffer<GPUParticleData> AcquireReadbackBuffer(uint particleCount)
     {
         uint elementCount = Math.Max(particleCount, 1u);
         while (_readbackBufferPool.Count > 0)
         {
-            XRDataBuffer buffer = _readbackBufferPool.Pop();
+            XRDataBuffer<GPUParticleData> buffer = _readbackBufferPool.Pop();
             if (buffer.ElementCount >= elementCount)
                 return buffer;
 
             buffer.Dispose();
         }
 
-        var created = new XRDataBuffer("PhysicsChainReadback", EBufferTarget.ShaderStorageBuffer, elementCount, EComponentType.Float, 16, false, false)
+        var created = new XRDataBuffer<GPUParticleData>("PhysicsChainReadback", EBufferTarget.ShaderStorageBuffer, elementCount)
         {
+            DefaultMemoryPolicy = XRBufferMemoryPolicy.GpuToCpuReadback,
             DisposeOnPush = false,
             Usage = EBufferUsage.StreamRead,
         };
@@ -1271,18 +1264,15 @@ public sealed class GPUPhysicsChainDispatcher
         bool mappingsResized = EnsureBufferCapacity(
             ref _gpuDrivenBonePaletteMappingsBuffer,
             "PhysicsChainGlobalBonePaletteMappings",
-            (uint)Math.Max(_gpuDrivenBoneMappings.Count, 1),
-            8);
+            (uint)Math.Max(_gpuDrivenBoneMappings.Count, 1));
         bool skinPaletteResized = EnsureBufferCapacity(
             ref _gpuDrivenSkinPaletteBuffer,
             "PhysicsChainGlobalSkinPalette",
-            (uint)Math.Max(_gpuDrivenSkinPalette.Count, 1),
-            12);
+            (uint)Math.Max(_gpuDrivenSkinPalette.Count, 1));
         bool invBindMatricesResized = EnsureBufferCapacity(
             ref _gpuDrivenBoneInvBindMatricesBuffer,
             "PhysicsChainGlobalBoneInvBindMatrices",
-            (uint)Math.Max(_gpuDrivenBoneInvBindMatrices.Count, 1),
-            16);
+            (uint)Math.Max(_gpuDrivenBoneInvBindMatrices.Count, 1));
 
         uint mappingBytes = _gpuDrivenBonePaletteMappingsBuffer?.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuDrivenBoneMappings)) ?? 0u;
         PushBufferUpdate(_gpuDrivenBonePaletteMappingsBuffer, mappingsResized, mappingBytes);
@@ -1603,7 +1593,7 @@ public sealed class GPUPhysicsChainDispatcher
         if (readbackRequestCount == 0)
             return;
 
-        XRDataBuffer readbackBuffer = AcquireReadbackBuffer((uint)TotalParticleCount);
+        XRDataBuffer<GPUParticleData> readbackBuffer = AcquireReadbackBuffer((uint)TotalParticleCount);
         if (!TryGetBufferIdForGpuCopy(renderer, _particlesBuffer, out uint sourceBufferId)
             || !TryGetBufferIdForGpuCopy(renderer, readbackBuffer, out uint destinationBufferId))
         {
@@ -1720,6 +1710,7 @@ public sealed class GPUPhysicsChainDispatcher
             renderer.RawGL.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
         }
 
+        XRBufferWriteTelemetry.RecordUpload(XRBufferResolvedRoute.Readback, (long)byteSize);
         RecordCpuReadbackBytes((long)byteSize, isBatched: true);
     }
 
@@ -1943,7 +1934,7 @@ public class GPUPhysicsChainRequest(PhysicsChainComponent component)
     public int TreeOffset;
     public int ColliderOffset;
     public int LastKnownParticleCount;
-    public XRDataBuffer? ResidentParticlesBuffer;
+    public XRDataBuffer<GPUPhysicsChainDispatcher.GPUParticleData>? ResidentParticlesBuffer;
     public int ResidentParticleCapacity;
     public int ResidentParticleStateVersion = int.MinValue;
     public int CombinedParticleStateVersion = int.MinValue;
@@ -1951,7 +1942,7 @@ public class GPUPhysicsChainRequest(PhysicsChainComponent component)
     public int ActiveTransformSignature = int.MinValue;
     public int ActiveColliderSignature = int.MinValue;
     public bool ResidentParticlesInitialized;
-    public XRDataBuffer? ResidentParticleStaticBuffer;
+    public XRDataBuffer<GPUPhysicsChainDispatcher.GPUParticleStaticData>? ResidentParticleStaticBuffer;
     public int ResidentParticleStaticCapacity;
     public int ResidentStaticDataVersion = int.MinValue;
 }
@@ -1976,7 +1967,7 @@ internal readonly record struct GPUReadbackRequestSnapshot(
     long SubmissionId);
 
 internal readonly record struct InFlightDispatch(
-    XRDataBuffer ReadbackBuffer,
+    XRDataBuffer<GPUPhysicsChainDispatcher.GPUParticleData> ReadbackBuffer,
     IntPtr Fence,
     int ParticleCount,
     GPUReadbackRequestSnapshot[] Requests);

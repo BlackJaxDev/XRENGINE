@@ -194,6 +194,26 @@ namespace XREngine.Rendering.Vulkan
             public bool IsReadyForRendering => IsGenerated && !_hasPendingUpload && _uploadedByteCount >= (ulong)Data.Length && _bufferSize >= (ulong)Data.Length;
             public string LastUploadRoute => _lastUploadRoute;
             public string LastBindingName => _lastBindingName;
+            public ulong BackendAllocatedByteSize => _bufferSize;
+            public ulong BackendUploadedByteCount => _uploadedByteCount;
+            public bool BackendHasPendingUpload => _hasPendingUpload;
+            public bool BackendIsReadyForGpuUse => IsReadyForRendering;
+            public bool BackendIsPersistentlyMapped => _persistentMappedPtr != null;
+            public XRBufferResolvedRoute BackendResolvedRoute => ResolveBackendRoute();
+
+            public bool TryGetGpuAddress(out ulong address, out string downgradeReason)
+            {
+                address = DeviceAddress;
+                if (address != 0ul)
+                {
+                    downgradeReason = string.Empty;
+                    return true;
+                }
+
+                downgradeReason = Renderer.ResolveSceneDatabaseDeviceAddressStatus(Data, DeviceAddress);
+                Data.ReportDeviceAddressDowngrade(downgradeReason);
+                return false;
+            }
 
             internal void EnsureReadyForRendering()
             {
@@ -206,6 +226,33 @@ namespace XREngine.Rendering.Vulkan
                 if (!IsReadyForRendering)
                     PushData();
             }
+
+            private XRBufferResolvedRoute ResolveBackendRoute()
+            {
+                if (_lastUploadRoute.Contains("Readback", StringComparison.OrdinalIgnoreCase))
+                    return XRBufferResolvedRoute.Readback;
+                if (_lastUploadRoute.Contains("DeviceLocal", StringComparison.OrdinalIgnoreCase))
+                    return XRBufferResolvedRoute.DeviceLocal;
+                if (_lastUploadRoute.Contains("Staging", StringComparison.OrdinalIgnoreCase))
+                    return XRBufferResolvedRoute.StagingUpload;
+                if (_persistentMappedPtr != null)
+                    return XRBufferResolvedRoute.PersistentMappedRing;
+                if (_lastMemProps.HasFlag(MemoryPropertyFlags.HostVisibleBit))
+                    return XRBufferResolvedRoute.HostVisible;
+
+                return XRBufferPolicyResolver.ResolveVulkan(
+                    Data.DefaultMemoryPolicy,
+                    supportsPersistentRing: true,
+                    supportsDeviceLocal: true);
+            }
+
+            private void ReportBackendState()
+                => Data.ReportBackendUploadState(
+                    BackendAllocatedByteSize,
+                    BackendUploadedByteCount,
+                    BackendHasPendingUpload,
+                    BackendResolvedRoute,
+                    BackendIsReadyForGpuUse);
 
             public bool TryGetDeviceAddress(out ulong address)
             {
@@ -259,6 +306,7 @@ namespace XREngine.Rendering.Vulkan
                         return;
 
                     _hasPendingUpload = true;
+                    ReportBackendState();
 
                     // Retire old buffer handles for deferred cleanup — the command buffer
                     // currently being recorded may still reference them, so we must not
@@ -383,6 +431,7 @@ namespace XREngine.Rendering.Vulkan
                     RefreshDeviceAddress();
                     _uploadedByteCount = uploadedContent ? _bufferSize : 0ul;
                     _hasPendingUpload = false;
+                    ReportBackendState();
 
                     // Track VRAM allocation only when the backing allocation is recreated.
                     _allocatedVRAMBytes = (long)_bufferSize;
@@ -399,6 +448,7 @@ namespace XREngine.Rendering.Vulkan
 
                 Renderer.TrackBufferBinding(Data);
                 RecordUploadDiagnostics((long)_bufferSize, recreate: needsRecreate, fullUpload: true);
+                ReportBackendState();
 
                 if (ShouldDisposeAfterUpload())
                     Data.Dispose();
@@ -542,6 +592,7 @@ namespace XREngine.Rendering.Vulkan
                 Renderer.TrackBufferBinding(Data);
                 RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.BufferUploadBytes, clampedLength);
                 TracePushSubData(offset, clampedLength, "done");
+                ReportBackendState();
             }
 
             private bool TryUploadGpuCompressedPayload(Buffer deviceBuffer)
@@ -910,6 +961,7 @@ namespace XREngine.Rendering.Vulkan
 
                 _hasPendingUpload = true;
                 _lastUploadRoute = "SkippedDeviceLost";
+                ReportBackendState();
                 Debug.VulkanWarningEvery(
                     $"VkDataBuffer.DeviceLost.{operation}.{GetDescribingName()}",
                     TimeSpan.FromSeconds(2),
@@ -1034,6 +1086,7 @@ namespace XREngine.Rendering.Vulkan
 
                 long count = bytes > long.MaxValue ? long.MaxValue : (long)bytes;
                 RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(count);
+                XRBufferWriteTelemetry.RecordHostCachedReadback(count);
             }
 
             private void RecordUploadDiagnostics(long byteCount, bool recreate, bool fullUpload)

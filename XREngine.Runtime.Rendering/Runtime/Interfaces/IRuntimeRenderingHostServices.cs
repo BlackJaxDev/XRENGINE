@@ -434,16 +434,6 @@ public interface IRuntimeRenderingHostServices
     float DefaultTsrRenderScale { get; }
 
     /// <summary>
-    /// Gets whether the forward renderer should emit a depth pre-pass by default.
-    /// </summary>
-    bool ForwardDepthPrePassEnabled { get; }
-
-    /// <summary>
-    /// Gets whether the forward pre-pass should share G-buffer targets with later passes.
-    /// </summary>
-    bool ForwardPrePassSharesGBufferTargets { get; }
-
-    /// <summary>
     /// Gets whether the host has per-frame render statistics tracking enabled.
     /// When false, render-stats sampling and the GPU pipeline profiler are skipped.
     /// </summary>

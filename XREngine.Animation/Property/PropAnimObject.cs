@@ -7,7 +7,7 @@ namespace XREngine.Animation
     {
         private DelGetValue<object?> _getValue;
 
-        private object?[]? _baked = null;
+        private BakedValueStore<object?>? _baked = null;
         /// <summary>
         /// The default value to return when no keyframes are set.
         /// </summary>
@@ -60,7 +60,9 @@ namespace XREngine.Animation
         public object? GetValueBaked(float second)
             => GetValueBaked(GetBakedFrameIndex(second));
         public object? GetValueBaked(int frameIndex)
-            => _baked?.TryGet(frameIndex) ?? string.Empty;
+            => _baked is not null && (uint)frameIndex < (uint)_baked.Count
+                ? _baked.GetValue(frameIndex)
+                : string.Empty;
         public object? GetValueKeyframed(float second)
         {
             ObjectKeyframe? key = Keyframes?.GetKeyBefore(second);
@@ -68,15 +70,19 @@ namespace XREngine.Animation
         }
         public override void Bake(int framesPerSecond)
         {
-            _bakedFPS = Math.Max(0, framesPerSecond);
-            _bakedFrameCount = _bakedFPS <= 0 ? 0 : (int)Math.Ceiling(LengthInSeconds * _bakedFPS);
-            _baked = new string[BakedFrameCount];
+            SetBakeCadence(framesPerSecond);
             if (_bakedFPS <= 0)
+            {
+                _baked = EncodeBakedValues(Array.Empty<object?>());
                 return;
+            }
 
+            object?[] baked = new object?[BakedFrameCount];
             float invFPS = 1.0f / _bakedFPS;
             for (int i = 0; i < BakedFrameCount; ++i)
-                _baked[i] = GetValueKeyframed(i * invFPS);
+                baked[i] = GetValueKeyframed(i * invFPS);
+
+            _baked = EncodeBakedValues(baked);
         }
         protected override void OnProgressed(float delta)
         {

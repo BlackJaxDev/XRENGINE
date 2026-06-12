@@ -2113,23 +2113,36 @@ namespace XREngine.Rendering
         }
 
         internal void SyncDirtyBoneMatricesToClientBuffer()
-            => WriteDirtyBoneMatricesToClientBuffer(clearDirtyState: false, logDiagnostics: false, out _);
+            => WriteDirtyBoneMatricesToClientBuffer(clearDirtyState: false, logDiagnostics: false, out _, out _, out _);
 
         //TODO: use mapped buffer for constant streaming
         public void PushBoneMatricesToGPU()
         {
-            if (!WriteDirtyBoneMatricesToClientBuffer(clearDirtyState: true, logDiagnostics: true, out int dirtyBoneCount))
+            if (!WriteDirtyBoneMatricesToClientBuffer(
+                    clearDirtyState: true,
+                    logDiagnostics: true,
+                    out int dirtyBoneCount,
+                    out uint dirtyBoneStart,
+                    out uint dirtyBoneEnd))
                 return;
 
-            BoneMatricesBuffer?.PushSubData();
-            SkinPaletteBuffer?.PushSubData();
+            uint dirtyElementCount = dirtyBoneEnd - dirtyBoneStart + 1u;
+            BoneMatricesBuffer?.CommitDirtyElements(dirtyBoneStart, dirtyElementCount);
+            SkinPaletteBuffer?.CommitDirtyElements(dirtyBoneStart, dirtyElementCount);
             long skinPaletteBytes = dirtyBoneCount * 12L * sizeof(float);
             RuntimeEngine.Rendering.Stats.RecordSkinningUpload(skinPaletteBytes, 0L, skinPaletteBytes: skinPaletteBytes);
         }
 
-        private bool WriteDirtyBoneMatricesToClientBuffer(bool clearDirtyState, bool logDiagnostics, out int dirtyBoneCount)
+        private bool WriteDirtyBoneMatricesToClientBuffer(
+            bool clearDirtyState,
+            bool logDiagnostics,
+            out int dirtyBoneCount,
+            out uint dirtyBoneStart,
+            out uint dirtyBoneEnd)
         {
             dirtyBoneCount = 0;
+            dirtyBoneStart = uint.MaxValue;
+            dirtyBoneEnd = 0u;
 
             if (BoneMatricesBuffer is null)
                 return false;
@@ -2157,6 +2170,11 @@ namespace XREngine.Rendering
                 {
                     uint index = _dirtyBoneIndices[dirtyIndex];
                     int i = (int)index;
+                    if (index < dirtyBoneStart)
+                        dirtyBoneStart = index;
+                    if (index > dirtyBoneEnd)
+                        dirtyBoneEnd = index;
+
                     Matrix4x4 currentMatrix = _dirtyBoneMatrices[i];
                     BoneMatricesBuffer.Set(index, currentMatrix);
                     if (SkinPaletteBuffer is not null)
@@ -2502,12 +2520,12 @@ namespace XREngine.Rendering
                 {
                     int offset = checked((int)(_blendshapeDirtyStartIndex * BlendshapeWeights.ElementSize));
                     uint length = checked((_blendshapeDirtyEndIndex - _blendshapeDirtyStartIndex + 1u) * BlendshapeWeights.ElementSize);
-                    BlendshapeWeights.PushSubData(offset, length);
+                    BlendshapeWeights.CommitDirtyBytes(checked((uint)offset), length);
                     blendshapeWeightBytes = length;
                 }
                 else
                 {
-                    BlendshapeWeights.PushSubData();
+                    BlendshapeWeights.CommitDirtyBytes(0u, BlendshapeWeights.Length);
                     blendshapeWeightBytes = BlendshapeWeights.Length;
                 }
 
@@ -2521,9 +2539,9 @@ namespace XREngine.Rendering
             {
                 if (_activeBlendshapeCount > 0)
                 {
-                    uint length = checked((uint)_activeBlendshapeCount * BlendshapeActiveWeights.ElementSize);
-                    BlendshapeActiveWeights.PushSubData(0, length);
-                    activeListBytes = length;
+                    uint activeElementCount = checked((uint)_activeBlendshapeCount);
+                    BlendshapeActiveWeights.CommitDirtyElements(0u, activeElementCount);
+                    activeListBytes = checked(activeElementCount * BlendshapeActiveWeights.ElementSize);
                 }
 
                 _blendshapeActiveListInvalidated = false;

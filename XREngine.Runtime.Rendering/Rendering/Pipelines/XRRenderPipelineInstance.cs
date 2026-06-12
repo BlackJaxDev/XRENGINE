@@ -23,6 +23,15 @@ namespace XREngine.Rendering;
 public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPipelineDebugContext, IRuntimeRenderPipelineFrameContext
 {
     private static int s_nextInstanceId = 0;
+    private const int MaxRetiredResourceGenerations = 3;
+    private const double ResizeGenerationDebounceMilliseconds = 125.0;
+    private const double ResizeGenerationMaxCoalesceMilliseconds = 300.0;
+    private const double IncrementalGenerationSliceMilliseconds = 2.0;
+    private const int IncrementalGenerationMaxSpecsPerSlice = 4;
+    private readonly RenderPipelineResourceManager _resourceManager = new();
+    private readonly Queue<RenderResourceGeneration> _retiredGenerations = new();
+    private readonly RenderResourceRegistry _legacyResources = new();
+    private ResourceBuildContext? _resourceBuildContext;
 
     /// <summary>
     /// Stable, monotonically increasing identifier assigned at construction. Used by
@@ -57,8 +66,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     public RenderCommandCollection MeshRenderCommands { get; } = new();
 
-    public RenderResourceRegistry Resources { get; } = new();
+    public RenderResourceRegistry Resources => _resourceBuildContext?.Generation.Registry
+        ?? ActiveGeneration?.Registry
+        ?? _legacyResources;
+
+    public RenderResourceGeneration? ActiveGeneration { get; private set; }
+    public RenderResourceGeneration? PendingGeneration { get; private set; }
+    public IReadOnlyCollection<RenderResourceGeneration> RetiredGenerations => _retiredGenerations;
     private int _destroyCacheQueued;
+    private int _lastDescriptorParityGeneration = -1;
+    private long _pendingGenerationReadyAfterTimestamp;
+    private long _pendingGenerationFirstResizeRequestTimestamp;
 
     /// <summary>
     /// Monotonically increasing counter incremented each time physical GPU resources
@@ -98,6 +116,54 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// a single bucket (which artificially inflates per-frame totals).
     /// </summary>
     public string ProfilerKey => $"{DebugName}#{InstanceId}";
+
+    internal ResourceBuildContext? CurrentResourceBuildContext => _resourceBuildContext;
+    internal uint? ResourceInternalWidth
+        => _resourceBuildContext?.Key.InternalWidth
+            ?? ActiveGeneration?.Key.InternalWidth;
+    internal uint? ResourceInternalHeight
+        => _resourceBuildContext?.Key.InternalHeight
+            ?? ActiveGeneration?.Key.InternalHeight;
+    internal uint? ResourceDisplayWidth
+        => _resourceBuildContext?.Key.DisplayWidth
+            ?? ActiveGeneration?.Key.DisplayWidth;
+    internal uint? ResourceDisplayHeight
+        => _resourceBuildContext?.Key.DisplayHeight
+            ?? ActiveGeneration?.Key.DisplayHeight;
+
+    internal sealed class ResourceBuildContext
+    {
+        public ResourceBuildContext(RenderResourceGeneration generation, int managedThreadId)
+        {
+            Generation = generation;
+            ManagedThreadId = managedThreadId;
+        }
+
+        public RenderResourceGeneration Generation { get; }
+        public int ManagedThreadId { get; }
+        public ResourceGenerationKey Key => Generation.Key;
+    }
+
+    internal IDisposable PushResourceBuildContext(RenderResourceGeneration generation)
+    {
+        ArgumentNullException.ThrowIfNull(generation);
+
+        int managedThreadId = Environment.CurrentManagedThreadId;
+        if (_resourceBuildContext is not null)
+        {
+            string message = _resourceBuildContext.ManagedThreadId == managedThreadId
+                ? $"Nested render-resource build contexts are not supported. Active={_resourceBuildContext.Generation.Key} New={generation.Key}"
+                : $"Cross-thread render-resource build context detected. ActiveThread={_resourceBuildContext.ManagedThreadId} CurrentThread={managedThreadId}";
+            throw new InvalidOperationException(message);
+        }
+
+        _resourceBuildContext = new ResourceBuildContext(generation, managedThreadId);
+        return StateObject.New(() =>
+        {
+            if (_resourceBuildContext?.Generation == generation)
+                _resourceBuildContext = null;
+        });
+    }
 
     /// <summary>
     /// Builds a human-readable descriptor for debugging the active pipeline state.
@@ -403,6 +469,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands))
             {
                 WarnIfScreenSpaceUiHasNoRenderCommand(userInterface, viewport);
+                EnsureResourceGenerationForCurrentFrame(viewport);
                 BeginRenderGraphValidationFrame();
 
                 if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
@@ -418,6 +485,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
                 Pipeline.CommandChain.Execute();
 
+                ValidateActiveGenerationDescriptorParity();
                 ValidateRenderGraphExecutionAgainstMetadata();
             }
         }
@@ -449,6 +517,297 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         RuntimeEngine.EnqueueRenderThreadTask(action, reason, renderThreadKind);
         return true;
+    }
+
+    private void EnsureResourceGenerationForCurrentFrame(XRViewport? viewport)
+    {
+        if (Pipeline is null || viewport is null)
+            return;
+
+        ResourceGenerationKey key = BuildResourceGenerationKey(
+            Math.Max(1, viewport.Width),
+            Math.Max(1, viewport.Height),
+            Math.Max(1, viewport.InternalWidth),
+            Math.Max(1, viewport.InternalHeight));
+
+        if (ActiveGeneration is null && PendingGeneration is null)
+            RequestResourceGeneration(key, "Initial");
+        else if (ActiveGeneration is not null && ActiveGeneration.Key != key && PendingGeneration?.Key != key)
+            RequestResourceGeneration(key, "FrameProfileChanged");
+
+        TryPreparePendingGeneration("FramePrepare");
+    }
+
+    internal bool RequestResourceGeneration(
+        int displayWidth,
+        int displayHeight,
+        int internalWidth,
+        int internalHeight,
+        string reason)
+        => RequestResourceGeneration(
+            BuildResourceGenerationKey(displayWidth, displayHeight, internalWidth, internalHeight),
+            reason);
+
+    private bool RequestResourceGeneration(ResourceGenerationKey key, string reason)
+    {
+        RenderPipeline? pipeline = Pipeline;
+        if (pipeline is null)
+            return false;
+
+        if (ActiveGeneration?.Key == key)
+            return true;
+
+        if (PendingGeneration?.Key == key)
+            return true;
+
+        RenderPipelineResourceLayout layout;
+        try
+        {
+            layout = pipeline.BuildResourceLayout(key.ToProfile());
+        }
+        catch (Exception ex)
+        {
+            Debug.RenderingWarning(
+                "[RenderResources] Failed to describe pending generation. Pipeline={0} Target={1} Reason={2}",
+                ProfilerKey,
+                key,
+                ex.Message);
+            return false;
+        }
+
+        if (layout.OrderedSpecs.Count == 0)
+            return false;
+
+        if (PendingGeneration is not null)
+        {
+            PendingGeneration.MarkSuperseded(reason);
+            PendingGeneration.Dispose();
+        }
+
+        PendingGeneration = new RenderResourceGeneration(key, layout);
+        ConfigurePendingGenerationDebounce(key, reason);
+        Debug.Rendering(
+            "[RenderResources] Pending generation requested. Pipeline={0} Reason={1} Target={2} Resources={3} DebounceMs={4:F0}",
+            ProfilerKey,
+            reason,
+            key,
+            layout.OrderedSpecs.Count,
+            PendingGenerationDebounceRemainingMilliseconds());
+        return true;
+    }
+
+    private void ConfigurePendingGenerationDebounce(ResourceGenerationKey key, string reason)
+    {
+        if (!ShouldDebouncePendingGeneration(key, reason))
+        {
+            _pendingGenerationReadyAfterTimestamp = 0;
+            _pendingGenerationFirstResizeRequestTimestamp = 0;
+            return;
+        }
+
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (_pendingGenerationFirstResizeRequestTimestamp == 0)
+            _pendingGenerationFirstResizeRequestTimestamp = now;
+
+        long debounceTicks = StopwatchTicksFromMilliseconds(ResizeGenerationDebounceMilliseconds);
+        long maxTicks = StopwatchTicksFromMilliseconds(ResizeGenerationMaxCoalesceMilliseconds);
+        long debounceUntil = now + debounceTicks;
+        long maxUntil = _pendingGenerationFirstResizeRequestTimestamp + maxTicks;
+        _pendingGenerationReadyAfterTimestamp = Math.Min(debounceUntil, maxUntil);
+    }
+
+    private bool ShouldDebouncePendingGeneration(ResourceGenerationKey key, string reason)
+    {
+        if (ActiveGeneration is null)
+            return false;
+
+        if (reason.Contains("Resize", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        ResourceGenerationKey activeKey = ActiveGeneration.Key;
+        return activeKey.DisplayWidth != key.DisplayWidth
+            || activeKey.DisplayHeight != key.DisplayHeight
+            || activeKey.InternalWidth != key.InternalWidth
+            || activeKey.InternalHeight != key.InternalHeight;
+    }
+
+    private double PendingGenerationDebounceRemainingMilliseconds()
+    {
+        long due = _pendingGenerationReadyAfterTimestamp;
+        if (due == 0)
+            return 0.0;
+
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (now >= due)
+            return 0.0;
+
+        return (due - now) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+    }
+
+    private static long StopwatchTicksFromMilliseconds(double milliseconds)
+        => (long)(milliseconds * System.Diagnostics.Stopwatch.Frequency / 1000.0);
+
+    private ResourceGenerationKey BuildResourceGenerationKey(
+        int displayWidth,
+        int displayHeight,
+        int internalWidth,
+        int internalHeight)
+    {
+        bool stereo = Pipeline switch
+        {
+            DefaultRenderPipeline defaultPipeline => defaultPipeline.Stereo,
+            DefaultRenderPipeline2 defaultPipeline2 => defaultPipeline2.Stereo,
+            _ => RenderState.StereoPass
+        };
+
+        bool outputHdr = EffectiveOutputHDRThisFrame
+            ?? LastSceneCamera?.OutputHDROverride
+            ?? LastRenderingCamera?.OutputHDROverride
+            ?? RuntimeRenderingHostServices.Current.DefaultOutputHDR;
+
+        EAntiAliasingMode antiAliasingMode = EffectiveAntiAliasingModeThisFrame
+            ?? LastSceneCamera?.AntiAliasingModeOverride
+            ?? LastRenderingCamera?.AntiAliasingModeOverride
+            ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
+
+        uint msaaSamples = Math.Max(1u,
+            EffectiveMsaaSampleCountThisFrame
+                ?? LastSceneCamera?.MsaaSampleCountOverride
+                ?? LastRenderingCamera?.MsaaSampleCountOverride
+                ?? RuntimeRenderingHostServices.Current.DefaultMsaaSampleCount);
+
+        ulong featureMask = Pipeline switch
+        {
+            DefaultRenderPipeline defaultPipeline => defaultPipeline.BuildResourceFeatureMaskForGenerationKey(),
+            _ => 0UL
+        };
+
+        return new ResourceGenerationKey(
+            Pipeline?.DebugName ?? DebugName,
+            (uint)Math.Max(1, displayWidth),
+            (uint)Math.Max(1, displayHeight),
+            (uint)Math.Max(1, internalWidth),
+            (uint)Math.Max(1, internalHeight),
+            outputHdr,
+            antiAliasingMode,
+            msaaSamples,
+            stereo,
+            VulkanFeatureProfile.IsActive,
+            featureMask);
+    }
+
+    private bool TryPreparePendingGeneration(string reason)
+    {
+        RenderResourceGeneration? pending = PendingGeneration;
+        if (pending is null)
+            return false;
+
+        if (!IsPendingGenerationDue())
+        {
+            Debug.RenderingEvery(
+                $"RenderResources.PendingDebounce.{ProfilerKey}",
+                TimeSpan.FromMilliseconds(250),
+                "[RenderResources] Pending generation debounce. Pipeline={0} Reason={1} RemainingMs={2:F0} Target={3}",
+                ProfilerKey,
+                reason,
+                PendingGenerationDebounceRemainingMilliseconds(),
+                pending.Key);
+            return false;
+        }
+
+        if (pending.IsReady)
+        {
+            CommitPendingGeneration(reason);
+            return true;
+        }
+
+        bool immediate = ActiveGeneration is null;
+        TimeSpan maxDuration = immediate
+            ? TimeSpan.MaxValue
+            : TimeSpan.FromMilliseconds(IncrementalGenerationSliceMilliseconds);
+        int maxSpecsPerSlice = immediate ? int.MaxValue : IncrementalGenerationMaxSpecsPerSlice;
+
+        if (!_resourceManager.MaterializeIncremental(this, pending, maxDuration, maxSpecsPerSlice, out bool completed))
+        {
+            PendingGeneration = null;
+            ClearPendingGenerationDebounce();
+            pending.Dispose();
+            return false;
+        }
+
+        if (!completed)
+        {
+            Debug.RenderingEvery(
+                $"RenderResources.PendingIncremental.{ProfilerKey}",
+                TimeSpan.FromMilliseconds(250),
+                "[RenderResources] Pending generation incremental build. Pipeline={0} Reason={1} Progress={2}/{3} Target={4}",
+                ProfilerKey,
+                reason,
+                pending.MaterializedSpecCount,
+                pending.Layout.OrderedSpecs.Count,
+                pending.Key);
+            return false;
+        }
+
+        CommitPendingGeneration(reason);
+        return true;
+    }
+
+    private bool IsPendingGenerationDue()
+    {
+        long due = _pendingGenerationReadyAfterTimestamp;
+        return due == 0 || System.Diagnostics.Stopwatch.GetTimestamp() >= due;
+    }
+
+    private void ClearPendingGenerationDebounce()
+    {
+        _pendingGenerationReadyAfterTimestamp = 0;
+        _pendingGenerationFirstResizeRequestTimestamp = 0;
+    }
+
+    private void CommitPendingGeneration(string reason)
+    {
+        RenderResourceGeneration? pending = PendingGeneration;
+        if (pending is null || !pending.IsReady)
+            return;
+
+        RenderResourceGeneration? old = ActiveGeneration;
+        ActiveGeneration = pending;
+        PendingGeneration = null;
+        ClearPendingGenerationDebounce();
+        ActiveGeneration.MarkActive(reason);
+        ResourceGeneration++;
+
+        if (old is not null)
+            RetireGeneration(old, $"Committed replacement generation: {reason}");
+        else
+            _legacyResources.DestroyAllPhysicalResources();
+
+        NotifyRenderResourcesChanged();
+
+        Debug.Rendering(
+            "[RenderResources] Pending generation committed. Pipeline={0} Reason={1} Active={2} Textures={3} FBOs={4} Buffers={5} RenderBuffers={6} BuildMs={7:F2}",
+            ProfilerKey,
+            reason,
+            ActiveGeneration.Key,
+            ActiveGeneration.TextureCount,
+            ActiveGeneration.FrameBufferCount,
+            ActiveGeneration.BufferCount,
+            ActiveGeneration.RenderBufferCount,
+            ActiveGeneration.BuildDuration.TotalMilliseconds);
+    }
+
+    private void RetireGeneration(RenderResourceGeneration generation, string reason)
+    {
+        generation.MarkRetired(reason);
+        _retiredGenerations.Enqueue(generation);
+
+        while (_retiredGenerations.Count > MaxRetiredResourceGenerations)
+        {
+            WaitForGpuBeforePhysicalResourceDestruction("RetiredRenderResourceGenerationCap");
+            RenderResourceGeneration retired = _retiredGenerations.Dequeue();
+            retired.Dispose();
+        }
     }
 
     public void DestroyCache()
@@ -484,7 +843,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         LogDefaultRenderPipelineResourceDestruction("DestroyCache");
         WaitForGpuBeforePhysicalResourceDestruction("DestroyCache");
-        Resources.DestroyAllPhysicalResources();
+        PendingGeneration?.Dispose();
+        PendingGeneration = null;
+        ActiveGeneration?.Dispose();
+        ActiveGeneration = null;
+        while (_retiredGenerations.Count != 0)
+            _retiredGenerations.Dequeue().Dispose();
+        _legacyResources.DestroyAllPhysicalResources();
     }
 
     /// <summary>
@@ -496,6 +861,18 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         if (EnqueueResourceMutationIfOffRenderThread(InvalidatePhysicalResources, "XRRenderPipelineInstance.InvalidatePhysicalResources"))
             return;
+
+        XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
+        if (viewport is not null
+            && RequestResourceGeneration(
+                Math.Max(1, viewport.Width),
+                Math.Max(1, viewport.Height),
+                Math.Max(1, viewport.InternalWidth),
+                Math.Max(1, viewport.InternalHeight),
+                "InvalidatePhysicalResources"))
+        {
+            return;
+        }
 
         LogDefaultRenderPipelineResourceDestruction($"InvalidatePhysicalResources (generation {ResourceGeneration} -> {ResourceGeneration + 1})");
         WaitForGpuBeforePhysicalResourceDestruction("InvalidatePhysicalResources");
@@ -567,9 +944,19 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     }
     public void InternalResolutionResized(int internalWidth, int internalHeight)
     {
-        // Only destroy physical GPU resources; retain descriptor metadata so
-        // cache-or-create commands detect the missing instances and recreate them
-        // on the very next frame instead of requiring a full registry rebuild.
+        XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
+        int displayWidth = Math.Max(1, viewport?.Width ?? internalWidth);
+        int displayHeight = Math.Max(1, viewport?.Height ?? internalHeight);
+        if (RequestResourceGeneration(
+            displayWidth,
+            displayHeight,
+            Math.Max(1, internalWidth),
+            Math.Max(1, internalHeight),
+            "InternalResolutionResized"))
+        {
+            return;
+        }
+
         InvalidatePhysicalResources();
     }
 
@@ -774,7 +1161,233 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             Debug.RenderingWarning("RenderBuffer name must be set before adding to the pipeline.");
             return;
         }
+
+        Resources.TryGetRenderBuffer(name, out XRRenderBuffer? existingRenderBuffer);
+        if (!RuntimeEngine.IsRenderThread && existingRenderBuffer is not null && !ReferenceEquals(existingRenderBuffer, renderBuffer))
+        {
+            RuntimeEngine.EnqueueRenderThreadTask(
+                () => SetRenderBuffer(renderBuffer, descriptor),
+                $"XRRenderPipelineInstance.SetRenderBuffer[{name}]",
+                RenderThreadJobKind.RenderPipelineResource);
+            return;
+        }
+
+        bool bindingChanged = !ReferenceEquals(existingRenderBuffer, renderBuffer);
         Resources.BindRenderBuffer(renderBuffer, descriptor);
+        if (bindingChanged)
+            NotifyRenderResourcesChanged();
+    }
+
+    private void ValidateActiveGenerationDescriptorParity()
+    {
+        RenderResourceGeneration? generation = ActiveGeneration;
+        if (generation is null || _lastDescriptorParityGeneration == ResourceGeneration)
+            return;
+
+        _lastDescriptorParityGeneration = ResourceGeneration;
+        RenderResourceRegistry registry = generation.Registry;
+
+        foreach (RenderPipelineResourceSpec spec in generation.Layout.OrderedSpecs)
+        {
+            switch (spec)
+            {
+                case TextureSpec textureSpec:
+                    ValidateTextureDescriptorParity(generation, registry, textureSpec);
+                    break;
+                case TextureViewSpec textureViewSpec:
+                    ValidateTextureDescriptorParity(generation, registry, textureViewSpec);
+                    break;
+                case FrameBufferSpec frameBufferSpec:
+                    ValidateFrameBufferDescriptorParity(generation, registry, frameBufferSpec);
+                    break;
+                case RenderBufferSpec renderBufferSpec:
+                    ValidateRenderBufferDescriptorParity(generation, registry, renderBufferSpec);
+                    break;
+                case BufferSpec bufferSpec:
+                    ValidateBufferDescriptorParity(generation, registry, bufferSpec);
+                    break;
+            }
+        }
+    }
+
+    private void ValidateTextureDescriptorParity(
+        RenderResourceGeneration generation,
+        RenderResourceRegistry registry,
+        TextureSpec spec)
+    {
+        if (!registry.TextureRecords.TryGetValue(spec.Name, out RenderTextureResource? record))
+        {
+            WarnMissingDeclaredResource(generation, spec);
+            return;
+        }
+
+        TextureResourceDescriptor expected = spec.ToDescriptor();
+        TextureResourceDescriptor actual = record.Descriptor;
+        if (expected.Lifetime != actual.Lifetime
+            || expected.SizePolicy != actual.SizePolicy
+            || !string.Equals(expected.FormatLabel, actual.FormatLabel, StringComparison.Ordinal)
+            || expected.StereoCompatible != actual.StereoCompatible
+            || expected.ArrayLayers != actual.ArrayLayers
+            || expected.SupportsAliasing != actual.SupportsAliasing
+            || expected.RequiresStorageUsage != actual.RequiresStorageUsage)
+        {
+            WarnDescriptorMismatch(generation, spec.Name, "texture", DescribeTextureDescriptor(expected), DescribeTextureDescriptor(actual));
+        }
+    }
+
+    private void ValidateTextureDescriptorParity(
+        RenderResourceGeneration generation,
+        RenderResourceRegistry registry,
+        TextureViewSpec spec)
+    {
+        if (!registry.TextureRecords.TryGetValue(spec.Name, out RenderTextureResource? record))
+        {
+            WarnMissingDeclaredResource(generation, spec);
+            return;
+        }
+
+        TextureResourceDescriptor expected = spec.ToDescriptor();
+        TextureResourceDescriptor actual = record.Descriptor;
+        if (expected.Lifetime != actual.Lifetime
+            || expected.SizePolicy != actual.SizePolicy
+            || !string.Equals(expected.FormatLabel, actual.FormatLabel, StringComparison.Ordinal)
+            || expected.StereoCompatible != actual.StereoCompatible
+            || expected.ArrayLayers != actual.ArrayLayers)
+        {
+            WarnDescriptorMismatch(generation, spec.Name, "texture view", DescribeTextureDescriptor(expected), DescribeTextureDescriptor(actual));
+        }
+    }
+
+    private void ValidateFrameBufferDescriptorParity(
+        RenderResourceGeneration generation,
+        RenderResourceRegistry registry,
+        FrameBufferSpec spec)
+    {
+        if (!registry.FrameBufferRecords.TryGetValue(spec.Name, out RenderFrameBufferResource? record))
+        {
+            WarnMissingDeclaredResource(generation, spec);
+            return;
+        }
+
+        FrameBufferResourceDescriptor expected = spec.ToDescriptor();
+        FrameBufferResourceDescriptor actual = record.Descriptor;
+        if (expected.Lifetime != actual.Lifetime
+            || expected.SizePolicy != actual.SizePolicy
+            || !AttachmentDescriptorsEqual(expected.Attachments, actual.Attachments))
+        {
+            WarnDescriptorMismatch(generation, spec.Name, "framebuffer", DescribeFrameBufferDescriptor(expected), DescribeFrameBufferDescriptor(actual));
+        }
+    }
+
+    private void ValidateRenderBufferDescriptorParity(
+        RenderResourceGeneration generation,
+        RenderResourceRegistry registry,
+        RenderBufferSpec spec)
+    {
+        if (!registry.RenderBufferRecords.TryGetValue(spec.Name, out RenderRenderBufferResource? record))
+        {
+            WarnMissingDeclaredResource(generation, spec);
+            return;
+        }
+
+        RenderBufferResourceDescriptor expected = spec.ToDescriptor();
+        RenderBufferResourceDescriptor actual = record.Descriptor;
+        if (expected.Lifetime != actual.Lifetime
+            || expected.SizePolicy != actual.SizePolicy
+            || expected.StorageFormat != actual.StorageFormat
+            || expected.MultisampleCount != actual.MultisampleCount
+            || expected.DefaultAttachment != actual.DefaultAttachment)
+        {
+            WarnDescriptorMismatch(generation, spec.Name, "renderbuffer", expected.ToString(), actual.ToString());
+        }
+    }
+
+    private void ValidateBufferDescriptorParity(
+        RenderResourceGeneration generation,
+        RenderResourceRegistry registry,
+        BufferSpec spec)
+    {
+        if (!registry.BufferRecords.TryGetValue(spec.Name, out RenderBufferResource? record))
+        {
+            WarnMissingDeclaredResource(generation, spec);
+            return;
+        }
+
+        BufferResourceDescriptor expected = spec.ToDescriptor();
+        BufferResourceDescriptor actual = record.Descriptor;
+        if (expected.Lifetime != actual.Lifetime
+            || expected.SizeInBytes != actual.SizeInBytes
+            || expected.Target != actual.Target
+            || expected.Usage != actual.Usage
+            || expected.SupportsAliasing != actual.SupportsAliasing
+            || expected.ElementStride != actual.ElementStride
+            || expected.ElementCount != actual.ElementCount
+            || expected.AccessPattern != actual.AccessPattern)
+        {
+            WarnDescriptorMismatch(generation, spec.Name, "buffer", expected.ToString(), actual.ToString());
+        }
+    }
+
+    private void WarnMissingDeclaredResource(RenderResourceGeneration generation, RenderPipelineResourceSpec spec)
+    {
+        if (!spec.Required)
+            return;
+
+        Debug.RenderingWarning(
+            "[RenderResources] Declared resource missing after frame execution. Pipeline={0} Generation={1} Resource={2} Kind={3}",
+            ProfilerKey,
+            generation.Key,
+            spec.Name,
+            spec.Kind);
+    }
+
+    private void WarnDescriptorMismatch(
+        RenderResourceGeneration generation,
+        string name,
+        string kind,
+        string? expected,
+        string? actual)
+        => Debug.RenderingWarning(
+            "[RenderResources] Descriptor parity mismatch. Pipeline={0} Generation={1} Resource={2} Kind={3} Expected={4} Actual={5}",
+            ProfilerKey,
+            generation.Key,
+            name,
+            kind,
+            expected ?? "<null>",
+            actual ?? "<null>");
+
+    private static string DescribeTextureDescriptor(TextureResourceDescriptor descriptor)
+        => $"lifetime={descriptor.Lifetime},size={descriptor.SizePolicy},format={descriptor.FormatLabel},stereo={descriptor.StereoCompatible},layers={descriptor.ArrayLayers},alias={descriptor.SupportsAliasing},storage={descriptor.RequiresStorageUsage}";
+
+    private static string DescribeFrameBufferDescriptor(FrameBufferResourceDescriptor descriptor)
+        => $"lifetime={descriptor.Lifetime},size={descriptor.SizePolicy},attachments={DescribeAttachments(descriptor.Attachments)}";
+
+    private static string DescribeAttachments(IReadOnlyList<FrameBufferAttachmentDescriptor> attachments)
+    {
+        if (attachments.Count == 0)
+            return "[]";
+
+        string[] parts = new string[attachments.Count];
+        for (int i = 0; i < attachments.Count; i++)
+        {
+            FrameBufferAttachmentDescriptor attachment = attachments[i];
+            parts[i] = $"{attachment.Attachment}:{attachment.ResourceName}:mip{attachment.MipLevel}:layer{attachment.LayerIndex}";
+        }
+        return "[" + string.Join(",", parts) + "]";
+    }
+
+    private static bool AttachmentDescriptorsEqual(
+        IReadOnlyList<FrameBufferAttachmentDescriptor> left,
+        IReadOnlyList<FrameBufferAttachmentDescriptor> right)
+    {
+        if (left.Count != right.Count)
+            return false;
+
+        for (int i = 0; i < left.Count; i++)
+            if (left[i] != right[i])
+                return false;
+
+        return true;
     }
 
     private void WarnIfScreenSpaceUiHasNoRenderCommand(IRuntimeScreenSpaceUserInterface? userInterface, XRViewport? viewport)

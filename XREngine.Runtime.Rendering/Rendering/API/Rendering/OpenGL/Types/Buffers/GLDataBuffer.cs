@@ -26,6 +26,34 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private readonly Dictionary<uint, uint> _ssboResourceIndexCache = [];
             public uint UploadedByteCount => _lastPushedLength;
+            public ulong BackendAllocatedByteSize => (ulong)Math.Max(_allocatedVRAMBytes, 0L);
+            public ulong BackendUploadedByteCount => _lastPushedLength;
+            public bool BackendHasPendingUpload => _hasPendingUpload;
+            public bool BackendIsReadyForGpuUse => IsGenerated && IsReadyForRendering;
+            public bool BackendIsPersistentlyMapped => IsMapped && AllowsUpdatesWhileMapped();
+            public XRBufferResolvedRoute BackendResolvedRoute
+                => XRBufferPolicyResolver.ResolveOpenGL(
+                    Data.DefaultMemoryPolicy,
+                    Data.StorageFlags,
+                    Data.RangeFlags,
+                    Renderer.UploadQueue.Enabled,
+                    Data.Length);
+
+            public bool TryGetGpuAddress(out ulong address, out string downgradeReason)
+            {
+                address = 0ul;
+                downgradeReason = "OpenGL buffers use binding points/bindless paths here; no fake GPU device address is exposed.";
+                Data.ReportDeviceAddressDowngrade(downgradeReason);
+                return false;
+            }
+
+            private void ReportBackendState()
+                => Data.ReportBackendUploadState(
+                    BackendAllocatedByteSize,
+                    BackendUploadedByteCount,
+                    BackendHasPendingUpload,
+                    BackendResolvedRoute,
+                    BackendIsReadyForGpuUse);
 
             protected override void UnlinkData()
             {
@@ -458,6 +486,7 @@ namespace XREngine.Rendering.OpenGL
                         }
 
                         _lastPushedLength = Data.Length;
+                        ReportBackendState();
 
                         if (Data.DisposeOnPush)
                             Data.Dispose();
@@ -473,6 +502,7 @@ namespace XREngine.Rendering.OpenGL
 
                     AllocateImmutable();
                     _lastPushedLength = Data.Length;
+                    ReportBackendState();
 
                     if (remapAfterUpload)
                         MapBufferData();
@@ -498,6 +528,7 @@ namespace XREngine.Rendering.OpenGL
                 Api.NamedBufferData(BindingId, Data.Length, addr, ToGLEnum(Data.Usage));
                 RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.BufferUploadBytes, Data.Length);
                 _lastPushedLength = Data.Length;
+                ReportBackendState();
 
                 // Track VRAM allocation
                 _allocatedVRAMBytes = Data.Length;
@@ -513,6 +544,7 @@ namespace XREngine.Rendering.OpenGL
             internal void SetLastPushedLength(uint length)
             {
                 _lastPushedLength = length;
+                ReportBackendState();
             }
 
             private readonly object _queuedUploadSync = new();
@@ -531,6 +563,7 @@ namespace XREngine.Rendering.OpenGL
 
                     _queuedCopyInFlight = true;
                     _hasPendingUpload = true;
+                    ReportBackendState();
                     return true;
                 }
             }
@@ -539,6 +572,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 lock (_queuedUploadSync)
                     _queuedCopyInFlight = false;
+                    ReportBackendState();
             }
 
             private void CancelQueuedUpload()
@@ -562,6 +596,8 @@ namespace XREngine.Rendering.OpenGL
                     _queuedUploadDirty = false;
                 }
 
+                ReportBackendState();
+
                 if (Data.DisposeOnPush && !uploadAgain)
                     Data.Dispose();
 
@@ -577,6 +613,7 @@ namespace XREngine.Rendering.OpenGL
                     _queuedCopyInFlight = false;
                     _queuedUploadDirty = false;
                 }
+                ReportBackendState();
             }
 
             /// <summary>
@@ -590,6 +627,7 @@ namespace XREngine.Rendering.OpenGL
                 }
                 _allocatedVRAMBytes = bytes;
                 RuntimeEngine.Rendering.Stats.Vram.AddBufferAllocation(_allocatedVRAMBytes);
+                ReportBackendState();
             }
 
             /// <summary>
@@ -898,6 +936,7 @@ namespace XREngine.Rendering.OpenGL
                         TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "NamedBufferSubData");
                     Api.NamedBufferSubData(BindingId, offset, length, addr);
                     RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.BufferUploadBytes, length);
+                    ReportBackendState();
                     if (_pushSubDataTraceEnabled)
                         TracePushSubData(traceLabel, offset, length, dataLength, lastPushed, _hasPendingUpload, _immutableStorageSet, true, "NamedBufferSubData-done");
                 }

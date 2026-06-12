@@ -45,7 +45,7 @@ namespace XREngine.Animation
         private TValue _currentVelocity;
         private TValue _currentAcceleration;
 
-        private TValue[]? _baked;
+        private BakedValueStore<TValue>? _baked;
 
         /// <summary>
         /// If true, speed calculated relative to the current tangent rather than multiplied directly with the current velocity (change in position).
@@ -152,12 +152,12 @@ namespace XREngine.Animation
 
             if (LerpConstrainedFPS)
             {
-                if (frame == _baked.Length - 1)
+                if (frame == _baked.Count - 1)
                 {
                     if (Looped && frame != 0)
                     {
-                        TValue t1 = _baked[frame];
-                        TValue t2 = _baked[0];
+                        TValue t1 = _baked.GetValue(frame);
+                        TValue t2 = _baked.GetValue(0);
 
                         //TODO: interpolate values by creating tangents dynamically?
 
@@ -166,12 +166,12 @@ namespace XREngine.Animation
 
                         return LerpValues(t1, t2, lerpTime);
                     }
-                    return _baked[frame];
+                    return _baked.GetValue(frame);
                 }
                 else
                 {
-                    TValue t1 = _baked[frame];
-                    TValue t2 = _baked[nextFrame];
+                    TValue t1 = _baked.GetValue(frame);
+                    TValue t2 = _baked.GetValue(nextFrame);
 
                     //TODO: interpolate values by creating tangents dynamically?
 
@@ -181,8 +181,8 @@ namespace XREngine.Animation
                     return LerpValues(t1, t2, lerpTime);
                 }
             }
-            else if (_baked.IndexInRangeArrayT(frame))
-                return _baked[frame];
+            else if ((uint)frame < (uint)_baked.Count)
+                return _baked.GetValue(frame);
             else
                 return DefaultValue;
         }
@@ -196,10 +196,10 @@ namespace XREngine.Animation
             if (_baked is null)
                 throw new InvalidOperationException("Cannot get baked value when not baked.");
 
-            if (!_baked.IndexInRangeArrayT(frame))
+            if ((uint)frame >= (uint)_baked.Count)
                 return new TValue();
 
-            return _baked[frame.Clamp(0, _baked.Length - 1)];
+            return _baked.GetValue(frame.Clamp(0, _baked.Count - 1));
         }
         /// <summary>
         /// Returns a linearly interpolated value between two values.
@@ -223,8 +223,8 @@ namespace XREngine.Animation
             => _getValue = ChooseValueGetter();
 
         public TValue GetValueBaked(int frameIndex)
-            => _baked is null || _baked.Length == 0 ? new TValue() :
-            _baked[frameIndex.Clamp(0, _baked.Length - 1)];
+            => _baked is null || _baked.Count == 0 ? new TValue() :
+            _baked.GetValue(frameIndex.Clamp(0, _baked.Count - 1));
 
         public TValue GetValueKeyframed(float second)
             => Interpolate(second, EVectorValueType.Position);
@@ -366,15 +366,19 @@ namespace XREngine.Animation
         }
         public override void Bake(int framesPerSecond)
         {
-            _bakedFPS = Math.Max(0, framesPerSecond);
-            _bakedFrameCount = _bakedFPS <= 0 ? 0 : (int)Math.Ceiling(LengthInSeconds * _bakedFPS);
-            _baked = new TValue[BakedFrameCount];
+            SetBakeCadence(framesPerSecond);
             if (_bakedFPS <= 0)
+            {
+                _baked = EncodeUnmanagedBakedValues(Array.Empty<TValue>());
                 return;
+            }
 
+            TValue[] baked = new TValue[BakedFrameCount];
             float invFPS = 1.0f / _bakedFPS;
             for (int i = 0; i < BakedFrameCount; ++i)
-                _baked[i] = GetValueKeyframed(i * invFPS);
+                baked[i] = GetValueKeyframed(i * invFPS);
+
+            _baked = EncodeUnmanagedBakedValues(baked);
         }
         /// <summary>
         /// 

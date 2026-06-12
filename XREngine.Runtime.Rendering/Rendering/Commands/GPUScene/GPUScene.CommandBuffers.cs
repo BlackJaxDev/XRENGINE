@@ -92,7 +92,7 @@ namespace XREngine.Rendering.Commands
                             _allLoadedCommandsBuffer.TryGetAddress(out var dst))
                         {
                             Memory.Move(dst, src, byteCount);
-                            _allLoadedCommandsBuffer.PushSubData(0, byteCount);
+                            _allLoadedCommandsBuffer.CommitDirtyBytes(0u, byteCount);
                         }
                         else
                         {
@@ -123,7 +123,7 @@ namespace XREngine.Rendering.Commands
                             _allLoadedTransparencyMetadataBuffer.TryGetAddress(out var dstMeta))
                         {
                             Memory.Move(dstMeta, srcMeta, byteCount);
-                            _allLoadedTransparencyMetadataBuffer.PushSubData(0, byteCount);
+                            _allLoadedTransparencyMetadataBuffer.CommitDirtyBytes(0u, byteCount);
                         }
                         else
                         {
@@ -166,7 +166,7 @@ namespace XREngine.Rendering.Commands
                 destination.TryGetAddress(out var dstBase))
             {
                 Memory.Move(dstBase + (int)byteOffset, srcBase + (int)byteOffset, byteCount);
-                destination.PushSubData((int)byteOffset, byteCount);
+                destination.CommitDirtyBytes(byteOffset, byteCount);
             }
         }
 
@@ -206,7 +206,7 @@ namespace XREngine.Rendering.Commands
             {
                 uint byteOffset = _materialStateDirtyRange.Min * _materialStateBuffer.ElementSize;
                 uint byteCount = (_materialStateDirtyRange.MaxExclusive - _materialStateDirtyRange.Min) * _materialStateBuffer.ElementSize;
-                _materialStateBuffer.PushSubData((int)byteOffset, byteCount);
+                _materialStateBuffer.CommitDirtyBytes(byteOffset, byteCount);
                 _materialStateDirtyRange.Clear();
             }
         }
@@ -383,7 +383,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             buffer.Resize(requiredSize);
-            buffer.PushSubData();
+            buffer.CommitDirtyBytes(0u, buffer.Length);
         }
 
         private void SyncLodTransitionBufferFromGpu()

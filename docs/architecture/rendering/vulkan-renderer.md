@@ -619,6 +619,18 @@ Compute auto-uniform and unresolved fallback uniform buffers are cached per prog
 
 > **Note:** The legacy per-object allocator is allocation-heavy and exists primarily as a fallback/debug path. The VMA backend is the intended default path; choose `Managed` when debugging the C# allocator or native wrapper deployment.
 
+Declared render-pipeline resources are synchronized through a staged planner
+swap. `VulkanRenderer.State` builds a pending `VulkanResourcePlanner` from the
+committed logical resource registry, validates render-pass metadata references
+against declared textures, buffers, FBOs, and FBO attachment slots, then asks a
+pending `VulkanResourceAllocator` to rebuild and allocate the replacement
+physical image and buffer plan. The active planner and allocator are not
+replaced until the pending plan succeeds; if allocation or validation fails, the
+current physical plan remains live and the failure is logged. After a successful
+swap, old physical resources are destroyed through the renderer's frame-slot
+retirement queues rather than being torn down before the replacement plan is
+ready.
+
 ---
 
 ## ImGui Integration

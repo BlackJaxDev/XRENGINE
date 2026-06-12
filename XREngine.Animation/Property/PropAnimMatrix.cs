@@ -8,7 +8,7 @@ namespace XREngine.Animation
     {
         private DelGetValue<Matrix4x4> _getValue;
 
-        private Matrix4x4[]? _baked = null;
+        private BakedValueStore<Matrix4x4>? _baked = null;
         /// <summary>
         /// The default value to return when no keyframes are set.
         /// </summary>
@@ -43,22 +43,28 @@ namespace XREngine.Animation
         public Matrix4x4 GetValueBaked(float second)
             => GetValueBaked(GetBakedFrameIndex(second));
         public Matrix4x4 GetValueBaked(int frameIndex)
-            => _baked?.TryGet(frameIndex) ?? Matrix4x4.Identity;
+            => _baked is not null && (uint)frameIndex < (uint)_baked.Count
+                ? _baked.GetValue(frameIndex)
+                : Matrix4x4.Identity;
 
         public Matrix4x4 GetValueKeyframed(float second)
             => Keyframes.Count == 0 ? DefaultValue : Keyframes.First?.Interpolate(second) ?? DefaultValue;
         
         public override void Bake(int framesPerSecond)
         {
-            _bakedFPS = Math.Max(0, framesPerSecond);
-            _bakedFrameCount = _bakedFPS <= 0 ? 0 : (int)Math.Ceiling(LengthInSeconds * _bakedFPS);
-            _baked = new Matrix4x4[BakedFrameCount];
+            SetBakeCadence(framesPerSecond);
             if (_bakedFPS <= 0)
+            {
+                _baked = EncodeUnmanagedBakedValues(Array.Empty<Matrix4x4>());
                 return;
+            }
 
+            Matrix4x4[] baked = new Matrix4x4[BakedFrameCount];
             float invFPS = 1.0f / _bakedFPS;
             for (int i = 0; i < BakedFrameCount; ++i)
-                _baked[i] = GetValueKeyframed(i * invFPS);
+                baked[i] = GetValueKeyframed(i * invFPS);
+
+            _baked = EncodeUnmanagedBakedValues(baked);
         }
         protected override void OnProgressed(float delta)
         {

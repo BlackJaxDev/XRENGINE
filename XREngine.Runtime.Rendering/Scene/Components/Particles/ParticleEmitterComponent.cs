@@ -83,12 +83,12 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
     private XRRenderProgram? _updateProgram;
 
     // GPU Buffers
-    private XRDataBuffer? _particlesBuffer;
-    private XRDataBuffer? _deadListBuffer;
-    private XRDataBuffer? _aliveListBuffer;
-    private XRDataBuffer? _countersBuffer;
-    private XRDataBuffer? _emitterParamsBuffer;
-    private XRDataBuffer? _indirectDrawBuffer;
+    private XRDataBuffer<GPUParticle>? _particlesBuffer;
+    private XRDataBuffer<uint>? _deadListBuffer;
+    private XRDataBuffer<uint>? _aliveListBuffer;
+    private XRDataBuffer<ParticleCounters>? _countersBuffer;
+    private XRDataBuffer<GPUEmitterParams>? _emitterParamsBuffer;
+    private XRDataBuffer<uint>? _indirectDrawBuffer;
 
     // CPU-side data for initialization
     private GPUParticle[]? _particleData;
@@ -447,69 +447,45 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
 
         // Create GPU buffers
         // Particles buffer: GPUParticle struct (24 floats = 96 bytes per particle)
-        _particlesBuffer = new XRDataBuffer(
+        _particlesBuffer = new XRDataBuffer<GPUParticle>(
             "ParticlesBuffer",
             EBufferTarget.ShaderStorageBuffer,
-            maxParticles,
-            EComponentType.Float,
-            GPUParticle.SizeInFloats,
-            false,
-            false);
+            maxParticles);
         _particlesBuffer.SetBlockIndex(0);
 
         // Dead list buffer: uint indices
-        _deadListBuffer = new XRDataBuffer(
+        _deadListBuffer = new XRDataBuffer<uint>(
             "DeadListBuffer",
             EBufferTarget.ShaderStorageBuffer,
-            maxParticles,
-            EComponentType.UInt,
-            1,
-            false,
-            false);
+            maxParticles);
         _deadListBuffer.SetBlockIndex(1);
 
         // Alive list buffer: uint indices
-        _aliveListBuffer = new XRDataBuffer(
+        _aliveListBuffer = new XRDataBuffer<uint>(
             "AliveListBuffer",
             EBufferTarget.ShaderStorageBuffer,
-            maxParticles,
-            EComponentType.UInt,
-            1,
-            false,
-            false);
+            maxParticles);
         _aliveListBuffer.SetBlockIndex(2);
 
         // Counters buffer: 4 uints
-        _countersBuffer = new XRDataBuffer(
+        _countersBuffer = new XRDataBuffer<ParticleCounters>(
             "CountersBuffer",
             EBufferTarget.ShaderStorageBuffer,
-            1,
-            EComponentType.UInt,
-            4,
-            false,
-            false);
+            1u);
         _countersBuffer.SetBlockIndex(3);
 
         // Emitter params uniform buffer: GPUEmitterParams struct
-        _emitterParamsBuffer = new XRDataBuffer(
+        _emitterParamsBuffer = new XRDataBuffer<GPUEmitterParams>(
             "EmitterParamsBlock",
             EBufferTarget.UniformBuffer,
-            1,
-            EComponentType.Float,
-            GPUEmitterParams.SizeInBytes / sizeof(float),
-            false,
-            false);
+            1u);
         _emitterParamsBuffer.SetBlockIndex(4);
 
         // Indirect draw buffer for instanced rendering
-        _indirectDrawBuffer = new XRDataBuffer(
+        _indirectDrawBuffer = new XRDataBuffer<uint>(
             "IndirectDrawBuffer",
             EBufferTarget.DrawIndirectBuffer,
-            1,
-            EComponentType.UInt,
-            4,
-            false,
-            false);
+            4u);
 
         // Upload initial data
         UploadInitialData();

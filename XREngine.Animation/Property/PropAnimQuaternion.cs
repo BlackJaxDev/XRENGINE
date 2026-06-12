@@ -11,7 +11,7 @@ namespace XREngine.Animation
         public event Action<PropAnimQuaternion>? LerpConstrainedFPSChanged;
 
         private DelGetValue<Quaternion> _getValue;
-        private Quaternion[]? _baked = null;
+        private BakedValueStore<Quaternion>? _baked = null;
 
         private Quaternion _defaultValue = Quaternion.Identity;
         /// <summary>
@@ -88,12 +88,12 @@ namespace XREngine.Animation
 
             if (LerpConstrainedFPS)
             {
-                if (frame == _baked.Length - 1)
+                if (frame == _baked.Count - 1)
                 {
                     if (Looped && frame != 0)
                     {
-                        Quaternion t1 = _baked[frame];
-                        Quaternion t2 = _baked[0];
+                        Quaternion t1 = _baked.GetValue(frame);
+                        Quaternion t2 = _baked.GetValue(0);
 
                         //TODO: interpolate values by creating tangents dynamically?
 
@@ -102,12 +102,12 @@ namespace XREngine.Animation
 
                         return Quaternion.Slerp(t1, t2, lerpTime);
                     }
-                    return _baked[frame];
+                    return _baked.GetValue(frame);
                 }
                 else
                 {
-                    Quaternion t1 = _baked[frame];
-                    Quaternion t2 = _baked[nextFrame];
+                    Quaternion t1 = _baked.GetValue(frame);
+                    Quaternion t2 = _baked.GetValue(nextFrame);
 
                     //TODO: interpolate values by creating tangents dynamically?
 
@@ -117,8 +117,8 @@ namespace XREngine.Animation
                     return Quaternion.Slerp(t1, t2, lerpTime);
                 }
             }
-            else if (_baked.IndexInRangeArrayT(frame))
-                return _baked[frame];
+            else if ((uint)frame < (uint)_baked.Count)
+                return _baked.GetValue(frame);
             else
                 return DefaultValue;
         }
@@ -127,10 +127,10 @@ namespace XREngine.Animation
             if (_baked is null)
                 throw new InvalidOperationException("Cannot get baked value when not baked.");
 
-            if (!_baked.IndexInRangeArrayT(frame))
+            if ((uint)frame >= (uint)_baked.Count)
                 return Quaternion.Identity;
 
-            return _baked[frame.Clamp(0, _baked.Length - 1)];
+            return _baked.GetValue(frame.Clamp(0, _baked.Count - 1));
         }
         public Quaternion GetValueKeyframed(float second)
         {
@@ -169,15 +169,19 @@ namespace XREngine.Animation
         }
         public override void Bake(int framesPerSecond)
         {
-            _bakedFPS = Math.Max(0, framesPerSecond);
-            _bakedFrameCount = _bakedFPS <= 0 ? 0 : (int)Math.Ceiling(LengthInSeconds * _bakedFPS);
-            _baked = new Quaternion[BakedFrameCount];
+            SetBakeCadence(framesPerSecond);
             if (_bakedFPS <= 0)
+            {
+                _baked = EncodeUnmanagedBakedValues(Array.Empty<Quaternion>());
                 return;
+            }
 
+            Quaternion[] baked = new Quaternion[BakedFrameCount];
             float invFPS = 1.0f / _bakedFPS;
             for (int i = 0; i < BakedFrameCount; ++i)
-                _baked[i] = GetValueKeyframed(i * invFPS);
+                baked[i] = GetValueKeyframed(i * invFPS);
+
+            _baked = EncodeUnmanagedBakedValues(baked);
         }
 
         public event Action<PropAnimQuaternion>? CurrentValueChanged;
