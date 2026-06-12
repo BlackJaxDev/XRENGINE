@@ -2,13 +2,16 @@
   href: index.md
 - name: Guides
   href: guides.md
-- name: Dependencies
-  href: ../DEPENDENCIES.md
-- name: API Guides
-  href: ../api/engine.md
+- name: User Guide
+  href: ../user-guide/README.md
+- name: Developer Guides
+  href: ../developer-guides/README.md
 - name: Architecture
   href: ../architecture/README.md
-- name: Features
-  href: ../features/gi/light-volumes.md
+- name: Work Docs
+  href: ../work/README.md
+- name: Dependencies
+  href: ../DEPENDENCIES.md
 - name: API Reference
-  href: api/index.md
+  href: apiref/index.md
+

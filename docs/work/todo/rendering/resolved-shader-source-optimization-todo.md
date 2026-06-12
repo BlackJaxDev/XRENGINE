@@ -162,7 +162,7 @@ post-process, UI, shadow, and future shader families.
     - Update `docs/architecture/rendering/uber-shader-varianting.md` to clarify
       that uber varianting specializes material intent while generic pruning
       runs later.
-    - Update `docs/architecture/rendering/world-shader-prewarm-graph.md` with
+    - Update `docs/work/design/rendering/world-shader-prewarm-graph-design.md` with
       optimized-source identity in prewarm descriptors.
     - Document shader source pipeline ownership: resolver facade, canonical
       resolver, generic optimizer, backend transforms, runtime compilers,

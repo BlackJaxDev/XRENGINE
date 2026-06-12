@@ -177,7 +177,7 @@ Add a `ESurfelDebugColorMode` (mirrored as a uniform on the disc shader) that th
 
 ## Phase 9: Docs and final integration
 
-- [ ] Update `docs/features/gi/surfel-gi.md` with the repaired input contracts and known limitations.
+- [ ] Update `docs/developer-guides/gi/surfel-gi.md` with the repaired input contracts and known limitations.
 - [ ] Update `docs/architecture/rendering/default-render-pipeline-notes.md` if the prepass identity convention changes.
 - [ ] Reconcile the C# `SurfelGPU.Meta` field comment (currently `Vector4 Meta; // x=frameIndex, y=reserved, z=reserved, w=reserved`) with the GLSL `uvec4 meta` layout (`x=lastUsedFrame, y=active, z=transformId`) so the storage convention does not drift.
 - [ ] Link this todo from any relevant GI planning index if one exists.

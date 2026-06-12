@@ -6,7 +6,7 @@ Scope: engine-native cooked `.asset` cache files for third-party model imports, 
 
 Related docs:
 
-- [Model import feature guide](../../../features/model-import.md)
+- [Model import feature guide](../../../developer-guides/assets/model-import.md)
 - [Texture management runtime design](../texturing/texture-management-runtime-design.md)
 - [Texture streaming cooked cache TODO](../../todo/texturing/texture-streaming-cooked-cache-todo.md)
 - [GPU meshlet zero-readback rendering design](../rendering/gpu-meshlet-zero-readback-rendering-design.md)
@@ -185,7 +185,7 @@ Windows path length. The fully resolved cache path is bounded by:
 - The source-relative path mirrored under the variant directory.
 - The cache file name `<source-name>.asset`.
 
-The implementation enables Windows long-path support (`\\?\` prefix and the `LongPathsEnabled` registry/manifest opt-in) for all cache file IO. If long paths are unavailable on a target machine, the cache path resolver falls back to collapsing `<relative-source-path>` into a single hashed segment to stay under MAX_PATH. The fallback strategy is logged once at AssetManager startup and the choice is documented in `docs/features/model-import.md`.
+The implementation enables Windows long-path support (`\\?\` prefix and the `LongPathsEnabled` registry/manifest opt-in) for all cache file IO. If long paths are unavailable on a target machine, the cache path resolver falls back to collapsing `<relative-source-path>` into a single hashed segment to stay under MAX_PATH. The fallback strategy is logged once at AssetManager startup and the choice is documented in `docs/developer-guides/assets/model-import.md`.
 
 ## 8. Cooked Asset Binary Shape
 

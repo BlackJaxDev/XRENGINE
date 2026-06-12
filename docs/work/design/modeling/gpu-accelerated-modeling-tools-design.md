@@ -12,7 +12,7 @@ Related docs:
 - [GPU meshlet zero-readback rendering TODO](../../todo/rendering/gpu/gpu-meshlet-zero-readback-rendering-todo.md)
 - [Mesh submission strategies](../../../architecture/rendering/mesh-submission-strategies.md)
 - [Model import binary cache design](../assets/model-import-binary-cache-design.md)
-- [MCP server](../../../features/mcp-server.md)
+- [MCP server](../../../developer-guides/ai/mcp-server.md)
 
 External references:
 

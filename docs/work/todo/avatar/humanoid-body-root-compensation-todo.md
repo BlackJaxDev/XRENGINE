@@ -274,7 +274,7 @@ dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -- --unit-testing
 
 - [ ] Record before/after Unity pose-audit comparison numbers in this document
   or a linked validation note.
-- [ ] Update `docs/api/animation.md` if public humanoid/root-motion behavior or
+- [ ] Update `docs/user-guide/animation.md` if public humanoid/root-motion behavior or
   editor controls change.
 - [ ] Update any unit-testing world settings/schema if new toggles are added.
 - [ ] Merge branch `humanoid-body-root-compensation` back into `main` after

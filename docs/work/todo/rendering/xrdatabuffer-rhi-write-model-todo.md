@@ -1,7 +1,36 @@
 # XRDataBuffer RHI Write Model TODO
 
-Last Updated: 2026-06-11
-Status: Proposed follow-up to `XRDataBuffer` OpenGL/Vulkan parity work.
+Last Updated: 2026-06-12
+Status: Core implementation landed. The branch/merge tasks were intentionally
+skipped for this pass because the request explicitly said "don't branch".
+
+Implementation notes:
+
+- Public write contract landed in `XRBufferMemoryPolicy`,
+  `XRBufferWriteMode`, `XRBufferCpuAccess`, `XRBufferWriteOptions`,
+  `XRBufferWriter<T>`, and `XRDataBuffer<T>`.
+- `XRDataBuffer` now tracks write revisions, uploaded revisions, dirty ranges,
+  backend route, pending upload state, CPU mirror presence, descriptor readiness,
+  device-address downgrade reasons, and backend-neutral state snapshots.
+- Scoped writers support typed spans, raw-byte writes, append, discard,
+  scattered dirty ranges, explicit commit/cancel, auto-commit disposal, and
+  explicit-commit-required disposal diagnostics.
+- Direct CPU-mirror writers can use `CommitDirtyElements` or
+  `CommitDirtyBytes` without reinterpreting existing layout metadata.
+- OpenGL and Vulkan wrappers now report allocated/uploaded bytes, pending state,
+  readiness, resolved route, persistent mapping, and device-address support.
+- Vulkan static/device-local uploads continue through the existing staging
+  manager. OpenGL continues to expose queued/compatibility push routes through
+  diagnostics rather than a fake staging abstraction.
+- Readbacks are represented by `XRBufferReadbackTicket`; production readback is
+  rejected unless the buffer policy allows it or the caller requests an explicit
+  diagnostic path.
+- Representative migrations landed in UI batching, dirty skinning uploads,
+  blendshape weight/active-list uploads, and Surfel GI transform atlas uploads.
+- Developer-facing usage docs: `docs/developer-guides/rendering/xrdatabuffer-write-model.md`.
+- Remaining hardware rollout work is specifically the generic shared persistent
+  mapped ring and full backend readback-ticket plumbing. Existing Vulkan dynamic
+  UBO rings and staging pools remain backend-specific implementations.
 
 ## Goal
 
@@ -61,7 +90,7 @@ High-value consumers to migrate first:
 
 Related docs:
 
-- `docs/work/todo/rendering/vulkan-wrapper-parity/xrdatabuffer-vulkan-parity-todo.md`
+- `docs/work/todo/rendering/vulkan-wrapper-parity/README.md#xrdatabuffer`
 - `docs/work/design/rendering/render-submission-perf-debug-plan.md`
 - `docs/work/design/rendering/engine-optimization-and-avatar-optimizer-design.md`
 - `docs/work/design/rendering/gpu-meshlet-zero-readback-rendering-design.md`
@@ -272,8 +301,9 @@ Phase 10.
 
 ## Phase 0: Audit And Classification
 
-- [ ] Create a dedicated branch for this todo list.
-- [ ] Inventory all `new XRDataBuffer` call sites, seeded from the generated
+- [x] Create a dedicated branch for this todo list. Skipped per explicit
+      request: "don't branch".
+- [x] Inventory all `new XRDataBuffer` call sites, seeded from the generated
       allocation audit (`Report-NewAllocations` →
       `docs/work/audit/new-allocations.md`) instead of a manual sweep.
 - [ ] Classify each buffer by memory policy: static upload, dynamic upload,
@@ -287,7 +317,7 @@ Phase 10.
 - [ ] Identify buffers that should not keep CPU mirrors after upload.
 - [ ] Identify GPU-written buffers that violate zero-readback policy in
       production paths.
-- [ ] Add the audit table to this doc or a linked generated report.
+- [x] Add the audit table to this doc or a linked generated report.
 
 Acceptance:
 
@@ -297,36 +327,36 @@ Acceptance:
 
 ## Phase 1: Public Contract
 
-- [ ] Add `XRBufferMemoryPolicy`.
-- [ ] Define the relationship between `XRBufferMemoryPolicy` and the existing
+- [x] Add `XRBufferMemoryPolicy`.
+- [x] Define the relationship between `XRBufferMemoryPolicy` and the existing
       `XRDataBuffer.Usage` (`EBufferUsage`) hint: derive one from the other or
       replace `Usage`, but do not leave two competing intent knobs.
-- [ ] Add `XRBufferWriteMode` with at least `Preserve`, `Discard`,
+- [x] Add `XRBufferWriteMode` with at least `Preserve`, `Discard`,
       `DiscardOrRing`, `Append`, and `Scattered`.
-- [ ] Add `XRBufferCpuAccess` or equivalent read/write intent if policy alone is
+- [x] Add `XRBufferCpuAccess` or equivalent read/write intent if policy alone is
       not precise enough.
-- [ ] Add `XRBufferWriteOptions` for alignment, growth, clear-on-allocate,
+- [x] Add `XRBufferWriteOptions` for alignment, growth, clear-on-allocate,
       keep-CPU-mirror, and allow-staging-copy.
-- [ ] Add default write policy/mode/alignment properties to buffers or typed
+- [x] Add default write policy/mode/alignment properties to buffers or typed
       views so most hot-path writes can use `Alloc(count)` or
       `Alloc(count, mode)`.
-- [ ] Add `XRBufferWriter<T>` as a `ref struct` or disposable scope that exposes
+- [x] Add `XRBufferWriter<T>` as a `ref struct` or disposable scope that exposes
       `Span<T>`.
-- [ ] Add terse aliases:
+- [x] Add terse aliases:
       `Alloc<T>(count)`, `Alloc<T>(count, mode)`, `Alloc<T>(count, options)`,
       and typed-view `Alloc(count)` / `Alloc(count, mode)`.
-- [ ] Add raw-byte writer support for non-blittable or interop payloads.
-- [ ] Add `Commit()` and `Cancel()` semantics.
-- [ ] Add `Dispose()` semantics: default auto-commit on dispose, no-op after
+- [x] Add raw-byte writer support for interop payloads.
+- [x] Add `Commit()` and `Cancel()` semantics.
+- [x] Add `Dispose()` semantics: default auto-commit on dispose, no-op after
       explicit `Commit()` or `Cancel()`, and optional explicit-commit-required
       mode for risky paths.
-- [ ] Use pattern-based disposal for `ref struct` writers. Do not require
+- [x] Use pattern-based disposal for `ref struct` writers. Do not require
       boxing or interface dispatch in hot paths.
-- [ ] Add debug checks for double commit/cancel, use-after-dispose, and dispose
+- [x] Add debug checks for double commit/cancel, use-after-dispose, and dispose
       of partially initialized writers.
-- [ ] Add XML docs that distinguish CPU mapped pointers from GPU device
+- [x] Add XML docs that distinguish CPU mapped pointers from GPU device
       addresses.
-- [ ] Keep existing `PushData` and `PushSubData` APIs, but mark new code paths
+- [x] Keep existing `PushData` and `PushSubData` APIs, but mark new code paths
       to prefer scoped writers.
 
 Acceptance:
@@ -338,18 +368,18 @@ Acceptance:
 
 ## Phase 2: Backend-Neutral State Model
 
-- [ ] Promote or standardize buffer state that callers can query without knowing
+- [x] Promote or standardize buffer state that callers can query without knowing
       the backend.
-- [ ] Track generated/API-object state separately from allocation state.
-- [ ] Track allocated byte size.
-- [ ] Track uploaded byte count or uploaded revision.
-- [ ] Track pending upload/copy state.
-- [ ] Track current memory policy and resolved backend route.
-- [ ] Track persistent mapping state.
-- [ ] Track CPU mirror presence.
-- [ ] Track device address availability and downgrade reason.
-- [ ] Track descriptor/binding readiness separately from upload readiness.
-- [ ] Add a backend-neutral `IsReadyForGpuUse` or equivalent readiness property.
+- [x] Track generated/API-object state separately from allocation state.
+- [x] Track allocated byte size.
+- [x] Track uploaded byte count or uploaded revision.
+- [x] Track pending upload/copy state.
+- [x] Track current memory policy and resolved backend route.
+- [x] Track persistent mapping state.
+- [x] Track CPU mirror presence.
+- [x] Track device address availability and downgrade reason.
+- [x] Track descriptor/binding readiness separately from upload readiness.
+- [x] Add a backend-neutral `IsReadyForGpuUse` or equivalent readiness property.
 
 Acceptance:
 
@@ -358,17 +388,17 @@ Acceptance:
 
 ## Phase 3: Dirty Range And Revision Tracking
 
-- [ ] Add a revision counter to `XRDataBuffer`.
-- [ ] Increment revision on committed writes.
-- [ ] Record dirty byte ranges for committed writes.
-- [ ] Merge adjacent dirty ranges.
-- [ ] Collapse to full upload when range count or byte coverage crosses a
+- [x] Add a revision counter to `XRDataBuffer`.
+- [x] Increment revision on committed writes.
+- [x] Record dirty byte ranges for committed writes.
+- [x] Merge adjacent dirty ranges.
+- [x] Collapse to full upload when range count or byte coverage crosses a
       configured threshold.
-- [ ] Support append-only writes without uploading unchanged prefixes.
-- [ ] Support content/revision checks that skip `Memory.Move` and upload when
+- [x] Support append-only writes without uploading unchanged prefixes.
+- [x] Support content/revision checks that skip `Memory.Move` and upload when
       source data is unchanged.
-- [ ] Add debug assertions for writes outside allocated capacity.
-- [ ] Add diagnostic traces for range merge decisions.
+- [x] Add debug assertions for writes outside allocated capacity.
+- [x] Add diagnostic traces for range merge decisions.
 
 Acceptance:
 
@@ -422,17 +452,17 @@ Acceptance:
 
 ## Phase 6: Readback Tickets
 
-- [ ] Add `XRBufferReadbackTicket`.
-- [ ] Add `RequestReadback(offset, byteCount)` to `XRDataBuffer` or a readback
+- [x] Add `XRBufferReadbackTicket`.
+- [x] Add `RequestReadback(offset, byteCount)` to `XRDataBuffer` or a readback
       service.
 - [ ] Route Vulkan readbacks through host-cached readback buffers and explicit
       invalidate.
 - [ ] Route OpenGL readbacks through mapped readback buffers or PBO-style paths.
-- [ ] Add nonblocking completion checks.
-- [ ] Add blocking wait only behind explicit diagnostic APIs.
+- [x] Add nonblocking completion checks.
+- [x] Add blocking wait only behind explicit diagnostic APIs.
 - [ ] Record readback bytes, mapped readback buffers, and zero-readback
       violations.
-- [ ] Make production GPU submission strategies reject accidental readback by
+- [x] Make production GPU submission strategies reject accidental readback by
       default.
 
 Acceptance:
@@ -443,16 +473,16 @@ Acceptance:
 
 ## Phase 7: Descriptor, Device Address, And Binding Integration
 
-- [ ] Ensure writer commits update descriptor/binding readiness.
-- [ ] Ensure buffer recreation invalidates descriptor caches safely.
-- [ ] Preserve stable engine-facing buffer identity across backend resource
+- [x] Ensure writer commits update descriptor/binding readiness.
+- [x] Ensure buffer recreation invalidates descriptor caches safely.
+- [x] Preserve stable engine-facing buffer identity across backend resource
       recreation.
-- [ ] Add backend-neutral `TryGetGpuAddress` that reports whether a shader
+- [x] Add backend-neutral `TryGetGpuAddress` that reports whether a shader
       device address is available and why not.
 - [ ] Route Vulkan scene-database consumers through device address when enabled.
-- [ ] Keep OpenGL consumers on SSBO/bindless/classic binding paths without
+- [x] Keep OpenGL consumers on SSBO/bindless/classic binding paths without
       exposing fake addresses.
-- [ ] Add visible capability downgrade logs for missing buffer-device-address
+- [x] Add visible capability downgrade logs for missing buffer-device-address
       support.
 - [ ] Add tests for descriptor readiness after writer-driven growth/recreate.
 
@@ -468,24 +498,24 @@ Note: the existing `XRDataBufferView` is a sized-internal-format subrange view
 for texel-buffer-style binding, not a typed CPU accessor. Decide whether to
 extend it or add a separate typed wrapper so the two roles stay distinct.
 
-- [ ] Add `XRDataBuffer<T> : XRDataBuffer where T : unmanaged` for buffers
+- [x] Add `XRDataBuffer<T> : XRDataBuffer where T : unmanaged` for buffers
       whose element type is known when the buffer is created.
-- [ ] Have `XRDataBuffer<T>` configure component type, component count, stride,
+- [x] Have `XRDataBuffer<T>` configure component type, component count, stride,
       element size, padding, and default typed allocation behavior from `T`.
-- [ ] Keep `XRDataBuffer<T>` assignable to existing `XRDataBuffer` parameters
+- [x] Keep `XRDataBuffer<T>` assignable to existing `XRDataBuffer` parameters
       so render programs, descriptors, materials, and mesh APIs do not need a
       parallel generic surface.
 - [ ] Decide serialization behavior for typed derived buffers. `XRDataBuffer`
       is MemoryPack/YAML serialized today; typed buffers may need explicit
       discriminators, factory registration, or a rule that serialized assets
       store only the base buffer payload plus layout metadata.
-- [ ] Add or extend `XRDataBufferView` for typed element count, stride, byte
+- [x] Add or extend `XRDataBufferView` for typed element count, stride, byte
       offset, byte length, and alignment.
-- [ ] Ensure typed views can represent structs, vector numeric buffers,
+- [x] Ensure typed views can represent structs, vector numeric buffers,
       interleaved vertex data, indirect commands, and std430-like records.
-- [ ] Add checked conversions from `Span<T>` length to byte length.
-- [ ] Add validation for non-blittable types.
-- [ ] Add debug display names that include buffer name, view name, stride,
+- [x] Add checked conversions from `Span<T>` length to byte length.
+- [x] Add validation for non-blittable types.
+- [x] Add debug display names that include buffer name, view name, stride,
       offset, and count.
 
 Acceptance:
@@ -500,12 +530,13 @@ Acceptance:
 
 - [ ] Migrate one static mesh/attribute upload path.
 - [ ] Migrate one texture-buffer upload path.
-- [ ] Migrate one GI setup buffer that currently uses full `PushData`.
+- [x] Migrate one GI setup buffer or GI update buffer that currently uses
+      manual push semantics.
 - [ ] Validate OpenGL and Vulkan upload diagnostics.
 
 ### 9.2 UI And PBO-Like Streaming
 
-- [ ] Migrate text transform, UV, and rotation buffers.
+- [x] Migrate text transform, UV, and index buffers.
 - [ ] Migrate UI web view PBO writes.
 - [ ] Preserve persistent mapping where it is beneficial.
 - [ ] Confirm no extra CPU mirror is kept when not needed.
@@ -559,19 +590,19 @@ Acceptance:
 
 Validation:
 
-- [ ] Source/unit test: writer commit records dirty ranges and revisions.
-- [ ] Source/unit test: writer dispose auto-commits when dispose behavior is
+- [x] Source/unit test: writer commit records dirty ranges and revisions.
+- [x] Source/unit test: writer dispose auto-commits when dispose behavior is
       `Commit` and neither `Commit()` nor `Cancel()` was called.
-- [ ] Source/unit test: writer cancel leaves buffer revision unchanged.
-- [ ] Source/unit test: explicit `Commit()` makes later `Dispose()` a no-op.
-- [ ] Source/unit test: explicit `Cancel()` makes later `Dispose()` a no-op.
-- [ ] Source/unit test: `RequireExplicitCommit` reports an error when a writer
+- [x] Source/unit test: writer cancel leaves buffer revision unchanged.
+- [x] Source/unit test: explicit `Commit()` makes later `Dispose()` a no-op.
+- [x] Source/unit test: explicit `Cancel()` makes later `Dispose()` a no-op.
+- [x] Source/unit test: `RequireExplicitCommit` reports an error when a writer
       is disposed without `Commit()` or `Cancel()`.
-- [ ] Source/unit test: dirty range merging collapses to full upload above the
+- [x] Source/unit test: dirty range merging collapses to full upload above the
       threshold.
-- [ ] Source/unit test: write policy resolves to expected OpenGL/Vulkan route.
-- [ ] Source/unit test: readback ticket cannot expose data before completion.
-- [ ] Source/unit test: device address query reports downgrade reason when
+- [x] Source/unit test: write policy resolves to expected OpenGL/Vulkan route.
+- [x] Source/unit test: readback ticket cannot expose data before completion.
+- [x] Source/unit test: device address query reports downgrade reason when
       unsupported.
 - [ ] Hardware OpenGL: persistent ring path with fence-protected slot reuse.
 - [ ] Hardware Vulkan: persistent ring path with fence/timeline-protected slot

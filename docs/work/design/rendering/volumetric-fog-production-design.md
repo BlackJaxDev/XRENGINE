@@ -411,7 +411,7 @@ visible payoff.
 
 ### 6. Documentation And Closeout
 
-- Move durable user-facing behavior into `docs/features` or
+- Move durable user-facing behavior into `docs/developer-guides`, `docs/user-guide`, or
   `docs/architecture` once production validation is complete.
 - Keep this design as the rationale and implementation map.
 - Retire the old TODO stub once all external links point here.

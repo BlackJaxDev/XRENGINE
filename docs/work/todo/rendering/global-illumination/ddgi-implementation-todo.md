@@ -7,10 +7,10 @@ Scope: implement the DDGI roadmap from [../design/ddgi-integration-plan.md](../d
 ## References
 
 - [../design/ddgi-integration-plan.md](../design/ddgi-integration-plan.md)
-- [../../features/gi/global-illumination.md](../../features/gi/global-illumination.md)
-- [../../features/gi/light-probes.md](../../features/gi/light-probes.md)
-- [../../features/gi/surfel-gi.md](../../features/gi/surfel-gi.md)
-- [../../features/gi/restir-gi.md](../../features/gi/restir-gi.md)
+- [../../../../developer-guides/gi/global-illumination.md](../../../../developer-guides/gi/global-illumination.md)
+- [../../../../developer-guides/gi/light-probes.md](../../../../developer-guides/gi/light-probes.md)
+- [../../../../developer-guides/gi/surfel-gi.md](../../../../developer-guides/gi/surfel-gi.md)
+- [../../../../developer-guides/gi/restir-gi.md](../../../../developer-guides/gi/restir-gi.md)
 - Morgan McGuire DDGI article series (2019), parts 1-4
 
 ## Working Rules

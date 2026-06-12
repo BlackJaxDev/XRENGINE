@@ -2,7 +2,7 @@
 
 Reference work docs:
 - [Default render pipeline V2 TODO](../todo/default-render-pipeline-v2-todo.md)
-- [Ambient Occlusion](../../features/gi/ambient-occlusion.md)
+- [Ambient Occlusion](../../developer-guides/gi/ambient-occlusion.md)
 - [Ambient Occlusion Testing](../testing/ambient-occlusion.md)
 
 ## Scope

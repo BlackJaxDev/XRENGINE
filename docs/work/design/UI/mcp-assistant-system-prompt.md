@@ -45,7 +45,7 @@ The AI is informed it can fetch pages from the DocFX API reference site (http://
 - API index: `http://localhost:8080/apiref/`
 - Type page: `http://localhost:8080/apiref/{Namespace}.{TypeName}.html`
 - Architecture docs: `http://localhost:8080/architecture/`
-- Feature docs: `http://localhost:8080/features/`
+- Developer guides: `http://localhost:8080/developer-guides/`
 
 This is useful when the AI needs to understand method behavior, parameter semantics, or architectural patterns that aren't fully captured by get_type_info/get_type_members alone.
 

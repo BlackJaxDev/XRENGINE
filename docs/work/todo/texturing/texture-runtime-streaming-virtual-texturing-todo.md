@@ -296,7 +296,7 @@ Known current limits:
 
 **Goal:** move durable texture architecture into stable docs once the roadmap phases settle.
 
-- [ ] Promote the final runtime texture architecture into `docs/architecture/rendering/` or `docs/features/`.
+- [ ] Promote the final runtime texture architecture into `docs/architecture/rendering/` or `docs/developer-guides/`.
 - [ ] Keep historical TODOs as phase ledgers only.
 - [ ] Update `docs/architecture/rendering/default-render-pipeline-notes.md` if bindless or virtual-texture paths change render-pass invariants.
 - [ ] Update user-facing setup docs if new settings, launch flags, cache formats, or diagnostics workflows are added.

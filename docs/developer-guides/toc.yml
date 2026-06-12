@@ -1,0 +1,144 @@
+- name: Overview
+  href: README.md
+
+- name: AI And MCP
+  items:
+    - name: MCP Server Implementation
+      href: ai/mcp-server.md
+    - name: MCP Assistant
+      href: ai/mcp-assistant.md
+
+- name: Assets
+  items:
+    - name: Model Import
+      href: assets/model-import.md
+    - name: Native FBX Import And Export
+      href: assets/native-fbx-import-export.md
+    - name: Unity Conversion Integrations
+      href: assets/unity-conversion-integrations.md
+
+- name: Audio
+  items:
+    - name: OpenAL Streaming Audio
+      href: audio/openal-streaming-audio.md
+    - name: Steam Audio
+      href: audio/steam-audio.md
+    - name: Audio2Face-3D
+      href: audio/audio2face-3d.md
+    - name: Audio2Face-3D Engine Setup
+      href: audio/audio2face-3d-engine-setup.md
+    - name: Speech To Text
+      href: audio/speech-to-text.md
+    - name: Text To Speech
+      href: audio/text-to-speech.md
+    - name: Voice MCP Bridge
+      href: audio/voice-mcp-bridge.md
+
+- name: Animation
+  items:
+    - name: Animation API
+      href: animation/animation-api.md
+
+- name: Components
+  items:
+    - name: Component API
+      href: components/component-api.md
+    - name: Atmospheric Scattering
+      href: components/atmospheric-scattering.md
+    - name: GPU Physics Chain
+      href: components/gpu-physics-chain.md
+    - name: Procedural Skybox Ambient Lighting
+      href: components/procedural-skybox-ambient.md
+
+- name: Diagnostics
+  items:
+    - name: Profiler
+      href: diagnostics/profiler.md
+
+- name: Global Illumination
+  href: gi/global-illumination.md
+  items:
+    - name: Ambient Occlusion
+      href: gi/ambient-occlusion.md
+    - name: Light Probes
+      href: gi/light-probes.md
+    - name: Light Volumes
+      href: gi/light-volumes.md
+    - name: Radiance Cascades
+      href: gi/radiance-cascades.md
+    - name: ReSTIR GI
+      href: gi/restir-gi.md
+    - name: Surfel GI
+      href: gi/surfel-gi.md
+    - name: Voxel Cone Tracing
+      href: gi/voxel-cone-tracing.md
+
+- name: Networking
+  items:
+    - name: Networking
+      href: networking/networking.md
+    - name: Control Plane
+      href: networking/control-plane.md
+
+- name: Physics
+  items:
+    - name: Physics API
+      href: physics/physics-api.md
+
+- name: Rendering
+  items:
+    - name: Skinning
+      href: rendering/skinning.md
+    - name: Blendshaping
+      href: rendering/blendshaping.md
+    - name: Uber Shader Materials
+      href: rendering/uber-shader-materials.md
+    - name: Surface Detail And Forward Shadows
+      href: rendering/shadows/surface-detail-forward-shadows.md
+    - name: CPU Query Async Occlusion
+      href: rendering/cpu-query-async-occlusion.md
+    - name: Gizmo Rendering
+      href: rendering/gizmo-rendering.md
+    - name: OpenGL Program Linking
+      href: rendering/opengl-program-linking.md
+    - name: Physics Chain Performance
+      href: rendering/physics-chain-performance.md
+    - name: Vulkan Upscale Bridge
+      href: rendering/vulkan-upscale-bridge.md
+    - name: Default Render Pipeline Script
+      href: rendering/render-pipelines/default-render-pipeline.xrs
+    - name: Render Pipeline Script Example
+      href: rendering/render-pipelines/render-pipeline-script-example.xrs
+
+- name: Runtime
+  items:
+    - name: Engine API
+      href: runtime/engine-api.md
+    - name: Job System
+      href: runtime/job-system.md
+    - name: Native Dependencies
+      href: runtime/native-dependencies.md
+    - name: Overrideable Settings
+      href: runtime/overrideable-settings.md
+
+- name: Scene
+  items:
+    - name: Scene Graph
+      href: scene/scene-graph.md
+
+- name: Testing
+  items:
+    - name: Unit Testing World
+      href: testing/unit-testing-world.md
+
+- name: UI
+  items:
+    - name: Native Hierarchy Panel
+      href: ui/native-hierarchy-panel.md
+
+- name: VR
+  items:
+    - name: VR Development
+      href: vr/vr-development.md
+    - name: OpenXR Runtime
+      href: vr/openxr-runtime.md

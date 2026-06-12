@@ -2,7 +2,7 @@
 
 Last updated: 2026-04-28
 
-The fastgltf-backed `.gltf` / `.glb` import path is implemented and documented in [Model Import](../../features/model-import.md). This page preserves the delivered validation record and gives future regression runs one stable place to update expected coverage.
+The fastgltf-backed `.gltf` / `.glb` import path is implemented and documented in [Model Import](../../developer-guides/assets/model-import.md). This page preserves the delivered validation record and gives future regression runs one stable place to update expected coverage.
 
 ## Delivered Runtime Coverage
 
@@ -51,6 +51,6 @@ Smaller synthetic fixtures remain regression coverage assets, not the optimizati
 
 ## Related Documentation
 
-- [Model Import](../../features/model-import.md)
-- [Unit Testing World](../../features/unit-testing-world.md)
-- [Native Dependencies](../../features/native-dependencies.md)
+- [Model Import](../../developer-guides/assets/model-import.md)
+- [Unit Testing World](../../developer-guides/testing/unit-testing-world.md)
+- [Native Dependencies](../../developer-guides/runtime/native-dependencies.md)

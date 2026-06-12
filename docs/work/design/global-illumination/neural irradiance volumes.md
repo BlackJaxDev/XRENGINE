@@ -6,9 +6,9 @@ Scope: add a baked neural irradiance volume GI mode to XRENGINE for mostly stati
 
 Related docs:
 
-- `docs/features/gi/global-illumination.md`
-- `docs/features/gi/light-volumes.md`
-- `docs/features/gi/radiance-cascades.md`
+- `docs/developer-guides/gi/global-illumination.md`
+- `docs/developer-guides/gi/light-volumes.md`
+- `docs/developer-guides/gi/radiance-cascades.md`
 - `vxao-implementation-plan.md`
 
 ---
@@ -46,9 +46,9 @@ Recommended delivery sequence:
 
 The most relevant existing systems are:
 
-- `docs/features/gi/global-illumination.md`
-- `docs/features/gi/light-volumes.md`
-- `docs/features/gi/radiance-cascades.md`
+- `docs/developer-guides/gi/global-illumination.md`
+- `docs/developer-guides/gi/light-volumes.md`
+- `docs/developer-guides/gi/radiance-cascades.md`
 - `XRENGINE/Scene/Components/Lights/LightVolumeComponent.cs`
 - `XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs`
 - `XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs`

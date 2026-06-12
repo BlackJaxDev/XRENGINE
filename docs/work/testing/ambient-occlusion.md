@@ -49,6 +49,6 @@ VXAO is not a finished AO implementation. Before treating it as more than a scaf
 
 ## Related Documentation
 
-- [Ambient Occlusion](../../features/gi/ambient-occlusion.md)
+- [Ambient Occlusion](../../developer-guides/gi/ambient-occlusion.md)
 - [Default Render Pipeline Notes](../../architecture/rendering/default-render-pipeline-notes.md)
 - [VXAO Implementation Plan](../design/vxao-implementation-plan.md)

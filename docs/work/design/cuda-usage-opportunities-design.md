@@ -6,10 +6,10 @@ Scope: identify where CUDA can materially benefit XRENGINE, where existing graph
 
 Related docs:
 
-- [Rendering Architecture](../../api/rendering.md)
-- [Physics Architecture](../../api/physics.md)
-- [Audio2Face-3D Component](../../features/audio2face-3d.md)
-- [Audio2Face-3D Engine Setup](../../features/audio2face-3d-engine-setup.md)
+- [Rendering Architecture](../../user-guide/rendering.md)
+- [Physics Architecture](../../user-guide/physics.md)
+- [Audio2Face-3D Component](../../developer-guides/audio/audio2face-3d.md)
+- [Audio2Face-3D Engine Setup](../../developer-guides/audio/audio2face-3d-engine-setup.md)
 - [Animated Gaussian Cloud Capture And Streaming TODO](../todo/animated-gaussian-cloud-capture-and-streaming-todo.md)
 - [Texture Compression And Cooked Texture Cache Design](texturing/texture-compression-and-cooked-cache-design.md)
 - [GPU Softbody Mesh Rigging TODO](../todo/rendering/gpu/gpu-softbody-mesh-rigging-todo.md)

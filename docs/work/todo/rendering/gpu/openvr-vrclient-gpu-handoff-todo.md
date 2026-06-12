@@ -180,11 +180,11 @@ Use per-eye 2D textures for the first implementation. Multiview array texture sh
 - `XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridge.cs`
 - `XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeSidecar.cs`
 - `docs/architecture/rendering/openvr-rendering.md`
-- `docs/features/vulkan-upscale-bridge.md`
+- `docs/developer-guides/rendering/vulkan-upscale-bridge.md`
 
 ## Related Documentation
 
 - [OpenVR Rendering](../../architecture/rendering/openvr-rendering.md)
-- [Vulkan Upscale Bridge](../../features/vulkan-upscale-bridge.md)
-- [VR Development](../../api/vr-development.md)
+- [Vulkan Upscale Bridge](../../../../developer-guides/rendering/vulkan-upscale-bridge.md)
+- [VR Development](../../../../user-guide/vr-development.md)
 - [Vulkan Manual Validation Guide](vulkan.md)

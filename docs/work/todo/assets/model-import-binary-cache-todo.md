@@ -6,7 +6,7 @@ Source design: [Model Import Cooked Asset Cache Design](../../design/assets/mode
 
 Related docs:
 
-- [Model import feature guide](../../../features/model-import.md)
+- [Model import feature guide](../../../developer-guides/assets/model-import.md)
 - [Texture streaming cooked cache TODO](../texturing/texture-streaming-cooked-cache-todo.md)
 - [GPU meshlet zero-readback rendering design](../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [Production rendering pipeline roadmap](../rendering/gpu/production-rendering-pipeline-roadmap.md)
@@ -55,7 +55,7 @@ The cache is a runtime/import acceleration artifact, not a replacement for user-
 - `XREngine.Runtime.Rendering/Rendering/Meshlets/Meshlet.cs`
 - `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene.cs`
 - `XREngine.UnitTests/`
-- `docs/features/model-import.md`
+- `docs/developer-guides/assets/model-import.md`
 
 ## Phase 0: Branch, Baseline, And Scope Lock
 
@@ -101,7 +101,7 @@ The cache is a runtime/import acceleration artifact, not a replacement for user-
 - [ ] Implement long-path handling and hashed fallback for cache paths that would exceed Windows path limits.
 - [ ] Add `CacheRejectReason` and model cache log event constants.
 - [ ] Add source-contract tests for game, engine, external, long-path, and variant-key cache resolution.
-- [ ] Update `docs/features/model-import.md` for cache path shape and long-path fallback behavior.
+- [ ] Update `docs/developer-guides/assets/model-import.md` for cache path shape and long-path fallback behavior.
 
 ### Exit Criteria
 

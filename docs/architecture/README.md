@@ -42,11 +42,15 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 - `Config/`: persistent project settings, including `editor_preferences_overrides.asset`, `game_settings.asset`, `user_settings.asset`, and `build_settings.asset`.
 
 ## Further Reading
-- [Audio Architecture](audio-architecture.md)
-- [Cooked Asset Serialization — AOT & I/O Design](cooked-asset-aot-and-io.md)
-- [GPU-Driven Animation Architecture](../work/design/gpu-driven-animation.md)
-- [Modeling XRMesh Editing Architecture](modeling-xrmesh-editing.md)
-- [Job System](../api/job-system.md)
-- [Networking Overview](networking-overview.md)
-- [Networking Feature Guide](../features/networking.md)
-- [Editor Undo System](undo-system.md)
+- [Audio Architecture](audio/audio-architecture.md)
+- [Cooked Asset Serialization - AOT And IO Design](assets/cooked-asset-aot-and-io.md)
+- [GPU-Driven Animation Design](../work/design/rendering/gpu/gpu-driven-animation.md)
+- [Modeling XRMesh Editing Architecture](modeling/xrmesh-editing.md)
+- [Scene Architecture](scene/overview.md)
+- [Transform Architecture](scene/transforms.md)
+- [Physics Architecture](physics/overview.md)
+- [Rendering Runtime Overview](rendering/runtime-overview.md)
+- [Job System](../developer-guides/runtime/job-system.md)
+- [Networking Overview](networking/overview.md)
+- [Networking Developer Guide](../developer-guides/networking/networking.md)
+- [Editor Undo System](editor/undo-system.md)

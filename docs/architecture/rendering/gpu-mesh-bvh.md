@@ -1,8 +1,7 @@
 # GPU Mesh BVH
 
-Known issue: live GPU skinned bounds preview is still under investigation. See
-`docs/architecture/rendering/gpu-skinned-bounds-live-preview-issue.md` for the
-current symptom summary, attempted fixes, and next debugging steps.
+Known issue history: the live GPU skinned bounds preview investigation is
+archived in [GPU Skinned Bounds Live Preview Issue](../../work/audit/gpu-skinned-bounds-live-preview-issue.md).
 
 Mesh-level GPU BVHs reuse the GPUScene BVH builder for per-triangle acceleration data. A renderable mesh owns a `GpuMeshBvh` instance on demand; the tree is built from a caller-owned triangle AABB buffer and then refit when the topology is stable.
 

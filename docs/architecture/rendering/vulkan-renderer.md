@@ -754,4 +754,4 @@ public override void CleanUp()
 
 - [Window Creation & Renderer Initialization](window-creation-and-renderer-init.md) — How windows and renderers are created at startup
 - [OpenGL Renderer](opengl-renderer.md) — OpenGL-specific initialization and render loop
-- [Rendering Code Map](RenderingCodeMap.md) — Full source file inventory
+- [Rendering Code Map](code-map.md) — Full source file inventory

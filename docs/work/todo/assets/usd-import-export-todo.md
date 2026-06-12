@@ -20,7 +20,7 @@ This tracker assumes the current import entry point stays anchored in the existi
 - `XRENGINE/Scene/Prefabs/XRPrefabSource.cs` already lists `usd`, `usda`, `usdc`, and `usdz` as supported third-party extensions.
 - `XRENGINE/Core/ModelImporter.cs` currently has format-specific native dispatch only for `.fbx`; non-FBX formats still route through the generic Assimp path.
 - There is no `XREngine.Usd` project, no USD-specific import/export option surface, no committed USD fixture corpus, no USD unit tests, and no USD benchmarks.
-- `docs/features/model-import.md` currently documents the native FBX path and Assimp for non-FBX formats; it does not describe any native USD behavior yet.
+- `docs/developer-guides/assets/model-import.md` currently documents the native FBX path and Assimp for non-FBX formats; it does not describe any native USD behavior yet.
 - Any OpenUSD dependency, binding generator, native packaging, or submodule addition would be a risky operation and requires proposal + approval before landing, along with the dependency/license workflow in `AGENTS.md`.
 
 ## Recommended V1 Scope
@@ -356,7 +356,7 @@ Recommended stages:
 - [ ] Decide whether USD gets its own `UsdImportOptions` type or a clean extension of `ModelImportOptions` with explicit USD-native settings.
 - [ ] Surface explicit USD-native options where needed: composition policy, payload load policy, variant selection overrides, up-axis/unit policy, and fallback controls.
 - [ ] Preserve editor, asset-pipeline, and prefab workflows while swapping the backend.
-- [ ] Update `docs/features/model-import.md` and any related workflow docs once USD support becomes user-visible.
+- [ ] Update `docs/developer-guides/assets/model-import.md` and any related workflow docs once USD support becomes user-visible.
 - [ ] Decide whether broader scene/stage import deserves a dedicated asset type later, or whether model/prefab import remains the only supported entry point for v1.
 
 ### Exit Criteria
