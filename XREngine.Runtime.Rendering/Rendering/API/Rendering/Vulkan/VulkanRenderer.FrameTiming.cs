@@ -590,6 +590,7 @@ public unsafe partial class VulkanRenderer
             MeshDrawOp draw => BuildVulkanGpuProfilerMeshDrawLabel(draw),
             IndirectDrawOp indirect => $"IndirectDraw[count={indirect.DrawCount}; stride={indirect.Stride}; useCount={indirect.UseCount}]",
             MeshTaskDispatchIndirectCountOp meshTask => $"MeshTaskDispatchIndirectCount[max={meshTask.MaxDrawCount}; stride={meshTask.Stride}]",
+            TransformFeedbackOp transformFeedback => $"TransformFeedback[{transformFeedback.Operation}; target={GetTargetName(transformFeedback.Target)}]",
             ComputeDispatchOp compute => $"ComputeDispatch[program={GetDisplayName(compute.Program.Data.Name, "UnnamedProgram")}; groups={compute.GroupsX}x{compute.GroupsY}x{compute.GroupsZ}]",
             MemoryBarrierOp barrier => $"MemoryBarrier[mask={barrier.Mask}]",
             _ => op.GetType().Name,

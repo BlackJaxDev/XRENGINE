@@ -50,6 +50,10 @@ Current fix:
 - MSAA lighting resolves from `MsaaLightingFBO` into `LightingAccumFBO`.
 - `LightCombineFBO` samples `LightingAccumTexture` and writes the final combined
   output to `LightingTexture`.
+- The non-MSAA and stereo light-combine shaders bind that input as
+  `LightingAccumTexture`, keeping it distinct from the final `LightingTexture`
+  render target. This avoids Vulkan's name-based descriptor resolution selecting
+  the pass output as binding 5.
 - `LightCombineFBO`, `SkyboxComponent`, and `AtmosphericScatteringComponent`
   explicitly use `BlendMode.Disabled()` so they cannot inherit additive light blending.
 - The accumulation FBO is color-cleared for the light pass and does not request
@@ -58,8 +62,12 @@ Current fix:
 - Render graph metadata declares `LightingAccumTexture` as the light-combine input
   instead of the final `LightingTexture`.
 
-This removes the read/write feedback edge and the blend-state inheritance path while
-preserving the shader's existing `LightingTexture` sampler name for compatibility.
+This removes the read/write feedback edge and the blend-state inheritance path.
+
+`XRE_DIAG_DEFERRED_LIGHTING=1` enables a targeted Vulkan auxiliary log named
+`vulkan-deferred-lighting-diagnostics.log`. It records deferred lighting FBO
+creation, combine-pass texture handoff, watched descriptor bindings, clear/load
+operations, and resource-plan aliasing hints.
 
 ## Runtime validation
 
@@ -126,9 +134,10 @@ pipeline in this run.
 
 ```powershell
 dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore
-dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "Name=BackgroundSkyMaterials_DisableBlendStateInheritance|Name=LightCombineQuad_UsesMaterialIdentityPredicate_InsteadOfSizeOnlyCache|Name=DeferredLightCombineMetadata_DeclaresGBufferProbeAndLightingInputs"
+dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "Name=BackgroundSkyMaterials_DisableBlendStateInheritance|Name=LightCombineQuad_UsesMaterialIdentityPredicate_InsteadOfSizeOnlyCache|Name=DeferredLightCombineMetadata_DeclaresGBufferProbeAndLightingInputs|Name=DeferredLightCombine_ProbeStorageBindings_DoNotOverlapGBufferSamplers"
 ```
 
-The editor build and three targeted tests pass after the accumulation split and
-blend-state inheritance fixes. A broader filtered rendering test run still contains
-unrelated stale source-path assertions and a fog default expectation mismatch.
+The editor build passes after the accumulation split and blend-state inheritance
+fixes. A focused test run is currently blocked by unrelated compile errors in
+`VulkanP0ValidationTests.cs` where calls to `VulkanShaderArtifactCache.TryRead(...)`
+do not match the current required parameter list.

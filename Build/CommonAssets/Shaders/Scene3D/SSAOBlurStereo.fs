@@ -1,6 +1,7 @@
 #version 460
 #extension GL_OVR_multiview2 : require
 //#extension GL_EXT_multiview_tessellation_geometry_shader : enable
+#include "AOCommon.glsl"
 
 layout(location = 0) out float OutIntensity;
 layout(location = 0) in vec3 FragPos;
@@ -8,11 +9,9 @@ uniform sampler2DArray AmbientOcclusionTexture;
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0f || uv.y > 1.0f)
+    if (FragPos.x > 1.0f || FragPos.y > 1.0f)
         discard;
-    //Normalize uv from [-1, 1] to [0, 1]
-    uv = uv * 0.5f + 0.5f;
+    vec2 uv = AOTextureUVFromFragPos(FragPos);
     
     vec2 texelSize = 1.0f / textureSize(AmbientOcclusionTexture, 0).xy;
     float result = 0.0f;

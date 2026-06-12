@@ -1,6 +1,7 @@
 #version 460
 #extension GL_OVR_multiview2 : require
 
+#include "AOCommon.glsl"
 #pragma snippet "NormalEncoding"
 
 layout(location = 0) out float OutIntensity;
@@ -16,28 +17,13 @@ uniform float DenoiseSharpness = 14.02f;
 uniform bool DenoiseEnabled = true;
 uniform bool UseInputNormals = true;
 uniform bool UseNormalWeightedBlur = true;
-uniform int DepthMode;
 uniform vec2 TexelSize = vec2(0.0f); // Set from C#; when zero, falls back to input texture size
-
-bool AOIsFarDepth(float depth)
-{
-    const float eps = 1e-6f;
-    return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
-}
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0f || uv.y > 1.0f)
+    if (FragPos.x > 1.0f || FragPos.y > 1.0f)
         discard;
-    uv = uv * 0.5f + 0.5f;
-#ifdef XRENGINE_VULKAN
-    // gl_FragCoord is top-left origin on Vulkan, so the fullscreen-triangle NDC-derived
-    // UV is vertically inverted relative to the gl_FragCoord/XRENGINE_ScreenUV convention
-    // that DeferredLightCombine uses to sample this AO target. Flip to match so the AO
-    // is oriented consistently with the rest of the composite (holds for both Y-up/Y-down).
-    uv.y = 1.0f - uv.y;
-#endif
+    vec2 uv = AOTextureUVFromFragPos(FragPos);
 
     float centerAO = texture(GTAOInputTexture, vec3(uv, gl_ViewID_OVR)).r;
     if (!DenoiseEnabled || DenoiseRadius <= 0)

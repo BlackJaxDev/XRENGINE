@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Silk.NET.Vulkan;
@@ -1601,6 +1603,19 @@ namespace XREngine.Rendering.Vulkan
                     fboLayoutTracking[target] = trackedLayouts;
                 FrameBufferAttachmentSignature[] fboSignature = vkFrameBuffer.ResolveAttachmentSignatureForPass(passIndex, context.PassMetadata, trackedLayouts);
                 bool passDepthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(passIndex, context.PassMetadata, trackedLayouts);
+                if (DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsWatchedFrameBufferName(fboName))
+                {
+                    Debug.VulkanEvery(
+                        $"DeferredLighting.BeginFBO.{fboName}",
+                        TimeSpan.FromSeconds(1),
+                        "[DeferredLightingDiag][BeginFBO] name='{0}' pass={1} dynamic={2} trackedLayouts={3} signature={4}",
+                        fboName,
+                        passIndex,
+                        UseDynamicRenderingRenderTargets,
+                        trackedLayouts is not null ? string.Join(",", trackedLayouts) : "null",
+                        FormatFboAttachmentSignature(fboSignature));
+                }
+
                 Rect2D fboRenderArea = new()
                 {
                     Offset = new Offset2D(0, 0),
@@ -2017,6 +2032,20 @@ namespace XREngine.Rendering.Vulkan
                                 "[Vulkan][FwdClear] ForwardPassFBO clear pass={0} color={1} depth={2} stencil={3}",
                                 opPassIndex, clear.ClearColor, clear.ClearDepth, clear.ClearStencil);
                         }
+                        if (DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsWatchedFrameBufferName(clear.Target?.Name))
+                        {
+                            Debug.VulkanEvery(
+                                $"DeferredLighting.ClearOp.{clear.Target?.Name}",
+                                TimeSpan.FromSeconds(1),
+                                "[DeferredLightingDiag][ClearOp] target='{0}' pass={1} color={2} depth={3} stencil={4} activeTarget='{5}'",
+                                clear.Target?.Name ?? "<swapchain>",
+                                opPassIndex,
+                                clear.ClearColor,
+                                clear.ClearDepth,
+                                clear.ClearStencil,
+                                activeTarget?.Name ?? "<none>");
+                        }
+
                         if (!renderPassActive || activeTarget != clear.Target)
                         {
                             EndActiveRenderPass();
@@ -2039,6 +2068,18 @@ namespace XREngine.Rendering.Vulkan
                         {
                             RecordClearOp(commandBuffer, imageIndex, clear);
                         }
+                        break;
+
+                    case TransformFeedbackOp transformFeedbackOp:
+                        if (!renderPassActive || activeTarget != transformFeedbackOp.Target)
+                        {
+                            EndActiveRenderPass();
+                            BeginRenderPassForTarget(transformFeedbackOp.Target, opPassIndex, activeContext);
+                        }
+
+                        CmdBeginLabel(commandBuffer, $"TransformFeedback.{transformFeedbackOp.Operation}");
+                        RecordTransformFeedbackOp(commandBuffer, transformFeedbackOp);
+                        CmdEndLabel(commandBuffer);
                         break;
 
                     case MeshDrawOp drawOp:
@@ -2516,8 +2557,57 @@ namespace XREngine.Rendering.Vulkan
             uint maxAttachments = Math.Max(vkFrameBuffer.AttachmentCount + 1u, 2u);
             ClearAttachment* fboAttachments = stackalloc ClearAttachment[(int)maxAttachments];
             uint fboCount = vkFrameBuffer.WriteClearAttachments(fboAttachments, op.ClearColor, op.ClearDepth, op.ClearStencil);
+            string targetName = op.Target.Name ?? "<unnamed>";
+            if (DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsWatchedFrameBufferName(targetName))
+            {
+                Debug.VulkanEvery(
+                    $"DeferredLighting.CmdClearAttachments.{targetName}",
+                    TimeSpan.FromSeconds(1),
+                    "[DeferredLightingDiag][CmdClearAttachments] target='{0}' count={1} color={2} depth={3} stencil={4} rect=({5},{6},{7},{8})",
+                    targetName,
+                    fboCount,
+                    op.ClearColor,
+                    op.ClearDepth,
+                    op.ClearStencil,
+                    clearArea.Offset.X,
+                    clearArea.Offset.Y,
+                    clearArea.Extent.Width,
+                    clearArea.Extent.Height);
+            }
+
             if (fboCount > 0)
                 Api!.CmdClearAttachments(commandBuffer, fboCount, fboAttachments, 1, rectPtr);
+        }
+
+        private static string FormatFboAttachmentSignature(FrameBufferAttachmentSignature[] signatures)
+        {
+            if (signatures.Length == 0)
+                return "<none>";
+
+            StringBuilder builder = new();
+            for (int i = 0; i < signatures.Length; i++)
+            {
+                if (i > 0)
+                    builder.Append("; ");
+
+                FrameBufferAttachmentSignature signature = signatures[i];
+                builder
+                    .Append(i)
+                    .Append(":role=").Append(signature.Role)
+                    .Append("/color=").Append(signature.ColorIndex)
+                    .Append("/format=").Append(signature.Format)
+                    .Append("/samples=").Append(signature.Samples)
+                    .Append("/aspect=").Append(signature.AspectMask)
+                    .Append("/load=").Append(signature.LoadOp)
+                    .Append("/store=").Append(signature.StoreOp)
+                    .Append("/stencilLoad=").Append(signature.StencilLoadOp)
+                    .Append("/stencilStore=").Append(signature.StencilStoreOp)
+                    .Append("/initial=").Append(signature.InitialLayout)
+                    .Append("/ref=").Append(signature.ReferenceLayout)
+                    .Append("/final=").Append(signature.FinalLayout);
+            }
+
+            return builder.ToString();
         }
 
         private static Rect2D ClampRectToExtent(Rect2D rect, Extent2D extent)
@@ -2836,6 +2926,101 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        private void RecordTransformFeedbackOp(CommandBuffer commandBuffer, TransformFeedbackOp op)
+        {
+            switch (op.Operation)
+            {
+                case EXRTransformFeedbackOperation.BindBuffer:
+                    op.TransformFeedback.BindFeedbackBuffer(
+                        commandBuffer,
+                        op.FeedbackBufferOffset,
+                        op.FeedbackBufferSize ?? Vk.WholeSize);
+                    break;
+
+                case EXRTransformFeedbackOperation.Begin:
+                    if (op.CounterBuffer is null)
+                    {
+                        op.TransformFeedback.Begin(commandBuffer);
+                    }
+                    else if (TryResolveTransformFeedbackBuffer(op.CounterBuffer, "counter", out VkDataBuffer? beginCounter))
+                    {
+                        op.TransformFeedback.Begin(commandBuffer, beginCounter, op.TransformFeedback.Data.BindingLocation, op.CounterBufferOffset);
+                    }
+                    break;
+
+                case EXRTransformFeedbackOperation.End:
+                    if (op.CounterBuffer is null)
+                    {
+                        op.TransformFeedback.End(commandBuffer);
+                    }
+                    else if (TryResolveTransformFeedbackBuffer(op.CounterBuffer, "counter", out VkDataBuffer? endCounter))
+                    {
+                        op.TransformFeedback.End(commandBuffer, endCounter, op.TransformFeedback.Data.BindingLocation, op.CounterBufferOffset);
+                    }
+                    break;
+
+                case EXRTransformFeedbackOperation.Pause:
+                    if (!TryResolveTransformFeedbackBuffer(op.CounterBuffer, "counter", out VkDataBuffer? pauseCounter))
+                    {
+                        Debug.VulkanWarning("Transform feedback pause skipped: Vulkan pause/resume requires a counter buffer.");
+                        return;
+                    }
+
+                    op.TransformFeedback.End(commandBuffer, pauseCounter, op.TransformFeedback.Data.BindingLocation, op.CounterBufferOffset);
+                    break;
+
+                case EXRTransformFeedbackOperation.Resume:
+                    if (!TryResolveTransformFeedbackBuffer(op.CounterBuffer, "counter", out VkDataBuffer? resumeCounter))
+                    {
+                        Debug.VulkanWarning("Transform feedback resume skipped: Vulkan pause/resume requires a counter buffer.");
+                        return;
+                    }
+
+                    op.TransformFeedback.Begin(commandBuffer, resumeCounter, op.TransformFeedback.Data.BindingLocation, op.CounterBufferOffset);
+                    break;
+
+                case EXRTransformFeedbackOperation.DrawIndirectByteCount:
+                    if (!TryResolveTransformFeedbackBuffer(op.CounterBuffer, "counter", out VkDataBuffer? drawCounter))
+                    {
+                        Debug.VulkanWarning("Transform feedback byte-count draw skipped: missing counter buffer.");
+                        return;
+                    }
+
+                    op.TransformFeedback.DrawIndirectByteCount(
+                        commandBuffer,
+                        op.InstanceCount,
+                        op.FirstInstance,
+                        drawCounter,
+                        op.CounterBufferOffset,
+                        op.CounterOffset,
+                        op.VertexStride);
+                    break;
+
+                default:
+                    Debug.VulkanWarning($"Unsupported Vulkan transform feedback operation '{op.Operation}'.");
+                    break;
+            }
+        }
+
+        private bool TryResolveTransformFeedbackBuffer(
+            XRDataBuffer? dataBuffer,
+            string role,
+            [NotNullWhen(true)] out VkDataBuffer? buffer)
+        {
+            buffer = null;
+            if (dataBuffer is null)
+                return false;
+
+            if (GetOrCreateAPIRenderObject(dataBuffer, generateNow: true) is VkDataBuffer vkBuffer)
+            {
+                buffer = vkBuffer;
+                return true;
+            }
+
+            Debug.VulkanWarning($"Failed to resolve Vulkan transform feedback {role} buffer.");
+            return false;
+        }
+
         private void RecordMeshTaskDispatchIndirectCountOp(CommandBuffer commandBuffer, MeshTaskDispatchIndirectCountOp op)
         {
             if (!SupportsVulkanMeshTaskIndirectCount || _extMeshShader is null)
@@ -3010,7 +3195,7 @@ namespace XREngine.Rendering.Vulkan
                 null);
         }
 
-        private static void ResolveBarrierScopes(
+        private void ResolveBarrierScopes(
             EMemoryBarrierMask mask,
             out PipelineStageFlags srcStages,
             out PipelineStageFlags dstStages,
@@ -3080,6 +3265,40 @@ namespace XREngine.Rendering.Vulkan
                 PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
                 AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentWriteBit,
                 AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit);
+
+            if (mask.HasFlag(EMemoryBarrierMask.TransformFeedback))
+            {
+                if (SupportsTransformFeedback)
+                {
+                    Merge(
+                        true,
+                        PipelineStageFlags.TransformFeedbackBitExt,
+                        PipelineStageFlags.TransformFeedbackBitExt |
+                            PipelineStageFlags.VertexInputBit |
+                            PipelineStageFlags.VertexShaderBit |
+                            PipelineStageFlags.GeometryShaderBit |
+                            PipelineStageFlags.ComputeShaderBit |
+                            PipelineStageFlags.TransferBit |
+                            PipelineStageFlags.DrawIndirectBit,
+                        AccessFlags.TransformFeedbackWriteBitExt |
+                            AccessFlags.TransformFeedbackCounterWriteBitExt,
+                        AccessFlags.TransformFeedbackWriteBitExt |
+                            AccessFlags.TransformFeedbackCounterReadBitExt |
+                            AccessFlags.VertexAttributeReadBit |
+                            AccessFlags.ShaderReadBit |
+                            AccessFlags.TransferReadBit |
+                            AccessFlags.IndirectCommandReadBit);
+                }
+                else
+                {
+                    Merge(
+                        true,
+                        PipelineStageFlags.AllCommandsBit,
+                        PipelineStageFlags.AllCommandsBit,
+                        AccessFlags.MemoryWriteBit,
+                        AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+                }
+            }
 
             Merge(mask.HasFlag(EMemoryBarrierMask.AtomicCounter),
                 PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,

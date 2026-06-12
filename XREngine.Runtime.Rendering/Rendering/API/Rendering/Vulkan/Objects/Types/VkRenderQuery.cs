@@ -33,6 +33,9 @@ namespace XREngine.Rendering.Vulkan
 
             public bool BeginQuery(CommandBuffer commandBuffer, EQueryTarget target, QueryControlFlags flags = QueryControlFlags.None)
             {
+                if (target == EQueryTarget.TransformFeedbackPrimitivesWritten)
+                    return BeginTransformFeedbackQuery(commandBuffer, flags);
+
                 if (!TryMapQueryType(target, out QueryType queryType, out bool isOcclusion))
                     return false;
 
@@ -57,7 +60,11 @@ namespace XREngine.Rendering.Vulkan
                 if (!_queryActive || _queryPool.Handle == 0)
                     return;
 
-                Api!.CmdEndQuery(commandBuffer, _queryPool, 0);
+                if (_queryType == QueryType.TransformFeedbackStreamExt && Renderer.SupportsTransformFeedbackQueries && Renderer._extTransformFeedback is not null)
+                    Renderer._extTransformFeedback.CmdEndQueryIndexed(commandBuffer, _queryPool, 0, 0);
+                else
+                    Api!.CmdEndQuery(commandBuffer, _queryPool, 0);
+
                 _queryActive = false;
                 Data.CurrentQuery = null;
             }
@@ -159,6 +166,26 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 _queryType = queryType;
+                return true;
+            }
+
+            private bool BeginTransformFeedbackQuery(CommandBuffer commandBuffer, QueryControlFlags flags)
+            {
+                if (!Renderer.SupportsTransformFeedbackQueries || Renderer._extTransformFeedback is null)
+                {
+                    Debug.VulkanWarning(
+                        "Transform feedback query skipped: {0} is unavailable or transformFeedbackQueries is false.",
+                        Silk.NET.Vulkan.Extensions.EXT.ExtTransformFeedback.ExtensionName);
+                    return false;
+                }
+
+                if (!EnsureQueryPool(QueryType.TransformFeedbackStreamExt))
+                    return false;
+
+                Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, 1);
+                Renderer._extTransformFeedback.CmdBeginQueryIndexed(commandBuffer, _queryPool, 0, flags, 0);
+                Data.CurrentQuery = EQueryTarget.TransformFeedbackPrimitivesWritten;
+                _queryActive = true;
                 return true;
             }
 

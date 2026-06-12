@@ -2488,14 +2488,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     {
                         var fxaaUpscale = new ViewportRenderCommandContainer(this);
                         var fxaa = fxaaUpscale.Add<VPRC_FXAA>();
-                        fxaa.SourceTextureName = FinalPostProcessOutputTextureName;
+                        fxaa.SourceFBOName = FinalPostProcessOutputFBOName;
                         fxaa.DestinationFBOName = FxaaFBOName;
                         postAaChoice.TrueCommands = fxaaUpscale;
                     }
                     {
                         var smaaUpscale = new ViewportRenderCommandContainer(this);
                         var smaa = smaaUpscale.Add<VPRC_SMAA>();
-                        smaa.SourceTextureName = FinalPostProcessOutputTextureName;
+                        smaa.SourceFBOName = FinalPostProcessOutputFBOName;
                         smaa.OutputTextureName = SmaaOutputTextureName;
                         smaa.OutputFBOName = SmaaFBOName;
                         postAaChoice.FalseCommands = smaaUpscale;
@@ -3483,7 +3483,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
     {
-        program.Uniform("DeferredDebugMode", ResolveDeferredDebugMode());
+        int deferredDebugMode = ResolveDeferredDebugMode();
+        program.Uniform("DeferredDebugMode", deferredDebugMode);
         program.Uniform("GlobalAmbient", ResolveGlobalAmbient());
 
         bool useAo = ShouldUseAmbientOcclusion();
@@ -3509,6 +3510,17 @@ public partial class DefaultRenderPipeline : RenderPipeline
         program.Uniform("SpecularOcclusionEnabled", specularOcclusion);
 
         BindPbrLightingResources(program);
+
+        if (DeferredLightingDiagnostics.Enabled &&
+            Debug.ShouldLogEvery($"DeferredLighting.LightCombineUniforms.{GetHashCode()}.{program.GetHashCode()}", TimeSpan.FromSeconds(1)))
+        {
+            XRRenderProgramDescriptor descriptor = program.ProgramDescriptor;
+            DeferredLightingDiagnostics.Write(
+                "[DefaultRenderPipeline] LightCombineFBO_SettingUniforms " +
+                $"program='{program.Name ?? "<unnamed>"}' " +
+                $"debugMode={deferredDebugMode} useAo={useAo} aoPower={aoPower} multiBounce={multiBounce} specularOcclusion={specularOcclusion} " +
+                $"descriptorStable='{descriptor.StableKey}' shaderIdentity='{descriptor.ShaderIdentityKey}' stages='{descriptor.StageTopology}' shaders={descriptor.ShaderCount}");
+        }
     }
 
     public bool BindPbrLightingResources(XRRenderProgram program)

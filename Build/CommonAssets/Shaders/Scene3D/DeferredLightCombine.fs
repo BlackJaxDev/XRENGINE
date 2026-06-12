@@ -30,7 +30,7 @@ layout(binding = 4) uniform sampler2D DepthView; //Depth
 #ifdef XRENGINE_MSAA_DEFERRED
 layout(binding = 5) uniform sampler2DMS LightingTextureMS;
 #else
-layout(binding = 5) uniform sampler2D LightingTexture;
+layout(binding = 5) uniform sampler2D LightingAccumTexture;
 #endif
 
 layout(binding = 6) uniform sampler2D BRDF;
@@ -350,7 +350,7 @@ void main()
         vec3 InLo = max(texelFetch(LightingTextureMS, coord, gl_SampleID).rgb, vec3(0.0f));
 #else
         float depth = texture(DepthView, uv).r;
-        vec3 InLo = max(texture(LightingTexture, uv).rgb, vec3(0.0f));
+        vec3 InLo = max(texture(LightingAccumTexture, uv).rgb, vec3(0.0f));
 #endif
         // Show raw depth before the far-depth discard so XRE_DEFERRED_DEBUG=5 can
         // distinguish an empty G-buffer from valid geometry with no lighting.

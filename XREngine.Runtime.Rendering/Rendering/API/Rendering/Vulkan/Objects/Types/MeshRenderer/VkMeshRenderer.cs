@@ -82,6 +82,21 @@ public unsafe partial class VulkanRenderer
         EMemoryBarrierMask Mask,
         FrameOpContext Context) : FrameOp(PassIndex, null, Context);
 
+    internal sealed record TransformFeedbackOp(
+        int PassIndex,
+        XRFrameBuffer? Target,
+        VkTransformFeedback TransformFeedback,
+        EXRTransformFeedbackOperation Operation,
+        XRDataBuffer? CounterBuffer,
+        ulong FeedbackBufferOffset,
+        ulong? FeedbackBufferSize,
+        ulong CounterBufferOffset,
+        uint CounterOffset,
+        uint VertexStride,
+        uint InstanceCount,
+        uint FirstInstance,
+        FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
+
     internal readonly record struct ProgramUniformValue(EShaderVarType Type, object Value, bool IsArray);
 
     internal readonly record struct ProgramImageBinding(
@@ -129,6 +144,7 @@ public unsafe partial class VulkanRenderer
             IndirectDrawOp indirectDraw => indirectDraw with { PassIndex = validatedPassIndex },
             MeshTaskDispatchIndirectCountOp meshTaskDispatch => meshTaskDispatch with { PassIndex = validatedPassIndex },
             MemoryBarrierOp memoryBarrier => memoryBarrier with { PassIndex = validatedPassIndex },
+            TransformFeedbackOp transformFeedback => transformFeedback with { PassIndex = validatedPassIndex },
             ComputeDispatchOp computeDispatch => computeDispatch with { PassIndex = validatedPassIndex },
             _ => op
         };
@@ -267,6 +283,18 @@ public unsafe partial class VulkanRenderer
                     break;
                 case MemoryBarrierOp barrier:
                     hash.Add((int)barrier.Mask);
+                    break;
+                case TransformFeedbackOp transformFeedback:
+                    hash.Add(transformFeedback.TransformFeedback.GetHashCode());
+                    hash.Add((int)transformFeedback.Operation);
+                    hash.Add(transformFeedback.CounterBuffer?.GetHashCode() ?? 0);
+                    hash.Add(transformFeedback.FeedbackBufferOffset);
+                    hash.Add(transformFeedback.FeedbackBufferSize ?? 0ul);
+                    hash.Add(transformFeedback.CounterBufferOffset);
+                    hash.Add(transformFeedback.CounterOffset);
+                    hash.Add(transformFeedback.VertexStride);
+                    hash.Add(transformFeedback.InstanceCount);
+                    hash.Add(transformFeedback.FirstInstance);
                     break;
                 case ComputeDispatchOp compute:
                     hash.Add(compute.Program.GetHashCode());

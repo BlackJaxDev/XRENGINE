@@ -1109,9 +1109,15 @@ namespace XREngine.Rendering.Vulkan
                 return true;
             }
 
-            private static BufferUsageFlags ResolveVkUsageFlags(EBufferTarget target, EBufferUsage usage)
+            private BufferUsageFlags ResolveVkUsageFlags(EBufferTarget target, EBufferUsage usage)
             {
                 BufferUsageFlags flags = ToVkUsageFlags(target) | ToVkUsageFlags(usage);
+                if (target == EBufferTarget.TransformFeedbackBuffer && Renderer.SupportsTransformFeedback)
+                {
+                    flags |= BufferUsageFlags.TransformFeedbackBufferBitExt |
+                        BufferUsageFlags.TransformFeedbackCounterBufferBitExt;
+                }
+
                 if (flags == 0)
                     flags = BufferUsageFlags.StorageBufferBit;
                 return flags;

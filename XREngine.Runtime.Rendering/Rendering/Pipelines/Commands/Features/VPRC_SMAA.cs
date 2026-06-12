@@ -320,9 +320,31 @@ void main()
                 if (_edgeFbo is null || _blendFbo is null)
                     return;
 
-                _edgeQuad.Render(_edgeFbo);
-                _blendQuad.Render(_blendFbo);
-                _neighborhoodQuad.Render(_outputFbo);
+                if (!TryResolvePassIndex(BuildEdgePassName(), out int edgePassIndex) ||
+                    !TryResolvePassIndex(BuildBlendPassName(), out int blendPassIndex) ||
+                    !TryResolvePassIndex(BuildNeighborhoodPassName(), out int neighborhoodPassIndex))
+                    return;
+
+                using (edgePassIndex != int.MinValue
+                    ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(edgePassIndex)
+                    : default)
+                {
+                    _edgeQuad.Render(_edgeFbo);
+                }
+
+                using (blendPassIndex != int.MinValue
+                    ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(blendPassIndex)
+                    : default)
+                {
+                    _blendQuad.Render(_blendFbo);
+                }
+
+                using (neighborhoodPassIndex != int.MinValue
+                    ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(neighborhoodPassIndex)
+                    : default)
+                {
+                    _neighborhoodQuad.Render(_outputFbo);
+                }
                 return;
             }
 
@@ -357,21 +379,57 @@ void main()
         if (source is null)
             return;
 
-        context.GetOrCreateSyntheticPass($"SmaaEdge_{GetSourceDisplayName()}_to_{ResolvedEdgeFboName}")
+        context.GetOrCreateSyntheticPass(BuildEdgePassName())
             .WithStage(ERenderGraphPassStage.Graphics)
             .SampleTexture(source)
             .UseColorAttachment(MakeFboColorResource(ResolvedEdgeFboName), ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
 
-        context.GetOrCreateSyntheticPass($"SmaaBlend_{ResolvedEdgeTextureName}_to_{ResolvedBlendFboName}")
+        context.GetOrCreateSyntheticPass(BuildBlendPassName())
             .WithStage(ERenderGraphPassStage.Graphics)
             .SampleTexture(MakeTextureResource(ResolvedEdgeTextureName))
             .UseColorAttachment(MakeFboColorResource(ResolvedBlendFboName), ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
 
-        context.GetOrCreateSyntheticPass($"SmaaNeighborhood_{GetSourceDisplayName()}_to_{OutputTextureName}")
+        context.GetOrCreateSyntheticPass(BuildNeighborhoodPassName())
             .WithStage(ERenderGraphPassStage.Graphics)
             .SampleTexture(source)
             .SampleTexture(MakeTextureResource(ResolvedBlendTextureName))
             .UseColorAttachment(MakeFboColorResource(ResolvedOutputFboName), ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
+    }
+
+    private string BuildEdgePassName()
+        => $"SmaaEdge_{GetSourceDisplayName()}_to_{ResolvedEdgeFboName}";
+
+    private string BuildBlendPassName()
+        => $"SmaaBlend_{ResolvedEdgeTextureName}_to_{ResolvedBlendFboName}";
+
+    private string BuildNeighborhoodPassName()
+        => $"SmaaNeighborhood_{GetSourceDisplayName()}_to_{OutputTextureName}";
+
+    private bool TryResolvePassIndex(string passName, out int passIndex)
+    {
+        var metadata = ParentPipeline?.PassMetadata;
+        if (metadata is not { Count: > 0 } renderPasses)
+        {
+            passIndex = int.MinValue;
+            return true;
+        }
+
+        foreach (var match in renderPasses)
+        {
+            if (string.Equals(match.Name, passName, StringComparison.OrdinalIgnoreCase))
+            {
+                passIndex = match.PassIndex;
+                return true;
+            }
+        }
+
+        passIndex = int.MinValue;
+        Debug.RenderingWarningEvery(
+            $"Smaa.MissingRenderGraphPass.{passName}",
+            TimeSpan.FromSeconds(2),
+            "[RenderDiag] Skipping SMAA pass '{0}': no matching render-graph pass metadata was generated.",
+            passName);
+        return false;
     }
 
     private static RenderingParameters CreateRenderOptions() => new()
@@ -381,7 +439,8 @@ void main()
             Enabled = ERenderParamUsage.Disabled,
             UpdateDepth = false,
             Function = EComparison.Always,
-        }
+        },
+        BlendModeAllDrawBuffers = BlendMode.Disabled()
     };
 
     private void EnsureResources(XRRenderPipelineInstance instance, XRTexture sourceTexture, uint width, uint height)

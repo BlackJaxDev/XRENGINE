@@ -57,7 +57,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
         shaderSource.ShouldContain("layout(binding = 0) uniform sampler2D AlbedoOpacity");
         shaderSource.ShouldContain("layout(binding = 1) uniform sampler2D Normal");
         shaderSource.ShouldContain("layout(binding = 2) uniform sampler2D RMSE");
-        shaderSource.ShouldContain("layout(binding = 5) uniform sampler2D LightingTexture");
+        shaderSource.ShouldContain("layout(binding = 5) uniform sampler2D LightingAccumTexture");
         shaderSource.ShouldContain("layout(std430, binding = 20) buffer LightProbePositions");
         shaderSource.ShouldContain("layout(std430, binding = 24) buffer LightProbeGridIndices");
 

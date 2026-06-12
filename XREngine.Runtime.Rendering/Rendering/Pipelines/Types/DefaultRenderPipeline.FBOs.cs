@@ -73,6 +73,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
                 RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime,
             }
         };
@@ -108,6 +109,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
                 RequiredEngineUniforms = EUniformRequirements.Camera,
             }
         };
@@ -1365,6 +1367,13 @@ public partial class DefaultRenderPipeline
                 BlendModeAllDrawBuffers = BlendMode.Disabled()
             }
         };
+        LogDeferredLightingDiagnostic(
+            "CreateLightCombineFBO " +
+            $"target={DescribeTexture(diffuseTexture)} " +
+            $"sampleSlot5={DescribeTexture(lightingAccumTexture)} " +
+            $"sampleSlot5Sampler='{lightingAccumTexture.SamplerName ?? "<null>"}' " +
+            $"shader={DescribeShader(lightCombineShader)} " +
+            $"blend=Disabled deriveTargetsFromMaterial=false textures=[{DescribeTextureList(lightCombineTextures)}]");
 
         // Wire probe/AO binding through the material's SettingUniforms so that probe sampler
         // locations are registered in _boundSamplerLocations BEFORE BindFallbackSamplers runs.
@@ -1388,6 +1397,9 @@ public partial class DefaultRenderPipeline
     private XRFrameBuffer CreateLightingAccumFBO()
     {
         IFrameBufferAttachement lightingAttach = EnsureTextureAttachment(LightingAccumTextureName, CreateLightingAccumTexture);
+        LogDeferredLightingDiagnostic(
+            "CreateLightingAccumFBO " +
+            $"target={DescribeAttachment(lightingAttach)} clearColorExpected=true clearDepth=false clearStencil=false");
 
         return new XRFrameBuffer((lightingAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
@@ -1628,6 +1640,14 @@ public partial class DefaultRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.Camera
             }
         };
+
+        LogDeferredLightingDiagnostic(
+            "CreateMsaaLightCombineFBO " +
+            $"sampleSlot5={DescribeTexture(msaaLightingTexture)} " +
+            $"sampleSlot5Sampler='{msaaLightingTexture.SamplerName ?? "<null>"}' " +
+            $"baseShader={DescribeShader(baseShader)} " +
+            $"msaaShader={DescribeShader(msaaShader)} " +
+            $"textures=[{DescribeTextureList(textures)}]");
 
         // Wire through material SettingUniforms (same reason as non-MSAA path above).
         mat.SettingUniforms += (_, program) => LightCombineFBO_SettingUniforms(program);

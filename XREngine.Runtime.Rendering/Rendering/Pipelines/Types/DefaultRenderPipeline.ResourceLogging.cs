@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace XREngine.Rendering;
@@ -96,6 +98,53 @@ public partial class DefaultRenderPipeline
             DescribeFrameBuffer(frameBuffer));
         */
     }
+
+    private static void LogDeferredLightingDiagnostic(string message)
+        => DeferredLightingDiagnostics.Write($"[DefaultRenderPipeline] {message}");
+
+    private static string DescribeTextureList(IReadOnlyList<XRTexture> textures)
+    {
+        List<string> labels = [];
+        for (int i = 0; i < textures.Count; i++)
+        {
+            XRTexture? texture = textures[i];
+            labels.Add(texture is null
+                ? $"{i}:<null>"
+                : $"{i}:{DescribeTexture(texture)} sampler='{texture.SamplerName ?? "<null>"}'");
+        }
+
+        return string.Join("; ", labels);
+    }
+
+    private static string DescribeShader(XRShader? shader)
+    {
+        if (shader is null)
+            return "<null>";
+
+        string sourceText = shader.Source?.Text ?? string.Empty;
+        string sourcePath = shader.Source?.FilePath ?? shader.FilePath ?? string.Empty;
+        string sourceName = shader.Source?.Name ?? shader.Name ?? string.Empty;
+        string sourceHash = StringComparer.Ordinal.GetHashCode(sourceText).ToString("X8");
+
+        StringBuilder builder = new();
+        builder.Append(shader.GetType().Name);
+        builder.Append('#').Append(RuntimeHelpers.GetHashCode(shader).ToString("X8"));
+        builder.Append(" type=").Append(shader.Type);
+        builder.Append(" name=").Append(string.IsNullOrWhiteSpace(shader.Name) ? "<unnamed>" : shader.Name);
+        builder.Append(" sourceName=").Append(string.IsNullOrWhiteSpace(sourceName) ? "<none>" : sourceName);
+        builder.Append(" path=").Append(string.IsNullOrWhiteSpace(sourcePath) ? "<none>" : sourcePath);
+        builder.Append(" sourceLen=").Append(sourceText.Length);
+        builder.Append(" sourceHash=").Append(sourceHash);
+        builder.Append(" msaaDefine=").Append(HasShaderDefine(sourceText, MsaaDeferredDefine));
+        builder.Append(" lightingAccumSymbol=").Append(sourceText.Contains("LightingAccumTexture", StringComparison.Ordinal));
+        builder.Append(" lightingMsaaSymbol=").Append(sourceText.Contains("LightingTextureMS", StringComparison.Ordinal));
+        return builder.ToString();
+    }
+
+    private static bool HasShaderDefine(string sourceText, string defineName)
+        => !string.IsNullOrEmpty(sourceText) &&
+           (sourceText.Contains($"#define {defineName}", StringComparison.Ordinal) ||
+            sourceText.Contains($"# define {defineName}", StringComparison.Ordinal));
 
     private static string DescribeFrameBuffer(XRFrameBuffer frameBuffer)
     {

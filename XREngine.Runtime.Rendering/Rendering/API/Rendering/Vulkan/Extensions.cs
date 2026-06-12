@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private KhrDrawIndirectCount? _khrDrawIndirectCount;
         private ExtMeshShader? _extMeshShader;
+        private ExtTransformFeedback? _extTransformFeedback;
         private KhrExternalMemoryWin32? _khrExternalMemoryWin32;
         private KhrExternalSemaphoreWin32? _khrExternalSemaphoreWin32;
 
@@ -42,9 +43,14 @@ namespace XREngine.Rendering.Vulkan
         private bool _supportsSynchronization2;
         private bool _supportsDepthClipControl;
         private bool _supportsGraphicsPipelineLibrary;
+        private bool _supportsTransformFeedback;
+        private bool _supportsTransformFeedbackGeometryStreams;
+        private bool _supportsTransformFeedbackQueries;
+        private bool _supportsTransformFeedbackDraw;
         private bool _supportsFragmentStoresAndAtomics;
         private bool _supportsVertexPipelineStoresAndAtomics;
         private bool _supportsGeometryShader;
+        private PhysicalDeviceTransformFeedbackPropertiesEXT _transformFeedbackProperties;
         private readonly Dictionary<ulong, uint> _renderPassColorAttachmentCounts = new();
         private readonly Dictionary<ulong, Format[]> _renderPassColorAttachmentFormats = new();
         private readonly Dictionary<ulong, string> _renderPassSemanticSignatures = new();
@@ -64,6 +70,11 @@ namespace XREngine.Rendering.Vulkan
         public bool SupportsSynchronization2 => _supportsSynchronization2;
         public bool SupportsDepthClipControl => _supportsDepthClipControl;
         public bool SupportsGraphicsPipelineLibrary => _supportsGraphicsPipelineLibrary;
+        public bool SupportsTransformFeedback => _supportsTransformFeedback && _extTransformFeedback is not null;
+        public bool SupportsTransformFeedbackGeometryStreams => SupportsTransformFeedback && _supportsTransformFeedbackGeometryStreams;
+        public bool SupportsTransformFeedbackQueries => SupportsTransformFeedback && _supportsTransformFeedbackQueries;
+        public bool SupportsTransformFeedbackDraw => SupportsTransformFeedback && _supportsTransformFeedbackDraw;
+        public PhysicalDeviceTransformFeedbackPropertiesEXT TransformFeedbackProperties => _transformFeedbackProperties;
         public bool SupportsFragmentStoresAndAtomics => _supportsFragmentStoresAndAtomics;
         public bool SupportsVertexPipelineStoresAndAtomics => _supportsVertexPipelineStoresAndAtomics;
         public bool SupportsGeometryShader => _supportsGeometryShader;
@@ -184,6 +195,7 @@ namespace XREngine.Rendering.Vulkan
             VulkanDepthClipControlExt.ExtensionName,
             "VK_KHR_pipeline_library",
             "VK_EXT_graphics_pipeline_library",
+            ExtTransformFeedback.ExtensionName,
             "VK_EXT_mesh_shader",
             "VK_NV_memory_decompression",
             "VK_NV_copy_memory_indirect"

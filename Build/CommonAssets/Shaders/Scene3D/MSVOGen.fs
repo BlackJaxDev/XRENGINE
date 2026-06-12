@@ -1,5 +1,6 @@
 #version 450
 
+#include "AOCommon.glsl"
 #pragma snippet "NormalEncoding"
 
 const float PI = 3.14159265359f;
@@ -16,18 +17,11 @@ uniform float Bias = 0.05f;
 uniform float Intensity = 1.0f;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
-uniform int DepthMode;
 
 uniform mat4 ViewMatrix;
 uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
-
-bool AOIsFarDepth(float depth)
-{
-    const float eps = 1e-6f;
-    return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
-}
 
 vec3 ViewPosFromDepth(float depth, vec2 uv)
 {
@@ -65,11 +59,9 @@ float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord)
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0f || uv.y > 1.0f)
+    if (FragPos.x > 1.0f || FragPos.y > 1.0f)
         discard;
-    //Normalize uv from [-1, 1] to [0, 1]
-    uv = uv * 0.5f + 0.5f;
+    vec2 uv = AOTextureUVFromFragPos(FragPos);
     
     vec3 normal = XRENGINE_ReadNormal(Normal, uv);
     vec3 viewNormal = normalize((ViewMatrix * vec4(normal, 0.0f)).rgb);

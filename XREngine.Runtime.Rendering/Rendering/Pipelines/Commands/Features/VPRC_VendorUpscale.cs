@@ -128,7 +128,8 @@ void main()
                         Enabled = ERenderParamUsage.Disabled,
                         Function = EComparison.Always,
                         UpdateDepth = false,
-                    }
+                    },
+                    BlendModeAllDrawBuffers = BlendMode.Disabled()
                 }
             };
 

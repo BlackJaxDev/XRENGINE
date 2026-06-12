@@ -180,6 +180,7 @@ public unsafe partial class VulkanRenderer
             BlitOp b => b.OutFbo is null,
             IndirectDrawOp id => id.Target is null,
             MeshTaskDispatchIndirectCountOp meshTask => meshTask.Target is null,
+            TransformFeedbackOp transformFeedback => transformFeedback.Target is null,
             _ => false,
         };
 

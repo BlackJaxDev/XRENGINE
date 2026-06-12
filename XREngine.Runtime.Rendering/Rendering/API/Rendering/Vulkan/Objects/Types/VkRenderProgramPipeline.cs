@@ -176,7 +176,7 @@ public unsafe partial class VulkanRenderer
             _layoutsDirty = true;
         }
 
-        private void CreatePipelineLayout(IReadOnlyList<DescriptorSetLayout> layouts)
+        private void CreatePipelineLayout(DescriptorSetLayout[] layouts)
         {
             if (_pipelineLayout.Handle != 0)
             {
@@ -184,7 +184,7 @@ public unsafe partial class VulkanRenderer
                 _pipelineLayout = default;
             }
 
-            if (layouts.Count == 0)
+            if (layouts.Length == 0)
             {
                 PushConstantRange pushRange = CreateCommonPushConstantRange();
                 PipelineLayoutCreateInfo info = new()
@@ -198,7 +198,7 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
-            DescriptorSetLayout[] layoutArray = layouts.ToArray();
+            DescriptorSetLayout[] layoutArray = [.. layouts];
             fixed (DescriptorSetLayout* layoutPtr = layoutArray)
             {
                 PushConstantRange pushRange = CreateCommonPushConstantRange();

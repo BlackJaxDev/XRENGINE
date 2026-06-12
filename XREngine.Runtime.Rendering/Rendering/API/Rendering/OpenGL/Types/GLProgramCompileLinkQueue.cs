@@ -227,6 +227,21 @@ namespace XREngine.Rendering.OpenGL
 
             public readonly record struct ShaderInput(string ResolvedSource, ShaderType Type);
 
+            public readonly record struct TransformFeedbackLinkInfo(string[]? Varyings, GLEnum BufferMode)
+            {
+                public bool HasVaryings => Varyings is { Length: > 0 };
+
+                public static TransformFeedbackLinkInfo Empty => new(Array.Empty<string>(), GLEnum.InterleavedAttribs);
+
+                public string ToIdentityString()
+                {
+                    if (!HasVaryings)
+                        return "TransformFeedback=<none>";
+
+                    return "TransformFeedback=" + BufferMode + ":" + string.Join("|", Varyings!);
+                }
+            }
+
             public readonly record struct ProgramBinarySnapshot(byte[] Binary, GLEnum Format, uint Length);
 
             public readonly record struct CompileResult(
@@ -330,7 +345,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void EnqueueCompileAndLink(uint programId, ShaderInput[] shaders)
             {
-                if (!TryEnqueueCompileAndLink(programId, shaders, EProgramPriority.Main, setBinaryRetrievableHint: false, out string? rejectReason))
+                if (!TryEnqueueCompileAndLink(programId, shaders, EProgramPriority.Main, setBinaryRetrievableHint: false, TransformFeedbackLinkInfo.Empty, out string? rejectReason))
                     throw new InvalidOperationException(rejectReason ?? "Unable to enqueue OpenGL compile/link job.");
             }
 
@@ -344,13 +359,14 @@ namespace XREngine.Rendering.OpenGL
             /// <see cref="EProgramPriority.Compute"/>, <see cref="EProgramPriority.Deferred"/>) inside the shared-context worker.
             /// </summary>
             public bool TryEnqueueCompileAndLink(uint programId, ShaderInput[] shaders, EProgramPriority priority, out string? rejectReason)
-                => TryEnqueueCompileAndLink(programId, shaders, priority, setBinaryRetrievableHint: false, out rejectReason);
+                => TryEnqueueCompileAndLink(programId, shaders, priority, setBinaryRetrievableHint: false, TransformFeedbackLinkInfo.Empty, out rejectReason);
 
             public bool TryEnqueueCompileAndLink(
                 uint programId,
                 ShaderInput[] shaders,
                 EProgramPriority priority,
                 bool setBinaryRetrievableHint,
+                TransformFeedbackLinkInfo transformFeedback,
                 out string? rejectReason)
             {
                 ShaderInputSummary summary = SummarizeShaderInputs(shaders);
@@ -615,6 +631,7 @@ namespace XREngine.Rendering.OpenGL
                             }
 
                             long linkStartTimestamp = Stopwatch.GetTimestamp();
+                            ApplyTransformFeedbackVaryings(gl, programId, transformFeedback, "worker=source-link-transform-feedback-varyings");
                             MeasureRenderingWorkerGlCall(
                                 "glLinkProgram",
                                 programId,
@@ -829,6 +846,21 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }, $"ProgramSourceCompile:{programId}", priority);
                 return true;
+            }
+
+            private static void ApplyTransformFeedbackVaryings(GL gl, uint programId, TransformFeedbackLinkInfo transformFeedback, string phase)
+            {
+                if (!transformFeedback.HasVaryings)
+                    return;
+
+                string[] varyings = transformFeedback.Varyings!;
+                MeasureRenderingWorkerGlCall(
+                    "glTransformFeedbackVaryings",
+                    programId,
+                    0,
+                    null,
+                    () => gl.TransformFeedbackVaryings(programId, (uint)varyings.Length, varyings, transformFeedback.BufferMode),
+                    phase);
             }
 
             /// <summary>

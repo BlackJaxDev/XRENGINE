@@ -74,6 +74,7 @@ You do not need to understand every property up front. These are the ones that u
 - `AddPhysics`, `PhysicsBallCount`, `PhysicsChain`: enable physics-focused scenarios
 - `ModelsToImport`: imports test assets into the world at startup
 - `DynamicPointLightCount`, `DynamicSpotLightCount`, `DynamicLightSeed`: add repeatable animated local-light stress rigs
+- `ProceduralSky`, `ProceduralSkyAutoCycle`, `ProceduralSkyTimeOfDay`: enable the dynamic sky and optionally lock it to a deterministic sun position
 - `InitializeAtmosphericScattering`: spawns the default planetary atmosphere and enables the matching camera post-process stage
 - `GPURenderDispatch`: switches rendering dispatch mode
 - `StartInPlayModeWithoutTransitions`: skips the usual edit-to-play transition
@@ -117,6 +118,10 @@ For glTF validation work, the checked-in corpus under `XREngine.UnitTests/TestDa
 `FbxLogVerbosity` controls how much native FBX importer/exporter trace output is emitted while the unit-testing world boots. When enabled, those lines go through the engine `Assets` log category, so they show up in the editor console `Assets` tab and in `Build/Logs/.../log_assets.log` when file logging is enabled. glTF does not currently expose a separate verbosity toggle; native glTF warnings and fallback diagnostics also flow through the normal asset-import logging path.
 
 This is the fastest way to spin up repeatable import tests without hand-building the scene each time.
+
+### Lock procedural sky time
+
+When `ProceduralSky` is enabled, the skybox can drive the unit-test directional lights. For deterministic lighting captures, set `ProceduralSkyAutoCycle` to `false` and choose `ProceduralSkyTimeOfDay`; `0.25` is noon and `0.75` is midnight.
 
 ### Test dynamic local lights
 

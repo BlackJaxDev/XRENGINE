@@ -3,9 +3,12 @@ using Newtonsoft.Json;
 using NUnit.Framework;
 using Shouldly;
 using System.IO;
+using System.Linq;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Editor;
 using XREngine.Rendering.Models;
 using XREngine.Runtime.Bootstrap;
+using XREngine.Runtime.Bootstrap.Builders;
 
 namespace XREngine.UnitTests.Editor;
 
@@ -127,6 +130,90 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         roundTrip.DynamicLightsCastShadows.ShouldBeTrue();
         roundTrip.DynamicLightsForceShadowAtlas.ShouldBeTrue();
         roundTrip.DynamicLightSeed.ShouldBe(42);
+    }
+
+    [Test]
+    public void Settings_RoundTripsProceduralSkySettings_BetweenEditorAndRuntimeSettings()
+    {
+        var editorSettings = new EditorUnitTests.Settings
+        {
+            ProceduralSky = true,
+            ProceduralSkyAutoCycle = false,
+            ProceduralSkyTimeOfDay = 0.6f,
+        };
+
+        UnitTestingWorldSettings runtimeSettings = editorSettings.ToRuntimeSettings();
+
+        runtimeSettings.ProceduralSky.ShouldBeTrue();
+        runtimeSettings.ProceduralSkyAutoCycle.ShouldBeFalse();
+        runtimeSettings.ProceduralSkyTimeOfDay.ShouldBe(0.6f);
+
+        runtimeSettings.ProceduralSkyAutoCycle = true;
+        runtimeSettings.ProceduralSkyTimeOfDay = 0.25f;
+
+        EditorUnitTests.Settings roundTrip = EditorUnitTests.Settings.FromRuntime(runtimeSettings);
+
+        roundTrip.ProceduralSky.ShouldBeTrue();
+        roundTrip.ProceduralSkyAutoCycle.ShouldBeTrue();
+        roundTrip.ProceduralSkyTimeOfDay.ShouldBe(0.25f);
+    }
+
+    [Test]
+    public void ParseJsonc_ReadsProceduralSkySettings()
+    {
+        const string json = """
+        {
+          "ProceduralSky": true,
+          "ProceduralSkyAutoCycle": false,
+          "ProceduralSkyTimeOfDay": 0.6
+        }
+        """;
+
+        UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.ParseJsonc(json);
+
+        settings.ProceduralSky.ShouldBeTrue();
+        settings.ProceduralSkyAutoCycle.ShouldBeFalse();
+        settings.ProceduralSkyTimeOfDay.ShouldBe(0.6f);
+        settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.ProceduralSkyAutoCycle)).ShouldBeTrue();
+        settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.ProceduralSkyTimeOfDay)).ShouldBeTrue();
+    }
+
+    [Test]
+    public void BootstrapWorldFactory_AppliesProceduralSkySettingsToSkybox()
+    {
+        UnitTestingWorldSettings previousSettings = RuntimeBootstrapState.Settings;
+        try
+        {
+            RuntimeBootstrapState.Settings = new UnitTestingWorldSettings
+            {
+                Skybox = true,
+                ProceduralSky = true,
+                ProceduralSkyAutoCycle = false,
+                ProceduralSkyTimeOfDay = 0.6f,
+                DirLight = false,
+                SpotLight = false,
+                PointLight = false,
+                LightProbe = LightProbeMode.Off,
+                VRPawn = false,
+                Locomotion = false,
+            };
+
+            var world = BootstrapWorldFactory.CreateUnitTestWorld(setUI: false, isServer: false);
+
+            SkyboxComponent? skybox = world.Scenes
+                .SelectMany(scene => scene.RootNodes)
+                .SelectMany(root => root.FindAllDescendantComponents<SkyboxComponent>())
+                .SingleOrDefault();
+
+            skybox.ShouldNotBeNull();
+            skybox.Mode.ShouldBe(ESkyboxMode.DynamicProcedural);
+            skybox.AutoCycle.ShouldBeFalse();
+            skybox.TimeOfDay.ShouldBe(0.6f);
+        }
+        finally
+        {
+            RuntimeBootstrapState.Settings = previousSettings;
+        }
     }
 
     [Test]

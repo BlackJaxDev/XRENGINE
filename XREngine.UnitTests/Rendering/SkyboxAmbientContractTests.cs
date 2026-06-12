@@ -10,12 +10,12 @@ public sealed class SkyboxAmbientContractTests
     [Test]
     public void DynamicProceduralSkybox_DrivesWorldAmbient()
     {
-        string source = ReadCSharpFile("XRENGINE/Scene/Components/Misc/SkyboxComponent.cs");
+        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Scene/Components/Misc/SkyboxComponent.cs");
 
         source.ShouldContain("private bool _syncGlobalAmbientLighting = true;");
         source.ShouldContain("public bool SyncGlobalAmbientLighting");
         source.ShouldContain("ApplyGlobalAmbientSync(sun, moon, sunDirection, moonDirection, sunKelvin, moonKelvin);");
-        source.ShouldContain("WorldAs<XRWorldInstance>()?.TargetWorld?.Settings");
+        source.ShouldContain("WorldAs<IRuntimeRenderWorld>()?.AmbientSettings");
         source.ShouldContain("settings.AmbientLightColor = color;");
         source.ShouldContain("settings.AmbientLightIntensity = intensity;");
     }
@@ -23,7 +23,7 @@ public sealed class SkyboxAmbientContractTests
     [Test]
     public void ForwardLighting_GlobalAmbientComesFromWorldSettings()
     {
-        string source = ReadCSharpFile("XRENGINE/Rendering/Lights3DCollection.ForwardLighting.cs");
+        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs");
 
         source.ShouldContain("program.Uniform(\"GlobalAmbient\", (Vector3)World.GetEffectiveAmbientColor());");
         source.ShouldNotContain("program.Uniform(\"GlobalAmbient\", new Vector3(0.1f, 0.1f, 0.1f));");
@@ -32,8 +32,8 @@ public sealed class SkyboxAmbientContractTests
     [Test]
     public void DeferredPipelines_BindGlobalAmbientFromRenderingWorld()
     {
-        string pipeline1 = ReadCSharpFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
-        string pipeline2 = ReadCSharpFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs");
+        string pipeline1 = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+        string pipeline2 = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs");
 
         pipeline1.ShouldContain("RenderingWorld?.GetEffectiveAmbientColor()");
         pipeline1.ShouldContain("program.Uniform(\"GlobalAmbient\", ResolveGlobalAmbient());");

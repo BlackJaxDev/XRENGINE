@@ -102,6 +102,14 @@
       "type": "boolean",
       "description": "Uses the dynamic procedural sky instead of loading the unit-test skybox texture. When enabled, the skybox syncs to the unit-test directional lights when present."
     },
+    "ProceduralSkyAutoCycle": {
+      "type": "boolean",
+      "description": "When ProceduralSky is enabled, controls whether the procedural sky advances its day/night cycle over time."
+    },
+    "ProceduralSkyTimeOfDay": {
+      "type": "number",
+      "description": "When ProceduralSky is enabled, sets the normalized time of day. 0.25 is noon, 0.75 is midnight."
+    },
     "Spline": {
       "type": "boolean",
       "description": "Adds a 3D spline to the scene."

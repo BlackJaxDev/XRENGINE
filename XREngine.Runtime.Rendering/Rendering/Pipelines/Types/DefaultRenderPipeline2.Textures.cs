@@ -547,7 +547,7 @@ public partial class DefaultRenderPipeline2
         => CreateLightingTexture(DiffuseTextureName, DiffuseTextureName);
 
     private XRTexture CreateLightingAccumTexture()
-        => CreateLightingTexture(LightingAccumTextureName, DiffuseTextureName);
+        => CreateLightingTexture(LightingAccumTextureName, LightingAccumTextureName);
 
     private XRTexture CreateLightingTexture(string textureName, string samplerName)
     {

@@ -1,6 +1,7 @@
 #version 450
 #extension GL_OVR_multiview2 : require
 
+#include "AOCommon.glsl"
 #pragma snippet "NormalEncoding"
 
 const float PI = 3.14159265359f;
@@ -16,7 +17,6 @@ uniform float Bias = 0.05f;
 uniform float Intensity = 1.0f;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
-uniform int DepthMode;
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
@@ -26,12 +26,6 @@ uniform mat4 LeftEyeInverseProjMatrix;
 uniform mat4 RightEyeInverseProjMatrix;
 uniform mat4 LeftEyeProjMatrix;
 uniform mat4 RightEyeProjMatrix;
-
-bool AOIsFarDepth(float depth)
-{
-    const float eps = 1e-6f;
-    return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
-}
 
 vec3 ViewPosFromDepth(float depth, vec2 uv, mat4 inverseProjMatrix)
 {
@@ -68,10 +62,9 @@ float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord, mat4
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0f || uv.y > 1.0f)
+    if (FragPos.x > 1.0f || FragPos.y > 1.0f)
         discard;
-    uv = uv * 0.5f + 0.5f;
+    vec2 uv = AOTextureUVFromFragPos(FragPos);
 
     bool leftEye = gl_ViewID_OVR == 0;
     mat4 viewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;

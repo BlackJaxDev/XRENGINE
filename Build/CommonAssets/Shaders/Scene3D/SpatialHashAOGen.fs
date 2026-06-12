@@ -55,11 +55,10 @@ float HashToUnitFloat(uvec3 v)
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0f || uv.y > 1.0f)
+    if (FragPos.x > 1.0f || FragPos.y > 1.0f)
         discard;
 
-    uv = uv * 0.5f + 0.5f;
+    vec2 uv = AOTextureUVFromFragPos(FragPos);
 
     vec3 encodedNormal = XRENGINE_ReadNormal(Normal, uv);
     float depth = texture(DepthView, uv).r;
@@ -92,7 +91,7 @@ void main()
             vec3 samplePos = fragPosVS + dir * (Bias + marchDist);
             vec4 clipPos = ProjMatrix * vec4(samplePos, 1.0f);
             clipPos.xyz /= clipPos.w;
-            vec2 sampleUV = clipPos.xy * 0.5f + 0.5f;
+            vec2 sampleUV = AOTextureUVFromClipXY(clipPos.xy);
 
             if (sampleUV.x < 0.0f || sampleUV.x > 1.0f || sampleUV.y < 0.0f || sampleUV.y > 1.0f)
                 break;

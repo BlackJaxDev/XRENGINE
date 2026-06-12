@@ -26,11 +26,9 @@ uniform mat4 ProjMatrix;
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0f || uv.y > 1.0f)
+    if (FragPos.x > 1.0f || FragPos.y > 1.0f)
         discard;
-    //Normalize uv from [-1, 1] to [0, 1]
-    uv = uv * 0.5f + 0.5f;
+    vec2 uv = AOTextureUVFromFragPos(FragPos);
     
     vec3 Normal = XRENGINE_ReadNormal(Normal, uv);
     float Depth = texture(DepthView, uv).r;
@@ -63,13 +61,13 @@ void main()
 
         offset = ProjMatrix * vec4(noiseSample, 1.0f);
         offset.xyz /= offset.w;
-        offset.xyz = offset.xyz * 0.5f + 0.5f;
+        vec2 sampleUV = AOTextureUVFromClipXY(offset.xy);
 
-        float rawSampleDepth = texture(DepthView, offset.xy).r;
+        float rawSampleDepth = texture(DepthView, sampleUV).r;
         if (AOIsFarDepth(rawSampleDepth))
             continue;
 
-        sampleDepth = AOViewPosFromDepth(rawSampleDepth, offset.xy, InverseProjMatrix).z;
+        sampleDepth = AOViewPosFromDepth(rawSampleDepth, sampleUV, InverseProjMatrix).z;
 
         occlusion += (sampleDepth >= noiseSample.z + bias ? smoothstep(0.0f, 1.0f, Radius / abs(FragPosVS.z - sampleDepth)) : 0.0f);
     }

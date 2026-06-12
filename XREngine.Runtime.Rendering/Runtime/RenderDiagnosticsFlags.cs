@@ -34,6 +34,9 @@ public static class RenderDiagnosticsFlags
     /// <summary>Post-process uniform and descriptor diagnostic logging. Seed: <c>XRE_DIAG_POSTPROCESS=1</c>.</summary>
     public static volatile bool DiagPostProcess;
 
+    /// <summary>Vulkan deferred-lighting accumulation diagnostics. Seed: <c>XRE_DIAG_DEFERRED_LIGHTING=1</c>.</summary>
+    public static volatile bool DiagDeferredLighting;
+
     /// <summary>Clear the default framebuffer to magenta to confirm present-path binding. Seed: <c>XRE_DEBUG_PRESENT_CLEAR=1</c>.</summary>
     public static volatile bool DebugPresentClear;
 
@@ -188,6 +191,7 @@ public static class RenderDiagnosticsFlags
         DiagVendorUpscale = ReadBool("XRE_DIAG_VENDOR_UPSCALE");
         DiagQuadBlit = ReadBool("XRE_DIAG_QUAD_BLIT");
         DiagPostProcess = ReadBool("XRE_DIAG_POSTPROCESS");
+        DiagDeferredLighting = ReadBool("XRE_DIAG_DEFERRED_LIGHTING");
         DebugPresentClear = ReadBool("XRE_DEBUG_PRESENT_CLEAR");
         PushSubDataBreakdown = ReadBool("XRE_PUSHSUBDATA_BREAKDOWN");
         PushSubDataTrace = ReadBool("XRE_PUSHSUBDATA_TRACE");
@@ -321,6 +325,7 @@ public static class RenderDiagnosticsFlags
     public static void SetDiagVendorUpscale(bool value) => DiagVendorUpscale = value;
     public static void SetDiagQuadBlit(bool value) => DiagQuadBlit = value;
     public static void SetDiagPostProcess(bool value) => DiagPostProcess = value;
+    public static void SetDiagDeferredLighting(bool value) => DiagDeferredLighting = value;
     public static void SetDebugPresentClear(bool value) => DebugPresentClear = value;
     public static void SetPushSubDataBreakdown(bool value) => PushSubDataBreakdown = value;
     public static void SetPushSubDataTrace(bool value) => PushSubDataTrace = value;

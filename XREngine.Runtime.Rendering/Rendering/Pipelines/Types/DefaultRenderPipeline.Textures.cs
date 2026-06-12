@@ -549,7 +549,7 @@ public partial class DefaultRenderPipeline
         => CreateLightingTexture(DiffuseTextureName, DiffuseTextureName);
 
     private XRTexture CreateLightingAccumTexture()
-        => CreateLightingTexture(LightingAccumTextureName, DiffuseTextureName);
+        => CreateLightingTexture(LightingAccumTextureName, LightingAccumTextureName);
 
     private XRTexture CreateLightingTexture(string textureName, string samplerName)
     {
@@ -558,6 +558,7 @@ public partial class DefaultRenderPipeline
         // covers the full HDR range needed for direct lighting + emissive.
         // MSAA variant keeps Rgb16f because R11fG11fB10f MSAA support is
         // less reliable across drivers.
+        XRTexture texture;
         if (Stereo)
         {
             var t = XRTexture2DArray.CreateFrameBufferTexture(
@@ -571,7 +572,7 @@ public partial class DefaultRenderPipeline
             t.SizedInternalFormat = ESizedInternalFormat.R11fG11fB10f;
             t.Name = textureName;
             t.SamplerName = samplerName;
-            return t;
+            texture = t;
         }
         else
         {
@@ -583,8 +584,13 @@ public partial class DefaultRenderPipeline
             t.SizedInternalFormat = ESizedInternalFormat.R11fG11fB10f;
             t.Name = textureName;
             t.SamplerName = samplerName;
-            return t;
+            texture = t;
         }
+
+        LogDeferredLightingDiagnostic(
+            "CreateLightingTexture " +
+            $"textureName='{textureName}' samplerName='{samplerName}' texture={DescribeTexture(texture)}");
+        return texture;
     }
 
     // --- MSAA GBuffer texture creation (non-Stereo only) ---
