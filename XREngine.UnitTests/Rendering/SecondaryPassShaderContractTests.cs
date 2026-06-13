@@ -142,17 +142,121 @@ public sealed class SecondaryPassShaderContractTests
     }
 
     [Test]
-    public void DeferredLightCombine_UsesScreenSpaceUvForGBufferComposite()
+    public void DeferredLightCombine_UsesFramebufferUvForGBufferComposite()
     {
         string source = LoadShaderSource(Path.Combine("Scene3D", "DeferredLightCombine.fs"));
 
         source.ShouldContain("uniform float ScreenWidth;");
         source.ShouldContain("uniform float ScreenHeight;");
         source.ShouldContain("uniform vec2 ScreenOrigin;");
-        source.ShouldContain("XRENGINE_ScreenUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight))");
-        source.ShouldContain("XRENGINE_ScreenPixelLocal(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(DepthView)))");
+        source.ShouldContain("XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight))");
+        source.ShouldContain("XRENGINE_FramebufferPixelLocal(gl_FragCoord.xy, ScreenOrigin)");
+        source.ShouldNotContain("XRENGINE_ScreenUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight))");
+        source.ShouldNotContain("XRENGINE_ScreenPixelLocal(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(DepthView)))");
         source.ShouldNotContain("vec2 uv = FragPos.xy;");
         source.ShouldNotContain("uv = uv * 0.5f + 0.5f;");
+    }
+
+    [TestCase("Scene3D/DeferredLightingDir.fs")]
+    [TestCase("Scene3D/DeferredLightingPoint.fs")]
+    [TestCase("Scene3D/DeferredLightingSpot.fs")]
+    public void DeferredLightAccumulationPasses_UseFramebufferCoordinatesForGBufferReads(string shaderRelativePath)
+    {
+        string source = LoadShaderSource(shaderRelativePath);
+
+        source.ShouldContain("XRENGINE_FramebufferCoordLocal(gl_FragCoord.xy, ScreenOrigin)");
+        source.ShouldNotContain("XRENGINE_ScreenCoordLocal(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight))");
+    }
+
+    [Test]
+    public void DeferredLightingEnhanced_UsesFramebufferUvForGBufferReads()
+    {
+        string source = LoadShaderSource(Path.Combine("Scene3D", "DeferredLightingDir_Enhanced.fs"));
+
+        source.ShouldContain("XRENGINE_FramebufferUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight))");
+        source.ShouldNotContain("XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight))");
+    }
+
+    [Test]
+    public void ScreenSpaceUtils_ConvertsFullscreenClipCoordinatesWithRuntimeYDirection()
+    {
+        string source = LoadShaderSource(Path.Combine("Snippets", "ScreenSpaceUtils.glsl"));
+        string depthUtils = LoadShaderSource(Path.Combine("Snippets", "DepthUtils.glsl"));
+
+        source.ShouldContain("vec2 XRENGINE_ClipXYToScreenUV(vec2 clipXY)");
+        source.ShouldContain("vec2 uv = clipXY * 0.5 + 0.5;");
+        source.ShouldContain("if (ClipSpaceYDirection == 1)");
+        source.ShouldContain("uv.y = 1.0 - uv.y;");
+        depthUtils.ShouldContain("vec2 XRENGINE_ClipXYToScreenUV(vec2 clipXY)");
+        depthUtils.ShouldContain("vec2 XRENGINE_FramebufferUV(vec2 fragCoord, vec2 screenOrigin, vec2 screenSize)");
+    }
+
+    [TestCase("Scene3D/PostProcess.fs")]
+    [TestCase("Scene3D/PostProcessStereo.fs")]
+    [TestCase("Scene3D/FinalPostProcess.fs")]
+    [TestCase("Scene3D/FinalPostProcessStereo.fs")]
+    public void FullscreenCompositePasses_UseClipPolicyForTriangleUvs(string shaderRelativePath)
+    {
+        string source = LoadShaderSource(shaderRelativePath);
+
+        source.ShouldContain("#pragma snippet \"ScreenSpaceUtils\"");
+        source.ShouldContain("vec2 clipXY = FragPos.xy;");
+        source.ShouldContain("XRENGINE_ClipXYToScreenUV(clipXY)");
+        source.ShouldNotContain("uv = uv * 0.5f + 0.5f;");
+        source.ShouldNotContain("uv = uv * 0.5 + 0.5;");
+    }
+
+    [TestCase("Scene3D/Atmosphere/AtmosphereHalfDepthDownsample.fs", false)]
+    [TestCase("Scene3D/Atmosphere/AtmosphereAerialPerspective.fs", true)]
+    [TestCase("Scene3D/Atmosphere/AtmosphereReproject.fs", true)]
+    [TestCase("Scene3D/Atmosphere/AtmosphereUpscale.fs", true)]
+    [TestCase("Scene3D/VolumetricFog/VolumetricFogHalfDepthDownsample.fs", false)]
+    [TestCase("Scene3D/VolumetricFog/VolumetricFogScatter.fs", true)]
+    [TestCase("Scene3D/VolumetricFog/VolumetricFogReproject.fs", true)]
+    [TestCase("Scene3D/VolumetricFog/VolumetricFogUpscale.fs", true)]
+    public void AtmosphereAndVolumetricFullscreenPasses_UseClipPolicyForUvAndDepth(string shaderRelativePath, bool reconstructsDepth)
+    {
+        string source = LoadShaderSource(shaderRelativePath);
+
+        source.ShouldContain("#pragma snippet \"ScreenSpaceUtils\"");
+        source.ShouldContain("XRENGINE_ClipXYToScreenUV(ndc)");
+        source.ShouldNotContain("vec3(uv, rawDepth) * 2.0f - 1.0f");
+
+        if (reconstructsDepth)
+            source.ShouldContain("uniform int ClipDepthRange;");
+    }
+
+    [Test]
+    public void FullscreenCompositeFbos_RequestClipSpacePolicyUniforms()
+    {
+        string pipeline = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "Pipelines",
+            "Types",
+            "DefaultRenderPipeline.FBOs.cs"));
+        string pipeline2 = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "Pipelines",
+            "Types",
+            "DefaultRenderPipeline2.FBOs.cs"));
+        string atmosphereSky = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Scene",
+            "Components",
+            "Environment",
+            "AtmosphericScatteringComponent.cs"));
+
+        foreach (string source in new[] { pipeline, pipeline2 })
+        {
+            source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy");
+            source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy");
+            source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy");
+            source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy");
+        }
+
+        atmosphereSky.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy");
     }
 
     [Test]
@@ -234,6 +338,7 @@ public sealed class SecondaryPassShaderContractTests
             "Vulkan",
             "Objects",
             "Types",
+            "MeshRenderer",
             "VkMeshRenderer.Pipeline.cs"));
         string vulkanShaderTools = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
@@ -288,6 +393,31 @@ public sealed class SecondaryPassShaderContractTests
     }
 
     [Test]
+    public void ClipDepthReconstructionPasses_UseRuntimeDepthRange()
+    {
+        string openGlUniformBinding = ReadWorkspaceFile(Path.Combine(
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "API",
+            "Rendering",
+            "OpenGL",
+            "Types",
+            "Meshes",
+            "GLRenderProgram.UniformBinding.cs"));
+        string postProcess = LoadShaderSource(Path.Combine("Scene3D", "PostProcess.fs"));
+        string volumetricFog = LoadShaderSource(Path.Combine("Scene3D", "VolumetricFog", "VolumetricFogScatter.fs"));
+
+        openGlUniformBinding.ShouldContain("_engineUniformClipSpaceYDirection == clipSpaceYDirection");
+        openGlUniformBinding.ShouldContain("_engineUniformClipDepthRange == clipDepthRange");
+        postProcess.ShouldContain("uniform int ClipDepthRange;");
+        postProcess.ShouldContain("XRENGINE_PostProcessDepthToClipZ(depth)");
+        postProcess.ShouldNotContain("vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f)");
+        volumetricFog.ShouldContain("uniform int ClipDepthRange;");
+        volumetricFog.ShouldContain("XRENGINE_VolumetricFogDepthToClipZ(depth)");
+        volumetricFog.ShouldNotContain("vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f)");
+    }
+
+    [Test]
     public void SkyboxVertex_PrecomputesWorldRayAndRotation()
     {
         string source = LoadShaderSource(Path.Combine("Scene3D", "Skybox.vs"));
@@ -302,9 +432,10 @@ public sealed class SecondaryPassShaderContractTests
         source.ShouldContain("vec3 RotateSkyDirection(vec3 dir)");
         source.ShouldContain("float GetFarClipZ()");
         source.ShouldContain("return ClipDepthRange == 1 ? -1.0 : 0.0;");
-        source.ShouldContain("FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));");
         source.ShouldContain("vec2 clipXY = Position.xy;");
+        source.ShouldContain("FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));");
         source.ShouldContain("gl_Position = vec4(clipXY, GetFarClipZ(), 1.0);");
+        source.ShouldNotContain("GetRayClipXY");
         source.ShouldNotContain("gl_VertexIndex");
     }
 
@@ -380,6 +511,7 @@ public sealed class SecondaryPassShaderContractTests
         source.ShouldContain("return ClipDepthRange == 1 ? -1.0 : 0.0;");
         source.ShouldContain("FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));");
         source.ShouldContain("gl_Position = vec4(clipXY, GetFarClipZ(), 1.0);");
+        source.ShouldNotContain("GetRayClipXY");
         source.ShouldContain("layout (location = 1) in vec3 FragWorldDir;");
         normalizesWorldDirection.ShouldBeTrue();
     }
@@ -460,6 +592,7 @@ public sealed class SecondaryPassShaderContractTests
             "Vulkan",
             "Objects",
             "Types",
+            "MeshRenderer",
             "VkMeshRenderer.Descriptors.cs"));
 
         flags.ShouldContain("public static volatile bool DiagPostProcess;");
@@ -488,6 +621,7 @@ public sealed class SecondaryPassShaderContractTests
             "Vulkan",
             "Objects",
             "Types",
+            "MeshRenderer",
             "VkMeshRenderer.Uniforms.cs"));
         string renderProgram = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
@@ -542,6 +676,7 @@ public sealed class SecondaryPassShaderContractTests
             "Vulkan",
             "Objects",
             "Types",
+            "Textures",
             "VkImageBackedTexture.cs"));
         string textureView = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
@@ -551,6 +686,7 @@ public sealed class SecondaryPassShaderContractTests
             "Vulkan",
             "Objects",
             "Types",
+            "Textures",
             "VkTextureView.cs"));
         string meshDescriptors = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
@@ -560,6 +696,7 @@ public sealed class SecondaryPassShaderContractTests
             "Vulkan",
             "Objects",
             "Types",
+            "MeshRenderer",
             "VkMeshRenderer.Descriptors.cs"));
 
         postProcessShader.ShouldContain("uniform usampler2D StencilView;");

@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out float OutDepth;
 layout(location = 0) in vec3 FragPos;
 
@@ -11,6 +13,6 @@ void main()
   if (ndc.x > 1.0f || ndc.y > 1.0f)
     discard;
 
-  vec2 uv = ndc * 0.5f + 0.5f;
+  vec2 uv = XRENGINE_ClipXYToScreenUV(ndc);
   OutDepth = texture(DepthView, uv).r;
 }

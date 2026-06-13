@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 // Volumetric fog temporal reprojection.
 //
 // Reads current half-res scatter, previous half-res history, and current
@@ -18,6 +20,11 @@ uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform int DepthMode;
 
+#ifndef XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+#define XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+uniform int ClipDepthRange;
+#endif
+
 uniform bool VolumetricFogHistoryReady;
 uniform mat4 VolumetricFogPreviousViewProjection;
 uniform vec2 VolumetricFogHistoryTexelSize;
@@ -31,6 +38,11 @@ float ResolveDepth(float depth)
     return DepthMode == 1 ? (1.0f - depth) : depth;
 }
 
+float VolumetricFogDepthToClipZ(float depth)
+{
+    return ClipDepthRange == 1 ? depth * 2.0f - 1.0f : depth;
+}
+
 bool IsValidUV(vec2 uv)
 {
     return all(greaterThanEqual(uv, vec2(0.0f))) && all(lessThanEqual(uv, vec2(1.0f)));
@@ -38,7 +50,7 @@ bool IsValidUV(vec2 uv)
 
 vec3 WorldPosFromDepthRaw(float rawDepth, vec2 uv)
 {
-    vec4 clipSpacePosition = vec4(vec3(uv, rawDepth) * 2.0f - 1.0f, 1.0f);
+    vec4 clipSpacePosition = vec4(uv * 2.0f - 1.0f, VolumetricFogDepthToClipZ(rawDepth), 1.0f);
     vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
     viewSpacePosition /= max(abs(viewSpacePosition.w), 1e-5f) * sign(viewSpacePosition.w == 0.0f ? 1.0f : viewSpacePosition.w);
     return (InverseViewMatrix * viewSpacePosition).xyz;
@@ -46,7 +58,7 @@ vec3 WorldPosFromDepthRaw(float rawDepth, vec2 uv)
 
 float LinearEyeDistance(float rawDepth, vec2 uv)
 {
-    vec4 clipSpacePosition = vec4(vec3(uv, rawDepth) * 2.0f - 1.0f, 1.0f);
+    vec4 clipSpacePosition = vec4(uv * 2.0f - 1.0f, VolumetricFogDepthToClipZ(rawDepth), 1.0f);
     vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
     float safeW = max(abs(viewSpacePosition.w), 1e-5f);
     return abs(viewSpacePosition.z / safeW);
@@ -123,7 +135,7 @@ void main()
     if (ndc.x > 1.0f || ndc.y > 1.0f)
         discard;
 
-    vec2 uv = ndc * 0.5f + 0.5f;
+    vec2 uv = XRENGINE_ClipXYToScreenUV(ndc);
     vec4 currentFog = texture(VolumetricFogHalfScatter, uv);
 
     if (IsNeutralFog(currentFog))

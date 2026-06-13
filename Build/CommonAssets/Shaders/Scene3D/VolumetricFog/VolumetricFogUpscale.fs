@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 // Volumetric fog bilateral upscale.
 //
 // Reads:
@@ -43,6 +45,11 @@ uniform mat4 InverseProjMatrix;
 uniform float RenderTime;
 uniform int DepthMode;
 uniform int VolumetricFogDebugMode;
+
+#ifndef XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+#define XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+uniform int ClipDepthRange;
+#endif
 
 const int MaxVolumetricFogVolumes = 4;
 
@@ -133,12 +140,17 @@ float ResolveDepth(float d)
     return DepthMode == 1 ? (1.0f - d) : d;
 }
 
+float VolumetricFogDepthToClipZ(float depth)
+{
+    return ClipDepthRange == 1 ? depth * 2.0f - 1.0f : depth;
+}
+
 // Returns eye-space linear distance for the given raw depth sample at UV.
 // We reconstruct the view-space Z magnitude from the inverse projection so
 // the bilateral weight is invariant to perspective.
 float LinearEyeDistance(float rawDepth, vec2 uv)
 {
-    vec4 clip = vec4(vec3(uv, rawDepth) * 2.0f - 1.0f, 1.0f);
+    vec4 clip = vec4(uv * 2.0f - 1.0f, VolumetricFogDepthToClipZ(rawDepth), 1.0f);
     vec4 view = InverseProjMatrix * clip;
     float w = max(abs(view.w), 1e-5f);
     return abs(view.z / w);
@@ -146,7 +158,7 @@ float LinearEyeDistance(float rawDepth, vec2 uv)
 
 vec3 WorldPosFromDepthRaw(float rawDepth, vec2 uv)
 {
-    vec4 clip = vec4(vec3(uv, rawDepth) * 2.0f - 1.0f, 1.0f);
+    vec4 clip = vec4(uv * 2.0f - 1.0f, VolumetricFogDepthToClipZ(rawDepth), 1.0f);
     vec4 view = InverseProjMatrix * clip;
     view /= max(abs(view.w), 1e-5f) * sign(view.w == 0.0f ? 1.0f : view.w);
     return (InverseViewMatrix * view).xyz;
@@ -248,7 +260,7 @@ void main()
     vec2 ndc = FragPos.xy;
     if (ndc.x > 1.0f || ndc.y > 1.0f)
         discard;
-    vec2 uv = ndc * 0.5f + 0.5f;
+    vec2 uv = XRENGINE_ClipXYToScreenUV(ndc);
 
     float rawFullDepth = texture(DepthView, uv).r;
     float resolvedFullDepth = ResolveDepth(rawFullDepth);

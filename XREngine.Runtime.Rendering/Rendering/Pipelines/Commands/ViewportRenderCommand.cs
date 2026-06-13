@@ -43,6 +43,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public virtual bool NeedsCollecVisible => false;
         public virtual string GpuProfilingName => GetType().Name;
+        private string? _cpuProfilingName;
+        public virtual string CpuProfilingName => _cpuProfilingName ??= $"VPRC.{GetType().Name}";
         /// <summary>
         /// Executes the command.
         /// </summary>
@@ -101,6 +103,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             if (ShouldExecute && ShouldExecuteThisFrame())
             {
+                using var cpuScope = RuntimeRenderingHostServices.Current.StartProfileScope(CpuProfilingName);
                 using var gpuScope = RenderPipelineGpuProfiler.Instance.StartScope(this);
                 Execute();
             }

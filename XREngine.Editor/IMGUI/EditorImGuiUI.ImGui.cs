@@ -610,50 +610,107 @@ public static partial class EditorImGuiUI
             using (Engine.Profiler.Start("UI.DrawExternalFileImportDialog"))
                 DrawExternalFileImportDialog();
 
-            using (Engine.Profiler.Start("UI.DrawProfilerPanel"))
-                DrawProfilerPanel();
-            using (Engine.Profiler.Start("UI.RenderOcclusionPanelOverlay"))
-                RenderOcclusionPanelOverlay();
-            using (Engine.Profiler.Start("UI.DrawConsolePanel"))
-                DrawConsolePanel();
-            using (Engine.Profiler.Start("UI.DrawStatePanel"))
-                DrawStatePanel();
-            using (Engine.Profiler.Start("UI.DrawOpenGLApiObjectsPanel"))
-                DrawOpenGLApiObjectsPanel();
-            using (Engine.Profiler.Start("UI.DrawOpenGLErrorsPanel"))
-                DrawOpenGLErrorsPanel();
-            using (Engine.Profiler.Start("UI.DrawRenderApiExtensionsPanel"))
-                DrawRenderApiExtensionsPanel();
-            using (Engine.Profiler.Start("UI.DrawShaderProgramLinksPanel"))
-                DrawShaderProgramLinksPanel();
+            if (_showProfiler)
+            {
+                using (Engine.Profiler.Start("UI.DrawProfilerPanel"))
+                    DrawProfilerPanel();
+            }
+            if (_showOcclusionPanel)
+            {
+                using (Engine.Profiler.Start("UI.RenderOcclusionPanelOverlay"))
+                    RenderOcclusionPanelOverlay();
+            }
+            if (_showConsole)
+            {
+                using (Engine.Profiler.Start("UI.DrawConsolePanel"))
+                    DrawConsolePanel();
+            }
+            if (_showStatePanel)
+            {
+                using (Engine.Profiler.Start("UI.DrawStatePanel"))
+                    DrawStatePanel();
+            }
+            if (_showOpenGLApiObjects)
+            {
+                using (Engine.Profiler.Start("UI.DrawOpenGLApiObjectsPanel"))
+                    DrawOpenGLApiObjectsPanel();
+            }
+            if (_showOpenGLErrors)
+            {
+                using (Engine.Profiler.Start("UI.DrawOpenGLErrorsPanel"))
+                    DrawOpenGLErrorsPanel();
+            }
+            if (_showRenderApiExtensions)
+            {
+                using (Engine.Profiler.Start("UI.DrawRenderApiExtensionsPanel"))
+                    DrawRenderApiExtensionsPanel();
+            }
+            if (_showShaderProgramLinks)
+            {
+                using (Engine.Profiler.Start("UI.DrawShaderProgramLinksPanel"))
+                    DrawShaderProgramLinksPanel();
+            }
             if (XREngine.Diagnostics.AssetDiagnostics.ConsumePendingDisplayFlag())
                 _showMissingAssets = true;
-            DrawMissingAssetsPanel();
-            using (Engine.Profiler.Start("UI.DrawGlobalEditorPreferencesPanel"))
-                DrawGlobalEditorPreferencesPanel();
-            using (Engine.Profiler.Start("UI.DrawEditorPreferencesOverridesPanel"))
-                DrawEditorPreferencesOverridesPanel();
-            using (Engine.Profiler.Start("UI.DrawUserSettingsPanel"))
-                DrawUserSettingsPanel();
-            using (Engine.Profiler.Start("UI.DrawBuildSettingsPanel"))
-                DrawBuildSettingsPanel();
-            using (Engine.Profiler.Start("UI.DrawNetworkingPanel"))
-                DrawNetworkingPanel();
-            using (Engine.Profiler.Start("UI.DrawAnimationClipEditorPanel"))
-                DrawAnimationClipEditorPanel();
-            using (Engine.Profiler.Start("UI.DrawRenderPipelineGraphPanel"))
-                DrawRenderPipelineGraphPanel();
-            using (Engine.Profiler.Start("UI.DrawShaderGraphPanel"))
-                DrawShaderGraphPanel();
-            DrawHierarchyPanel();
+            if (_showMissingAssets)
+                DrawMissingAssetsPanel();
+            if (_showGlobalEditorPreferences)
+            {
+                using (Engine.Profiler.Start("UI.DrawGlobalEditorPreferencesPanel"))
+                    DrawGlobalEditorPreferencesPanel();
+            }
+            if (_showEditorPreferencesOverrides)
+            {
+                using (Engine.Profiler.Start("UI.DrawEditorPreferencesOverridesPanel"))
+                    DrawEditorPreferencesOverridesPanel();
+            }
+            if (_showUserSettings)
+            {
+                using (Engine.Profiler.Start("UI.DrawUserSettingsPanel"))
+                    DrawUserSettingsPanel();
+            }
+            if (_showBuildSettings)
+            {
+                using (Engine.Profiler.Start("UI.DrawBuildSettingsPanel"))
+                    DrawBuildSettingsPanel();
+            }
+            if (_showNetworking)
+            {
+                using (Engine.Profiler.Start("UI.DrawNetworkingPanel"))
+                    DrawNetworkingPanel();
+            }
+            if (_showAnimationClipEditor)
+            {
+                using (Engine.Profiler.Start("UI.DrawAnimationClipEditorPanel"))
+                    DrawAnimationClipEditorPanel();
+            }
+            if (_showRenderPipelineGraph)
+            {
+                using (Engine.Profiler.Start("UI.DrawRenderPipelineGraphPanel"))
+                    DrawRenderPipelineGraphPanel();
+            }
+            if (_showShaderGraphPanel)
+            {
+                using (Engine.Profiler.Start("UI.DrawShaderGraphPanel"))
+                    DrawShaderGraphPanel();
+            }
+            if (_showHierarchy)
+                DrawHierarchyPanel();
             using (Engine.Profiler.Start("UI.DrawScenePanel"))
                 DrawScenePanel();
-            DrawInspectorPanel();
-            DrawAssetExplorerPanel();
-            DrawExternalTextureBrowserPanel();
-            DrawArchiveInspectorPanel();
-            using (Engine.Profiler.Start("UI.DrawTextureStreamingPanel"))
-                DrawTextureStreamingPanel();
+            if (_showInspector)
+                DrawInspectorPanel();
+            if (_showAssetExplorer)
+                DrawAssetExplorerPanel();
+            if (_showExternalTextureBrowser)
+                DrawExternalTextureBrowserPanel();
+            if (_showArchiveInspector)
+                DrawArchiveInspectorPanel();
+            if (_showTextureStreaming)
+            {
+                using (Engine.Profiler.Start("UI.DrawTextureStreamingPanel"))
+                    DrawTextureStreamingPanel();
+            }
             using (Engine.Profiler.Start("UI.DrawClosePromptDialog"))
                 DrawClosePromptDialog();
 

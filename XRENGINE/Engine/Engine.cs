@@ -3,6 +3,7 @@ using XREngine.Audio;
 using XREngine.Components.Physics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
+using XREngine.Data.Profiling;
 using XREngine.Data.Trees;
 using XREngine.Input;
 using XREngine.Rendering;
@@ -197,6 +198,17 @@ namespace XREngine
         /// </summary>
         private static IDisposable ExternalProfilingHook(string sampleName) => Profiler.Start(sampleName);
 
+        private static bool ExternalProfilingEnabledHook()
+            => Profiler.EnableFrameLogging;
+
+        private static object ExternalLinkedProfilingContextHook()
+            => Profiler.CaptureLinkedChildContext();
+
+        private static IDisposable ExternalLinkedProfilingHook(object? context, string sampleName)
+            => context is CodeProfiler.LinkedScopeContext linkedContext
+                ? Profiler.StartLinkedChild(linkedContext, sampleName, ProfilerScopeKind.OneOffInvoke)
+                : Profiler.Start(sampleName, ProfilerScopeKind.OneOffInvoke);
+
         /// <summary>
         /// Static constructor that initializes default settings and wires up internal event handlers.
         /// </summary>
@@ -248,6 +260,9 @@ namespace XREngine
 
             // Connect external profiling hooks for subsystems
             XREvent.ProfilingHook = ExternalProfilingHook;
+            XREvent.IsProfilingEnabledHook = ExternalProfilingEnabledHook;
+            XREvent.CaptureLinkedProfilingContextHook = ExternalLinkedProfilingContextHook;
+            XREvent.LinkedProfilingHook = ExternalLinkedProfilingHook;
             IRenderTree.ProfilingHook = ExternalProfilingHook;
             IRenderTree.OctreeStatsHook = (adds, moves, removes, skipped) =>
             {

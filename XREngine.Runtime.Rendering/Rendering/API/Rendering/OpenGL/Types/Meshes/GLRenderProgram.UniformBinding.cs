@@ -417,8 +417,10 @@ namespace XREngine.Rendering.OpenGL
                 bool stereoPass = RuntimeEngine.Rendering.State.IsStereoPass;
                 bool useUnjitteredProjection = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
                 var renderArea = RuntimeEngine.Rendering.State.RenderArea;
+                ERenderClipSpaceYDirection clipSpaceYDirection = RuntimeEngine.Rendering.Settings.ClipSpaceYDirection;
+                ERenderClipDepthRange clipDepthRange = RuntimeEngine.Rendering.EffectiveClipDepthRange;
 
-                if (MatchesEngineUniformContext(frameId, pipeline, camera, stereoRightEyeCamera, world, stereoPass, useUnjitteredProjection, renderArea))
+                if (MatchesEngineUniformContext(frameId, pipeline, camera, stereoRightEyeCamera, world, stereoPass, useUnjitteredProjection, renderArea, clipSpaceYDirection, clipDepthRange))
                 {
                     _engineUniformRequirements |= appliedRequirements;
                     return;
@@ -436,6 +438,8 @@ namespace XREngine.Rendering.OpenGL
                 _engineUniformRenderAreaY = renderArea.Y;
                 _engineUniformRenderAreaWidth = renderArea.Width;
                 _engineUniformRenderAreaHeight = renderArea.Height;
+                _engineUniformClipSpaceYDirection = clipSpaceYDirection;
+                _engineUniformClipDepthRange = clipDepthRange;
             }
 
             public void ResetEngineUniformBindingState()
@@ -452,6 +456,8 @@ namespace XREngine.Rendering.OpenGL
                 _engineUniformRenderAreaY = 0;
                 _engineUniformRenderAreaWidth = 0;
                 _engineUniformRenderAreaHeight = 0;
+                _engineUniformClipSpaceYDirection = (ERenderClipSpaceYDirection)(-1);
+                _engineUniformClipDepthRange = (ERenderClipDepthRange)(-1);
             }
 
             private bool MatchesCurrentEngineUniformContext()
@@ -464,8 +470,10 @@ namespace XREngine.Rendering.OpenGL
                 bool stereoPass = RuntimeEngine.Rendering.State.IsStereoPass;
                 bool useUnjitteredProjection = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
                 var renderArea = RuntimeEngine.Rendering.State.RenderArea;
+                ERenderClipSpaceYDirection clipSpaceYDirection = RuntimeEngine.Rendering.Settings.ClipSpaceYDirection;
+                ERenderClipDepthRange clipDepthRange = RuntimeEngine.Rendering.EffectiveClipDepthRange;
 
-                return MatchesEngineUniformContext(frameId, pipeline, camera, stereoRightEyeCamera, world, stereoPass, useUnjitteredProjection, renderArea);
+                return MatchesEngineUniformContext(frameId, pipeline, camera, stereoRightEyeCamera, world, stereoPass, useUnjitteredProjection, renderArea, clipSpaceYDirection, clipDepthRange);
             }
 
             private bool MatchesEngineUniformContext(
@@ -476,7 +484,9 @@ namespace XREngine.Rendering.OpenGL
                 IRuntimeRenderWorld? world,
                 bool stereoPass,
                 bool useUnjitteredProjection,
-                XREngine.Data.Geometry.BoundingRectangle renderArea)
+                XREngine.Data.Geometry.BoundingRectangle renderArea,
+                ERenderClipSpaceYDirection clipSpaceYDirection,
+                ERenderClipDepthRange clipDepthRange)
                 => _engineUniformFrameId == frameId
                 && ReferenceEquals(_engineUniformPipeline, pipeline)
                 && ReferenceEquals(_engineUniformCamera, camera)
@@ -487,7 +497,9 @@ namespace XREngine.Rendering.OpenGL
                 && _engineUniformRenderAreaX == renderArea.X
                 && _engineUniformRenderAreaY == renderArea.Y
                 && _engineUniformRenderAreaWidth == renderArea.Width
-                && _engineUniformRenderAreaHeight == renderArea.Height;
+                && _engineUniformRenderAreaHeight == renderArea.Height
+                && _engineUniformClipSpaceYDirection == clipSpaceYDirection
+                && _engineUniformClipDepthRange == clipDepthRange;
 
             private bool ValidateUniformType(int location, params GLEnum[] expectedTypes)
             {

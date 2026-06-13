@@ -10,6 +10,7 @@ using XREngine.Data.Trees;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Shadows;
 using XREngine.Scene;
 
 namespace XREngine.Rendering;
@@ -1018,6 +1019,7 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVisibilityBuffer(int passDraws, long classifiedPixels, int activeMaterialTiles, int classificationOverflow, TimeSpan reconstruction, TimeSpan materialShading);
     void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands);
     void RecordRenderForbiddenGpuFallback(int eventCount = 1);
+    void RecordRenderShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics);
     void RecordRenderGpuTransparencyDomainCounts(uint opaqueOrOtherVisible, uint maskedVisible, uint approximateVisible, uint exactVisible);
     void RecordRenderGpuMeshletStrategyRequested(int eventCount = 1);
     void RecordRenderGpuMeshletProductionFrame(int eventCount = 1);

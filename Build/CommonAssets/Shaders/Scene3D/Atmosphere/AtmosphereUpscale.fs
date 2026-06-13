@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
@@ -10,6 +12,11 @@ uniform sampler2D DepthView;
 uniform mat4 InverseProjMatrix;
 uniform int DepthMode;
 
+#ifndef XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+#define XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+uniform int ClipDepthRange;
+#endif
+
 #include "AtmosphereCommon.glsl"
 
 float ResolveDepth(float depth)
@@ -17,9 +24,14 @@ float ResolveDepth(float depth)
   return DepthMode == 1 ? (1.0f - depth) : depth;
 }
 
+float AtmosphereDepthToClipZ(float depth)
+{
+  return ClipDepthRange == 1 ? depth * 2.0f - 1.0f : depth;
+}
+
 float LinearEyeDistance(float rawDepth, vec2 uv)
 {
-  vec4 clip = vec4(vec3(uv, rawDepth) * 2.0f - 1.0f, 1.0f);
+  vec4 clip = vec4(uv * 2.0f - 1.0f, AtmosphereDepthToClipZ(rawDepth), 1.0f);
   vec4 view = InverseProjMatrix * clip;
   float w = max(abs(view.w), 1e-5f);
   return abs(view.z / w);
@@ -42,7 +54,7 @@ void main()
     return;
   }
 
-  vec2 uv = ndc * 0.5f + 0.5f;
+  vec2 uv = XRENGINE_ClipXYToScreenUV(ndc);
   float fullRawDepth = texture(DepthView, uv).r;
   if (ResolveDepth(fullRawDepth) >= 0.999999f)
   {

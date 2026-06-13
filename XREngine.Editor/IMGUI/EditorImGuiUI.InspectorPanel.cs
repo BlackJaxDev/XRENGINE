@@ -332,8 +332,9 @@ public static partial class EditorImGuiUI
 
         private static partial void DrawInspectorPanel()
         {
-            using var profilerScope = Engine.Profiler.Start("UI.DrawInspectorPanel");
             if (!_showInspector) return;
+
+            using var profilerScope = Engine.Profiler.Start("UI.DrawInspectorPanel");
 
             if (!ImGui.Begin("Inspector", ref _showInspector))
             {

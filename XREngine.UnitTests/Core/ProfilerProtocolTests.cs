@@ -114,6 +114,40 @@ public sealed class ProfilerProtocolTests
             ForbiddenGpuFallbackEvents = 1,
             GpuMappedBuffers = 3,
             GpuReadbackBytes = 4096,
+            ShadowAtlasSolve = new ShadowAtlasSolveDiagnosticsData
+            {
+                ElapsedMilliseconds = 1.25,
+                ClassifiedRequestCount = 12,
+                DirectionalRequestCount = 4,
+                SpotRequestCount = 2,
+                PointRequestCount = 6,
+                DepthRequestCount = 10,
+                Variance2RequestCount = 1,
+                ExponentialVariance2RequestCount = 0,
+                ExponentialVariance4RequestCount = 1,
+                BalancedSolveAttemptCount = 3,
+                FailedCandidateCount = 2,
+                DemotionCount = 5,
+                StickyDemotionCount = 1,
+                DirectionalGroupDemotionCount = 4,
+                DeterministicFallbackDemotionCount = 0,
+                PriorReserveHitCount = 7,
+                PriorReserveMissCount = 2,
+                PriorSubBlockHitCount = 1,
+                PriorSubBlockMissCount = 1,
+                PageAllocationAttemptCount = 8,
+                PageAllocationSuccessCount = 6,
+                PageCreateAttemptCount = 1,
+                PageCreateSuccessCount = 1,
+                PageClearCount = 2,
+                DirectionalGroupSeedCount = 1,
+                DirectionalGroupMemberCount = 4,
+                DirectionalGroupCoLocationFailureCount = 0,
+                PointGroupSeedCount = 1,
+                PointGroupMemberCount = 6,
+                PointGroupCoLocationFailureCount = 0,
+                LastFailureReason = "PageBudgetExceeded",
+            },
             RenderProfilerV2 = new RenderProfilerV2Data
             {
                 RendererState = new RenderProfilerRendererStateData
@@ -432,6 +466,33 @@ public sealed class ProfilerProtocolTests
         clone.ForbiddenGpuFallbackEvents.ShouldBe(1);
         clone.GpuMappedBuffers.ShouldBe(3);
         clone.GpuReadbackBytes.ShouldBe(4096);
+        clone.ShadowAtlasSolve.ElapsedMilliseconds.ShouldBe(1.25);
+        clone.ShadowAtlasSolve.ClassifiedRequestCount.ShouldBe(12);
+        clone.ShadowAtlasSolve.DirectionalRequestCount.ShouldBe(4);
+        clone.ShadowAtlasSolve.SpotRequestCount.ShouldBe(2);
+        clone.ShadowAtlasSolve.PointRequestCount.ShouldBe(6);
+        clone.ShadowAtlasSolve.DepthRequestCount.ShouldBe(10);
+        clone.ShadowAtlasSolve.Variance2RequestCount.ShouldBe(1);
+        clone.ShadowAtlasSolve.ExponentialVariance4RequestCount.ShouldBe(1);
+        clone.ShadowAtlasSolve.BalancedSolveAttemptCount.ShouldBe(3);
+        clone.ShadowAtlasSolve.FailedCandidateCount.ShouldBe(2);
+        clone.ShadowAtlasSolve.DemotionCount.ShouldBe(5);
+        clone.ShadowAtlasSolve.StickyDemotionCount.ShouldBe(1);
+        clone.ShadowAtlasSolve.DirectionalGroupDemotionCount.ShouldBe(4);
+        clone.ShadowAtlasSolve.PriorReserveHitCount.ShouldBe(7);
+        clone.ShadowAtlasSolve.PriorReserveMissCount.ShouldBe(2);
+        clone.ShadowAtlasSolve.PriorSubBlockHitCount.ShouldBe(1);
+        clone.ShadowAtlasSolve.PriorSubBlockMissCount.ShouldBe(1);
+        clone.ShadowAtlasSolve.PageAllocationAttemptCount.ShouldBe(8);
+        clone.ShadowAtlasSolve.PageAllocationSuccessCount.ShouldBe(6);
+        clone.ShadowAtlasSolve.PageCreateAttemptCount.ShouldBe(1);
+        clone.ShadowAtlasSolve.PageCreateSuccessCount.ShouldBe(1);
+        clone.ShadowAtlasSolve.PageClearCount.ShouldBe(2);
+        clone.ShadowAtlasSolve.DirectionalGroupSeedCount.ShouldBe(1);
+        clone.ShadowAtlasSolve.DirectionalGroupMemberCount.ShouldBe(4);
+        clone.ShadowAtlasSolve.PointGroupSeedCount.ShouldBe(1);
+        clone.ShadowAtlasSolve.PointGroupMemberCount.ShouldBe(6);
+        clone.ShadowAtlasSolve.LastFailureReason.ShouldBe("PageBudgetExceeded");
         clone.RenderProfilerV2.ProfileCaptureSchemaVersion.ShouldBe(2);
         var rendererState = clone.RenderProfilerV2.RendererState;
         rendererState.IndirectCountCalls.ShouldBe(6);

@@ -2,11 +2,31 @@
 
 #pragma snippet "ShadowMomentEncoding"
 
+#ifndef XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+#define XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+uniform int ClipDepthRange;
+#endif
+
+float XRENGINE_ShadowClipZToDepth(float clipZ)
+{
+    return ClipDepthRange == 1 ? clipZ * 0.5 + 0.5 : clipZ;
+}
+
+float XRENGINE_ShadowDepthToClipZ(float depth)
+{
+    return ClipDepthRange == 1 ? depth * 2.0 - 1.0 : depth;
+}
+
+vec3 XRENGINE_ShadowClipCoordToUvDepth(vec3 clipCoord)
+{
+    return vec3(clipCoord.xy * 0.5 + 0.5, XRENGINE_ShadowClipZToDepth(clipCoord.z));
+}
+
 vec3 XRENGINE_ProjectShadowCoord(mat4 lightMatrix, vec3 fragPosWS)
 {
     vec4 fragPosLightSpace = lightMatrix * vec4(fragPosWS, 1.0);
     vec3 shadowCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    return shadowCoord * 0.5 + 0.5;
+    return XRENGINE_ShadowClipCoordToUvDepth(shadowCoord);
 }
 
 bool XRENGINE_ShadowCoordInBounds(vec3 shadowCoord)
@@ -54,7 +74,7 @@ vec3 XRENGINE_ContactShadowViewPosFromDepth(
     int depthMode)
 {
     // InverseProjMatrix already matches the camera depth convention, including reversed-Z.
-    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
+    vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, XRENGINE_ShadowDepthToClipZ(depth), 1.0);
     vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
     viewSpacePosition /= viewSpacePosition.w;
     return viewSpacePosition.xyz;

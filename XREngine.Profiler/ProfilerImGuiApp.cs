@@ -71,7 +71,7 @@ internal sealed class ProfilerImGuiApp : IDisposable
         _gl.Clear(ClearBufferMask.ColorBufferBit);
 
         // Process latest UDP data before drawing
-        _renderer.ProcessLatestData();
+        _renderer.ProcessLatestData(CapturePanelVisibility());
 
         DrawUI();
 
@@ -126,6 +126,18 @@ internal sealed class ProfilerImGuiApp : IDisposable
         if (!_receiver.IsConnected)
             DrawWaitingOverlay();
     }
+
+    private ProfilerPanelRenderer.PanelVisibility CapturePanelVisibility()
+        => new(
+            ProfilerTree: _showProfilerTree,
+            FpsDropSpikes: _showFpsDropSpikes,
+            RenderStats: _showRenderStats,
+            GpuPipeline: _showGpuPipeline,
+            ThreadAllocations: _showThreadAllocations,
+            ComponentTimings: _showComponentTimings,
+            BvhMetrics: _showBvhMetrics,
+            JobSystem: _showJobSystem,
+            MainThreadInvokes: _showMainThreadInvokes);
 
     // ─────────────────── Menu Bar ───────────────────
 

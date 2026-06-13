@@ -16,6 +16,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
@@ -608,6 +609,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void RecordRenderForbiddenGpuFallback(int eventCount = 1)
         => Engine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(eventCount);
+
+    public void RecordRenderShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics)
+        => Engine.Rendering.Stats.ShadowAtlas.RecordSolveDiagnostics(diagnostics);
 
     public void RecordRenderGpuTransparencyDomainCounts(uint opaqueOrOtherVisible, uint maskedVisible, uint approximateVisible, uint exactVisible)
         => Engine.Rendering.Stats.GpuTransparency.RecordGpuTransparencyDomainCounts(opaqueOrOtherVisible, maskedVisible, approximateVisible, exactVisible);

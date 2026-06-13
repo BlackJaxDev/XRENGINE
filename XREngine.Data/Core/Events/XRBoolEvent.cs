@@ -11,7 +11,17 @@
         public XRBoolEvent() { }
 
         protected override IDisposable? BeginProfiling(string name)
-            => ProfilingHook?.Invoke(name);
+            => ProfilingHook?.Invoke(name) ?? XREvent.ProfilingHook?.Invoke(name);
+
+        protected override bool HasProfilingHooks
+            => (XREvent.IsProfilingEnabledHook?.Invoke() ?? true)
+            && (ProfilingHook is not null || XREvent.ProfilingHook is not null || XREvent.LinkedProfilingHook is not null);
+
+        protected override object? CaptureLinkedProfilingContext()
+            => XREvent.CaptureLinkedProfilingContextHook?.Invoke();
+
+        protected override IDisposable? BeginLinkedProfiling(object? context, string name)
+            => XREvent.LinkedProfilingHook?.Invoke(context, name) ?? BeginProfiling(name);
 
         /// <summary>
         /// Invokes all listeners and returns true if all return true.
@@ -23,8 +33,24 @@
             bool result = false;
             WithProfiling("XRBoolEvent<T>.InvokeAllMatch", () =>
             {
-                ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
-                result = Actions.All(x => x.Invoke(item));
+                using (BeginProfiling("XRBoolEvent<T>.ConsumeQueues"))
+                {
+                    ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
+                }
+
+                result = true;
+                using (BeginProfiling("XRBoolEvent<T>.Actions"))
+                {
+                    for (int i = 0; i < Actions.Count; i++)
+                    {
+                        using var listenerSample = BeginListenerProfiling("XRBoolEvent<T>.Action", Actions[i], i);
+                        if (!Actions[i].Invoke(item))
+                        {
+                            result = false;
+                            break;
+                        }
+                    }
+                }
             });
             return result;
         }
@@ -37,7 +63,11 @@
             bool result = false;
             await WithProfilingAsync("XRBoolEvent<T>.InvokeAllMatchAsync", async () =>
             {
-                ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
+                using (BeginProfiling("XRBoolEvent<T>.ConsumeQueues"))
+                {
+                    ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
+                }
+
                 var snapshot = Actions.Count == 0 ? null : Actions.ToArray();
                 if (snapshot is null)
                 {
@@ -45,7 +75,23 @@
                     return;
                 }
 
-                var results = await Task.WhenAll(snapshot.Select(a => Task.Run(() => a.Invoke(item))));
+                object? profilingContext = CaptureLinkedProfilingContext();
+                var tasks = new Task<bool>[snapshot.Length];
+                using (BeginProfiling("XRBoolEvent<T>.AsyncActions"))
+                {
+                    for (int i = 0; i < snapshot.Length; i++)
+                    {
+                        Func<T, bool> listener = snapshot[i];
+                        int index = i;
+                        tasks[i] = Task.Run(() => InvokeLinkedListener(listener, item, index, profilingContext, "XRBoolEvent<T>.AsyncAction"));
+                    }
+
+                    await Task.WhenAll(tasks);
+                }
+
+                var results = new bool[tasks.Length];
+                for (int i = 0; i < tasks.Length; i++)
+                    results[i] = tasks[i].Result;
                 result = results.All(static x => x);
             });
             return result;
@@ -59,7 +105,11 @@
             bool result = false;
             WithProfiling("XRBoolEvent<T>.InvokeAllMatchParallel", () =>
             {
-                ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
+                using (BeginProfiling("XRBoolEvent<T>.ConsumeQueues"))
+                {
+                    ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
+                }
+
                 var snapshot = Actions.Count == 0 ? null : Actions.ToArray();
                 if (snapshot is null)
                 {
@@ -68,7 +118,9 @@
                 }
 
                 int allTrue = 1;
-                Parallel.ForEach(snapshot, (listener, state) =>
+                object? profilingContext = CaptureLinkedProfilingContext();
+                using var actionsSample = BeginProfiling("XRBoolEvent<T>.ParallelActions");
+                Parallel.For(0, snapshot.Length, (i, state) =>
                 {
                     if (Volatile.Read(ref allTrue) == 0)
                     {
@@ -76,7 +128,7 @@
                         return;
                     }
 
-                    if (!listener.Invoke(item))
+                    if (!InvokeLinkedListener(snapshot[i], item, i, profilingContext, "XRBoolEvent<T>.ParallelAction"))
                     {
                         Interlocked.Exchange(ref allTrue, 0);
                         state.Stop();
@@ -98,8 +150,23 @@
             bool result = false;
             WithProfiling("XRBoolEvent<T>.InvokeAnyMatch", () =>
             {
-                ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
-                result = Actions.Any(x => x.Invoke(item));
+                using (BeginProfiling("XRBoolEvent<T>.ConsumeQueues"))
+                {
+                    ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
+                }
+
+                using (BeginProfiling("XRBoolEvent<T>.Actions"))
+                {
+                    for (int i = 0; i < Actions.Count; i++)
+                    {
+                        using var listenerSample = BeginListenerProfiling("XRBoolEvent<T>.Action", Actions[i], i);
+                        if (Actions[i].Invoke(item))
+                        {
+                            result = true;
+                            break;
+                        }
+                    }
+                }
             });
             return result;
         }
@@ -112,7 +179,11 @@
             bool result = false;
             await WithProfilingAsync("XRBoolEvent<T>.InvokeAnyMatchAsync", async () =>
             {
-                ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
+                using (BeginProfiling("XRBoolEvent<T>.ConsumeQueues"))
+                {
+                    ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
+                }
+
                 var snapshot = Actions.Count == 0 ? null : Actions.ToArray();
                 if (snapshot is null)
                 {
@@ -120,15 +191,26 @@
                     return;
                 }
 
-                var tasks = snapshot.Select(a => Task.Run(() => a.Invoke(item))).ToList();
-                while (tasks.Count > 0)
+                object? profilingContext = CaptureLinkedProfilingContext();
+                var tasks = new List<Task<bool>>(snapshot.Length);
+                using (BeginProfiling("XRBoolEvent<T>.AsyncActions"))
                 {
-                    var completed = await Task.WhenAny(tasks);
-                    tasks.Remove(completed);
-                    if (await completed)
+                    for (int i = 0; i < snapshot.Length; i++)
                     {
-                        result = true;
-                        return;
+                        Func<T, bool> listener = snapshot[i];
+                        int index = i;
+                        tasks.Add(Task.Run(() => InvokeLinkedListener(listener, item, index, profilingContext, "XRBoolEvent<T>.AsyncAction")));
+                    }
+
+                    while (tasks.Count > 0)
+                    {
+                        var completed = await Task.WhenAny(tasks);
+                        tasks.Remove(completed);
+                        if (await completed)
+                        {
+                            result = true;
+                            return;
+                        }
                     }
                 }
 
@@ -145,7 +227,11 @@
             bool result = false;
             WithProfiling("XRBoolEvent<T>.InvokeAnyMatchParallel", () =>
             {
-                ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
+                using (BeginProfiling("XRBoolEvent<T>.ConsumeQueues"))
+                {
+                    ConsumeQueues("XRBoolEvent<T>.ConsumeQueues");
+                }
+
                 var snapshot = Actions.Count == 0 ? null : Actions.ToArray();
                 if (snapshot is null)
                 {
@@ -154,7 +240,9 @@
                 }
 
                 int anyTrue = 0;
-                Parallel.ForEach(snapshot, (listener, state) =>
+                object? profilingContext = CaptureLinkedProfilingContext();
+                using var actionsSample = BeginProfiling("XRBoolEvent<T>.ParallelActions");
+                Parallel.For(0, snapshot.Length, (i, state) =>
                 {
                     if (Volatile.Read(ref anyTrue) != 0)
                     {
@@ -162,7 +250,7 @@
                         return;
                     }
 
-                    if (listener.Invoke(item))
+                    if (InvokeLinkedListener(snapshot[i], item, i, profilingContext, "XRBoolEvent<T>.ParallelAction"))
                     {
                         Interlocked.Exchange(ref anyTrue, 1);
                         state.Stop();
@@ -172,6 +260,12 @@
                 result = Volatile.Read(ref anyTrue) != 0;
             });
             return result;
+        }
+
+        private bool InvokeLinkedListener(Func<T, bool> listener, T item, int index, object? profilingContext, string prefix)
+        {
+            using var listenerSample = BeginLinkedListenerProfiling(profilingContext, prefix, listener, index);
+            return listener.Invoke(item);
         }
 
         public static XRBoolEvent<T>? operator +(XRBoolEvent<T>? e, Func<T, bool> a)

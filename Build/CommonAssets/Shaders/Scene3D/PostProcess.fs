@@ -98,14 +98,24 @@ uniform bool DebugBloomOnly = false;
 
 uniform int DepthMode;
 
+#ifndef XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+#define XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+uniform int ClipDepthRange;
+#endif
+
 float XRENGINE_ResolveDepth(float depth)
 {
   return DepthMode == 1 ? (1.0f - depth) : depth;
 }
 
+float XRENGINE_PostProcessDepthToClipZ(float depth)
+{
+  return ClipDepthRange == 1 ? depth * 2.0f - 1.0f : depth;
+}
+
 vec3 XRENGINE_WorldPosFromDepthRaw(float depth, vec2 uv, mat4 invProj, mat4 invView)
 {
-  vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
+  vec4 clipSpacePosition = vec4(uv * 2.0f - 1.0f, XRENGINE_PostProcessDepthToClipZ(depth), 1.0f);
   vec4 viewSpacePosition = invProj * clipSpacePosition;
   viewSpacePosition /= viewSpacePosition.w;
   return (invView * viewSpacePosition).xyz;
@@ -335,11 +345,10 @@ vec3 SampleBloom(vec2 uv, float lod)
 
 void main()
 {
-  vec2 uv = FragPos.xy;
-  if (uv.x > 1.0f || uv.y > 1.0f)
+  vec2 clipXY = FragPos.xy;
+  if (clipXY.x > 1.0f || clipXY.y > 1.0f)
       discard;
-  //Normalize uv from [-1, 1] to [0, 1]
-  uv = uv * 0.5f + 0.5f;
+  vec2 uv = XRENGINE_ClipXYToScreenUV(clipXY);
   vec2 sceneUv = SceneSourceUv(uv);
 
   // Gizmo bypass: pixels tagged with the gizmo stencil bit (0x80) skip tonemap,

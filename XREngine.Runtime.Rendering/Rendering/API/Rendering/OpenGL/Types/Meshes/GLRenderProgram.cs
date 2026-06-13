@@ -73,6 +73,8 @@ namespace XREngine.Rendering.OpenGL
             private int _engineUniformRenderAreaY;
             private int _engineUniformRenderAreaWidth;
             private int _engineUniformRenderAreaHeight;
+            private ERenderClipSpaceYDirection _engineUniformClipSpaceYDirection = (ERenderClipSpaceYDirection)(-1);
+            private ERenderClipDepthRange _engineUniformClipDepthRange = (ERenderClipDepthRange)(-1);
 
             private readonly ConcurrentBag<string> _failedAttributes = [];
             private readonly ConcurrentDictionary<string, byte> _failedUniforms = new();

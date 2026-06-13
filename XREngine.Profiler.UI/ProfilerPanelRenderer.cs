@@ -12,6 +12,39 @@ namespace XREngine.Profiler.UI;
 public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 {
     public readonly record struct GpuPipelineTimingDumpResult(bool Success, string Message);
+    public readonly record struct PanelVisibility(
+        bool ProfilerTree,
+        bool FpsDropSpikes,
+        bool RenderStats,
+        bool GpuPipeline,
+        bool ThreadAllocations,
+        bool ComponentTimings,
+        bool BvhMetrics,
+        bool JobSystem,
+        bool MainThreadInvokes)
+    {
+        public static PanelVisibility All { get; } = new(
+            ProfilerTree: true,
+            FpsDropSpikes: true,
+            RenderStats: true,
+            GpuPipeline: true,
+            ThreadAllocations: true,
+            ComponentTimings: true,
+            BvhMetrics: true,
+            JobSystem: true,
+            MainThreadInvokes: true);
+
+        public bool NeedsThreadTiming => ProfilerTree || FpsDropSpikes;
+        public bool NeedsFrame => NeedsThreadTiming || ComponentTimings;
+        public bool NeedsRenderStats => RenderStats || GpuPipeline;
+        public bool NeedsAnyData =>
+            NeedsFrame ||
+            NeedsRenderStats ||
+            ThreadAllocations ||
+            BvhMetrics ||
+            JobSystem ||
+            MainThreadInvokes;
+    }
 
     private readonly IProfilerDataSource _source = source;
 
@@ -228,8 +261,13 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 
     /// <summary>Process the latest data from the source (call once per frame).</summary>
     public void ProcessLatestData()
+        => ProcessLatestData(PanelVisibility.All);
+
+    /// <summary>Process only the data needed by currently visible panels.</summary>
+    public void ProcessLatestData(PanelVisibility visibility)
     {
         if (_paused) return;
+        if (!visibility.NeedsAnyData) return;
 
         var nowUtc = DateTime.UtcNow;
         double updateIntervalSeconds = GetEffectiveUpdateIntervalSeconds();
@@ -241,49 +279,65 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             minInterval == TimeSpan.Zero ||
             nowUtc - _lastDisplayRefreshUtc >= minInterval;
 
-        var frame = _source.LatestFrame;
-        var renderStats = _source.LatestRenderStats;
-        bool hasFrame = frame is not null && frame.Threads is { Length: > 0 };
+        var frame = visibility.NeedsFrame ? _source.LatestFrame : null;
+        var renderStats = visibility.NeedsRenderStats ? _source.LatestRenderStats : null;
+        bool hasFrame = visibility.NeedsThreadTiming && frame is not null && frame.Threads is { Length: > 0 };
         bool hasNewFrame = false;
 
-        if (hasFrame)
+        if (frame is not null)
         {
             hasNewFrame = frame!.FrameTime != _lastEnqueuedFrameTime;
             if (hasNewFrame)
             {
                 _lastEnqueuedFrameTime = frame.FrameTime;
-                var history = frame.ThreadHistory ?? [];
-                _lastHistorySnapshot = history;
+                var history = visibility.NeedsThreadTiming ? frame.ThreadHistory ?? [] : [];
 
-                UpdateWorstFrameStatistics(frame, nowUtc);
-                UpdateThreadCache(frame.Threads!, nowUtc);
-                UpdateRootMethodCache(frame, history, nowUtc);
-                UpdateFpsDropSpikeLog(frame, history);
+                if (hasFrame)
+                {
+                    _lastHistorySnapshot = history;
+
+                    if (visibility.ProfilerTree)
+                    {
+                        UpdateWorstFrameStatistics(frame, nowUtc);
+                        UpdateThreadCache(frame.Threads!, nowUtc);
+                        UpdateRootMethodCache(frame, history, nowUtc);
+                    }
+
+                    if (visibility.FpsDropSpikes)
+                        UpdateFpsDropSpikeLog(frame, history);
+                }
             }
         }
 
         // Push render stats independently of frame logging so GPU/render graphs keep updating
         if (renderStats is not null && shouldRefreshDisplay)
-            PushRenderStatsSample(renderStats);
+            PushRenderStatsSample(renderStats, includeGpuPipeline: visibility.GpuPipeline);
 
-        RefreshThreadCacheState(nowUtc);
+        if (visibility.ProfilerTree)
+            RefreshThreadCacheState(nowUtc);
 
         if (shouldRefreshDisplay)
         {
-            PruneRootMethodCache(nowUtc);
-            UpdateDisplayValues();
-            UpdateGpuPipelineDisplay(renderStats);
-
-            if (hasNewFrame)
+            if (visibility.ProfilerTree)
             {
-                var display = GetSnapshotForHierarchy(frame!, out float hierMs, out bool usingWorst);
-                _lastCaptureTime = frame!.FrameTime;
-                _lastHierarchySnapshot = display;
-                _lastHierarchyFrameMs = hierMs;
-                _lastHierarchyUsingWorst = usingWorst;
+                PruneRootMethodCache(nowUtc);
+                UpdateDisplayValues();
+
+                if (hasNewFrame && hasFrame)
+                {
+                    var display = GetSnapshotForHierarchy(frame!, out float hierMs, out bool usingWorst);
+                    _lastCaptureTime = frame!.FrameTime;
+                    _lastHierarchySnapshot = display;
+                    _lastHierarchyFrameMs = hierMs;
+                    _lastHierarchyUsingWorst = usingWorst;
+                }
+
+                RebuildCachedRootMethodLists(nowUtc);
             }
 
-            RebuildCachedRootMethodLists(nowUtc);
+            if (visibility.GpuPipeline)
+                UpdateGpuPipelineDisplay(renderStats);
+
             _lastDisplayRefreshUtc = nowUtc;
         }
     }
@@ -544,6 +598,23 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"Draw Calls: {stats.DrawCalls:N0}");
         ImGui.Text($"Multi-Draw Calls: {stats.MultiDrawCalls:N0}");
         ImGui.Text($"Triangles Rendered: {stats.TrianglesRendered:N0}");
+
+        ShadowAtlasSolveDiagnosticsData shadowAtlasSolve = stats.ShadowAtlasSolve;
+        if (shadowAtlasSolve.ClassifiedRequestCount > 0 || shadowAtlasSolve.ElapsedMilliseconds > 0.0)
+        {
+            ImGui.Separator();
+            ImGui.TextColored(new Vector4(0.45f, 0.85f, 1.0f, 1.0f), "Shadow Atlas Solve:");
+            ImGui.Text($"  Solve: {shadowAtlasSolve.ElapsedMilliseconds:F3} ms, requests {shadowAtlasSolve.ClassifiedRequestCount:N0} (dir {shadowAtlasSolve.DirectionalRequestCount:N0}, spot {shadowAtlasSolve.SpotRequestCount:N0}, point {shadowAtlasSolve.PointRequestCount:N0})");
+            ImGui.Text($"  Attempts: {shadowAtlasSolve.BalancedSolveAttemptCount:N0}, failures {shadowAtlasSolve.FailedCandidateCount:N0}, demotions {shadowAtlasSolve.DemotionCount:N0} (sticky {shadowAtlasSolve.StickyDemotionCount:N0}, grouped {shadowAtlasSolve.DirectionalGroupDemotionCount:N0}, fallback {shadowAtlasSolve.DeterministicFallbackDemotionCount:N0})");
+            ImGui.Text($"  Reuse: reserve {shadowAtlasSolve.PriorReserveHitCount:N0}/{shadowAtlasSolve.PriorReserveHitCount + shadowAtlasSolve.PriorReserveMissCount:N0}, sub-block {shadowAtlasSolve.PriorSubBlockHitCount:N0}/{shadowAtlasSolve.PriorSubBlockHitCount + shadowAtlasSolve.PriorSubBlockMissCount:N0}");
+            ImGui.Text($"  Pages: allocations {shadowAtlasSolve.PageAllocationSuccessCount:N0}/{shadowAtlasSolve.PageAllocationAttemptCount:N0}, creates {shadowAtlasSolve.PageCreateSuccessCount:N0}/{shadowAtlasSolve.PageCreateAttemptCount:N0}, clears {shadowAtlasSolve.PageClearCount:N0}");
+            ImGui.Text($"  Groups: directional {shadowAtlasSolve.DirectionalGroupSeedCount:N0} seeds/{shadowAtlasSolve.DirectionalGroupMemberCount:N0} members/{shadowAtlasSolve.DirectionalGroupCoLocationFailureCount:N0} misses, point {shadowAtlasSolve.PointGroupSeedCount:N0} seeds/{shadowAtlasSolve.PointGroupMemberCount:N0} members/{shadowAtlasSolve.PointGroupCoLocationFailureCount:N0} misses");
+            if (!string.IsNullOrWhiteSpace(shadowAtlasSolve.LastFailureReason) &&
+                !string.Equals(shadowAtlasSolve.LastFailureReason, "None", StringComparison.Ordinal))
+            {
+                ImGui.TextColored(new Vector4(1.0f, 0.75f, 0.2f, 1.0f), $"  Last Failure: {shadowAtlasSolve.LastFailureReason}");
+            }
+        }
 
         if (stats.GpuCpuFallbackEvents > 0 || stats.GpuCpuFallbackRecoveredCommands > 0)
         {
@@ -2296,7 +2367,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         return new RootMethodActivitySortKey(category, activeRatio, averageCallCount);
     }
 
-    private void PushRenderStatsSample(RenderStatsPacket stats)
+    private void PushRenderStatsSample(RenderStatsPacket stats, bool includeGpuPipeline)
     {
         int index = _renderStatsHistoryHead;
 
@@ -2328,7 +2399,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (_renderStatsHistoryCount < RenderStatsHistorySamples)
             _renderStatsHistoryCount++;
 
-        PushGpuPipelineSample(stats, index);
+        if (includeGpuPipeline)
+            PushGpuPipelineSample(stats, index);
     }
 
     private void PushGpuPipelineSample(RenderStatsPacket stats, int index)

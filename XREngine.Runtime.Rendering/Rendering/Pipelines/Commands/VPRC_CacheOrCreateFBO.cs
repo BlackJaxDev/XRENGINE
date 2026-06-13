@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -60,13 +61,30 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
+            try
+            {
+                ExecuteCore();
+            }
+            catch (Exception ex)
+            {
+                LogExecutionFailure(ex);
+                throw;
+            }
+        }
+
+        private void ExecuteCore()
+        {
             if (Name is null)
                 return;
+
+            XRRenderPipelineInstance? pipelineInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            if (pipelineInstance is null)
+                throw new InvalidOperationException($"Cannot cache or create FBO '{Name}' because there is no active render pipeline instance.");
 
             // Cache-or-create commands manage concrete pipeline resources, not variable aliases.
             // Using the broader name-resolution path here can suppress recreation after cache
             // invalidation by resolving a stale variable entry with the same name.
-            if (ActivePipelineInstance.Resources.TryGetFrameBuffer(Name, out var fbo) && fbo is not null)
+            if (pipelineInstance.Resources.TryGetFrameBuffer(Name, out var fbo) && fbo is not null)
             {
                 if (NeedsRecreate?.Invoke(fbo) == true)
                 {
@@ -82,13 +100,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
                 if (fbo is null)
                 {
-                    if (FrameBufferFactory is null)
-                        return;
-
-                    XRFrameBuffer recreated = FrameBufferFactory();
+                    XRFrameBuffer recreated = CreateFrameBufferOrThrow("recreating a cached FBO");
                     recreated.Name = Name;
                     FrameBufferResourceDescriptor recreatedDescriptor = BuildDescriptor(recreated);
-                    ActivePipelineInstance.SetFBO(recreated, recreatedDescriptor);
+                    pipelineInstance.SetFBO(recreated, recreatedDescriptor);
                     return;
                 }
 
@@ -99,23 +114,32 @@ namespace XREngine.Rendering.Pipelines.Commands
                         fbo.Resize(x, y);
                 }
 
-                RegisterDescriptor(fbo);
+                RegisterDescriptor(pipelineInstance, fbo);
                 return;
             }
 
-            if (FrameBufferFactory is null)
-                return;
-
-            fbo = FrameBufferFactory();
+            fbo = CreateFrameBufferOrThrow("creating a missing FBO");
             fbo.Name = Name;
             FrameBufferResourceDescriptor descriptor = BuildDescriptor(fbo);
-            ActivePipelineInstance.SetFBO(fbo, descriptor);
+            pipelineInstance.SetFBO(fbo, descriptor);
         }
 
-        private void RegisterDescriptor(XRFrameBuffer frameBuffer)
+        private XRFrameBuffer CreateFrameBufferOrThrow(string reason)
+        {
+            if (FrameBufferFactory is null)
+                throw new InvalidOperationException($"Cannot cache or create FBO '{Name}' while {reason}: FrameBufferFactory is null.");
+
+            XRFrameBuffer? frameBuffer = FrameBufferFactory();
+            if (frameBuffer is null)
+                throw new InvalidOperationException($"Cannot cache or create FBO '{Name}' while {reason}: FrameBufferFactory returned null.");
+
+            return frameBuffer;
+        }
+
+        private void RegisterDescriptor(XRRenderPipelineInstance pipelineInstance, XRFrameBuffer frameBuffer)
         {
             FrameBufferResourceDescriptor descriptor = BuildDescriptor(frameBuffer);
-            ActivePipelineInstance.Resources.RegisterFrameBufferDescriptor(descriptor);
+            pipelineInstance.Resources.RegisterFrameBufferDescriptor(descriptor);
         }
 
         private FrameBufferResourceDescriptor BuildDescriptor(XRFrameBuffer frameBuffer)
@@ -140,6 +164,65 @@ namespace XREngine.Rendering.Pipelines.Commands
                 FullSizeMethod => RenderResourceSizePolicy.Window(),
                 _ => _sizePolicyOverride
             };
+        }
+
+        private void LogExecutionFailure(Exception ex)
+        {
+            string diagnostics;
+            try
+            {
+                diagnostics = BuildFailureDiagnostics(ex);
+            }
+            catch (Exception diagnosticException)
+            {
+                diagnostics = $"Failed to build CacheOrCreateFBO diagnostics: {diagnosticException}";
+            }
+
+            Debug.RenderingWarningEvery(
+                $"VPRC.CacheOrCreateFBO.{Name ?? "<unnamed>"}.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] CacheOrCreateFBO failed:\n{0}",
+                diagnostics);
+        }
+
+        private string BuildFailureDiagnostics(Exception ex)
+        {
+            XRRenderPipelineInstance? pipelineInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            var builder = new StringBuilder(1024);
+            builder.Append("Exception: ").Append(ex.GetType().FullName).Append(": ").AppendLine(ex.Message);
+            builder.Append("CommandName: ").AppendLine(GpuProfilingName);
+            builder.Append("FboName: ").AppendLine(Name ?? "<null>");
+            builder.Append("CommandIndex: ").Append(CommandContainer?.IndexOf(this).ToString() ?? "<no container>").AppendLine();
+            builder.Append("ParentPipeline: ").AppendLine(ParentPipeline?.GetType().FullName ?? "<null>");
+            builder.Append("ActivePipelineInstance: ").AppendLine(pipelineInstance?.GetType().FullName ?? "<null>");
+            builder.Append("HasFactory: ").Append(FrameBufferFactory is not null).AppendLine();
+            builder.Append("HasSizeVerifier: ").Append(SizeVerifier is not null).AppendLine();
+            builder.Append("HasNeedsRecreate: ").Append(NeedsRecreate is not null).AppendLine();
+            builder.Append("Lifetime: ").Append(_lifetime).AppendLine();
+            builder.Append("SizePolicyOverride: ").Append(_sizePolicyOverride?.ToString() ?? "<null>").AppendLine();
+            builder.Append("CachedFbo: ").AppendLine(DescribeCachedFrameBuffer(pipelineInstance));
+            builder.Append("Stack:").AppendLine();
+            builder.AppendLine(ex.StackTrace ?? "<no stack>");
+            return builder.ToString();
+        }
+
+        private string DescribeCachedFrameBuffer(XRRenderPipelineInstance? pipelineInstance)
+        {
+            if (pipelineInstance is null)
+                return "<no active pipeline instance>";
+            if (Name is null)
+                return "<command name is null>";
+
+            return pipelineInstance.Resources.TryGetFrameBuffer(Name, out XRFrameBuffer? frameBuffer) && frameBuffer is not null
+                ? DescribeFrameBuffer(frameBuffer)
+                : "<not registered>";
+        }
+
+        private static string DescribeFrameBuffer(XRFrameBuffer frameBuffer)
+        {
+            int targetCount = frameBuffer.Targets?.Length ?? 0;
+            int drawBufferCount = frameBuffer.DrawBuffers?.Length ?? 0;
+            return $"{frameBuffer.GetType().FullName} Name='{frameBuffer.Name ?? "<null>"}' Size={frameBuffer.Width}x{frameBuffer.Height} Targets={targetCount} DrawBuffers={drawBufferCount} TextureTypes={frameBuffer.TextureTypes} Samples={frameBuffer.EffectiveSampleCount} Complete={frameBuffer.IsLastCheckComplete}";
         }
     }
 }

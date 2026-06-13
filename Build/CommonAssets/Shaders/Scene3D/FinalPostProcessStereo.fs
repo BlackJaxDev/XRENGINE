@@ -1,6 +1,8 @@
 #version 460
 #extension GL_OVR_multiview2 : require
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
@@ -84,11 +86,11 @@ vec2 ApplyLensDistortionByMode(vec2 uv)
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0 || uv.y > 1.0)
+    vec2 clipXY = FragPos.xy;
+    if (clipXY.x > 1.0 || clipXY.y > 1.0)
         discard;
 
-    uv = uv * 0.5 + 0.5;
+    vec2 uv = XRENGINE_ClipXYToScreenUV(clipXY);
     vec2 sourceUv = clamp(ApplyLensDistortionByMode(uv), vec2(0.0), vec2(1.0));
     OutColor = texture(PostProcessOutputTexture, vec3(sourceUv, gl_ViewID_OVR));
 }

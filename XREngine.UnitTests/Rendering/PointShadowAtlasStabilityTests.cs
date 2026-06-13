@@ -1,16 +1,41 @@
 using System.Numerics;
+using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
+using XREngine;
+using XREngine.Components;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Shadows;
+using XREngine.Scene;
 
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
+[NonParallelizable]
 public sealed class PointShadowAtlasStabilityTests
 {
+    private static readonly FieldInfo WorldField = typeof(RuntimeWorldObjectBase).GetField(
+        "_world",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("RuntimeWorldObjectBase._world field was not found.");
+    private static readonly IRuntimeWorldContext ActiveWorld = new TestWorldContext();
+
+    private IRuntimeShaderServices? _previousShaderServices;
+
+    [OneTimeSetUp]
+    public void OneTimeSetUp()
+    {
+        _previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+    }
+
+    [OneTimeTearDown]
+    public void OneTimeTearDown()
+        => RuntimeShaderServices.Current = _previousShaderServices;
+
     [Test]
     public void ContendedPointFaceSlotsStayStableAfterSettling()
     {
@@ -92,9 +117,21 @@ public sealed class PointShadowAtlasStabilityTests
 
     private static PointLightComponent CreatePointLight(uint resolution)
     {
-        PointLightComponent light = new();
+        SceneNode node = new(nameof(PointLightComponent));
+        PointLightComponent light = node.AddComponent<PointLightComponent>()!;
+        WorldField.SetValue(node, ActiveWorld);
+        WorldField.SetValue(light, ActiveWorld);
         light.SetShadowMapResolution(resolution, resolution);
         return light;
+    }
+
+    private sealed class TestWorldContext : IRuntimeWorldContext
+    {
+        public bool IsPlaySessionActive => false;
+        public void RegisterTick(ETickGroup group, int order, WorldTick tick) { }
+        public void UnregisterTick(ETickGroup group, int order, WorldTick tick) { }
+        public void AddDirtyRuntimeObject(RuntimeWorldObjectBase worldObject) { }
+        public void EnqueueRuntimeWorldMatrixChange(RuntimeWorldObjectBase worldObject, Matrix4x4 worldMatrix) { }
     }
 
     private static ShadowMapRequest CreatePointFaceRequest(
@@ -136,7 +173,6 @@ public sealed class PointShadowAtlasStabilityTests
             manager.Submit(requests[i]).ShouldBeTrue();
 
         manager.SolveAllocations();
-        manager.RenderScheduledTiles();
         manager.PublishFrameData();
         return manager.PublishedFrameData;
     }

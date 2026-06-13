@@ -29,12 +29,10 @@ uniform mat4 RightEyeProjMatrix;
 
 vec3 ViewPosFromDepth(float depth, vec2 uv, mat4 inverseProjMatrix)
 {
-    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
-    return viewSpacePosition.xyz / viewSpacePosition.w;
+    return AOViewPosFromDepth(depth, uv, inverseProjMatrix);
 }
 
-float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord, mat4 projMatrix)
+float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord, mat4 inverseProjMatrix)
 {
     float occlusion = 0.0f;
     int numSamples = 8;
@@ -49,7 +47,7 @@ float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord, mat4
         float depth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
         if (AOIsFarDepth(depth))
             continue;
-        vec3 samplePos = ViewPosFromDepth(depth, uv, projMatrix);
+        vec3 samplePos = ViewPosFromDepth(depth, uv, inverseProjMatrix);
         vec3 diff = samplePos - pos;
 
         float dist = length(diff);
@@ -69,7 +67,6 @@ void main()
     bool leftEye = gl_ViewID_OVR == 0;
     mat4 viewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;
     mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
-    mat4 projMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
 
     vec3 normal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
     vec3 viewNormal = normalize((viewMatrix * vec4(normal, 0.0f)).rgb);
@@ -82,10 +79,10 @@ void main()
     vec3 position = ViewPosFromDepth(depth, uv, inverseProjMatrix);
 
     float totalOcclusion = 0.0f;
-    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.x, uv, projMatrix);
-    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.y, uv, projMatrix);
-    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.z, uv, projMatrix);
-    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.w, uv, projMatrix);
+    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.x, uv, inverseProjMatrix);
+    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.y, uv, inverseProjMatrix);
+    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.z, uv, inverseProjMatrix);
+    totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.w, uv, inverseProjMatrix);
     float obscurance = 0.25f * totalOcclusion;
     OutIntensity = clamp(1.0f - Bias * obscurance * Intensity, 0.0f, 1.0f);
 }

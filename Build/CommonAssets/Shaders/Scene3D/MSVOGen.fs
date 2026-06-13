@@ -25,9 +25,7 @@ uniform mat4 ProjMatrix;
 
 vec3 ViewPosFromDepth(float depth, vec2 uv)
 {
-    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
-    return viewSpacePosition.xyz / viewSpacePosition.w;
+    return AOViewPosFromDepth(depth, uv, InverseProjMatrix);
 }
 
 float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord)

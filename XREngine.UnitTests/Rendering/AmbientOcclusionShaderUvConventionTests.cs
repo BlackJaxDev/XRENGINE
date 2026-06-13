@@ -50,6 +50,30 @@ public sealed class AmbientOcclusionShaderUvConventionTests
         source.ShouldContain("AOTextureUVFromClipXY(");
     }
 
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/MSVOGen.fs")]
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/MSVOGenStereo.fs")]
+    public void MultiScaleAoDepthReconstruction_UsesSharedClipDepthPolicy(string relativePath)
+    {
+        string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
+
+        source.ShouldContain("AOViewPosFromDepth(depth, uv");
+        source.ShouldNotContain("vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f)");
+    }
+
+    [Test]
+    public void AoCommon_UsesRuntimeClipSpacePolicy()
+    {
+        string source = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/AOCommon.glsl").Replace("\r\n", "\n");
+
+        source.ShouldContain("uniform int ClipSpaceYDirection;");
+        source.ShouldContain("uniform int ClipDepthRange;");
+        source.ShouldContain("float AODepthToClipZ(float depth)");
+        source.ShouldContain("ClipDepthRange == 1 ? depth * 2.0f - 1.0f : depth");
+        source.ShouldContain("if (ClipSpaceYDirection == 1)");
+        source.ShouldContain("AODepthToClipZ(depth)");
+        source.ShouldNotContain("vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f)");
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         string fullPath = ResolveWorkspacePath(relativePath);

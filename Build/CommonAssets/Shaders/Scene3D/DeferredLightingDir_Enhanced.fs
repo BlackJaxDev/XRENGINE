@@ -2,6 +2,8 @@
 
 #pragma snippet "NormalEncoding"
 #pragma snippet "ScreenSpaceUtils"
+#pragma snippet "ShadowSampling"
+#pragma snippet "DepthUtils"
 
 const float PI = 3.14159265359f;
 const float InvPI = 0.31831f;
@@ -200,10 +202,8 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL)
     // Offset receiver along normal to reduce acne/light leaks
     vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax * 1.0f;
 
-    // Move the fragment position into light space
-    vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
-    vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    fragCoord = fragCoord * 0.5f + 0.5f;
+    // Move the fragment position into light-space texture/depth coordinates.
+    vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS);
     
     // Early exit if outside shadow map bounds
     if (any(lessThan(fragCoord.xy, vec2(0.0f))) || 
@@ -364,15 +364,12 @@ vec3 CalcTotalLight(
 // Optimized world position reconstruction
 vec3 WorldPosFromDepth(in float depth, in vec2 uv)
 {
-    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
-    viewSpacePosition /= viewSpacePosition.w;
-    return (InverseViewMatrix * viewSpacePosition).xyz;
+    return XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
 }
 
 void main()
 {
-    vec2 uv = XRENGINE_ScreenUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));
+    vec2 uv = XRENGINE_FramebufferUV(gl_FragCoord.xy, vec2(ScreenWidth, ScreenHeight));
     
     // Retrieve shading information from GBuffer textures
     vec3 albedo = texture(AlbedoOpacity, uv).rgb;

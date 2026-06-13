@@ -23,6 +23,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Pipelines;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using XREngine.Timers;
@@ -899,6 +900,12 @@ internal static partial class RuntimeEngine
             {
                 if (EnableTracking && events > 0 && HasHostStats)
                     RuntimeRenderingHostServices.Current.RecordRenderForbiddenGpuFallback(events);
+            }
+
+            public static void RecordShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics)
+            {
+                if (EnableTracking && HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderShadowAtlasSolveDiagnostics(diagnostics);
             }
 
             public static void RecordGpuTransparencyDomainCounts(int opaqueOrOther, int masked, int approximate, int exact)
