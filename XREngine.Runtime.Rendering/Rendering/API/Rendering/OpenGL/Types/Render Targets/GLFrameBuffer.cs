@@ -191,15 +191,35 @@ namespace XREngine.Rendering.OpenGL
                 return;
             }
 
-            var casted = Data.DrawBuffers?.Select(ToGLEnum)?.ToArray();
-            if (casted is null || casted.Length == 0)
-                casted = [GLEnum.None];
+            EDrawBuffersAttachment[]? drawBuffersSource = Data.DrawBuffers;
+            int drawBufferCount = drawBuffersSource is { Length: > 0 } ? drawBuffersSource.Length : 1;
+            Span<GLEnum> casted = drawBufferCount <= 32
+                ? stackalloc GLEnum[drawBufferCount]
+                : new GLEnum[drawBufferCount];
+
+            if (drawBuffersSource is { Length: > 0 })
+            {
+                for (int i = 0; i < drawBuffersSource.Length; i++)
+                    casted[i] = ToGLEnum(drawBuffersSource[i]);
+            }
+            else
+            {
+                casted[0] = GLEnum.None;
+            }
+
+            if (GLSubmitTracer.Enabled)
+            {
+                GLSubmitTracer.Trace(
+                    "NamedFramebufferDrawBuffers",
+                    $"fbo={BindingId} fboName={Data.Name ?? "<unnamed>"} count={drawBufferCount}");
+            }
 
             fixed (GLEnum* drawBuffers = casted)
             {
-                Api.NamedFramebufferDrawBuffers(BindingId, (uint)casted.Length, drawBuffers);
+                Api.NamedFramebufferDrawBuffers(BindingId, (uint)drawBufferCount, drawBuffers);
             }
             Api.NamedFramebufferReadBuffer(BindingId, GLEnum.None);
+            GLSubmitTracer.TraceEnd("NamedFramebufferDrawBuffers");
             CheckErrors();
         }
 
@@ -249,7 +269,12 @@ namespace XREngine.Rendering.OpenGL
             };
 
         public void CheckErrors()
-            => Renderer.CheckFrameBufferErrors(this);
+        {
+            if (GLSubmitTracer.Enabled)
+                GLSubmitTracer.Trace("CheckFramebufferStatus", $"fbo={BindingId} fboName={Data.Name ?? "<unnamed>"}");
+            Renderer.CheckFrameBufferErrors(this);
+            GLSubmitTracer.TraceEnd("CheckFramebufferStatus");
+        }
 
         public int GetInteger(GLEnum parameter)
         {

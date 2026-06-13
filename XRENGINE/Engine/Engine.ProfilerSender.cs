@@ -125,6 +125,21 @@ public static partial class Engine
             };
         }
 
+        var churnRowsSnapshot = Rendering.Stats.ResourceChurn.GetLastFrameRows();
+        var churnRows = new RenderResourceChurnRowData[churnRowsSnapshot.Length];
+        for (int i = 0; i < churnRowsSnapshot.Length; i++)
+        {
+            var row = churnRowsSnapshot[i];
+            churnRows[i] = new RenderResourceChurnRowData
+            {
+                ResourceKind = row.ResourceKind,
+                ResourceName = row.ResourceName,
+                EventName = row.EventName,
+                Reason = row.Reason,
+                Count = row.Count,
+            };
+        }
+
         ShadowAtlasSolveDiagnostics shadowAtlasSolve = Rendering.Stats.ShadowAtlas.LastSolveDiagnostics;
         return new RenderStatsPacket
         {
@@ -355,6 +370,11 @@ public static partial class Engine
             AllocatedRenderBufferBytes = Rendering.Stats.Vram.AllocatedRenderBufferBytes,
             FBOBandwidthBytes = Rendering.Stats.Vram.FBOBandwidthBytes,
             FBOBindCount = Rendering.Stats.Vram.FBOBindCount,
+            RenderResourceCreatedCount = Rendering.Stats.ResourceChurn.CreatedCount,
+            RenderResourceRecreatedCount = Rendering.Stats.ResourceChurn.RecreatedCount,
+            RenderResourceResizedCount = Rendering.Stats.ResourceChurn.ResizedCount,
+            RenderResourceDestroyedCount = Rendering.Stats.ResourceChurn.DestroyedCount,
+            RenderResourceChurnRows = churnRows,
             VrLeftEyeDraws = Rendering.Stats.Vr.VrLeftEyeDraws,
             VrRightEyeDraws = Rendering.Stats.Vr.VrRightEyeDraws,
             VrLeftEyeVisible = Rendering.Stats.Vr.VrLeftEyeVisible,

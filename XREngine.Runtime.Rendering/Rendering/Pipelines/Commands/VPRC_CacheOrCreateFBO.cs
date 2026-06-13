@@ -34,9 +34,21 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private RenderResourceSizePolicy? _sizePolicyOverride;
         private RenderResourceLifetime _lifetime = RenderResourceLifetime.Persistent;
+        private string? _branchProfileBaseName;
+        private string? _hitProfileName;
+        private string? _missProfileName;
+        private string? _recreateCheckProfileName;
+        private string? _recreateProfileName;
+        private string? _resizeProfileName;
+        private string? _factoryProfileName;
+        private string? _setFboProfileName;
+        private string? _descriptorProfileName;
+
+        public override string CpuProfilingName
+            => GetCpuProfilingNameWithSuffix(Name);
 
         public override string GpuProfilingName
-            => string.IsNullOrWhiteSpace(Name) ? base.GpuProfilingName : $"{base.GpuProfilingName}[{Name}]";
+            => GetGpuProfilingNameWithSuffix(Name);
 
         public VPRC_CacheOrCreateFBO SetOptions(string name, Func<XRFrameBuffer> factory, Func<(uint x, uint y)>? sizeVerifier, Func<XRFrameBuffer, bool>? needsRecreate = null)
         {
@@ -86,24 +98,40 @@ namespace XREngine.Rendering.Pipelines.Commands
             // invalidation by resolving a stale variable entry with the same name.
             if (pipelineInstance.Resources.TryGetFrameBuffer(Name, out var fbo) && fbo is not null)
             {
-                if (NeedsRecreate?.Invoke(fbo) == true)
+                using var hitScope = RuntimeRenderingHostServices.Current.StartProfileScope(HitProfileName);
+                bool needsRecreate = false;
+                if (NeedsRecreate is not null)
                 {
-                    // Destroy the previous instance so its GL/Vulkan wrappers tear down the
-                    // underlying handles. Without this, the cache-or-create cycle leaks GPU
-                    // objects on every reconfiguration (resize, AA change, pipeline rebuild),
-                    // and NVIDIA's OpenGL driver eventually trips a FAST_FAIL_CORRUPT_LIST_ENTRY
-                    // inside glNamedFramebufferTexture after enough orphaned attachments
-                    // accumulate.
-                    fbo.Destroy(true);
-                    fbo = null;
+                    using var recreateCheckScope = RuntimeRenderingHostServices.Current.StartProfileScope(RecreateCheckProfileName);
+                    needsRecreate = NeedsRecreate.Invoke(fbo);
+                }
+
+                if (needsRecreate)
+                {
+                    using (RuntimeRenderingHostServices.Current.StartProfileScope(RecreateProfileName))
+                    {
+                        RecordChurn("Recreated", "NeedsRecreate");
+                        RecordChurn("Destroyed", "NeedsRecreate");
+                        // Destroy the previous instance so its GL/Vulkan wrappers tear down the
+                        // underlying handles. Without this, the cache-or-create cycle leaks GPU
+                        // objects on every reconfiguration (resize, AA change, pipeline rebuild),
+                        // and NVIDIA's OpenGL driver eventually trips a FAST_FAIL_CORRUPT_LIST_ENTRY
+                        // inside glNamedFramebufferTexture after enough orphaned attachments
+                        // accumulate.
+                        fbo.Destroy(true);
+                        fbo = null;
+                    }
                 }
 
                 if (fbo is null)
                 {
-                    XRFrameBuffer recreated = CreateFrameBufferOrThrow("recreating a cached FBO");
+                    XRFrameBuffer recreated;
+                    using (RuntimeRenderingHostServices.Current.StartProfileScope(FactoryProfileName))
+                        recreated = CreateFrameBufferOrThrow("recreating a cached FBO");
                     recreated.Name = Name;
                     FrameBufferResourceDescriptor recreatedDescriptor = BuildDescriptor(recreated);
-                    pipelineInstance.SetFBO(recreated, recreatedDescriptor);
+                    using (RuntimeRenderingHostServices.Current.StartProfileScope(SetFboProfileName))
+                        pipelineInstance.SetFBO(recreated, recreatedDescriptor);
                     return;
                 }
 
@@ -111,18 +139,61 @@ namespace XREngine.Rendering.Pipelines.Commands
                 {
                     (uint x, uint y) = SizeVerifier();
                     if (fbo.Width != x || fbo.Height != y)
+                    {
+                        using var resizeScope = RuntimeRenderingHostServices.Current.StartProfileScope(ResizeProfileName);
+                        RecordChurn("Resized", $"{fbo.Width}x{fbo.Height}->{x}x{y}");
                         fbo.Resize(x, y);
+                    }
                 }
 
-                RegisterDescriptor(pipelineInstance, fbo);
+                using (RuntimeRenderingHostServices.Current.StartProfileScope(DescriptorProfileName))
+                    RegisterDescriptor(pipelineInstance, fbo);
                 return;
             }
 
-            fbo = CreateFrameBufferOrThrow("creating a missing FBO");
+            using var missScope = RuntimeRenderingHostServices.Current.StartProfileScope(MissProfileName);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope(FactoryProfileName))
+                fbo = CreateFrameBufferOrThrow("creating a missing FBO");
             fbo.Name = Name;
             FrameBufferResourceDescriptor descriptor = BuildDescriptor(fbo);
-            pipelineInstance.SetFBO(fbo, descriptor);
+            RecordChurn("Created", "Missing");
+            using (RuntimeRenderingHostServices.Current.StartProfileScope(SetFboProfileName))
+                pipelineInstance.SetFBO(fbo, descriptor);
         }
+
+        private void RecordChurn(string eventName, string reason)
+        {
+            if (Name is null)
+                return;
+
+            RuntimeRenderingHostServices.Current.RecordRenderResourceChurn("FBO", Name, eventName, reason);
+        }
+
+        private void RefreshBranchProfileNames()
+        {
+            string baseName = CpuProfilingName;
+            if (string.Equals(_branchProfileBaseName, baseName, StringComparison.Ordinal))
+                return;
+
+            _branchProfileBaseName = baseName;
+            _hitProfileName = baseName + ".Hit";
+            _missProfileName = baseName + ".Miss";
+            _recreateCheckProfileName = baseName + ".NeedsRecreate";
+            _recreateProfileName = baseName + ".Recreate";
+            _resizeProfileName = baseName + ".Resize";
+            _factoryProfileName = baseName + ".Factory";
+            _setFboProfileName = baseName + ".SetFBO";
+            _descriptorProfileName = baseName + ".Descriptor";
+        }
+
+        private string HitProfileName { get { RefreshBranchProfileNames(); return _hitProfileName!; } }
+        private string MissProfileName { get { RefreshBranchProfileNames(); return _missProfileName!; } }
+        private string RecreateCheckProfileName { get { RefreshBranchProfileNames(); return _recreateCheckProfileName!; } }
+        private string RecreateProfileName { get { RefreshBranchProfileNames(); return _recreateProfileName!; } }
+        private string ResizeProfileName { get { RefreshBranchProfileNames(); return _resizeProfileName!; } }
+        private string FactoryProfileName { get { RefreshBranchProfileNames(); return _factoryProfileName!; } }
+        private string SetFboProfileName { get { RefreshBranchProfileNames(); return _setFboProfileName!; } }
+        private string DescriptorProfileName { get { RefreshBranchProfileNames(); return _descriptorProfileName!; } }
 
         private XRFrameBuffer CreateFrameBufferOrThrow(string reason)
         {

@@ -28,6 +28,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         private RenderResourceSizePolicy? _sizePolicyOverride;
         private RenderResourceLifetime _lifetime = RenderResourceLifetime.Persistent;
 
+        public override string CpuProfilingName
+            => GetCpuProfilingNameWithSuffix(Name);
+
+        public override string GpuProfilingName
+            => GetGpuProfilingNameWithSuffix(Name);
+
         public VPRC_CacheOrCreateRenderBuffer SetOptions(string name, Func<XRRenderBuffer> factory, Func<(uint x, uint y)>? sizeVerifier = null)
         {
             Name = name;
@@ -60,9 +66,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                     (uint x, uint y) = SizeVerifier();
                     if (renderBuffer.Width != x || renderBuffer.Height != y)
                     {
+                        uint oldWidth = renderBuffer.Width;
+                        uint oldHeight = renderBuffer.Height;
                         renderBuffer.Width = x;
                         renderBuffer.Height = y;
                         renderBuffer.Allocate();
+                        RecordChurn("Resized", $"{oldWidth}x{oldHeight}->{x}x{y}");
                     }
                 }
 
@@ -76,7 +85,16 @@ namespace XREngine.Rendering.Pipelines.Commands
             renderBuffer = RenderBufferFactory();
             renderBuffer.Name = Name;
             RenderBufferResourceDescriptor descriptor = BuildDescriptor(renderBuffer);
+            RecordChurn("Created", "Missing");
             ActivePipelineInstance.SetRenderBuffer(renderBuffer, descriptor);
+        }
+
+        private void RecordChurn(string eventName, string reason)
+        {
+            if (Name is null)
+                return;
+
+            RuntimeRenderingHostServices.Current.RecordRenderResourceChurn("RenderBuffer", Name, eventName, reason);
         }
 
         private void RegisterDescriptor(XRRenderBuffer renderBuffer)

@@ -25,6 +25,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         private RenderResourceLifetime _lifetime = RenderResourceLifetime.Persistent;
         private EBufferAccessPattern _accessPattern = EBufferAccessPattern.ReadWrite;
 
+        public override string CpuProfilingName
+            => GetCpuProfilingNameWithSuffix(Name);
+
+        public override string GpuProfilingName
+            => GetGpuProfilingNameWithSuffix(Name);
+
         public VPRC_CacheOrCreateBuffer SetOptions(string name, Func<XRDataBuffer> factory, Func<XRDataBuffer, bool>? needsRecreate = null)
         {
             Name = name;
@@ -50,6 +56,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Name is null)
                 return;
 
+            bool recreatingBuffer = false;
             if (ActivePipelineInstance.TryGetBuffer(Name, out XRDataBuffer? buffer) && buffer is not null)
             {
                 bool shouldRecreate = NeedsRecreate?.Invoke(buffer) ?? false;
@@ -58,6 +65,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                     RegisterDescriptor(buffer);
                     return;
                 }
+
+                RecordChurn("Recreated", "NeedsRecreate");
+                recreatingBuffer = true;
             }
 
             if (BufferFactory is null)
@@ -66,7 +76,16 @@ namespace XREngine.Rendering.Pipelines.Commands
             buffer = BufferFactory();
             buffer.AttributeName = Name;
             BufferResourceDescriptor descriptor = BuildDescriptor(buffer);
+            RecordChurn("Created", recreatingBuffer ? "Recreate" : "Missing");
             ActivePipelineInstance.SetBuffer(buffer, descriptor);
+        }
+
+        private void RecordChurn(string eventName, string reason)
+        {
+            if (Name is null)
+                return;
+
+            RuntimeRenderingHostServices.Current.RecordRenderResourceChurn("Buffer", Name, eventName, reason);
         }
 
         private void RegisterDescriptor(XRDataBuffer buffer)

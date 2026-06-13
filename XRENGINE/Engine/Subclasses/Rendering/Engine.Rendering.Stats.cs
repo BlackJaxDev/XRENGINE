@@ -60,6 +60,7 @@ namespace XREngine
                     Vulkan.SnapshotAndReset();
                     Vr.SnapshotAndReset();
                     Vram.SnapshotAndReset();
+                    ResourceChurn.SnapshotAndReset();
 
 #if !XRE_PUBLISHED
                     Engine.ProfileCapture.RecordRenderStatsSnapshot();

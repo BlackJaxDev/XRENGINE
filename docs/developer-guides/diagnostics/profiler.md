@@ -132,9 +132,9 @@ A standalone Silk.NET window (GLFW + OpenGL 3.3 + ImGui with docking) that:
 1. Listens on the configured UDP port via `UdpProfilerReceiver` (background thread).
 2. Deserializes incoming packets and stores the latest snapshot per type (volatile refs).
 3. Renders 9 dockable panels via `ProfilerPanelRenderer`:
-   - **Profiler Tree** — call-tree hierarchy with root method graphs (`PlotLines`) and worst-frame tracking
+   - **Profiler Tree** — call-tree hierarchy with root method graphs (`PlotLines`), total/self/average/peak timing columns, and worst-frame tracking
    - **FPS Drop Spikes** — sortable table of frame-time anomalies with hottest call path
-   - **Render Stats** — draw calls, VRAM, FBO bandwidth, render matrix, CPU spatial tree
+   - **Render Stats** — draw calls, VRAM, FBO bandwidth, render resource churn, render matrix, CPU spatial tree
   - **GPU Pipeline** — generic render-pipeline command GPU timings, root history plots, and hierarchical pass breakdowns
    - **Thread Allocations** — per-phase GC allocation stats (last / avg / max KB)
    - **BVH Metrics** — build, refit, cull, raycast counts and timings
@@ -154,6 +154,20 @@ without instrumenting each pass manually.
 - In the in-editor profiler, each render-pipeline root history graph has a **Dump** button that writes a unique `profiler-gpu-pipeline-*.log` file under the active `Build/Logs/.../<session>/` folder. The dump includes retained frame samples, warmup-excluded summaries, worst frames, render-thread CPU/present deltas, named XRWindow CPU phase aggregates, slow command/scope rankings, shader/material hint rankings, and full aggregate tables for LLM analysis.
 - To avoid OpenGL driver stalls, timestamp sampling is capped per frame and temporarily throttled after slow query calls. Shadow-map passes keep high-level pass timings but skip per-mesh shadow draw scopes.
 - Current backend support is **OpenGL**. Unsupported renderers report status text rather than falling back to CPU timings.
+
+### CPU Hierarchy And Render Resource Churn
+
+The profiler tree separates inclusive command time from untracked self time:
+`Total` is the inclusive aggregate, `Self` is the portion not attributed to
+visible children, `Avg` is total divided by calls, and `Peak` is the largest
+single sample retained by the display window. Use `Self` to find genuinely
+opaque work and `Peak` to distinguish one-off stalls from many small calls.
+
+Render Stats also reports per-frame render resource churn. The summary counters
+and table group FBO, texture, renderbuffer, and buffer create/recreate/resize/
+destroy events by resource name and reason. Steady-state frames should generally
+show no churn; repeated `Recreated` or `Resized` rows point to a resource
+lifetime or size-policy bug rather than normal render cost.
 
 ### Connection States
 

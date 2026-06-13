@@ -459,10 +459,13 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         // ── Root Method Hierarchy Table ──
         if (_cachedHierarchyList.Count > 0)
         {
-            if (ImGui.BeginTable("ProfilerHierarchy", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.Resizable | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY))
+            if (ImGui.BeginTable("ProfilerHierarchy", 6, ImGuiTableFlags.Borders | ImGuiTableFlags.Resizable | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY))
             {
                 ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch);
-                ImGui.TableSetupColumn("Time", ImGuiTableColumnFlags.WidthFixed, 60f);
+                ImGui.TableSetupColumn("Total", ImGuiTableColumnFlags.WidthFixed, 60f);
+                ImGui.TableSetupColumn("Self", ImGuiTableColumnFlags.WidthFixed, 60f);
+                ImGui.TableSetupColumn("Avg", ImGuiTableColumnFlags.WidthFixed, 56f);
+                ImGui.TableSetupColumn("Peak", ImGuiTableColumnFlags.WidthFixed, 56f);
                 ImGui.TableSetupColumn("Calls", ImGuiTableColumnFlags.WidthFixed, 40f);
                 ImGui.TableHeadersRow();
 
@@ -598,6 +601,41 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"Draw Calls: {stats.DrawCalls:N0}");
         ImGui.Text($"Multi-Draw Calls: {stats.MultiDrawCalls:N0}");
         ImGui.Text($"Triangles Rendered: {stats.TrianglesRendered:N0}");
+
+        RenderResourceChurnRowData[] resourceChurnRows = stats.RenderResourceChurnRows ?? [];
+        int resourceChurnCount = stats.RenderResourceCreatedCount
+            + stats.RenderResourceRecreatedCount
+            + stats.RenderResourceResizedCount
+            + stats.RenderResourceDestroyedCount;
+        if (resourceChurnCount > 0 || resourceChurnRows.Length > 0)
+        {
+            ImGui.Separator();
+            ImGui.TextColored(new Vector4(1.0f, 0.78f, 0.35f, 1.0f), "Render Resource Churn:");
+            ImGui.Text($"  Created {stats.RenderResourceCreatedCount:N0} | Recreated {stats.RenderResourceRecreatedCount:N0} | Resized {stats.RenderResourceResizedCount:N0} | Destroyed {stats.RenderResourceDestroyedCount:N0}");
+
+            if (resourceChurnRows.Length > 0 &&
+                ImGui.BeginTable("RenderResourceChurnRows", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable))
+            {
+                ImGui.TableSetupColumn("Resource", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Kind", ImGuiTableColumnFlags.WidthFixed, 80f);
+                ImGui.TableSetupColumn("Event", ImGuiTableColumnFlags.WidthFixed, 78f);
+                ImGui.TableSetupColumn("Reason", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Count", ImGuiTableColumnFlags.WidthFixed, 50f);
+                ImGui.TableHeadersRow();
+
+                foreach (var row in resourceChurnRows)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableSetColumnIndex(0); ImGui.Text(row.ResourceName);
+                    ImGui.TableSetColumnIndex(1); ImGui.Text(row.ResourceKind);
+                    ImGui.TableSetColumnIndex(2); ImGui.Text(row.EventName);
+                    ImGui.TableSetColumnIndex(3); ImGui.Text(string.IsNullOrWhiteSpace(row.Reason) ? "-" : row.Reason);
+                    ImGui.TableSetColumnIndex(4); ImGui.Text($"{row.Count:N0}");
+                }
+
+                ImGui.EndTable();
+            }
+        }
 
         ShadowAtlasSolveDiagnosticsData shadowAtlasSolve = stats.ShadowAtlasSolve;
         if (shadowAtlasSolve.ClassifiedRequestCount > 0 || shadowAtlasSolve.ElapsedMilliseconds > 0.0)
@@ -1677,6 +1715,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             entry.RootNodes.Clear();
             entry.ThreadIds.Clear();
             entry.TotalTimeMs = 0;
+            entry.MaxRootElapsedMs = 0;
             ResetAggregatedChildrenStats(entry.Children);
         }
 
@@ -1697,6 +1736,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                     agg.RootNodes.Add(rootNode);
                     agg.ThreadIds.Add(thread.ThreadId);
                     agg.TotalTimeMs += rootNode.ElapsedMs;
+                    agg.MaxRootElapsedMs = Math.Max(agg.MaxRootElapsedMs, rootNode.ElapsedMs);
                     agg.SeenThisUpdate = true;
                     agg.LastSeen = now;
                     UpdateAggregatedChildrenRecursive(rootNode.Children, agg.Children, now);
@@ -1707,6 +1747,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         foreach (var entry in _rootMethodCache.Values)
         {
             entry.AccumulatedMaxTotalTimeMs = Math.Max(entry.AccumulatedMaxTotalTimeMs, entry.TotalTimeMs);
+            entry.AccumulatedMaxRootElapsedMs = Math.Max(entry.AccumulatedMaxRootElapsedMs, entry.MaxRootElapsedMs);
             entry.AccumulatedMaxThreadCount = Math.Max(entry.AccumulatedMaxThreadCount, entry.ThreadIds.Count);
             entry.AccumulatedMaxRootNodeCount = Math.Max(entry.AccumulatedMaxRootNodeCount, entry.RootNodes.Count);
             UpdateAggregatedChildrenMaxRecursive(entry.Children);
@@ -1768,10 +1809,13 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             if (entry.SeenThisUpdate)
             {
                 entry.DisplayTotalTimeMs = ApplyDisplaySmoothing(entry.DisplayTotalTimeMs, entry.AccumulatedMaxTotalTimeMs);
+                entry.DisplayPeakRootElapsedMs = ApplyDisplaySmoothing(entry.DisplayPeakRootElapsedMs, entry.AccumulatedMaxRootElapsedMs);
                 entry.DisplayThreadCount = entry.AccumulatedMaxThreadCount;
                 entry.DisplayRootNodeCount = entry.AccumulatedMaxRootNodeCount;
             }
             entry.AccumulatedMaxTotalTimeMs = 0;
+            entry.AccumulatedMaxRootElapsedMs = 0;
+            entry.MaxRootElapsedMs = 0;
             entry.AccumulatedMaxThreadCount = 0;
             entry.AccumulatedMaxRootNodeCount = 0;
             entry.SeenThisUpdate = false;
@@ -3130,8 +3174,11 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (isStale) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.65f, 0.65f, 0.70f, 1.0f));
         int hierCalls = Math.Max(1, rm.DisplayRootNodeCount);
         float hierAvgMs = rm.DisplayTotalTimeMs / hierCalls;
-        ImGui.TableSetColumnIndex(1); ImGui.Text(hierCalls > 1 ? $"{hierAvgMs:F3} ({rm.DisplayTotalTimeMs:F3})" : $"{rm.DisplayTotalTimeMs:F3}");
-        ImGui.TableSetColumnIndex(2); ImGui.Text($"{rm.DisplayRootNodeCount}");
+        ImGui.TableSetColumnIndex(1); ImGui.Text($"{rm.DisplayTotalTimeMs:F3}");
+        ImGui.TableSetColumnIndex(2); ImGui.Text($"{Math.Max(0.0f, untracked):F3}");
+        ImGui.TableSetColumnIndex(3); ImGui.Text($"{hierAvgMs:F3}");
+        ImGui.TableSetColumnIndex(4); ImGui.Text($"{rm.DisplayPeakRootElapsedMs:F3}");
+        ImGui.TableSetColumnIndex(5); ImGui.Text($"{rm.DisplayRootNodeCount}");
         if (isStale) ImGui.PopStyleColor();
 
         if (nodeOpen)
@@ -3145,7 +3192,10 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 ImGui.TableSetColumnIndex(0);
                 ImGui.TreeNodeEx($"(untracked time)##Untracked_{key}", ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen | ImGuiTreeNodeFlags.SpanFullWidth);
                 ImGui.TableSetColumnIndex(1); ImGui.Text($"{untracked:F3}");
-                ImGui.TableSetColumnIndex(2); ImGui.Text("-");
+                ImGui.TableSetColumnIndex(2); ImGui.Text($"{untracked:F3}");
+                ImGui.TableSetColumnIndex(3); ImGui.Text("-");
+                ImGui.TableSetColumnIndex(4); ImGui.Text("-");
+                ImGui.TableSetColumnIndex(5); ImGui.Text("-");
             }
 
             ImGui.TreePop();
@@ -3178,8 +3228,12 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             _nodeOpenCache[key] = nodeOpen;
 
         if (isStale) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.65f, 0.65f, 0.70f, 1.0f));
+        int calls = Math.Max(1, node.DisplayCallCount);
         ImGui.TableSetColumnIndex(1); ImGui.Text($"{node.DisplayTotalElapsedMs:F3}");
-        ImGui.TableSetColumnIndex(2); ImGui.Text($"{node.DisplayCallCount}");
+        ImGui.TableSetColumnIndex(2); ImGui.Text($"{Math.Max(0.0f, untracked):F3}");
+        ImGui.TableSetColumnIndex(3); ImGui.Text($"{node.DisplayTotalElapsedMs / calls:F3}");
+        ImGui.TableSetColumnIndex(4); ImGui.Text($"{node.DisplayPeakElapsedMs:F3}");
+        ImGui.TableSetColumnIndex(5); ImGui.Text($"{node.DisplayCallCount}");
         if (isStale) ImGui.PopStyleColor();
 
         if (nodeOpen)
@@ -3193,7 +3247,10 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 ImGui.TableSetColumnIndex(0);
                 ImGui.TreeNodeEx($"(untracked time)##Untracked_{key}", ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen | ImGuiTreeNodeFlags.SpanFullWidth);
                 ImGui.TableSetColumnIndex(1); ImGui.Text($"{untracked:F3}");
-                ImGui.TableSetColumnIndex(2); ImGui.Text("-");
+                ImGui.TableSetColumnIndex(2); ImGui.Text($"{untracked:F3}");
+                ImGui.TableSetColumnIndex(3); ImGui.Text("-");
+                ImGui.TableSetColumnIndex(4); ImGui.Text("-");
+                ImGui.TableSetColumnIndex(5); ImGui.Text("-");
             }
 
             ImGui.TreePop();
@@ -3218,6 +3275,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             }
             agg.TotalElapsedMs += child.ElapsedMs;
             agg.CallCount++;
+            agg.MaxElapsedMs = Math.Max(agg.MaxElapsedMs, child.ElapsedMs);
             agg.SeenThisUpdate = true;
             agg.LastSeen = now;
             UpdateAggregatedChildrenRecursive(child.Children, agg.Children, now);
@@ -3230,6 +3288,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         {
             c.TotalElapsedMs = 0;
             c.CallCount = 0;
+            c.MaxElapsedMs = 0;
             ResetAggregatedChildrenStats(c.Children);
         }
     }
@@ -3240,6 +3299,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         {
             c.AccumulatedMaxTotalElapsedMs = Math.Max(c.AccumulatedMaxTotalElapsedMs, c.TotalElapsedMs);
             c.AccumulatedMaxCallCount = Math.Max(c.AccumulatedMaxCallCount, c.CallCount);
+            c.AccumulatedMaxElapsedMs = Math.Max(c.AccumulatedMaxElapsedMs, c.MaxElapsedMs);
             UpdateAggregatedChildrenMaxRecursive(c.Children);
         }
     }
@@ -3251,10 +3311,13 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             if (c.SeenThisUpdate)
             {
                 c.DisplayTotalElapsedMs = ApplyDisplaySmoothing(c.DisplayTotalElapsedMs, c.AccumulatedMaxTotalElapsedMs);
+                c.DisplayPeakElapsedMs = ApplyDisplaySmoothing(c.DisplayPeakElapsedMs, c.AccumulatedMaxElapsedMs);
                 c.DisplayCallCount = c.AccumulatedMaxCallCount;
             }
             c.AccumulatedMaxTotalElapsedMs = 0;
             c.AccumulatedMaxCallCount = 0;
+            c.AccumulatedMaxElapsedMs = 0;
+            c.MaxElapsedMs = 0;
             c.SeenThisUpdate = false;
             UpdateAggregatedChildrenDisplayRecursive(c.Children);
         }
@@ -3288,7 +3351,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             if (c.DisplayTotalElapsedMs >= 0.1f || _paused || (nowUtc - c.LastSeen).TotalSeconds < staleSec)
                 visible++;
         }
-        untracked = parentTime - childTotal;
+        untracked = Math.Max(0.0f, parentTime - childTotal);
 
         sorted = visible > 0 ? new AggregatedChildNode[visible] : [];
         int idx = 0;
@@ -3435,11 +3498,14 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         public string Name { get; set; } = string.Empty;
         public ProfilerScopeKind ScopeKind { get; set; }
         public float TotalElapsedMs { get; set; }
+        public float MaxElapsedMs { get; set; }
         public int CallCount { get; set; }
         public bool SeenThisUpdate { get; set; }
         public float AccumulatedMaxTotalElapsedMs { get; set; }
+        public float AccumulatedMaxElapsedMs { get; set; }
         public int AccumulatedMaxCallCount { get; set; }
         public float DisplayTotalElapsedMs { get; set; }
+        public float DisplayPeakElapsedMs { get; set; }
         public int DisplayCallCount { get; set; }
         public float CachedUntrackedTime { get; set; }
         public Dictionary<string, AggregatedChildNode> Children { get; } = new();
@@ -3452,11 +3518,14 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         public string Name { get; set; } = string.Empty;
         public ProfilerScopeKind ScopeKind { get; set; }
         public float TotalTimeMs { get; set; }
+        public float MaxRootElapsedMs { get; set; }
         public bool SeenThisUpdate { get; set; }
         public float AccumulatedMaxTotalTimeMs { get; set; }
+        public float AccumulatedMaxRootElapsedMs { get; set; }
         public int AccumulatedMaxThreadCount { get; set; }
         public int AccumulatedMaxRootNodeCount { get; set; }
         public float DisplayTotalTimeMs { get; set; }
+        public float DisplayPeakRootElapsedMs { get; set; }
         public int DisplayThreadCount { get; set; }
         public int DisplayRootNodeCount { get; set; }
         public float CachedUntrackedTime { get; set; }

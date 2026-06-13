@@ -125,6 +125,11 @@ public sealed partial class RenderStatsPacket
     // FBO bandwidth
     public long FBOBandwidthBytes { get; set; }
     public int FBOBindCount { get; set; }
+    public int RenderResourceCreatedCount { get; set; }
+    public int RenderResourceRecreatedCount { get; set; }
+    public int RenderResourceResizedCount { get; set; }
+    public int RenderResourceDestroyedCount { get; set; }
+    public RenderResourceChurnRowData[] RenderResourceChurnRows { get; set; } = [];
 
     // OpenXR / VR
     public int VrLeftEyeDraws { get; set; }
@@ -276,6 +281,16 @@ public sealed partial class ShadowAtlasSolveDiagnosticsData
     public int PointGroupMemberCount { get; set; }
     public int PointGroupCoLocationFailureCount { get; set; }
     public string LastFailureReason { get; set; } = string.Empty;
+}
+
+[MemoryPackable]
+public sealed partial class RenderResourceChurnRowData
+{
+    public string ResourceKind { get; set; } = string.Empty;
+    public string ResourceName { get; set; } = string.Empty;
+    public string EventName { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+    public int Count { get; set; }
 }
 
 [MemoryPackable]
