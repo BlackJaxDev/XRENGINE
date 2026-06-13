@@ -593,6 +593,10 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RecordRenderResourceChurn(string resourceKind, string resourceName, string eventName, string? reason = null)
+        {
+        }
+
         public void RecordRenderShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics)
         {
         }

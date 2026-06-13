@@ -426,17 +426,17 @@ public partial class DefaultRenderPipeline
 
     private void AppendForwardPass(ViewportRenderCommandContainer c, bool enableComputePasses)
     {
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+        AddConditionalFboCache(c, "ForwardPassMsaaFBO", () => RuntimeEnableMsaa,
             ForwardPassMsaaFBOName,
             CreateForwardPassMsaaFBO,
             GetDesiredFBOSizeInternal,
             NeedsRecreateMsaaFbo);
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+        AddConditionalFboCache(c, "MsaaLightCombineFBO", () => RuntimeEnableMsaaDeferred,
             MsaaLightCombineFBOName,
             CreateMsaaLightCombineFBO,
             GetDesiredFBOSizeInternal,
             NeedsRecreateMsaaLightCombineFbo);
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+        AddConditionalFboCache(c, "DepthPreloadFBO", () => RuntimeEnableMsaa && !RuntimeEnableMsaaDeferred,
             DepthPreloadFBOName,
             CreateDepthPreloadFBO,
             GetDesiredFBOSizeInternal);
@@ -447,29 +447,10 @@ public partial class DefaultRenderPipeline
             GetDesiredFBOSizeInternal)
             .UseLifetime(RenderResourceLifetime.Transient);
 
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            RestirCompositeFBOName,
-            CreateRestirCompositeFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            LightVolumeCompositeFBOName,
-            CreateLightVolumeCompositeFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            RadianceCascadeCompositeFBOName,
-            CreateRadianceCascadeCompositeFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            SurfelGICompositeFBOName,
-            CreateSurfelGICompositeFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
+        AddConditionalTransientFboCache(c, "RestirCompositeFBO", () => enableComputePasses && UsesRestirGI, RestirCompositeFBOName, CreateRestirCompositeFBO);
+        AddConditionalTransientFboCache(c, "LightVolumeCompositeFBO", () => enableComputePasses && UsesLightVolumes, LightVolumeCompositeFBOName, CreateLightVolumeCompositeFBO);
+        AddConditionalTransientFboCache(c, "RadianceCascadeCompositeFBO", () => enableComputePasses && UsesRadianceCascades, RadianceCascadeCompositeFBOName, CreateRadianceCascadeCompositeFBO);
+        AddConditionalTransientFboCache(c, "SurfelGICompositeFBO", () => enableComputePasses && UsesSurfelGI, SurfelGICompositeFBOName, CreateSurfelGICompositeFBO);
 
         using (c.AddUsing<VPRC_BindFBOByName>(x =>
         {
@@ -548,6 +529,48 @@ public partial class DefaultRenderPipeline
                 depthViewTextureName: ForwardPassMsaaDepthViewTextureName);
             msaaResolve.TrueCommands = resolveCmds;
         }
+    }
+
+    private void AddConditionalFboCache(
+        ViewportRenderCommandContainer c,
+        string label,
+        Func<bool> condition,
+        string name,
+        Func<XRFrameBuffer> factory,
+        Func<(uint x, uint y)>? sizeVerifier,
+        Func<XRFrameBuffer, bool>? needsRecreate = null)
+    {
+        var conditional = c.Add<VPRC_IfElse>();
+        conditional.Label = label;
+        conditional.ConditionEvaluator = condition;
+
+        var commands = new ViewportRenderCommandContainer(this);
+        commands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            name,
+            factory,
+            sizeVerifier,
+            needsRecreate);
+        conditional.TrueCommands = commands;
+    }
+
+    private void AddConditionalTransientFboCache(
+        ViewportRenderCommandContainer c,
+        string label,
+        Func<bool> condition,
+        string name,
+        Func<XRFrameBuffer> factory)
+    {
+        var conditional = c.Add<VPRC_IfElse>();
+        conditional.Label = label;
+        conditional.ConditionEvaluator = condition;
+
+        var commands = new ViewportRenderCommandContainer(this);
+        commands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            name,
+            factory,
+            GetDesiredFBOSizeInternal)
+            .UseLifetime(RenderResourceLifetime.Transient);
+        conditional.TrueCommands = commands;
     }
 
     private void AppendTransparencyPasses(ViewportRenderCommandContainer c)

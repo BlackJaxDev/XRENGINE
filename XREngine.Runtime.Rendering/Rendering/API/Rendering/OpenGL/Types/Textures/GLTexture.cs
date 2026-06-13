@@ -395,7 +395,16 @@ namespace XREngine.Rendering.OpenGL
                     $"attachment={attachment} tex={texId} texName={Data?.Name ?? "<unnamed>"} " +
                     $"mip={mipLevel} type={GetType().Name} dataFmt={Data?.GetType().Name} " +
                     $"dims={dims.X}x{dims.Y}x{dims.Z}{textureState}");
+                if (GLSubmitTracer.Enabled)
+                {
+                    GLSubmitTracer.Trace(
+                        "NamedFramebufferTexture",
+                        $"fbo={fboId} fboName={fbo.Name ?? "<unnamed>"} attachment={attachment} " +
+                        $"tex={texId} texName={Data?.Name ?? "<unnamed>"} mip={mipLevel} " +
+                        $"type={GetType().Name} dims={dims.X}x{dims.Y}x{dims.Z}{textureState}");
+                }
                 Api.NamedFramebufferTexture(fboId, ToGLEnum(attachment), texId, mipLevel);
+                GLSubmitTracer.TraceEnd("NamedFramebufferTexture");
                 XREngine.Rendering.Commands.GPURenderPassCollection.Crumb("NamedFramebufferTexture.END");
             }
 

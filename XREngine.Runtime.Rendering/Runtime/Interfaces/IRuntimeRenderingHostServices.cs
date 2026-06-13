@@ -1019,6 +1019,7 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVisibilityBuffer(int passDraws, long classifiedPixels, int activeMaterialTiles, int classificationOverflow, TimeSpan reconstruction, TimeSpan materialShading);
     void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands);
     void RecordRenderForbiddenGpuFallback(int eventCount = 1);
+    void RecordRenderResourceChurn(string resourceKind, string resourceName, string eventName, string? reason = null);
     void RecordRenderShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics);
     void RecordRenderGpuTransparencyDomainCounts(uint opaqueOrOtherVisible, uint maskedVisible, uint approximateVisible, uint exactVisible);
     void RecordRenderGpuMeshletStrategyRequested(int eventCount = 1);

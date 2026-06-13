@@ -610,6 +610,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderForbiddenGpuFallback(int eventCount = 1)
         => Engine.Rendering.Stats.GpuFallback.RecordForbiddenGpuFallback(eventCount);
 
+    public void RecordRenderResourceChurn(string resourceKind, string resourceName, string eventName, string? reason = null)
+        => Engine.Rendering.Stats.ResourceChurn.Record(resourceKind, resourceName, eventName, reason);
+
     public void RecordRenderShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics)
         => Engine.Rendering.Stats.ShadowAtlas.RecordSolveDiagnostics(diagnostics);
 

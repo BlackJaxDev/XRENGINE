@@ -42,9 +42,44 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// If true, this command's CollectVisible and SwapBuffers methods will be called.
         /// </summary>
         public virtual bool NeedsCollecVisible => false;
-        public virtual string GpuProfilingName => GetType().Name;
+        private string? _gpuProfilingName;
+        private string BaseGpuProfilingName => _gpuProfilingName ??= GetType().Name;
+        public virtual string GpuProfilingName => BaseGpuProfilingName;
         private string? _cpuProfilingName;
-        public virtual string CpuProfilingName => _cpuProfilingName ??= $"VPRC.{GetType().Name}";
+        private string BaseCpuProfilingName => _cpuProfilingName ??= $"VPRC.{GetType().Name}";
+        public virtual string CpuProfilingName => BaseCpuProfilingName;
+        private string? _cpuProfilingNameSuffix;
+        private string? _cpuProfilingNameWithSuffix;
+        private string? _gpuProfilingNameSuffix;
+        private string? _gpuProfilingNameWithSuffix;
+
+        protected string GetCpuProfilingNameWithSuffix(string? suffix)
+        {
+            if (string.IsNullOrWhiteSpace(suffix))
+                return BaseCpuProfilingName;
+
+            if (!string.Equals(_cpuProfilingNameSuffix, suffix, StringComparison.Ordinal))
+            {
+                _cpuProfilingNameSuffix = suffix;
+                _cpuProfilingNameWithSuffix = $"{BaseCpuProfilingName}[{suffix}]";
+            }
+
+            return _cpuProfilingNameWithSuffix!;
+        }
+
+        protected string GetGpuProfilingNameWithSuffix(string? suffix)
+        {
+            if (string.IsNullOrWhiteSpace(suffix))
+                return BaseGpuProfilingName;
+
+            if (!string.Equals(_gpuProfilingNameSuffix, suffix, StringComparison.Ordinal))
+            {
+                _gpuProfilingNameSuffix = suffix;
+                _gpuProfilingNameWithSuffix = $"{BaseGpuProfilingName}[{suffix}]";
+            }
+
+            return _gpuProfilingNameWithSuffix!;
+        }
         /// <summary>
         /// Executes the command.
         /// </summary>

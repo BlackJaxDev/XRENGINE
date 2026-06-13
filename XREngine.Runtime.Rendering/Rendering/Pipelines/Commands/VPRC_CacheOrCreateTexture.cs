@@ -31,8 +31,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         private RenderResourceSizePolicy? _sizePolicyOverride;
         private RenderResourceLifetime _lifetime = RenderResourceLifetime.Persistent;
 
+        public override string CpuProfilingName
+            => GetCpuProfilingNameWithSuffix(Name);
+
         public override string GpuProfilingName
-            => string.IsNullOrWhiteSpace(Name) ? base.GpuProfilingName : $"{base.GpuProfilingName}[{Name}]";
+            => GetGpuProfilingNameWithSuffix(Name);
 
         public VPRC_CacheOrCreateTexture SetOptions(string name, Func<XRTexture> factory, Func<XRTexture, bool>? needsRecreate, Action<XRTexture>? resize)
         {
@@ -64,6 +67,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             // Using the broader name-resolution path here can suppress recreation after cache
             // invalidation by resolving a stale variable entry with the same name.
             bool hasTexture = ActivePipelineInstance.Resources.TryGetTexture(Name, out XRTexture? texture);
+            bool recreatingTexture = false;
 
             if (hasTexture && texture is not null)
             {
@@ -87,6 +91,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                         if (!stillInvalid)
                         {
                             RegisterDescriptor(texture);
+                            RecordChurn("Resized", "Resize");
                             ActivePipelineInstance.NotifyRenderResourcesChanged();
                             return;
                         }
@@ -97,6 +102,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                     // texture objects on every pipeline reconfiguration, which combined with
                     // leaked FBO attachments eventually corrupts NVIDIA's per-texture
                     // attached-FBO list (FAST_FAIL_CORRUPT_LIST_ENTRY in glNamedFramebufferTexture).
+                    RecordChurn("Recreated", "NeedsRecreate");
+                    RecordChurn("Destroyed", "NeedsRecreate");
+                    recreatingTexture = true;
                     texture.Destroy(true);
                     texture = null;
                     hasTexture = false;
@@ -113,8 +121,17 @@ namespace XREngine.Rendering.Pipelines.Commands
                 texture = TextureFactory();
                 texture.Name = Name;
                 TextureResourceDescriptor descriptor = BuildDescriptor(texture);
+                RecordChurn("Created", recreatingTexture ? "Recreate" : "Missing");
                 ActivePipelineInstance.SetTexture(texture, descriptor);
             }
+        }
+
+        private void RecordChurn(string eventName, string reason)
+        {
+            if (Name is null)
+                return;
+
+            RuntimeRenderingHostServices.Current.RecordRenderResourceChurn("Texture", Name, eventName, reason);
         }
 
         private void RegisterDescriptor(XRTexture texture)
