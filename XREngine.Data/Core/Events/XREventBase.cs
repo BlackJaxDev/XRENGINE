@@ -11,6 +11,42 @@ namespace XREngine.Data.Core
         protected virtual IDisposable? BeginProfiling(string name)
             => null;
 
+        protected virtual bool HasProfilingHooks => false;
+
+        protected virtual object? CaptureLinkedProfilingContext()
+            => null;
+
+        protected virtual IDisposable? BeginLinkedProfiling(object? context, string name)
+            => BeginProfiling(name);
+
+        protected IDisposable? BeginListenerProfiling(string prefix, TListener listener, int index)
+        {
+            if (!HasProfilingHooks)
+                return null;
+
+            return BeginProfiling(FormatListenerProfilingName(prefix, listener, index));
+        }
+
+        protected IDisposable? BeginLinkedListenerProfiling(object? context, string prefix, TListener listener, int index)
+        {
+            if (!HasProfilingHooks)
+                return null;
+
+            string name = FormatListenerProfilingName(prefix, listener, index);
+            return context is null
+                ? BeginProfiling(name)
+                : BeginLinkedProfiling(context, name);
+        }
+
+        private static string FormatListenerProfilingName(string prefix, TListener listener, int index)
+        {
+            var method = listener.Method;
+            string owner = method.DeclaringType?.FullName
+                ?? listener.Target?.GetType().FullName
+                ?? "<unknown>";
+            return $"{prefix}[{index}] {owner}.{method.Name}";
+        }
+
         protected void WithProfiling(string name, Action action)
         {
             var sample = BeginProfiling(name);

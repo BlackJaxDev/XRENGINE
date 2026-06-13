@@ -2,6 +2,8 @@
 #extension GL_OVR_multiview2 : require
 //#extension GL_EXT_multiview_tessellation_geometry_shader : enable
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
@@ -256,10 +258,10 @@ vec2 GetStencilOutlineIntensity(vec2 uv, int viewIndex)
 
 void main()
 {
-    vec2 uv = FragPos.xy;
-    if (uv.x > 1.0 || uv.y > 1.0)
+    vec2 clipXY = FragPos.xy;
+    if (clipXY.x > 1.0 || clipXY.y > 1.0)
         discard;
-    // uv is now normalized to [0, 1]
+    vec2 uv = XRENGINE_ClipXYToScreenUV(clipXY);
     vec2 duv = ApplyLensDistortionByMode(uv);
 
     vec3 uvi = vec3(duv, gl_ViewID_OVR);
@@ -343,7 +345,7 @@ void main()
 
     ldrSceneColor = (ldrSceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
 
-    vec2 outline = GetStencilOutlineIntensity(uv, int(gl_ViewID_OVR));
+    vec2 outline = GetStencilOutlineIntensity(duv, int(gl_ViewID_OVR));
     float hoverOutline = outline.x;
     float selectionOutline = outline.y;
     float outlineWeight = max(hoverOutline, selectionOutline);

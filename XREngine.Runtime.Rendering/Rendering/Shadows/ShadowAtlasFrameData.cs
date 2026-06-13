@@ -5,6 +5,10 @@ namespace XREngine.Rendering.Shadows;
 
 public sealed class ShadowAtlasFrameData
 {
+    private const int MaxPooledMemberArraysPerLength = 64;
+    private static readonly object MemberArrayPoolSync = new();
+    private static readonly Dictionary<int, Stack<ShadowAtlasGroupedAllocationMember[]>> MemberArrayPool = new();
+
     private ShadowAtlasAllocation[] _allocations = [];
     private ShadowAtlasGroupedDirectionalCascadeAllocation[] _directionalCascadeGroups = [];
     private ShadowAtlasGroupedPointFaceAllocation[] _pointFaceGroups = [];
@@ -20,6 +24,7 @@ public sealed class ShadowAtlasFrameData
     public ulong FrameId { get; private set; }
     public ulong Generation { get; private set; }
     public ShadowAtlasMetrics Metrics { get; private set; }
+    public ShadowAtlasSolveDiagnostics SolveDiagnostics { get; private set; }
     public int AllocationCount => _allocationCount;
     public int DirectionalCascadeGroupCount => _directionalCascadeGroupCount;
     public int PointFaceGroupCount => _pointFaceGroupCount;
@@ -144,6 +149,45 @@ public sealed class ShadowAtlasFrameData
         return false;
     }
 
+    internal static ShadowAtlasGroupedAllocationMember[] RentGroupedMemberArray(int length)
+    {
+        if (length <= 0)
+            return [];
+
+        lock (MemberArrayPoolSync)
+        {
+            if (MemberArrayPool.TryGetValue(length, out Stack<ShadowAtlasGroupedAllocationMember[]>? arrays) &&
+                arrays.Count > 0)
+            {
+                return arrays.Pop();
+            }
+        }
+
+        return new ShadowAtlasGroupedAllocationMember[length];
+    }
+
+    private static void ReturnGroupedMemberArray(ShadowAtlasGroupedAllocationMember[]? array, int usedLength)
+    {
+        if (array is null || array.Length == 0)
+            return;
+
+        int clearLength = Math.Clamp(usedLength, 0, array.Length);
+        if (clearLength > 0)
+            Array.Clear(array, 0, clearLength);
+
+        lock (MemberArrayPoolSync)
+        {
+            if (!MemberArrayPool.TryGetValue(array.Length, out Stack<ShadowAtlasGroupedAllocationMember[]>? arrays))
+            {
+                arrays = new Stack<ShadowAtlasGroupedAllocationMember[]>(4);
+                MemberArrayPool.Add(array.Length, arrays);
+            }
+
+            if (arrays.Count < MaxPooledMemberArraysPerLength)
+                arrays.Push(array);
+        }
+    }
+
     internal void SetData(
         ulong frameId,
         ulong generation,
@@ -152,7 +196,8 @@ public sealed class ShadowAtlasFrameData
         IReadOnlyList<ShadowAtlasGroupedPointFaceAllocation> pointFaceGroups,
         IReadOnlyList<ShadowDirectionalAtlasLightDiagnostic> directionalLightDiagnostics,
         IReadOnlyList<ShadowAtlasPageDescriptor> pages,
-        ShadowAtlasMetrics metrics)
+        ShadowAtlasMetrics metrics,
+        ShadowAtlasSolveDiagnostics solveDiagnostics)
     {
         EnsureAllocationCapacity(allocations.Count);
         EnsureDirectionalCascadeGroupCapacity(directionalCascadeGroups.Count);
@@ -170,11 +215,15 @@ public sealed class ShadowAtlasFrameData
         for (int i = allocations.Count; i < _allocationCount; i++)
             _allocations[i] = default;
 
+        for (int i = 0; i < _directionalCascadeGroupCount; i++)
+            ReturnGroupedMemberArray(_directionalCascadeGroups[i].Members, _directionalCascadeGroups[i].CascadeCount);
         for (int i = 0; i < directionalCascadeGroups.Count; i++)
             _directionalCascadeGroups[i] = directionalCascadeGroups[i];
         for (int i = directionalCascadeGroups.Count; i < _directionalCascadeGroupCount; i++)
             _directionalCascadeGroups[i] = default;
 
+        for (int i = 0; i < _pointFaceGroupCount; i++)
+            ReturnGroupedMemberArray(_pointFaceGroups[i].Members, _pointFaceGroups[i].FaceCount);
         for (int i = 0; i < pointFaceGroups.Count; i++)
             _pointFaceGroups[i] = pointFaceGroups[i];
         for (int i = pointFaceGroups.Count; i < _pointFaceGroupCount; i++)
@@ -198,6 +247,7 @@ public sealed class ShadowAtlasFrameData
         FrameId = frameId;
         Generation = generation;
         Metrics = metrics;
+        SolveDiagnostics = solveDiagnostics;
     }
 
     private void EnsureAllocationCapacity(int count)

@@ -203,6 +203,9 @@ namespace XREngine
             [ThreadStatic]
             private static ThreadProducerState? _tlsProducerState;
 
+            [ThreadStatic]
+            private static LinkedThreadProducerState? _tlsLinkedProducerState;
+
             public delegate void DelTimerCallback(string? methodName, float elapsedMs);
 
             internal readonly record struct CompletedScopeEvent(
@@ -219,6 +222,25 @@ namespace XREngine
                 public int ThreadId { get; } = threadId;
                 public ThreadProducerBuffer Buffer { get; } = buffer;
                 public int Depth;
+            }
+
+            internal sealed class LinkedThreadProducerState(int threadId, int depth)
+            {
+                public int ThreadId { get; } = threadId;
+                public int Depth = depth;
+            }
+
+            public readonly struct LinkedScopeContext
+            {
+                internal LinkedScopeContext(int threadId, int parentDepth)
+                {
+                    ThreadId = threadId;
+                    ParentDepth = parentDepth;
+                }
+
+                internal int ThreadId { get; }
+                internal int ParentDepth { get; }
+                internal bool IsValid => ThreadId != 0 && ParentDepth >= 0;
             }
 
             internal sealed class ThreadProducerBuffer(int threadId, int capacity)
@@ -326,25 +348,84 @@ namespace XREngine
             {
                 private readonly CodeProfiler? _profiler;
                 private readonly ThreadProducerState? _state;
+                private readonly LinkedThreadProducerState? _linkedState;
+                private readonly LinkedThreadProducerState? _previousLinkedState;
                 private readonly string? _methodName;
                 private readonly long _startTicks;
                 private readonly int _depth;
                 private readonly ProfilerScopeKind _scopeKind;
+                private readonly bool _restoreLinkedStateOnDispose;
 
                 internal ProfilerScope(CodeProfiler profiler, ThreadProducerState state, long startTicks, int depth, string? methodName, ProfilerScopeKind scopeKind)
                 {
                     _profiler = profiler;
                     _state = state;
+                    _linkedState = null;
+                    _previousLinkedState = null;
                     _methodName = methodName;
                     _startTicks = startTicks;
                     _depth = depth;
                     _scopeKind = scopeKind;
+                    _restoreLinkedStateOnDispose = false;
+                }
+
+                internal ProfilerScope(
+                    CodeProfiler profiler,
+                    LinkedThreadProducerState linkedState,
+                    LinkedThreadProducerState? previousLinkedState,
+                    bool restoreLinkedStateOnDispose,
+                    long startTicks,
+                    int depth,
+                    string? methodName,
+                    ProfilerScopeKind scopeKind)
+                {
+                    _profiler = profiler;
+                    _state = null;
+                    _linkedState = linkedState;
+                    _previousLinkedState = previousLinkedState;
+                    _methodName = methodName;
+                    _startTicks = startTicks;
+                    _depth = depth;
+                    _scopeKind = scopeKind;
+                    _restoreLinkedStateOnDispose = restoreLinkedStateOnDispose;
                 }
 
                 [MethodImpl(MethodImplOptions.AggressiveInlining)]
                 public void Dispose()
                 {
-                    if (_profiler is null || _state is null)
+                    if (_profiler is null)
+                        return;
+
+                    if (_linkedState is not null)
+                    {
+                        int linkedDepth = _linkedState.Depth;
+                        int newLinkedDepth = linkedDepth > 0 ? linkedDepth - 1 : 0;
+                        _linkedState.Depth = newLinkedDepth;
+
+                        long linkedEndTicks = Time.Timer.TimeTicks();
+                        if (_profiler._enableFrameLogging)
+                        {
+                            long linkedElapsedTicks = linkedEndTicks - _startTicks;
+                            if (linkedElapsedTicks < 0L)
+                                linkedElapsedTicks = 0L;
+
+                            _profiler._overflowCompletedEvents.Enqueue(new CompletedScopeEvent(
+                                _linkedState.ThreadId,
+                                _depth,
+                                _startTicks,
+                                linkedElapsedTicks,
+                                _methodName,
+                                _scopeKind,
+                                IsAsyncRoot: false));
+                        }
+
+                        if (_restoreLinkedStateOnDispose)
+                            _tlsLinkedProducerState = _previousLinkedState;
+
+                        return;
+                    }
+
+                    if (_state is null)
                         return;
 
                     int depth = _state.Depth;
@@ -1478,6 +1559,22 @@ namespace XREngine
                 if (!_enableFrameLogging)
                     return default;
 
+                if (_tlsLinkedProducerState is { } linkedState)
+                {
+                    int linkedDepth = linkedState.Depth + 1;
+                    linkedState.Depth = linkedDepth;
+                    long linkedStartTicks = Time.Timer.TimeTicks();
+                    return new ProfilerScope(
+                        this,
+                        linkedState,
+                        null,
+                        false,
+                        linkedStartTicks,
+                        linkedDepth,
+                        methodName,
+                        scopeKind);
+                }
+
                 var state = GetOrCreateThreadProducerState();
                 int depth = state.Depth + 1;
                 state.Depth = depth;
@@ -1485,6 +1582,43 @@ namespace XREngine
                 if (state.ThreadId == RenderThreadId)
                     RecordRenderThreadScopeEntry(depth, startTicks, methodName, scopeKind);
                 return new ProfilerScope(this, state, startTicks, depth, methodName, scopeKind);
+            }
+
+            public LinkedScopeContext CaptureLinkedChildContext()
+            {
+                if (!_enableFrameLogging)
+                    return default;
+
+                if (_tlsLinkedProducerState is { } linkedState)
+                    return new LinkedScopeContext(linkedState.ThreadId, linkedState.Depth);
+
+                var state = GetOrCreateThreadProducerState();
+                return new LinkedScopeContext(state.ThreadId, state.Depth);
+            }
+
+            public ProfilerScope StartLinkedChild(
+                LinkedScopeContext context,
+                string? methodName,
+                ProfilerScopeKind scopeKind = ProfilerScopeKind.OneOffInvoke)
+            {
+                if (!_enableFrameLogging || !context.IsValid)
+                    return default;
+
+                int childDepth = context.ParentDepth + 1;
+                var previousLinkedState = _tlsLinkedProducerState;
+                var linkedState = new LinkedThreadProducerState(context.ThreadId, childDepth);
+                _tlsLinkedProducerState = linkedState;
+
+                long startTicks = Time.Timer.TimeTicks();
+                return new ProfilerScope(
+                    this,
+                    linkedState,
+                    previousLinkedState,
+                    true,
+                    startTicks,
+                    childDepth,
+                    methodName,
+                    scopeKind);
             }
 
             private void RecordRenderThreadScopeEntry(int depth, long startTicks, string? methodName, ProfilerScopeKind scopeKind)
@@ -1658,6 +1792,10 @@ namespace XREngine
                 public void Dispose()
                 {
                 }
+            }
+
+            public readonly struct LinkedScopeContext
+            {
             }
 
             public sealed class CodeProfilerTimer(string? name = null) : IPoolable
@@ -1853,6 +1991,15 @@ namespace XREngine
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public ProfilerScope Start([CallerMemberName] string? methodName = null, ProfilerScopeKind scopeKind = ProfilerScopeKind.Unspecified)
+                => default;
+
+            public LinkedScopeContext CaptureLinkedChildContext()
+                => default;
+
+            public ProfilerScope StartLinkedChild(
+                LinkedScopeContext context,
+                string? methodName,
+                ProfilerScopeKind scopeKind = ProfilerScopeKind.OneOffInvoke)
                 => default;
 
             public Guid StartAsync(

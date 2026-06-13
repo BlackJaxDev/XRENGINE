@@ -49,6 +49,7 @@ namespace XREngine
             protected void StartUdpReceiver(int udpPort)
             {
                 UdpClient listener = new();
+                UdpSocketOptions.DisableConnectionReset(listener, "server UDP receiver");
                 //listener.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                 listener.Client.Bind(new IPEndPoint(IPAddress.Any, udpPort));
                 UdpReceiver = listener;

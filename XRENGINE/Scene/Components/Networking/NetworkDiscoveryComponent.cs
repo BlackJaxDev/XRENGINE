@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine;
+using XREngine.Networking;
 
 namespace XREngine.Components
 {
@@ -319,6 +320,7 @@ namespace XREngine.Components
                 // Multiple local instances need to share the discovery port.
                 // On Windows this requires ReuseAddress + ExclusiveAddressUse=false before binding.
                 client.ExclusiveAddressUse = false;
+                UdpSocketOptions.DisableConnectionReset(client, "discovery listener");
                 client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                 client.Client.Bind(new IPEndPoint(IPAddress.Any, _discoveryPort));
 
@@ -352,6 +354,7 @@ namespace XREngine.Components
         private async Task BroadcastLoopAsync(CancellationToken token)
         {
             using UdpClient client = new(AddressFamily.InterNetwork);
+            UdpSocketOptions.DisableConnectionReset(client, "discovery broadcaster");
             client.EnableBroadcast = true;
 
             IPEndPoint broadcast = new(IPAddress.Broadcast, _discoveryPort);

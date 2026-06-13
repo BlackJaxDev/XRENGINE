@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using XREngine;
 using XREngine.Data.Profiling;
+using XREngine.Profiler.UI;
+using XREngine.Rendering.Shadows;
 
 namespace XREngine.Editor;
 
@@ -52,42 +54,60 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
     /// Call once per frame, before the shared renderer's <c>ProcessLatestData()</c>.
     /// </summary>
     public void CollectFromEngine()
+        => CollectFromEngine(ProfilerPanelRenderer.PanelVisibility.All);
+
+    /// <summary>
+    /// Collects only the telemetry needed by the visible in-editor profiler panels.
+    /// </summary>
+    public void CollectFromEngine(ProfilerPanelRenderer.PanelVisibility visibility)
     {
-        _latestFrame = CollectProfilerFrame();
-        _latestRenderStats = CollectRenderStats();
-        _latestAllocations = CollectThreadAllocations();
-        _latestBvhMetrics = CollectBvhMetrics();
-        _latestJobStats = CollectJobSystemStats();
-        _latestMainThreadInvokes = CollectMainThreadInvokes();
+        _latestFrame = visibility.NeedsFrame
+            ? CollectProfilerFrame(visibility.NeedsThreadTiming, visibility.ComponentTimings)
+            : null;
+        _latestRenderStats = visibility.RenderStats
+            ? CollectRenderStats()
+            : visibility.GpuPipeline
+                ? CollectGpuPipelineStats()
+                : null;
+        _latestAllocations = visibility.ThreadAllocations ? CollectThreadAllocations() : null;
+        _latestBvhMetrics = visibility.BvhMetrics ? CollectBvhMetrics() : null;
+        _latestJobStats = visibility.JobSystem ? CollectJobSystemStats() : null;
+        _latestMainThreadInvokes = visibility.MainThreadInvokes ? CollectMainThreadInvokes() : null;
     }
 
     // ═══════════════════════════════════════════════════════════════
     //  Collectors — same patterns as Engine.ProfilerSender.cs
     // ═══════════════════════════════════════════════════════════════
 
-    private static ProfilerFramePacket? CollectProfilerFrame()
+    private static ProfilerFramePacket? CollectProfilerFrame(bool includeThreadTimings, bool includeComponentTimings)
     {
         if (!Engine.Profiler.TryGetSnapshot(out var snapshot, out var history) || snapshot is null)
             return null;
 
-        var threads = new ProfilerThreadData[snapshot.Threads.Count];
-        for (int i = 0; i < snapshot.Threads.Count; i++)
+        ProfilerThreadData[] threads = [];
+        if (includeThreadTimings)
         {
-            var t = snapshot.Threads[i];
-            threads[i] = new ProfilerThreadData
+            threads = new ProfilerThreadData[snapshot.Threads.Count];
+            for (int i = 0; i < snapshot.Threads.Count; i++)
             {
-                ThreadId = t.ThreadId,
-                TotalTimeMs = t.TotalTimeMs,
-                RootNodes = ConvertNodes(t.RootNodes),
-            };
+                var t = snapshot.Threads[i];
+                threads[i] = new ProfilerThreadData
+                {
+                    ThreadId = t.ThreadId,
+                    TotalTimeMs = t.TotalTimeMs,
+                    RootNodes = ConvertNodes(t.RootNodes),
+                };
+            }
         }
 
         return new ProfilerFramePacket
         {
             FrameTime = snapshot.FrameTime,
             Threads = threads,
-            ThreadHistory = history ?? [],
-            ComponentTimings = ConvertComponentTimings(snapshot.ComponentTimings?.Components),
+            ThreadHistory = includeThreadTimings ? history ?? [] : [],
+            ComponentTimings = includeComponentTimings
+                ? ConvertComponentTimings(snapshot.ComponentTimings?.Components)
+                : [],
         };
     }
 
@@ -169,6 +189,7 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             };
         }
 
+        ShadowAtlasSolveDiagnostics shadowAtlasSolve = Engine.Rendering.Stats.ShadowAtlas.LastSolveDiagnostics;
         return new RenderStatsPacket
         {
             DrawCalls = Engine.Rendering.Stats.Frame.DrawCalls,
@@ -179,6 +200,7 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             ForbiddenGpuFallbackEvents = Engine.Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents,
             GpuMappedBuffers = Engine.Rendering.Stats.GpuReadback.GpuMappedBuffers,
             GpuReadbackBytes = Engine.Rendering.Stats.GpuReadback.GpuReadbackBytes,
+            ShadowAtlasSolve = ConvertShadowAtlasSolveDiagnostics(shadowAtlasSolve),
             RenderProfilerV2 = new RenderProfilerV2Data
             {
                 RendererState = new RenderProfilerRendererStateData
@@ -494,6 +516,18 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
         };
     }
 
+    private static RenderStatsPacket CollectGpuPipelineStats()
+        => new()
+        {
+            GpuRenderPipelineProfilingEnabled = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineProfilingEnabled,
+            GpuRenderPipelineProfilingSupported = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineProfilingSupported,
+            GpuRenderPipelineTimingsReady = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineTimingsReady,
+            GpuRenderPipelineBackend = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineBackend,
+            GpuRenderPipelineStatusMessage = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineStatusMessage,
+            GpuRenderPipelineFrameMs = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineFrameMs,
+            GpuRenderPipelineTimingRoots = Engine.Rendering.Stats.GpuPipelineProfiler.GetGpuRenderPipelineTimingRoots(),
+        };
+
     private static ThreadAllocationsPacket? CollectThreadAllocations()
     {
         var snap = Engine.Allocations.GetSnapshot();
@@ -531,6 +565,42 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             RaycastMilliseconds = m.RaycastMilliseconds,
         };
     }
+
+    private static ShadowAtlasSolveDiagnosticsData ConvertShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics)
+        => new()
+        {
+            ElapsedMilliseconds = diagnostics.ElapsedMilliseconds,
+            ClassifiedRequestCount = diagnostics.ClassifiedRequestCount,
+            DirectionalRequestCount = diagnostics.DirectionalRequestCount,
+            SpotRequestCount = diagnostics.SpotRequestCount,
+            PointRequestCount = diagnostics.PointRequestCount,
+            DepthRequestCount = diagnostics.DepthRequestCount,
+            Variance2RequestCount = diagnostics.Variance2RequestCount,
+            ExponentialVariance2RequestCount = diagnostics.ExponentialVariance2RequestCount,
+            ExponentialVariance4RequestCount = diagnostics.ExponentialVariance4RequestCount,
+            BalancedSolveAttemptCount = diagnostics.BalancedSolveAttemptCount,
+            FailedCandidateCount = diagnostics.FailedCandidateCount,
+            DemotionCount = diagnostics.DemotionCount,
+            StickyDemotionCount = diagnostics.StickyDemotionCount,
+            DirectionalGroupDemotionCount = diagnostics.DirectionalGroupDemotionCount,
+            DeterministicFallbackDemotionCount = diagnostics.DeterministicFallbackDemotionCount,
+            PriorReserveHitCount = diagnostics.PriorReserveHitCount,
+            PriorReserveMissCount = diagnostics.PriorReserveMissCount,
+            PriorSubBlockHitCount = diagnostics.PriorSubBlockHitCount,
+            PriorSubBlockMissCount = diagnostics.PriorSubBlockMissCount,
+            PageAllocationAttemptCount = diagnostics.PageAllocationAttemptCount,
+            PageAllocationSuccessCount = diagnostics.PageAllocationSuccessCount,
+            PageCreateAttemptCount = diagnostics.PageCreateAttemptCount,
+            PageCreateSuccessCount = diagnostics.PageCreateSuccessCount,
+            PageClearCount = diagnostics.PageClearCount,
+            DirectionalGroupSeedCount = diagnostics.DirectionalGroupSeedCount,
+            DirectionalGroupMemberCount = diagnostics.DirectionalGroupMemberCount,
+            DirectionalGroupCoLocationFailureCount = diagnostics.DirectionalGroupCoLocationFailureCount,
+            PointGroupSeedCount = diagnostics.PointGroupSeedCount,
+            PointGroupMemberCount = diagnostics.PointGroupMemberCount,
+            PointGroupCoLocationFailureCount = diagnostics.PointGroupCoLocationFailureCount,
+            LastFailureReason = diagnostics.LastFailureReason.ToString(),
+        };
 
     private static JobSystemStatsPacket? CollectJobSystemStats()
     {

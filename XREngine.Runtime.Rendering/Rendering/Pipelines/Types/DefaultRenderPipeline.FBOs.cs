@@ -74,7 +74,7 @@ public partial class DefaultRenderPipeline
                     UpdateDepth = false,
                 },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime,
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy,
             }
         };
         var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false);
@@ -110,7 +110,7 @@ public partial class DefaultRenderPipeline
                     UpdateDepth = false,
                 },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.Camera,
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy,
             }
         };
 
@@ -151,6 +151,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
         return new XRQuadFrameBuffer(mat, deriveRenderTargetsFromMaterial: false)
@@ -187,7 +188,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
-                RequiredEngineUniforms = EUniformRequirements.RenderTime,
+                RequiredEngineUniforms = EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy,
             }
         };
         var fbo = new XRQuadFrameBuffer(scatterMat, deriveRenderTargetsFromMaterial: false)
@@ -228,6 +229,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
         var fbo = new XRQuadFrameBuffer(reprojectMat, deriveRenderTargetsFromMaterial: false)
@@ -277,6 +279,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
         var fbo = new XRQuadFrameBuffer(upscaleMat, deriveRenderTargetsFromMaterial: false)
@@ -322,7 +325,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
-                // Downsample only reads the depth sampler; no engine uniforms required.
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
         return new XRQuadFrameBuffer(mat, deriveRenderTargetsFromMaterial: false)
@@ -370,7 +373,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
-                RequiredEngineUniforms = EUniformRequirements.Lights | EUniformRequirements.RenderTime,
+                RequiredEngineUniforms = EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy,
             }
         };
         var fbo = new XRQuadFrameBuffer(scatterMat, deriveRenderTargetsFromMaterial: false)
@@ -419,6 +422,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
         var fbo = new XRQuadFrameBuffer(reprojectMat, deriveRenderTargetsFromMaterial: false)
@@ -483,6 +487,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
         var fbo = new XRQuadFrameBuffer(upscaleMat, deriveRenderTargetsFromMaterial: false)

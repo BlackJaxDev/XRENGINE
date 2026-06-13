@@ -15,6 +15,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Shadows;
 using XREngine.Scene;
 
 namespace XREngine.UnitTests.Rendering;
@@ -754,6 +755,10 @@ public sealed class RuntimeRenderingHostServicesTests
         }
 
         public void RecordRenderForbiddenGpuFallback(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics)
         {
         }
 

@@ -456,7 +456,7 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
                 UpdateDepth = false,
                 Function = EComparison.Lequal,
             },
-            RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.RenderTime,
+            RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy,
             ExcludeFromGpuIndirect = true,
             BlendModeAllDrawBuffers = BlendMode.Disabled(),
         };

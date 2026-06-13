@@ -6,6 +6,21 @@
 uniform int DepthMode;
 #endif
 
+#ifndef XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+#define XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+uniform int ClipDepthRange;
+#endif
+
+#ifndef XRENGINE_CLIP_SPACE_Y_DIRECTION_UNIFORM
+#define XRENGINE_CLIP_SPACE_Y_DIRECTION_UNIFORM
+uniform int ClipSpaceYDirection;
+#endif
+
+float AODepthToClipZ(float depth)
+{
+    return ClipDepthRange == 1 ? depth * 2.0f - 1.0f : depth;
+}
+
 vec2 AOTextureUVFromClipXY(vec2 clipXY)
 {
     vec2 uv = clipXY * 0.5f + 0.5f;
@@ -15,6 +30,9 @@ vec2 AOTextureUVFromClipXY(vec2 clipXY)
     // origin makes those conventions vertically opposite, so normalize every
     // screen-space AO texture lookup through the same flip.
     uv.y = 1.0f - uv.y;
+#else
+    if (ClipSpaceYDirection == 1)
+        uv.y = 1.0f - uv.y;
 #endif
     return uv;
 }
@@ -32,7 +50,7 @@ bool AOIsFarDepth(float depth)
 
 vec3 AOViewPosFromDepth(float depth, vec2 uv, mat4 inverseProjMatrix)
 {
-    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
+    vec4 clipSpacePosition = vec4(uv * 2.0f - 1.0f, AODepthToClipZ(depth), 1.0f);
     vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
     return viewSpacePosition.xyz / max(viewSpacePosition.w, 1e-5f);
 }

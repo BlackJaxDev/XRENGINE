@@ -9,6 +9,9 @@ namespace XREngine.Data.Core
     public class XREvent : XREventBase<Action>
     {
         public static Func<string, IDisposable>? ProfilingHook = null;
+        public static Func<bool>? IsProfilingEnabledHook = null;
+        public static Func<object?>? CaptureLinkedProfilingContextHook = null;
+        public static Func<object?, string, IDisposable>? LinkedProfilingHook = null;
 
         public XREvent() { }
 
@@ -18,6 +21,16 @@ namespace XREngine.Data.Core
 
         protected override IDisposable? BeginProfiling(string name)
             => ProfilingHook?.Invoke(name);
+
+        protected override bool HasProfilingHooks
+            => (IsProfilingEnabledHook?.Invoke() ?? true)
+            && (ProfilingHook is not null || LinkedProfilingHook is not null);
+
+        protected override object? CaptureLinkedProfilingContext()
+            => CaptureLinkedProfilingContextHook?.Invoke();
+
+        protected override IDisposable? BeginLinkedProfiling(object? context, string name)
+            => LinkedProfilingHook?.Invoke(context, name) ?? BeginProfiling(name);
 
         public void Invoke()
         {
@@ -33,7 +46,10 @@ namespace XREngine.Data.Core
             using (BeginProfiling("XREvent.Actions"))
             {
                 for (int i = 0; i < Actions.Count; i++)
+                {
+                    using var listenerSample = BeginListenerProfiling("XREvent.Action", Actions[i], i);
                     Actions[i].Invoke();
+                }
             }
             using (BeginProfiling("XREvent.PersistentCalls"))
             {
@@ -69,11 +85,33 @@ namespace XREngine.Data.Core
 
         private async Task InvokeAsyncInternal()
         {
-            ConsumeQueues("XREvent.ConsumeQueues");
+            using (BeginProfiling("XREvent.ConsumeQueues"))
+            {
+                ConsumeQueues("XREvent.ConsumeQueues");
+            }
+
             var snapshot = Actions.Count == 0 ? null : Actions.ToArray();
             if (snapshot is not null)
-                await Task.WhenAll(snapshot.Select(Task.Run));
-            InvokePersistentCalls([]);
+            {
+                object? profilingContext = CaptureLinkedProfilingContext();
+                using (BeginProfiling("XREvent.AsyncActions"))
+                {
+                    var tasks = new Task[snapshot.Length];
+                    for (int i = 0; i < snapshot.Length; i++)
+                    {
+                        Action action = snapshot[i];
+                        int index = i;
+                        tasks[i] = Task.Run(() => InvokeLinkedListener(action, index, profilingContext, "XREvent.AsyncAction"));
+                    }
+
+                    await Task.WhenAll(tasks);
+                }
+            }
+
+            using (BeginProfiling("XREvent.PersistentCalls"))
+            {
+                InvokePersistentCalls([]);
+            }
         }
 
         public void InvokeParallel()
@@ -94,19 +132,38 @@ namespace XREngine.Data.Core
 
         private void InvokeParallelInternal(int minParallelListeners)
         {
-            ConsumeQueues("XREvent.ConsumeQueues");
+            using (BeginProfiling("XREvent.ConsumeQueues"))
+            {
+                ConsumeQueues("XREvent.ConsumeQueues");
+            }
 
             if (Actions.Count < Math.Max(2, minParallelListeners))
             {
+                using var actionsSample = BeginProfiling("XREvent.Actions");
                 for (int i = 0; i < Actions.Count; i++)
+                {
+                    using var listenerSample = BeginListenerProfiling("XREvent.Action", Actions[i], i);
                     Actions[i].Invoke();
+                }
             }
             else
             {
-                Parallel.For(0, Actions.Count, i => Actions[i].Invoke());
+                object? profilingContext = CaptureLinkedProfilingContext();
+                using var actionsSample = BeginProfiling("XREvent.ParallelActions");
+                Parallel.For(0, Actions.Count, i =>
+                    InvokeLinkedListener(Actions[i], i, profilingContext, "XREvent.ParallelAction"));
             }
 
-            InvokePersistentCalls([]);
+            using (BeginProfiling("XREvent.PersistentCalls"))
+            {
+                InvokePersistentCalls([]);
+            }
+        }
+
+        private void InvokeLinkedListener(Action listener, int index, object? profilingContext, string prefix)
+        {
+            using var listenerSample = BeginLinkedListenerProfiling(profilingContext, prefix, listener, index);
+            listener.Invoke();
         }
 
         public static XREvent? operator +(XREvent? e, Action a)
@@ -140,15 +197,40 @@ namespace XREngine.Data.Core
         public bool HasPersistentCalls => PersistentCalls is { Count: > 0 };
 
         protected override IDisposable? BeginProfiling(string name)
-            => ProfilingHook?.Invoke(name);
+            => ProfilingHook?.Invoke(name) ?? XREvent.ProfilingHook?.Invoke(name);
+
+        protected override bool HasProfilingHooks
+            => (XREvent.IsProfilingEnabledHook?.Invoke() ?? true)
+            && (ProfilingHook is not null || XREvent.ProfilingHook is not null || XREvent.LinkedProfilingHook is not null);
+
+        protected override object? CaptureLinkedProfilingContext()
+            => XREvent.CaptureLinkedProfilingContextHook?.Invoke();
+
+        protected override IDisposable? BeginLinkedProfiling(object? context, string name)
+            => XREvent.LinkedProfilingHook?.Invoke(context, name) ?? BeginProfiling(name);
 
         public void Invoke(T item)
         {
             WithProfiling("XREvent<T>.Invoke", () =>
             {
-                ConsumeQueues("XREvent<T>.ConsumeQueues");
-                Actions.ForEach(x => x.Invoke(item));
-                InvokePersistentCalls(item);
+                using (BeginProfiling("XREvent<T>.ConsumeQueues"))
+                {
+                    ConsumeQueues("XREvent<T>.ConsumeQueues");
+                }
+
+                using (BeginProfiling("XREvent<T>.Actions"))
+                {
+                    for (int i = 0; i < Actions.Count; i++)
+                    {
+                        using var listenerSample = BeginListenerProfiling("XREvent<T>.Action", Actions[i], i);
+                        Actions[i].Invoke(item);
+                    }
+                }
+
+                using (BeginProfiling("XREvent<T>.PersistentCalls"))
+                {
+                    InvokePersistentCalls(item);
+                }
             });
         }
 
@@ -156,12 +238,40 @@ namespace XREngine.Data.Core
         {
             await WithProfilingAsync("XREvent<T>.InvokeAsync", async () =>
             {
-                ConsumeQueues("XREvent<T>.ConsumeQueues");
+                using (BeginProfiling("XREvent<T>.ConsumeQueues"))
+                {
+                    ConsumeQueues("XREvent<T>.ConsumeQueues");
+                }
+
                 var snapshot = Actions.Count == 0 ? null : Actions.ToArray();
                 if (snapshot is not null)
-                    await Task.WhenAll(snapshot.Select(a => Task.Run(() => a.Invoke(item))));
-                InvokePersistentCalls(item);
+                {
+                    object? profilingContext = CaptureLinkedProfilingContext();
+                    using (BeginProfiling("XREvent<T>.AsyncActions"))
+                    {
+                        var tasks = new Task[snapshot.Length];
+                        for (int i = 0; i < snapshot.Length; i++)
+                        {
+                            Action<T> action = snapshot[i];
+                            int index = i;
+                            tasks[i] = Task.Run(() => InvokeLinkedListener(action, item, index, profilingContext, "XREvent<T>.AsyncAction"));
+                        }
+
+                        await Task.WhenAll(tasks);
+                    }
+                }
+
+                using (BeginProfiling("XREvent<T>.PersistentCalls"))
+                {
+                    InvokePersistentCalls(item);
+                }
             });
+        }
+
+        private void InvokeLinkedListener(Action<T> listener, T item, int index, object? profilingContext, string prefix)
+        {
+            using var listenerSample = BeginLinkedListenerProfiling(profilingContext, prefix, listener, index);
+            listener.Invoke(item);
         }
 
         private void InvokePersistentCalls(T item)

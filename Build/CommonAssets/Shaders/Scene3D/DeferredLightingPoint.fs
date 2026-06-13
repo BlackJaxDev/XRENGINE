@@ -889,10 +889,10 @@ in vec3 rms)
 }
 void main()
 {
-    vec2 fragCoordLocal = XRENGINE_ScreenCoordLocal(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight));
+    vec2 fragCoordLocal = XRENGINE_FramebufferCoordLocal(gl_FragCoord.xy, ScreenOrigin);
     vec2 uv = clamp(fragCoordLocal / vec2(ScreenWidth, ScreenHeight), vec2(0.0f), vec2(1.0f));
 #ifdef XRENGINE_MSAA_DEFERRED
-	ivec2 coord = ivec2(floor(fragCoordLocal));
+	ivec2 coord = clamp(ivec2(floor(fragCoordLocal)), ivec2(0), textureSize(DepthView) - ivec2(1));
 	vec3 albedo = texelFetch(AlbedoOpacity, coord, gl_SampleID).rgb;
 	vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
 	vec3 rms = texelFetch(RMSE, coord, gl_SampleID).rgb;

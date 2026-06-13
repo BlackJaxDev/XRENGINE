@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using XREngine.Networking;
 
 namespace XREngine.Components
 {
@@ -218,6 +219,7 @@ namespace XREngine.Components
                 var address = ResolveLocalAddress();
                 var localEndPoint = new IPEndPoint(address, _localPort);
                 var client = new UdpClient(localEndPoint.AddressFamily);
+                UdpSocketOptions.DisableConnectionReset(client, "UdpSocketComponent");
                 client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, _reuseAddress);
                 client.Client.Bind(localEndPoint);
                 client.EnableBroadcast = _allowBroadcast;

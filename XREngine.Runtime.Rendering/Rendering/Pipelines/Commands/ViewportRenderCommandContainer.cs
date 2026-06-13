@@ -302,6 +302,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public void Execute()
         {
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("ViewportRenderCommandContainer.Execute");
             var instance = ViewportRenderCommand.ActivePipelineInstance;
             if (instance is null)
                 return;
@@ -324,10 +325,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                     Debug.RenderingWarningEvery(
                         $"VPRC.Execute.{_commands[i].GetType().Name}.{i}",
                         TimeSpan.FromSeconds(1),
-                        "[RenderDiag] Command [{0}] {1} threw: {2}",
+                        "[RenderDiag] Command [{0}] {1} threw {2}: {3}\n{4}",
                         i,
                         _commands[i].GetType().Name,
-                        ex.Message);
+                        ex.GetType().FullName ?? ex.GetType().Name,
+                        ex.Message,
+                        ex.StackTrace ?? "<no stack>");
                 }
             }
         }

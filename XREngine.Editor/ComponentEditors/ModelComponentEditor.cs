@@ -191,7 +191,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                     using var _ = Undo.TrackChange("Set Model", modelComponent);
                     modelComponent.Model = asset;
                 }
-            });
+            }, allowInlineInspector: false);
 
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
@@ -220,8 +220,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
         string displayName = string.IsNullOrEmpty(model.Name) ? "<unnamed model>" : model.Name;
         ImGui.TextUnformatted($"Model: {displayName}");
-        var runtimeMeshes = modelComponent.Meshes.ToArray();
-        ImGui.TextDisabled($"{model.Meshes.Count.ToString(CultureInfo.InvariantCulture)} submesh(es), {runtimeMeshes.Length.ToString(CultureInfo.InvariantCulture)} runtime instance(s)");
+        var runtimeMeshes = modelComponent.Meshes;
+        ImGui.TextDisabled($"{model.Meshes.Count.ToString(CultureInfo.InvariantCulture)} submesh(es), {runtimeMeshes.Count.ToString(CultureInfo.InvariantCulture)} runtime instance(s)");
 
         if (model.Meshes.Count == 0)
             return;
@@ -294,7 +294,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                         continue;
                     }
 
-                    RenderableMesh? runtimeMesh = submeshIndex < runtimeMeshes.Length ? runtimeMeshes[submeshIndex] : null;
+                    RenderableMesh? runtimeMesh = submeshIndex < runtimeMeshes.Count ? runtimeMeshes[submeshIndex] : null;
                     DrawSubmeshSection(modelComponent, submeshIndex, subMesh, runtimeMesh);
                     submeshIndex++;
                 }

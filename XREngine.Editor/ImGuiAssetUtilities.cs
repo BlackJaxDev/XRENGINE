@@ -29,10 +29,18 @@ internal static class ImGuiAssetUtilities
     private const float AssetPickerPreviewFallbackEdge = 96.0f;
     private static readonly Dictionary<AssetPickerKey, object> _assetPickerStates = new();
     private static readonly ConcurrentDictionary<string, Type?> _assetTypeHintCache = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<Type, bool> _creatableAssetTypeCache = new();
     private const string AssetCreateReplacePopupId = "AssetCreateReplace";
 
     [ThreadStatic]
     private static HashSet<XRAsset>? _inlineInspectorStack;
+
+    private static class AssetFieldCache<TAsset> where TAsset : XRAsset
+    {
+        public static readonly Type AssetType = typeof(TAsset);
+        public static readonly bool ContainsGenericParameters = AssetType.ContainsGenericParameters;
+        public static readonly string PickerPopupLabel = $"Pick {AssetType.Name}###{AssetPickerPopupId}";
+    }
 
     private sealed class AssetReferenceEqualityComparer : IEqualityComparer<XRAsset>
     {
@@ -90,16 +98,10 @@ internal static class ImGuiAssetUtilities
         Action<TAsset?> assign,
         AssetFieldOptions? options = null,
         bool allowClear = true,
-        bool allowCreateOrReplace = true)
+        bool allowCreateOrReplace = true,
+        bool allowInlineInspector = true)
         where TAsset : XRAsset
     {
-        options ??= AssetFieldOptions.ForType<TAsset>();
-        var state = GetPickerState<TAsset>(options);
-
-        // Use an ImGui label with '###' so the popup shows the asset type in the title
-        // while keeping a stable internal ID.
-        string popupLabel = $"Pick {typeof(TAsset).Name}###{AssetPickerPopupId}";
-
         ImGui.PushID(id);
 
         var style = ImGui.GetStyle();
@@ -111,8 +113,10 @@ internal static class ImGuiAssetUtilities
             : 0.0f;
 
         bool canCreateOrReplace = allowCreateOrReplace
-            && !typeof(TAsset).ContainsGenericParameters
-            && EditorImGuiUI.HasCreatablePropertyTypes(typeof(TAsset));
+            && !AssetFieldCache<TAsset>.ContainsGenericParameters
+            && _creatableAssetTypeCache.GetOrAdd(
+                AssetFieldCache<TAsset>.AssetType,
+                static type => EditorImGuiUI.HasCreatablePropertyTypes(type));
         string createReplaceLabel = current is null ? "Create..." : "Replace...";
         float createReplaceWidth = canCreateOrReplace
             ? ImGui.CalcTextSize(createReplaceLabel).X + style.FramePadding.X * 2.0f
@@ -122,9 +126,15 @@ internal static class ImGuiAssetUtilities
         int buttonCount = 1 + (showClear ? 1 : 0) + (canCreateOrReplace ? 1 : 0);
         float fieldWidth = MathF.Max(80.0f, availableWidth - (clearWidth + createReplaceWidth + browseWidth) - style.ItemSpacing.X * buttonCount);
 
-        var storage = ImGui.GetStateStorage();
-        uint inlineInspectorKey = ImGui.GetID("InlineAssetInspectorOpen");
-        bool inlineInspectorOpen = current is not null && storage.GetInt(inlineInspectorKey, 0) != 0;
+        ImGuiStoragePtr storage = default;
+        uint inlineInspectorKey = 0;
+        bool inlineInspectorOpen = false;
+        if (allowInlineInspector)
+        {
+            storage = ImGui.GetStateStorage();
+            inlineInspectorKey = ImGui.GetID("InlineAssetInspectorOpen");
+            inlineInspectorOpen = current is not null && storage.GetInt(inlineInspectorKey, 0) != 0;
+        }
 
         bool openPopup = false;
         string preview = GetAssetDisplayName(current);
@@ -136,8 +146,11 @@ internal static class ImGuiAssetUtilities
             }
             else
             {
-                inlineInspectorOpen = !inlineInspectorOpen;
-                storage.SetInt(inlineInspectorKey, inlineInspectorOpen ? 1 : 0);
+                if (allowInlineInspector)
+                {
+                    inlineInspectorOpen = !inlineInspectorOpen;
+                    storage.SetInt(inlineInspectorKey, inlineInspectorOpen ? 1 : 0);
+                }
             }
         }
 
@@ -201,15 +214,16 @@ internal static class ImGuiAssetUtilities
             openPopup = true;
 
         if (openPopup)
-            ImGui.OpenPopup(popupLabel);
+            ImGui.OpenPopup(AssetFieldCache<TAsset>.PickerPopupLabel);
 
-        if (ImGui.BeginPopup(popupLabel))
+        if (ImGui.BeginPopup(AssetFieldCache<TAsset>.PickerPopupLabel))
         {
+            var state = GetPickerState<TAsset>(options ?? AssetFieldOptions.ForType<TAsset>());
             DrawAssetPickerPopup(state, current, assign);
             ImGui.EndPopup();
         }
 
-        if (current is not null && inlineInspectorOpen)
+        if (allowInlineInspector && current is not null && inlineInspectorOpen)
             DrawInlineAssetInspectorContents(current);
 
         ImGui.PopID();
@@ -603,17 +617,12 @@ internal static class ImGuiAssetUtilities
         }
     }
 
-    private static string GetAssetDisplayName<T>(T? asset) where T : class
+    private static string GetAssetDisplayName<T>(T? asset) where T : XRAsset
     {
         if (asset is null)
             return "<none>";
 
-        string? preferredName = null;
-        PropertyInfo? nameProperty = asset.GetType().GetProperty("Name", BindingFlags.Instance | BindingFlags.Public);
-        if (nameProperty?.GetValue(asset) is string name && !string.IsNullOrWhiteSpace(name))
-            preferredName = name;
-
-        return FormatAssetLabel(preferredName, asset);
+        return FormatAssetLabel(asset.Name, asset);
     }
 
     private static string FormatAssetLabel(string? preferredName, object? fallback)
@@ -652,6 +661,9 @@ internal static class ImGuiAssetUtilities
 
     public sealed class AssetFieldOptions
     {
+        private static readonly AssetFieldOptions Default = new(null);
+        private static readonly AssetFieldOptions Meshes = new([".asset", ".mesh", ".model"]);
+        private static readonly AssetFieldOptions Materials = new([".asset", ".material"]);
         private readonly string[] _customExtensions;
 
         private AssetFieldOptions(IEnumerable<string>? extensions)
@@ -664,13 +676,13 @@ internal static class ImGuiAssetUtilities
         }
 
         public static AssetFieldOptions ForType<TAsset>() where TAsset : XRAsset
-            => new(null);
+            => Default;
 
         public static AssetFieldOptions ForMeshes()
-            => new([".asset", ".mesh", ".model"]);
+            => Meshes;
 
         public static AssetFieldOptions ForMaterials()
-            => new([".asset", ".material"]);
+            => Materials;
 
         public static AssetFieldOptions WithExtensions(IEnumerable<string> extensions)
             => new(extensions);

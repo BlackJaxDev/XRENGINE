@@ -41,9 +41,6 @@ namespace XREngine
             private readonly ConcurrentDictionary<string, UdpPeerState> _udpPeers = new(StringComparer.Ordinal);
             private readonly object _sendTargetSync = new();
             private readonly List<IPEndPoint> _sendTargetsScratch = new(8);
-            private const double UdpConnectionResetLogIntervalSeconds = 30.0;
-            private long _lastUdpConnectionResetLogTicks;
-            private int _suppressedUdpConnectionResetCount;
 
             public abstract bool IsServer { get; }
             public abstract bool IsClient { get; }
@@ -172,17 +169,7 @@ namespace XREngine
                 bool anyAcked = false;
                 while ((receiver?.Available ?? 0) > 0)
                 {
-                    UdpReceiveResult result;
-                    try
-                    {
-                        result = await receiver!.ReceiveAsync();
-                    }
-                    catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset)
-                    {
-                        LogUdpConnectionReset(ex);
-                        break;
-                    }
-
+                    UdpReceiveResult result = await receiver!.ReceiveAsync(_consumeCts.Token).ConfigureAwait(false);
                     ReadReceivedData(result.Buffer, result.Buffer.Length, _decompBuffer, ref anyAcked, result.RemoteEndPoint);
                 }
                 //TODO: verify this is correct and not ruining the average
@@ -219,32 +206,6 @@ namespace XREngine
                 }
             }
 
-            private void LogUdpConnectionReset(SocketException ex)
-            {
-                long now = System.Diagnostics.Stopwatch.GetTimestamp();
-                long intervalTicks = (long)(UdpConnectionResetLogIntervalSeconds * System.Diagnostics.Stopwatch.Frequency);
-                long last = Interlocked.Read(ref _lastUdpConnectionResetLogTicks);
-
-                if (last != 0 && now - last < intervalTicks)
-                {
-                    Interlocked.Increment(ref _suppressedUdpConnectionResetCount);
-                    return;
-                }
-
-                if (Interlocked.CompareExchange(ref _lastUdpConnectionResetLogTicks, now, last) != last)
-                {
-                    Interlocked.Increment(ref _suppressedUdpConnectionResetCount);
-                    return;
-                }
-
-                int suppressed = Interlocked.Exchange(ref _suppressedUdpConnectionResetCount, 0);
-                string repeatText = suppressed > 0
-                    ? $" Suppressed {suppressed} repeat UDP reset(s) since the previous log."
-                    : string.Empty;
-
-                Debug.Log(ELogCategory.Networking, $"[Net] UDP receive reset by remote host ({ex.SocketErrorCode}/{ex.ErrorCode}).{repeatText}");
-            }
-
             /// <summary>
             /// Run on server or p2p client - sends to all clients
             /// </summary>
@@ -253,6 +214,7 @@ namespace XREngine
             protected void StartUdpMulticastSender(IPAddress udpMulticastIP, int udpMulticastPort)
             {
                 UdpClient udpClient = new() { /*ExclusiveAddressUse = false*/ };
+                UdpSocketOptions.DisableConnectionReset(udpClient, "multicast sender");
                 UdpMulticastSender = udpClient;
                 MulticastEndPoint = new IPEndPoint(udpMulticastIP, udpMulticastPort);
                 //UdpMulticastSender.Connect(MulticastEndPoint);
@@ -272,6 +234,7 @@ namespace XREngine
                     MulticastLoopback = false,
                     ExclusiveAddressUse = false,
                 };
+                UdpSocketOptions.DisableConnectionReset(udpClient, "multicast receiver");
                 udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                 udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, upMulticastServerPort));
                 udpClient.JoinMulticastGroup(udpMulticastServerIP);

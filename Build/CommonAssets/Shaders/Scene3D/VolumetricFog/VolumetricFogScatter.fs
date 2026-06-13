@@ -37,6 +37,11 @@ uniform int DirLightCount;
 uniform int DepthMode;
 uniform vec3 GlobalAmbient;
 
+#ifndef XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+#define XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+uniform int ClipDepthRange;
+#endif
+
 uniform bool ShadowMapEnabled;
 uniform bool UseCascadedDirectionalShadows;
 uniform bool EnableCascadedShadows;
@@ -126,9 +131,17 @@ float XRENGINE_ResolveDepth(float depth)
 {
   return DepthMode == 1 ? (1.0f - depth) : depth;
 }
+float XRENGINE_VolumetricFogDepthToClipZ(float depth)
+{
+  return ClipDepthRange == 1 ? depth * 2.0f - 1.0f : depth;
+}
+float XRENGINE_VolumetricFogClipZToDepth(float clipZ)
+{
+  return ClipDepthRange == 1 ? clipZ * 0.5f + 0.5f : clipZ;
+}
 vec3 XRENGINE_WorldPosFromDepthRaw(float depth, vec2 uv, mat4 invProj, mat4 invView)
 {
-  vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
+  vec4 clipSpacePosition = vec4(uv * 2.0f - 1.0f, XRENGINE_VolumetricFogDepthToClipZ(depth), 1.0f);
   vec4 viewSpacePosition = invProj * clipSpacePosition;
   viewSpacePosition /= viewSpacePosition.w;
   return (invView * viewSpacePosition).xyz;
@@ -228,7 +241,7 @@ vec3 ProjectShadowCoord(mat4 lightMatrix, vec3 samplePosWS)
 {
   vec4 samplePosLightSpace = lightMatrix * vec4(samplePosWS, 1.0f);
   vec3 shadowCoord = samplePosLightSpace.xyz / samplePosLightSpace.w;
-  return shadowCoord * 0.5f + 0.5f;
+  return vec3(shadowCoord.xy * 0.5f + 0.5f, XRENGINE_VolumetricFogClipZToDepth(shadowCoord.z));
 }
 bool ShadowCoordInBounds(vec3 shadowCoord)
 {
@@ -745,6 +758,6 @@ void main()
   vec2 ndc = FragPos.xy;
   if (ndc.x > 1.0f || ndc.y > 1.0f)
     discard;
-  vec2 uv = ndc * 0.5f + 0.5f;
+  vec2 uv = XRENGINE_ClipXYToScreenUV(ndc);
   OutColor = ComputeVolumetricFog(uv);
 }

@@ -1,4 +1,5 @@
 using XREngine.Data.Profiling;
+using XREngine.Rendering.Shadows;
 
 namespace XREngine;
 
@@ -124,6 +125,7 @@ public static partial class Engine
             };
         }
 
+        ShadowAtlasSolveDiagnostics shadowAtlasSolve = Rendering.Stats.ShadowAtlas.LastSolveDiagnostics;
         return new RenderStatsPacket
         {
             DrawCalls = Rendering.Stats.Frame.DrawCalls,
@@ -134,6 +136,7 @@ public static partial class Engine
             ForbiddenGpuFallbackEvents = Rendering.Stats.GpuFallback.ForbiddenGpuFallbackEvents,
             GpuMappedBuffers = Rendering.Stats.GpuReadback.GpuMappedBuffers,
             GpuReadbackBytes = Rendering.Stats.GpuReadback.GpuReadbackBytes,
+            ShadowAtlasSolve = ConvertShadowAtlasSolveDiagnostics(shadowAtlasSolve),
             RenderProfilerV2 = new RenderProfilerV2Data
             {
                 RendererState = new RenderProfilerRendererStateData
@@ -486,6 +489,42 @@ public static partial class Engine
             RaycastMilliseconds = m.RaycastMilliseconds,
         };
     }
+
+    private static ShadowAtlasSolveDiagnosticsData ConvertShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics)
+        => new()
+        {
+            ElapsedMilliseconds = diagnostics.ElapsedMilliseconds,
+            ClassifiedRequestCount = diagnostics.ClassifiedRequestCount,
+            DirectionalRequestCount = diagnostics.DirectionalRequestCount,
+            SpotRequestCount = diagnostics.SpotRequestCount,
+            PointRequestCount = diagnostics.PointRequestCount,
+            DepthRequestCount = diagnostics.DepthRequestCount,
+            Variance2RequestCount = diagnostics.Variance2RequestCount,
+            ExponentialVariance2RequestCount = diagnostics.ExponentialVariance2RequestCount,
+            ExponentialVariance4RequestCount = diagnostics.ExponentialVariance4RequestCount,
+            BalancedSolveAttemptCount = diagnostics.BalancedSolveAttemptCount,
+            FailedCandidateCount = diagnostics.FailedCandidateCount,
+            DemotionCount = diagnostics.DemotionCount,
+            StickyDemotionCount = diagnostics.StickyDemotionCount,
+            DirectionalGroupDemotionCount = diagnostics.DirectionalGroupDemotionCount,
+            DeterministicFallbackDemotionCount = diagnostics.DeterministicFallbackDemotionCount,
+            PriorReserveHitCount = diagnostics.PriorReserveHitCount,
+            PriorReserveMissCount = diagnostics.PriorReserveMissCount,
+            PriorSubBlockHitCount = diagnostics.PriorSubBlockHitCount,
+            PriorSubBlockMissCount = diagnostics.PriorSubBlockMissCount,
+            PageAllocationAttemptCount = diagnostics.PageAllocationAttemptCount,
+            PageAllocationSuccessCount = diagnostics.PageAllocationSuccessCount,
+            PageCreateAttemptCount = diagnostics.PageCreateAttemptCount,
+            PageCreateSuccessCount = diagnostics.PageCreateSuccessCount,
+            PageClearCount = diagnostics.PageClearCount,
+            DirectionalGroupSeedCount = diagnostics.DirectionalGroupSeedCount,
+            DirectionalGroupMemberCount = diagnostics.DirectionalGroupMemberCount,
+            DirectionalGroupCoLocationFailureCount = diagnostics.DirectionalGroupCoLocationFailureCount,
+            PointGroupSeedCount = diagnostics.PointGroupSeedCount,
+            PointGroupMemberCount = diagnostics.PointGroupMemberCount,
+            PointGroupCoLocationFailureCount = diagnostics.PointGroupCoLocationFailureCount,
+            LastFailureReason = diagnostics.LastFailureReason.ToString(),
+        };
 
     private static JobSystemStatsPacket? CollectJobSystemStats()
     {

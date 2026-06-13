@@ -116,7 +116,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("bool XRENGINE_IsContactShadowFarDepth(float depth, int depthMode)");
         source.ShouldContain("return depthMode == 1 ? depth <= eps : depth >= 1.0 - eps;");
         source.ShouldContain("vec3 XRENGINE_ContactShadowViewPosFromDepth(");
-        source.ShouldContain("vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);");
+        source.ShouldContain("vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, XRENGINE_ShadowDepthToClipZ(depth), 1.0);");
         source.ShouldContain("vec3 XRENGINE_ContactShadowViewPosFromWorldPos(vec3 worldPos, mat4 viewMatrix)");
         source.ShouldContain("bool XRENGINE_TryProjectContactShadowWorldPos(");
         source.ShouldContain("float XRENGINE_ContactShadowViewDepthFromWorldPos(vec3 worldPos, mat4 viewMatrix)");
@@ -454,6 +454,37 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
             source.ShouldContain("XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix)");
             source.ShouldNotContain("XRENGINE_WorldPosFromDepth(depth, uv, InverseProjMatrix, InverseViewMatrix)");
         }
+    }
+
+    [Test]
+    public void DeferredShadowReceivers_ProjectShadowDepthThroughClipPolicy()
+    {
+        string shadowSampling = LoadShaderSource("Snippets/ShadowSampling.glsl");
+        shadowSampling.ShouldContain("uniform int ClipDepthRange;");
+        shadowSampling.ShouldContain("float XRENGINE_ShadowClipZToDepth(float clipZ)");
+        shadowSampling.ShouldContain("float XRENGINE_ShadowDepthToClipZ(float depth)");
+        shadowSampling.ShouldContain("return ClipDepthRange == 1 ? clipZ * 0.5 + 0.5 : clipZ;");
+        shadowSampling.ShouldContain("return ClipDepthRange == 1 ? depth * 2.0 - 1.0 : depth;");
+        shadowSampling.ShouldContain("return XRENGINE_ShadowClipCoordToUvDepth(shadowCoord);");
+        shadowSampling.ShouldNotContain("return shadowCoord * 0.5 + 0.5;");
+        shadowSampling.ShouldNotContain("vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0)");
+
+        foreach (string shaderPath in new[]
+        {
+            "Scene3D/DeferredLightingDir.fs",
+            "Scene3D/DeferredLightingSpot.fs",
+            "Scene3D/DeferredLightingDir_Enhanced.fs",
+        })
+        {
+            string source = LoadShaderSource(shaderPath);
+            source.ShouldContain("XRENGINE_ProjectShadowCoord(lightMatrix");
+            source.ShouldNotContain("fragCoord = fragCoord * 0.5f + 0.5f;");
+        }
+
+        string volumetricFog = LoadShaderSource("Scene3D/VolumetricFog/VolumetricFogScatter.fs");
+        volumetricFog.ShouldContain("float XRENGINE_VolumetricFogClipZToDepth(float clipZ)");
+        volumetricFog.ShouldContain("return vec3(shadowCoord.xy * 0.5f + 0.5f, XRENGINE_VolumetricFogClipZToDepth(shadowCoord.z));");
+        volumetricFog.ShouldNotContain("return shadowCoord * 0.5f + 0.5f;");
     }
 
     [Test]

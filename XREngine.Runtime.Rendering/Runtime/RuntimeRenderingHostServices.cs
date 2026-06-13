@@ -12,6 +12,7 @@ using XREngine.Data.Trees;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Shadows;
 using XREngine.Scene;
 namespace XREngine.Rendering;
 
@@ -589,6 +590,10 @@ public static class RuntimeRenderingHostServices
         }
 
         public void RecordRenderForbiddenGpuFallback(int eventCount = 1)
+        {
+        }
+
+        public void RecordRenderShadowAtlasSolveDiagnostics(ShadowAtlasSolveDiagnostics diagnostics)
         {
         }
 

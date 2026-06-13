@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "ScreenSpaceUtils"
+
 // Single-tap half-resolution depth downsample for the volumetric fog chain.
 //
 // Writes raw (un-resolved) depth so the half-res scatter can use the same
@@ -23,6 +25,6 @@ void main()
     vec2 ndc = FragPos.xy;
     if (ndc.x > 1.0f || ndc.y > 1.0f)
         discard;
-    vec2 uv = ndc * 0.5f + 0.5f;
+    vec2 uv = XRENGINE_ClipXYToScreenUV(ndc);
     OutDepth = texture(DepthView, uv).r;
 }

@@ -297,14 +297,28 @@ public static partial class EditorImGuiUI
         if (!_showProfiler) return;
         if (_profilerUdpEnabled) return;
         if (_engineProfilerDataSource is null) return;
+        ProfilerPanelRenderer.PanelVisibility visibility = CaptureProfilerPanelVisibility();
+        if (!visibility.NeedsAnyData) return;
 
         long nowMs = _profilerCollectClock.ElapsedMilliseconds;
         if (_lastProfilerCollectMs != long.MinValue && (nowMs - _lastProfilerCollectMs) < ProfilerCollectMinIntervalMs)
             return;
 
-        _engineProfilerDataSource.CollectFromEngine();
+        _engineProfilerDataSource.CollectFromEngine(visibility);
         _lastProfilerCollectMs = nowMs;
     }
+
+    private static ProfilerPanelRenderer.PanelVisibility CaptureProfilerPanelVisibility()
+        => new(
+            ProfilerTree: _showProfilerTree,
+            FpsDropSpikes: _showFpsDropSpikes,
+            RenderStats: _showRenderStats,
+            GpuPipeline: _showGpuPipeline,
+            ThreadAllocations: _showThreadAllocations,
+            ComponentTimings: _showComponentTimings,
+            BvhMetrics: _showBvhMetrics,
+            JobSystem: _showJobSystem,
+            MainThreadInvokes: _showMainThreadInvokes);
 
     private static ProfilerPanelRenderer.GpuPipelineTimingDumpResult DumpGpuPipelineTimingHistory(string pipelineName)
     {
@@ -439,7 +453,7 @@ public static partial class EditorImGuiUI
         // subsequent Draw* calls read; it self-skips when no new frame has been collected, so the
         // per-frame cost on this thread is small.
         using (Engine.Profiler.Start("UI.DrawProfilerPanel.ProcessLatestData"))
-            _engineProfilerRenderer!.ProcessLatestData();
+            _engineProfilerRenderer!.ProcessLatestData(CaptureProfilerPanelVisibility());
 
         // Controls / toggles window
         using (Engine.Profiler.Start("UI.DrawProfilerPanel.SettingsWindow"))

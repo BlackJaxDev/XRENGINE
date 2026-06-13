@@ -13,6 +13,11 @@ uniform mat4 InverseProjMatrix;
 uniform float RenderTime;
 uniform int DepthMode;
 
+#ifndef XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+#define XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
+uniform int ClipDepthRange;
+#endif
+
 #include "AtmosphereCommon.glsl"
 
 float ResolveDepth(float depth)
@@ -20,9 +25,14 @@ float ResolveDepth(float depth)
   return DepthMode == 1 ? (1.0f - depth) : depth;
 }
 
+float AtmosphereDepthToClipZ(float depth)
+{
+  return ClipDepthRange == 1 ? depth * 2.0f - 1.0f : depth;
+}
+
 vec3 WorldPosFromDepthRaw(float rawDepth, vec2 uv)
 {
-  vec4 clipSpacePosition = vec4(vec3(uv, rawDepth) * 2.0f - 1.0f, 1.0f);
+  vec4 clipSpacePosition = vec4(uv * 2.0f - 1.0f, AtmosphereDepthToClipZ(rawDepth), 1.0f);
   vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
   float safeW = max(abs(viewSpacePosition.w), 1e-5f);
   viewSpacePosition /= safeW * sign(viewSpacePosition.w == 0.0f ? 1.0f : viewSpacePosition.w);
@@ -46,7 +56,7 @@ void main()
     return;
   }
 
-  vec2 uv = ndc * 0.5f + 0.5f;
+  vec2 uv = XRENGINE_ClipXYToScreenUV(ndc);
   float rawDepth = texture(AtmosphereHalfDepth, uv).r;
   float resolvedDepth = ResolveDepth(rawDepth);
   if (resolvedDepth >= 0.999999f)

@@ -329,12 +329,15 @@ void ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices,
 void main()
 {
         vec2 uv = clamp(
-                XRENGINE_ScreenUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)),
+                XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)),
                 vec2(0.0f),
                 vec2(1.0f));
 
 #ifdef XRENGINE_MSAA_DEFERRED
-        ivec2 coord = XRENGINE_ScreenPixelLocal(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(DepthView)));
+        ivec2 coord = clamp(
+                XRENGINE_FramebufferPixelLocal(gl_FragCoord.xy, ScreenOrigin),
+                ivec2(0),
+                textureSize(DepthView) - ivec2(1));
         vec4 albedoOpacity = texelFetch(AlbedoOpacity, coord, gl_SampleID);
         vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
         vec4 rmse = texelFetch(RMSE, coord, gl_SampleID);

@@ -101,6 +101,7 @@ namespace XREngine
                 {
                     ExclusiveAddressUse = false,
                 };
+                UdpSocketOptions.DisableConnectionReset(udpClient, "client UDP sender/receiver");
                 udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                 udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, udpClientReceivePort));
                 UdpSender = udpClient;

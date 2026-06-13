@@ -18,6 +18,7 @@ public sealed partial class RenderStatsPacket
     public int ForbiddenGpuFallbackEvents { get; set; }
     public int GpuMappedBuffers { get; set; }
     public long GpuReadbackBytes { get; set; }
+    public ShadowAtlasSolveDiagnosticsData ShadowAtlasSolve { get; set; } = new();
 
     // Rendering profiler schema v2: nested to stay below MemoryPack's per-object member cap.
     public RenderProfilerV2Data RenderProfilerV2 { get; set; } = new();
@@ -239,6 +240,42 @@ public sealed partial class RenderProfilerV2Data
     public RenderProfilerRendererStateData RendererState { get; set; } = new();
     public RenderProfilerSceneAssetData SceneAssets { get; set; } = new();
     public RenderProfilerGpuDrivenData GpuDriven { get; set; } = new();
+}
+
+[MemoryPackable]
+public sealed partial class ShadowAtlasSolveDiagnosticsData
+{
+    public double ElapsedMilliseconds { get; set; }
+    public int ClassifiedRequestCount { get; set; }
+    public int DirectionalRequestCount { get; set; }
+    public int SpotRequestCount { get; set; }
+    public int PointRequestCount { get; set; }
+    public int DepthRequestCount { get; set; }
+    public int Variance2RequestCount { get; set; }
+    public int ExponentialVariance2RequestCount { get; set; }
+    public int ExponentialVariance4RequestCount { get; set; }
+    public int BalancedSolveAttemptCount { get; set; }
+    public int FailedCandidateCount { get; set; }
+    public int DemotionCount { get; set; }
+    public int StickyDemotionCount { get; set; }
+    public int DirectionalGroupDemotionCount { get; set; }
+    public int DeterministicFallbackDemotionCount { get; set; }
+    public int PriorReserveHitCount { get; set; }
+    public int PriorReserveMissCount { get; set; }
+    public int PriorSubBlockHitCount { get; set; }
+    public int PriorSubBlockMissCount { get; set; }
+    public int PageAllocationAttemptCount { get; set; }
+    public int PageAllocationSuccessCount { get; set; }
+    public int PageCreateAttemptCount { get; set; }
+    public int PageCreateSuccessCount { get; set; }
+    public int PageClearCount { get; set; }
+    public int DirectionalGroupSeedCount { get; set; }
+    public int DirectionalGroupMemberCount { get; set; }
+    public int DirectionalGroupCoLocationFailureCount { get; set; }
+    public int PointGroupSeedCount { get; set; }
+    public int PointGroupMemberCount { get; set; }
+    public int PointGroupCoLocationFailureCount { get; set; }
+    public string LastFailureReason { get; set; } = string.Empty;
 }
 
 [MemoryPackable]
