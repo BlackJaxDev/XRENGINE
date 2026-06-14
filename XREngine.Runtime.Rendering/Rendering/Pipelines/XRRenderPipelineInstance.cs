@@ -918,6 +918,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
 
         renderer.DeviceWaitIdle();
+        if (renderer.IsDeviceLost)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.RenderPipeline.ResourceDestroy.DeviceLost.{reason}",
+                System.TimeSpan.FromSeconds(1),
+                "[Vulkan] Skipping descriptor-reference release after DeviceWaitIdle reported device loss: {0}",
+                reason);
+            return;
+        }
+
         renderer.ReleaseDescriptorReferencesForPhysicalResourceDestruction(reason);
         Debug.VulkanEvery(
             $"Vulkan.RenderPipeline.ResourceDestroy.WaitIdle.{reason}",

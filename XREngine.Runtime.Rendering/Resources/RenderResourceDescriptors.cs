@@ -61,7 +61,23 @@ public sealed record TextureResourceDescriptor(
     bool StereoCompatible = false,
     uint ArrayLayers = 1,
     bool SupportsAliasing = false,
-    bool RequiresStorageUsage = false)
+    bool RequiresStorageUsage = false,
+    RenderPipelineResourceKind Kind = RenderPipelineResourceKind.Texture,
+    RenderPipelineResourceUsage Usage = RenderPipelineResourceUsage.None,
+    EPixelInternalFormat? InternalFormat = null,
+    EPixelFormat? PixelFormat = null,
+    EPixelType? PixelType = null,
+    ESizedInternalFormat? SizedInternalFormat = null,
+    uint Samples = 1,
+    RenderResourceMipPolicy MipPolicy = default,
+    string? SourceTextureName = null,
+    uint BaseMipLevel = 0,
+    uint MipLevelCount = 1,
+    uint BaseLayer = 0,
+    uint LayerCount = 1,
+    EDepthStencilFmt DepthStencilAspect = EDepthStencilFmt.None,
+    bool ArrayTarget = false,
+    bool Multisample = false)
     : RenderResourceDescriptor(Name, Lifetime, SizePolicy);
 
 public readonly record struct FrameBufferAttachmentDescriptor(

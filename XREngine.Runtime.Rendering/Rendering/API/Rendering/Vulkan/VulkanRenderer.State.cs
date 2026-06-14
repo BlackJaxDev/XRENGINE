@@ -23,6 +23,7 @@ public unsafe partial class VulkanRenderer
     private FrameOpContext? _lastActiveFrameOpContext;
     private ulong _resourcePlannerSignature = ulong.MaxValue;
     private ulong _resourcePlannerRevision;
+    private bool _isRecordingCommandBuffer;
     private readonly Dictionary<string, XRDataBuffer> _trackedBuffersByName = new(StringComparer.OrdinalIgnoreCase);
     internal VulkanResourcePlanner ResourcePlanner => _resourcePlanner;
     internal VulkanResourcePlan ResourcePlan => _resourcePlanner.CurrentPlan;
@@ -545,7 +546,11 @@ public unsafe partial class VulkanRenderer
         int ViewportIdentity,
         XRRenderPipelineInstance? PipelineInstance,
         RenderResourceRegistry? ResourceRegistry,
-        IReadOnlyCollection<RenderPassMetadata>? PassMetadata)
+        IReadOnlyCollection<RenderPassMetadata>? PassMetadata,
+        uint DisplayWidth = 1u,
+        uint DisplayHeight = 1u,
+        uint InternalWidth = 1u,
+        uint InternalHeight = 1u)
     {
         public int SchedulingIdentity => HashCode.Combine(PipelineIdentity, ViewportIdentity);
     }
@@ -554,12 +559,37 @@ public unsafe partial class VulkanRenderer
     {
         XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingViewport;
+        uint displayWidth = ResolvePositiveDimension(
+            pipeline?.ResourceDisplayWidth,
+            viewport?.Width,
+            swapChainExtent.Width,
+            1u);
+        uint displayHeight = ResolvePositiveDimension(
+            pipeline?.ResourceDisplayHeight,
+            viewport?.Height,
+            swapChainExtent.Height,
+            1u);
+        uint internalWidth = ResolvePositiveDimension(
+            pipeline?.ResourceInternalWidth,
+            viewport?.InternalWidth,
+            displayWidth,
+            1u);
+        uint internalHeight = ResolvePositiveDimension(
+            pipeline?.ResourceInternalHeight,
+            viewport?.InternalHeight,
+            displayHeight,
+            1u);
+
         FrameOpContext context = new(
             pipeline?.GetHashCode() ?? 0,
             viewport?.GetHashCode() ?? 0,
             pipeline,
             pipeline?.Resources,
-            pipeline?.Pipeline?.PassMetadata);
+            pipeline?.Pipeline?.PassMetadata,
+            displayWidth,
+            displayHeight,
+            internalWidth,
+            internalHeight);
 
         if (pipeline is not null)
             _lastActiveFrameOpContext = context;
@@ -574,6 +604,276 @@ public unsafe partial class VulkanRenderer
             return context;
 
         return _lastActiveFrameOpContext ?? context;
+    }
+
+    internal bool TryEnsurePhysicalImageForTextureResource(
+        string? resourceName,
+        out VulkanPhysicalImageGroup? group)
+    {
+        group = null;
+        if (string.IsNullOrWhiteSpace(resourceName))
+            return false;
+
+        if (_resourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) &&
+            group?.IsAllocated == true)
+        {
+            return true;
+        }
+
+        FrameOpContext context = CaptureFrameOpContextOrLastActive();
+        if (context.ResourceRegistry is null ||
+            !context.ResourceRegistry.TextureRecords.ContainsKey(resourceName))
+        {
+            group = null;
+            return false;
+        }
+
+        if (_isRecordingCommandBuffer)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.ResourcePlanner.LazyRebuildDuringRecord.{resourceName}",
+                TimeSpan.FromSeconds(2),
+                "[VulkanResourcePlanner] Deferring lazy physical-image plan rebuild for '{0}' during command-buffer recording.",
+                resourceName);
+            group = null;
+            return false;
+        }
+
+        UpdateResourcePlannerFromContext(context);
+
+        if (_resourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) &&
+            group is not null)
+        {
+            group.EnsureAllocated(this);
+            if (group.LastKnownLayout == ImageLayout.Undefined)
+                TransitionNewPhysicalImagesToInitialLayout();
+            return group.IsAllocated;
+        }
+
+        group = null;
+        return false;
+    }
+
+    private FrameOpContext PrepareResourcePlannerForFrameOps(FrameOp[] ops)
+    {
+        if (ops.Length == 0)
+        {
+            FrameOpContext context = CaptureFrameOpContext();
+            UpdateResourcePlannerFromContext(context);
+            return context;
+        }
+
+        FrameOpContext primary = SelectPrimaryPlannerContext(ops);
+        RenderResourceRegistry? mergedRegistry = BuildMergedFrameOpRegistry(ops, primary.ResourceRegistry);
+        FrameOpContext plannerContext = mergedRegistry is null
+            ? primary
+            : primary with { ResourceRegistry = mergedRegistry };
+
+        plannerContext = RefreshPlannerExtentsFromLiveContext(plannerContext, ops);
+        UpdateResourcePlannerFromContext(plannerContext);
+        return plannerContext;
+    }
+
+    private FrameOpContext RefreshPlannerExtentsFromLiveContext(FrameOpContext context, FrameOp[] ops)
+    {
+        FrameOpContext live = CaptureFrameOpContextOrLastActive();
+        bool refreshExtents =
+            ReferenceEquals(context.PipelineInstance, live.PipelineInstance) ||
+            ReferenceEquals(context.ResourceRegistry, live.ResourceRegistry);
+
+        if (!refreshExtents)
+        {
+            foreach (FrameOp op in ops)
+            {
+                if (VulkanRenderGraphCompiler.OpTargetsSwapchain(op))
+                {
+                    refreshExtents = true;
+                    break;
+                }
+            }
+        }
+
+        if (!refreshExtents)
+            return context;
+
+        uint displayWidth = live.DisplayWidth > 0 ? live.DisplayWidth : context.DisplayWidth;
+        uint displayHeight = live.DisplayHeight > 0 ? live.DisplayHeight : context.DisplayHeight;
+        uint internalWidth = live.InternalWidth > 0 ? live.InternalWidth : context.InternalWidth;
+        uint internalHeight = live.InternalHeight > 0 ? live.InternalHeight : context.InternalHeight;
+
+        if (displayWidth == context.DisplayWidth &&
+            displayHeight == context.DisplayHeight &&
+            internalWidth == context.InternalWidth &&
+            internalHeight == context.InternalHeight)
+        {
+            return context;
+        }
+
+        Debug.VulkanEvery(
+            $"Vulkan.ResourcePlanner.RefreshFrameOpExtents.{context.PipelineIdentity}.{context.ViewportIdentity}",
+            TimeSpan.FromSeconds(1),
+            "[VulkanResourcePlanner] Refreshing frame-op planner extents from live viewport. Old={0}x{1}/{2}x{3} Live={4}x{5}/{6}x{7}.",
+            context.DisplayWidth,
+            context.DisplayHeight,
+            context.InternalWidth,
+            context.InternalHeight,
+            displayWidth,
+            displayHeight,
+            internalWidth,
+            internalHeight);
+
+        return context with
+        {
+            DisplayWidth = displayWidth,
+            DisplayHeight = displayHeight,
+            InternalWidth = internalWidth,
+            InternalHeight = internalHeight
+        };
+    }
+
+    private static FrameOpContext SelectPrimaryPlannerContext(FrameOp[] ops)
+    {
+        FrameOpContext fallback = ops[0].Context;
+        FrameOpContext best = fallback;
+        int bestScore = int.MinValue;
+
+        foreach (FrameOp op in ops)
+        {
+            FrameOpContext context = op.Context;
+            if (context.ResourceRegistry is null)
+                continue;
+
+            int score = 1;
+            score += Math.Min(context.ResourceRegistry.TextureRecords.Count, 128);
+            score += Math.Min(context.ResourceRegistry.FrameBufferRecords.Count, 128) * 2;
+            score += context.PassMetadata?.Count ?? 0;
+            if (VulkanRenderGraphCompiler.OpTargetsSwapchain(op))
+                score += 512;
+
+            foreach (XRFrameBuffer target in EnumerateFrameOpFrameBuffers(op))
+            {
+                if (!string.IsNullOrWhiteSpace(target.Name) &&
+                    context.ResourceRegistry.FrameBufferRecords.ContainsKey(target.Name))
+                {
+                    score += 256;
+                }
+                else
+                {
+                    score += 32;
+                }
+            }
+
+            if (score <= bestScore)
+                continue;
+
+            bestScore = score;
+            best = context;
+        }
+
+        return best;
+    }
+
+    private static uint ResolvePositiveDimension(uint? primary, int? secondary, uint tertiary, uint fallback)
+    {
+        if (primary.HasValue && primary.Value > 0)
+            return primary.Value;
+
+        if (secondary.HasValue && secondary.Value > 0)
+            return (uint)secondary.Value;
+
+        return tertiary > 0 ? tertiary : fallback;
+    }
+
+    private VulkanResourceExtentContext BuildResourceExtentContext(in FrameOpContext context)
+    {
+        uint displayWidth = context.DisplayWidth > 0
+            ? context.DisplayWidth
+            : Math.Max(swapChainExtent.Width, 1u);
+        uint displayHeight = context.DisplayHeight > 0
+            ? context.DisplayHeight
+            : Math.Max(swapChainExtent.Height, 1u);
+        uint internalWidth = context.InternalWidth > 0
+            ? context.InternalWidth
+            : displayWidth;
+        uint internalHeight = context.InternalHeight > 0
+            ? context.InternalHeight
+            : displayHeight;
+
+        return new VulkanResourceExtentContext(
+            displayWidth,
+            displayHeight,
+            internalWidth,
+            internalHeight);
+    }
+
+    private static RenderResourceRegistry? BuildMergedFrameOpRegistry(
+        FrameOp[] ops,
+        RenderResourceRegistry? primaryRegistry)
+    {
+        HashSet<RenderResourceRegistry> registries = new();
+        foreach (FrameOp op in ops)
+        {
+            if (op.Context.ResourceRegistry is { } registry)
+                registries.Add(registry);
+        }
+
+        if (registries.Count == 0)
+            return primaryRegistry;
+
+        if (registries.Count == 1)
+            return registries.First();
+
+        RenderResourceRegistry merged = new();
+        if (primaryRegistry is not null)
+            AddRegistryDescriptors(merged, primaryRegistry, overwrite: true);
+
+        foreach (RenderResourceRegistry registry in registries)
+        {
+            if (ReferenceEquals(registry, primaryRegistry))
+                continue;
+
+            AddRegistryDescriptors(merged, registry, overwrite: false);
+        }
+
+        return merged;
+    }
+
+    private static void AddRegistryDescriptors(
+        RenderResourceRegistry destination,
+        RenderResourceRegistry source,
+        bool overwrite)
+    {
+        foreach (KeyValuePair<string, RenderTextureResource> pair in source.TextureRecords)
+        {
+            if (overwrite || !destination.TextureRecords.ContainsKey(pair.Key))
+                destination.RegisterTextureDescriptor(pair.Value.Descriptor);
+        }
+
+        foreach (KeyValuePair<string, RenderFrameBufferResource> pair in source.FrameBufferRecords)
+        {
+            if (overwrite || !destination.FrameBufferRecords.ContainsKey(pair.Key))
+                destination.RegisterFrameBufferDescriptor(pair.Value.Descriptor);
+        }
+
+        foreach (KeyValuePair<string, RenderBufferResource> pair in source.BufferRecords)
+        {
+            if (overwrite || !destination.BufferRecords.ContainsKey(pair.Key))
+                destination.RegisterBufferDescriptor(pair.Value.Descriptor);
+        }
+    }
+
+    private static IEnumerable<XRFrameBuffer> EnumerateFrameOpFrameBuffers(FrameOp op)
+    {
+        if (op.Target is not null)
+            yield return op.Target;
+
+        if (op is BlitOp blit)
+        {
+            if (blit.InFbo is not null)
+                yield return blit.InFbo;
+            if (blit.OutFbo is not null)
+                yield return blit.OutFbo;
+        }
     }
 
     internal static bool RequiresResourcePlannerRebuild(in FrameOpContext previous, in FrameOpContext next)
@@ -605,7 +905,11 @@ public unsafe partial class VulkanRenderer
             pendingPlanner.Sync(context.ResourceRegistry);
             ValidateVulkanResourcePlanMetadata(context.PassMetadata, pendingPlanner);
             pendingAllocator.UpdatePlan(pendingPlanner.CurrentPlan);
-            pendingAllocator.RebuildPhysicalPlan(this, context.PassMetadata, pendingPlanner);
+            pendingAllocator.RebuildPhysicalPlan(
+                this,
+                context.PassMetadata,
+                pendingPlanner,
+                BuildResourceExtentContext(context));
             pendingAllocator.AllocatePhysicalImages(this);
             pendingAllocator.AllocatePhysicalBuffers(this);
         }
@@ -635,7 +939,10 @@ public unsafe partial class VulkanRenderer
         TransitionNewPhysicalImagesToInitialLayout();
 
         if (retiredImageCount > 0 || retiredBufferCount > 0)
+        {
+            WaitForResourcePlanReplacementIdle(retiredImageCount, retiredBufferCount);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
+        }
         oldAllocator.DestroyPhysicalImages(this);
         oldAllocator.DestroyPhysicalBuffers(this);
 
@@ -649,6 +956,21 @@ public unsafe partial class VulkanRenderer
 
         _resourcePlannerSignature = plannerSignature;
         _resourcePlannerRevision++;
+    }
+
+    private void WaitForResourcePlanReplacementIdle(int imageCount, int bufferCount)
+    {
+        if (IsDeviceLost)
+            return;
+
+        Debug.VulkanEvery(
+            "Vulkan.ResourcePlanner.PlanReplacementIdle",
+            TimeSpan.FromSeconds(2),
+            "[VulkanResourcePlanner] Waiting for device idle before retiring replaced physical resource plan. images={0} buffers={1}",
+            imageCount,
+            bufferCount);
+
+        DeviceWaitIdle();
     }
 
     private static void ValidateVulkanResourcePlanMetadata(
@@ -792,11 +1114,10 @@ public unsafe partial class VulkanRenderer
         HashCode hash = new();
         hash.Add(ComputeResourceRegistrySignature(context.ResourceRegistry));
 
-        XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingViewport;
-        hash.Add(viewport?.Width ?? 0);
-        hash.Add(viewport?.Height ?? 0);
-        hash.Add(viewport?.InternalWidth ?? 0);
-        hash.Add(viewport?.InternalHeight ?? 0);
+        hash.Add(context.DisplayWidth);
+        hash.Add(context.DisplayHeight);
+        hash.Add(context.InternalWidth);
+        hash.Add(context.InternalHeight);
 
         hash.Add(ComputePassMetadataSignature(passMetadata));
 
@@ -855,6 +1176,26 @@ public unsafe partial class VulkanRenderer
             hash.Add(descriptor.ArrayLayers);
             hash.Add(descriptor.StereoCompatible);
             hash.Add(descriptor.SupportsAliasing);
+            hash.Add(descriptor.RequiresStorageUsage);
+            hash.Add((int)descriptor.Kind);
+            hash.Add((int)descriptor.Usage);
+            hash.Add(descriptor.InternalFormat.HasValue ? (int)descriptor.InternalFormat.Value : -1);
+            hash.Add(descriptor.PixelFormat.HasValue ? (int)descriptor.PixelFormat.Value : -1);
+            hash.Add(descriptor.PixelType.HasValue ? (int)descriptor.PixelType.Value : -1);
+            hash.Add(descriptor.SizedInternalFormat.HasValue ? (int)descriptor.SizedInternalFormat.Value : -1);
+            hash.Add(descriptor.Samples);
+            hash.Add(descriptor.MipPolicy.BaseMipLevel);
+            hash.Add(descriptor.MipPolicy.MipLevelCount);
+            hash.Add(descriptor.MipPolicy.AutoGenerateMipmaps);
+            hash.Add(descriptor.MipPolicy.RequireImmutableStorage);
+            hash.Add(descriptor.SourceTextureName, StringComparer.OrdinalIgnoreCase);
+            hash.Add(descriptor.BaseMipLevel);
+            hash.Add(descriptor.MipLevelCount);
+            hash.Add(descriptor.BaseLayer);
+            hash.Add(descriptor.LayerCount);
+            hash.Add((int)descriptor.DepthStencilAspect);
+            hash.Add(descriptor.ArrayTarget);
+            hash.Add(descriptor.Multisample);
         }
 
         foreach (KeyValuePair<string, RenderFrameBufferResource> pair in registry.FrameBufferRecords.OrderBy(static p => p.Key, StringComparer.OrdinalIgnoreCase))
@@ -1181,7 +1522,7 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private void TransitionNewPhysicalImagesToInitialLayout()
     {
-        List<(Image image, ImageLayout target, ImageAspectFlags aspect)>? overflow = null;
+        List<(Image image, ImageLayout target, ImageAspectFlags aspect, uint mipLevels, uint layers)>? overflow = null;
 
         foreach (VulkanPhysicalImageGroup group in _resourceAllocator.EnumeratePhysicalGroups())
         {
@@ -1195,7 +1536,12 @@ public unsafe partial class VulkanRenderer
                 : ImageAspectFlags.ColorBit;
 
             overflow ??= new();
-            overflow.Add((group.Image, targetLayout, aspect));
+            overflow.Add((
+                group.Image,
+                targetLayout,
+                aspect,
+                Math.Max(1u, group.MipLevels),
+                Math.Max(1u, group.Template.Layers)));
             group.LastKnownLayout = targetLayout;
         }
 
@@ -1204,7 +1550,7 @@ public unsafe partial class VulkanRenderer
 
         using var scope = NewCommandScope();
 
-        foreach ((Image image, ImageLayout target, ImageAspectFlags aspect) in overflow)
+        foreach ((Image image, ImageLayout target, ImageAspectFlags aspect, uint mipLevels, uint layers) in overflow)
         {
             ImageMemoryBarrier barrier = new()
             {
@@ -1218,9 +1564,9 @@ public unsafe partial class VulkanRenderer
                 {
                     AspectMask = aspect,
                     BaseMipLevel = 0,
-                    LevelCount = Vk.RemainingMipLevels,
+                    LevelCount = mipLevels,
                     BaseArrayLayer = 0,
-                    LayerCount = Vk.RemainingArrayLayers,
+                    LayerCount = layers,
                 },
                 SrcAccessMask = 0,
                 DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
@@ -1254,9 +1600,6 @@ public unsafe partial class VulkanRenderer
 
     private static ImageLayout ResolveInitialPhysicalGroupLayout(ImageUsageFlags usage, bool isDepth)
     {
-        if (isDepth)
-            return ImageLayout.DepthStencilAttachmentOptimal;
-
         bool colorAttachment = (usage & ImageUsageFlags.ColorAttachmentBit) != 0;
         bool sampled = (usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0;
         bool storage = (usage & ImageUsageFlags.StorageBit) != 0;
@@ -1270,11 +1613,21 @@ public unsafe partial class VulkanRenderer
         if (storage)
             return ImageLayout.General;
 
+        // Prefer descriptor-compatible read-only layouts for sampled render targets.
+        // Dynamic-rendering begin and render-graph pass barriers transition them into
+        // attachment layouts at the actual write site. Starting sampled images in an
+        // attachment layout made CPU tracking disagree with descriptor/final layouts
+        // after plan rebuilds and window resizes.
+        if (sampled)
+            return isDepth
+                ? ImageLayout.DepthStencilReadOnlyOptimal
+                : ImageLayout.ShaderReadOnlyOptimal;
+
+        if (isDepth)
+            return ImageLayout.DepthStencilAttachmentOptimal;
+
         if (colorAttachment)
             return ImageLayout.ColorAttachmentOptimal;
-
-        if (sampled)
-            return ImageLayout.ShaderReadOnlyOptimal;
 
         if ((usage & ImageUsageFlags.TransferDstBit) != 0)
             return ImageLayout.TransferDstOptimal;
@@ -1299,13 +1652,13 @@ public unsafe partial class VulkanRenderer
             Flags = 0, // TODO: add alias bit when Silk.NET exposes VK_IMAGE_CREATE_ALIAS_BIT
             ImageType = ImageType.Type2D,
             Extent = group.ResolvedExtent,
-            MipLevels = 1,
+            MipLevels = Math.Max(1u, group.MipLevels),
             ArrayLayers = Math.Max(group.Template.Layers, 1u),
             Format = group.Format,
             Tiling = ImageTiling.Optimal,
             InitialLayout = ImageLayout.Undefined,
             Usage = group.Usage,
-            Samples = SampleCountFlags.Count1Bit,
+            Samples = group.Samples,
             SharingMode = SharingMode.Exclusive,
         };
 
@@ -1319,14 +1672,16 @@ public unsafe partial class VulkanRenderer
         Debug.VulkanEvery(
             $"Vulkan.PhysicalImage.Alloc.{group.Key}",
             TimeSpan.FromSeconds(2),
-            "[Vulkan] Physical image allocated: resource='{0}' handle=0x{1:X} format={2} usage={3} extent={4}x{5} layers={6}",
+            "[Vulkan] Physical image allocated: resource='{0}' handle=0x{1:X} format={2} usage={3} extent={4}x{5} layers={6} mips={7} samples={8}",
             group.Key,
             image.Handle,
             group.Format,
             group.Usage,
             group.ResolvedExtent.Width,
             group.ResolvedExtent.Height,
-            Math.Max(group.Template.Layers, 1u));
+            Math.Max(group.Template.Layers, 1u),
+            Math.Max(1u, group.MipLevels),
+            group.Samples);
 
         try
         {
@@ -1578,15 +1933,76 @@ public unsafe partial class VulkanRenderer
         if (targets is null)
             return;
 
-        foreach (var (target, _, _, _) in targets)
+        foreach (var (target, attachment, mipLevel, layerIndex) in targets)
         {
             if (target is XRTexture texture)
             {
                 string? textureName = texture.Name;
                 if (!string.IsNullOrWhiteSpace(textureName))
-                    registry.BindTexture(texture);
+                {
+                    TextureResourceDescriptor descriptor = registry.TextureRecords.TryGetValue(textureName, out RenderTextureResource? existingRecord)
+                        ? existingRecord.Descriptor
+                        : RenderResourceDescriptorFactory.FromTexture(texture);
+
+                    registry.BindTexture(texture, EnrichTextureDescriptorForFrameBufferAttachment(descriptor, texture, attachment, mipLevel, layerIndex));
+                }
+
+                if (texture is XRTextureViewBase view)
+                {
+                    XRTexture viewedTexture = view.GetViewedTexture();
+                    string? viewedTextureName = viewedTexture.Name;
+                    if (!string.IsNullOrWhiteSpace(viewedTextureName))
+                    {
+                        TextureResourceDescriptor descriptor = registry.TextureRecords.TryGetValue(viewedTextureName, out RenderTextureResource? existingRecord)
+                            ? existingRecord.Descriptor
+                            : RenderResourceDescriptorFactory.FromTexture(viewedTexture);
+
+                        int sourceMipLevel = mipLevel >= 0 ? SaturatingAddToInt32(view.MinLevel, (uint)mipLevel) : mipLevel;
+                        int sourceLayerIndex = layerIndex >= 0 ? SaturatingAddToInt32(view.MinLayer, (uint)layerIndex) : layerIndex;
+                        registry.BindTexture(viewedTexture, EnrichTextureDescriptorForFrameBufferAttachment(descriptor, viewedTexture, attachment, sourceMipLevel, sourceLayerIndex));
+                    }
+                }
             }
         }
+    }
+
+    private static int SaturatingAddToInt32(uint left, uint right)
+    {
+        ulong sum = (ulong)left + right;
+        return sum > int.MaxValue ? int.MaxValue : (int)sum;
+    }
+
+    private static TextureResourceDescriptor EnrichTextureDescriptorForFrameBufferAttachment(
+        TextureResourceDescriptor descriptor,
+        XRTexture texture,
+        EFrameBufferAttachment attachment,
+        int mipLevel,
+        int layerIndex)
+    {
+        RenderPipelineResourceUsage usage = descriptor.Usage | RenderPipelineResourceUsage.SampledTexture;
+        usage |= attachment is EFrameBufferAttachment.DepthAttachment
+            or EFrameBufferAttachment.DepthStencilAttachment
+            or EFrameBufferAttachment.StencilAttachment
+            ? RenderPipelineResourceUsage.DepthStencilAttachment
+            : RenderPipelineResourceUsage.ColorAttachment;
+
+        uint requiredMipLevels = mipLevel >= 0
+            ? Math.Max(descriptor.MipPolicy.MipLevelCount, (uint)mipLevel + 1u)
+            : Math.Max(descriptor.MipPolicy.MipLevelCount, 1u);
+
+        uint requiredLayers = layerIndex >= 0
+            ? Math.Max(descriptor.ArrayLayers, (uint)layerIndex + 1u)
+            : descriptor.ArrayLayers;
+
+        return descriptor with
+        {
+            Name = texture.Name ?? descriptor.Name,
+            Usage = usage,
+            MipPolicy = descriptor.MipPolicy with { MipLevelCount = requiredMipLevels },
+            MipLevelCount = Math.Max(descriptor.MipLevelCount, requiredMipLevels),
+            ArrayLayers = Math.Max(requiredLayers, 1u),
+            LayerCount = Math.Max(descriptor.LayerCount, requiredLayers)
+        };
     }
 
     internal void TrackTextureBinding(XRTexture texture)
@@ -1602,16 +2018,13 @@ public unsafe partial class VulkanRenderer
         if (registry is null)
             return;
 
-        if (registry.TextureRecords.TryGetValue(name, out RenderTextureResource? record))
-        {
-            if (ReferenceEquals(record.Instance, texture))
-                return;
-
-            registry.BindTexture(texture, record.Descriptor);
+        if (!registry.TextureRecords.TryGetValue(name, out RenderTextureResource? record))
             return;
-        }
 
-        registry.BindTexture(texture);
+        if (ReferenceEquals(record.Instance, texture))
+            return;
+
+        registry.BindTexture(texture, record.Descriptor);
     }
 
     internal void TrackBufferBinding(XRDataBuffer buffer)

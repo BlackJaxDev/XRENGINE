@@ -13,6 +13,8 @@ public unsafe partial class VulkanRenderer
         ImageAspectFlags DescriptorAspect { get; }
         ImageUsageFlags DescriptorUsage { get; }
         SampleCountFlags DescriptorSamples { get; }
+        uint DescriptorMipLevels => 1u;
+        uint DescriptorArrayLayers => 1u;
 
         /// <summary>
         /// Returns the most recently tracked <see cref="ImageLayout"/> for the backing VkImage.

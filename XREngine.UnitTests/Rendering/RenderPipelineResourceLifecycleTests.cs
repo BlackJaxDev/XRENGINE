@@ -1,9 +1,11 @@
 using System.IO;
 using NUnit.Framework;
 using Shouldly;
+using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -31,6 +33,154 @@ public sealed class RenderPipelineResourceLifecycleTests
         RenderPipelineResourceLayout layout = builder.Build(RenderPipelineResourceProfile.Empty);
 
         layout.OrderedSpecs.Select(x => x.Name).ToArray().ShouldBe(["Color", "ColorFBO"]);
+    }
+
+    [Test]
+    public void LayoutBuilder_LowersTextureAndViewDescriptorsWithoutLosingVulkanMetadata()
+    {
+        RenderPipelineResourceLayoutBuilder builder = new();
+
+        builder.Texture("Color")
+            .Size(RenderResourceSizePolicy.Absolute(64u, 32u))
+            .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.TransferDestination)
+            .Format(EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat)
+            .SizedFormat(ESizedInternalFormat.Rgba16f)
+            .Samples(4u)
+            .Layers(2u)
+            .Mips(new RenderResourceMipPolicy(0u, 3u, AutoGenerateMipmaps: true, RequireImmutableStorage: true))
+            .Add();
+
+        builder.TextureView("ColorView", "Color")
+            .Size(RenderResourceSizePolicy.Absolute(64u, 32u))
+            .Usage(RenderPipelineResourceUsage.SampledTexture)
+            .SizedFormat(ESizedInternalFormat.Rgba16f)
+            .MipRange(1u, 2u)
+            .LayerRange(1u, 1u)
+            .Target(array: true, multisample: true)
+            .Add();
+
+        Dictionary<string, TextureResourceDescriptor> descriptors = builder
+            .Build(RenderPipelineResourceProfile.Empty)
+            .LowerTextureDescriptors()
+            .ToDictionary(static d => d.Name, StringComparer.OrdinalIgnoreCase);
+
+        TextureResourceDescriptor color = descriptors["Color"];
+        color.Kind.ShouldBe(RenderPipelineResourceKind.Texture);
+        color.Usage.ShouldBe(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.TransferDestination);
+        color.InternalFormat.ShouldBe(EPixelInternalFormat.Rgba16f);
+        color.PixelFormat.ShouldBe(EPixelFormat.Rgba);
+        color.PixelType.ShouldBe(EPixelType.HalfFloat);
+        color.SizedInternalFormat.ShouldBe(ESizedInternalFormat.Rgba16f);
+        color.Samples.ShouldBe(4u);
+        color.ArrayLayers.ShouldBe(2u);
+        color.MipPolicy.MipLevelCount.ShouldBe(3u);
+        color.MipPolicy.AutoGenerateMipmaps.ShouldBeTrue();
+        color.MipPolicy.RequireImmutableStorage.ShouldBeTrue();
+
+        TextureResourceDescriptor view = descriptors["ColorView"];
+        view.Kind.ShouldBe(RenderPipelineResourceKind.TextureView);
+        view.SourceTextureName.ShouldBe("Color");
+        view.BaseMipLevel.ShouldBe(1u);
+        view.MipLevelCount.ShouldBe(2u);
+        view.BaseLayer.ShouldBe(1u);
+        view.LayerCount.ShouldBe(1u);
+        view.ArrayTarget.ShouldBeTrue();
+        view.Multisample.ShouldBeTrue();
+    }
+
+    [Test]
+    public void Registry_BindTexturePreservesPredeclaredDescriptor()
+    {
+        RenderResourceRegistry registry = new();
+        TextureResourceDescriptor plannedDescriptor = new(
+            "Color",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(64u, 32u),
+            FormatLabel: ESizedInternalFormat.Rgba16f.ToString(),
+            SupportsAliasing: false,
+            RequiresStorageUsage: true,
+            Usage: RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.StorageImage,
+            SizedInternalFormat: ESizedInternalFormat.Rgba16f,
+            Samples: 4u,
+            MipPolicy: new RenderResourceMipPolicy(0u, 3u));
+
+        registry.RegisterTextureDescriptor(plannedDescriptor);
+
+        XRTexture2D runtimeTexture = XRTexture2D.CreateFrameBufferTexture(
+            64u,
+            32u,
+            EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba,
+            EPixelType.UnsignedByte,
+            EFrameBufferAttachment.ColorAttachment0);
+        runtimeTexture.Name = "Color";
+
+        registry.BindTexture(runtimeTexture);
+
+        TextureResourceDescriptor actual = registry.TextureRecords["Color"].Descriptor;
+        actual.SizedInternalFormat.ShouldBe(ESizedInternalFormat.Rgba16f);
+        actual.Usage.ShouldBe(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.StorageImage);
+        actual.RequiresStorageUsage.ShouldBeTrue();
+        actual.Samples.ShouldBe(4u);
+        actual.MipPolicy.MipLevelCount.ShouldBe(3u);
+    }
+
+    [Test]
+    public void VulkanPlanner_AllocatesSourceTexturesAndResolvesViewsToPhysicalGroups()
+    {
+        RenderResourceRegistry registry = new();
+        registry.RegisterTextureDescriptor(new TextureResourceDescriptor(
+            "DepthStencil",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(128u, 64u),
+            FormatLabel: ESizedInternalFormat.Depth24Stencil8.ToString(),
+            Usage: RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.DepthStencilAttachment | RenderPipelineResourceUsage.TransferDestination,
+            SizedInternalFormat: ESizedInternalFormat.Depth24Stencil8,
+            Samples: 4u,
+            MipPolicy: new RenderResourceMipPolicy(0u, 3u)));
+
+        registry.RegisterTextureDescriptor(new TextureResourceDescriptor(
+            "DepthView",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(128u, 64u),
+            FormatLabel: ESizedInternalFormat.Depth24Stencil8.ToString(),
+            ArrayLayers: 1u,
+            Kind: RenderPipelineResourceKind.TextureView,
+            Usage: RenderPipelineResourceUsage.SampledTexture,
+            SizedInternalFormat: ESizedInternalFormat.Depth24Stencil8,
+            SourceTextureName: "DepthStencil",
+            MipLevelCount: 1u,
+            LayerCount: 1u,
+            DepthStencilAspect: EDepthStencilFmt.Depth,
+            Multisample: true));
+
+        registry.RegisterFrameBufferDescriptor(new FrameBufferResourceDescriptor(
+            "DepthFBO",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(128u, 64u),
+            [new FrameBufferAttachmentDescriptor("DepthView", EFrameBufferAttachment.DepthAttachment, 0, -1)]));
+
+        VulkanResourcePlanner planner = new();
+        planner.Sync(registry);
+
+        planner.TryGetTextureDescriptor("DepthView", out _).ShouldBeTrue();
+        planner.TryGetPhysicalTextureDescriptor("DepthView", out _).ShouldBeFalse();
+        planner.CurrentPlan.AllTextures().Select(static x => x.Name).ShouldBe(["DepthStencil"]);
+        planner.ResolveImageResourceName("DepthView").ShouldBe("DepthStencil");
+
+        VulkanResourceAllocator allocator = new();
+        allocator.UpdatePlan(planner.CurrentPlan);
+        allocator.RebuildPhysicalPlan(null!, null, planner);
+
+        VulkanPhysicalImageGroup group = allocator.EnumeratePhysicalGroups().Single();
+        group.Format.ShouldBe(Format.D24UnormS8Uint);
+        group.Samples.ShouldBe(SampleCountFlags.Count4Bit);
+        group.MipLevels.ShouldBe(1u);
+        group.Usage.HasFlag(ImageUsageFlags.DepthStencilAttachmentBit).ShouldBeTrue();
+        group.Usage.HasFlag(ImageUsageFlags.SampledBit).ShouldBeTrue();
+
+        allocator.TryGetPhysicalGroupForResource("DepthView", out VulkanPhysicalImageGroup? viewGroup).ShouldBeTrue();
+        viewGroup.ShouldBeSameAs(group);
     }
 
     [Test]

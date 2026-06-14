@@ -162,12 +162,27 @@ public sealed record TextureSpec(
             StereoCompatible,
             Math.Max(1u, Layers),
             SupportsAliasing: Lifetime == RenderResourceLifetime.Transient,
-            RequiresStorageUsage);
+            RequiresStorageUsage,
+            Kind: RenderPipelineResourceKind.Texture,
+            Usage: Usage,
+            InternalFormat: InternalFormat,
+            PixelFormat: PixelFormat,
+            PixelType: PixelType,
+            SizedInternalFormat: SizedInternalFormat,
+            Samples: Math.Max(1u, Samples),
+            MipPolicy: NormalizeMipPolicy(MipPolicy),
+            BaseMipLevel: MipPolicy.BaseMipLevel,
+            MipLevelCount: Math.Max(1u, MipPolicy.MipLevelCount),
+            BaseLayer: 0u,
+            LayerCount: Math.Max(1u, Layers));
 
     private string? ResolveFormatLabel()
         => SizedInternalFormat?.ToString()
             ?? InternalFormat?.ToString()
             ?? DebugLabel;
+
+    private static RenderResourceMipPolicy NormalizeMipPolicy(RenderResourceMipPolicy mipPolicy)
+        => mipPolicy with { MipLevelCount = Math.Max(1u, mipPolicy.MipLevelCount) };
 }
 
 public sealed record TextureViewSpec(
@@ -211,7 +226,20 @@ public sealed record TextureViewSpec(
             StereoCompatible: LayerCount > 1u,
             ArrayLayers: Math.Max(1u, LayerCount),
             SupportsAliasing: false,
-            RequiresStorageUsage: false);
+            RequiresStorageUsage: false,
+            Kind: RenderPipelineResourceKind.TextureView,
+            Usage: Usage,
+            SizedInternalFormat: SizedInternalFormat,
+            Samples: Multisample ? 2u : 1u,
+            MipPolicy: new RenderResourceMipPolicy(BaseMipLevel, Math.Max(1u, MipLevelCount)),
+            SourceTextureName: SourceTextureName,
+            BaseMipLevel: BaseMipLevel,
+            MipLevelCount: Math.Max(1u, MipLevelCount),
+            BaseLayer: BaseLayer,
+            LayerCount: Math.Max(1u, LayerCount),
+            DepthStencilAspect: DepthStencilAspect,
+            ArrayTarget: ArrayTarget,
+            Multisample: Multisample);
 }
 
 public sealed record RenderBufferSpec(

@@ -18,6 +18,10 @@ namespace XREngine.Rendering.Vulkan
             private ImageAspectFlags _aspect = ImageAspectFlags.ColorBit;
             private ImageUsageFlags _usage = ImageUsageFlags.SampledBit;
             private SampleCountFlags _samples = SampleCountFlags.Count1Bit;
+            private uint _baseMipLevel;
+            private uint _mipLevels = 1u;
+            private uint _baseArrayLayer;
+            private uint _arrayLayers = 1u;
             private BufferView _texelBufferView;
             private Format _texelBufferFormat = Format.Undefined;
 
@@ -90,11 +94,53 @@ namespace XREngine.Rendering.Vulkan
                     return _samples;
                 }
             }
+            uint IVkImageDescriptorSource.DescriptorMipLevels
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+                    return _mipLevels;
+                }
+            }
+            uint IVkImageDescriptorSource.DescriptorArrayLayers
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+                    return _arrayLayers;
+                }
+            }
             ImageLayout IVkImageDescriptorSource.TrackedImageLayout
             {
                 get
                 {
                     RefreshFromViewedTextureIfStale();
+
+                    if (TryGetViewedAttachmentSource(out IVkFrameBufferAttachmentSource? attachmentSource))
+                    {
+                        ImageLayout? common = null;
+                        uint mipCount = Math.Max(_mipLevels, 1u);
+                        uint layerCount = Math.Max(_arrayLayers, 1u);
+                        for (uint mip = 0; mip < mipCount; mip++)
+                        {
+                            int sourceMip = checked((int)(_baseMipLevel + mip));
+                            for (uint layer = 0; layer < layerCount; layer++)
+                            {
+                                ImageLayout layout = attachmentSource.GetAttachmentTrackedLayout(
+                                    sourceMip,
+                                    checked((int)(_baseArrayLayer + layer)));
+                                if (layout == ImageLayout.Undefined)
+                                    return ImageLayout.Undefined;
+
+                                if (common.HasValue && common.Value != layout)
+                                    return ImageLayout.Undefined;
+
+                                common = layout;
+                            }
+                        }
+
+                        return common ?? ImageLayout.Undefined;
+                    }
 
                     XRTexture viewedTexture = Data.GetViewedTexture();
                     if (viewedTexture is null)
@@ -143,14 +189,7 @@ namespace XREngine.Rendering.Vulkan
                 if (_image.Handle == 0)
                     return default;
 
-                ImageSubresourceRange subresourceRange = new()
-                {
-                    AspectMask = aspect,
-                    BaseMipLevel = Data.MinLevel,
-                    LevelCount = Math.Max(Data.NumLevels, 1u),
-                    BaseArrayLayer = Data.MinLayer,
-                    LayerCount = Math.Max(Data.NumLayers, 1u),
-                };
+                ImageSubresourceRange subresourceRange = CurrentViewSubresourceRange(aspect);
 
                 ImageViewCreateInfo depthViewInfo = new()
                 {
@@ -185,6 +224,10 @@ namespace XREngine.Rendering.Vulkan
                 _aspect = ImageAspectFlags.ColorBit;
                 _usage = ImageUsageFlags.SampledBit;
                 _samples = SampleCountFlags.Count1Bit;
+                _baseMipLevel = 0u;
+                _mipLevels = 1u;
+                _baseArrayLayer = 0u;
+                _arrayLayers = 1u;
                 _texelBufferView = default;
                 _texelBufferFormat = Format.Undefined;
 
@@ -223,12 +266,69 @@ namespace XREngine.Rendering.Vulkan
 
             void IVkFrameBufferAttachmentSource.UpdateTrackedLayout(ImageLayout layout)
             {
-                XRTexture viewedTexture = Data.GetViewedTexture();
-                if (viewedTexture is null)
+                if (!TryGetViewedAttachmentSource(out IVkFrameBufferAttachmentSource? source))
                     return;
 
-                if (Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkFrameBufferAttachmentSource source)
-                    source.UpdateTrackedLayout(layout);
+                uint mipCount = Math.Max(_mipLevels, 1u);
+                uint layerCount = Math.Max(_arrayLayers, 1u);
+                for (uint mip = 0; mip < mipCount; mip++)
+                {
+                    int sourceMip = checked((int)(_baseMipLevel + mip));
+                    for (uint layer = 0; layer < layerCount; layer++)
+                    {
+                        source.UpdateAttachmentTrackedLayout(
+                            layout,
+                            sourceMip,
+                            checked((int)(_baseArrayLayer + layer)));
+                    }
+                }
+            }
+
+            ImageLayout IVkFrameBufferAttachmentSource.GetAttachmentTrackedLayout(int mipLevel, int layerIndex)
+            {
+                RefreshFromViewedTextureIfStale();
+
+                if (!TryGetViewedAttachmentSource(out IVkFrameBufferAttachmentSource? source))
+                    return ImageLayout.Undefined;
+
+                int sourceMip = checked((int)(_baseMipLevel + (uint)Math.Max(mipLevel, 0)));
+                if (layerIndex >= 0)
+                    return source.GetAttachmentTrackedLayout(sourceMip, checked((int)(_baseArrayLayer + (uint)layerIndex)));
+
+                ImageLayout? common = null;
+                uint layers = Math.Max(_arrayLayers, 1u);
+                for (uint layer = 0; layer < layers; layer++)
+                {
+                    ImageLayout layout = source.GetAttachmentTrackedLayout(sourceMip, checked((int)(_baseArrayLayer + layer)));
+                    if (layout == ImageLayout.Undefined)
+                        return ImageLayout.Undefined;
+
+                    if (common.HasValue && common.Value != layout)
+                        return ImageLayout.Undefined;
+
+                    common = layout;
+                }
+
+                return common ?? ImageLayout.Undefined;
+            }
+
+            void IVkFrameBufferAttachmentSource.UpdateAttachmentTrackedLayout(ImageLayout layout, int mipLevel, int layerIndex)
+            {
+                RefreshFromViewedTextureIfStale();
+
+                if (!TryGetViewedAttachmentSource(out IVkFrameBufferAttachmentSource? source))
+                    return;
+
+                int sourceMip = checked((int)(_baseMipLevel + (uint)Math.Max(mipLevel, 0)));
+                if (layerIndex >= 0)
+                {
+                    source.UpdateAttachmentTrackedLayout(layout, sourceMip, checked((int)(_baseArrayLayer + (uint)layerIndex)));
+                    return;
+                }
+
+                uint layers = Math.Max(_arrayLayers, 1u);
+                for (uint layer = 0; layer < layers; layer++)
+                    source.UpdateAttachmentTrackedLayout(layout, sourceMip, checked((int)(_baseArrayLayer + layer)));
             }
 
             bool IVkImageDescriptorSource.TryTransitionDedicatedImageLayout(ImageLayout oldLayout, ImageLayout newLayout)
@@ -239,6 +339,20 @@ namespace XREngine.Rendering.Vulkan
 
                 return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source &&
                     source.TryTransitionDedicatedImageLayout(oldLayout, newLayout);
+            }
+
+            private bool TryGetViewedAttachmentSource([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IVkFrameBufferAttachmentSource? source)
+            {
+                XRTexture viewedTexture = Data.GetViewedTexture();
+                if (viewedTexture is not null &&
+                    Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkFrameBufferAttachmentSource attachmentSource)
+                {
+                    source = attachmentSource;
+                    return true;
+                }
+
+                source = null;
+                return false;
             }
 
             private void OnViewedTextureChanged()
@@ -449,6 +563,10 @@ namespace XREngine.Rendering.Vulkan
                     _aspect = ImageAspectFlags.None;
                     _usage = 0;
                     _samples = SampleCountFlags.Count1Bit;
+                    _baseMipLevel = 0u;
+                    _mipLevels = 1u;
+                    _baseArrayLayer = 0u;
+                    _arrayLayers = 1u;
                     _texelBufferView = texelSource.DescriptorBufferView;
                     _texelBufferFormat = texelSource.DescriptorBufferFormat;
                     _depthOnlyView = default;
@@ -476,14 +594,7 @@ namespace XREngine.Rendering.Vulkan
                     throw new InvalidOperationException($"Viewed texture '{viewedTexture.GetDescribingName()}' has no Vulkan image handle.");
 
                 ImageViewType viewType = ResolveViewType(Data.TextureTarget);
-                ImageSubresourceRange subresourceRange = new()
-                {
-                    AspectMask = NormalizeAspectMaskForFormat(_format, _aspect),
-                    BaseMipLevel = Data.MinLevel,
-                    LevelCount = Math.Max(Data.NumLevels, 1u),
-                    BaseArrayLayer = Data.MinLayer,
-                    LayerCount = Math.Max(Data.NumLayers, 1u),
-                };
+                ImageSubresourceRange subresourceRange = ResolveViewSubresourceRange(source, NormalizeAspectMaskForFormat(_format, _aspect));
 
                 ImageViewCreateInfo viewInfo = new()
                 {
@@ -549,14 +660,7 @@ namespace XREngine.Rendering.Vulkan
                 _samples = source.DescriptorSamples;
 
                 ImageViewType viewType = ResolveViewType(Data.TextureTarget);
-                ImageSubresourceRange subresourceRange = new()
-                {
-                    AspectMask = NormalizeAspectMaskForFormat(_format, _aspect),
-                    BaseMipLevel = Data.MinLevel,
-                    LevelCount = Math.Max(Data.NumLevels, 1u),
-                    BaseArrayLayer = Data.MinLayer,
-                    LayerCount = Math.Max(Data.NumLayers, 1u),
-                };
+                ImageSubresourceRange subresourceRange = ResolveViewSubresourceRange(source, NormalizeAspectMaskForFormat(_format, _aspect));
 
                 ImageViewCreateInfo viewInfo = new()
                 {
@@ -573,6 +677,54 @@ namespace XREngine.Rendering.Vulkan
                 if (_view.Handle != 0)
                     CreateSampler();
             }
+
+            private ImageSubresourceRange ResolveViewSubresourceRange(IVkImageDescriptorSource source, ImageAspectFlags aspectMask)
+            {
+                uint backingMipLevels = Math.Max(source.DescriptorMipLevels, 1u);
+                uint backingLayers = Math.Max(source.DescriptorArrayLayers, 1u);
+
+                _baseMipLevel = Math.Min(Data.MinLevel, backingMipLevels - 1u);
+                uint requestedLevels = Math.Max(Data.NumLevels, 1u);
+                _mipLevels = Math.Min(requestedLevels, backingMipLevels - _baseMipLevel);
+
+                _baseArrayLayer = Math.Min(Data.MinLayer, backingLayers - 1u);
+                uint requestedLayers = Math.Max(Data.NumLayers, 1u);
+                _arrayLayers = Math.Min(requestedLayers, backingLayers - _baseArrayLayer);
+
+                if (_baseMipLevel != Data.MinLevel ||
+                    _mipLevels != requestedLevels ||
+                    _baseArrayLayer != Data.MinLayer ||
+                    _arrayLayers != requestedLayers)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.TextureView.ClampedSubresource.{Data.GetHashCode()}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Texture view '{0}' subresource range clamped to backing image. requested mip={1}+{2} layer={3}+{4}; backing mips={5} layers={6}; using mip={7}+{8} layer={9}+{10}.",
+                        Data.Name ?? Data.GetDescribingName(),
+                        Data.MinLevel,
+                        requestedLevels,
+                        Data.MinLayer,
+                        requestedLayers,
+                        backingMipLevels,
+                        backingLayers,
+                        _baseMipLevel,
+                        _mipLevels,
+                        _baseArrayLayer,
+                        _arrayLayers);
+                }
+
+                return CurrentViewSubresourceRange(aspectMask);
+            }
+
+            private ImageSubresourceRange CurrentViewSubresourceRange(ImageAspectFlags aspectMask)
+                => new()
+                {
+                    AspectMask = aspectMask,
+                    BaseMipLevel = _baseMipLevel,
+                    LevelCount = Math.Max(_mipLevels, 1u),
+                    BaseArrayLayer = _baseArrayLayer,
+                    LayerCount = Math.Max(_arrayLayers, 1u),
+                };
 
             private void RecreateSampler()
             {

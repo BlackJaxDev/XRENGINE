@@ -94,7 +94,7 @@ public unsafe partial class VulkanRenderer
 
 		internal void ReleaseDescriptorReferencesForPhysicalResourceDestruction()
 		{
-			ReleaseDescriptorAllocation(destroyPoolImmediately: true);
+			ReleaseDescriptorAllocation();
 			_descriptorDirty = true;
 		}
 

@@ -35,6 +35,9 @@ public unsafe partial class VulkanRenderer
 
     private static ImageLayout GetDefaultSampledDescriptorLayout(IVkImageDescriptorSource source)
     {
+        if ((source.DescriptorUsage & ImageUsageFlags.StorageBit) != 0)
+            return ImageLayout.General;
+
         ImageAspectFlags aspect = source.DescriptorAspect;
         bool depthOrStencil = (aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0 ||
             IsCombinedDepthStencilFormat(source.DescriptorFormat);
