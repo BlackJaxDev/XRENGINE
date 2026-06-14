@@ -283,26 +283,49 @@ namespace XREngine.Rendering.Vulkan
             if (texture is XRTexture3D)
                 baseArrayLayer = 0;
 
+            uint descriptorLayers = Math.Max(source.DescriptorArrayLayers, 1u);
+            if (baseArrayLayer >= descriptorLayers)
+                baseArrayLayer = descriptorLayers - 1u;
+
+            uint mipLevels = Math.Max(source.DescriptorMipLevels, 1u);
+            uint resolvedMipLevel = Math.Min((uint)Math.Max(mipLevel, 0), mipLevels - 1u);
+
             ImageLayout effectiveLayout = layout;
+            bool resolvedSubresourceLayout = false;
+            if (source is IVkFrameBufferAttachmentSource attachmentSource)
+            {
+                ImageLayout attachmentLayout = attachmentSource.GetAttachmentTrackedLayout(
+                    checked((int)resolvedMipLevel),
+                    checked((int)baseArrayLayer));
+                if (attachmentLayout != ImageLayout.Undefined)
+                {
+                    effectiveLayout = attachmentLayout;
+                    resolvedSubresourceLayout = true;
+                }
+            }
+
             string? resourceName = texture.Name;
             if (string.IsNullOrWhiteSpace(resourceName))
                 resourceName = texture.GetDescribingName();
 
-            if (!string.IsNullOrWhiteSpace(resourceName) &&
+            if (!resolvedSubresourceLayout &&
+                !string.IsNullOrWhiteSpace(resourceName) &&
                 ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup? group) &&
                 group is not null &&
                 group.IsAllocated)
             {
                 effectiveLayout = group.LastKnownLayout;
             }
-            else if (!source.UsesAllocatorImage)
+            else if (!resolvedSubresourceLayout)
             {
                 // For dedicated (non-planner) images, ALWAYS use the texture's own
                 // tracked layout so blit transitions emit a correct OldLayout.
                 // Newly-created images report Undefined, which is correct — the blit
                 // pre-transition barrier must use Undefined as OldLayout, not the
                 // hardcoded attachment-optimal layout.
-                effectiveLayout = source.TrackedImageLayout;
+                ImageLayout trackedLayout = source.TrackedImageLayout;
+                if (trackedLayout != ImageLayout.Undefined || !source.UsesAllocatorImage)
+                    effectiveLayout = trackedLayout;
             }
 
             info = new BlitImageInfo(
@@ -311,7 +334,7 @@ namespace XREngine.Rendering.Vulkan
                 aspectMask,
                 baseArrayLayer,
                 1,
-                (uint)Math.Max(mipLevel, 0),
+                resolvedMipLevel,
                 effectiveLayout,
                 stage,
                 access,
@@ -333,7 +356,11 @@ namespace XREngine.Rendering.Vulkan
                 if (liveImage.Handle == 0)
                     return false;
 
-                resolved = info.WithResolvedState(liveImage, info.PreferredLayout);
+                ImageLayout liveLayout = ResolveTrackedBlitLayout(source, info);
+                if (liveLayout == ImageLayout.Undefined)
+                    liveLayout = info.PreferredLayout;
+
+                resolved = info.WithResolvedState(liveImage, liveLayout);
                 return true;
             }
 
@@ -538,6 +565,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ImageAspectFlags barrierAspectMask = NormalizeBarrierAspectMask(resolvedInfo.Format, resolvedInfo.AspectMask);
+            oldLayout = ResolveLiveBlitOldLayout(resolvedInfo, oldLayout);
 
             ImageMemoryBarrier barrier = new()
             {
@@ -577,14 +605,53 @@ namespace XREngine.Rendering.Vulkan
             UpdateTrackedBlitLayout(resolvedInfo, newLayout);
         }
 
+        private static ImageLayout ResolveLiveBlitOldLayout(in BlitImageInfo info, ImageLayout requestedOldLayout)
+        {
+            if (info.DescriptorSource is { } source)
+            {
+                ImageLayout trackedLayout = ResolveTrackedBlitLayout(source, info);
+                if (trackedLayout != ImageLayout.Undefined)
+                    return trackedLayout;
+            }
+
+            if (info.RenderBufferSource?.PhysicalGroup is { } group)
+                return group.LastKnownLayout;
+
+            return requestedOldLayout;
+        }
+
         private static void UpdateTrackedBlitLayout(in BlitImageInfo info, ImageLayout layout)
         {
             if (info.DescriptorSource is IVkFrameBufferAttachmentSource attachmentSource)
-                attachmentSource.UpdateTrackedLayout(layout);
+            {
+                attachmentSource.UpdateAttachmentTrackedLayout(
+                    layout,
+                    checked((int)info.MipLevel),
+                    ResolveBlitInfoLayerIndex(info));
+            }
 
             if (info.RenderBufferSource?.PhysicalGroup is { } group)
                 group.LastKnownLayout = layout;
         }
+
+        private static ImageLayout ResolveTrackedBlitLayout(IVkImageDescriptorSource source, in BlitImageInfo info)
+        {
+            if (source is IVkFrameBufferAttachmentSource attachmentSource)
+            {
+                ImageLayout attachmentLayout = attachmentSource.GetAttachmentTrackedLayout(
+                    checked((int)info.MipLevel),
+                    ResolveBlitInfoLayerIndex(info));
+                if (attachmentLayout != ImageLayout.Undefined)
+                    return attachmentLayout;
+            }
+
+            return source.TrackedImageLayout;
+        }
+
+        private static int ResolveBlitInfoLayerIndex(in BlitImageInfo info)
+            => info.LayerCount == 1u
+                ? checked((int)info.BaseArrayLayer)
+                : -1;
 
         private void TransitionSwapchainImage(CommandBuffer commandBuffer, Image image, ImageLayout oldLayout, ImageLayout newLayout)
         {

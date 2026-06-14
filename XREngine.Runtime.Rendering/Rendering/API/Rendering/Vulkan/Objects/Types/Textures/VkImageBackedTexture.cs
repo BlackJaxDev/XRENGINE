@@ -73,6 +73,7 @@ public unsafe partial class VulkanRenderer
         private Format? _formatOverride;
         private uint? _arrayLayersOverride;
         private uint? _mipLevelsOverride;
+        private SampleCountFlags? _samplesOverride;
 
         /// <summary>Tracks the most recent image layout so transitions use the correct source layout.</summary>
         protected ImageLayout _currentImageLayout = ImageLayout.Undefined;
@@ -125,6 +126,11 @@ public unsafe partial class VulkanRenderer
             get
             {
                 RefreshPhysicalGroupImageIfStale();
+                if (_hasPartialAttachmentLayouts)
+                    return TryResolveWholeImageAttachmentLayout(out ImageLayout layout)
+                        ? layout
+                        : ImageLayout.Undefined;
+
                 if (_physicalGroup is not null)
                     _currentImageLayout = _physicalGroup.LastKnownLayout;
                 return _currentImageLayout;
@@ -201,6 +207,24 @@ public unsafe partial class VulkanRenderer
             {
                 RefreshPhysicalGroupImageIfStale();
                 return SampleCount;
+            }
+        }
+
+        uint IVkImageDescriptorSource.DescriptorMipLevels
+        {
+            get
+            {
+                RefreshPhysicalGroupImageIfStale();
+                return ResolvedMipLevels;
+            }
+        }
+
+        uint IVkImageDescriptorSource.DescriptorArrayLayers
+        {
+            get
+            {
+                RefreshPhysicalGroupImageIfStale();
+                return ResolvedArrayLayers;
             }
         }
 
@@ -339,12 +363,9 @@ public unsafe partial class VulkanRenderer
             {
                 RefreshPhysicalGroupImageIfStale();
                 if (_hasPartialAttachmentLayouts)
-                {
-                    uint mipLevel = 0u;
-                    return TryResolveAllLayerAttachmentLayout(mipLevel, out ImageLayout layout)
+                    return TryResolveWholeImageAttachmentLayout(out ImageLayout layout)
                         ? layout
                         : ImageLayout.Undefined;
-                }
 
                 if (_physicalGroup is not null)
                     return _physicalGroup.LastKnownLayout;
@@ -408,13 +429,16 @@ public unsafe partial class VulkanRenderer
         /// <inheritdoc />
         void IVkFrameBufferAttachmentSource.UpdateAttachmentTrackedLayout(ImageLayout layout, int mipLevel, int layerIndex)
         {
+            if (AttachmentCoversWholeImage(mipLevel, layerIndex))
+            {
+                ((IVkFrameBufferAttachmentSource)this).UpdateTrackedLayout(layout);
+                return;
+            }
+
             BeginPartialAttachmentLayoutTracking();
 
-            if (_physicalGroup is not null)
-                _physicalGroup.LastKnownLayout = layout;
-
-            _currentImageLayout = layout;
             _attachmentLayouts[BuildAttachmentLayoutKey(mipLevel, layerIndex)] = layout;
+            UpdateWholeImageLayoutFromAttachmentTracking();
             HasUploadedData = true;
             MarkDescriptorClean();
         }
@@ -433,10 +457,12 @@ public unsafe partial class VulkanRenderer
         protected uint ResolvedArrayLayers => _arrayLayersOverride ?? _layout.ArrayLayers;
 
         /// <summary>Effective mip level count.</summary>
-        protected uint ResolvedMipLevels => _mipLevelsOverride ?? _layout.MipLevels;
+        protected uint ResolvedMipLevels => SampleCount == SampleCountFlags.Count1Bit
+            ? _mipLevelsOverride ?? _layout.MipLevels
+            : 1u;
 
-        /// <summary>Always single-sample for now.</summary>
-        internal SampleCountFlags SampleCount => SampleCountFlags.Count1Bit;
+        /// <summary>Effective sample count, respecting any override from the physical group.</summary>
+        internal SampleCountFlags SampleCount => _samplesOverride ?? ReadSampleCountFromData();
 
         #endregion
 
@@ -511,7 +537,20 @@ public unsafe partial class VulkanRenderer
         {
             RefreshLayout();
             AcquireImageHandle();
+            if (_image.Handle == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.NoImageOnGenerate.{Data.GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Texture '{0}' could not acquire a Vulkan image during generation.",
+                    ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName());
+                return InvalidBindingId;
+            }
+
             CreateImageView(default);
+            if (_view.Handle == 0)
+                return InvalidBindingId;
+
             if (CreateSampler)
                 CreateSamplerInternal();
             MarkDescriptorClean();
@@ -569,6 +608,7 @@ public unsafe partial class VulkanRenderer
             _formatOverride = null;
             _arrayLayersOverride = null;
             _mipLevelsOverride = null;
+            _samplesOverride = null;
             _currentImageLayout = ImageLayout.Undefined;
             ResetAttachmentLayoutTracking();
             InvalidateTextureData();
@@ -616,8 +656,11 @@ public unsafe partial class VulkanRenderer
             if (!_layoutInitialized)
                 RefreshLayout();
 
-            if (TryResolvePhysicalGroup(out VulkanPhysicalImageGroup? group))
+            if (TryResolvePhysicalGroup(out VulkanPhysicalImageGroup? group) ||
+                Renderer.TryEnsurePhysicalImageForTextureResource(ResolveLogicalResourceName(), out group))
             {
+                RetireDedicatedImageBeforeBorrowingPhysicalGroup();
+
                 // Borrow the image from the resource-planner physical group.
                 _physicalGroup = group;
                 _image = group!.Image;
@@ -630,7 +673,8 @@ public unsafe partial class VulkanRenderer
                 if (Data.RequiresStorageUsage)
                     Usage |= ImageUsageFlags.StorageBit;
                 _arrayLayersOverride = Math.Max(group.Template.Layers, 1u);
-                _mipLevelsOverride = 1;
+                _mipLevelsOverride = Math.Max(1u, group.MipLevels);
+                _samplesOverride = group.Samples;
                 _ownsImageMemory = false;
                 AspectFlags = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
                 _currentImageLayout = group.LastKnownLayout;
@@ -660,10 +704,53 @@ public unsafe partial class VulkanRenderer
             _formatOverride = null;
             _arrayLayersOverride = null;
             _mipLevelsOverride = null;
+            _samplesOverride = null;
             _ownsImageMemory = true;
             AspectFlags = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
             _currentImageLayout = ImageLayout.Undefined;
             ResetAttachmentLayoutTracking();
+        }
+
+        private void RetireDedicatedImageBeforeBorrowingPhysicalGroup()
+        {
+            if (!_ownsImageMemory)
+            {
+                DestroyAllViews();
+                return;
+            }
+
+            ImageView[] retiredAttachmentViews;
+            if (_attachmentViews.Count > 0)
+            {
+                retiredAttachmentViews = new ImageView[_attachmentViews.Count];
+                int index = 0;
+                foreach ((_, ImageView attachmentView) in _attachmentViews)
+                    retiredAttachmentViews[index++] = attachmentView;
+            }
+            else
+            {
+                retiredAttachmentViews = [];
+            }
+
+            Renderer.RetireImageResources(new RetiredImageResources(
+                _image,
+                _memory,
+                _view,
+                retiredAttachmentViews,
+                default,
+                _allocatedVRAMBytes));
+
+            if (_allocatedVRAMBytes > 0)
+            {
+                RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(_allocatedVRAMBytes);
+                _allocatedVRAMBytes = 0;
+            }
+
+            _view = default;
+            _attachmentViews.Clear();
+            _image = default;
+            _memory = default;
+            _ownsImageMemory = false;
         }
 
         /// <summary>
@@ -703,8 +790,26 @@ public unsafe partial class VulkanRenderer
             }
 
             Image current = _physicalGroup.Image;
+            if (current.Handle == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.StaleImageHandle.NullPhysical.{ResolveLogicalResourceName() ?? "?"}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Physical group for '{0}' is allocated but has no image handle yet.",
+                    ResolveLogicalResourceName() ?? Data.Name ?? "<unnamed>");
+                _image = default;
+                _memory = default;
+                DestroyAllViews();
+                return;
+            }
+
             if (current.Handle == _image.Handle)
             {
+                _extentOverride = _physicalGroup.ResolvedExtent;
+                _formatOverride = _physicalGroup.Format;
+                _arrayLayersOverride = Math.Max(_physicalGroup.Template.Layers, 1u);
+                _mipLevelsOverride = Math.Max(1u, _physicalGroup.MipLevels);
+                _samplesOverride = _physicalGroup.Samples;
                 _currentImageLayout = _physicalGroup.LastKnownLayout;
                 return;
             }
@@ -721,6 +826,9 @@ public unsafe partial class VulkanRenderer
             _memory = _physicalGroup.Memory;
             _extentOverride = _physicalGroup.ResolvedExtent;
             _formatOverride = _physicalGroup.Format;
+            _arrayLayersOverride = Math.Max(_physicalGroup.Template.Layers, 1u);
+            _mipLevelsOverride = Math.Max(1u, _physicalGroup.MipLevels);
+            _samplesOverride = _physicalGroup.Samples;
             Usage = _physicalGroup.Usage;
             if (Data.RequiresStorageUsage)
                 Usage |= ImageUsageFlags.StorageBit;
@@ -752,7 +860,7 @@ public unsafe partial class VulkanRenderer
                 Tiling = Tiling,
                 InitialLayout = ImageLayout.Undefined,
                 Usage = Usage,
-                Samples = SampleCountFlags.Count1Bit,
+                Samples = SampleCount,
                 SharingMode = SharingMode.Exclusive,
             };
 
@@ -785,14 +893,16 @@ public unsafe partial class VulkanRenderer
             Debug.VulkanEvery(
                 $"Vulkan.DedicatedTexture.{ResolveLogicalResourceName() ?? Data.Name ?? "unnamed"}",
                 TimeSpan.FromSeconds(2),
-                "[Vulkan] Dedicated texture image created: name='{0}' handle=0x{1:X} format={2} extent={3}x{4}x{5} usage={6}",
+                "[Vulkan] Dedicated texture image created: name='{0}' handle=0x{1:X} format={2} extent={3}x{4}x{5} usage={6} mips={7} samples={8}",
                 ResolveLogicalResourceName() ?? Data.Name ?? "<unnamed>",
                 _image.Handle,
                 ResolvedFormat,
                 ResolvedExtent.Width,
                 ResolvedExtent.Height,
                 ResolvedExtent.Depth,
-                Usage);
+                Usage,
+                ResolvedMipLevels,
+                SampleCount);
 
             // Record the allocation for VRAM usage statistics.
             _allocatedVRAMBytes = (long)memRequirements.Size;
@@ -811,6 +921,15 @@ public unsafe partial class VulkanRenderer
         private void CreateImageView(AttachmentViewKey key)
         {
             DestroyView(ref _view);
+            if (_image.Handle == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.ViewWithoutImage.{Data.GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping image-view creation for texture '{0}' because no VkImage is available.",
+                    ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName());
+                return;
+            }
 
             ImageAspectFlags normalizedAspect = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
             AspectFlags = normalizedAspect;
@@ -829,6 +948,16 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         private ImageView CreateView(AttachmentViewKey descriptor)
         {
+            if (_image.Handle == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.SubresourceViewWithoutImage.{Data.GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping subresource image-view creation for texture '{0}' because no VkImage is available.",
+                    ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName());
+                return default;
+            }
+
             ImageAspectFlags aspectMask = NormalizeAspectMaskForFormat(ResolvedFormat, descriptor.AspectMask);
 
             ImageViewCreateInfo viewInfo = new()
@@ -945,6 +1074,24 @@ public unsafe partial class VulkanRenderer
         public ImageView GetAttachmentView(int mipLevel, int layerIndex)
         {
             RefreshPhysicalGroupImageIfStale();
+            if (_image.Handle == 0)
+            {
+                AcquireImageHandle();
+                RefreshPhysicalGroupImageIfStale();
+            }
+
+            if (_image.Handle == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.AttachmentViewWithoutImage.{Data.GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Texture '{0}' has no VkImage for framebuffer attachment view.",
+                    ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName());
+                return default;
+            }
+
+            if (_view.Handle == 0)
+                CreateImageView(default);
 
             AttachmentViewKey key = BuildAttachmentViewKey(mipLevel, layerIndex);
             if (key == default)
@@ -953,7 +1100,8 @@ public unsafe partial class VulkanRenderer
             if (!_attachmentViews.TryGetValue(key, out ImageView cached))
             {
                 cached = CreateView(key);
-                _attachmentViews[key] = cached;
+                if (cached.Handle != 0)
+                    _attachmentViews[key] = cached;
             }
 
             return cached;
@@ -977,7 +1125,7 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         protected virtual AttachmentViewKey BuildAttachmentViewKey(int mipLevel, int layerIndex)
         {
-            uint baseMip = (uint)Math.Max(mipLevel, 0);
+            uint baseMip = ClampAttachmentMipLevel(mipLevel);
 
             // Framebuffer attachments require single-mip-level views (levelCount=1).
             // Only reuse the default full-mip view when it already has exactly 1 level
@@ -986,6 +1134,20 @@ public unsafe partial class VulkanRenderer
                 return default;
 
             return new AttachmentViewKey(baseMip, 1, 0, 1, ImageViewType.Type2D, AspectFlags);
+        }
+
+        protected uint ClampAttachmentMipLevel(int mipLevel)
+        {
+            uint mipCount = Math.Max(ResolvedMipLevels, 1u);
+            uint requested = (uint)Math.Max(mipLevel, 0);
+            return Math.Min(requested, mipCount - 1u);
+        }
+
+        protected uint ClampAttachmentLayerIndex(int layerIndex)
+        {
+            uint layerCount = Math.Max(ResolvedArrayLayers, 1u);
+            uint requested = (uint)Math.Max(layerIndex, 0);
+            return Math.Min(requested, layerCount - 1u);
         }
 
         private AttachmentLayoutKey BuildAttachmentLayoutKey(int mipLevel, int layerIndex)
@@ -1022,6 +1184,69 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
+        private bool TryResolveWholeImageAttachmentLayout(out ImageLayout layout)
+        {
+            layout = ImageLayout.Undefined;
+
+            if (!_hasPartialAttachmentLayouts)
+            {
+                layout = _physicalGroup is not null
+                    ? _physicalGroup.LastKnownLayout
+                    : _currentImageLayout;
+                return layout != ImageLayout.Undefined;
+            }
+
+            ImageLayout? common = null;
+            uint mipCount = Math.Max(ResolvedMipLevels, 1u);
+            uint layerCount = Math.Max(ResolvedArrayLayers, 1u);
+            for (uint mip = 0; mip < mipCount; mip++)
+            {
+                for (uint layer = 0; layer < layerCount; layer++)
+                {
+                    AttachmentLayoutKey key = new(mip, layer, 1u);
+                    if (!_attachmentLayouts.TryGetValue(key, out ImageLayout subresourceLayout) ||
+                        subresourceLayout == ImageLayout.Undefined)
+                    {
+                        return false;
+                    }
+
+                    if (common.HasValue && common.Value != subresourceLayout)
+                        return false;
+
+                    common = subresourceLayout;
+                }
+            }
+
+            if (!common.HasValue)
+                return false;
+
+            layout = common.Value;
+            return true;
+        }
+
+        private bool AttachmentCoversWholeImage(int mipLevel, int layerIndex)
+        {
+            uint resolvedMip = ClampAttachmentMipLevel(mipLevel);
+            bool coversAllMips = resolvedMip == 0 && Math.Max(ResolvedMipLevels, 1u) == 1u;
+            bool coversAllLayers = layerIndex < 0 || Math.Max(ResolvedArrayLayers, 1u) == 1u;
+            return coversAllMips && coversAllLayers;
+        }
+
+        private void UpdateWholeImageLayoutFromAttachmentTracking()
+        {
+            if (TryResolveWholeImageAttachmentLayout(out ImageLayout commonLayout))
+            {
+                _currentImageLayout = commonLayout;
+                if (_physicalGroup is not null)
+                    _physicalGroup.LastKnownLayout = commonLayout;
+                return;
+            }
+
+            _currentImageLayout = ImageLayout.Undefined;
+            if (_physicalGroup is not null)
+                _physicalGroup.LastKnownLayout = ImageLayout.Undefined;
+        }
+
         private void BeginPartialAttachmentLayoutTracking()
         {
             if (_hasPartialAttachmentLayouts)
@@ -1033,6 +1258,9 @@ public unsafe partial class VulkanRenderer
             ImageLayout wholeImageLayout = _physicalGroup is not null
                 ? _physicalGroup.LastKnownLayout
                 : _currentImageLayout;
+            if (_physicalGroup is not null)
+                _physicalGroup.LastKnownLayout = ImageLayout.Undefined;
+
             if (wholeImageLayout == ImageLayout.Undefined)
                 return;
 
@@ -1100,6 +1328,27 @@ public unsafe partial class VulkanRenderer
                 XRTextureCubeArray t => t.SizedInternalFormat,
                 XRTextureRectangle t => t.SizedInternalFormat,
                 _ => ESizedInternalFormat.Rgba8,
+            };
+
+        private SampleCountFlags ReadSampleCountFromData()
+            => Data switch
+            {
+                XRTexture2D tex2D => ToSampleCountFlags(tex2D.MultiSampleCount),
+                XRTexture2DArray texArray when texArray.MultiSample && texArray.Textures.Length > 0
+                    => ToSampleCountFlags(Math.Max(2u, texArray.Textures[0].MultiSampleCount)),
+                _ => SampleCountFlags.Count1Bit,
+            };
+
+        private static SampleCountFlags ToSampleCountFlags(uint samples)
+            => samples switch
+            {
+                <= 1u => SampleCountFlags.Count1Bit,
+                2u => SampleCountFlags.Count2Bit,
+                3u or 4u => SampleCountFlags.Count4Bit,
+                <= 8u => SampleCountFlags.Count8Bit,
+                <= 16u => SampleCountFlags.Count16Bit,
+                <= 32u => SampleCountFlags.Count32Bit,
+                _ => SampleCountFlags.Count64Bit,
             };
 
         /// <summary>
@@ -1346,12 +1595,12 @@ public unsafe partial class VulkanRenderer
             if (requested != ImageLayout.ShaderReadOnlyOptimal)
                 return requested;
 
-            if ((Usage & ImageUsageFlags.StorageBit) != 0)
-                return ImageLayout.General;
-
             bool canSample = (Usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0;
             if (canSample)
                 return requested;
+
+            if ((Usage & ImageUsageFlags.StorageBit) != 0)
+                return ImageLayout.General;
 
             return ImageLayout.TransferSrcOptimal;
         }

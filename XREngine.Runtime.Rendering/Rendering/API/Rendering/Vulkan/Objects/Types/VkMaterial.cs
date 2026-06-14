@@ -274,7 +274,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 lock (_stateSync)
                 {
-                    DestroyAllProgramStates();
+                    DestroyAllProgramStates(retireDescriptorPools: true);
                     _materialDirty = true;
                 }
             }
@@ -576,10 +576,10 @@ namespace XREngine.Rendering.Vulkan
             /// Destroys every cached <see cref="ProgramDescriptorState"/> and clears <see cref="_programStates"/>.
             /// Must be called while holding <see cref="_stateSync"/>.
             /// </summary>
-            private void DestroyAllProgramStates()
+            private void DestroyAllProgramStates(bool retireDescriptorPools = false)
             {
                 foreach (ProgramDescriptorState state in _programStates.Values)
-                    DestroyProgramState(state);
+                    DestroyProgramState(state, retireDescriptorPools);
                 _programStates.Clear();
             }
 
@@ -587,14 +587,21 @@ namespace XREngine.Rendering.Vulkan
             /// Releases all Vulkan resources owned by <paramref name="state"/>:
             /// uniform buffers, device memory, and the descriptor pool (which implicitly frees its sets).
             /// </summary>
-            private void DestroyProgramState(ProgramDescriptorState state)
+            private void DestroyProgramState(ProgramDescriptorState state, bool retireDescriptorPool = false)
             {
                 DestroyUniformResources(state.UniformBindings);
 
                 if (state.DescriptorPool.Handle != 0)
                 {
-                    Api!.DestroyDescriptorPool(Device, state.DescriptorPool, null);
-                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+                    if (retireDescriptorPool)
+                    {
+                        Renderer.RetireDescriptorPool(state.DescriptorPool);
+                    }
+                    else
+                    {
+                        Api!.DestroyDescriptorPool(Device, state.DescriptorPool, null);
+                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+                    }
                 }
             }
 

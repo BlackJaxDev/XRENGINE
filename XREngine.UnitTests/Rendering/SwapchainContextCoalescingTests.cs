@@ -432,10 +432,11 @@ public sealed class SwapchainContextCoalescingTests
     }
 
     [Test]
-    public void SortFrameOps_GroupOrderThenPassOrder_CrossPipeline()
+    public void SortFrameOps_PassOrderThenGroupOrder_CrossPipeline()
     {
         // Realistic scenario: two pipelines, each with multiple passes.
-        // GroupOrder should separate them; PassOrder should order within each group.
+        // PassOrder preserves render graph dependencies across pipelines, while
+        // GroupOrder preserves first-occurrence order for ops in the same pass.
         var compiler = new VulkanRenderGraphCompiler();
         var passOrder = new Dictionary<int, int>
         {
@@ -460,12 +461,12 @@ public sealed class SwapchainContextCoalescingTests
 
         FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
 
-        // Scene pipeline ops first (GroupOrder 0), then UI (GroupOrder 3)
+        // Matching pass ranks stay in first-occurrence order: scene then UI.
         sorted[0].PassIndex.ShouldBe(0);
-        sorted[1].PassIndex.ShouldBe(1);
-        sorted[2].PassIndex.ShouldBe(2);
-        sorted[3].PassIndex.ShouldBe(5);
-        sorted[4].PassIndex.ShouldBe(6);
+        sorted[1].PassIndex.ShouldBe(5);
+        sorted[2].PassIndex.ShouldBe(1);
+        sorted[3].PassIndex.ShouldBe(6);
+        sorted[4].PassIndex.ShouldBe(2);
     }
 
     #endregion

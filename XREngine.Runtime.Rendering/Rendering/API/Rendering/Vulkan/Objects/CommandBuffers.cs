@@ -944,11 +944,9 @@ namespace XREngine.Rendering.Vulkan
             var ops = DrainFrameOps(out ulong frameOpsSignature);
             bool hasFrameOps = ops.Length > 0;
 
-            FrameOpContext plannerContext = hasFrameOps
-                ? ops[0].Context
-                : CaptureFrameOpContext();
-
-            UpdateResourcePlannerFromContext(plannerContext);
+            _ = hasFrameOps
+                ? PrepareResourcePlannerForFrameOps(ops)
+                : PrepareResourcePlannerForFrameOps([]);
             ulong plannerRevision = ResourcePlannerRevision;
 
             if (!dirty && hasFrameOps && _commandBufferFrameOpSignatures[imageIndex] != frameOpsSignature)
@@ -963,7 +961,15 @@ namespace XREngine.Rendering.Vulkan
             if (!dirty)
                 return;
 
-            RecordCommandBuffer(imageIndex, ops);
+            _isRecordingCommandBuffer = true;
+            try
+            {
+                RecordCommandBuffer(imageIndex, ops);
+            }
+            finally
+            {
+                _isRecordingCommandBuffer = false;
+            }
             _commandBufferDirtyFlags[imageIndex] = false;
             _commandBufferFrameOpSignatures[imageIndex] = frameOpsSignature;
             _commandBufferPlannerRevisions[imageIndex] = plannerRevision;
@@ -1343,8 +1349,12 @@ namespace XREngine.Rendering.Vulkan
                             activeFboAttachmentSignature,
                             beginRendering: false);
 
+                        UpdatePhysicalGroupLayoutsForFbo(
+                            activeTarget,
+                            activeFboAttachmentSignature,
+                            useReferenceLayouts: false);
+
                         ImageLayout[] finalLayouts = VkFrameBuffer.GetFinalLayouts(activeFboAttachmentSignature);
-                        UpdatePhysicalGroupLayoutsForFbo(activeTarget, finalLayouts);
                         fboLayoutTracking[activeTarget] = finalLayouts;
                     }
                 }
@@ -1644,6 +1654,10 @@ namespace XREngine.Rendering.Vulkan
                         target,
                         fboSignature,
                         beginRendering: true);
+                    UpdatePhysicalGroupLayoutsForFbo(
+                        target,
+                        fboSignature,
+                        useReferenceLayouts: true);
 
                     uint dynamicAttachmentCountFbo = Math.Max((uint)fboSignature.Length, 1u);
                     ClearValue* dynamicClearValuesFbo = stackalloc ClearValue[(int)dynamicAttachmentCountFbo];
@@ -1916,17 +1930,26 @@ namespace XREngine.Rendering.Vulkan
                             hasActiveContext = true;
                             ApplyPipelineOverride(activeContext);
 
-                            // Only rebuild the resource planner when the new context has a
-                            // valid pipeline.  Null-pipeline contexts (e.g. ops emitted
-                            // outside the render pipeline scope) cannot provide valid resource
-                            // metadata and rebuilding would destroy physical images that may
-                            // still be in use by a previous frame's in-flight command buffer.
-                            if (activeContext.PipelineInstance is not null &&
-                                (!hasPlannerContext || RequiresResourcePlannerRebuild(plannerContext, activeContext)))
+                            // The physical resource plan is selected before command-buffer
+                            // recording starts. Do not rebuild it mid-recording: changing
+                            // VkImage handles after framebuffer attachment views/descriptors
+                            // have been resolved is a resize-time crash amplifier.
+                            if (activeContext.PipelineInstance is not null && !hasPlannerContext)
                             {
-                                UpdateResourcePlannerFromContext(activeContext);
                                 plannerContext = activeContext;
                                 hasPlannerContext = true;
+                            }
+                            else if (activeContext.PipelineInstance is not null &&
+                                RequiresResourcePlannerRebuild(plannerContext, activeContext))
+                            {
+                                Debug.VulkanWarningEvery(
+                                    $"Vulkan.ResourcePlanner.ContextChangeDuringRecord.{activeContext.PipelineIdentity}.{activeContext.ViewportIdentity}",
+                                    TimeSpan.FromSeconds(2),
+                                    "[VulkanResourcePlanner] Keeping pre-recorded physical plan during command-buffer recording despite context change. OldPipe={0} NewPipe={1} OldVp={2} NewVp={3}.",
+                                    plannerContext.PipelineIdentity,
+                                    activeContext.PipelineIdentity,
+                                    plannerContext.ViewportIdentity,
+                                    activeContext.ViewportIdentity);
                             }
 
                             activePassIndex = int.MinValue;
@@ -3364,9 +3387,9 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < barrierCapacity; i++)
             {
                 FrameBufferAttachmentSignature signature = signatures[i];
-                ImageLayout oldLayout = beginRendering ? signature.InitialLayout : signature.ReferenceLayout;
+                ImageLayout requestedOldLayout = beginRendering ? signature.InitialLayout : signature.ReferenceLayout;
                 ImageLayout newLayout = beginRendering ? signature.ReferenceLayout : signature.FinalLayout;
-                if (newLayout == ImageLayout.Undefined || oldLayout == newLayout)
+                if (newLayout == ImageLayout.Undefined)
                     continue;
 
                 var (target, _, mipLevel, layerIndex) = targets[i];
@@ -3385,6 +3408,10 @@ namespace XREngine.Rendering.Vulkan
                         i);
                     continue;
                 }
+
+                ImageLayout oldLayout = ResolveLiveBlitOldLayout(info, requestedOldLayout);
+                if (oldLayout == newLayout)
+                    continue;
 
                 bool oldLayoutIsRenderAttachment = !beginRendering;
                 bool newLayoutIsRenderAttachment = beginRendering;
@@ -3548,6 +3575,44 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        private void UpdatePhysicalGroupLayoutsForFbo(
+            XRFrameBuffer fbo,
+            FrameBufferAttachmentSignature[] signatures,
+            bool useReferenceLayouts)
+        {
+            var targets = fbo.Targets;
+            if (targets is null || signatures.Length == 0)
+                return;
+
+            int attachmentCount = Math.Min(targets.Length, signatures.Length);
+            for (int attachmentIndex = 0; attachmentIndex < attachmentCount; attachmentIndex++)
+            {
+                ImageLayout layout = useReferenceLayouts
+                    ? signatures[attachmentIndex].ReferenceLayout
+                    : signatures[attachmentIndex].FinalLayout;
+
+                if (layout == ImageLayout.Undefined)
+                    continue;
+
+                var (target, _, mipLevel, layerIndex) = targets[attachmentIndex];
+                switch (target)
+                {
+                    case XRRenderBuffer rb:
+                    {
+                        if (GetOrCreateAPIRenderObject(rb, true) is VkRenderBuffer vkRb && vkRb.PhysicalGroup is { } group)
+                            group.LastKnownLayout = layout;
+                        break;
+                    }
+                    case XRTexture tex:
+                    {
+                        if (GetOrCreateAPIRenderObject(tex, true) is IVkFrameBufferAttachmentSource attSrc)
+                            attSrc.UpdateAttachmentTrackedLayout(layout, mipLevel, layerIndex);
+                        break;
+                    }
+                }
+            }
+        }
+
         /// <summary>
         /// Queries the current tracked layout of each attachment backing the given FBO.
         /// Returns an array suitable for <see cref="VkFrameBuffer.ResolveRenderPassForPass"/>
@@ -3627,7 +3692,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         AspectMask = aspect,
                         BaseMipLevel = 0,
-                        LevelCount = Vk.RemainingMipLevels,
+                        LevelCount = Math.Max(1u, group.MipLevels),
                         BaseArrayLayer = 0,
                         LayerCount = Math.Max(group.Template.Layers, 1u),
                     },
@@ -3672,20 +3737,33 @@ namespace XREngine.Rendering.Vulkan
             {
                 planned.Group.EnsureAllocated(this);
 
-                // The barrier planner pre-computes OldLayout from the logical resource
-                // dependency graph. Only substitute the group's tracked layout when the
-                // planner has no concrete prior layout (UNDEFINED); otherwise keep the
-                // planned value so we don't accidentally suppress required transitions.
+                // The barrier planner pre-computes OldLayout from the logical dependency
+                // graph, but dynamic rendering, blits, and resource-plan replacement can
+                // change the live VkImage layout before the planned edge is emitted. Vulkan
+                // validation cares about the live subresource layout, so use the physical
+                // group's tracker whenever it has a concrete value.
                 ImageLayout effectiveOldLayout = planned.Previous.Layout;
                 ImageLayout groupLayout = planned.Group.LastKnownLayout;
-                if (effectiveOldLayout == ImageLayout.Undefined && groupLayout != ImageLayout.Undefined)
+                if (groupLayout != ImageLayout.Undefined &&
+                    groupLayout != effectiveOldLayout)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.Barrier.OldLayout.Reconciled.{planned.ResourceName}.{planned.PassIndex}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Reconciled planned oldLayout for '{0}' pass={1}: planned={2} tracked={3} next={4}.",
+                        planned.ResourceName,
+                        planned.PassIndex,
+                        effectiveOldLayout,
+                        groupLayout,
+                        planned.Next.Layout);
                     effectiveOldLayout = groupLayout;
+                }
 
                 ImageSubresourceRange range = new()
                 {
                     AspectMask = planned.Next.AspectMask,
                     BaseMipLevel = 0,
-                    LevelCount = 1,
+                    LevelCount = Math.Max(1u, planned.Group.MipLevels),
                     BaseArrayLayer = 0,
                     LayerCount = Math.Max(planned.Group.Template.Layers, 1u)
                 };

@@ -5,6 +5,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Resources;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan
@@ -104,6 +105,80 @@ namespace XREngine.Rendering.Vulkan
         private long _lastFrameCompletedTimestamp;
         private int _consecutiveNotReadyCount;
         private const int MaxConsecutiveNotReadyBeforeRecreate = 3;
+
+        private void DrainSkippedResizeFrameOps(string reason)
+        {
+            FrameOp[] droppedOps = DrainFrameOps(out _);
+            if (droppedOps.Length > 0)
+                MarkCommandBuffersDirty();
+
+            Debug.VulkanEvery(
+                $"Vulkan.Frame.{GetHashCode()}.ResizeSkip",
+                TimeSpan.FromMilliseconds(500),
+                "[Vulkan] Skipping frame while resize resources settle. Reason={0} DroppedFrameOps={1}",
+                reason,
+                droppedOps.Length);
+        }
+
+        private void WaitCurrentFrameSlotAndDrainRetiredResources()
+        {
+            if (_frameSlotTimelineValues is not null &&
+                currentFrame >= 0 &&
+                currentFrame < _frameSlotTimelineValues.Length)
+            {
+                ulong slotWaitValue = _frameSlotTimelineValues[currentFrame];
+                WaitForTimelineValue(_graphicsTimelineSemaphore, slotWaitValue);
+                SampleFrameTimingQueries(currentFrame);
+            }
+
+            DrainRetiredDescriptorPools();
+            DrainRetiredPipelines();
+            DrainRetiredBuffers();
+            DrainRetiredFramebuffers();
+            DrainRetiredImages();
+        }
+
+        private bool TryGetViewportResourceMismatch(out string reason)
+        {
+            reason = string.Empty;
+
+            var viewports = XRWindow.Viewports;
+            for (int i = 0; i < viewports.Count; i++)
+            {
+                XRViewport viewport = viewports[i];
+                if (viewport.Width <= 0 || viewport.Height <= 0)
+                    continue;
+
+                XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
+                RenderResourceGeneration? activeGeneration = instance.ActiveGeneration;
+                uint displayWidth = (uint)Math.Max(1, viewport.Width);
+                uint displayHeight = (uint)Math.Max(1, viewport.Height);
+                uint internalWidth = (uint)Math.Max(1, viewport.InternalWidth);
+                uint internalHeight = (uint)Math.Max(1, viewport.InternalHeight);
+
+                if (activeGeneration is null)
+                {
+                    reason = $"VP[{viewport.Index}] has no active resource generation; pending={instance.PendingGeneration?.Key.ToString() ?? "<none>"}";
+                    return true;
+                }
+
+                ResourceGenerationKey key = activeGeneration.Key;
+                if (key.DisplayWidth == displayWidth &&
+                    key.DisplayHeight == displayHeight &&
+                    key.InternalWidth == internalWidth &&
+                    key.InternalHeight == internalHeight)
+                {
+                    continue;
+                }
+
+                reason =
+                    $"VP[{viewport.Index}] active={key.DisplayWidth}x{key.DisplayHeight}/{key.InternalWidth}x{key.InternalHeight} " +
+                    $"current={displayWidth}x{displayHeight}/{internalWidth}x{internalHeight} pending={instance.PendingGeneration?.Key.ToString() ?? "<none>"}";
+                return true;
+            }
+
+            return false;
+        }
 
         private void ScheduleSwapchainRecreate(string reason)
         {
@@ -209,8 +284,11 @@ namespace XREngine.Rendering.Vulkan
                 _swapchainResizeLastChangedAt = 0;
             }
 
-            if (liveSurfaceValid &&
-                (liveSurfaceWidth != swapChainExtent.Width || liveSurfaceHeight != swapChainExtent.Height))
+            bool surfaceMatchesSwapchain = liveSurfaceValid &&
+                liveSurfaceWidth == swapChainExtent.Width &&
+                liveSurfaceHeight == swapChainExtent.Height;
+
+            if (liveSurfaceValid && !surfaceMatchesSwapchain)
             {
                 ScheduleSwapchainRecreate("Surface/swapchain size mismatch");
 
@@ -248,6 +326,9 @@ namespace XREngine.Rendering.Vulkan
                 if (pendingMatchesLive && resizeSettled)
                 {
                     RecreateSwapchainImmediately("Debounce elapsed before frame acquire (resize settled)");
+                    surfaceMatchesSwapchain = liveSurfaceValid &&
+                        liveSurfaceWidth == swapChainExtent.Width &&
+                        liveSurfaceHeight == swapChainExtent.Height;
                 }
                 else
                 {
@@ -261,6 +342,29 @@ namespace XREngine.Rendering.Vulkan
                         liveSurfaceHeight,
                         resizeSettled);
                 }
+            }
+
+            if (!liveSurfaceValid)
+            {
+                WaitCurrentFrameSlotAndDrainRetiredResources();
+                DrainSkippedResizeFrameOps("Live surface size is zero");
+                return;
+            }
+
+            if (_frameBufferInvalidated || !surfaceMatchesSwapchain)
+            {
+                WaitCurrentFrameSlotAndDrainRetiredResources();
+                DrainSkippedResizeFrameOps(
+                    $"Swapchain resize/recreate pending. Pending={_pendingSurfaceWidth}x{_pendingSurfaceHeight} " +
+                    $"Live={liveSurfaceWidth}x{liveSurfaceHeight} Swapchain={swapChainExtent.Width}x{swapChainExtent.Height}");
+                return;
+            }
+
+            if (TryGetViewportResourceMismatch(out string resourceMismatchReason))
+            {
+                WaitCurrentFrameSlotAndDrainRetiredResources();
+                DrainSkippedResizeFrameOps(resourceMismatchReason);
+                return;
             }
 
             // 1. Wait for the previous submission associated with this in-flight slot.

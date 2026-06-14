@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using System.Text;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
@@ -96,7 +97,8 @@ internal sealed class VulkanResourceAllocator
     public void RebuildPhysicalPlan(
         VulkanRenderer renderer,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
-        VulkanResourcePlanner planner)
+        VulkanResourcePlanner planner,
+        VulkanResourceExtentContext extentContext)
     {
         DestroyPhysicalImages(renderer);
         DestroyPhysicalBuffers(renderer);
@@ -110,11 +112,13 @@ internal sealed class VulkanResourceAllocator
 
         foreach (VulkanImageAliasGroup group in _aliasGroups.Values)
         {
-            Extent3D extent = ResolveExtent(group.CreateInfoTemplate.SizePolicy);
-            Format format = ResolveFormat(group.CreateInfoTemplate.FormatLabel);
+            Extent3D extent = ResolveExtent(group.CreateInfoTemplate.SizePolicy, extentContext);
+            Format format = ResolveFormat(group.CreateInfoTemplate);
             ImageUsageFlags usage = InferImageUsage(group, format, usageProfiles, planner);
+            uint mipLevels = ResolveMipLevelCount(group, extent, usage, planner);
+            SampleCountFlags samples = ResolveSampleCount(group.CreateInfoTemplate.Samples);
 
-            VulkanPhysicalImageGroup physicalGroup = new(group, extent, format, usage);
+            VulkanPhysicalImageGroup physicalGroup = new(group, extent, format, usage, mipLevels, samples);
             foreach (VulkanImageAllocation allocation in group.Allocations)
             {
                 physicalGroup.AddLogical(allocation);
@@ -122,6 +126,16 @@ internal sealed class VulkanResourceAllocator
             }
 
             _physicalGroups[group.Key] = physicalGroup;
+        }
+
+        foreach ((string viewName, TextureResourceDescriptor descriptor) in planner.TextureViewDescriptors)
+        {
+            string sourceName = string.IsNullOrWhiteSpace(descriptor.SourceTextureName)
+                ? planner.ResolveImageResourceName(viewName)
+                : planner.ResolveImageResourceName(descriptor.SourceTextureName!);
+
+            if (_resourceToPhysicalGroup.TryGetValue(sourceName, out VulkanPhysicalImageGroup? sourceGroup))
+                _resourceToPhysicalGroup[viewName] = sourceGroup;
         }
 
         foreach (VulkanBufferAliasGroup group in _bufferAliasGroups.Values)
@@ -140,6 +154,12 @@ internal sealed class VulkanResourceAllocator
 
         LogDeferredLightingPhysicalPlan(passMetadata, planner);
     }
+
+    public void RebuildPhysicalPlan(
+        VulkanRenderer renderer,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        VulkanResourcePlanner planner)
+        => RebuildPhysicalPlan(renderer, passMetadata, planner, new VulkanResourceExtentContext(1u, 1u, 1u, 1u));
 
     public bool TryGetPhysicalGroup(VulkanAliasGroupKey key, out VulkanPhysicalImageGroup? group)
         => _physicalGroups.TryGetValue(key, out group);
@@ -285,7 +305,7 @@ internal sealed class VulkanResourceAllocator
             foreach (FrameBufferAttachmentDescriptor attachment in descriptor?.Attachments ?? [])
             {
                 if (MatchesSlot(attachment.Attachment, slot) && !string.IsNullOrWhiteSpace(attachment.ResourceName))
-                    yield return attachment.ResourceName;
+                    yield return planner.ResolveImageResourceName(attachment.ResourceName);
             }
 
             yield break;
@@ -295,7 +315,7 @@ internal sealed class VulkanResourceAllocator
         {
             string textureName = resourceBinding["tex::".Length..];
             if (!string.IsNullOrWhiteSpace(textureName))
-                yield return textureName;
+                yield return planner.ResolveImageResourceName(textureName);
             yield break;
         }
 
@@ -307,7 +327,7 @@ internal sealed class VulkanResourceAllocator
             yield break;
         }
 
-        yield return resourceBinding;
+        yield return imageType ? planner.ResolveImageResourceName(resourceBinding) : resourceBinding;
     }
 
     private static bool IsImageResourceType(ERenderPassResourceType type)
@@ -354,16 +374,17 @@ internal sealed class VulkanResourceAllocator
         return false;
     }
 
-    private static Extent3D ResolveExtent(RenderResourceSizePolicy sizePolicy)
+    private static Extent3D ResolveExtent(
+        RenderResourceSizePolicy sizePolicy,
+        VulkanResourceExtentContext extentContext)
     {
         uint width;
         uint height;
 
-        var viewport = RuntimeEngine.Rendering.State.RenderingViewport;
-        uint windowWidth = viewport is null ? 1u : (uint)Math.Max(1, viewport.Width);
-        uint windowHeight = viewport is null ? 1u : (uint)Math.Max(1, viewport.Height);
-        uint internalWidth = viewport is null ? windowWidth : (uint)Math.Max(1, viewport.InternalWidth);
-        uint internalHeight = viewport is null ? windowHeight : (uint)Math.Max(1, viewport.InternalHeight);
+        uint windowWidth = Math.Max(extentContext.WindowWidth, 1u);
+        uint windowHeight = Math.Max(extentContext.WindowHeight, 1u);
+        uint internalWidth = Math.Max(extentContext.InternalWidth, 1u);
+        uint internalHeight = Math.Max(extentContext.InternalHeight, 1u);
 
         switch (sizePolicy.SizeClass)
         {
@@ -392,10 +413,20 @@ internal sealed class VulkanResourceAllocator
         return new Extent3D(width, height, 1);
     }
 
-    private static Format ResolveFormat(string? formatLabel)
+    private static Format ResolveFormat(VulkanImageCreateTemplate template)
     {
+        if (template.SizedInternalFormat is ESizedInternalFormat sizedFormat)
+            return VulkanRenderer.VkFormatConversions.FromSizedFormat(sizedFormat);
+
+        if (template.InternalFormat is EPixelInternalFormat internalFormat)
+            return VulkanRenderer.VkFormatConversions.FromPixelInternalFormat(internalFormat);
+
+        string? formatLabel = template.FormatLabel;
         if (string.IsNullOrWhiteSpace(formatLabel))
-            return Format.R8G8B8A8Unorm;
+            throw new InvalidOperationException("Vulkan image descriptor is missing a format.");
+
+        if (Enum.TryParse(formatLabel, ignoreCase: true, out ESizedInternalFormat sizedFromLabel))
+            return VulkanRenderer.VkFormatConversions.FromSizedFormat(sizedFromLabel);
 
         if (Enum.TryParse(formatLabel, ignoreCase: true, out Format parsed))
             return parsed;
@@ -407,9 +438,66 @@ internal sealed class VulkanResourceAllocator
             "rgb10a2" => Format.A2B10G10R10UnormPack32,
             "depth24stencil8" => Format.D24UnormS8Uint,
             "depth32" or "depth32f" => Format.D32Sfloat,
-            _ => Format.R8G8B8A8Unorm,
+            _ => throw new InvalidOperationException($"Unsupported Vulkan image format label '{formatLabel}'.")
         };
     }
+
+    private static uint ResolveMipLevelCount(
+        VulkanImageAliasGroup group,
+        Extent3D extent,
+        ImageUsageFlags usage,
+        VulkanResourcePlanner planner)
+    {
+        VulkanImageCreateTemplate template = group.CreateInfoTemplate;
+        uint requested = Math.Max(1u, template.MipPolicy.MipLevelCount);
+        foreach (VulkanImageAllocation allocation in group.Allocations)
+            requested = Math.Max(requested, ResolveRequiredMipLevelsFromFrameBuffers(allocation.Name, planner));
+
+        if (template.Samples > 1u)
+            return 1u;
+
+        uint maxLevels = 1u + (uint)BitOperations.Log2(Math.Max(Math.Max(extent.Width, extent.Height), extent.Depth));
+        uint clamped = Math.Clamp(requested, 1u, Math.Max(1u, maxLevels));
+
+        if (template.MipPolicy.AutoGenerateMipmaps
+            && (usage & ImageUsageFlags.TransferDstBit) == 0)
+        {
+            return 1u;
+        }
+
+        return clamped;
+    }
+
+    private static uint ResolveRequiredMipLevelsFromFrameBuffers(string resourceName, VulkanResourcePlanner planner)
+    {
+        uint required = 1u;
+        foreach (FrameBufferResourceDescriptor descriptor in planner.FrameBufferDescriptors.Values)
+        {
+            foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
+            {
+                string attachmentResourceName = planner.ResolveImageResourceName(attachment.ResourceName);
+                if (!string.Equals(attachmentResourceName, resourceName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (attachment.MipLevel >= 0)
+                    required = Math.Max(required, (uint)attachment.MipLevel + 1u);
+            }
+        }
+
+        return required;
+    }
+
+    private static SampleCountFlags ResolveSampleCount(uint samples)
+        => samples switch
+        {
+            <= 1u => SampleCountFlags.Count1Bit,
+            2u => SampleCountFlags.Count2Bit,
+            3u or 4u => SampleCountFlags.Count4Bit,
+            <= 8u => SampleCountFlags.Count8Bit,
+            <= 16u => SampleCountFlags.Count16Bit,
+            <= 32u => SampleCountFlags.Count32Bit,
+            _ => SampleCountFlags.Count64Bit
+        };
 
     private static ImageUsageFlags InferImageUsage(
         VulkanImageAliasGroup group,
@@ -423,6 +511,12 @@ internal sealed class VulkanResourceAllocator
 
         foreach (VulkanImageAllocation allocation in group.Allocations)
         {
+            if (allocation.Descriptor.Usage != RenderPipelineResourceUsage.None)
+            {
+                inferredFromDescriptor = true;
+                usage |= ToVkUsageFlags(allocation.Descriptor.Usage);
+            }
+
             if (!usageProfiles.TryGetValue(allocation.Name, out VulkanUsageProfile? profile))
                 continue;
 
@@ -450,7 +544,8 @@ internal sealed class VulkanResourceAllocator
             {
                 foreach (FrameBufferAttachmentDescriptor att in fboDescriptor.Attachments)
                 {
-                    if (!string.Equals(att.ResourceName, allocation.Name, StringComparison.OrdinalIgnoreCase))
+                    string attachmentResourceName = planner.ResolveImageResourceName(att.ResourceName);
+                    if (!string.Equals(attachmentResourceName, allocation.Name, StringComparison.OrdinalIgnoreCase))
                         continue;
 
                     inferredFromDescriptor = true;
@@ -504,6 +599,28 @@ internal sealed class VulkanResourceAllocator
         }
 
         return usage;
+    }
+
+    private static ImageUsageFlags ToVkUsageFlags(RenderPipelineResourceUsage usage)
+    {
+        ImageUsageFlags flags = 0;
+
+        if ((usage & RenderPipelineResourceUsage.SampledTexture) != 0)
+            flags |= ImageUsageFlags.SampledBit;
+        if ((usage & RenderPipelineResourceUsage.ColorAttachment) != 0)
+            flags |= ImageUsageFlags.ColorAttachmentBit;
+        if ((usage & RenderPipelineResourceUsage.DepthStencilAttachment) != 0)
+            flags |= ImageUsageFlags.DepthStencilAttachmentBit;
+        if ((usage & RenderPipelineResourceUsage.StorageImage) != 0)
+            flags |= ImageUsageFlags.StorageBit;
+        if ((usage & RenderPipelineResourceUsage.TransferSource) != 0)
+            flags |= ImageUsageFlags.TransferSrcBit;
+        if ((usage & RenderPipelineResourceUsage.TransferDestination) != 0)
+            flags |= ImageUsageFlags.TransferDstBit;
+        if ((usage & RenderPipelineResourceUsage.PresentSource) != 0)
+            flags |= ImageUsageFlags.TransferSrcBit;
+
+        return flags;
     }
 
     private static BufferUsageFlags InferBufferUsage(
@@ -608,7 +725,7 @@ internal sealed class VulkanResourceAllocator
                 "[VulkanResourceAllocator] Watched image group " +
                 $"key={group.Key} allowsAliasing={group.AllowsAliasing} allocated={group.IsAllocated} " +
                 $"image=0x{group.Image.Handle:X} extent={group.ResolvedExtent.Width}x{group.ResolvedExtent.Height}x{group.ResolvedExtent.Depth} " +
-                $"format={group.Format} usage={group.Usage} lastLayout={group.LastKnownLayout} " +
+                $"format={group.Format} usage={group.Usage} mips={group.MipLevels} samples={group.Samples} lastLayout={group.LastKnownLayout} " +
                 $"logical=[{DescribeLogicalImageAllocations(group.LogicalResources)}]");
         }
 
@@ -670,6 +787,9 @@ internal sealed class VulkanResourceAllocator
                 .Append(" lifetime=").Append(allocation.Lifetime)
                 .Append(" alias=").Append(allocation.SupportsAliasing)
                 .Append(" format=").Append(allocation.Descriptor.FormatLabel ?? "<null>")
+                .Append(" usage=").Append(allocation.Descriptor.Usage)
+                .Append(" samples=").Append(allocation.Descriptor.Samples)
+                .Append(" mips=").Append(Math.Max(1u, allocation.Descriptor.MipPolicy.MipLevelCount))
                 .Append(" size=").Append(allocation.SizePolicy);
         }
 
@@ -704,7 +824,7 @@ internal sealed class VulkanImageAliasGroup
     {
         Key = key;
         AllowsAliasing = true;
-        CreateInfoTemplate = VulkanImageCreateTemplate.FromDescriptor(key.AliasKey.SizePolicy, key.AliasKey.FormatLabel, key.AliasKey.ArrayLayers);
+        CreateInfoTemplate = VulkanImageCreateTemplate.FromDescriptor(key.AliasKey);
     }
 
     public VulkanAliasGroupKey Key { get; }
@@ -772,6 +892,12 @@ internal readonly record struct VulkanBufferAllocation(
     public bool SupportsAliasing => Request.SupportsAliasing;
 }
 
+internal readonly record struct VulkanResourceExtentContext(
+    uint WindowWidth,
+    uint WindowHeight,
+    uint InternalWidth,
+    uint InternalHeight);
+
 internal readonly record struct VulkanAliasGroupKey(
     VulkanAliasKey AliasKey,
     RenderResourceLifetime Lifetime,
@@ -801,10 +927,23 @@ internal readonly record struct VulkanBufferAliasGroupKey(
 internal readonly record struct VulkanImageCreateTemplate(
     RenderResourceSizePolicy SizePolicy,
     uint Layers,
-    string? FormatLabel)
+    string? FormatLabel,
+    ESizedInternalFormat? SizedInternalFormat,
+    EPixelInternalFormat? InternalFormat,
+    RenderPipelineResourceUsage Usage,
+    uint Samples,
+    RenderResourceMipPolicy MipPolicy)
 {
-    public static VulkanImageCreateTemplate FromDescriptor(RenderResourceSizePolicy sizePolicy, string? formatLabel, uint layers)
-        => new(sizePolicy, Math.Max(layers, 1u), formatLabel);
+    public static VulkanImageCreateTemplate FromDescriptor(VulkanAliasKey aliasKey)
+        => new(
+            aliasKey.SizePolicy,
+            Math.Max(aliasKey.ArrayLayers, 1u),
+            aliasKey.FormatLabel,
+            aliasKey.SizedInternalFormat,
+            aliasKey.InternalFormat,
+            aliasKey.Usage,
+            Math.Max(1u, aliasKey.Samples),
+            new RenderResourceMipPolicy(0u, Math.Max(1u, aliasKey.MipLevelCount)));
 }
 
 internal readonly record struct VulkanBufferCreateTemplate(
@@ -828,7 +967,9 @@ internal sealed class VulkanPhysicalImageGroup
         VulkanImageAliasGroup logicalGroup,
         Extent3D extent,
         Format format,
-        ImageUsageFlags usage)
+        ImageUsageFlags usage,
+        uint mipLevels,
+        SampleCountFlags samples)
     {
         Key = logicalGroup.Key;
         AllowsAliasing = logicalGroup.AllowsAliasing;
@@ -836,6 +977,8 @@ internal sealed class VulkanPhysicalImageGroup
         ResolvedExtent = extent;
         Format = format;
         Usage = usage;
+        MipLevels = Math.Max(1u, mipLevels);
+        Samples = samples;
     }
 
     public VulkanAliasGroupKey Key { get; }
@@ -844,6 +987,8 @@ internal sealed class VulkanPhysicalImageGroup
     public Extent3D ResolvedExtent { get; }
     public Format Format { get; }
     public ImageUsageFlags Usage { get; }
+    public uint MipLevels { get; }
+    public SampleCountFlags Samples { get; }
     public IReadOnlyList<VulkanImageAllocation> LogicalResources => _logicalResources;
     public bool IsAllocated => _allocated;
     public Image Image => _image;

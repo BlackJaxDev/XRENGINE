@@ -12,11 +12,13 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanResourcePlanner
 {
     private readonly Dictionary<string, TextureResourceDescriptor> _textures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, TextureResourceDescriptor> _textureViews = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, FrameBufferResourceDescriptor> _frameBuffers = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, BufferResourceDescriptor> _buffers = new(StringComparer.OrdinalIgnoreCase);
     private VulkanResourcePlan _plan = VulkanResourcePlan.Empty;
 
     public IReadOnlyDictionary<string, TextureResourceDescriptor> TextureDescriptors => _textures;
+    public IReadOnlyDictionary<string, TextureResourceDescriptor> TextureViewDescriptors => _textureViews;
     public IReadOnlyDictionary<string, FrameBufferResourceDescriptor> FrameBufferDescriptors => _frameBuffers;
     public IReadOnlyDictionary<string, BufferResourceDescriptor> BufferDescriptors => _buffers;
     public VulkanResourcePlan CurrentPlan => _plan;
@@ -24,6 +26,7 @@ internal sealed class VulkanResourcePlanner
     public void Sync(RenderResourceRegistry? registry)
     {
         _textures.Clear();
+        _textureViews.Clear();
         _frameBuffers.Clear();
         _buffers.Clear();
         _plan = VulkanResourcePlan.Empty;
@@ -32,7 +35,12 @@ internal sealed class VulkanResourcePlanner
             return;
 
         foreach ((string name, RenderTextureResource record) in registry.TextureRecords)
-            _textures[name] = record.Descriptor;
+        {
+            if (record.Descriptor.Kind == RenderPipelineResourceKind.TextureView)
+                _textureViews[name] = record.Descriptor;
+            else
+                _textures[name] = record.Descriptor;
+        }
 
         foreach ((string name, RenderFrameBufferResource record) in registry.FrameBufferRecords)
             _frameBuffers[name] = record.Descriptor;
@@ -44,7 +52,40 @@ internal sealed class VulkanResourcePlanner
     }
 
     public bool TryGetTextureDescriptor(string name, out TextureResourceDescriptor? descriptor)
+        => _textures.TryGetValue(name, out descriptor)
+            || _textureViews.TryGetValue(name, out descriptor);
+
+    public bool TryGetPhysicalTextureDescriptor(string name, out TextureResourceDescriptor? descriptor)
         => _textures.TryGetValue(name, out descriptor);
+
+    public bool TryGetTextureViewDescriptor(string name, out TextureResourceDescriptor? descriptor)
+        => _textureViews.TryGetValue(name, out descriptor);
+
+    public string ResolveImageResourceName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return name;
+
+        HashSet<string>? seen = null;
+        string current = name;
+        while (_textureViews.TryGetValue(current, out TextureResourceDescriptor? descriptor)
+            && !string.IsNullOrWhiteSpace(descriptor.SourceTextureName))
+        {
+            seen ??= new(StringComparer.OrdinalIgnoreCase);
+            if (!seen.Add(current))
+                break;
+
+            current = descriptor.SourceTextureName!;
+        }
+
+        return current;
+    }
+
+    public bool TryResolveImageResourceName(string name, out string resolvedName)
+    {
+        resolvedName = ResolveImageResourceName(name);
+        return _textures.ContainsKey(resolvedName);
+    }
 
     public bool TryGetFrameBufferDescriptor(string name, out FrameBufferResourceDescriptor? descriptor)
         => _frameBuffers.TryGetValue(name, out descriptor);
@@ -121,6 +162,14 @@ internal readonly record struct VulkanAllocationRequest(TextureResourceDescripto
     public string Name => Descriptor.Name;
     public RenderResourceLifetime Lifetime => Descriptor.Lifetime;
     public RenderResourceSizePolicy SizePolicy => Descriptor.SizePolicy;
+    public RenderPipelineResourceUsage Usage => Descriptor.Usage;
+    public ESizedInternalFormat? SizedInternalFormat => Descriptor.SizedInternalFormat;
+    public EPixelInternalFormat? InternalFormat => Descriptor.InternalFormat;
+    public EPixelFormat? PixelFormat => Descriptor.PixelFormat;
+    public EPixelType? PixelType => Descriptor.PixelType;
+    public uint Samples => Math.Max(1u, Descriptor.Samples);
+    public RenderResourceMipPolicy MipPolicy
+        => Descriptor.MipPolicy with { MipLevelCount = Math.Max(1u, Descriptor.MipPolicy.MipLevelCount) };
     public bool IsStereoCompatible => Descriptor.StereoCompatible;
     // Temporarily disable physical image aliasing in Vulkan.
     // Aliased transient images can carry incompatible layout expectations across
@@ -130,8 +179,14 @@ internal readonly record struct VulkanAllocationRequest(TextureResourceDescripto
     public VulkanAliasKey AliasKey => new(
         Descriptor.SizePolicy,
         Descriptor.FormatLabel,
+        Descriptor.SizedInternalFormat,
+        Descriptor.InternalFormat,
+        Descriptor.Usage,
+        Math.Max(1u, Descriptor.Samples),
+        Math.Max(1u, Descriptor.MipPolicy.MipLevelCount),
         Descriptor.ArrayLayers,
-        Descriptor.StereoCompatible);
+        Descriptor.StereoCompatible,
+        Descriptor.RequiresStorageUsage);
 }
 
 internal readonly record struct VulkanBufferAllocationRequest(BufferResourceDescriptor Descriptor)
@@ -153,8 +208,14 @@ internal readonly record struct VulkanBufferAliasKey(
 internal readonly record struct VulkanAliasKey(
     RenderResourceSizePolicy SizePolicy,
     string? FormatLabel,
+    ESizedInternalFormat? SizedInternalFormat,
+    EPixelInternalFormat? InternalFormat,
+    RenderPipelineResourceUsage Usage,
+    uint Samples,
+    uint MipLevelCount,
     uint ArrayLayers,
-    bool StereoCompatible);
+    bool StereoCompatible,
+    bool RequiresStorageUsage);
 
 internal sealed class VulkanResourcePlan
 {

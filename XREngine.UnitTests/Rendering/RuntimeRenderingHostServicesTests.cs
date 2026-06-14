@@ -487,6 +487,10 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
+        public void RecordRenderResourceChurn(string resourceKind, string resourceName, string eventName, string? reason = null)
+        {
+        }
+
         public byte[] ReadAllBytes(string filePath)
             => Array.Empty<byte>();
 

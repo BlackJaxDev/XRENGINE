@@ -27,7 +27,7 @@ public unsafe partial class VulkanRenderer
             if (mipLevel <= 0)
                 return default;
 
-            uint baseMip = (uint)Math.Max(mipLevel, 0);
+            uint baseMip = ClampAttachmentMipLevel(mipLevel);
             return new AttachmentViewKey(baseMip, 1, 0, 1, ImageViewType.Type1D, AspectFlags);
         }
 

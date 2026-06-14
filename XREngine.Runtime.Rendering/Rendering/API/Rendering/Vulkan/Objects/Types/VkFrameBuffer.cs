@@ -760,7 +760,9 @@ public unsafe partial class VulkanRenderer
             RenderPassResourceUsage usage)
         {
             if (signature.Role == AttachmentRole.Color)
-                return ImageLayout.ColorAttachmentOptimal;
+                return signature.ReferenceLayout == ImageLayout.General
+                    ? ImageLayout.General
+                    : ImageLayout.ColorAttachmentOptimal;
 
             return usage.Access == ERenderGraphAccess.Read
                 ? ImageLayout.DepthStencilReadOnlyOptimal
@@ -912,6 +914,12 @@ public unsafe partial class VulkanRenderer
             source.EnsureAttachmentLayout(depthStencilAttachment);
 
             ImageView view = source.GetAttachmentView(mipLevel, layerIndex);
+            if (view.Handle == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Texture '{texture.Name ?? texture.GetDescribingName()}' could not provide a Vulkan image view for framebuffer attachment '{attachment}'.");
+            }
+
             return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, source.DescriptorAspect, source.DescriptorUsage);
         }
 
@@ -969,8 +977,11 @@ public unsafe partial class VulkanRenderer
             // chain). Sampled depth/stencil attachments also need to leave the
             // pass in a read-only layout; otherwise later sampled descriptors
             // will mismatch the actual image layout.
+            bool storageCapable = (source.Usage & ImageUsageFlags.StorageBit) != 0;
             ImageLayout finalLayout = role == AttachmentRole.Color
-                ? ImageLayout.ShaderReadOnlyOptimal
+                ? storageCapable
+                    ? ImageLayout.General
+                    : ImageLayout.ShaderReadOnlyOptimal
                 : (source.Usage & ImageUsageFlags.SampledBit) != 0
                     ? ImageLayout.DepthStencilReadOnlyOptimal
                     : ImageLayout.DepthStencilAttachmentOptimal;
@@ -988,7 +999,9 @@ public unsafe partial class VulkanRenderer
             // require read-only depth (sampling the same depth they test against) opt in via
             // render-pass metadata, which overrides this reference layout to read-only.
             ImageLayout referenceLayout = role == AttachmentRole.Color
-                ? ImageLayout.ColorAttachmentOptimal
+                ? storageCapable
+                    ? ImageLayout.General
+                    : ImageLayout.ColorAttachmentOptimal
                 : ImageLayout.DepthStencilAttachmentOptimal;
 
             return new FrameBufferAttachmentSignature(

@@ -23,9 +23,10 @@ public sealed class RenderTextureResource
         if (Instance == texture)
             return;
 
-        // Destroy synchronously so GL handle deletion happens before the new resource
-        // attaches, avoiding NVIDIA driver state corruption from leaked texture/FBO bindings.
-        Instance?.Destroy(true);
+        // The registry is an ownership map, not a lifetime boundary. The same logical
+        // resource can be rebound between a texture and one of its views while render
+        // resources are being enriched; destroying the previous instance here invalidates
+        // live descriptors and framebuffer attachments.
         Instance = texture;
     }
 
@@ -54,7 +55,6 @@ public sealed class RenderFrameBufferResource
         if (Instance == frameBuffer)
             return;
 
-        Instance?.Destroy(true);
         Instance = frameBuffer;
     }
 
@@ -83,7 +83,6 @@ public sealed class RenderBufferResource
         if (Instance == buffer)
             return;
 
-        Instance?.Destroy(true);
         Instance = buffer;
     }
 
@@ -112,7 +111,6 @@ public sealed class RenderRenderBufferResource
         if (Instance == renderBuffer)
             return;
 
-        Instance?.Destroy(true);
         Instance = renderBuffer;
     }
 
@@ -156,13 +154,7 @@ public sealed class RenderResourceRegistry
 
         RenderFrameBufferResource record = _frameBuffers.GetOrAdd(descriptor.Name, static (_, d) => new RenderFrameBufferResource(d), descriptor);
         if (!ReferenceEquals(record.Descriptor, descriptor))
-        {
             record.UpdateDescriptor(descriptor);
-        }
-        else
-        {
-            record.UpdateDescriptor(descriptor);
-        }
 
         return record;
     }
@@ -183,12 +175,17 @@ public sealed class RenderResourceRegistry
         ArgumentNullException.ThrowIfNull(texture);
         string name = texture.Name ?? throw new InvalidOperationException("Texture name must be set before binding to the registry.");
 
-        descriptor ??= RenderResourceDescriptorFactory.FromTexture(texture);
-        descriptor = descriptor with { Name = name };
-
-        RenderTextureResource record = RegisterTextureDescriptor(descriptor);
-        if (record.Instance is XRTexture existingTexture && !ReferenceEquals(existingTexture, texture))
-            DestroyFrameBuffersReferencing(existingTexture);
+        RenderTextureResource record;
+        if (descriptor is null && _textures.TryGetValue(name, out RenderTextureResource? existingRecord))
+        {
+            record = existingRecord;
+        }
+        else
+        {
+            descriptor ??= RenderResourceDescriptorFactory.FromTexture(texture);
+            descriptor = descriptor with { Name = name };
+            record = RegisterTextureDescriptor(descriptor);
+        }
 
         record.Bind(texture);
     }
@@ -198,10 +195,18 @@ public sealed class RenderResourceRegistry
         ArgumentNullException.ThrowIfNull(frameBuffer);
         string name = frameBuffer.Name ?? throw new InvalidOperationException("FrameBuffer name must be set before binding to the registry.");
 
-        descriptor ??= RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer);
-        descriptor = descriptor with { Name = name };
+        RenderFrameBufferResource record;
+        if (descriptor is null && _frameBuffers.TryGetValue(name, out RenderFrameBufferResource? existingRecord))
+        {
+            record = existingRecord;
+        }
+        else
+        {
+            descriptor ??= RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer);
+            descriptor = descriptor with { Name = name };
+            record = RegisterFrameBufferDescriptor(descriptor);
+        }
 
-        RenderFrameBufferResource record = RegisterFrameBufferDescriptor(descriptor);
         record.Bind(frameBuffer);
     }
 
@@ -213,10 +218,18 @@ public sealed class RenderResourceRegistry
         if (string.IsNullOrWhiteSpace(name))
             throw new InvalidOperationException("Data buffer attribute name must be set before binding to the registry.");
 
-        descriptor ??= RenderResourceDescriptorFactory.FromBuffer(buffer);
-        descriptor = descriptor with { Name = name };
+        RenderBufferResource record;
+        if (descriptor is null && _buffers.TryGetValue(name, out RenderBufferResource? existingRecord))
+        {
+            record = existingRecord;
+        }
+        else
+        {
+            descriptor ??= RenderResourceDescriptorFactory.FromBuffer(buffer);
+            descriptor = descriptor with { Name = name };
+            record = RegisterBufferDescriptor(descriptor);
+        }
 
-        RenderBufferResource record = RegisterBufferDescriptor(descriptor);
         record.Bind(buffer);
     }
 
@@ -236,10 +249,18 @@ public sealed class RenderResourceRegistry
         ArgumentNullException.ThrowIfNull(renderBuffer);
         string name = renderBuffer.Name ?? throw new InvalidOperationException("RenderBuffer name must be set before binding to the registry.");
 
-        descriptor ??= RenderResourceDescriptorFactory.FromRenderBuffer(renderBuffer);
-        descriptor = descriptor with { Name = name };
+        RenderRenderBufferResource record;
+        if (descriptor is null && _renderBuffers.TryGetValue(name, out RenderRenderBufferResource? existingRecord))
+        {
+            record = existingRecord;
+        }
+        else
+        {
+            descriptor ??= RenderResourceDescriptorFactory.FromRenderBuffer(renderBuffer);
+            descriptor = descriptor with { Name = name };
+            record = RegisterRenderBufferDescriptor(descriptor);
+        }
 
-        RenderRenderBufferResource record = RegisterRenderBufferDescriptor(descriptor);
         record.Bind(renderBuffer);
     }
 

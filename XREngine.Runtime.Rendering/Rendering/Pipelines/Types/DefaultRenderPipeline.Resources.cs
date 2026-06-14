@@ -26,6 +26,12 @@ public partial class DefaultRenderPipeline
     private const RenderPipelineResourceUsage SampledStorageTexture =
         RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.StorageImage;
 
+    private const RenderPipelineResourceUsage PrecomputedColorTexture =
+        RenderPipelineResourceUsage.SampledTexture |
+        RenderPipelineResourceUsage.ColorAttachment |
+        RenderPipelineResourceUsage.TransferSource |
+        RenderPipelineResourceUsage.TransferDestination;
+
     internal ulong BuildResourceFeatureMaskForGenerationKey()
     {
         DefaultPipelineResourceFeature mask = DefaultPipelineResourceFeature.None;
@@ -138,7 +144,7 @@ public partial class DefaultRenderPipeline
             .RequiresStorageUsage()
             .Add();
 
-        Texture(builder, BRDFTextureName, RenderResourceSizePolicy.Absolute(2048u, 2048u), RenderPipelineResourceUsage.SampledTexture,
+        Texture(builder, BRDFTextureName, RenderResourceSizePolicy.Absolute(2048u, 2048u), PrecomputedColorTexture,
             EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f,
             CreateBRDFTexture)
             .Mips(new RenderResourceMipPolicy(AutoGenerateMipmaps: false, RequireImmutableStorage: false))

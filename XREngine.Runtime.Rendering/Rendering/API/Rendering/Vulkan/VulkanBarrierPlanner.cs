@@ -307,7 +307,7 @@ internal sealed class VulkanBarrierPlanner
             foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
             {
                 if (MatchesSlot(attachment.Attachment, slot) && !string.IsNullOrWhiteSpace(attachment.ResourceName))
-                    yield return attachment.ResourceName;
+                    yield return planner.ResolveImageResourceName(attachment.ResourceName);
             }
 
             yield break;
@@ -317,7 +317,7 @@ internal sealed class VulkanBarrierPlanner
         {
             string textureName = resourceBinding["tex::".Length..];
             if (!string.IsNullOrWhiteSpace(textureName))
-                yield return textureName;
+                yield return planner.ResolveImageResourceName(textureName);
             yield break;
         }
 
@@ -325,7 +325,7 @@ internal sealed class VulkanBarrierPlanner
         if (planner.TryGetBufferDescriptor(resourceBinding, out _))
             yield break;
 
-        yield return resourceBinding;
+        yield return planner.ResolveImageResourceName(resourceBinding);
     }
 
     private static IEnumerable<string> ExpandBufferLogicalResources(string resourceBinding, VulkanResourcePlanner planner)
@@ -414,7 +414,7 @@ internal sealed class VulkanBarrierPlanner
         public static PlannedImageState FromUsage(RenderPassResourceUsage usage, VulkanPhysicalImageGroup group, ERenderGraphPassStage passStage)
         {
             ImageAspectFlags aspect = ResolveAspect(group, usage.ResourceType);
-            ImageLayout layout = ResolveLayout(usage.ResourceType);
+            ImageLayout layout = ResolveLayout(usage.ResourceType, group);
             PipelineStageFlags stages = ResolveStage(usage.ResourceType, passStage);
             AccessFlags access = ResolveAccess(usage.ResourceType, usage.Access);
             return new(layout, stages, access, aspect);
@@ -427,7 +427,7 @@ internal sealed class VulkanBarrierPlanner
             ERenderGraphPassStage fallbackStage)
         {
             ImageAspectFlags aspect = ResolveAspect(group, resourceType);
-            ImageLayout layout = ResolveLayoutFromSync(state.Layout, resourceType);
+            ImageLayout layout = ResolveLayoutFromSync(state.Layout, resourceType, group);
             PipelineStageFlags stages = ResolveStageFromSync(state.StageMask, resourceType, fallbackStage);
             AccessFlags access = ResolveAccessFromSync(state.AccessMask, resourceType);
             return new(layout, stages, access, aspect);
@@ -478,12 +478,14 @@ internal sealed class VulkanBarrierPlanner
             => HashCode.Combine((int)StageMask, (int)AccessMask);
     }
 
-    private static ImageLayout ResolveLayout(ERenderPassResourceType type)
+    private static ImageLayout ResolveLayout(ERenderPassResourceType type, VulkanPhysicalImageGroup? group = null)
         => type switch
         {
             ERenderPassResourceType.ColorAttachment or ERenderPassResourceType.ResolveAttachment => ImageLayout.ColorAttachmentOptimal,
             ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment => ImageLayout.DepthStencilAttachmentOptimal,
-            ERenderPassResourceType.SampledTexture => ImageLayout.ShaderReadOnlyOptimal,
+            ERenderPassResourceType.SampledTexture => IsDepthOrStencilGroup(group)
+                ? ImageLayout.DepthStencilReadOnlyOptimal
+                : ImageLayout.ShaderReadOnlyOptimal,
             ERenderPassResourceType.StorageTexture => ImageLayout.General,
             ERenderPassResourceType.TransferSource => ImageLayout.TransferSrcOptimal,
             ERenderPassResourceType.TransferDestination => ImageLayout.TransferDstOptimal,
@@ -674,22 +676,27 @@ internal sealed class VulkanBarrierPlanner
             : flags;
     }
 
-    private static ImageLayout ResolveLayoutFromSync(RenderGraphImageLayout? layout, ERenderPassResourceType resourceType)
+    private static ImageLayout ResolveLayoutFromSync(
+        RenderGraphImageLayout? layout,
+        ERenderPassResourceType resourceType,
+        VulkanPhysicalImageGroup? group)
     {
         if (!layout.HasValue)
-            return ResolveLayout(resourceType);
+            return ResolveLayout(resourceType, group);
 
         return layout.Value switch
         {
             RenderGraphImageLayout.Undefined => ImageLayout.Undefined,
             RenderGraphImageLayout.ColorAttachment => ImageLayout.ColorAttachmentOptimal,
             RenderGraphImageLayout.DepthStencilAttachment => ImageLayout.DepthStencilAttachmentOptimal,
-            RenderGraphImageLayout.ShaderReadOnly => ImageLayout.ShaderReadOnlyOptimal,
+            RenderGraphImageLayout.ShaderReadOnly => IsDepthOrStencilGroup(group)
+                ? ImageLayout.DepthStencilReadOnlyOptimal
+                : ImageLayout.ShaderReadOnlyOptimal,
             RenderGraphImageLayout.General => ImageLayout.General,
             RenderGraphImageLayout.TransferSource => ImageLayout.TransferSrcOptimal,
             RenderGraphImageLayout.TransferDestination => ImageLayout.TransferDstOptimal,
             RenderGraphImageLayout.Present => ImageLayout.PresentSrcKhr,
-            _ => ResolveLayout(resourceType)
+            _ => ResolveLayout(resourceType, group)
         };
     }
 
@@ -711,6 +718,9 @@ internal sealed class VulkanBarrierPlanner
             or Format.D32SfloatS8Uint
             or Format.X8D24UnormPack32
             or Format.D16UnormS8Uint;
+
+    private static bool IsDepthOrStencilGroup(VulkanPhysicalImageGroup? group)
+        => group is not null && IsDepthFormat(group.Format);
 
     private static bool FormatHasStencil(Format format)
         => format is Format.D24UnormS8Uint or Format.D32SfloatS8Uint or Format.D16UnormS8Uint;

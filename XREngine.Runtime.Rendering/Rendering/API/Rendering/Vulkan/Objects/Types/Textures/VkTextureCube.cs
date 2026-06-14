@@ -24,8 +24,9 @@ public unsafe partial class VulkanRenderer
         {
             if (layerIndex >= 0 && layerIndex < 6)
             {
-                uint baseMip = (uint)Math.Max(mipLevel, 0);
-                return new AttachmentViewKey(baseMip, 1, (uint)layerIndex, 1, ImageViewType.Type2D, AspectFlags);
+                uint baseMip = ClampAttachmentMipLevel(mipLevel);
+                uint baseLayer = ClampAttachmentLayerIndex(layerIndex);
+                return new AttachmentViewKey(baseMip, 1, baseLayer, 1, ImageViewType.Type2D, AspectFlags);
             }
 
             return default;
