@@ -116,7 +116,8 @@ internal sealed class VulkanBarrierPlanner
                     .Where(e =>
                         !e.DependencyOnly &&
                         e.ResourceType == usage.ResourceType &&
-                        string.Equals(e.ResourceName, usage.ResourceName, StringComparison.OrdinalIgnoreCase))
+                        string.Equals(e.ResourceName, usage.ResourceName, StringComparison.OrdinalIgnoreCase) &&
+                        e.SubresourceRange.Equals(usage.SubresourceRange))
                     .LastOrDefault();
 
                 if (ShouldTrackImage(usage.ResourceType))
@@ -136,53 +137,67 @@ internal sealed class VulkanBarrierPlanner
         RenderGraphSynchronizationEdge? syncEdge,
         QueueOwnershipConfig ownership)
     {
-        foreach (string logicalResource in ExpandImageLogicalResources(usage.ResourceName, resourcePlanner))
+        foreach (ImageResourceBinding binding in ExpandImageLogicalResources(usage, resourcePlanner))
         {
+            string logicalResource = binding.ResourceName;
             if (!resourceAllocator.TryGetPhysicalGroupForResource(logicalResource, out VulkanPhysicalImageGroup? group) || group is null)
                 continue;
 
-            PlannedImageState desiredState = syncEdge is null
-                ? PlannedImageState.FromUsage(usage, group, pass.Stage)
-                : PlannedImageState.FromSyncState(syncEdge.ConsumerState, usage.ResourceType, group, pass.Stage);
-
-            PlannedImageBarrier? plannedBarrier = null;
-            uint desiredOwnerQueue = ownership.ResolveOwner(pass.Stage, usage.ResourceType);
-            uint previousOwnerQueue = desiredOwnerQueue;
-            if (_lastImageQueueOwners.TryGetValue(logicalResource, out uint existingOwner))
-                previousOwnerQueue = existingOwner;
-
-            uint srcQueueFamily = previousOwnerQueue != desiredOwnerQueue ? previousOwnerQueue : Vk.QueueFamilyIgnored;
-            uint dstQueueFamily = previousOwnerQueue != desiredOwnerQueue ? desiredOwnerQueue : Vk.QueueFamilyIgnored;
-
-            if (_lastImageStates.TryGetValue(logicalResource, out PlannedImageState previousState))
+            ResolvedImageSubresourceRange bindingRange = ResolveSubresourceRange(binding.Range, group);
+            foreach (ResolvedImageSubresourceRange range in ExpandTrackingRanges(bindingRange, splitMips: !binding.Range.IsWholeResource))
             {
-                if (syncEdge is not null)
+                string stateKey = BuildImageStateKey(logicalResource, range, group);
+                PlannedImageState desiredState = syncEdge is null
+                    ? PlannedImageState.FromUsage(usage, group, pass.Stage)
+                    : PlannedImageState.FromSyncState(syncEdge.ConsumerState, usage.ResourceType, group, pass.Stage);
+
+                PlannedImageBarrier? plannedBarrier = null;
+                uint desiredOwnerQueue = ownership.ResolveOwner(pass.Stage, usage.ResourceType);
+                uint previousOwnerQueue = desiredOwnerQueue;
+                if (_lastImageQueueOwners.TryGetValue(stateKey, out uint existingOwner))
+                    previousOwnerQueue = existingOwner;
+                else if (!string.Equals(stateKey, logicalResource, StringComparison.OrdinalIgnoreCase) &&
+                    _lastImageQueueOwners.TryGetValue(logicalResource, out existingOwner))
                 {
-                    PlannedImageState syncPreviousState = PlannedImageState.FromSyncState(syncEdge.ProducerState, usage.ResourceType, group, pass.Stage);
-                    if (syncPreviousState.Layout != ImageLayout.Undefined || previousState.Layout == ImageLayout.Undefined)
-                        previousState = syncPreviousState;
+                    previousOwnerQueue = existingOwner;
                 }
 
-                if (!previousState.Equals(desiredState))
-                    plannedBarrier = new PlannedImageBarrier(pass.PassIndex, logicalResource, group, previousState, desiredState, srcQueueFamily, dstQueueFamily);
-            }
-            else
-            {
-                plannedBarrier = new PlannedImageBarrier(
-                    pass.PassIndex,
-                    logicalResource,
-                    group,
-                    PlannedImageState.Initial(desiredState.AspectMask),
-                    desiredState,
-                    srcQueueFamily,
-                    dstQueueFamily);
-            }
+                uint srcQueueFamily = previousOwnerQueue != desiredOwnerQueue ? previousOwnerQueue : Vk.QueueFamilyIgnored;
+                uint dstQueueFamily = previousOwnerQueue != desiredOwnerQueue ? desiredOwnerQueue : Vk.QueueFamilyIgnored;
 
-            if (plannedBarrier.HasValue)
-                AddImageBarrier(plannedBarrier.Value);
+                if (_lastImageStates.TryGetValue(stateKey, out PlannedImageState previousState) ||
+                    (!string.Equals(stateKey, logicalResource, StringComparison.OrdinalIgnoreCase) &&
+                        _lastImageStates.TryGetValue(logicalResource, out previousState)))
+                {
+                    if (syncEdge is not null)
+                    {
+                        PlannedImageState syncPreviousState = PlannedImageState.FromSyncState(syncEdge.ProducerState, usage.ResourceType, group, pass.Stage);
+                        if (syncPreviousState.Layout != ImageLayout.Undefined || previousState.Layout == ImageLayout.Undefined)
+                            previousState = syncPreviousState;
+                    }
 
-            _lastImageStates[logicalResource] = desiredState;
-            _lastImageQueueOwners[logicalResource] = desiredOwnerQueue;
+                    if (!previousState.Equals(desiredState))
+                        plannedBarrier = new PlannedImageBarrier(pass.PassIndex, logicalResource, group, range, previousState, desiredState, srcQueueFamily, dstQueueFamily);
+                }
+                else
+                {
+                    plannedBarrier = new PlannedImageBarrier(
+                        pass.PassIndex,
+                        logicalResource,
+                        group,
+                        range,
+                        PlannedImageState.Initial(desiredState.AspectMask),
+                        desiredState,
+                        srcQueueFamily,
+                        dstQueueFamily);
+                }
+
+                if (plannedBarrier.HasValue)
+                    AddImageBarrier(plannedBarrier.Value);
+
+                _lastImageStates[stateKey] = desiredState;
+                _lastImageQueueOwners[stateKey] = desiredOwnerQueue;
+            }
         }
     }
 
@@ -282,8 +297,9 @@ internal sealed class VulkanBarrierPlanner
             or ERenderPassResourceType.TransferSource
             or ERenderPassResourceType.TransferDestination;
 
-    private static IEnumerable<string> ExpandImageLogicalResources(string resourceBinding, VulkanResourcePlanner planner)
+    private static IEnumerable<ImageResourceBinding> ExpandImageLogicalResources(RenderPassResourceUsage usage, VulkanResourcePlanner planner)
     {
+        string resourceBinding = usage.ResourceName;
         if (string.IsNullOrWhiteSpace(resourceBinding))
             yield break;
 
@@ -307,7 +323,9 @@ internal sealed class VulkanBarrierPlanner
             foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
             {
                 if (MatchesSlot(attachment.Attachment, slot) && !string.IsNullOrWhiteSpace(attachment.ResourceName))
-                    yield return planner.ResolveImageResourceName(attachment.ResourceName);
+                    yield return new ImageResourceBinding(
+                        planner.ResolveImageResourceName(attachment.ResourceName),
+                        ResolveAttachmentRange(attachment, usage.SubresourceRange));
             }
 
             yield break;
@@ -317,7 +335,7 @@ internal sealed class VulkanBarrierPlanner
         {
             string textureName = resourceBinding["tex::".Length..];
             if (!string.IsNullOrWhiteSpace(textureName))
-                yield return planner.ResolveImageResourceName(textureName);
+                yield return new ImageResourceBinding(planner.ResolveImageResourceName(textureName), usage.SubresourceRange);
             yield break;
         }
 
@@ -325,7 +343,7 @@ internal sealed class VulkanBarrierPlanner
         if (planner.TryGetBufferDescriptor(resourceBinding, out _))
             yield break;
 
-        yield return planner.ResolveImageResourceName(resourceBinding);
+        yield return new ImageResourceBinding(planner.ResolveImageResourceName(resourceBinding), usage.SubresourceRange);
     }
 
     private static IEnumerable<string> ExpandBufferLogicalResources(string resourceBinding, VulkanResourcePlanner planner)
@@ -384,10 +402,85 @@ internal sealed class VulkanBarrierPlanner
         return false;
     }
 
+    private static RenderGraphSubresourceRange ResolveAttachmentRange(
+        FrameBufferAttachmentDescriptor attachment,
+        RenderGraphSubresourceRange usageRange)
+    {
+        if (!usageRange.IsWholeResource)
+            return usageRange;
+
+        uint mipLevel = (uint)Math.Max(attachment.MipLevel, 0);
+        if (attachment.LayerIndex < 0)
+            return new RenderGraphSubresourceRange(mipLevel, 1u, 0u, RenderGraphSubresourceRange.Remaining);
+
+        return new RenderGraphSubresourceRange(mipLevel, 1u, (uint)attachment.LayerIndex, 1u);
+    }
+
+    private static ResolvedImageSubresourceRange ResolveSubresourceRange(
+        RenderGraphSubresourceRange range,
+        VulkanPhysicalImageGroup group)
+    {
+        uint mipLevels = Math.Max(group.MipLevels, 1u);
+        uint layers = Math.Max(group.Template.Layers, 1u);
+        uint baseMip = Math.Min(range.BaseMipLevel, mipLevels - 1u);
+        uint baseLayer = Math.Min(range.BaseArrayLayer, layers - 1u);
+        uint levelCount = range.MipLevelCount == RenderGraphSubresourceRange.Remaining
+            ? mipLevels - baseMip
+            : Math.Min(Math.Max(range.MipLevelCount, 1u), mipLevels - baseMip);
+        uint layerCount = range.ArrayLayerCount == RenderGraphSubresourceRange.Remaining
+            ? layers - baseLayer
+            : Math.Min(Math.Max(range.ArrayLayerCount, 1u), layers - baseLayer);
+
+        return new ResolvedImageSubresourceRange(baseMip, levelCount, baseLayer, layerCount);
+    }
+
+    private static string BuildImageStateKey(
+        string logicalResource,
+        ResolvedImageSubresourceRange range,
+        VulkanPhysicalImageGroup group)
+    {
+        if (range.CoversWholeImage(group))
+            return logicalResource;
+
+        return $"{logicalResource}|m{range.BaseMipLevel}:{range.LevelCount}|l{range.BaseArrayLayer}:{range.LayerCount}";
+    }
+
+    private static IEnumerable<ResolvedImageSubresourceRange> ExpandTrackingRanges(
+        ResolvedImageSubresourceRange range,
+        bool splitMips)
+    {
+        if (!splitMips || range.LevelCount <= 1u)
+        {
+            yield return range;
+            yield break;
+        }
+
+        for (uint mip = range.BaseMipLevel; mip < range.BaseMipLevel + range.LevelCount; mip++)
+            yield return range with { BaseMipLevel = mip, LevelCount = 1u };
+    }
+
+    private readonly record struct ImageResourceBinding(
+        string ResourceName,
+        RenderGraphSubresourceRange Range);
+
+    internal readonly record struct ResolvedImageSubresourceRange(
+        uint BaseMipLevel,
+        uint LevelCount,
+        uint BaseArrayLayer,
+        uint LayerCount)
+    {
+        public bool CoversWholeImage(VulkanPhysicalImageGroup group)
+            => BaseMipLevel == 0u &&
+               LevelCount >= Math.Max(group.MipLevels, 1u) &&
+               BaseArrayLayer == 0u &&
+               LayerCount >= Math.Max(group.Template.Layers, 1u);
+    }
+
     internal readonly record struct PlannedImageBarrier(
         int PassIndex,
         string ResourceName,
         VulkanPhysicalImageGroup Group,
+        ResolvedImageSubresourceRange Range,
         PlannedImageState Previous,
         PlannedImageState Next,
         uint SrcQueueFamilyIndex,

@@ -15,6 +15,9 @@ uniform float PaniniCrop;
 uniform vec2 PaniniViewExtents;
 uniform vec3 BrownConradyRadial;
 uniform vec2 BrownConradyTangential;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 
 vec2 ApplyLensDistortion(vec2 uv, float intensity, vec2 center)
 {
@@ -89,7 +92,10 @@ void main()
     if (clipXY.x > 1.0 || clipXY.y > 1.0)
         discard;
 
-    vec2 uv = XRENGINE_ClipXYToScreenUV(clipXY);
+    vec2 uv = clamp(
+        XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)),
+        vec2(0.0),
+        vec2(1.0));
     vec2 sourceUv = clamp(ApplyLensDistortionByMode(uv), vec2(0.0), vec2(1.0));
     OutColor = texture(PostProcessOutputTexture, sourceUv);
 }

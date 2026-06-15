@@ -187,6 +187,7 @@ namespace XREngine.Rendering.Vulkan
             "VK_KHR_draw_indirect_count",
             "VK_KHR_synchronization2",
             "VK_KHR_shader_draw_parameters",
+            "VK_EXT_shader_viewport_index_layer",
             "VK_EXT_index_type_uint8",
             "VK_EXT_descriptor_indexing",
             "VK_KHR_buffer_device_address",

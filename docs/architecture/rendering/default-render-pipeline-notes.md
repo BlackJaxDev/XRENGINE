@@ -399,10 +399,25 @@ Current modes:
 - `3` = RMSE buffer
 - `4` = decoded normal
 - `5` = depth
+- `6` = directional shadow factor
+- `7` = directional shadow receiver depth
+- `8` = directional shadow sample depth
+- `9` = directional shadow single-tap lit result
+- `10` = ambient occlusion sampled by light-combine
 
 ---
 
-## 19. Temporal AA: Static Edge Rejection and Debug Views
+## 19. Ambient Occlusion Coordinate Convention
+
+**Rule:** AO shaders store and sample texture UVs in framebuffer texture space, but all projection/reconstruction helpers must convert through the active clip-space Y convention.
+
+`AOCommon.glsl` owns that conversion with `AOTextureUVFromClipXY` and `AOClipXYFromTextureUV`. Do not hand-roll `clipXY * 0.5 + 0.5` in individual AO passes or resolve shaders. Vulkan and OpenGL differ in clip-space orientation through `ClipSpaceYDirection`; skipping the helper makes AO appear vertically flipped at the deferred light-combine point.
+
+Use deferred debug view `10` to validate the final AO sampling orientation against raw albedo or depth before changing individual AO kernels.
+
+---
+
+## 20. Temporal AA: Static Edge Rejection and Debug Views
 
 **Rule:** Temporal reprojection needs to stay conservative on moving or disoccluded pixels, but static silhouettes must still accumulate enough history to hide the camera jitter.
 

@@ -106,6 +106,7 @@ namespace XREngine.Rendering.Models.Materials
                 [nameof(EEngineUniform.ScreenOrigin)] = EUniformRequirements.ViewportDimensions,
                 [nameof(EEngineUniform.ClipSpaceYDirection)] = EUniformRequirements.ClipSpacePolicy,
                 [nameof(EEngineUniform.ClipDepthRange)] = EUniformRequirements.ClipSpacePolicy,
+                [nameof(EEngineUniform.FramebufferTextureYDirection)] = EUniformRequirements.ClipSpacePolicy,
 
                 // RenderTime flag — time uniforms
                 [nameof(EEngineUniform.RenderTime)] = EUniformRequirements.RenderTime,

@@ -1677,6 +1677,9 @@ namespace XREngine.Rendering
             program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)DepthMode);
             program.Uniform(EEngineUniform.ClipSpaceYDirection.ToStringFast(), (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
             program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
+            program.Uniform(
+                EEngineUniform.FramebufferTextureYDirection.ToStringFast(),
+                (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.Current.CurrentRenderBackend));
 
             Parameters.SetUniforms(program);
         }

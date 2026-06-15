@@ -60,10 +60,11 @@ public static class RenderDiagnosticsFlags
 
     /// <summary>
     /// Deferred-lighting debug visualization mode for newly-created <c>DefaultRenderPipeline</c>
-    /// instances. Values: 0=Disabled, 1=RawAlbedo, 2=DirectLighting, 3=Rmse, 4=Normal, 5=Depth
-    /// (see <c>DeferredLightCombine.fs</c>). Existing pipelines retain their per-instance setting;
-    /// change takes effect on the next pipeline construction (e.g. swapping cameras / scenes).
-    /// Seed: <c>XRE_DEFERRED_DEBUG=&lt;0..5&gt;</c>.
+    /// instances. Values: 0=Disabled, 1=RawAlbedo, 2=DirectLighting, 3=Rmse, 4=Normal, 5=Depth,
+    /// 6..9=DirectionalShadow probes, 10=AmbientOcclusion, 11..14=DirectionalShadow UV probes
+    /// (see <c>DeferredLightCombine.fs</c>).
+    /// Existing pipelines retain their per-instance setting; change takes effect on the next pipeline
+    /// construction (e.g. swapping cameras / scenes). Seed: <c>XRE_DEFERRED_DEBUG=&lt;0..14&gt;</c>.
     /// </summary>
     public static volatile int DeferredDebugView;
 
@@ -203,7 +204,7 @@ public static class RenderDiagnosticsFlags
         try
         {
             string? raw = Environment.GetEnvironmentVariable("XRE_DEFERRED_DEBUG");
-            if (!string.IsNullOrWhiteSpace(raw) && int.TryParse(raw, out int mode) && mode >= 0 && mode <= 6)
+            if (!string.IsNullOrWhiteSpace(raw) && int.TryParse(raw, out int mode) && mode >= 0 && mode <= 14)
                 DeferredDebugView = mode;
         }
         catch
@@ -334,11 +335,11 @@ public static class RenderDiagnosticsFlags
     public static void SetUploadStageLogging(bool value) => UploadStageLogging = value;
     public static void SetCrashBreadcrumbs(bool value) => CrashBreadcrumbs = value;
 
-    /// <summary>Set the default deferred debug view for newly-created pipelines (0..5).</summary>
+    /// <summary>Set the default deferred debug view for newly-created pipelines (0..14).</summary>
     public static void SetDeferredDebugView(int value)
     {
         if (value < 0) value = 0;
-        else if (value > 5) value = 5;
+        else if (value > 14) value = 14;
         DeferredDebugView = value;
     }
 

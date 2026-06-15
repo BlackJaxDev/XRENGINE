@@ -577,10 +577,16 @@ public partial class DefaultRenderPipeline
             {
                 DepthTest = new DepthTest()
                 {
-                    Enabled = ERenderParamUsage.Enabled,
+                    Enabled = ERenderParamUsage.Disabled,
                     Function = EComparison.Always,
                     UpdateDepth = false,
-                }
+                },
+                StencilTest = new StencilTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
         upscaleMaterial.SettingUniforms += (_, program) => TsrUpscaleFBO_SettingUniforms(program);
@@ -645,6 +651,11 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                StencilTest = new()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
             }
         };
 
@@ -690,6 +701,11 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                StencilTest = new()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
             }
         };
 
@@ -780,6 +796,11 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                StencilTest = new()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
             }
         };
 
@@ -890,6 +911,11 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
+                StencilTest = new()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
             }
         };
 
@@ -969,6 +995,11 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Lequal,
                     UpdateDepth = false,
                 },
+                StencilTest = new StencilTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
                 RequiredEngineUniforms = EUniformRequirements.None
             }
         };
@@ -1145,7 +1176,13 @@ public partial class DefaultRenderPipeline
                     Enabled = ERenderParamUsage.Disabled,
                     Function = EComparison.Always,
                     UpdateDepth = false,
-                }
+                },
+                StencilTest = new StencilTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
 

@@ -126,13 +126,17 @@ public unsafe partial class VulkanRenderer
             get
             {
                 RefreshPhysicalGroupImageIfStale();
+                if (_physicalGroup is not null)
+                {
+                    _currentImageLayout = ResolvePhysicalGroupWholeImageLayout();
+                    return _currentImageLayout;
+                }
+
                 if (_hasPartialAttachmentLayouts)
                     return TryResolveWholeImageAttachmentLayout(out ImageLayout layout)
                         ? layout
                         : ImageLayout.Undefined;
 
-                if (_physicalGroup is not null)
-                    _currentImageLayout = _physicalGroup.LastKnownLayout;
                 return _currentImageLayout;
             }
         }
@@ -362,13 +366,14 @@ public unsafe partial class VulkanRenderer
             get
             {
                 RefreshPhysicalGroupImageIfStale();
+                if (_physicalGroup is not null)
+                    return ResolvePhysicalGroupWholeImageLayout();
+
                 if (_hasPartialAttachmentLayouts)
                     return TryResolveWholeImageAttachmentLayout(out ImageLayout layout)
                         ? layout
                         : ImageLayout.Undefined;
 
-                if (_physicalGroup is not null)
-                    return _physicalGroup.LastKnownLayout;
                 return _currentImageLayout;
             }
         }
@@ -410,8 +415,19 @@ public unsafe partial class VulkanRenderer
         {
             RefreshPhysicalGroupImageIfStale();
 
+            if (_physicalGroup is not null)
+            {
+                uint baseMip = ClampAttachmentMipLevel(mipLevel);
+                uint baseLayer = layerIndex < 0 ? 0u : ClampAttachmentLayerIndex(layerIndex);
+                uint layerCount = layerIndex < 0 ? Math.Max(ResolvedArrayLayers, 1u) : 1u;
+                ImageLayout groupLayout = _physicalGroup.GetKnownLayout(baseMip, 1u, baseLayer, layerCount);
+                return groupLayout != ImageLayout.Undefined
+                    ? groupLayout
+                    : _physicalGroup.LastKnownLayout;
+            }
+
             if (!_hasPartialAttachmentLayouts)
-                return _physicalGroup is not null ? _physicalGroup.LastKnownLayout : _currentImageLayout;
+                return _currentImageLayout;
 
             AttachmentLayoutKey key = BuildAttachmentLayoutKey(mipLevel, layerIndex);
             if (_attachmentLayouts.TryGetValue(key, out ImageLayout layout))
@@ -423,7 +439,20 @@ public unsafe partial class VulkanRenderer
             if (_hasPartialAttachmentLayouts)
                 return ImageLayout.Undefined;
 
-            return _physicalGroup is not null ? _physicalGroup.LastKnownLayout : _currentImageLayout;
+            return _currentImageLayout;
+        }
+
+        private ImageLayout ResolvePhysicalGroupWholeImageLayout()
+        {
+            if (_physicalGroup is null)
+                return _currentImageLayout;
+
+            uint mipLevels = Math.Max(ResolvedMipLevels, 1u);
+            uint arrayLayers = Math.Max(ResolvedArrayLayers, 1u);
+            ImageLayout knownLayout = _physicalGroup.GetKnownLayout(0u, mipLevels, 0u, arrayLayers);
+            return knownLayout != ImageLayout.Undefined
+                ? knownLayout
+                : _physicalGroup.LastKnownLayout;
         }
 
         /// <inheritdoc />
@@ -437,7 +466,12 @@ public unsafe partial class VulkanRenderer
 
             BeginPartialAttachmentLayoutTracking();
 
+            uint baseMip = ClampAttachmentMipLevel(mipLevel);
+            uint baseLayer = layerIndex < 0 ? 0u : ClampAttachmentLayerIndex(layerIndex);
+            uint layerCount = layerIndex < 0 ? Math.Max(ResolvedArrayLayers, 1u) : 1u;
+
             _attachmentLayouts[BuildAttachmentLayoutKey(mipLevel, layerIndex)] = layout;
+            _physicalGroup?.UpdateKnownLayout(layout, baseMip, 1u, baseLayer, layerCount);
             UpdateWholeImageLayoutFromAttachmentTracking();
             HasUploadedData = true;
             MarkDescriptorClean();
@@ -810,7 +844,6 @@ public unsafe partial class VulkanRenderer
                 _arrayLayersOverride = Math.Max(_physicalGroup.Template.Layers, 1u);
                 _mipLevelsOverride = Math.Max(1u, _physicalGroup.MipLevels);
                 _samplesOverride = _physicalGroup.Samples;
-                _currentImageLayout = _physicalGroup.LastKnownLayout;
                 return;
             }
 
@@ -839,6 +872,7 @@ public unsafe partial class VulkanRenderer
             ResetAttachmentLayoutTracking();
             CreateImageView(default);
             _currentImageLayout = _physicalGroup.LastKnownLayout;
+            MarkDescriptorDirty();
 
             // The physical group may have been transitioned to an initial layout during
             // allocation (see TransitionNewPhysicalImagesToInitialLayout). Adopt that
@@ -1095,13 +1129,48 @@ public unsafe partial class VulkanRenderer
 
             AttachmentViewKey key = BuildAttachmentViewKey(mipLevel, layerIndex);
             if (key == default)
+            {
+                if (BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(ResolveLogicalResourceName() ?? Data.Name))
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.BloomDiag.AttachmentView.Primary.{ResolveLogicalResourceName() ?? Data.Name}.{mipLevel}.{layerIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[BloomDiag][Vulkan] attachmentView texture='{0}' requestedMip={1} resolvedMip=0 layer={2} key=primary view=0x{3:X} image=0x{4:X} mips={5} layers={6}",
+                        ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
+                        mipLevel,
+                        layerIndex,
+                        _view.Handle,
+                        _image.Handle,
+                        ResolvedMipLevels,
+                        ResolvedArrayLayers);
+                }
                 return _view;
+            }
 
             if (!_attachmentViews.TryGetValue(key, out ImageView cached))
             {
                 cached = CreateView(key);
                 if (cached.Handle != 0)
                     _attachmentViews[key] = cached;
+            }
+
+            if (BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(ResolveLogicalResourceName() ?? Data.Name))
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.BloomDiag.AttachmentView.{ResolveLogicalResourceName() ?? Data.Name}.{mipLevel}.{layerIndex}.{key.BaseMipLevel}.{key.BaseArrayLayer}.{cached.Handle}",
+                    TimeSpan.FromSeconds(1),
+                    "[BloomDiag][Vulkan] attachmentView texture='{0}' requestedMip={1} resolvedMip={2} requestedLayer={3} baseLayer={4} levelCount={5} layerCount={6} view=0x{7:X} image=0x{8:X} mips={9} layers={10}",
+                    ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
+                    mipLevel,
+                    key.BaseMipLevel,
+                    layerIndex,
+                    key.BaseArrayLayer,
+                    key.LevelCount,
+                    key.LayerCount,
+                    cached.Handle,
+                    _image.Handle,
+                    ResolvedMipLevels,
+                    ResolvedArrayLayers);
             }
 
             return cached;
@@ -1191,7 +1260,7 @@ public unsafe partial class VulkanRenderer
             if (!_hasPartialAttachmentLayouts)
             {
                 layout = _physicalGroup is not null
-                    ? _physicalGroup.LastKnownLayout
+                    ? ResolvePhysicalGroupWholeImageLayout()
                     : _currentImageLayout;
                 return layout != ImageLayout.Undefined;
             }
@@ -1237,14 +1306,12 @@ public unsafe partial class VulkanRenderer
             if (TryResolveWholeImageAttachmentLayout(out ImageLayout commonLayout))
             {
                 _currentImageLayout = commonLayout;
-                if (_physicalGroup is not null)
+                if (_physicalGroup is not null && Math.Max(ResolvedMipLevels, 1u) == 1u && Math.Max(ResolvedArrayLayers, 1u) == 1u)
                     _physicalGroup.LastKnownLayout = commonLayout;
                 return;
             }
 
             _currentImageLayout = ImageLayout.Undefined;
-            if (_physicalGroup is not null)
-                _physicalGroup.LastKnownLayout = ImageLayout.Undefined;
         }
 
         private void BeginPartialAttachmentLayoutTracking()
@@ -1258,8 +1325,6 @@ public unsafe partial class VulkanRenderer
             ImageLayout wholeImageLayout = _physicalGroup is not null
                 ? _physicalGroup.LastKnownLayout
                 : _currentImageLayout;
-            if (_physicalGroup is not null)
-                _physicalGroup.LastKnownLayout = ImageLayout.Undefined;
 
             if (wholeImageLayout == ImageLayout.Undefined)
                 return;

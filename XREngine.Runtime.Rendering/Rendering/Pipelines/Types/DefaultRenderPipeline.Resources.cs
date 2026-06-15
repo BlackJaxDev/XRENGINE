@@ -32,6 +32,10 @@ public partial class DefaultRenderPipeline
         RenderPipelineResourceUsage.TransferSource |
         RenderPipelineResourceUsage.TransferDestination;
 
+    private const RenderPipelineResourceUsage BloomColorTexture = PrecomputedColorTexture;
+
+    private const int BloomMaxMipmapLevel = 4;
+
     internal ulong BuildResourceFeatureMaskForGenerationKey()
     {
         DefaultPipelineResourceFeature mask = DefaultPipelineResourceFeature.None;
@@ -58,6 +62,7 @@ public partial class DefaultRenderPipeline
     protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {
         DeclareCoreTextures(builder);
+        DeclareAmbientOcclusionResources(builder);
         DeclareTextureViews(builder);
         DeclareMsaaDeferredResources(builder);
         DeclareForwardPrePassResources(builder);
@@ -148,6 +153,56 @@ public partial class DefaultRenderPipeline
             EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f,
             CreateBRDFTexture)
             .Mips(new RenderResourceMipPolicy(AutoGenerateMipmaps: false, RequireImmutableStorage: false))
+            .Add();
+    }
+
+    private void DeclareAmbientOcclusionResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        RenderResourceSizePolicy halfSize = RenderResourceSizePolicy.Internal(0.5f);
+        uint layerCount = DeclaredLayerCount(builder);
+
+        Texture(builder, AmbientOcclusionRawTextureName, internalSize, PrecomputedColorTexture,
+            EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f,
+            CreateAmbientOcclusionRawTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
+            .Add();
+
+        Texture(builder, HBAOPlusRawTextureName, internalSize, PrecomputedColorTexture,
+            EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f,
+            CreateHBAOPlusRawTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
+            .Add();
+
+        Texture(builder, HBAOPlusBlurIntermediateTextureName, internalSize, PrecomputedColorTexture,
+            EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f,
+            CreateHBAOPlusBlurIntermediateTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
+            .Add();
+
+        Texture(builder, GTAORawTextureName, halfSize, PrecomputedColorTexture,
+            EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f,
+            CreateGTAORawTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
+            .Add();
+
+        Texture(builder, GTAOBlurIntermediateTextureName, halfSize, PrecomputedColorTexture,
+            EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f,
+            CreateGTAOBlurIntermediateTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
+            .Add();
+
+        builder.Texture(AmbientOcclusionNoiseTextureName)
+            .Size(RenderResourceSizePolicy.Absolute(4u, 4u))
+            .Usage(RenderPipelineResourceUsage.SampledTexture)
+            .Format(EPixelInternalFormat.RG, EPixelFormat.Rg, EPixelType.Float)
+            .SizedFormat(ESizedInternalFormat.Rg16f)
+            .Optional()
             .Add();
     }
 
@@ -396,6 +451,17 @@ public partial class DefaultRenderPipeline
             CreateFinalPostProcessOutputTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .Add();
+
+        Texture(builder, BloomBlurTextureName, internalSize, BloomColorTexture,
+            ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
+            CreateBloomBlurTexture)
+            .Layers(layerCount)
+            .StereoCompatible(builder.Profile.Stereo)
+            .Mips(new RenderResourceMipPolicy(
+                MipLevelCount: BloomMaxMipmapLevel + 1u,
+                AutoGenerateMipmaps: false,
+                RequireImmutableStorage: true))
             .Add();
 
         builder.FrameBuffer(PostProcessOutputFBOName)
@@ -689,6 +755,158 @@ public partial class DefaultRenderPipeline
         aoTexture.Name = AmbientOcclusionIntensityTextureName;
         aoTexture.SamplerName = AmbientOcclusionIntensityTextureName;
         return aoTexture;
+    }
+
+    private XRTexture CreateAmbientOcclusionRawTexture()
+        => CreateAmbientOcclusionScratchTexture(
+            AmbientOcclusionRawTextureName,
+            AmbientOcclusionIntensityTextureName,
+            InternalWidth,
+            InternalHeight,
+            linearFiltering: false);
+
+    private XRTexture CreateHBAOPlusRawTexture()
+        => CreateAmbientOcclusionScratchTexture(
+            HBAOPlusRawTextureName,
+            "HBAOInputTexture",
+            InternalWidth,
+            InternalHeight,
+            linearFiltering: false);
+
+    private XRTexture CreateHBAOPlusBlurIntermediateTexture()
+        => CreateAmbientOcclusionScratchTexture(
+            HBAOPlusBlurIntermediateTextureName,
+            "HBAOInputTexture",
+            InternalWidth,
+            InternalHeight,
+            linearFiltering: false);
+
+    private XRTexture CreateGTAORawTexture()
+        => CreateAmbientOcclusionScratchTexture(
+            GTAORawTextureName,
+            "GTAOInputTexture",
+            Math.Max(1u, InternalWidth / 2u),
+            Math.Max(1u, InternalHeight / 2u),
+            linearFiltering: false);
+
+    private XRTexture CreateGTAOBlurIntermediateTexture()
+        => CreateAmbientOcclusionScratchTexture(
+            GTAOBlurIntermediateTextureName,
+            "GTAOInputTexture",
+            Math.Max(1u, InternalWidth / 2u),
+            Math.Max(1u, InternalHeight / 2u),
+            linearFiltering: true);
+
+    private XRTexture CreateAmbientOcclusionScratchTexture(
+        string textureName,
+        string samplerName,
+        uint width,
+        uint height,
+        bool linearFiltering)
+    {
+        var minFilter = linearFiltering ? ETexMinFilter.Linear : ETexMinFilter.Nearest;
+        var magFilter = linearFiltering ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
+
+        if (Stereo)
+        {
+            var texture = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                Math.Max(1u, width),
+                Math.Max(1u, height),
+                EPixelInternalFormat.R16f,
+                EPixelFormat.Red,
+                EPixelType.HalfFloat,
+                EFrameBufferAttachment.ColorAttachment0);
+            texture.Resizable = false;
+            texture.SizedInternalFormat = ESizedInternalFormat.R16f;
+            texture.OVRMultiViewParameters = new(0, 2u);
+            texture.Name = textureName;
+            texture.SamplerName = samplerName;
+            texture.MinFilter = minFilter;
+            texture.MagFilter = magFilter;
+            texture.UWrap = ETexWrapMode.ClampToEdge;
+            texture.VWrap = ETexWrapMode.ClampToEdge;
+            return texture;
+        }
+
+        var aoTexture = XRTexture2D.CreateFrameBufferTexture(
+            Math.Max(1u, width),
+            Math.Max(1u, height),
+            EPixelInternalFormat.R16f,
+            EPixelFormat.Red,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        aoTexture.Resizable = false;
+        aoTexture.SizedInternalFormat = ESizedInternalFormat.R16f;
+        aoTexture.Name = textureName;
+        aoTexture.SamplerName = samplerName;
+        aoTexture.MinFilter = minFilter;
+        aoTexture.MagFilter = magFilter;
+        aoTexture.UWrap = ETexWrapMode.ClampToEdge;
+        aoTexture.VWrap = ETexWrapMode.ClampToEdge;
+        return aoTexture;
+    }
+
+    private XRTexture CreateBloomBlurTexture()
+    {
+        uint width = (uint)Math.Max(1, InternalWidth);
+        uint height = (uint)Math.Max(1, InternalHeight);
+        int maxMipLevel = Math.Min(BloomMaxMipmapLevel, XRTexture.GetSmallestMipmapLevel(width, height));
+        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
+        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
+        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
+
+        if (Stereo)
+        {
+            var texture = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                width,
+                height,
+                internalFormat,
+                EPixelFormat.Rgba,
+                pixelType);
+            texture.OVRMultiViewParameters = new(0, 2u);
+            ConfigureBloomBlurTexture(texture, sized, maxMipLevel);
+            return texture;
+        }
+
+        var mono = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            internalFormat,
+            EPixelFormat.Rgba,
+            pixelType,
+            EFrameBufferAttachment.ColorAttachment0);
+        ConfigureBloomBlurTexture(mono, sized, maxMipLevel);
+        return mono;
+    }
+
+    private static void ConfigureBloomBlurTexture(XRTexture2D texture, ESizedInternalFormat sized, int maxMipLevel)
+    {
+        texture.Resizable = false;
+        texture.SizedInternalFormat = sized;
+        texture.LargestMipmapLevel = 0;
+        texture.SmallestAllowedMipmapLevel = maxMipLevel;
+        texture.MinFilter = ETexMinFilter.LinearMipmapLinear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = BloomBlurTextureName;
+        texture.Name = BloomBlurTextureName;
+    }
+
+    private static void ConfigureBloomBlurTexture(XRTexture2DArray texture, ESizedInternalFormat sized, int maxMipLevel)
+    {
+        texture.Resizable = false;
+        texture.SizedInternalFormat = sized;
+        texture.LargestMipmapLevel = 0;
+        texture.SmallestAllowedMipmapLevel = maxMipLevel;
+        texture.MinFilter = ETexMinFilter.LinearMipmapLinear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = BloomBlurTextureName;
+        texture.Name = BloomBlurTextureName;
     }
 
     private RenderPipelineResourceLayoutBuilder.TextureSpecBuilder Texture(

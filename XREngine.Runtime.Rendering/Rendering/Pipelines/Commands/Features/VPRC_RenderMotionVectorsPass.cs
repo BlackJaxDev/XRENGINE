@@ -1,9 +1,11 @@
+using System;
 using System.Collections.Generic;
 using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.RenderGraph;
 using Silk.NET.OpenGL;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -83,8 +85,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             var rs = ActivePipelineInstance.RenderState;
+            string? targetName = rs.CurrentRenderTargetBinding?.Name;
+            int passIndex = string.IsNullOrWhiteSpace(targetName)
+                ? int.MinValue
+                : ResolvePassIndex($"RenderMotionVectors_{targetName}");
 
             //Debug.Out($"[Velocity] Motion vectors begin. GPU={GPUDispatch} PassCount={RenderPasses.Count}");
+            using var renderGraphPassScope = passIndex != int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                : default;
             using var overrideTicket = rs.PushOverrideMaterial(material);
             // Rasterize the motion-vector pass against the same unjittered projection
             // used for the reprojection uniforms so coverage and depth testing line up.
@@ -119,6 +128,48 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             //Debug.Out("[Velocity] Motion vectors end.");
+        }
+
+        private int ResolvePassIndex(string passName)
+        {
+            var metadata = ParentPipeline?.PassMetadata;
+            if (metadata is null)
+                return int.MinValue;
+
+            foreach (RenderPassMetadata pass in metadata)
+            {
+                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
+                    return pass.PassIndex;
+            }
+
+            return int.MinValue;
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            if (RuntimeEngine.Rendering.State.IsSceneCapturePass || RenderPasses.Length == 0)
+                return;
+
+            string? targetName = context.CurrentRenderTarget?.Name;
+            if (string.IsNullOrWhiteSpace(targetName))
+                return;
+
+            var builder = context.GetOrCreateSyntheticPass($"RenderMotionVectors_{targetName}", ERenderGraphPassStage.Graphics);
+            builder
+                .UseEngineDescriptors()
+                .UseMaterialDescriptors()
+                .UseColorAttachment(
+                    MakeFboColorResource(targetName),
+                    context.CurrentRenderTarget!.ColorAccess,
+                    context.CurrentRenderTarget.ConsumeColorLoadOp(),
+                    context.CurrentRenderTarget.GetColorStoreOp())
+                .UseDepthAttachment(
+                    MakeFboDepthResource(targetName),
+                    ERenderGraphAccess.Read,
+                    context.CurrentRenderTarget.ConsumeDepthLoadOp(),
+                    context.CurrentRenderTarget.GetDepthStoreOp());
         }
     }
 }

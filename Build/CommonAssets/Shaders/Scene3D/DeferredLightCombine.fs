@@ -93,7 +93,11 @@ uniform bool SpecularOcclusionEnabled = false;
 uniform vec3 GlobalAmbient = vec3(0.03f);
 
 // Debug: set via XRE_DEFERRED_DEBUG env var.
-// 0 = normal, 1 = raw albedo, 2 = InLo, 3 = RMSE, 4 = normal, 5 = depth, 6 = world pos
+// 0 = normal, 1 = raw albedo, 2 = InLo, 3 = RMSE, 4 = normal, 5 = depth,
+// 6 = directional shadow factor, 7 = directional receiver depth,
+// 8 = directional sample depth, 9 = directional single-tap lit,
+// 10 = sampled ambient occlusion,
+// 11/12 = directional local shadow UV x/y, 13/14 = atlas UV x/y
 uniform int DeferredDebugMode = 0;
 
 // Multi-bounce AO approximation — Jimenez et al. 2016 Section 5
@@ -371,6 +375,8 @@ void main()
                 if (DeferredDebugMode == 2) { OutLo = vec4(InLo, 1.0f); return; }              // Light volume accumulation
                 if (DeferredDebugMode == 3) { OutLo = vec4(rmse.rgb, 1.0f); return; }          // RMSE (roughness, metallic, specular)
                 if (DeferredDebugMode == 4) { OutLo = vec4(normal * 0.5f + 0.5f, 1.0f); return; } // Decoded normal
+                if ((DeferredDebugMode >= 6 && DeferredDebugMode <= 9) || (DeferredDebugMode >= 11 && DeferredDebugMode <= 14)) { OutLo = vec4(InLo, 1.0f); return; } // Directional debug from the light shader
+                if (DeferredDebugMode == 10) { OutLo = vec4(vec3(ao), 1.0f); return; }          // AO after deferred sampling/power
         }
 
         vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);

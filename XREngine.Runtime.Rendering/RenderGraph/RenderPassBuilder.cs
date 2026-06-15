@@ -47,6 +47,9 @@ public sealed class RenderPassBuilder
     public RenderPassBuilder UseColorAttachment(string resourceName, ERenderGraphAccess access = ERenderGraphAccess.ReadWrite, ERenderPassLoadOp load = ERenderPassLoadOp.Load, ERenderPassStoreOp store = ERenderPassStoreOp.Store)
         => AddUsage(resourceName, ERenderPassResourceType.ColorAttachment, access, load, store);
 
+    public RenderPassBuilder UseColorAttachmentMip(string resourceName, uint mipLevel, ERenderGraphAccess access = ERenderGraphAccess.ReadWrite, ERenderPassLoadOp load = ERenderPassLoadOp.Load, ERenderPassStoreOp store = ERenderPassStoreOp.Store)
+        => AddUsage(resourceName, ERenderPassResourceType.ColorAttachment, access, load, store, SingleMipRange(mipLevel));
+
     public RenderPassBuilder UseDepthAttachment(string resourceName, ERenderGraphAccess access = ERenderGraphAccess.ReadWrite, ERenderPassLoadOp load = ERenderPassLoadOp.Load, ERenderPassStoreOp store = ERenderPassStoreOp.Store)
         => AddUsage(resourceName, ERenderPassResourceType.DepthAttachment, access, load, store);
 
@@ -55,6 +58,18 @@ public sealed class RenderPassBuilder
 
     public RenderPassBuilder SampleTexture(string resourceName)
         => AddUsage(resourceName, ERenderPassResourceType.SampledTexture, ERenderGraphAccess.Read, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+
+    public RenderPassBuilder SampleTextureMip(string resourceName, uint mipLevel)
+        => AddUsage(resourceName, ERenderPassResourceType.SampledTexture, ERenderGraphAccess.Read, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store, SingleMipRange(mipLevel));
+
+    public RenderPassBuilder SampleTextureMips(string resourceName, uint baseMipLevel, uint mipLevelCount)
+        => AddUsage(
+            resourceName,
+            ERenderPassResourceType.SampledTexture,
+            ERenderGraphAccess.Read,
+            ERenderPassLoadOp.Load,
+            ERenderPassStoreOp.Store,
+            new RenderGraphSubresourceRange(baseMipLevel, mipLevelCount, 0u, RenderGraphSubresourceRange.Remaining));
 
     public RenderPassBuilder ReadBuffer(string bufferName, ERenderPassResourceType bufferType = ERenderPassResourceType.StorageBuffer)
         => AddUsage(bufferName, bufferType, ERenderGraphAccess.Read, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
@@ -71,11 +86,26 @@ public sealed class RenderPassBuilder
     public RenderPassBuilder ReadWriteTexture(string resourceName)
         => AddUsage(resourceName, ERenderPassResourceType.StorageTexture, ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
 
-    private RenderPassBuilder AddUsage(string resourceName, ERenderPassResourceType type, ERenderGraphAccess access, ERenderPassLoadOp load, ERenderPassStoreOp store)
+    public RenderPassBuilder UseTransferSource(string resourceName)
+        => AddUsage(resourceName, ERenderPassResourceType.TransferSource, ERenderGraphAccess.Read, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+
+    public RenderPassBuilder UseTransferDestination(string resourceName)
+        => AddUsage(resourceName, ERenderPassResourceType.TransferDestination, ERenderGraphAccess.Write, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+
+    private RenderPassBuilder AddUsage(
+        string resourceName,
+        ERenderPassResourceType type,
+        ERenderGraphAccess access,
+        ERenderPassLoadOp load,
+        ERenderPassStoreOp store,
+        RenderGraphSubresourceRange? subresourceRange = null)
     {
         if (!string.IsNullOrWhiteSpace(resourceName))
-            _metadata.AddUsage(new RenderPassResourceUsage(resourceName, type, access, load, store));
+            _metadata.AddUsage(new RenderPassResourceUsage(resourceName, type, access, load, store, subresourceRange));
 
         return this;
     }
+
+    private static RenderGraphSubresourceRange SingleMipRange(uint mipLevel)
+        => new(mipLevel, 1u, 0u, RenderGraphSubresourceRange.Remaining);
 }

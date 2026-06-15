@@ -348,10 +348,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             _currentLightComponent.SetUniforms(materialProgram);
+            int deferredDebugMode = RenderDiagnosticsFlags.DeferredDebugView;
+            materialProgram.Uniform("DeferredDebugMode", deferredDebugMode >= 0 && deferredDebugMode <= 14 ? deferredDebugMode : 0);
 
             bool useCascadedDirectionalShadows = false;
             bool directionalAtlasSampleable = false;
             bool useDirectionalShadowAtlas = false;
+            bool legacyDirectionalCascadeBound = false;
             if (_currentLightComponent is DirectionalLightComponent directionalLight)
             {
                 ShadowMapFormatSelection directionalShadowFormat = directionalLight.ResolveShadowMapFormat(preferredStorageFormat: null);
@@ -377,16 +380,24 @@ namespace XREngine.Rendering.Pipelines.Commands
                     directionalLight.ShadowMomentUseMipmaps ? 1.0f : 0.0f,
                     directionalLight.ShadowMomentMipBias));
 
-                if (useCascadedDirectionalShadows && !useDirectionalShadowAtlas)
-                    materialProgram.Sampler("ShadowMapArray", directionalLight.CascadedShadowMapTexture!, 5);
-                else
-                    materialProgram.Sampler("ShadowMapArray", DummyShadowMapArray, 5);
-
                 BindDirectionalAtlasShadows(
                     materialProgram,
                     directionalLight,
                     useCascadedDirectionalShadows,
                     out directionalAtlasSampleable);
+
+                if (useDirectionalShadowAtlas && !directionalAtlasSampleable)
+                    useDirectionalShadowAtlas = false;
+
+                if (useCascadedDirectionalShadows && !useDirectionalShadowAtlas && directionalLight.CascadedShadowMapTexture is not null)
+                {
+                    materialProgram.Sampler("ShadowMapArray", directionalLight.CascadedShadowMapTexture, 5);
+                    legacyDirectionalCascadeBound = true;
+                }
+                else
+                {
+                    materialProgram.Sampler("ShadowMapArray", DummyShadowMapArray, 5);
+                }
             }
             else
             {
@@ -418,7 +429,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             bool hasShadowMap = _currentLightComponent.CastsShadows && selectedShadowMap is not null;
             bool directionalHasShadowMap = directionalAtlasSampleable ||
-                (!useDirectionalShadowAtlas && useCascadedDirectionalShadows);
+                legacyDirectionalCascadeBound;
             if (_currentLightComponent is DirectionalLightComponent)
                 directionalHasShadowMap |= !useDirectionalShadowAtlas && hasShadowMap;
 

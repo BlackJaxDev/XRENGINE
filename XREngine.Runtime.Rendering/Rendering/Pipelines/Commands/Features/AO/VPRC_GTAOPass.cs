@@ -191,17 +191,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.TransformIdTexture = transformIdTex;
             state.DepthStencilTexture = depthStencilTex;
 
-            state.RawAoTexture?.Destroy();
-            state.HorizontalBlurTexture?.Destroy();
-            state.FinalAoTexture?.Destroy();
-
-            state.RawAoTexture = CreateAoTexture(aoWidth, aoHeight, RawIntensityTextureName, InputSamplerName);
-            state.HorizontalBlurTexture = CreateAoTexture(aoWidth, aoHeight, IntermediateIntensityTextureName, InputSamplerName, bilinear: resDivisor > 1);
-            state.FinalAoTexture = CreateAoTexture(width, height, FinalIntensityTextureName, FinalIntensityTextureName);
-
-            instance.SetTexture(state.RawAoTexture);
-            instance.SetTexture(state.HorizontalBlurTexture);
-            instance.SetTexture(state.FinalAoTexture);
+            state.RawAoTexture = ResolveAoTexture(instance, state.RawAoTexture, aoWidth, aoHeight, RawIntensityTextureName, InputSamplerName);
+            state.HorizontalBlurTexture = ResolveAoTexture(instance, state.HorizontalBlurTexture, aoWidth, aoHeight, IntermediateIntensityTextureName, InputSamplerName, bilinear: resDivisor > 1);
+            state.FinalAoTexture = ResolveAoTexture(instance, state.FinalAoTexture, width, height, FinalIntensityTextureName, FinalIntensityTextureName);
             InvalidateDependentFbos(instance);
 
             RenderingParameters renderParams = new()
@@ -281,6 +273,42 @@ namespace XREngine.Rendering.Pipelines.Commands
             instance.SetFBO(outputFbo);
         }
 
+        private XRTexture ResolveAoTexture(
+            XRRenderPipelineInstance instance,
+            XRTexture? previousTexture,
+            int width,
+            int height,
+            string textureName,
+            string samplerName,
+            bool bilinear = false)
+        {
+            XRTexture? registeredTexture = instance.GetTexture<XRTexture>(textureName);
+            if (registeredTexture is not null && TextureMatchesSize(registeredTexture, width, height))
+            {
+                ConfigureAoSampler(registeredTexture, samplerName, bilinear);
+                return registeredTexture;
+            }
+
+            if (previousTexture is not null && !ReferenceEquals(previousTexture, registeredTexture))
+                previousTexture.Destroy();
+
+            XRTexture createdTexture = CreateAoTexture(width, height, textureName, samplerName, bilinear);
+            instance.SetTexture(createdTexture);
+            return createdTexture;
+        }
+
+        private static bool TextureMatchesSize(XRTexture texture, int width, int height)
+        {
+            Vector3 dims = texture.WidthHeightDepth;
+            return (int)MathF.Round(dims.X) == Math.Max(width, 1) &&
+                   (int)MathF.Round(dims.Y) == Math.Max(height, 1);
+        }
+
+        private static void ConfigureAoSampler(XRTexture texture, string samplerName, bool bilinear)
+        {
+            texture.SamplerName = samplerName;
+        }
+
         private XRTexture CreateAoTexture(int width, int height, string textureName, string samplerName, bool bilinear = false)
         {
             var minFilter = bilinear ? ETexMinFilter.Linear : ETexMinFilter.Nearest;
@@ -340,7 +368,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), 0.0f);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
         }
 
         private void GTAOHorizontalBlur_SetUniforms(XRRenderProgram program)
@@ -373,6 +401,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)camera.DepthMode);
 
             var settings = GetCurrentSettings();
+            var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
             program.Uniform("BlurDirection", direction);
             program.Uniform("DenoiseRadius", Math.Clamp(settings?.GTAODenoiseRadius ?? GroundTruthAmbientOcclusionSettings.DefaultDenoiseRadius, 0, 16));
             program.Uniform("DenoiseSharpness", settings?.GTAODenoiseSharpness is > 0.0f ? settings.GTAODenoiseSharpness : GroundTruthAmbientOcclusionSettings.DefaultDenoiseSharpness);

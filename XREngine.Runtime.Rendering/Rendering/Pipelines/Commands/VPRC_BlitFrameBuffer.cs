@@ -133,8 +133,23 @@ namespace XREngine.Rendering.Pipelines.Commands
             var builder = context.GetOrCreateSyntheticPass($"Blit_{SourceFBOName}_to_{DestinationFBOName}")
                 .WithStage(ERenderGraphPassStage.Transfer);
 
-            builder.SampleTexture(MakeFboColorResource(SourceFBOName));
-            builder.UseColorAttachment(MakeFboColorResource(DestinationFBOName));
+            if (BlitColor)
+            {
+                builder.UseTransferSource(MakeFboColorResource(SourceFBOName));
+                builder.UseTransferDestination(MakeFboColorResource(DestinationFBOName));
+            }
+
+            if (BlitDepth)
+            {
+                builder.UseTransferSource(MakeFboDepthResource(SourceFBOName));
+                builder.UseTransferDestination(MakeFboDepthResource(DestinationFBOName));
+            }
+
+            if (BlitStencil)
+            {
+                builder.UseTransferSource(RenderGraphResourceNames.MakeFboStencil(SourceFBOName));
+                builder.UseTransferDestination(RenderGraphResourceNames.MakeFboStencil(DestinationFBOName));
+            }
         }
     }
 }

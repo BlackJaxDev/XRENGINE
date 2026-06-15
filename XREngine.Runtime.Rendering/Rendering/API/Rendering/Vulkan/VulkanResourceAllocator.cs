@@ -962,6 +962,7 @@ internal sealed class VulkanPhysicalImageGroup
     private DeviceMemory _memory;
     private bool _allocated;
     private ImageLayout _lastKnownLayout = ImageLayout.Undefined;
+    private readonly Dictionary<SubresourceLayoutKey, ImageLayout> _subresourceLayouts = new();
 
     internal VulkanPhysicalImageGroup(
         VulkanImageAliasGroup logicalGroup,
@@ -1002,7 +1003,76 @@ internal sealed class VulkanPhysicalImageGroup
     public ImageLayout LastKnownLayout
     {
         get => _lastKnownLayout;
-        internal set => _lastKnownLayout = value;
+        internal set
+        {
+            _lastKnownLayout = value;
+            _subresourceLayouts.Clear();
+        }
+    }
+
+    public ImageLayout GetKnownLayout(uint baseMipLevel, uint levelCount, uint baseArrayLayer, uint layerCount)
+    {
+        ResolveSubresourceRange(
+            baseMipLevel,
+            levelCount,
+            baseArrayLayer,
+            layerCount,
+            out uint resolvedBaseMip,
+            out uint resolvedLevelCount,
+            out uint resolvedBaseLayer,
+            out uint resolvedLayerCount);
+
+        if (_subresourceLayouts.Count == 0)
+            return _lastKnownLayout;
+
+        ImageLayout? common = null;
+        for (uint mip = resolvedBaseMip; mip < resolvedBaseMip + resolvedLevelCount; mip++)
+        {
+            for (uint layer = resolvedBaseLayer; layer < resolvedBaseLayer + resolvedLayerCount; layer++)
+            {
+                if (!_subresourceLayouts.TryGetValue(new SubresourceLayoutKey(mip, layer), out ImageLayout layout) ||
+                    layout == ImageLayout.Undefined)
+                {
+                    return ImageLayout.Undefined;
+                }
+
+                if (common.HasValue && common.Value != layout)
+                    return ImageLayout.Undefined;
+
+                common = layout;
+            }
+        }
+
+        return common ?? ImageLayout.Undefined;
+    }
+
+    public void UpdateKnownLayout(ImageLayout layout, uint baseMipLevel, uint levelCount, uint baseArrayLayer, uint layerCount)
+    {
+        ResolveSubresourceRange(
+            baseMipLevel,
+            levelCount,
+            baseArrayLayer,
+            layerCount,
+            out uint resolvedBaseMip,
+            out uint resolvedLevelCount,
+            out uint resolvedBaseLayer,
+            out uint resolvedLayerCount);
+
+        if (CoversWholeImage(resolvedBaseMip, resolvedLevelCount, resolvedBaseLayer, resolvedLayerCount))
+        {
+            LastKnownLayout = layout;
+            return;
+        }
+
+        BeginPartialLayoutTracking();
+
+        for (uint mip = resolvedBaseMip; mip < resolvedBaseMip + resolvedLevelCount; mip++)
+        {
+            for (uint layer = resolvedBaseLayer; layer < resolvedBaseLayer + resolvedLayerCount; layer++)
+                _subresourceLayouts[new SubresourceLayoutKey(mip, layer)] = layout;
+        }
+
+        UpdateWholeLayoutFromSubresources();
     }
 
     internal void AddLogical(VulkanImageAllocation allocation)
@@ -1015,7 +1085,7 @@ internal sealed class VulkanPhysicalImageGroup
 
         renderer.AllocatePhysicalImage(this, ref _image, ref _memory);
         _allocated = true;
-        _lastKnownLayout = ImageLayout.Undefined;
+        LastKnownLayout = ImageLayout.Undefined;
     }
 
     public void Destroy(VulkanRenderer renderer)
@@ -1025,8 +1095,94 @@ internal sealed class VulkanPhysicalImageGroup
 
         renderer.DestroyPhysicalImage(ref _image, ref _memory);
         _allocated = false;
+        LastKnownLayout = ImageLayout.Undefined;
+    }
+
+    private void BeginPartialLayoutTracking()
+    {
+        if (_subresourceLayouts.Count > 0 || _lastKnownLayout == ImageLayout.Undefined)
+        {
+            _lastKnownLayout = ImageLayout.Undefined;
+            return;
+        }
+
+        uint mipLevels = Math.Max(MipLevels, 1u);
+        uint layerCount = Math.Max(Template.Layers, 1u);
+        for (uint mip = 0; mip < mipLevels; mip++)
+        {
+            for (uint layer = 0; layer < layerCount; layer++)
+                _subresourceLayouts[new SubresourceLayoutKey(mip, layer)] = _lastKnownLayout;
+        }
+
         _lastKnownLayout = ImageLayout.Undefined;
     }
+
+    private void UpdateWholeLayoutFromSubresources()
+    {
+        ImageLayout? common = null;
+        uint mipLevels = Math.Max(MipLevels, 1u);
+        uint layerCount = Math.Max(Template.Layers, 1u);
+        for (uint mip = 0; mip < mipLevels; mip++)
+        {
+            for (uint layer = 0; layer < layerCount; layer++)
+            {
+                if (!_subresourceLayouts.TryGetValue(new SubresourceLayoutKey(mip, layer), out ImageLayout layout) ||
+                    layout == ImageLayout.Undefined)
+                {
+                    _lastKnownLayout = ImageLayout.Undefined;
+                    return;
+                }
+
+                if (common.HasValue && common.Value != layout)
+                {
+                    _lastKnownLayout = ImageLayout.Undefined;
+                    return;
+                }
+
+                common = layout;
+            }
+        }
+
+        if (common.HasValue && Math.Max(MipLevels, 1u) == 1u && Math.Max(Template.Layers, 1u) == 1u)
+        {
+            _lastKnownLayout = common.Value;
+            _subresourceLayouts.Clear();
+        }
+        else
+        {
+            _lastKnownLayout = ImageLayout.Undefined;
+        }
+    }
+
+    private bool CoversWholeImage(uint baseMipLevel, uint levelCount, uint baseArrayLayer, uint layerCount)
+        => baseMipLevel == 0u &&
+           levelCount >= Math.Max(MipLevels, 1u) &&
+           baseArrayLayer == 0u &&
+           layerCount >= Math.Max(Template.Layers, 1u);
+
+    private void ResolveSubresourceRange(
+        uint baseMipLevel,
+        uint levelCount,
+        uint baseArrayLayer,
+        uint layerCount,
+        out uint resolvedBaseMipLevel,
+        out uint resolvedLevelCount,
+        out uint resolvedBaseArrayLayer,
+        out uint resolvedLayerCount)
+    {
+        uint mipLevels = Math.Max(MipLevels, 1u);
+        uint layers = Math.Max(Template.Layers, 1u);
+        resolvedBaseMipLevel = Math.Min(baseMipLevel, mipLevels - 1u);
+        resolvedBaseArrayLayer = Math.Min(baseArrayLayer, layers - 1u);
+        resolvedLevelCount = levelCount == uint.MaxValue
+            ? mipLevels - resolvedBaseMipLevel
+            : Math.Min(Math.Max(levelCount, 1u), mipLevels - resolvedBaseMipLevel);
+        resolvedLayerCount = layerCount == uint.MaxValue
+            ? layers - resolvedBaseArrayLayer
+            : Math.Min(Math.Max(layerCount, 1u), layers - resolvedBaseArrayLayer);
+    }
+
+    private readonly record struct SubresourceLayoutKey(uint MipLevel, uint ArrayLayer);
 }
 
 internal sealed class VulkanPhysicalBufferGroup

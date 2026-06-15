@@ -207,6 +207,34 @@ public unsafe partial class VulkanRenderer
 
 					PushPerDrawConstants(commandBuffer, material, drawCopy);
 
+					if (BloomVulkanDiagnosticsEnabled && vertexCount <= 6u)
+					{
+						Debug.VulkanEvery(
+							$"Vulkan.BloomDiag.CmdDraw.{passIndex}.{Renderer.GetCurrentDrawFrameBuffer()?.Name}.{vertexCount}",
+							TimeSpan.FromSeconds(1),
+							"[BloomDiag][Vulkan] CmdDraw fullscreen target='{0}' pass={1} vertices={2} pipeline=0x{3:X} topology={4} blend={5} depthTest={6} depthWrite={7} stencil={8} colorWrite={9} viewport=({10},{11},{12},{13}) scissor=({14},{15},{16},{17}) program='{18}' material='{19}'",
+							Renderer.GetCurrentDrawFrameBuffer()?.Name ?? "<none>",
+							passIndex,
+							vertexCount,
+							pipeline.Handle,
+							fallbackTopology,
+							drawCopy.BlendEnabled,
+							drawCopy.DepthTestEnabled,
+							drawCopy.DepthWriteEnabled,
+							drawCopy.StencilTestEnabled,
+							drawCopy.ColorWriteMask,
+							drawCopy.Viewport.X,
+							drawCopy.Viewport.Y,
+							drawCopy.Viewport.Width,
+							drawCopy.Viewport.Height,
+							drawCopy.Scissor.Offset.X,
+							drawCopy.Scissor.Offset.Y,
+							drawCopy.Scissor.Extent.Width,
+							drawCopy.Scissor.Extent.Height,
+							_program?.Data?.Name ?? "<program>",
+							material.Name ?? "<material>");
+					}
+
 					Api!.CmdDraw(commandBuffer, vertexCount, drawInstances, 0, 0);
 					RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
 					RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered((int)(vertexCount / 3 * drawInstances));

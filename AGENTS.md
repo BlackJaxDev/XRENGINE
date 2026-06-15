@@ -139,6 +139,45 @@ The loop:
 Notes:
 - Record durable findings (symptoms, ruled-out causes, render-pass order, next isolation step) so later iterations build on earlier ones instead of repeating them.
 
+### RenderDoc GPU Captures
+
+For Vulkan or OpenGL rendering issues, use RenderDoc when MCP screenshots and logs do not identify the failing pass/resource. Prefer it for shadow maps, post-process inputs, motion vectors, G-buffer contents, descriptor binding mistakes, layout hazards, and "the frame looks wrong but logs are inconclusive" cases.
+
+1. Verify capture tooling first:
+
+   ```powershell
+   rdc doctor
+   ```
+
+   If `rdc` is unavailable but RenderDoc is installed, use `C:\Program Files\RenderDoc\renderdoccmd.exe` directly. Make sure the Vulkan RenderDoc layer is registered before Vulkan captures.
+2. Build and launch from the repo root so assets and generated settings resolve correctly. Capture the editor with the same Unit Testing World/MCP flags used by the editor iteration loop:
+
+   ```powershell
+   New-Item -ItemType Directory -Force Build\RenderDoc | Out-Null
+   rdc capture -o Build\RenderDoc\xrengine-vulkan.rdc -- dotnet .\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.dll --unit-testing --mcp --mcp-allow-all --mcp-port 5467
+   ```
+
+   RenderDoc fallback:
+
+   ```powershell
+   & "C:\Program Files\RenderDoc\renderdoccmd.exe" capture -w -d . -c Build\RenderDoc\xrengine-vulkan.rdc dotnet .\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.dll --unit-testing --mcp --mcp-allow-all --mcp-port 5467
+   ```
+
+3. Inspect the capture in an open-work-close session:
+
+   ```powershell
+   rdc open Build\RenderDoc\xrengine-vulkan.rdc
+   rdc info --json
+   rdc passes
+   rdc draws --limit 40
+   rdc bindings <EID> --json
+   rdc rt <EID> -o Build\RenderDoc\analysis-pass.png
+   rdc close
+   ```
+
+4. Always export suspicious render targets/textures to PNG and visually inspect them. For this engine, useful first checks are directional shadow atlas/cascade depth, Velocity, AmbientOcclusionTexture, LightingAccumTexture, BloomBlurTexture mips, TsrOutputTexture, and the final post-process output.
+5. Keep capture output under `Build\RenderDoc\`, close RenderDoc/`rdc` sessions when done, and record durable findings alongside the MCP/log observations.
+
 ## Testing Policy
 
 1. Run the most targeted tests for the changed subsystem.

@@ -37,6 +37,7 @@ uniform bool DirectionalShadowAtlasEnabled = false;
 uniform ivec4 DirectionalShadowAtlasPacked0[MAX_CASCADES]; // enabled, page, fallback, record index
 uniform vec4 DirectionalShadowAtlasUvScaleBias[MAX_CASCADES];
 uniform vec4 DirectionalShadowAtlasDepthParams[MAX_CASCADES]; // near, far, local texel size, requested/allocated scale
+uniform int DeferredDebugMode = 0;
 
 // Distinct debug colors per cascade index
 const vec3 CascadeDebugColorTable[MAX_CASCADES] = vec3[](
@@ -176,7 +177,7 @@ float SampleShadowMapSoftLocal(in sampler2D shadowMap, in vec3 shadowCoord, in f
 
 		vec2 sampleUv = shadowCoord.xy + LocalShadowPoissonDisk[i] * radius;
 		float sampleDepth = texture(shadowMap, sampleUv).r;
-		lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0f : 0.0f;
+		lit += XRENGINE_ShadowLit(shadowCoord.z, sampleDepth, bias);
 	}
 
 	return lit / float(clampedSamples);
@@ -194,7 +195,7 @@ float SampleShadowMapPCFLocal(in sampler2D shadowMap, in vec3 shadowCoord, in fl
 		for (int y = -halfKernel; y <= halfKernel; ++y)
 		{
 			float sampleDepth = texture(shadowMap, shadowCoord.xy + vec2(x, y) * texelSize).r;
-			lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0f : 0.0f;
+			lit += XRENGINE_ShadowLit(shadowCoord.z, sampleDepth, bias);
 		}
 	}
 
@@ -204,7 +205,7 @@ float SampleShadowMapPCFLocal(in sampler2D shadowMap, in vec3 shadowCoord, in fl
 float SampleShadowMapSimpleLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias)
 {
 	float depth = texture(shadowMap, shadowCoord.xy).r;
-	return (shadowCoord.z - bias) <= depth ? 1.0f : 0.0f;
+	return XRENGINE_ShadowLit(shadowCoord.z, depth, bias);
 }
 
 float SampleShadowMapTent4Local(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in float filterRadius)
@@ -213,10 +214,10 @@ float SampleShadowMapTent4Local(in sampler2D shadowMap, in vec3 shadowCoord, in 
 	vec2 radius = max(vec2(max(filterRadius, 0.0f)), texelSize);
 	float lit = 0.0f;
 
-	lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(-0.5f, -0.5f) * radius).r ? 1.0f : 0.0f;
-	lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(0.5f, -0.5f) * radius).r ? 1.0f : 0.0f;
-	lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(-0.5f, 0.5f) * radius).r ? 1.0f : 0.0f;
-	lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(0.5f, 0.5f) * radius).r ? 1.0f : 0.0f;
+	lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, shadowCoord.xy + vec2(-0.5f, -0.5f) * radius).r, bias);
+	lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, shadowCoord.xy + vec2(0.5f, -0.5f) * radius).r, bias);
+	lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, shadowCoord.xy + vec2(-0.5f, 0.5f) * radius).r, bias);
+	lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, shadowCoord.xy + vec2(0.5f, 0.5f) * radius).r, bias);
 
 	return lit * 0.25f;
 }
@@ -235,7 +236,7 @@ float SampleShadowMapArraySoftLocal(in sampler2DArray shadowMap, in vec3 shadowC
 
 		vec2 sampleUv = shadowCoord.xy + LocalShadowPoissonDisk[i] * radius;
 		float sampleDepth = texture(shadowMap, vec3(sampleUv, layer)).r;
-		lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0f : 0.0f;
+		lit += XRENGINE_ShadowLit(shadowCoord.z, sampleDepth, bias);
 	}
 
 	return lit / float(clampedSamples);
@@ -253,7 +254,7 @@ float SampleShadowMapArrayPCFLocal(in sampler2DArray shadowMap, in vec3 shadowCo
 		for (int y = -halfKernel; y <= halfKernel; ++y)
 		{
 			float sampleDepth = texture(shadowMap, vec3(shadowCoord.xy + vec2(x, y) * texelSize, layer)).r;
-			lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0f : 0.0f;
+			lit += XRENGINE_ShadowLit(shadowCoord.z, sampleDepth, bias);
 		}
 	}
 
@@ -263,7 +264,7 @@ float SampleShadowMapArrayPCFLocal(in sampler2DArray shadowMap, in vec3 shadowCo
 float SampleShadowMapArraySimpleLocal(in sampler2DArray shadowMap, in vec3 shadowCoord, in float layer, in float bias)
 {
 	float depth = texture(shadowMap, vec3(shadowCoord.xy, layer)).r;
-	return (shadowCoord.z - bias) <= depth ? 1.0f : 0.0f;
+	return XRENGINE_ShadowLit(shadowCoord.z, depth, bias);
 }
 
 float SampleShadowMapArrayTent4Local(in sampler2DArray shadowMap, in vec3 shadowCoord, in float layer, in float bias, in float filterRadius)
@@ -272,10 +273,10 @@ float SampleShadowMapArrayTent4Local(in sampler2DArray shadowMap, in vec3 shadow
 	vec2 radius = max(vec2(max(filterRadius, 0.0f)), texelSize);
 	float lit = 0.0f;
 
-	lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(-0.5f, -0.5f) * radius, layer)).r ? 1.0f : 0.0f;
-	lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(0.5f, -0.5f) * radius, layer)).r ? 1.0f : 0.0f;
-	lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(-0.5f, 0.5f) * radius, layer)).r ? 1.0f : 0.0f;
-	lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(0.5f, 0.5f) * radius, layer)).r ? 1.0f : 0.0f;
+	lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, vec3(shadowCoord.xy + vec2(-0.5f, -0.5f) * radius, layer)).r, bias);
+	lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, vec3(shadowCoord.xy + vec2(0.5f, -0.5f) * radius, layer)).r, bias);
+	lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, vec3(shadowCoord.xy + vec2(-0.5f, 0.5f) * radius, layer)).r, bias);
+	lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, vec3(shadowCoord.xy + vec2(0.5f, 0.5f) * radius, layer)).r, bias);
 
 	return lit * 0.25f;
 }
@@ -290,7 +291,7 @@ float BlockerSearch2DLocal(in sampler2D shadowMap, in vec2 uv, in float receiver
 		if (i >= clampedSamples) break;
 		vec2 sampleUv = uv + LocalShadowPoissonDisk[i] * searchRadius;
 		float d = texture(shadowMap, sampleUv).r;
-		if (d < receiverDepth) { blockerSum += d; blockerCount++; }
+		if (XRENGINE_IsShadowBlocker(d, receiverDepth)) { blockerSum += d; blockerCount++; }
 	}
 	return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0f;
 }
@@ -305,30 +306,30 @@ float BlockerSearch2DArrayLocal(in sampler2DArray shadowMap, in vec2 uv, in floa
 		if (i >= clampedSamples) break;
 		vec2 sampleUv = uv + LocalShadowPoissonDisk[i] * searchRadius;
 		float d = texture(shadowMap, vec3(sampleUv, layer)).r;
-		if (d < receiverDepth) { blockerSum += d; blockerCount++; }
+		if (XRENGINE_IsShadowBlocker(d, receiverDepth)) { blockerSum += d; blockerCount++; }
 	}
 	return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0f;
 }
 
 float SampleShadowMapCHSSLocal(in sampler2D shadowMap, in vec3 shadowCoord, in float bias, in int sampleCount, in float searchRadius, in float lightSourceRadius)
 {
-	float receiverDepth = shadowCoord.z - bias;
+	float receiverDepth = XRENGINE_ApplyShadowBias(shadowCoord.z, bias);
 	float avgBlocker = BlockerSearch2DLocal(shadowMap, shadowCoord.xy, receiverDepth, searchRadius, sampleCount);
 	if (avgBlocker < 0.0f) return 1.0f;
 	vec2 texelSize = 1.0f / vec2(textureSize(shadowMap, 0));
 	float minR = max(texelSize.x, texelSize.y);
-	float penumbra = clamp((receiverDepth - avgBlocker) / max(avgBlocker, 0.0001f) * lightSourceRadius, minR, searchRadius * 4.0f);
+	float penumbra = clamp(abs(receiverDepth - avgBlocker) / max(abs(avgBlocker), 0.0001f) * lightSourceRadius, minR, searchRadius * 4.0f);
 	return SampleShadowMapSoftLocal(shadowMap, shadowCoord, bias, sampleCount, penumbra);
 }
 
 float SampleShadowMapArrayCHSSLocal(in sampler2DArray shadowMap, in vec3 shadowCoord, in float layer, in float bias, in int sampleCount, in float searchRadius, in float lightSourceRadius)
 {
-	float receiverDepth = shadowCoord.z - bias;
+	float receiverDepth = XRENGINE_ApplyShadowBias(shadowCoord.z, bias);
 	float avgBlocker = BlockerSearch2DArrayLocal(shadowMap, shadowCoord.xy, layer, receiverDepth, searchRadius, sampleCount);
 	if (avgBlocker < 0.0f) return 1.0f;
 	vec2 texelSize = 1.0f / vec2(textureSize(shadowMap, 0).xy);
 	float minR = max(texelSize.x, texelSize.y);
-	float penumbra = clamp((receiverDepth - avgBlocker) / max(avgBlocker, 0.0001f) * lightSourceRadius, minR, searchRadius * 4.0f);
+	float penumbra = clamp(abs(receiverDepth - avgBlocker) / max(abs(avgBlocker), 0.0001f) * lightSourceRadius, minR, searchRadius * 4.0f);
 	return SampleShadowMapArraySoftLocal(shadowMap, shadowCoord, layer, bias, sampleCount, penumbra);
 }
 
@@ -757,6 +758,76 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 			ShadowMaxPenumbra * cascadeScale,
 			ShadowVogelTapCount) * contact;
 }
+
+vec4 DebugCascadeShadowProbe(in vec3 fragPosWS, in vec3 N, in int cascadeIndex)
+{
+	if (!LightHasShadowMap)
+		return vec4(1.0f, 0.0f, 1.0f, 0.0f);
+
+	mat4 lightMatrix = LightData.CascadeMatrices[cascadeIndex];
+	float receiverOffset = LightData.CascadeReceiverOffsets[cascadeIndex];
+	vec3 offsetPosWS = fragPosWS + N * receiverOffset;
+	vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS);
+
+	if (fragCoord.x < 0.0f || fragCoord.x > 1.0f ||
+		fragCoord.y < 0.0f || fragCoord.y > 1.0f ||
+		fragCoord.z < 0.0f || fragCoord.z > 1.0f)
+		return vec4(fragCoord.z, 0.0f, 0.0f, -1.0f);
+
+	float cascadeScale = 1.0f + float(cascadeIndex) * 0.35f;
+	float filterRadius = ShadowFilterRadius * cascadeScale;
+	float atlasResolutionScale = 1.0f;
+	bool atlasMetadataEnabled = false;
+	if (DirectionalShadowAtlasEnabled)
+	{
+		ivec4 atlasState = DirectionalShadowAtlasPacked0[cascadeIndex];
+		atlasMetadataEnabled = atlasState.x != 0;
+		if (atlasMetadataEnabled)
+			atlasResolutionScale = max(DirectionalShadowAtlasDepthParams[cascadeIndex].w, 1.0f);
+	}
+
+	float atlasAuthoredTexelSize = DirectionalShadowAtlasDepthParams[cascadeIndex].z / atlasResolutionScale;
+	float constantBias = LightData.CascadeBiasMin[cascadeIndex];
+	vec2 shadowTexelSize = atlasMetadataEnabled && DirectionalShadowAtlasDepthParams[cascadeIndex].z > 0.0f
+		? vec2(max(atlasAuthoredTexelSize, 1e-7f))
+		: 1.0f / vec2(textureSize(ShadowMapArray, 0).xy);
+	float bias = XRENGINE_ComputeShadowDepthBias(
+		fragCoord,
+		shadowTexelSize,
+		filterRadius,
+		constantBias,
+		LightData.CascadeBiasMax[cascadeIndex]);
+
+	float sampleDepth = 0.0f;
+	vec2 atlasUv = fragCoord.xy;
+	if (DirectionalShadowAtlasEnabled)
+	{
+		ivec4 atlasI0 = DirectionalShadowAtlasPacked0[cascadeIndex];
+		bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < textureSize(DirectionalShadowAtlas, 0).z;
+		if (!atlasEnabled)
+			return vec4(fragCoord.z, 0.0f, 0.0f, -2.0f);
+
+		atlasUv = XRENGINE_ShadowAtlasUvFromLocal(fragCoord.xy, DirectionalShadowAtlasUvScaleBias[cascadeIndex]);
+		sampleDepth = texture(DirectionalShadowAtlas, vec3(atlasUv, float(atlasI0.y))).r;
+	}
+	else
+	{
+		sampleDepth = texture(ShadowMapArray, vec3(fragCoord.xy, float(cascadeIndex))).r;
+	}
+
+	float debugValue = fragCoord.z;
+	if (DeferredDebugMode == 11)
+		debugValue = fragCoord.x;
+	else if (DeferredDebugMode == 12)
+		debugValue = fragCoord.y;
+	else if (DeferredDebugMode == 13)
+		debugValue = atlasUv.x;
+	else if (DeferredDebugMode == 14)
+		debugValue = atlasUv.y;
+
+	return vec4(debugValue, sampleDepth, XRENGINE_ShadowLit(fragCoord.z, sampleDepth, bias), 1.0f);
+}
+
 vec3 CalcColor(
 in float NoL,
 in float NoH,
@@ -817,6 +888,22 @@ in float viewDepth)
 
 				if (viewDepth <= splitFar || isLast)
 				{
+					if ((DeferredDebugMode >= 7 && DeferredDebugMode <= 9) || (DeferredDebugMode >= 11 && DeferredDebugMode <= 14))
+					{
+						vec4 probe = DebugCascadeShadowProbe(fragPosWS, N, i);
+						if (probe.w < 0.0f)
+							return probe.w < -1.5f ? vec3(0.0f, 0.0f, 1.0f) : vec3(1.0f, 0.0f, 1.0f);
+						if (probe.w == 0.0f)
+							return vec3(1.0f, 0.0f, 0.0f);
+						if (DeferredDebugMode == 7)
+							return vec3(probe.x);
+						if (DeferredDebugMode == 8)
+							return vec3(probe.y);
+						if (DeferredDebugMode == 9)
+							return vec3(probe.z);
+						return vec3(probe.x);
+					}
+
 					float s0 = ReadCascadeShadowMap(fragPosWS, N, NoL, viewDepth, i);
 					if (s0 < 0.0f) s0 = 1.0f;
 					debugCascadeIndex = i;
@@ -845,6 +932,9 @@ in float viewDepth)
 		{
 			shadow = ReadShadowMap2D(fragPosWS, N, NoL, viewDepth, LightData.WorldToLightSpaceMatrix);
 		}
+
+		if (DeferredDebugMode == 6)
+			return vec3(shadow);
 
 		vec3 result = color * shadow;
 

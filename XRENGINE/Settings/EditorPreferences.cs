@@ -1982,14 +1982,14 @@ namespace XREngine
 
         [Category("Diagnostics")]
         [DisplayName("Deferred Debug View")]
-        [Description("Deferred-lighting debug visualization for newly-created DefaultRenderPipeline instances. 0=Disabled, 1=RawAlbedo, 2=DirectLighting, 3=Rmse (vs reference), 4=Normal, 5=Depth. Existing pipelines keep their per-instance value; change takes effect on the next pipeline construction. Seed env: XRE_DEFERRED_DEBUG.")]
+        [Description("Deferred-lighting debug visualization for newly-created DefaultRenderPipeline instances. 0=Disabled, 1=RawAlbedo, 2=DirectLighting, 3=Rmse (vs reference), 4=Normal, 5=Depth, 6=DirectionalShadowFactor, 7=DirectionalShadowReceiverDepth, 8=DirectionalShadowSampleDepth, 9=DirectionalShadowSingleTapLit, 10=AmbientOcclusion, 11/12=DirectionalShadowLocalUvX/Y, 13/14=DirectionalShadowAtlasUvX/Y. Existing pipelines keep their per-instance value; change takes effect on the next pipeline construction. Seed env: XRE_DEFERRED_DEBUG.")]
         [DefaultValue(0)]
         public int DeferredDebugView
         {
             get => _deferredDebugView;
             set
             {
-                int clamped = value < 0 ? 0 : (value > 6 ? 6 : value);
+                int clamped = value < 0 ? 0 : (value > 14 ? 14 : value);
                 if (SetField(ref _deferredDebugView, clamped))
                     XREngine.Rendering.RenderDiagnosticsFlags.SetDeferredDebugView(clamped);
             }

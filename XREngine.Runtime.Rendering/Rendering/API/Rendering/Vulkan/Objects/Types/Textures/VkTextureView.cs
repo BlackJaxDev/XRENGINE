@@ -674,8 +674,24 @@ namespace XREngine.Rendering.Vulkan
                 if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
                     _view = default;
 
+                bool hasStencil = _format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
+                if (_view.Handle != 0 && hasStencil && (_usage & ImageUsageFlags.SampledBit) != 0)
+                {
+                    ImageViewCreateInfo depthOnlyViewInfo = viewInfo with
+                    {
+                        SubresourceRange = viewInfo.SubresourceRange with
+                        {
+                            AspectMask = ImageAspectFlags.DepthBit,
+                        },
+                    };
+                    if (Api!.CreateImageView(Device, ref depthOnlyViewInfo, null, out _depthOnlyView) != Result.Success)
+                        _depthOnlyView = default;
+                }
+
                 if (_view.Handle != 0)
                     CreateSampler();
+
+                MarkDescriptorDirty();
             }
 
             private ImageSubresourceRange ResolveViewSubresourceRange(IVkImageDescriptorSource source, ImageAspectFlags aspectMask)

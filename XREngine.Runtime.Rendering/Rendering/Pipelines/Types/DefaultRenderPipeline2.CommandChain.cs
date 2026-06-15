@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -434,6 +435,8 @@ public partial class DefaultRenderPipeline2
             NeedsRecreateLightCombineFbo)
             .UseLifetime(RenderResourceLifetime.Transient);
 
+        c.Add<VPRC_SetClears>().Set(ColorF4.Black, null, null);
+
         // MSAA deferred: mark complex pixels in the MSAA depth-stencil before lighting
         {
             var msaaMarkBranch = c.Add<VPRC_IfElse>();
@@ -557,6 +560,7 @@ public partial class DefaultRenderPipeline2
             }
         }
 
+        c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, null, null);
         EndGpuScope(c, "Lighting");
     }
 
@@ -730,6 +734,7 @@ public partial class DefaultRenderPipeline2
             }))
             using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
                 c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+            AppendDiagnosticTextureCapture(c, "05b_LightCombine", DiffuseTextureName);
 
             //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
             c.Add<VPRC_DepthTest>().Enable = true;
@@ -915,6 +920,8 @@ public partial class DefaultRenderPipeline2
         }
         // Restore clears for subsequent passes to the pipeline defaults.
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+        AppendDiagnosticTextureCapture(c, "07_Velocity", VelocityTextureName);
+        AppendDiagnosticFboCapture(c, "07b_VelocityFBO", VelocityFBOName);
         EndGpuScope(c, "Velocity");
     }
 
@@ -1226,6 +1233,7 @@ public partial class DefaultRenderPipeline2
                         blitDepth: false,
                         blitStencil: false,
                         linearFilter: false);
+                    AppendDiagnosticTextureCapture(tsrUpscale, "14b_TsrHistoryColor", TsrHistoryColorTextureName);
                     tsrOrPostAa.TrueCommands = tsrUpscale;
                 }
                 {
@@ -1595,6 +1603,55 @@ public partial class DefaultRenderPipeline2
 
     private static string? ResolveOutputSourceFboOverride()
         => RenderDiagnosticsFlags.OutputSourceFboOverride;
+
+    private static void AppendDiagnosticTextureCapture(
+        ViewportRenderCommandContainer c,
+        string label,
+        string textureName,
+        int mipLevel = 0)
+    {
+        if (!ShouldCaptureDefaultPipelineFbos())
+            return;
+
+        var capture = c.Add<VPRC_CaptureFrame>();
+        capture.SourceTextureName = textureName;
+        capture.SourceMipLevel = mipLevel;
+        capture.MaxCaptures = 1;
+        capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
+        capture.OutputFilePath = Path.Combine("Build", "Diagnostics", "FrameCaptures", $"DefaultPipeline2_{label}.png");
+        capture.FlipVertically = false;
+    }
+
+    private static void AppendDiagnosticFboCapture(
+        ViewportRenderCommandContainer c,
+        string label,
+        string fboName)
+    {
+        if (!ShouldCaptureDefaultPipelineFbos())
+            return;
+
+        var capture = c.Add<VPRC_CaptureFrame>();
+        capture.SourceFBOName = fboName;
+        capture.MaxCaptures = 1;
+        capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
+        capture.OutputFilePath = Path.Combine("Build", "Diagnostics", "FrameCaptures", $"DefaultPipeline2_{label}.png");
+        capture.FlipVertically = false;
+    }
+
+    private static int ResolveDefaultPipelineCaptureSkipFrames()
+    {
+        string? raw = Environment.GetEnvironmentVariable("XRE_CAPTURE_DEFAULT_PIPELINE_SKIP_FRAMES");
+        return int.TryParse(raw, out int skipFrames) ? Math.Max(0, skipFrames) : 120;
+    }
+
+    private static bool ShouldCaptureDefaultPipelineFbos()
+    {
+        string? raw = Environment.GetEnvironmentVariable("XRE_CAPTURE_DEFAULT_PIPELINE_FBO");
+        return !string.IsNullOrWhiteSpace(raw) &&
+            !string.Equals(raw, "0", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(raw, "off", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsValidFinalOutputSourceFboOverride(string sourceFboName, bool bypassVendorUpscale)
     {

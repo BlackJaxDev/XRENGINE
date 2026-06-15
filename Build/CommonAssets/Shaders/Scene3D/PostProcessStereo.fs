@@ -26,6 +26,9 @@ uniform int BloomStartMip = 1;
 uniform int BloomEndMip = 4;
 uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.649, 0.397, 0.102);
 uniform bool DebugBloomOnly = false;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 
 // Lens distortion mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini, 4=BrownConrady
 uniform int LensDistortionMode;
@@ -261,7 +264,10 @@ void main()
     vec2 clipXY = FragPos.xy;
     if (clipXY.x > 1.0 || clipXY.y > 1.0)
         discard;
-    vec2 uv = XRENGINE_ClipXYToScreenUV(clipXY);
+    vec2 uv = clamp(
+        XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)),
+        vec2(0.0),
+        vec2(1.0));
     vec2 duv = ApplyLensDistortionByMode(uv);
 
     vec3 uvi = vec3(duv, gl_ViewID_OVR);

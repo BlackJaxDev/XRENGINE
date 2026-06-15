@@ -1,5 +1,7 @@
 #version 450 core
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) in vec3 FragPos;
 layout(location = 0) out vec4 OutColor;
 layout(location = 1) out vec2 OutExposureVariance;
@@ -26,6 +28,9 @@ uniform float ReactiveLumaThreshold;
 uniform float DepthDiscontinuityScale;
 uniform float ConfidencePower;
 uniform int DebugMode;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 
 const vec3 LuminanceWeights = vec3(0.2126f, 0.7152f, 0.0722f);
 
@@ -196,7 +201,10 @@ void main()
     if (clipXY.x > 1.0f || clipXY.y > 1.0f)
         discard;
 
-    vec2 uv = clipXY * 0.5f + 0.5f;
+    vec2 uv = clamp(
+        XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)),
+        vec2(0.0f),
+        vec2(1.0f));
 
     // Closest-depth velocity reduces edge fattening at silhouettes.
     // MotionVectors.fs writes unjittered current-minus-previous NDC, so do

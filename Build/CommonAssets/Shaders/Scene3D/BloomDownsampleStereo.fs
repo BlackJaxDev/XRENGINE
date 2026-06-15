@@ -1,7 +1,9 @@
 #version 460
 #extension GL_OVR_multiview2 : require
 
-layout(location = 0) out vec3 OutColor;
+#pragma snippet "ScreenSpaceUtils"
+
+layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2DArray SourceTexture;
@@ -13,6 +15,10 @@ uniform float BloomSoftKnee;
 uniform float BloomIntensity;
 uniform vec3 Luminance = vec3(0.299, 0.587, 0.114);
 uniform bool UseKarisAverage;
+uniform bool DebugSolidOutput;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 
 float KarisWeight(vec3 c)
 {
@@ -33,12 +39,20 @@ vec3 BrightPass(vec3 c)
 
 void main()
 {
-    vec2 uv = clamp(FragPos.xy, -1.0, 1.0) * 0.5 + 0.5;
-    uv = clamp(uv, 0.0, 1.0);
+    if (DebugSolidOutput)
+    {
+        OutColor = vec4(1.0, 0.0, 1.0, 1.0);
+        return;
+    }
+
+    vec2 uv = clamp(
+        XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)),
+        vec2(0.0),
+        vec2(1.0));
 
     float lod = float(SourceLOD);
     float layer = float(gl_ViewID_OVR);
-    vec2 texelSize = 1.0 / textureSize(SourceTexture, SourceLOD).xy;
+    vec2 texelSize = 1.0 / vec2(textureSize(SourceTexture, SourceLOD).xy);
 
     vec3 a = textureLod(SourceTexture, vec3(uv + texelSize * vec2(-1.0, -1.0), layer), lod).rgb;
     vec3 b = textureLod(SourceTexture, vec3(uv + texelSize * vec2( 0.0, -1.0), layer), lod).rgb;
@@ -91,5 +105,5 @@ void main()
     if (UseThreshold)
         result = BrightPass(result);
 
-    OutColor = max(result, vec3(0.0));
+    OutColor = vec4(max(result, vec3(0.0)), 1.0);
 }

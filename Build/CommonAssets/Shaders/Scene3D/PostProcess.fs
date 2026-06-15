@@ -97,6 +97,9 @@ uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.649, 0.397, 0.102);
 uniform bool DebugBloomOnly = false;
 
 uniform int DepthMode;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 
 #ifndef XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
 #define XRENGINE_CLIP_DEPTH_RANGE_UNIFORM
@@ -348,7 +351,10 @@ void main()
   vec2 clipXY = FragPos.xy;
   if (clipXY.x > 1.0f || clipXY.y > 1.0f)
       discard;
-  vec2 uv = XRENGINE_ClipXYToScreenUV(clipXY);
+  vec2 uv = clamp(
+      XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)),
+      vec2(0.0f),
+      vec2(1.0f));
   vec2 sceneUv = SceneSourceUv(uv);
 
   // Gizmo bypass: pixels tagged with the gizmo stencil bit (0x80) skip tonemap,

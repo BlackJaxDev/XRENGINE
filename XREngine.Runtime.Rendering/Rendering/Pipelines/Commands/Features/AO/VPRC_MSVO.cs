@@ -21,6 +21,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private string MSVOBlurShaderName()
             => Stereo ? "SSAOBlurStereo.fs" : "SSAOBlur.fs";
 
+        public string MSVORawTextureName { get; set; } = "AmbientOcclusionRawTexture";
         public string MSVOIntensityTextureName { get; set; } = "AmbientOcclusionTexture";
         public string MSVOFBOName { get; set; } = "AmbientOcclusionFBO";
         public string MSVOBlurFBOName { get; set; } = "AmbientOcclusionBlurFBO";
@@ -41,7 +42,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             public bool ResourcesDirty = true;
             public int LastWidth;
             public int LastHeight;
-            public XRTexture? AoTexture;
+            public XRTexture? RawAoTexture;
+            public XRTexture? FinalAoTexture;
         }
 
         private static readonly ConditionalWeakTable<XRRenderPipelineInstance, InstanceState> _instanceStates = new();
@@ -64,6 +66,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         public void SetOutputNames(string intensityTexture, string generationFbo, string blurFbo, string gBufferFBO)
         {
+            MSVORawTextureName = "AmbientOcclusionRawTexture";
             MSVOIntensityTextureName = intensityTexture;
             MSVOFBOName = generationFbo;
             MSVOBlurFBOName = blurFbo;
@@ -101,10 +104,14 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (!forceRebuild)
             {
-                XRTexture? registeredAo = instance.GetTexture<XRTexture>(MSVOIntensityTextureName);
-                forceRebuild = state.AoTexture is null
-                    || registeredAo is null
-                    || !ReferenceEquals(state.AoTexture, registeredAo);
+                XRTexture? registeredRawAo = instance.GetTexture<XRTexture>(MSVORawTextureName);
+                XRTexture? registeredFinalAo = instance.GetTexture<XRTexture>(MSVOIntensityTextureName);
+                forceRebuild = state.RawAoTexture is null
+                    || state.FinalAoTexture is null
+                    || registeredRawAo is null
+                    || registeredFinalAo is null
+                    || !ReferenceEquals(state.RawAoTexture, registeredRawAo)
+                    || !ReferenceEquals(state.FinalAoTexture, registeredFinalAo);
             }
 
             if (!forceRebuild)
@@ -153,9 +160,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.LastWidth = width;
             state.LastHeight = height;
 
-            state.AoTexture?.Destroy();
-            state.AoTexture = CreateAoTexture(width, height);
-            instance.SetTexture(state.AoTexture);
+            state.RawAoTexture = ResolveAoTexture(instance, state.RawAoTexture, width, height, MSVORawTextureName, MSVOIntensityTextureName);
+            state.FinalAoTexture = ResolveAoTexture(instance, state.FinalAoTexture, width, height, MSVOIntensityTextureName, MSVOIntensityTextureName);
             InvalidateDependentFbos(instance);
 
             RenderingParameters renderParams = new()
@@ -179,7 +185,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             XRTexture[] msvoBlurTexRefs =
             [
-                state.AoTexture,
+                state.RawAoTexture!,
             ];
 
             XRMaterial msvoGenMat = new(msvoGenTexRefs, msvoGenShader) { RenderOptions = renderParams };
@@ -200,8 +206,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (depthStencilTex is not IFrameBufferAttachement depthStencilAttach)
                 throw new ArgumentException("DepthStencil texture must be an IFrameBufferAttachement");
 
-            if (state.AoTexture is not IFrameBufferAttachement aoAttach)
-                throw new ArgumentException("Ambient occlusion texture must be an IFrameBufferAttachement");
+            if (state.RawAoTexture is not IFrameBufferAttachement rawAoAttach)
+                throw new ArgumentException("Raw ambient occlusion texture must be an IFrameBufferAttachement");
+
+            if (state.FinalAoTexture is not IFrameBufferAttachement finalAoAttach)
+                throw new ArgumentException("Final ambient occlusion texture must be an IFrameBufferAttachement");
 
             XRQuadFrameBuffer msvoGenFBO = new(msvoGenMat, true,
                 (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -214,12 +223,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             };
             msvoGenFBO.SettingUniforms += MSVOGen_SetUniforms;
 
-            XRQuadFrameBuffer msvoBlurFBO = new(msvoBlurMat, true, (aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+            XRQuadFrameBuffer msvoBlurFBO = new(msvoBlurMat, true, (rawAoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
             {
                 Name = MSVOBlurFBOName
             };
+            msvoBlurFBO.SettingUniforms += MSVOBlur_SetUniforms;
 
-            XRFrameBuffer outputFbo = new((aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+            XRFrameBuffer outputFbo = new((finalAoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
             {
                 Name = GBufferFBOFBOName
             };
@@ -229,7 +239,42 @@ namespace XREngine.Rendering.Pipelines.Commands
             instance.SetFBO(outputFbo);
         }
 
-        private XRTexture CreateAoTexture(int width, int height)
+        private XRTexture ResolveAoTexture(
+            XRRenderPipelineInstance instance,
+            XRTexture? previousTexture,
+            int width,
+            int height,
+            string textureName,
+            string samplerName)
+        {
+            XRTexture? registeredTexture = instance.GetTexture<XRTexture>(textureName);
+            if (registeredTexture is not null && TextureMatchesSize(registeredTexture, width, height))
+            {
+                ConfigureAoSampler(registeredTexture, samplerName);
+                return registeredTexture;
+            }
+
+            if (previousTexture is not null && !ReferenceEquals(previousTexture, registeredTexture))
+                previousTexture.Destroy();
+
+            XRTexture createdTexture = CreateAoTexture(width, height, textureName, samplerName);
+            instance.SetTexture(createdTexture);
+            return createdTexture;
+        }
+
+        private static bool TextureMatchesSize(XRTexture texture, int width, int height)
+        {
+            Vector3 dims = texture.WidthHeightDepth;
+            return (int)MathF.Round(dims.X) == Math.Max(width, 1) &&
+                   (int)MathF.Round(dims.Y) == Math.Max(height, 1);
+        }
+
+        private static void ConfigureAoSampler(XRTexture texture, string samplerName)
+        {
+            texture.SamplerName = samplerName;
+        }
+
+        private XRTexture CreateAoTexture(int width, int height, string textureName, string samplerName)
         {
             if (Stereo)
             {
@@ -244,8 +289,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 texture.Resizable = false;
                 texture.SizedInternalFormat = ESizedInternalFormat.R16f;
                 texture.OVRMultiViewParameters = new(0, 2u);
-                texture.Name = MSVOIntensityTextureName;
-                texture.SamplerName = MSVOIntensityTextureName;
+                texture.Name = textureName;
+                texture.SamplerName = samplerName;
                 texture.MinFilter = ETexMinFilter.Nearest;
                 texture.MagFilter = ETexMagFilter.Nearest;
                 texture.UWrap = ETexWrapMode.ClampToEdge;
@@ -260,8 +305,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 EPixelFormat.Red,
                 EPixelType.HalfFloat,
                 EFrameBufferAttachment.ColorAttachment0);
-            aoTexture.Name = MSVOIntensityTextureName;
-            aoTexture.SamplerName = MSVOIntensityTextureName;
+            aoTexture.Name = textureName;
+            aoTexture.SamplerName = samplerName;
             aoTexture.MinFilter = ETexMinFilter.Nearest;
             aoTexture.MagFilter = ETexMagFilter.Nearest;
             aoTexture.UWrap = ETexWrapMode.ClampToEdge;
@@ -295,7 +340,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ScaleFactors);
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), 0.0f);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
+        }
+
+        private void MSVOBlur_SetUniforms(XRRenderProgram program)
+        {
+            var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
         }
 
         private void InvalidateDependentFbos(XRRenderPipelineInstance instance)
@@ -322,8 +375,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_instanceStates.TryGetValue(instance, out var state))
             {
                 state.ResourcesDirty = true;
-                state.AoTexture?.Destroy();
-                state.AoTexture = null;
+                state.RawAoTexture?.Destroy();
+                state.RawAoTexture = null;
+                state.FinalAoTexture?.Destroy();
+                state.FinalAoTexture = null;
                 state.LastWidth = 0;
                 state.LastHeight = 0;
             }

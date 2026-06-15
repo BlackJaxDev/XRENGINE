@@ -995,6 +995,33 @@ namespace XREngine.Rendering.Vulkan
                     }
                     return true;
 
+                case Format.R16Sfloat:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 2;
+                        int dstIndex = i * 4;
+                        ushort* p = (ushort*)(src + srcIndex);
+                        byte value = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[0]));
+                        dstRgba[dstIndex + 0] = value;
+                        dstRgba[dstIndex + 1] = value;
+                        dstRgba[dstIndex + 2] = value;
+                        dstRgba[dstIndex + 3] = 255;
+                    }
+                    return true;
+
+                case Format.R16G16Sfloat:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 4;
+                        int dstIndex = i * 4;
+                        ushort* p = (ushort*)(src + srcIndex);
+                        dstRgba[dstIndex + 0] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[0]));
+                        dstRgba[dstIndex + 1] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[1]));
+                        dstRgba[dstIndex + 2] = 0;
+                        dstRgba[dstIndex + 3] = 255;
+                    }
+                    return true;
+
                 case Format.R32G32B32A32Sfloat:
                     for (int i = 0; i < pixelCount; i++)
                     {
@@ -1005,6 +1032,34 @@ namespace XREngine.Rendering.Vulkan
                         dstRgba[dstIndex + 1] = FloatToByte(p[1]);
                         dstRgba[dstIndex + 2] = FloatToByte(p[2]);
                         dstRgba[dstIndex + 3] = FloatToByte(p[3]);
+                    }
+                    return true;
+
+                case Format.R32Sfloat:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 4;
+                        int dstIndex = i * 4;
+                        float value = *(float*)(src + srcIndex);
+                        byte encoded = FloatToByte(value);
+                        dstRgba[dstIndex + 0] = encoded;
+                        dstRgba[dstIndex + 1] = encoded;
+                        dstRgba[dstIndex + 2] = encoded;
+                        dstRgba[dstIndex + 3] = 255;
+                    }
+                    return true;
+
+                case Format.B10G11R11UfloatPack32:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 4;
+                        int dstIndex = i * 4;
+                        uint packed = *(uint*)(src + srcIndex);
+                        DecodeB10G11R11Ufloat(packed, out float r, out float g, out float b);
+                        dstRgba[dstIndex + 0] = FloatToByte(r);
+                        dstRgba[dstIndex + 1] = FloatToByte(g);
+                        dstRgba[dstIndex + 2] = FloatToByte(b);
+                        dstRgba[dstIndex + 3] = 255;
                     }
                     return true;
             }
@@ -1073,6 +1128,33 @@ namespace XREngine.Rendering.Vulkan
                     }
                     return true;
 
+                case Format.R16Sfloat:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 2;
+                        int dstIndex = i * 4;
+                        ushort* p = (ushort*)(src + srcIndex);
+                        float value = (float)BitConverter.UInt16BitsToHalf(p[0]);
+                        dstRgba[dstIndex + 0] = value;
+                        dstRgba[dstIndex + 1] = value;
+                        dstRgba[dstIndex + 2] = value;
+                        dstRgba[dstIndex + 3] = 1.0f;
+                    }
+                    return true;
+
+                case Format.R16G16Sfloat:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 4;
+                        int dstIndex = i * 4;
+                        ushort* p = (ushort*)(src + srcIndex);
+                        dstRgba[dstIndex + 0] = (float)BitConverter.UInt16BitsToHalf(p[0]);
+                        dstRgba[dstIndex + 1] = (float)BitConverter.UInt16BitsToHalf(p[1]);
+                        dstRgba[dstIndex + 2] = 0.0f;
+                        dstRgba[dstIndex + 3] = 1.0f;
+                    }
+                    return true;
+
                 case Format.R32G32B32A32Sfloat:
                     for (int i = 0; i < pixelCount; i++)
                     {
@@ -1085,9 +1167,62 @@ namespace XREngine.Rendering.Vulkan
                         dstRgba[dstIndex + 3] = p[3];
                     }
                     return true;
+
+                case Format.R32Sfloat:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 4;
+                        int dstIndex = i * 4;
+                        float value = *(float*)(src + srcIndex);
+                        dstRgba[dstIndex + 0] = value;
+                        dstRgba[dstIndex + 1] = value;
+                        dstRgba[dstIndex + 2] = value;
+                        dstRgba[dstIndex + 3] = 1.0f;
+                    }
+                    return true;
+
+                case Format.B10G11R11UfloatPack32:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 4;
+                        int dstIndex = i * 4;
+                        DecodeB10G11R11Ufloat(*(uint*)(src + srcIndex), out float r, out float g, out float b);
+                        dstRgba[dstIndex + 0] = r;
+                        dstRgba[dstIndex + 1] = g;
+                        dstRgba[dstIndex + 2] = b;
+                        dstRgba[dstIndex + 3] = 1.0f;
+                    }
+                    return true;
             }
 
             return false;
+        }
+
+        private static void DecodeB10G11R11Ufloat(uint packed, out float r, out float g, out float b)
+        {
+            r = DecodeUnsignedFloat(packed & 0x7FFu, 6);
+            g = DecodeUnsignedFloat((packed >> 11) & 0x7FFu, 6);
+            b = DecodeUnsignedFloat((packed >> 22) & 0x3FFu, 5);
+        }
+
+        private static float DecodeUnsignedFloat(uint bits, int mantissaBits)
+        {
+            const int exponentBias = 15;
+            const int maxExponent = 31;
+
+            uint mantissaMask = (1u << mantissaBits) - 1u;
+            uint mantissa = bits & mantissaMask;
+            uint exponent = bits >> mantissaBits;
+            if (exponent == 0u)
+                return mantissa == 0u
+                    ? 0.0f
+                    : MathF.Pow(2.0f, 1 - exponentBias - mantissaBits) * mantissa;
+
+            if (exponent == maxExponent)
+                return float.PositiveInfinity;
+
+            float normalizedMantissa = 1.0f + mantissa / (float)(1u << mantissaBits);
+            return normalizedMantissa * MathF.Pow(2.0f, (int)exponent - exponentBias);
         }
 
         private static uint GetColorFormatPixelSize(Format format)
@@ -1097,9 +1232,13 @@ namespace XREngine.Rendering.Vulkan
                 Format.R8G8B8A8Srgb => 4,
                 Format.B8G8R8A8Unorm => 4,
                 Format.B8G8R8A8Srgb => 4,
+                Format.R16Sfloat => 2,
+                Format.R16G16Sfloat => 4,
                 Format.R16G16B16A16Unorm => 8,
                 Format.R16G16B16A16Sfloat => 8,
+                Format.R32Sfloat => 4,
                 Format.R32G32B32A32Sfloat => 16,
+                Format.B10G11R11UfloatPack32 => 4,
                 _ => 0,
             };
 

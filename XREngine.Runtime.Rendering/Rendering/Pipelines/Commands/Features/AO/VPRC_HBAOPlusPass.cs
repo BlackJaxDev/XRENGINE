@@ -178,17 +178,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.TransformIdTexture = transformIdTex;
             state.DepthStencilTexture = depthStencilTex;
 
-            state.RawAoTexture?.Destroy();
-            state.HorizontalBlurTexture?.Destroy();
-            state.FinalAoTexture?.Destroy();
-
-            state.RawAoTexture = CreateAoTexture(width, height, RawIntensityTextureName, InputSamplerName);
-            state.HorizontalBlurTexture = CreateAoTexture(width, height, IntermediateIntensityTextureName, InputSamplerName);
-            state.FinalAoTexture = CreateAoTexture(width, height, FinalIntensityTextureName, FinalIntensityTextureName);
-
-            instance.SetTexture(state.RawAoTexture);
-            instance.SetTexture(state.HorizontalBlurTexture);
-            instance.SetTexture(state.FinalAoTexture);
+            state.RawAoTexture = ResolveAoTexture(instance, state.RawAoTexture, width, height, RawIntensityTextureName, InputSamplerName);
+            state.HorizontalBlurTexture = ResolveAoTexture(instance, state.HorizontalBlurTexture, width, height, IntermediateIntensityTextureName, InputSamplerName);
+            state.FinalAoTexture = ResolveAoTexture(instance, state.FinalAoTexture, width, height, FinalIntensityTextureName, FinalIntensityTextureName);
             InvalidateDependentFbos(instance);
 
             RenderingParameters renderParams = new()
@@ -268,6 +260,41 @@ namespace XREngine.Rendering.Pipelines.Commands
             instance.SetFBO(outputFbo);
         }
 
+        private XRTexture ResolveAoTexture(
+            XRRenderPipelineInstance instance,
+            XRTexture? previousTexture,
+            int width,
+            int height,
+            string textureName,
+            string samplerName)
+        {
+            XRTexture? registeredTexture = instance.GetTexture<XRTexture>(textureName);
+            if (registeredTexture is not null && TextureMatchesSize(registeredTexture, width, height))
+            {
+                ConfigureAoSampler(registeredTexture, samplerName);
+                return registeredTexture;
+            }
+
+            if (previousTexture is not null && !ReferenceEquals(previousTexture, registeredTexture))
+                previousTexture.Destroy();
+
+            XRTexture createdTexture = CreateAoTexture(width, height, textureName, samplerName);
+            instance.SetTexture(createdTexture);
+            return createdTexture;
+        }
+
+        private static bool TextureMatchesSize(XRTexture texture, int width, int height)
+        {
+            Vector3 dims = texture.WidthHeightDepth;
+            return (int)MathF.Round(dims.X) == Math.Max(width, 1) &&
+                   (int)MathF.Round(dims.Y) == Math.Max(height, 1);
+        }
+
+        private static void ConfigureAoSampler(XRTexture texture, string samplerName)
+        {
+            texture.SamplerName = samplerName;
+        }
+
         private XRTexture CreateAoTexture(int width, int height, string textureName, string samplerName)
         {
             if (Stereo)
@@ -324,7 +351,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), 0.0f);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
         }
 
         private void HBAOPlusHorizontalBlur_SetUniforms(XRRenderProgram program)
@@ -340,6 +367,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)camera.DepthMode);
 
             var settings = GetCurrentSettings();
+            var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
             program.Uniform("BlurDirection", direction);
             program.Uniform("BlurRadius", Math.Clamp(settings?.HBAOBlurRadius ?? 8, 0, 16));
             program.Uniform("BlurSharpness", settings?.HBAOBlurSharpness is > 0.0f ? settings.HBAOBlurSharpness : 4.0f);
