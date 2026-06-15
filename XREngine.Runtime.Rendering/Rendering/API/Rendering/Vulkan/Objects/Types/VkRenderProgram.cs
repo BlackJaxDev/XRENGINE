@@ -2368,6 +2368,9 @@ public unsafe partial class VulkanRenderer
                 case EEngineUniform.ClipDepthRange:
                     value = new ProgramUniformValue(EShaderVarType._int, (int)RuntimeEngine.Rendering.EffectiveClipDepthRange, false);
                     return true;
+                case EEngineUniform.FramebufferTextureYDirection:
+                    value = new ProgramUniformValue(EShaderVarType._int, (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan), false);
+                    return true;
                 case EEngineUniform.VRMode:
                     value = new ProgramUniformValue(EShaderVarType._int, stereo ? 1 : 0, false);
                     return true;

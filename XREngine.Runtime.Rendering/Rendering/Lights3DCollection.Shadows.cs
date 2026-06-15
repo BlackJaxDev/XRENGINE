@@ -758,6 +758,25 @@ namespace XREngine.Scene
                 return true;
             }
 
+            bool directionalAtlasReady = needsCascadeAtlas
+                ? HasSampleableDirectionalCascadeAtlas(light, activeCascadeCount)
+                : HasSampleableDirectionalPrimaryAtlas(light);
+            if (!directionalAtlasReady)
+            {
+                renderCascades = needsCascadeAtlas && !momentSingleMap;
+                LogDirectionalLegacyDecision(
+                    light,
+                    needsCascadeAtlas
+                        ? "AtlasCascadeNotSampleable"
+                        : "AtlasPrimaryNotSampleable",
+                    legacyRender: true,
+                    renderCascades,
+                    needsLegacyCascades: renderCascades,
+                    needsLegacyPrimary: light.ShadowMap is not null,
+                    activeCascadeCount);
+                return true;
+            }
+
             LogDirectionalLegacyDecision(
                 light,
                 "AtlasEnabledNoLegacyFallback",
@@ -769,6 +788,35 @@ namespace XREngine.Scene
             renderCascades = false;
             return false;
         }
+
+        private static bool HasSampleableDirectionalPrimaryAtlas(DirectionalLightComponent light)
+            => light.TryGetPrimaryAtlasSlot(out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot) &&
+               IsSampleableDirectionalAtlasSlot(slot);
+
+        private static bool HasSampleableDirectionalCascadeAtlas(DirectionalLightComponent light, int activeCascadeCount)
+        {
+            int count = Math.Clamp(activeCascadeCount, 0, 8);
+            if (count <= 0)
+                return false;
+
+            for (int i = 0; i < count; i++)
+            {
+                if (!light.TryGetCascadeAtlasSlot(i, out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot) ||
+                    !IsSampleableDirectionalAtlasSlot(slot))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsSampleableDirectionalAtlasSlot(in DirectionalLightComponent.DirectionalCascadeAtlasSlot slot)
+            => slot.HasAllocation &&
+               slot.IsResident &&
+               slot.LastRenderedFrame != 0u &&
+               slot.PageIndex >= 0 &&
+               slot.Fallback is ShadowFallbackMode.None or ShadowFallbackMode.StaleTile;
 
         private static bool ViewportTargetsWorld(XRViewport viewport, IRuntimeRenderWorld world)
             => ReferenceEquals(viewport.World, world) ||

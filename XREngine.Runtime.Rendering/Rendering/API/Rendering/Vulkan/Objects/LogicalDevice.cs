@@ -338,6 +338,37 @@ public unsafe partial class VulkanRenderer
         featureSupported = vulkan11Features.ShaderDrawParameters;
     }
 
+    private unsafe void QueryVulkan12Capabilities(
+        out PhysicalDeviceVulkan12Features vulkan12Features,
+        out bool promotedToCore)
+    {
+        vulkan12Features = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan12Features,
+            PNext = null,
+        };
+
+        Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+        promotedToCore = properties.ApiVersion >= Vk.Version12;
+        if (!promotedToCore)
+            return;
+
+        PhysicalDeviceVulkan12Features queriedFeatures = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan12Features,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &queriedFeatures,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        vulkan12Features = queriedFeatures;
+    }
+
     private unsafe void QueryMultiviewCapabilities(
         bool extensionEnabled,
         out bool featureSupported,
@@ -595,11 +626,19 @@ public unsafe partial class VulkanRenderer
             _supportsGeometryShader = true;
         }
 
+        bool enableMultiViewport = supportedFeatures.MultiViewport;
+        if (enableMultiViewport)
+            deviceFeatures.MultiViewport = Vk.True;
+
         if (supportedFeatures.SampleRateShading)
             deviceFeatures.SampleRateShading = Vk.True;
 
         if (supportedFeatures.IndependentBlend)
             deviceFeatures.IndependentBlend = Vk.True;
+
+        QueryVulkan12Capabilities(
+            out PhysicalDeviceVulkan12Features supportedVulkan12Features,
+            out bool vulkan12PromotedToCore);
 
         _availableDeviceExtensions = EnumerateAvailableDeviceExtensions();
         var availableExtensionSet = new HashSet<string>(_availableDeviceExtensions, StringComparer.Ordinal);
@@ -613,6 +652,38 @@ public unsafe partial class VulkanRenderer
             {
                 Debug.VulkanWarning(
                     "[Vulkan] Optional extension {0} skipped because required dependency VK_KHR_pipeline_library is unavailable.",
+                    optionalExt);
+                continue;
+            }
+
+            if (vulkan12PromotedToCore && optionalExt == "VK_KHR_draw_indirect_count" && !supportedVulkan12Features.DrawIndirectCount)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Optional extension {0} skipped because Vulkan 1.2 drawIndirectCount feature is unavailable.",
+                    optionalExt);
+                continue;
+            }
+
+            if (vulkan12PromotedToCore && optionalExt == "VK_EXT_descriptor_indexing" && !supportedVulkan12Features.DescriptorIndexing)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Optional extension {0} skipped because Vulkan 1.2 descriptorIndexing feature is unavailable.",
+                    optionalExt);
+                continue;
+            }
+
+            if (vulkan12PromotedToCore && optionalExt == "VK_KHR_buffer_device_address" && !supportedVulkan12Features.BufferDeviceAddress)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Optional extension {0} skipped because Vulkan 1.2 bufferDeviceAddress feature is unavailable.",
+                    optionalExt);
+                continue;
+            }
+
+            if (vulkan12PromotedToCore && optionalExt == "VK_KHR_timeline_semaphore" && !supportedVulkan12Features.TimelineSemaphore)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Optional extension {0} skipped because Vulkan 1.2 timelineSemaphore feature is unavailable.",
                     optionalExt);
                 continue;
             }
@@ -634,6 +705,7 @@ public unsafe partial class VulkanRenderer
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static name => name, StringComparer.Ordinal)];
 
+        bool drawIndirectCountExtensionEnabled = extensionsArray.Contains("VK_KHR_draw_indirect_count");
         bool descriptorIndexingExtensionEnabled = extensionsArray.Contains("VK_EXT_descriptor_indexing");
         bool descriptorIndexingRequestedByProfile = VulkanFeatureProfile.EnableDescriptorIndexing;
         QueryDescriptorIndexingCapabilities();
@@ -695,6 +767,18 @@ public unsafe partial class VulkanRenderer
         bool shaderDrawParametersExtensionEnabled = extensionsArray.Contains("VK_KHR_shader_draw_parameters");
         QueryShaderDrawParametersCapabilities(out bool shaderDrawParametersFeatureSupported);
         bool enableShaderDrawParametersFeature = shaderDrawParametersFeatureSupported;
+
+        bool shaderOutputViewportIndexFeatureSupported =
+            vulkan12PromotedToCore && supportedVulkan12Features.ShaderOutputViewportIndex;
+        bool shaderOutputLayerFeatureSupported =
+            vulkan12PromotedToCore && supportedVulkan12Features.ShaderOutputLayer;
+        bool shaderViewportLayerPromotedToCore = vulkan12PromotedToCore;
+        bool enableShaderOutputViewportIndexFeature = shaderOutputViewportIndexFeatureSupported;
+        bool enableShaderOutputLayerFeature = shaderOutputLayerFeatureSupported;
+        bool enableDrawIndirectCountFeature =
+            vulkan12PromotedToCore &&
+            drawIndirectCountExtensionEnabled &&
+            supportedVulkan12Features.DrawIndirectCount;
 
         bool multiviewExtensionEnabled = extensionsArray.Contains("VK_KHR_multiview");
         QueryMultiviewCapabilities(
@@ -808,6 +892,24 @@ public unsafe partial class VulkanRenderer
             Multiview = enableMultiviewFeature,
         };
 
+        PhysicalDeviceVulkan12Features vulkan12FeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan12Features,
+            PNext = null,
+            DrawIndirectCount = enableDrawIndirectCountFeature,
+            DescriptorIndexing = descriptorIndexingExtensionEnabled && supportedVulkan12Features.DescriptorIndexing,
+            RuntimeDescriptorArray = enableDescriptorIndexing,
+            DescriptorBindingPartiallyBound = enableDescriptorIndexing,
+            DescriptorBindingSampledImageUpdateAfterBind = enableDescriptorIndexing,
+            DescriptorBindingStorageImageUpdateAfterBind = enableDescriptorIndexing && _supportsDescriptorBindingStorageImageUpdateAfterBind,
+            DescriptorBindingStorageBufferUpdateAfterBind = enableDescriptorIndexing,
+            DescriptorBindingUniformBufferUpdateAfterBind = enableDescriptorIndexing,
+            TimelineSemaphore = enableTimelineSemaphoreFeature,
+            BufferDeviceAddress = enableBufferDeviceAddress,
+            ShaderOutputViewportIndex = enableShaderOutputViewportIndexFeature,
+            ShaderOutputLayer = enableShaderOutputLayerFeature,
+        };
+
         PhysicalDeviceIndexTypeUint8FeaturesEXT indexTypeUint8FeatureEnable = new()
         {
             SType = StructureType.PhysicalDeviceIndexTypeUint8FeaturesExt,
@@ -866,8 +968,17 @@ public unsafe partial class VulkanRenderer
             GeometryStreams = enableTransformFeedbackFeature && transformFeedbackGeometryStreamsSupported,
         };
 
+        bool useVulkan12FeatureEnable =
+            vulkan12PromotedToCore &&
+            (enableDrawIndirectCountFeature ||
+                (descriptorIndexingExtensionEnabled && supportedVulkan12Features.DescriptorIndexing) ||
+                enableTimelineSemaphoreFeature ||
+                enableBufferDeviceAddress ||
+                enableShaderOutputViewportIndexFeature ||
+                enableShaderOutputLayerFeature);
+
         void* enabledFeaturesPNext = null;
-        if (enableDescriptorIndexing)
+        if (enableDescriptorIndexing && !useVulkan12FeatureEnable)
         {
             descriptorIndexingFeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &descriptorIndexingFeatureEnable;
@@ -885,7 +996,7 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &copyMemoryIndirectFeatureEnable;
         }
 
-        if (enableBufferDeviceAddress)
+        if (enableBufferDeviceAddress && !useVulkan12FeatureEnable)
         {
             bufferDeviceAddressFeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &bufferDeviceAddressFeatureEnable;
@@ -897,10 +1008,16 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &dynamicRenderingFeatureEnable;
         }
 
-        if (enableShaderDrawParametersFeature)
+        if (enableShaderDrawParametersFeature || enableMultiviewFeature)
         {
             vulkan11FeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &vulkan11FeatureEnable;
+        }
+
+        if (useVulkan12FeatureEnable)
+        {
+            vulkan12FeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &vulkan12FeatureEnable;
         }
 
         if (enableIndexTypeUint8Feature)
@@ -915,7 +1032,7 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &maintenance4FeatureEnable;
         }
 
-        if (enableTimelineSemaphoreFeature)
+        if (enableTimelineSemaphoreFeature && !useVulkan12FeatureEnable)
         {
             timelineSemaphoreFeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &timelineSemaphoreFeatureEnable;
@@ -1002,6 +1119,10 @@ public unsafe partial class VulkanRenderer
         RuntimeEngine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
         RuntimeEngine.Rendering.State.HasOvrMultiViewExtension = enableMultiviewFeature;
         RuntimeEngine.Rendering.State.HasVulkanDepthClipControl = enableDepthClipControlFeature;
+        ReportLayeredShadowCapabilities(
+            enableMultiViewport,
+            enableShaderOutputViewportIndexFeature,
+            enableShaderOutputLayerFeature);
 
         if (descriptorIndexingExtensionEnabled && !enableDescriptorIndexing)
         {
@@ -1024,6 +1145,15 @@ public unsafe partial class VulkanRenderer
                     "[Vulkan] Draw parameters support unavailable (shaderDrawParametersFeature={0}, extensionEnabled={1}). Shaders using gl_BaseVertex/gl_BaseInstance may fail.",
                     shaderDrawParametersFeatureSupported,
                     shaderDrawParametersExtensionEnabled);
+            }
+
+            if (!enableShaderOutputViewportIndexFeature || !enableShaderOutputLayerFeature)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Shader viewport/layer output support incomplete (viewportIndexFeature={0}, layerFeature={1}, promotedToCore={2}). Cascaded shadow atlas rendering may fall back.",
+                    shaderOutputViewportIndexFeatureSupported,
+                    shaderOutputLayerFeatureSupported,
+                    shaderViewportLayerPromotedToCore);
             }
 
             if (depthClipControlExtensionEnabled && !enableDepthClipControlFeature)
@@ -1289,6 +1419,40 @@ public unsafe partial class VulkanRenderer
             Debug.Vulkan("[Vulkan] VK_EXT_descriptor_indexing enabled for descriptor update-after-bind support.");
 
         LogStartupCapabilitySnapshot();
+    }
+
+    private void ReportLayeredShadowCapabilities(
+        bool enableMultiViewport,
+        bool enableShaderOutputViewportIndex,
+        bool enableShaderOutputLayer)
+    {
+        Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+        int maxViewports = enableMultiViewport
+            ? System.Math.Max(1, unchecked((int)System.Math.Min(properties.Limits.MaxViewports, (uint)int.MaxValue)))
+            : 1;
+
+        // These OpenGL-named flags are the renderer-wide shadow-planner contract.
+        // Vulkan reports equivalent capabilities from multiViewport and shader-output
+        // ViewportIndex/Layer feature bits so shared light code can choose atlas paths.
+        RuntimeEngine.Rendering.State.SupportsOpenGLViewportArray = enableMultiViewport;
+        RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray = enableMultiViewport;
+        RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex =
+            enableMultiViewport && enableShaderOutputViewportIndex;
+        RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex =
+            enableMultiViewport && enableShaderOutputViewportIndex && _supportsGeometryShader;
+        RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering = enableShaderOutputLayer;
+        RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering =
+            enableShaderOutputLayer && _supportsGeometryShader;
+        RuntimeEngine.Rendering.State.SupportsOpenGLLayeredFramebuffers = enableShaderOutputLayer;
+        RuntimeEngine.Rendering.State.MaxOpenGLViewports = maxViewports;
+
+        Debug.Vulkan(
+            "[Vulkan] Layered shadow planner capabilities: multiViewport={0}, maxViewports={1}, shaderOutputViewportIndex={2}, shaderOutputLayer={3}, geometryShader={4}.",
+            enableMultiViewport,
+            maxViewports,
+            enableShaderOutputViewportIndex,
+            enableShaderOutputLayer,
+            _supportsGeometryShader);
     }
 
     private void LogStartupCapabilitySnapshot()

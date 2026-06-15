@@ -68,6 +68,7 @@ namespace XREngine.Rendering
         DepthMode,
         ClipSpaceYDirection,
         ClipDepthRange,
+        FramebufferTextureYDirection,
         CameraPosition,
         //CameraForward,
         //CameraUp,

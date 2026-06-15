@@ -34,6 +34,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private string GetUpsampleShaderName() =>
             Stereo ? "BloomUpsampleStereo.fs" : "BloomUpsample.fs";
 
+        private string GetCopyShaderName() =>
+            Stereo ? "BloomCopyStereo.fs" : "BloomCopy.fs";
+
         // FBO names for the initial copy (mip 0 write target).
         public const string BloomMip0FBOName = "BloomMip0FBO";
 
@@ -59,6 +62,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         private const string BloomUpsampleFallbackScopeName = "Bloom Upsample shader=BloomUpsample.fs";
         private const string BloomUpsampleStereoFallbackScopeName = "Bloom Upsample shader=BloomUpsampleStereo.fs";
         private const string BloomSourceSamplerName = "SourceTexture";
+        private const string BloomCopyPassName = "Bloom_Copy_Mip0";
+        private static readonly bool BloomDebugSolidOutput =
+            string.Equals(Environment.GetEnvironmentVariable("XRE_BLOOM_DEBUG_SOLID"), "1", StringComparison.OrdinalIgnoreCase);
+        private static readonly bool BloomDiagEnabled =
+            string.Equals(Environment.GetEnvironmentVariable("XRE_BLOOM_DIAG"), "1", StringComparison.OrdinalIgnoreCase);
 
         private static readonly string[] BloomDownsampleScopeNames =
         [
@@ -117,6 +125,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private uint _lastHeight = 0u;
         private int _activeBloomMaxMip = 0;
         private XRTexture? _bloomSourceViewTexture;
+        private XRTexture? _bloomCopySourceTexture;
         private readonly Dictionary<int, XRTexture> _bloomSourceMipViews = [];
 
         private const int BloomMaxMipmapLevel = 4;
@@ -167,19 +176,28 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             DepthTest =
             {
-                Enabled = ERenderParamUsage.Unchanged,
+                Enabled = ERenderParamUsage.Disabled,
                 UpdateDepth = false,
                 Function = EComparison.Always,
-            }
+            },
+            StencilTest =
+            {
+                Enabled = ERenderParamUsage.Disabled,
+            },
+            BlendModeAllDrawBuffers = BlendMode.Disabled()
         };
 
         private static RenderingParameters UpsampleBlendParams() => new()
         {
             DepthTest =
             {
-                Enabled = ERenderParamUsage.Unchanged,
+                Enabled = ERenderParamUsage.Disabled,
                 UpdateDepth = false,
                 Function = EComparison.Always,
+            },
+            StencilTest =
+            {
+                Enabled = ERenderParamUsage.Disabled,
             },
             // Additive blending: src * ONE + dst * ONE
             // Each upsample level adds its tent-filtered contribution to the
@@ -218,6 +236,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 3 => BloomUS3FBOName,
                 _ => throw new ArgumentOutOfRangeException(nameof(targetMipLevel), targetMipLevel, "Bloom upsample target mip level is out of range."),
             };
+
+        private static string GetDownsamplePassName(int targetMipLevel)
+            => $"Bloom_Downsample_Mip{targetMipLevel - 1}_to_{targetMipLevel}";
+
+        private static string GetUpsamplePassName(int sourceMipLevel)
+            => $"Bloom_Upsample_Mip{sourceMipLevel}_to_{sourceMipLevel - 1}";
 
         private BoundingRectangle GetBloomRect(int mipLevel)
             => mipLevel switch
@@ -277,24 +301,23 @@ namespace XREngine.Rendering.Pipelines.Commands
             var pixelFormat = EPixelFormat.Rgba;
             var pixelType = useHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
 
-            XRTexture outputTexture = CreateBloomTexture(width, height, _activeBloomMaxMip,
+            XRTexture outputTexture = ResolveOrCreateBloomTexture(instance, width, height, _activeBloomMaxMip,
                 internalFormat, sizedInternalFormat, pixelFormat, pixelType);
 
             _bloomSourceMipViews.Clear();
             _bloomSourceViewTexture = outputTexture;
-            instance.SetTexture(outputTexture);
 
             if (outputTexture is not IFrameBufferAttachement outputAttach)
                 throw new InvalidOperationException("Output texture is not an IFrameBufferAttachement.");
 
+            string copyShader = Path.Combine(SceneShaderPath, GetCopyShaderName());
             string downsampleShader = Path.Combine(SceneShaderPath, GetDownsampleShaderName());
             string upsampleShader = Path.Combine(SceneShaderPath, GetUpsampleShaderName());
 
             // --- Mip 0 write target (for initial HDR scene copy) ---
-            // Uses the downsample material but is only bound for writing; the
-            // inputFBO material is what actually renders into it.
-            var mip0 = new XRQuadFrameBuffer(CreateDownsampleMaterial(outputTexture, 0, downsampleShader)) { Name = BloomMip0FBOName };
+            var mip0 = new XRQuadFrameBuffer(CreateCopyMaterial(copyShader)) { Name = BloomMip0FBOName };
             mip0.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+            mip0.SettingUniforms += BloomCopy_SettingUniforms;
             instance.SetFBO(mip0);
 
             // --- Downsample FBOs (target mips 1..N) ---
@@ -319,15 +342,70 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
         }
 
+        private XRTexture ResolveOrCreateBloomTexture(
+            XRRenderPipelineInstance instance,
+            uint width,
+            uint height,
+            int maxMipLevel,
+            EPixelInternalFormat internalFormat,
+            ESizedInternalFormat sizedInternalFormat,
+            EPixelFormat pixelFormat,
+            EPixelType pixelType)
+        {
+            XRTexture? existing = instance.GetTexture<XRTexture>(BloomOutputTextureName);
+            if (IsBloomTextureCompatible(existing, width, height, maxMipLevel, sizedInternalFormat))
+                return existing!;
+
+            XRTexture outputTexture = CreateBloomTexture(width, height, maxMipLevel,
+                internalFormat, sizedInternalFormat, pixelFormat, pixelType);
+            instance.SetTexture(outputTexture);
+            return outputTexture;
+        }
+
+        private bool IsBloomTextureCompatible(
+            XRTexture? texture,
+            uint width,
+            uint height,
+            int maxMipLevel,
+            ESizedInternalFormat sizedInternalFormat)
+        {
+            if (texture is null)
+                return false;
+
+            if (Stereo)
+                return texture is XRTexture2DArray arrayTexture &&
+                    arrayTexture.Width == width &&
+                    arrayTexture.Height == height &&
+                    arrayTexture.SizedInternalFormat == sizedInternalFormat &&
+                    arrayTexture.LargestMipmapLevel == 0 &&
+                    arrayTexture.SmallestAllowedMipmapLevel >= maxMipLevel;
+
+            return texture is XRTexture2D monoTexture &&
+                monoTexture.Width == width &&
+                monoTexture.Height == height &&
+                monoTexture.SizedInternalFormat == sizedInternalFormat &&
+                monoTexture.LargestMipmapLevel == 0 &&
+                monoTexture.SmallestAllowedMipmapLevel >= maxMipLevel;
+        }
+
         private XRMaterial CreateDownsampleMaterial(XRTexture outputTexture, int sourceMip, string downsampleShader)
             => new(
                 [
                     new ShaderInt(0, "SourceLOD"),
                     new ShaderBool(false, "UseThreshold"),
                     new ShaderBool(false, "UseKarisAverage"),
+                    new ShaderBool(false, "DebugSolidOutput"),
                 ],
                 [GetOrCreateBloomSourceMipView(outputTexture, sourceMip)],
                 XRShader.EngineShader(downsampleShader, EShaderType.Fragment))
+            {
+                RenderOptions = NoDepthTestParams()
+            };
+
+        private XRMaterial CreateCopyMaterial(string copyShader)
+            => new(
+                Array.Empty<XRTexture?>(),
+                XRShader.EngineShader(copyShader, EShaderType.Fragment))
             {
                 RenderOptions = NoDepthTestParams()
             };
@@ -380,9 +458,31 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             // Step 1: Copy HDR scene into bloom texture mip 0.
-            using (RenderPipelineGpuProfiler.Instance.StartScope(BloomCopyScopeName))
-            using (mip0.BindForWritingState())
-                inputFBO.Render();
+            {
+                if (!VPRCSourceTextureHelpers.TryResolveColorTexture(
+                        instance,
+                        null,
+                        InputFBOName,
+                        out XRTexture? inputTexture,
+                        out string resolveFailure) ||
+                    inputTexture is null)
+                {
+                    LogGuardFailure(nameof(Execute), $"Input FBO '{InputFBOName}' has no bloom source texture: {resolveFailure}");
+                    return;
+                }
+
+                _bloomCopySourceTexture = inputTexture;
+                int copyPassIndex = ResolvePassIndex(BloomCopyPassName);
+                using var copyPassScope = copyPassIndex != int.MinValue
+                    ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(copyPassIndex)
+                    : default;
+                using (RenderPipelineGpuProfiler.Instance.StartScope(BloomCopyScopeName))
+                using (mip0.BindForWritingState())
+                {
+                    bool rendered = mip0.Render();
+                    LogBloomRenderResult("CopyMip0", mip0, default, copyPassIndex, 0, rendered);
+                }
+            }
 
             if (_activeBloomMaxMip < 1)
                 return;
@@ -425,10 +525,17 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
+            int passIndex = ResolvePassIndex(GetDownsamplePassName(sourceMip + 1));
+            using var passScope = passIndex != int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                : default;
             using (RenderPipelineGpuProfiler.Instance.StartScope(GetDownsampleScopeName(sourceMip)))
-            using (fbo.BindForWritingState())
             using (instance.RenderState.PushRenderArea(rect))
-                fbo.Render();
+            using (fbo.BindForWritingState())
+            {
+                bool rendered = fbo.Render();
+                LogBloomRenderResult("Downsample", fbo, rect, passIndex, sourceMip, rendered);
+            }
         }
 
         /// <summary>
@@ -444,10 +551,71 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
+            int passIndex = ResolvePassIndex(GetUpsamplePassName(sourceMip));
+            using var passScope = passIndex != int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                : default;
             using (RenderPipelineGpuProfiler.Instance.StartScope(GetUpsampleScopeName(sourceMip)))
-            using (fbo.BindForWritingState())
             using (instance.RenderState.PushRenderArea(rect))
-                fbo.Render();
+            using (fbo.BindForWritingState())
+            {
+                bool rendered = fbo.Render();
+                LogBloomRenderResult("Upsample", fbo, rect, passIndex, sourceMip, rendered);
+            }
+        }
+
+        private static void LogBloomRenderResult(
+            string phase,
+            XRQuadFrameBuffer fbo,
+            BoundingRectangle rect,
+            int passIndex,
+            int sourceMip,
+            bool rendered)
+        {
+            if (!BloomDiagEnabled)
+                return;
+
+            bool prepared = fbo.FullScreenMesh.TryPrepareForRendering(out string reason);
+            string detail = fbo.FullScreenMesh.GetLastPrepareDetail();
+            var area = RuntimeEngine.Rendering.State.RenderArea;
+            Debug.RenderingEvery(
+                $"BloomDiag.{phase}.{fbo.Name}.{sourceMip}",
+                TimeSpan.FromSeconds(1),
+                "[BloomDiag] phase={0} fbo='{1}' pass={2} sourceMip={3} rendered={4} prepared={5} reason='{6}' detail='{7}' rect=({8},{9},{10},{11}) area=({12},{13},{14},{15}) material='{16}' mesh='{17}' targets={18}",
+                phase,
+                fbo.Name ?? "<unnamed>",
+                passIndex,
+                sourceMip,
+                rendered,
+                prepared,
+                reason,
+                detail,
+                rect.X,
+                rect.Y,
+                rect.Width,
+                rect.Height,
+                area.X,
+                area.Y,
+                area.Width,
+                area.Height,
+                fbo.Material?.Name ?? "<null>",
+                fbo.FullScreenMesh.Name ?? "<null>",
+                fbo.Targets?.Length ?? 0);
+        }
+
+        private int ResolvePassIndex(string passName)
+        {
+            var metadata = ParentPipeline?.PassMetadata;
+            if (metadata is null)
+                return int.MinValue;
+
+            foreach (RenderPassMetadata pass in metadata)
+            {
+                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
+                    return pass.PassIndex;
+            }
+
+            return int.MinValue;
         }
 
         private XRTexture GetOrCreateBloomSourceMipView(XRTexture bloomTexture, int sourceMip)
@@ -535,6 +703,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
             {
                 bloom.SetDownsampleUniforms(program, firstLevel: true);
+                program.Uniform("DebugSolidOutput", BloomDebugSolidOutput);
                 return;
             }
 
@@ -560,6 +729,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 // SourceLOD stays at zero because each material samples through a one-mip view.
                 bloom.SetDownsampleUniforms(program, firstLevel: false);
+                program.Uniform("DebugSolidOutput", BloomDebugSolidOutput);
                 return;
             }
 
@@ -576,6 +746,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("BloomIntensity", 0.530f);
             program.Uniform("Luminance", RuntimeEngine.Rendering.Settings.DefaultLuminance);
             program.Uniform("UseKarisAverage", firstLevel);
+            program.Uniform("DebugSolidOutput", BloomDebugSolidOutput);
         }
 
         private void UpsampleFbo_SettingUniforms(XRRenderProgram program)
@@ -603,13 +774,51 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("Scatter", 0.7f);
         }
 
+        private void BloomCopy_SettingUniforms(XRRenderProgram program)
+        {
+            if (_bloomCopySourceTexture is not null)
+                program.Sampler(BloomSourceSamplerName, _bloomCopySourceTexture, 0);
+        }
+
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {
             base.DescribeRenderPass(context);
 
-            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_BloomPass), ERenderGraphPassStage.Graphics);
-            builder.SampleTexture(MakeFboColorResource(InputFBOName));
-            builder.ReadWriteTexture(MakeTextureResource(BloomOutputTextureName));
+            string bloomTexture = MakeTextureResource(BloomOutputTextureName);
+
+            var copy = context.GetOrCreateSyntheticPass(BloomCopyPassName, ERenderGraphPassStage.Graphics);
+            copy.SampleTexture(MakeFboColorResource(InputFBOName));
+            copy.UseColorAttachmentMip(
+                bloomTexture,
+                0u,
+                ERenderGraphAccess.Write,
+                ERenderPassLoadOp.DontCare,
+                ERenderPassStoreOp.Store);
+
+            for (int targetMipLevel = 1; targetMipLevel <= BloomMaxMipmapLevel; targetMipLevel++)
+            {
+                var downsample = context.GetOrCreateSyntheticPass(GetDownsamplePassName(targetMipLevel), ERenderGraphPassStage.Graphics);
+                downsample.SampleTextureMip(bloomTexture, (uint)(targetMipLevel - 1));
+                downsample.UseColorAttachmentMip(
+                    bloomTexture,
+                    (uint)targetMipLevel,
+                    ERenderGraphAccess.Write,
+                    ERenderPassLoadOp.DontCare,
+                    ERenderPassStoreOp.Store);
+            }
+
+            for (int sourceMipLevel = BloomMaxMipmapLevel; sourceMipLevel >= 2; sourceMipLevel--)
+            {
+                int targetMipLevel = sourceMipLevel - 1;
+                var upsample = context.GetOrCreateSyntheticPass(GetUpsamplePassName(sourceMipLevel), ERenderGraphPassStage.Graphics);
+                upsample.SampleTextureMip(bloomTexture, (uint)sourceMipLevel);
+                upsample.UseColorAttachmentMip(
+                    bloomTexture,
+                    (uint)targetMipLevel,
+                    ERenderGraphAccess.ReadWrite,
+                    ERenderPassLoadOp.Load,
+                    ERenderPassStoreOp.Store);
+            }
         }
     }
 }

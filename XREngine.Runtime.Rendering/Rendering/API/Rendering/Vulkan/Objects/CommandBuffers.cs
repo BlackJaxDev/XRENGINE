@@ -32,6 +32,8 @@ namespace XREngine.Rendering.Vulkan
         private string? _vulkanDiagnosticLastTitle;
         private int _vulkanLastFrameDroppedDrawOps;
         private int _vulkanLastFrameDroppedOps;
+        private static readonly bool BloomVulkanDiagnosticsEnabled =
+            string.Equals(Environment.GetEnvironmentVariable("XRE_BLOOM_DIAG"), "1", StringComparison.Ordinal);
 
         private readonly record struct FrameOpFailureSnapshot(
             string OpType,
@@ -42,6 +44,10 @@ namespace XREngine.Rendering.Vulkan
             string MaterialName,
             string ShaderName,
             string Message);
+
+        private static bool IsBloomDiagnosticName(string? name)
+            => !string.IsNullOrWhiteSpace(name) &&
+               name.Contains("Bloom", StringComparison.OrdinalIgnoreCase);
 
         private readonly struct ComputeDispatchPushConstants
         {
@@ -2114,9 +2120,26 @@ namespace XREngine.Rendering.Vulkan
 
                         // Apply per-draw dynamic state snapshot (OpenGL-like immediate semantics).
                         Viewport viewport = drawOp.Draw.Viewport;
-                        Api!.CmdSetViewport(commandBuffer, 0, 1, &viewport);
                         Rect2D scissor = drawOp.Draw.Scissor;
-                        Api!.CmdSetScissor(commandBuffer, 0, 1, &scissor);
+                        uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
+                        if (viewportScissorCount > 1 &&
+                            drawOp.Draw.IndexedViewports is { } indexedViewports &&
+                            drawOp.Draw.IndexedScissors is { } indexedScissors &&
+                            indexedViewports.Length >= (int)viewportScissorCount &&
+                            indexedScissors.Length >= (int)viewportScissorCount)
+                        {
+                            fixed (Viewport* indexedViewportPtr = indexedViewports)
+                            fixed (Rect2D* indexedScissorPtr = indexedScissors)
+                            {
+                                Api!.CmdSetViewport(commandBuffer, 0, viewportScissorCount, indexedViewportPtr);
+                                Api!.CmdSetScissor(commandBuffer, 0, viewportScissorCount, indexedScissorPtr);
+                            }
+                        }
+                        else
+                        {
+                            Api!.CmdSetViewport(commandBuffer, 0, 1, &viewport);
+                            Api!.CmdSetScissor(commandBuffer, 0, 1, &scissor);
+                        }
 
                         if (drawOp.Target?.Name == "ForwardPassFBO")
                         {
@@ -2705,14 +2728,14 @@ namespace XREngine.Rendering.Vulkan
                     if (isDestination && info.DescriptorSource is { } descriptorSource)
                     {
                         ImageUsageFlags usage = descriptorSource.DescriptorUsage;
-                        if ((usage & ImageUsageFlags.StorageBit) != 0)
-                            return ImageLayout.General;
                         if ((usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0)
                         {
                             return IsDepthOrStencilAspect(info.AspectMask)
                                 ? ImageLayout.DepthStencilReadOnlyOptimal
                                 : ImageLayout.ShaderReadOnlyOptimal;
                         }
+                        if ((usage & ImageUsageFlags.StorageBit) != 0)
+                            return ImageLayout.General;
                     }
 
                     if (info.PreferredLayout != ImageLayout.Undefined)
@@ -3442,6 +3465,36 @@ namespace XREngine.Rendering.Vulkan
                     }
                 };
 
+                if (BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(fbo.Name))
+                {
+                    string targetName = target switch
+                    {
+                        XRTexture texture => texture.Name ?? texture.GetDescribingName(),
+                        XRRenderBuffer renderBuffer => renderBuffer.Name ?? renderBuffer.GetType().Name,
+                        _ => target.GetType().Name
+                    } ?? "<unnamed>";
+
+                    Debug.VulkanEvery(
+                        $"Vulkan.BloomDiag.FboTransition.{fbo.Name}.{i}.{beginRendering}.{info.MipLevel}.{info.BaseArrayLayer}.{oldLayout}.{newLayout}",
+                        TimeSpan.FromSeconds(1),
+                        "[BloomDiag][Vulkan] fbo='{0}' begin={1} attachment={2} target='{3}' requestedMip={4} resolvedMip={5} layer={6} old={7} new={8} aspect={9} image=0x{10:X} stages={11}->{12} access={13}->{14}",
+                        fbo.Name ?? "<unnamed>",
+                        beginRendering,
+                        i,
+                        targetName,
+                        mipLevel,
+                        info.MipLevel,
+                        info.BaseArrayLayer,
+                        oldLayout,
+                        newLayout,
+                        aspectMask,
+                        info.Image.Handle,
+                        srcStage,
+                        dstStage,
+                        barrier.SrcAccessMask,
+                        barrier.DstAccessMask);
+                }
+
                 barriers[barrierCount++] = barrier;
                 srcStages |= srcStage;
                 dstStages |= dstStage;
@@ -3743,7 +3796,11 @@ namespace XREngine.Rendering.Vulkan
                 // validation cares about the live subresource layout, so use the physical
                 // group's tracker whenever it has a concrete value.
                 ImageLayout effectiveOldLayout = planned.Previous.Layout;
-                ImageLayout groupLayout = planned.Group.LastKnownLayout;
+                ImageLayout groupLayout = planned.Group.GetKnownLayout(
+                    planned.Range.BaseMipLevel,
+                    planned.Range.LevelCount,
+                    planned.Range.BaseArrayLayer,
+                    planned.Range.LayerCount);
                 if (groupLayout != ImageLayout.Undefined &&
                     groupLayout != effectiveOldLayout)
                 {
@@ -3762,11 +3819,33 @@ namespace XREngine.Rendering.Vulkan
                 ImageSubresourceRange range = new()
                 {
                     AspectMask = planned.Next.AspectMask,
-                    BaseMipLevel = 0,
-                    LevelCount = Math.Max(1u, planned.Group.MipLevels),
-                    BaseArrayLayer = 0,
-                    LayerCount = Math.Max(planned.Group.Template.Layers, 1u)
+                    BaseMipLevel = planned.Range.BaseMipLevel,
+                    LevelCount = Math.Max(1u, planned.Range.LevelCount),
+                    BaseArrayLayer = planned.Range.BaseArrayLayer,
+                    LayerCount = Math.Max(1u, planned.Range.LayerCount)
                 };
+
+                if (BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(planned.ResourceName))
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.BloomDiag.PlannedBarrier.{planned.ResourceName}.{planned.PassIndex}.{range.BaseMipLevel}.{range.LevelCount}.{range.BaseArrayLayer}.{range.LayerCount}.{effectiveOldLayout}.{planned.Next.Layout}",
+                        TimeSpan.FromSeconds(1),
+                        "[BloomDiag][Vulkan] planned pass={0} resource='{1}' mip={2}+{3} layer={4}+{5} old={6} new={7} prevStage={8} nextStage={9} prevAccess={10} nextAccess={11} aspect={12} image=0x{13:X}",
+                        planned.PassIndex,
+                        planned.ResourceName,
+                        range.BaseMipLevel,
+                        range.LevelCount,
+                        range.BaseArrayLayer,
+                        range.LayerCount,
+                        effectiveOldLayout,
+                        planned.Next.Layout,
+                        planned.Previous.StageMask,
+                        planned.Next.StageMask,
+                        planned.Previous.AccessMask,
+                        planned.Next.AccessMask,
+                        range.AspectMask,
+                        planned.Group.Image.Handle);
+                }
 
                 ImageMemoryBarrier barrier = new()
                 {
@@ -3798,7 +3877,12 @@ namespace XREngine.Rendering.Vulkan
 
                 // Update the group's tracked layout so subsequent barriers and blit
                 // operations use the correct OldLayout.
-                planned.Group.LastKnownLayout = planned.Next.Layout;
+                planned.Group.UpdateKnownLayout(
+                    planned.Next.Layout,
+                    planned.Range.BaseMipLevel,
+                    planned.Range.LevelCount,
+                    planned.Range.BaseArrayLayer,
+                    planned.Range.LayerCount);
             }
         }
 

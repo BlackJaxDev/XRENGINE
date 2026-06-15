@@ -58,6 +58,14 @@ public unsafe partial class VulkanRenderer
     internal Rect2D GetCurrentScissor()
         => _state.GetScissor(ResolveCurrentDrawTargetExtent());
 
+    internal IndexedViewportScissorSnapshot GetCurrentIndexedViewportScissorSnapshot()
+        => _state.GetIndexedViewportScissorSnapshot(ResolveCurrentDrawTargetExtent());
+
+    internal readonly record struct IndexedViewportScissorSnapshot(
+        Viewport[]? Viewports,
+        Rect2D[]? Scissors,
+        uint Count);
+
     /// <summary>
     /// Extent of the draw target that is actually bound right now. Quad-blit style
     /// passes bind FBOs through <see cref="XRFrameBuffer.BindForWriting"/> (engine-side
@@ -67,13 +75,34 @@ public unsafe partial class VulkanRenderer
     internal Extent2D ResolveCurrentDrawTargetExtent()
     {
         XRFrameBuffer? fbo = GetCurrentDrawFrameBuffer();
-        if (fbo is not null && fbo.Width > 0 && fbo.Height > 0)
-            return new Extent2D(fbo.Width, fbo.Height);
+        if (fbo is not null)
+            return ResolveFrameBufferDrawExtent(fbo);
+
         return _state.GetCurrentTargetExtent();
     }
 
     internal XRFrameBuffer? GetCurrentDrawFrameBuffer()
         => XRFrameBuffer.BoundForWriting ?? _boundDrawFrameBuffer;
+
+    private static Extent2D ResolveFrameBufferDrawExtent(XRFrameBuffer fbo)
+    {
+        uint width = Math.Max(fbo.Width, 1u);
+        uint height = Math.Max(fbo.Height, 1u);
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length == 0)
+            return new Extent2D(width, height);
+
+        int maxMip = 0;
+        foreach (var (_, _, mip, _) in targets)
+            maxMip = Math.Max(maxMip, mip);
+
+        if (maxMip <= 0)
+            return new Extent2D(width, height);
+
+        return new Extent2D(
+            Math.Max(width >> maxMip, 1u),
+            Math.Max(height >> maxMip, 1u));
+    }
 
     internal XRFrameBuffer? GetCurrentReadFrameBuffer()
         => _boundReadFrameBuffer;
@@ -242,6 +271,11 @@ public unsafe partial class VulkanRenderer
         private bool _viewportExplicitlySet;
         private BoundingRectangle _viewportRegion;
         private BoundingRectangle _scissorRegion;
+        private BoundingRectangle[]? _indexedViewportRegions;
+        private BoundingRectangle[]? _indexedScissorRegions;
+        private Viewport[]? _indexedViewportCache;
+        private Rect2D[]? _indexedScissorCache;
+        private Extent2D _indexedCacheExtent;
 
         public VulkanStateTracker()
         {
@@ -364,6 +398,81 @@ public unsafe partial class VulkanRenderer
 
         public void SetScissor(BoundingRectangle region)
             => _scissorRegion = region;
+
+        public void SetIndexedViewportScissors(
+            ReadOnlySpan<BoundingRectangle> viewports,
+            ReadOnlySpan<BoundingRectangle> scissors)
+        {
+            int count = Math.Min(viewports.Length, scissors.Length);
+            if (count <= 0)
+            {
+                ClearIndexedViewportScissors();
+                return;
+            }
+
+            BoundingRectangle[] viewportRegions = new BoundingRectangle[count];
+            BoundingRectangle[] scissorRegions = new BoundingRectangle[count];
+            for (int i = 0; i < count; i++)
+            {
+                BoundingRectangle viewport = viewports[i];
+                BoundingRectangle scissor = scissors[i];
+                viewport.CheckProperDimensions();
+                scissor.CheckProperDimensions();
+                viewportRegions[i] = viewport;
+                scissorRegions[i] = scissor;
+            }
+
+            _indexedViewportRegions = viewportRegions;
+            _indexedScissorRegions = scissorRegions;
+            _indexedViewportCache = null;
+            _indexedScissorCache = null;
+            _indexedCacheExtent = default;
+        }
+
+        public void ClearIndexedViewportScissors()
+        {
+            _indexedViewportRegions = null;
+            _indexedScissorRegions = null;
+            _indexedViewportCache = null;
+            _indexedScissorCache = null;
+            _indexedCacheExtent = default;
+        }
+
+        public IndexedViewportScissorSnapshot GetIndexedViewportScissorSnapshot(Extent2D targetExtent)
+        {
+            if (_indexedViewportRegions is null ||
+                _indexedScissorRegions is null ||
+                _indexedViewportRegions.Length == 0 ||
+                _indexedViewportRegions.Length != _indexedScissorRegions.Length)
+            {
+                return default;
+            }
+
+            if (_indexedViewportCache is not null &&
+                _indexedScissorCache is not null &&
+                _indexedCacheExtent.Width == targetExtent.Width &&
+                _indexedCacheExtent.Height == targetExtent.Height)
+            {
+                return new IndexedViewportScissorSnapshot(
+                    _indexedViewportCache,
+                    _indexedScissorCache,
+                    (uint)_indexedViewportCache.Length);
+            }
+
+            int count = _indexedViewportRegions.Length;
+            Viewport[] viewports = new Viewport[count];
+            Rect2D[] scissors = new Rect2D[count];
+            for (int i = 0; i < count; i++)
+            {
+                viewports[i] = CreateVulkanViewport(_indexedViewportRegions[i], targetExtent);
+                scissors[i] = CreateVulkanScissor(_indexedScissorRegions[i], targetExtent);
+            }
+
+            _indexedViewportCache = viewports;
+            _indexedScissorCache = scissors;
+            _indexedCacheExtent = targetExtent;
+            return new IndexedViewportScissorSnapshot(viewports, scissors, (uint)count);
+        }
 
         private static Rect2D CreateVulkanScissor(BoundingRectangle region, Extent2D targetExtent)
         {
@@ -746,9 +855,9 @@ public unsafe partial class VulkanRenderer
             int score = 1;
             score += Math.Min(context.ResourceRegistry.TextureRecords.Count, 128);
             score += Math.Min(context.ResourceRegistry.FrameBufferRecords.Count, 128) * 2;
-            score += context.PassMetadata?.Count ?? 0;
+            score += (context.PassMetadata?.Count ?? 0) * 4;
             if (VulkanRenderGraphCompiler.OpTargetsSwapchain(op))
-                score += 512;
+                score += 16;
 
             foreach (XRFrameBuffer target in EnumerateFrameOpFrameBuffers(op))
             {
@@ -941,6 +1050,7 @@ public unsafe partial class VulkanRenderer
         if (retiredImageCount > 0 || retiredBufferCount > 0)
         {
             WaitForResourcePlanReplacementIdle(retiredImageCount, retiredBufferCount);
+            ReleaseDescriptorReferencesForPhysicalResourceDestruction("ResourcePlanReplacement");
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
         }
         oldAllocator.DestroyPhysicalImages(this);
@@ -1139,6 +1249,7 @@ public unsafe partial class VulkanRenderer
             hash.Add(edge.ConsumerPassIndex);
             hash.Add(edge.ResourceName, StringComparer.OrdinalIgnoreCase);
             hash.Add((int)edge.ResourceType);
+            AddSubresourceRangeToHash(ref hash, edge.SubresourceRange);
             hash.Add((int)edge.ProducerState.StageMask);
             hash.Add((int)edge.ProducerState.AccessMask);
             hash.Add((int)(edge.ProducerState.Layout ?? RenderGraphImageLayout.Undefined));
@@ -1252,13 +1363,18 @@ public unsafe partial class VulkanRenderer
                 .ThenBy(static u => u.ResourceType)
                 .ThenBy(static u => u.Access)
                 .ThenBy(static u => u.LoadOp)
-                .ThenBy(static u => u.StoreOp))
+                .ThenBy(static u => u.StoreOp)
+                .ThenBy(static u => u.SubresourceRange.BaseMipLevel)
+                .ThenBy(static u => u.SubresourceRange.MipLevelCount)
+                .ThenBy(static u => u.SubresourceRange.BaseArrayLayer)
+                .ThenBy(static u => u.SubresourceRange.ArrayLayerCount))
             {
                 hash.Add(usage.ResourceName, StringComparer.Ordinal);
                 hash.Add((int)usage.ResourceType);
                 hash.Add((int)usage.Access);
                 hash.Add((int)usage.LoadOp);
                 hash.Add((int)usage.StoreOp);
+                AddSubresourceRangeToHash(ref hash, usage.SubresourceRange);
             }
 
             foreach (int dependency in pass.ExplicitDependencies.OrderBy(static d => d))
@@ -1307,11 +1423,20 @@ public unsafe partial class VulkanRenderer
                     hash.Add((int)usage.Access);
                     hash.Add((int)usage.LoadOp);
                     hash.Add((int)usage.StoreOp);
+                    AddSubresourceRangeToHash(ref hash, usage.SubresourceRange);
                 }
             }
         }
 
         return hash.ToHashCode();
+    }
+
+    private static void AddSubresourceRangeToHash(ref HashCode hash, RenderGraphSubresourceRange range)
+    {
+        hash.Add(range.BaseMipLevel);
+        hash.Add(range.MipLevelCount);
+        hash.Add(range.BaseArrayLayer);
+        hash.Add(range.ArrayLayerCount);
     }
 
     private VulkanBarrierPlanner.QueueOwnershipConfig BuildQueueOwnershipConfig(IReadOnlyCollection<RenderPassMetadata>? passMetadata)

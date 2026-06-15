@@ -7,6 +7,11 @@
 uniform int ClipDepthRange;
 #endif
 
+#ifndef XRENGINE_DEPTH_MODE_UNIFORM
+#define XRENGINE_DEPTH_MODE_UNIFORM
+uniform int DepthMode;
+#endif
+
 float XRENGINE_ShadowClipZToDepth(float clipZ)
 {
     return ClipDepthRange == 1 ? clipZ * 0.5 + 0.5 : clipZ;
@@ -34,6 +39,24 @@ bool XRENGINE_ShadowCoordInBounds(vec3 shadowCoord)
     return shadowCoord.x >= 0.0 && shadowCoord.x <= 1.0 &&
            shadowCoord.y >= 0.0 && shadowCoord.y <= 1.0 &&
            shadowCoord.z >= 0.0 && shadowCoord.z <= 1.0;
+}
+
+float XRENGINE_ApplyShadowBias(float receiverDepth, float bias)
+{
+    return DepthMode == 1 ? receiverDepth + bias : receiverDepth - bias;
+}
+
+float XRENGINE_ShadowLit(float receiverDepth, float sampleDepth, float bias)
+{
+    float biasedReceiverDepth = XRENGINE_ApplyShadowBias(receiverDepth, bias);
+    return DepthMode == 1
+        ? (biasedReceiverDepth >= sampleDepth ? 1.0 : 0.0)
+        : (biasedReceiverDepth <= sampleDepth ? 1.0 : 0.0);
+}
+
+bool XRENGINE_IsShadowBlocker(float sampleDepth, float receiverDepth)
+{
+    return DepthMode == 1 ? sampleDepth > receiverDepth : sampleDepth < receiverDepth;
 }
 
 const float XRENGINE_ShadowPi = 3.14159265359;
@@ -527,7 +550,7 @@ float XRENGINE_SampleShadowMapPCF(sampler2D shadowMap, vec3 shadowCoord, float b
         for (int y = -halfKernel; y <= halfKernel; ++y)
         {
             float pcfDepth = texture(shadowMap, shadowCoord.xy + vec2(x, y) * texelSize).r;
-            shadow += (shadowCoord.z - bias) > pcfDepth ? 0.0 : 1.0;
+            shadow += XRENGINE_ShadowLit(shadowCoord.z, pcfDepth, bias);
         }
     }
 
@@ -546,7 +569,7 @@ float XRENGINE_SampleShadowMapPCFAddBias(sampler2D shadowMap, vec3 shadowCoord, 
         for (int y = -halfKernel; y <= halfKernel; ++y)
         {
             float pcfDepth = texture(shadowMap, shadowCoord.xy + vec2(x, y) * texelSize).r;
-            shadow += (shadowCoord.z + bias) <= pcfDepth ? 1.0 : 0.0;
+            shadow += XRENGINE_ShadowLit(shadowCoord.z, pcfDepth, -bias);
         }
     }
 
@@ -565,7 +588,7 @@ float XRENGINE_SampleShadowMapArrayPCF(sampler2DArray shadowMap, vec3 shadowCoor
         for (int y = -halfKernel; y <= halfKernel; ++y)
         {
             float pcfDepth = texture(shadowMap, vec3(shadowCoord.xy + vec2(x, y) * texelSize, layer)).r;
-            shadow += (shadowCoord.z - bias) > pcfDepth ? 0.0 : 1.0;
+            shadow += XRENGINE_ShadowLit(shadowCoord.z, pcfDepth, bias);
         }
     }
 
@@ -575,7 +598,7 @@ float XRENGINE_SampleShadowMapArrayPCF(sampler2DArray shadowMap, vec3 shadowCoor
 float XRENGINE_SampleShadowMapArraySimple(sampler2DArray shadowMap, vec3 shadowCoord, float layer, float bias)
 {
     float depth = texture(shadowMap, vec3(shadowCoord.xy, layer)).r;
-    return (shadowCoord.z - bias) > depth ? 0.0 : 1.0;
+    return XRENGINE_ShadowLit(shadowCoord.z, depth, bias);
 }
 
 const vec2 XRENGINE_ShadowPoissonDisk[16] = vec2[](
@@ -626,7 +649,7 @@ float XRENGINE_SampleShadowMapSoft(sampler2D shadowMap, vec3 shadowCoord, float 
 
         vec2 sampleUv = shadowCoord.xy + XRENGINE_ShadowPoissonDisk[i] * radius;
         float sampleDepth = texture(shadowMap, sampleUv).r;
-        lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+        lit += XRENGINE_ShadowLit(shadowCoord.z, sampleDepth, bias);
     }
 
     return lit / float(clampedSamples);
@@ -638,7 +661,7 @@ float XRENGINE_SampleShadowMapVogel(sampler2D shadowMap, vec3 shadowCoord, float
     if (clampedTaps <= 1)
     {
         float depth = texture(shadowMap, shadowCoord.xy).r;
-        return (shadowCoord.z - bias) > depth ? 0.0 : 1.0;
+        return XRENGINE_ShadowLit(shadowCoord.z, depth, bias);
     }
 
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
@@ -653,7 +676,7 @@ float XRENGINE_SampleShadowMapVogel(sampler2D shadowMap, vec3 shadowCoord, float
 
         vec2 sampleUv = shadowCoord.xy + XRENGINE_GetVogelDiskTapRotated(i, clampedTaps, rotation) * radius;
         float sampleDepth = texture(shadowMap, sampleUv).r;
-        lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+        lit += XRENGINE_ShadowLit(shadowCoord.z, sampleDepth, bias);
     }
 
     return lit / float(clampedTaps);
@@ -665,10 +688,10 @@ float XRENGINE_SampleShadowMapTent4(sampler2D shadowMap, vec3 shadowCoord, float
     vec2 radius = max(vec2(max(filterRadius, 0.0)), texelSize);
     float lit = 0.0;
 
-    lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(-0.5, -0.5) * radius).r ? 1.0 : 0.0;
-    lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(0.5, -0.5) * radius).r ? 1.0 : 0.0;
-    lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(-0.5, 0.5) * radius).r ? 1.0 : 0.0;
-    lit += (shadowCoord.z - bias) <= texture(shadowMap, shadowCoord.xy + vec2(0.5, 0.5) * radius).r ? 1.0 : 0.0;
+    lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, shadowCoord.xy + vec2(-0.5, -0.5) * radius).r, bias);
+    lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, shadowCoord.xy + vec2(0.5, -0.5) * radius).r, bias);
+    lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, shadowCoord.xy + vec2(-0.5, 0.5) * radius).r, bias);
+    lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, shadowCoord.xy + vec2(0.5, 0.5) * radius).r, bias);
 
     return lit * 0.25;
 }
@@ -679,10 +702,10 @@ float XRENGINE_SampleShadowMapArrayTent4(sampler2DArray shadowMap, vec3 shadowCo
     vec2 radius = max(vec2(max(filterRadius, 0.0)), texelSize);
     float lit = 0.0;
 
-    lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(-0.5, -0.5) * radius, layer)).r ? 1.0 : 0.0;
-    lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(0.5, -0.5) * radius, layer)).r ? 1.0 : 0.0;
-    lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(-0.5, 0.5) * radius, layer)).r ? 1.0 : 0.0;
-    lit += (shadowCoord.z - bias) <= texture(shadowMap, vec3(shadowCoord.xy + vec2(0.5, 0.5) * radius, layer)).r ? 1.0 : 0.0;
+    lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, vec3(shadowCoord.xy + vec2(-0.5, -0.5) * radius, layer)).r, bias);
+    lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, vec3(shadowCoord.xy + vec2(0.5, -0.5) * radius, layer)).r, bias);
+    lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, vec3(shadowCoord.xy + vec2(-0.5, 0.5) * radius, layer)).r, bias);
+    lit += XRENGINE_ShadowLit(shadowCoord.z, texture(shadowMap, vec3(shadowCoord.xy + vec2(0.5, 0.5) * radius, layer)).r, bias);
 
     return lit * 0.25;
 }
@@ -701,7 +724,7 @@ float XRENGINE_SampleShadowMapArraySoft(sampler2DArray shadowMap, vec3 shadowCoo
 
         vec2 sampleUv = shadowCoord.xy + XRENGINE_ShadowPoissonDisk[i] * radius;
         float sampleDepth = texture(shadowMap, vec3(sampleUv, layer)).r;
-        lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+        lit += XRENGINE_ShadowLit(shadowCoord.z, sampleDepth, bias);
     }
 
     return lit / float(clampedSamples);
@@ -725,7 +748,7 @@ float XRENGINE_SampleShadowMapArrayVogel(sampler2DArray shadowMap, vec3 shadowCo
 
         vec2 sampleUv = shadowCoord.xy + XRENGINE_GetVogelDiskTapRotated(i, clampedTaps, rotation) * radius;
         float sampleDepth = texture(shadowMap, vec3(sampleUv, layer)).r;
-        lit += (shadowCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+        lit += XRENGINE_ShadowLit(shadowCoord.z, sampleDepth, bias);
     }
 
     return lit / float(clampedTaps);
@@ -1121,7 +1144,7 @@ float XRENGINE_ClampPenumbra(float penumbra, float minRadius, float maxRadius)
 
 float XRENGINE_EstimatePenumbra(float receiverDepth, float avgBlockerDepth, float lightSourceRadius, float minRadius, float maxRadius)
 {
-    float penumbra = (receiverDepth - avgBlockerDepth) / max(avgBlockerDepth, 0.0001) * max(lightSourceRadius, 0.0);
+    float penumbra = abs(receiverDepth - avgBlockerDepth) / max(abs(avgBlockerDepth), 0.0001) * max(lightSourceRadius, 0.0);
     return XRENGINE_ClampPenumbra(penumbra, minRadius, maxRadius);
 }
 
@@ -1142,7 +1165,7 @@ float XRENGINE_BlockerSearch2D(sampler2D shadowMap, vec2 uv, float receiverDepth
 
         vec2 sampleUv = uv + XRENGINE_GetVogelDiskTapRotated(i, clampedSamples, rotation) * radius;
         float sampleDepth = texture(shadowMap, sampleUv).r;
-        if (sampleDepth < receiverDepth)
+        if (XRENGINE_IsShadowBlocker(sampleDepth, receiverDepth))
         {
             blockerSum += sampleDepth;
             blockerCount++;
@@ -1169,7 +1192,7 @@ float XRENGINE_BlockerSearch2DArray(sampler2DArray shadowMap, vec2 uv, float lay
 
         vec2 sampleUv = uv + XRENGINE_GetVogelDiskTapRotated(i, clampedSamples, rotation) * radius;
         float sampleDepth = texture(shadowMap, vec3(sampleUv, layer)).r;
-        if (sampleDepth < receiverDepth)
+        if (XRENGINE_IsShadowBlocker(sampleDepth, receiverDepth))
         {
             blockerSum += sampleDepth;
             blockerCount++;
@@ -1222,7 +1245,7 @@ float XRENGINE_SampleShadowMapCHSS(
     float minPenumbra,
     float maxPenumbra)
 {
-    float receiverDepth = shadowCoord.z - bias;
+    float receiverDepth = XRENGINE_ApplyShadowBias(shadowCoord.z, bias);
     float avgBlockerDepth = XRENGINE_BlockerSearch2D(shadowMap, shadowCoord.xy, receiverDepth, searchRadius, blockerSamples);
 
     if (avgBlockerDepth < 0.0)
@@ -1262,7 +1285,7 @@ float XRENGINE_SampleShadowMapArrayCHSS(
     float minPenumbra,
     float maxPenumbra)
 {
-    float receiverDepth = shadowCoord.z - bias;
+    float receiverDepth = XRENGINE_ApplyShadowBias(shadowCoord.z, bias);
     float avgBlockerDepth = XRENGINE_BlockerSearch2DArray(shadowMap, shadowCoord.xy, layer, receiverDepth, searchRadius, blockerSamples);
 
     if (avgBlockerDepth < 0.0)
@@ -1338,13 +1361,13 @@ float XRENGINE_SampleShadowCubeCHSS(samplerCube shadowMap, vec3 shadowDir, float
 float XRENGINE_SampleShadowMapSimple(sampler2D shadowMap, vec3 shadowCoord, float bias)
 {
     float depth = texture(shadowMap, shadowCoord.xy).r;
-    return (shadowCoord.z - bias) > depth ? 0.0 : 1.0;
+    return XRENGINE_ShadowLit(shadowCoord.z, depth, bias);
 }
 
 float XRENGINE_SampleShadowMapSimpleAddBias(sampler2D shadowMap, vec3 shadowCoord, float bias)
 {
     float depth = texture(shadowMap, shadowCoord.xy).r;
-    return (shadowCoord.z + bias) <= depth ? 1.0 : 0.0;
+    return XRENGINE_ShadowLit(shadowCoord.z, depth, -bias);
 }
 
 float XRENGINE_LinearDepth01ToPerspectiveDepth(float linearDepth01, float nearZ, float farZ)
@@ -1669,7 +1692,7 @@ float XRENGINE_SampleShadowAtlasPCF(
         for (int y = -halfKernel; y <= halfKernel; ++y)
         {
             float pcfDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(x, y) * texelSize, uvScaleBias);
-            shadow += (localCoord.z - bias) > pcfDepth ? 0.0 : 1.0;
+            shadow += XRENGINE_ShadowLit(localCoord.z, pcfDepth, bias);
         }
     }
 
@@ -1683,7 +1706,7 @@ float XRENGINE_SampleShadowAtlasSimple(
     float bias)
 {
     float depth = XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy, uvScaleBias);
-    return (localCoord.z - bias) > depth ? 0.0 : 1.0;
+    return XRENGINE_ShadowLit(localCoord.z, depth, bias);
 }
 
 float XRENGINE_SampleShadowAtlasSoft(
@@ -1706,7 +1729,7 @@ float XRENGINE_SampleShadowAtlasSoft(
 
         vec2 sampleUv = localCoord.xy + XRENGINE_ShadowPoissonDisk[i] * radius;
         float sampleDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, sampleUv, uvScaleBias);
-        lit += (localCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+        lit += XRENGINE_ShadowLit(localCoord.z, sampleDepth, bias);
     }
 
     return lit / float(clampedSamples);
@@ -1736,7 +1759,7 @@ float XRENGINE_SampleShadowAtlasVogel(
 
         vec2 sampleUv = localCoord.xy + XRENGINE_GetVogelDiskTapRotated(i, clampedTaps, rotation) * radius;
         float sampleDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, sampleUv, uvScaleBias);
-        lit += (localCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+        lit += XRENGINE_ShadowLit(localCoord.z, sampleDepth, bias);
     }
 
     return lit / float(clampedTaps);
@@ -1753,10 +1776,10 @@ float XRENGINE_SampleShadowAtlasTent4(
     vec2 radius = max(vec2(max(filterRadius, 0.0)), vec2(max(localTexelSize, 1e-7)));
     float lit = 0.0;
 
-    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(-0.5, -0.5) * radius, uvScaleBias) ? 1.0 : 0.0;
-    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(0.5, -0.5) * radius, uvScaleBias) ? 1.0 : 0.0;
-    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(-0.5, 0.5) * radius, uvScaleBias) ? 1.0 : 0.0;
-    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(0.5, 0.5) * radius, uvScaleBias) ? 1.0 : 0.0;
+    lit += XRENGINE_ShadowLit(localCoord.z, XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(-0.5, -0.5) * radius, uvScaleBias), bias);
+    lit += XRENGINE_ShadowLit(localCoord.z, XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(0.5, -0.5) * radius, uvScaleBias), bias);
+    lit += XRENGINE_ShadowLit(localCoord.z, XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(-0.5, 0.5) * radius, uvScaleBias), bias);
+    lit += XRENGINE_ShadowLit(localCoord.z, XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(0.5, 0.5) * radius, uvScaleBias), bias);
 
     return lit * 0.25;
 }
@@ -1783,7 +1806,7 @@ float XRENGINE_BlockerSearchShadowAtlas2D(
 
         vec2 sampleUv = localUv + XRENGINE_GetVogelDiskTapRotated(i, clampedSamples, rotation) * radius;
         float sampleDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, sampleUv, uvScaleBias);
-        if (sampleDepth < receiverDepth)
+        if (XRENGINE_IsShadowBlocker(sampleDepth, receiverDepth))
         {
             blockerSum += sampleDepth;
             blockerCount++;
@@ -1806,7 +1829,7 @@ float XRENGINE_SampleShadowAtlasCHSS(
     float minPenumbra,
     float maxPenumbra)
 {
-    float receiverDepth = localCoord.z - bias;
+    float receiverDepth = XRENGINE_ApplyShadowBias(localCoord.z, bias);
     float avgBlockerDepth = XRENGINE_BlockerSearchShadowAtlas2D(
         shadowMap,
         localCoord.xy,
@@ -1900,7 +1923,7 @@ float XRENGINE_SampleShadowAtlasPCF(
         for (int y = -halfKernel; y <= halfKernel; ++y)
         {
             float pcfDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(x, y) * texelSize, layer, uvScaleBias);
-            shadow += (localCoord.z - bias) > pcfDepth ? 0.0 : 1.0;
+            shadow += XRENGINE_ShadowLit(localCoord.z, pcfDepth, bias);
         }
     }
 
@@ -1915,7 +1938,7 @@ float XRENGINE_SampleShadowAtlasSimple(
     float bias)
 {
     float depth = XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy, layer, uvScaleBias);
-    return (localCoord.z - bias) > depth ? 0.0 : 1.0;
+    return XRENGINE_ShadowLit(localCoord.z, depth, bias);
 }
 
 float XRENGINE_SampleShadowAtlasSoft(
@@ -1939,7 +1962,7 @@ float XRENGINE_SampleShadowAtlasSoft(
 
         vec2 sampleUv = localCoord.xy + XRENGINE_ShadowPoissonDisk[i] * radius;
         float sampleDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, sampleUv, layer, uvScaleBias);
-        lit += (localCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+        lit += XRENGINE_ShadowLit(localCoord.z, sampleDepth, bias);
     }
 
     return lit / float(clampedSamples);
@@ -1970,7 +1993,7 @@ float XRENGINE_SampleShadowAtlasVogel(
 
         vec2 sampleUv = localCoord.xy + XRENGINE_GetVogelDiskTapRotated(i, clampedTaps, rotation) * radius;
         float sampleDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, sampleUv, layer, uvScaleBias);
-        lit += (localCoord.z - bias) <= sampleDepth ? 1.0 : 0.0;
+        lit += XRENGINE_ShadowLit(localCoord.z, sampleDepth, bias);
     }
 
     return lit / float(clampedTaps);
@@ -1988,10 +2011,10 @@ float XRENGINE_SampleShadowAtlasTent4(
     vec2 radius = max(vec2(max(filterRadius, 0.0)), vec2(max(localTexelSize, 1e-7)));
     float lit = 0.0;
 
-    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(-0.5, -0.5) * radius, layer, uvScaleBias) ? 1.0 : 0.0;
-    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(0.5, -0.5) * radius, layer, uvScaleBias) ? 1.0 : 0.0;
-    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(-0.5, 0.5) * radius, layer, uvScaleBias) ? 1.0 : 0.0;
-    lit += (localCoord.z - bias) <= XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(0.5, 0.5) * radius, layer, uvScaleBias) ? 1.0 : 0.0;
+    lit += XRENGINE_ShadowLit(localCoord.z, XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(-0.5, -0.5) * radius, layer, uvScaleBias), bias);
+    lit += XRENGINE_ShadowLit(localCoord.z, XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(0.5, -0.5) * radius, layer, uvScaleBias), bias);
+    lit += XRENGINE_ShadowLit(localCoord.z, XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(-0.5, 0.5) * radius, layer, uvScaleBias), bias);
+    lit += XRENGINE_ShadowLit(localCoord.z, XRENGINE_ReadShadowAtlasDepth(shadowMap, localCoord.xy + vec2(0.5, 0.5) * radius, layer, uvScaleBias), bias);
 
     return lit * 0.25;
 }
@@ -2019,7 +2042,7 @@ float XRENGINE_BlockerSearchShadowAtlas2D(
 
         vec2 sampleUv = localUv + XRENGINE_GetVogelDiskTapRotated(i, clampedSamples, rotation) * radius;
         float sampleDepth = XRENGINE_ReadShadowAtlasDepth(shadowMap, sampleUv, layer, uvScaleBias);
-        if (sampleDepth < receiverDepth)
+        if (XRENGINE_IsShadowBlocker(sampleDepth, receiverDepth))
         {
             blockerSum += sampleDepth;
             blockerCount++;
@@ -2043,7 +2066,7 @@ float XRENGINE_SampleShadowAtlasCHSS(
     float minPenumbra,
     float maxPenumbra)
 {
-    float receiverDepth = localCoord.z - bias;
+    float receiverDepth = XRENGINE_ApplyShadowBias(localCoord.z, bias);
     float avgBlockerDepth = XRENGINE_BlockerSearchShadowAtlas2D(
         shadowMap,
         localCoord.xy,

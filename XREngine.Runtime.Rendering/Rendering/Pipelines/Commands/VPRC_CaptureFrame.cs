@@ -23,9 +23,22 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
     public string? WidthVariableName { get; set; }
     public string? HeightVariableName { get; set; }
     public string? SuccessVariableName { get; set; }
+    public int MaxCaptures { get; set; }
+    public int SkipFramesBeforeCapture { get; set; }
+
+    private int _captureCount;
+    private int _framesSkipped;
 
     protected override void Execute()
     {
+        if (MaxCaptures > 0 && _captureCount >= MaxCaptures)
+            return;
+        if (_framesSkipped < SkipFramesBeforeCapture)
+        {
+            _framesSkipped++;
+            return;
+        }
+
         XRRenderPipelineInstance instance = ActivePipelineInstance;
         if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? texture, out string failure) ||
             texture is null)
@@ -67,6 +80,8 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
             instance.Variables.Set(HeightVariableName!, height);
         if (!string.IsNullOrWhiteSpace(SuccessVariableName))
             instance.Variables.Set(SuccessVariableName!, wroteFile || !string.IsNullOrWhiteSpace(DestinationBufferName));
+
+        _captureCount++;
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)

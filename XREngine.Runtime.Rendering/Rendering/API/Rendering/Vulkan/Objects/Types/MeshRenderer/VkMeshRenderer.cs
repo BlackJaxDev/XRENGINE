@@ -210,6 +210,30 @@ public unsafe partial class VulkanRenderer
                     hash.Add(meshDraw.Draw.Scissor.Offset.Y);
                     hash.Add(meshDraw.Draw.Scissor.Extent.Width);
                     hash.Add(meshDraw.Draw.Scissor.Extent.Height);
+                    hash.Add(meshDraw.Draw.ViewportScissorCount);
+                    if (meshDraw.Draw.ViewportScissorCount > 1 &&
+                        meshDraw.Draw.IndexedViewports is { } indexedViewports &&
+                        meshDraw.Draw.IndexedScissors is { } indexedScissors)
+                    {
+                        int indexedCount = (int)Math.Min(
+                            meshDraw.Draw.ViewportScissorCount,
+                            (uint)Math.Min(indexedViewports.Length, indexedScissors.Length));
+                        for (int indexedIndex = 0; indexedIndex < indexedCount; indexedIndex++)
+                        {
+                            Viewport indexedViewport = indexedViewports[indexedIndex];
+                            Rect2D indexedScissor = indexedScissors[indexedIndex];
+                            hash.Add(indexedViewport.X);
+                            hash.Add(indexedViewport.Y);
+                            hash.Add(indexedViewport.Width);
+                            hash.Add(indexedViewport.Height);
+                            hash.Add(indexedViewport.MinDepth);
+                            hash.Add(indexedViewport.MaxDepth);
+                            hash.Add(indexedScissor.Offset.X);
+                            hash.Add(indexedScissor.Offset.Y);
+                            hash.Add(indexedScissor.Extent.Width);
+                            hash.Add(indexedScissor.Extent.Height);
+                        }
+                    }
                     hash.Add(meshDraw.Draw.DepthTestEnabled);
                     hash.Add(meshDraw.Draw.DepthWriteEnabled);
                     hash.Add((int)meshDraw.Draw.DepthCompareOp);
@@ -321,6 +345,9 @@ public unsafe partial class VulkanRenderer
         VkMeshRenderer Renderer,
         Viewport Viewport,
         Rect2D Scissor,
+        Viewport[]? IndexedViewports,
+        Rect2D[]? IndexedScissors,
+        uint ViewportScissorCount,
         SampleCountFlags RasterizationSamples,
         bool DepthTestEnabled,
         bool DepthWriteEnabled,
@@ -435,6 +462,7 @@ public unsafe partial class VulkanRenderer
             BlendFactor SrcAlphaBlendFactor,
             BlendFactor DstAlphaBlendFactor,
             ColorComponentFlags ColorWriteMask,
+            uint ViewportScissorCount,
             bool NativeNegativeOneToOneDepth);
 
         private readonly Dictionary<GraphicsPipelineLibraryKey, Pipeline> _graphicsPipelineLibraries = new();
@@ -475,6 +503,7 @@ public unsafe partial class VulkanRenderer
             BlendFactor SrcAlphaBlendFactor,
             BlendFactor DstAlphaBlendFactor,
             ColorComponentFlags ColorWriteMask,
+            uint ViewportScissorCount,
             bool NativeNegativeOneToOneDepth);
 
         private VkRenderProgram? _program;
@@ -865,11 +894,16 @@ public unsafe partial class VulkanRenderer
             }
 
             ComputeDispatchSnapshot? programBindingSnapshot = CaptureProgramBindingSnapshot(effectiveMaterial);
+            IndexedViewportScissorSnapshot indexedViewportScissors = Renderer.GetCurrentIndexedViewportScissorSnapshot();
+            uint viewportScissorCount = indexedViewportScissors.Count > 1 ? indexedViewportScissors.Count : 1u;
 
             var draw = new PendingMeshDraw(
                 this,
                 Renderer.GetCurrentViewport(),
                 Renderer.GetCurrentScissor(),
+                viewportScissorCount > 1 ? indexedViewportScissors.Viewports : null,
+                viewportScissorCount > 1 ? indexedViewportScissors.Scissors : null,
+                viewportScissorCount,
                 rasterizationSamples,
                 depthTestEnabled,
                 depthWriteEnabled,

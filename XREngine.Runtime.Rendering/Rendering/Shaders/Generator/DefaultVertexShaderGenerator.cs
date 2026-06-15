@@ -371,7 +371,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 Line("#extension GL_NV_viewport_array2 : require");
                 Line("#extension GL_NV_stereo_view_rendering : require");
             }
-            else if ((UseDirectionalCascadeInstancedLayering || UsePointLightInstancedLayering) && !RuntimeEngine.Rendering.State.IsVulkan)
+            else if (UseDirectionalCascadeInstancedLayering || UsePointLightInstancedLayering)
             {
                 Line("#extension GL_ARB_shader_viewport_layer_array : require");
             }

@@ -670,6 +670,7 @@ public unsafe partial class VulkanRenderer
 				effectiveDraw.SrcAlphaBlendFactor,
 				effectiveDraw.DstAlphaBlendFactor,
 				effectiveDraw.ColorWriteMask,
+				Math.Max(effectiveDraw.ViewportScissorCount, 1u),
 				useNativeNegativeOneToOneDepth);
 
 			if (pipelineInvalidated && _pipelines.Count > 256)
@@ -727,8 +728,8 @@ public unsafe partial class VulkanRenderer
 				PipelineViewportStateCreateInfo viewportState = new()
 				{
 					SType = StructureType.PipelineViewportStateCreateInfo,
-					ViewportCount = 1,
-					ScissorCount = 1,
+					ViewportCount = Math.Max(effectiveDraw.ViewportScissorCount, 1u),
+					ScissorCount = Math.Max(effectiveDraw.ViewportScissorCount, 1u),
 				};
 
 				PipelineViewportDepthClipControlCreateInfoEXTNative depthClipControlInfo = new()
@@ -1095,6 +1096,7 @@ public unsafe partial class VulkanRenderer
 				hasBlendState ? pipeline.SrcAlphaBlendFactor : default,
 				hasBlendState ? pipeline.DstAlphaBlendFactor : default,
 				hasBlendState ? pipeline.ColorWriteMask : default,
+				hasRasterState ? Math.Max(pipeline.ViewportScissorCount, 1u) : 1u,
 				hasRasterState && pipeline.NativeNegativeOneToOneDepth);
 		}
 

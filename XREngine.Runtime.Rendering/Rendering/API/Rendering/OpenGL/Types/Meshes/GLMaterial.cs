@@ -334,6 +334,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     program.Uniform(EEngineUniform.ClipSpaceYDirection.ToStringFast(), (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
                     program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
+                    program.Uniform(EEngineUniform.FramebufferTextureYDirection.ToStringFast(), (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.OpenGL));
                 }
 
                 if (missingProgramRequirements.HasFlag(EUniformRequirements.MousePosition))

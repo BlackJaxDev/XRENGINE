@@ -45,6 +45,32 @@ namespace XREngine.Rendering.Vulkan
             MarkCommandBuffersDirty();
         }
 
+        public override bool SetIndexedViewportScissors(
+            ReadOnlySpan<BoundingRectangle> viewports,
+            ReadOnlySpan<BoundingRectangle> scissors)
+        {
+            int count = Math.Min(viewports.Length, scissors.Length);
+            if (count <= 0 ||
+                !RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
+                count > RuntimeEngine.Rendering.State.MaxOpenGLViewports)
+            {
+                return false;
+            }
+
+            _state.SetIndexedViewportScissors(viewports[..count], scissors[..count]);
+            MarkCommandBuffersDirty();
+            return true;
+        }
+
+        public override void ClearIndexedViewportScissors(int count)
+        {
+            if (count <= 0)
+                return;
+
+            _state.ClearIndexedViewportScissors();
+            MarkCommandBuffersDirty();
+        }
+
         // =========== API Render Object Factory ===========
 
         protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)

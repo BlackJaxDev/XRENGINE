@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -158,10 +159,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.TransformIdTexture = transformIdTex;
             state.DepthStencilTexture = depthStencilTex;
 
-            state.AoTexture?.Destroy();
-            state.AoTexture = CreateAoTexture(width, height);
+            state.AoTexture = ResolveAoTexture(instance, state.AoTexture, width, height);
             state.DepthViewTexture = instance.GetTexture<XRTexture>(DepthViewTextureName);
-            instance.SetTexture(state.AoTexture);
             InvalidateDependentFbos(instance);
 
             RenderingParameters renderParams = new()
@@ -219,6 +218,39 @@ namespace XREngine.Rendering.Pipelines.Commands
             instance.SetFBO(generationFbo);
             instance.SetFBO(blurFbo);
             instance.SetFBO(outputFbo);
+        }
+
+        private XRTexture ResolveAoTexture(
+            XRRenderPipelineInstance instance,
+            XRTexture? previousTexture,
+            int width,
+            int height)
+        {
+            XRTexture? registeredTexture = instance.GetTexture<XRTexture>(IntensityTextureName);
+            if (registeredTexture is not null && TextureMatchesSize(registeredTexture, width, height))
+            {
+                ConfigureAoSampler(registeredTexture);
+                return registeredTexture;
+            }
+
+            if (previousTexture is not null && !ReferenceEquals(previousTexture, registeredTexture))
+                previousTexture.Destroy();
+
+            XRTexture createdTexture = CreateAoTexture(width, height);
+            instance.SetTexture(createdTexture);
+            return createdTexture;
+        }
+
+        private static bool TextureMatchesSize(XRTexture texture, int width, int height)
+        {
+            Vector3 dims = texture.WidthHeightDepth;
+            return (int)MathF.Round(dims.X) == Math.Max(width, 1) &&
+                   (int)MathF.Round(dims.Y) == Math.Max(height, 1);
+        }
+
+        private void ConfigureAoSampler(XRTexture texture)
+        {
+            texture.SamplerName = IntensityTextureName;
         }
 
         private XRTexture CreateAoTexture(int width, int height)

@@ -34,6 +34,21 @@ public enum ERenderClipDepthRange
 
 public static class RenderClipSpacePolicy
 {
+    public static ERenderClipSpaceYDirection FramebufferTextureYDirection(RuntimeGraphicsApiKind backend)
+    {
+        ERenderClipSpaceYDirection clipY = RuntimeEngine.Rendering.Settings.ClipSpaceYDirection;
+        if (backend != RuntimeGraphicsApiKind.Vulkan)
+            return clipY;
+
+        // Vulkan uses a negative-height viewport for the engine's Y-up clip-space
+        // policy. That preserves screen-space handedness for rasterization, but FBO
+        // texture row 0 is still the top of the image, so clip->texture sampling must
+        // use the opposite Y mapping.
+        return clipY == ERenderClipSpaceYDirection.YUp
+            ? ERenderClipSpaceYDirection.YDown
+            : ERenderClipSpaceYDirection.YUp;
+    }
+
     public static float DepthBufferToClipZ(float depth, ERenderClipDepthRange range)
         => range == ERenderClipDepthRange.NegativeOneToOne
             ? depth * 2.0f - 1.0f

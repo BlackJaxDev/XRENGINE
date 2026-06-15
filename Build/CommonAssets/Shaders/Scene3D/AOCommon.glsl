@@ -16,6 +16,18 @@ uniform int ClipDepthRange;
 uniform int ClipSpaceYDirection;
 #endif
 
+#ifndef XRENGINE_FRAMEBUFFER_TEXTURE_Y_DIRECTION_UNIFORM
+#define XRENGINE_FRAMEBUFFER_TEXTURE_Y_DIRECTION_UNIFORM
+uniform int FramebufferTextureYDirection;
+#endif
+
+#ifndef XRENGINE_AO_SCREEN_DIMENSIONS_UNIFORM
+#define XRENGINE_AO_SCREEN_DIMENSIONS_UNIFORM
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
+#endif
+
 float AODepthToClipZ(float depth)
 {
     return ClipDepthRange == 1 ? depth * 2.0f - 1.0f : depth;
@@ -24,21 +36,24 @@ float AODepthToClipZ(float depth)
 vec2 AOTextureUVFromClipXY(vec2 clipXY)
 {
     vec2 uv = clipXY * 0.5f + 0.5f;
-#ifdef XRENGINE_VULKAN
-    // Fullscreen AO passes use NDC-derived UVs, while deferred composition
-    // samples AO by gl_FragCoord/XRENGINE_ScreenUV. Vulkan's framebuffer
-    // origin makes those conventions vertically opposite, so normalize every
-    // screen-space AO texture lookup through the same flip.
-    uv.y = 1.0f - uv.y;
-#else
-    if (ClipSpaceYDirection == 1)
+    if (FramebufferTextureYDirection == 1)
         uv.y = 1.0f - uv.y;
-#endif
     return uv;
+}
+
+vec2 AOClipXYFromTextureUV(vec2 uv)
+{
+    if (FramebufferTextureYDirection == 1)
+        uv.y = 1.0f - uv.y;
+    return uv * 2.0f - 1.0f;
 }
 
 vec2 AOTextureUVFromFragPos(vec3 fragPos)
 {
+    vec2 screenSize = vec2(ScreenWidth, ScreenHeight);
+    if (screenSize.x > 0.0f && screenSize.y > 0.0f)
+        return clamp((gl_FragCoord.xy - ScreenOrigin) / screenSize, vec2(0.0f), vec2(1.0f));
+
     return AOTextureUVFromClipXY(fragPos.xy);
 }
 
@@ -50,7 +65,7 @@ bool AOIsFarDepth(float depth)
 
 vec3 AOViewPosFromDepth(float depth, vec2 uv, mat4 inverseProjMatrix)
 {
-    vec4 clipSpacePosition = vec4(uv * 2.0f - 1.0f, AODepthToClipZ(depth), 1.0f);
+    vec4 clipSpacePosition = vec4(AOClipXYFromTextureUV(uv), AODepthToClipZ(depth), 1.0f);
     vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
     return viewSpacePosition.xyz / max(viewSpacePosition.w, 1e-5f);
 }

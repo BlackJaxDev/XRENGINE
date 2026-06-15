@@ -228,6 +228,15 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        internal Extent2D ResolveDrawExtent()
+        {
+            if (FramebufferWidth > 0 && FramebufferHeight > 0)
+                return new Extent2D(FramebufferWidth, FramebufferHeight);
+
+            var (width, height) = ResolveFramebufferExtent();
+            return new Extent2D(width, height);
+        }
+
         private static FrameBufferAttachmentSignature[] ApplyInitialLayoutOverrides(
             FrameBufferAttachmentSignature[] signatures,
             ImageLayout[] overrides)
@@ -760,9 +769,7 @@ public unsafe partial class VulkanRenderer
             RenderPassResourceUsage usage)
         {
             if (signature.Role == AttachmentRole.Color)
-                return signature.ReferenceLayout == ImageLayout.General
-                    ? ImageLayout.General
-                    : ImageLayout.ColorAttachmentOptimal;
+                return ImageLayout.ColorAttachmentOptimal;
 
             return usage.Access == ERenderGraphAccess.Read
                 ? ImageLayout.DepthStencilReadOnlyOptimal
@@ -971,17 +978,14 @@ public unsafe partial class VulkanRenderer
             AttachmentLoadOp stencilLoad = AttachmentLoadOp.DontCare;
             AttachmentStoreOp stencilStore = hasStencil ? AttachmentStoreOp.Store : AttachmentStoreOp.DontCare;
 
-            // Color attachments use ShaderReadOnlyOptimal as the final layout so
-            // the render pass automatically transitions them for sampling by
-            // subsequent passes (e.g. fullscreen quad blits in the post-process
-            // chain). Sampled depth/stencil attachments also need to leave the
-            // pass in a read-only layout; otherwise later sampled descriptors
-            // will mismatch the actual image layout.
-            bool storageCapable = (source.Usage & ImageUsageFlags.StorageBit) != 0;
+            // Color attachments stay in color-attachment layout at the pass
+            // boundary. The render graph emits explicit barriers to shader-read
+            // when a later pass samples them, which keeps the graph state and the
+            // live Vulkan layout in agreement. Sampled depth/stencil attachments
+            // still need to leave the pass in a read-only layout because their
+            // pass metadata may opt into read-only testing/sampling.
             ImageLayout finalLayout = role == AttachmentRole.Color
-                ? storageCapable
-                    ? ImageLayout.General
-                    : ImageLayout.ShaderReadOnlyOptimal
+                ? ImageLayout.ColorAttachmentOptimal
                 : (source.Usage & ImageUsageFlags.SampledBit) != 0
                     ? ImageLayout.DepthStencilReadOnlyOptimal
                     : ImageLayout.DepthStencilAttachmentOptimal;
@@ -999,9 +1003,7 @@ public unsafe partial class VulkanRenderer
             // require read-only depth (sampling the same depth they test against) opt in via
             // render-pass metadata, which overrides this reference layout to read-only.
             ImageLayout referenceLayout = role == AttachmentRole.Color
-                ? storageCapable
-                    ? ImageLayout.General
-                    : ImageLayout.ColorAttachmentOptimal
+                ? ImageLayout.ColorAttachmentOptimal
                 : ImageLayout.DepthStencilAttachmentOptimal;
 
             return new FrameBufferAttachmentSignature(

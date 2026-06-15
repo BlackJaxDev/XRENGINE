@@ -96,6 +96,7 @@ namespace XREngine.Components.Lights
             UnsupportedViewportScissorArray = 10,
             UnsupportedVertexStageViewportIndexWrites = 11,
             UnsupportedGeometryStageViewportIndexWrites = 12,
+            VulkanGroupedAtlasDisabled = 13,
         }
 
         private enum DirectionalCascadeShadowBackend
@@ -1576,6 +1577,9 @@ namespace XREngine.Components.Lights
 
             if (!hasGroupedAtlasAllocation)
                 return CreateSequentialCascadeShadowRenderPlan(requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingGroupedAtlasAllocation);
+
+            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+                return CreateSequentialCascadeShadowRenderPlan(requestedMode, DirectionalCascadeShadowBackend.AtlasPage, cascadeCount, DirectionalCascadeShadowFallbackReason.VulkanGroupedAtlasDisabled);
 
             if (!RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
                 cascadeCount > RuntimeEngine.Rendering.State.MaxOpenGLViewports)

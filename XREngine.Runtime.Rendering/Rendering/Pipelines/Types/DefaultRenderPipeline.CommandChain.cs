@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Numerics;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Data.Colors;
@@ -263,6 +264,10 @@ public partial class DefaultRenderPipeline
                 resolveDepthStencil: true);
             msaaGBufferBranch.TrueCommands = msaaGeomCmds;
         }
+
+        AppendDiagnosticTextureCapture(c, "01_AlbedoOpacity", AlbedoOpacityTextureName);
+        AppendDiagnosticTextureCapture(c, "02_Normal", NormalTextureName);
+        AppendDiagnosticTextureCapture(c, "03_RMSE", RMSETextureName);
     }
 
     private void AppendForwardDepthPrePass(ViewportRenderCommandContainer c)
@@ -351,6 +356,8 @@ public partial class DefaultRenderPipeline
             [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOResolveCommands(),
         };
         aoResolveSwitch.DefaultCase = CreateAmbientOcclusionResolveCommands();
+
+        AppendDiagnosticTextureCapture(c, "04_AmbientOcclusion", AmbientOcclusionIntensityTextureName);
     }
 
     private void AppendLightingPass(ViewportRenderCommandContainer c)
@@ -366,6 +373,8 @@ public partial class DefaultRenderPipeline
             GetDesiredFBOSizeInternal,
             NeedsRecreateLightCombineFbo)
             .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_SetClears>().Set(ColorF4.Black, null, null);
 
         var msaaMarkBranch = c.Add<VPRC_IfElse>();
         msaaMarkBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
@@ -422,6 +431,9 @@ public partial class DefaultRenderPipeline
             }
             msaaLightingBranch.FalseCommands = stdLightCmds;
         }
+
+        AppendDiagnosticTextureCapture(c, "05_LightingAccum", LightingAccumTextureName);
+        c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, null, null);
     }
 
     private void AppendForwardPass(ViewportRenderCommandContainer c, bool enableComputePasses)
@@ -492,6 +504,7 @@ public partial class DefaultRenderPipeline
 
             c.Add<VPRC_DepthTest>().Enable = false;
             c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+            AppendDiagnosticTextureCapture(c, "05b_LightCombine", DiffuseTextureName);
 
             c.Add<VPRC_DepthTest>().Enable = true;
             c.Add<VPRC_DepthWrite>().Allow = false;
@@ -529,6 +542,8 @@ public partial class DefaultRenderPipeline
                 depthViewTextureName: ForwardPassMsaaDepthViewTextureName);
             msaaResolve.TrueCommands = resolveCmds;
         }
+
+        AppendDiagnosticTextureCapture(c, "06_ForwardPass", HDRSceneTextureName);
     }
 
     private void AddConditionalFboCache(
@@ -619,6 +634,8 @@ public partial class DefaultRenderPipeline
             c.Add<VPRC_DepthWrite>().Allow = true;
         }
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+        AppendDiagnosticTextureCapture(c, "07_Velocity", VelocityTextureName);
+        AppendDiagnosticFboCapture(c, "07b_VelocityFBO", VelocityFBOName);
     }
 
     private void AppendBloomPass(ViewportRenderCommandContainer c)
@@ -633,6 +650,10 @@ public partial class DefaultRenderPipeline
                 Stereo);
             bloomChoice.TrueCommands = bloomCommands;
         }
+
+        AppendDiagnosticTextureCapture(c, "08_BloomMip0", BloomBlurTextureName, mipLevel: 0);
+        AppendDiagnosticTextureCapture(c, "09_BloomMip1", BloomBlurTextureName, mipLevel: 1);
+        AppendDiagnosticTextureCapture(c, "10_BloomMip4", BloomBlurTextureName, mipLevel: 4);
     }
 
     private void AppendMotionBlurAndDoF(ViewportRenderCommandContainer c)
@@ -659,6 +680,8 @@ public partial class DefaultRenderPipeline
 
         c.Add<VPRC_TemporalAccumulationPass>().Phase =
             VPRC_TemporalAccumulationPass.EPhase.PopJitter;
+
+        AppendDiagnosticTextureCapture(c, "11_TemporalColorInput", TemporalColorInputTextureName);
     }
 
     private void AppendPostTemporalForwardPasses(ViewportRenderCommandContainer c)
@@ -837,6 +860,7 @@ public partial class DefaultRenderPipeline
                     blitDepth: false,
                     blitStencil: false,
                     linearFilter: false);
+                AppendDiagnosticTextureCapture(tsrUpscale, "14b_TsrHistoryColor", TsrHistoryColorTextureName);
                 tsrOrPostAa.TrueCommands = tsrUpscale;
             }
             {
@@ -863,6 +887,8 @@ public partial class DefaultRenderPipeline
 
             upscaleChoice.TrueCommands = upscaleCmds;
         }
+
+        AppendDiagnosticTextureCapture(c, "14_TsrOutput", TsrOutputTextureName);
     }
 
     private void AppendExposureUpdate(ViewportRenderCommandContainer c)
@@ -900,6 +926,8 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_DepthWrite>().Allow = true;
             }
         }
+
+        AppendDiagnosticTextureCapture(c, "12_PostProcessOutput", PostProcessOutputTextureName);
     }
 
     private void AppendFinalPostProcess(ViewportRenderCommandContainer c)
@@ -909,6 +937,8 @@ public partial class DefaultRenderPipeline
         {
             c.Add<VPRC_RenderQuadToFBO>().SetTargets(FinalPostProcessFBOName, FinalPostProcessOutputFBOName);
         }
+
+        AppendDiagnosticTextureCapture(c, "13_FinalPostProcessOutput", FinalPostProcessOutputTextureName);
     }
 
     /// <summary>
@@ -1346,6 +1376,55 @@ public partial class DefaultRenderPipeline
 
     private static string? ResolveOutputSourceFboOverride()
         => RenderDiagnosticsFlags.OutputSourceFboOverride;
+
+    private static void AppendDiagnosticTextureCapture(
+        ViewportRenderCommandContainer c,
+        string label,
+        string textureName,
+        int mipLevel = 0)
+    {
+        if (!ShouldCaptureDefaultPipelineFbos())
+            return;
+
+        var capture = c.Add<VPRC_CaptureFrame>();
+        capture.SourceTextureName = textureName;
+        capture.SourceMipLevel = mipLevel;
+        capture.MaxCaptures = 1;
+        capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
+        capture.OutputFilePath = Path.Combine("Build", "Diagnostics", "FrameCaptures", $"DefaultPipeline_{label}.png");
+        capture.FlipVertically = false;
+    }
+
+    private static void AppendDiagnosticFboCapture(
+        ViewportRenderCommandContainer c,
+        string label,
+        string fboName)
+    {
+        if (!ShouldCaptureDefaultPipelineFbos())
+            return;
+
+        var capture = c.Add<VPRC_CaptureFrame>();
+        capture.SourceFBOName = fboName;
+        capture.MaxCaptures = 1;
+        capture.SkipFramesBeforeCapture = ResolveDefaultPipelineCaptureSkipFrames();
+        capture.OutputFilePath = Path.Combine("Build", "Diagnostics", "FrameCaptures", $"DefaultPipeline_{label}.png");
+        capture.FlipVertically = false;
+    }
+
+    private static int ResolveDefaultPipelineCaptureSkipFrames()
+    {
+        string? raw = Environment.GetEnvironmentVariable("XRE_CAPTURE_DEFAULT_PIPELINE_SKIP_FRAMES");
+        return int.TryParse(raw, out int skipFrames) ? Math.Max(0, skipFrames) : 120;
+    }
+
+    private static bool ShouldCaptureDefaultPipelineFbos()
+    {
+        string? raw = Environment.GetEnvironmentVariable("XRE_CAPTURE_DEFAULT_PIPELINE_FBO");
+        return !string.IsNullOrWhiteSpace(raw) &&
+            !string.Equals(raw, "0", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(raw, "off", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsValidFinalOutputSourceFboOverride(string sourceFboName, bool bypassVendorUpscale)
     {

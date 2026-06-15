@@ -66,6 +66,7 @@ public sealed record RenderGraphSynchronizationEdge(
     int ConsumerPassIndex,
     string ResourceName,
     ERenderPassResourceType ResourceType,
+    RenderGraphSubresourceRange SubresourceRange,
     RenderGraphSyncState ProducerState,
     RenderGraphSyncState ConsumerState,
     bool DependencyOnly);
@@ -121,7 +122,8 @@ public static class RenderGraphSynchronizationPlanner
                     continue;
 
                 RenderGraphSyncState consumerState = ResolveState(usage, pass.Stage);
-                if (lastUsageByResource.TryGetValue(usage.ResourceName, out var producer))
+                string usageKey = BuildUsageKey(usage);
+                if (lastUsageByResource.TryGetValue(usageKey, out var producer))
                 {
                     if (producer.PassIndex != pass.PassIndex)
                     {
@@ -130,13 +132,14 @@ public static class RenderGraphSynchronizationPlanner
                             pass.PassIndex,
                             usage.ResourceName,
                             usage.ResourceType,
+                            usage.SubresourceRange,
                             producer.State,
                             consumerState,
                             DependencyOnly: false));
                     }
                 }
 
-                lastUsageByResource[usage.ResourceName] = (pass.PassIndex, usage.ResourceType, consumerState);
+                lastUsageByResource[usageKey] = (pass.PassIndex, usage.ResourceType, consumerState);
             }
         }
 
@@ -159,6 +162,7 @@ public static class RenderGraphSynchronizationPlanner
                     pass.PassIndex,
                     string.Empty,
                     ERenderPassResourceType.TransferDestination,
+                    RenderGraphSubresourceRange.Full,
                     producerState,
                     consumerState,
                     DependencyOnly: true));
@@ -333,5 +337,14 @@ public static class RenderGraphSynchronizationPlanner
             ERenderPassResourceType.TransferDestination => RenderGraphImageLayout.TransferDestination,
             _ => null
         };
+    }
+
+    private static string BuildUsageKey(RenderPassResourceUsage usage)
+    {
+        RenderGraphSubresourceRange range = usage.SubresourceRange;
+        if (range.IsWholeResource)
+            return usage.ResourceName;
+
+        return $"{usage.ResourceName}|m{range.BaseMipLevel}:{range.MipLevelCount}|l{range.BaseArrayLayer}:{range.ArrayLayerCount}";
     }
 }

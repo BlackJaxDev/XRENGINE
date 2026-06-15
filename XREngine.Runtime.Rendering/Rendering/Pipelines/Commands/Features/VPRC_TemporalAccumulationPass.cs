@@ -1,3 +1,4 @@
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -23,6 +24,12 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     private const string TemporalHistoryDepthScopeName = "Temporal History Depth";
     private const string TemporalHistoryExposureScopeName = "Temporal History Exposure";
     private const string TemporalHistoryPassthroughScopeName = "Temporal History Passthrough Color+Depth";
+    private const string TemporalInputCopyPassName = "Temporal_InputCopy";
+    private const string TemporalAccumulationResolvePassName = "Temporal_AccumulationResolve";
+    private const string TemporalHistoryColorCopyPassName = "Temporal_HistoryColorCopy";
+    private const string TemporalHistoryDepthCopyPassName = "Temporal_HistoryDepthCopy";
+    private const string TemporalHistoryExposureCopyPassName = "Temporal_HistoryExposureCopy";
+    private const string TemporalHistoryPassthroughPassName = "Temporal_HistoryPassthrough";
 
     private static readonly Vector2[] TemporalJitterSequence =
     [
@@ -184,6 +191,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
             using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalInputCopyScopeName))
             {
+                using IDisposable? passScope = PushRenderGraphPass(TemporalInputCopyPassName);
                 renderer.BlitFBOToFBO(
                     forwardFBO,
                     temporalInputFBO,
@@ -196,13 +204,17 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
             //Debug.Out("[Temporal] Rendering accumulation FBO.");
             using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalAccumulationScopeName))
+            using (IDisposable? passScope = PushRenderGraphPass(TemporalAccumulationResolvePassName))
+            {
                 accumulationFBO.Render(accumulationFBO);
+            }
 
             // TAA history must store the resolved color, not the raw forward pass,
             // otherwise accumulation never becomes recursive and tuning the temporal
             // weights has only a weak one-frame effect.
             using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalHistoryColorScopeName))
             {
+                using IDisposable? passScope = PushRenderGraphPass(TemporalHistoryColorCopyPassName);
                 renderer.BlitFBOToFBO(
                     accumulationFBO,
                     historyColorFBO,
@@ -217,6 +229,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             // reprojection rejection next frame.
             using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalHistoryDepthScopeName))
             {
+                using IDisposable? passScope = PushRenderGraphPass(TemporalHistoryDepthCopyPassName);
                 renderer.BlitFBOToFBO(
                     forwardFBO,
                     historyColorFBO,
@@ -229,6 +242,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
             using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalHistoryExposureScopeName))
             {
+                using IDisposable? passScope = PushRenderGraphPass(TemporalHistoryExposureCopyPassName);
                 renderer.BlitFBOToFBO(
                     accumulationFBO,
                     historyExposureFBO,
@@ -245,6 +259,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
             using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalHistoryPassthroughScopeName))
             {
+                using IDisposable? passScope = PushRenderGraphPass(TemporalHistoryPassthroughPassName);
                 renderer.BlitFBOToFBO(
                     forwardFBO,
                     historyColorFBO,
@@ -260,6 +275,29 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         // even when TAA/jitter is disabled.
         //Debug.Out("[Temporal] Flagging history captured.");
         FlagTemporalHistoryCaptured();
+    }
+
+    private IDisposable? PushRenderGraphPass(string passName)
+    {
+        int passIndex = ResolvePassIndex(passName);
+        return passIndex != int.MinValue
+            ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+            : null;
+    }
+
+    private int ResolvePassIndex(string passName)
+    {
+        var metadata = ParentPipeline?.PassMetadata;
+        if (metadata is null)
+            return int.MinValue;
+
+        foreach (RenderPassMetadata pass in metadata)
+        {
+            if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
+                return pass.PassIndex;
+        }
+
+        return int.MinValue;
     }
 
     private static bool ShouldUseTemporalJitter()
@@ -292,7 +330,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     internal static bool TryGetTemporalUniformData([NotNullWhen(true)] out TemporalUniformData data)
     {
-        if (CurrentRenderingPipeline is not { } instance || instance.RenderState.SceneCamera is not { } camera)
+        if (CurrentRenderingPipeline is not { } instance ||
+            !TryResolveTemporalCamera(instance, out XRCamera? camera))
         {
             data = default;
             return false;
@@ -325,11 +364,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     internal static void ResetHistory(XRRenderPipelineInstance? instance)
     {
-        XRCamera? camera = instance?.RenderState.SceneCamera
-            ?? instance?.RenderState.RenderingCamera
-            ?? instance?.LastSceneCamera
-            ?? instance?.LastRenderingCamera;
-        if (camera is null || !TemporalStates.TryGetValue(camera, out TemporalState? state))
+        if (!TryResolveTemporalCamera(instance, out XRCamera? camera) ||
+            !TemporalStates.TryGetValue(camera, out TemporalState? state))
             return;
 
         state.ActiveJitterHandle?.Dispose();
@@ -344,8 +380,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     private static bool TryGetActiveState([NotNullWhen(true)] out XRRenderPipelineInstance? instance, [NotNullWhen(true)] out TemporalState? state)
     {
-        instance = ActivePipelineInstance;
-        if (instance is null || instance.RenderState.SceneCamera is not { } camera)
+        instance = CurrentRenderingPipeline;
+        if (instance is null || !TryResolveTemporalCamera(instance, out XRCamera? camera))
         {
             state = null;
             return false;
@@ -353,6 +389,17 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         state = TemporalStates.GetValue(camera, _ => new TemporalState());
         return true;
+    }
+
+    private static bool TryResolveTemporalCamera(
+        XRRenderPipelineInstance? instance,
+        [NotNullWhen(true)] out XRCamera? camera)
+    {
+        camera = instance?.RenderState.SceneCamera
+            ?? instance?.RenderState.RenderingCamera
+            ?? instance?.LastSceneCamera
+            ?? instance?.LastRenderingCamera;
+        return camera is not null;
     }
 
     private static void BeginTemporalFrame()
@@ -394,8 +441,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         state.ActiveJitterHandle?.Dispose();
         state.ActiveJitterHandle = null;
 
-        var camera = instance.RenderState.SceneCamera;
-        if (camera is null)
+        if (!TryResolveTemporalCamera(instance, out XRCamera? camera))
         {
             state.CurrentJitter = Vector2.Zero;
             state.CurrProjection = Matrix4x4.Identity;
@@ -457,7 +503,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             return;
         }
 
-        if (instance.RenderState.SceneCamera is null)
+        if (!TryResolveTemporalCamera(instance, out _))
         {
             Debug.Rendering("[Temporal] FlagHistoryCaptured skipped: no camera.");
             return;
@@ -532,37 +578,56 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (Phase != EPhase.Accumulate)
             return;
 
-        var builder = context.GetOrCreateSyntheticPass($"{nameof(VPRC_TemporalAccumulationPass)}_{Phase}", ERenderGraphPassStage.Graphics);
+        EAntiAliasingMode antiAliasingMode = ResolveAntiAliasingMode();
+        if (ShouldRunInternalAccumulation(antiAliasingMode))
+            DescribeTaaAccumulation(context);
+        else
+            DescribeHistoryPassthrough(context);
+    }
 
-        builder.SampleTexture(MakeFboColorResource(ForwardFBOName));
+    private void DescribeTaaAccumulation(RenderGraphDescribeContext context)
+    {
+        context.GetOrCreateSyntheticPass(TemporalInputCopyPassName, ERenderGraphPassStage.Transfer)
+            .UseTransferSource(MakeFboColorResource(ForwardFBOName))
+            .UseTransferDestination(MakeFboColorResource(TemporalInputFBOName));
 
-        builder.UseColorAttachment(
-            MakeFboColorResource(TemporalInputFBOName),
-            ERenderGraphAccess.Write,
-            ERenderPassLoadOp.DontCare,
-            ERenderPassStoreOp.Store);
-        builder.SampleTexture(MakeFboColorResource(TemporalInputFBOName));
+        context.GetOrCreateSyntheticPass(TemporalAccumulationResolvePassName, ERenderGraphPassStage.Graphics)
+            .SampleTexture(MakeFboColorResource(TemporalInputFBOName))
+            .SampleTexture(MakeFboColorResource(HistoryColorFBOName))
+            .SampleTexture(MakeTextureResource(DefaultRenderPipeline.VelocityTextureName))
+            .SampleTexture(MakeTextureResource(DefaultRenderPipeline.DepthViewTextureName))
+            .SampleTexture(MakeTextureResource(DefaultRenderPipeline.HistoryDepthViewTextureName))
+            .SampleTexture(MakeFboColorResource(HistoryExposureFBOName))
+            .UseColorAttachment(
+                MakeTextureResource(DefaultRenderPipeline.HDRSceneTextureName),
+                ERenderGraphAccess.Write,
+                ERenderPassLoadOp.DontCare,
+                ERenderPassStoreOp.Store)
+            .UseColorAttachment(
+                MakeTextureResource(DefaultRenderPipeline.TemporalExposureVarianceTextureName),
+                ERenderGraphAccess.Write,
+                ERenderPassLoadOp.DontCare,
+                ERenderPassStoreOp.Store);
 
-        builder.UseColorAttachment(MakeFboColorResource(TemporalAccumulationFBOName));
-        builder.SampleTexture(MakeFboColorResource(TemporalAccumulationFBOName));
+        context.GetOrCreateSyntheticPass(TemporalHistoryColorCopyPassName, ERenderGraphPassStage.Transfer)
+            .UseTransferSource(MakeTextureResource(DefaultRenderPipeline.HDRSceneTextureName))
+            .UseTransferDestination(MakeFboColorResource(HistoryColorFBOName));
 
-        builder.SampleTexture(MakeFboColorResource(HistoryColorFBOName));
-        builder.UseColorAttachment(
-            MakeFboColorResource(HistoryColorFBOName),
-            ERenderGraphAccess.Write,
-            ERenderPassLoadOp.DontCare,
-            ERenderPassStoreOp.Store);
-        builder.UseDepthAttachment(
-            MakeFboDepthResource(HistoryColorFBOName),
-            ERenderGraphAccess.Write,
-            ERenderPassLoadOp.DontCare,
-            ERenderPassStoreOp.Store);
+        context.GetOrCreateSyntheticPass(TemporalHistoryDepthCopyPassName, ERenderGraphPassStage.Transfer)
+            .UseTransferSource(MakeFboDepthResource(ForwardFBOName))
+            .UseTransferDestination(MakeFboDepthResource(HistoryColorFBOName));
 
-        builder.SampleTexture(MakeFboColorResource(HistoryExposureFBOName));
-        builder.UseColorAttachment(
-            MakeFboColorResource(HistoryExposureFBOName),
-            ERenderGraphAccess.Write,
-            ERenderPassLoadOp.DontCare,
-            ERenderPassStoreOp.Store);
+        context.GetOrCreateSyntheticPass(TemporalHistoryExposureCopyPassName, ERenderGraphPassStage.Transfer)
+            .UseTransferSource(MakeTextureResource(DefaultRenderPipeline.TemporalExposureVarianceTextureName))
+            .UseTransferDestination(MakeFboColorResource(HistoryExposureFBOName));
+    }
+
+    private void DescribeHistoryPassthrough(RenderGraphDescribeContext context)
+    {
+        context.GetOrCreateSyntheticPass(TemporalHistoryPassthroughPassName, ERenderGraphPassStage.Transfer)
+            .UseTransferSource(MakeFboColorResource(ForwardFBOName))
+            .UseTransferSource(MakeFboDepthResource(ForwardFBOName))
+            .UseTransferDestination(MakeFboColorResource(HistoryColorFBOName))
+            .UseTransferDestination(MakeFboDepthResource(HistoryColorFBOName));
     }
 }
