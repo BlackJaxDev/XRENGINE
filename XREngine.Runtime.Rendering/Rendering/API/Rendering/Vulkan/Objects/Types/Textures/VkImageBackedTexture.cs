@@ -158,6 +158,15 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        DeviceMemory IVkImageDescriptorSource.DescriptorMemory
+        {
+            get
+            {
+                RefreshPhysicalGroupImageIfStale();
+                return _memory;
+            }
+        }
+
         ImageView IVkImageDescriptorSource.DescriptorView
         {
             get

@@ -5,6 +5,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.XeSS;
 
@@ -29,13 +30,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool FlipSourceYOnVulkanFallback { get; set; } = true;
         public string AutoExposureTextureName { get; set; } = DefaultRenderPipeline.AutoExposureTextureName;
 
-        private static bool _reportedDlssFailure;
         private static bool _reportedXessFailure;
         private static bool _reportedXessApiMismatch;
         private static bool _reportedDlssApiMismatch;
         private static bool _reportedDlssUnavailable;
         private static bool _reportedXessUnavailable;
         private static bool _reportedXessFrameGenUnavailable;
+        private static bool _reportedDlssFrameGenUnavailable;
 
         private XRMaterial? _fallbackMaterial;
         private XRQuadFrameBuffer? _fallbackQuad;
@@ -48,6 +49,25 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRTexture? _bridgeMotionTexture;
         private XRFrameBuffer? _bridgeExposureTextureFbo;
         private XRTexture? _bridgeExposureTexture;
+        private NvidiaDlssManager.Native.NativeVulkanSession? _nativeDlssSession;
+        private VulkanRenderer? _nativeDlssRenderer;
+        private XRTexture2D? _nativeDlssOutputTexture;
+        private XRFrameBuffer? _nativeDlssOutputFbo;
+        private uint _nativeDlssViewportId;
+        private uint _nativeDlssOutputWidth;
+        private uint _nativeDlssOutputHeight;
+        private bool _nativeDlssOutputHdr;
+        private bool _nativeDlssDispatchHistoryValid;
+        private XRCamera? _lastNativeDlssCamera;
+        private object? _lastNativeDlssScene;
+        private bool _lastNativeDlssOutputHdr;
+        private bool _lastNativeDlssReverseDepth;
+        private uint _lastNativeDlssInputWidth;
+        private uint _lastNativeDlssInputHeight;
+        private uint _lastNativeDlssOutputWidth;
+        private uint _lastNativeDlssOutputHeight;
+        private Vector3 _lastNativeDlssCameraPosition;
+        private Vector3 _lastNativeDlssCameraForward;
         private bool _bridgeVendorHistoryValid;
         private EVulkanUpscaleBridgeVendor _lastBridgeVendor;
         private bool _fallbackApplySharpen;
@@ -154,15 +174,42 @@ void main()
             DestroyBridgeHelperFrameBuffer(ref _bridgeDepthTextureFbo, ref _bridgeDepthTexture);
             DestroyBridgeHelperFrameBuffer(ref _bridgeMotionTextureFbo, ref _bridgeMotionTexture);
             DestroyBridgeHelperFrameBuffer(ref _bridgeExposureTextureFbo, ref _bridgeExposureTexture);
+            DestroyNativeDlssResources();
             _bridgeVendorHistoryValid = false;
             _lastBridgeVendor = default;
             _bridgeDispatchHistoryValid = false;
             _lastBridgeCamera = null;
             _lastBridgeScene = null;
+            _nativeDlssDispatchHistoryValid = false;
+            _lastNativeDlssCamera = null;
+            _lastNativeDlssScene = null;
             _fallbackApplySharpen = false;
             _fallbackSharpenStrength = 0.0f;
 
             base.ReleaseContainerResources(instance);
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            if (SourceQuadFBOName is null)
+                return;
+
+            string destination = DestinationFBOName
+                ?? (RenderToSourceFrameBuffer ? SourceQuadFBOName : null)
+                ?? context.CurrentRenderTarget?.Name
+                ?? RenderGraphResourceNames.OutputRenderTarget;
+
+            var builder = context.GetOrCreateSyntheticPass(BuildQuadBlitPassName(SourceQuadFBOName, destination));
+            if (!string.IsNullOrWhiteSpace(SourceTextureName))
+            {
+                builder.SampleTexture(MakeTextureResource(SourceTextureName));
+                return;
+            }
+
+            if (!TryDescribeActualFboColorInputs(builder, SourceQuadFBOName))
+                builder.SampleTexture(MakeFboColorResource(SourceQuadFBOName));
         }
 
         protected override void Execute()
@@ -183,13 +230,17 @@ void main()
                 out string resolveFailure)
                 && resolvedColorTexture is not null;
 
+            bool requestedVendorFeature = IsVendorFeatureRequested();
+            if (ForceFallbackBlit && requestedVendorFeature)
+                FailRequestedVendorFeature("vendor upscale/frame generation", "vendor upscale bypass is active while a vendor feature is requested");
+
             if (!ForceFallbackBlit && viewport?.Window?.Renderer is VulkanRenderer)
             {
-                if (TryRunXess())
+                if (TryRunNativeVulkanVendor(out string nativeFailure))
                     return;
 
-                if (TryRunDlss())
-                    return;
+                if (requestedVendorFeature)
+                    FailRequestedVendorFeature("native Vulkan vendor upscale/frame generation", nativeFailure);
 
                 ReportNativeFallback();
             }
@@ -202,15 +253,18 @@ void main()
                 if (TryRunBridge(openGlRenderer, viewport, sourceFrameBuffer, resolvedColorTexture, out string bridgeFailure))
                     return;
 
+                if (requestedVendorFeature)
+                    FailRequestedVendorFeature("OpenGL-to-Vulkan vendor upscale bridge", bridgeFailure);
+
                 ReportBridgeFallback(viewport, bridgeFailure);
             }
-            else if (!ForceFallbackBlit && viewport is not null && IsBridgePathRequested())
+            else if (!ForceFallbackBlit && viewport is not null && requestedVendorFeature)
             {
-                ReportBridgeFallback(
-                    viewport,
+                string failureReason =
                     hasColorTexture
                         ? RuntimeEngine.Rendering.DescribeVulkanUpscaleBridgeUnavailability(viewport, ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? false)
-                        : resolveFailure);
+                        : resolveFailure;
+                FailRequestedVendorFeature("vendor upscale/frame generation", failureReason);
             }
 
             if (FrameBufferName is null)
@@ -775,7 +829,7 @@ void main()
                 string reason = string.IsNullOrWhiteSpace(IntelXessManager.LastError)
                     ? "runtime unavailable"
                     : IntelXessManager.LastError!;
-                Debug.LogWarning($"Intel XeSS is enabled but unavailable ({reason}). Falling back to standard blit.");
+                Debug.RenderingError($"Intel XeSS is enabled but unavailable ({reason}). No fallback blit will be rendered for an explicit vendor request.");
             }
 
             if (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && !NvidiaDlssManager.IsSupported && !_reportedDlssUnavailable)
@@ -784,7 +838,7 @@ void main()
                 string reason = string.IsNullOrWhiteSpace(NvidiaDlssManager.LastError)
                     ? "runtime unavailable"
                     : NvidiaDlssManager.LastError!;
-                Debug.LogWarning($"NVIDIA DLSS is enabled but unavailable ({reason}). Falling back to standard blit.");
+                Debug.RenderingError($"NVIDIA DLSS is enabled but unavailable ({reason}). No fallback blit will be rendered for an explicit vendor request.");
             }
         }
 
@@ -799,13 +853,13 @@ void main()
             if (RuntimeEngine.EffectiveSettings.EnableIntelXess && !_reportedXessApiMismatch)
             {
                 _reportedXessApiMismatch = true;
-                Debug.LogWarning($"Intel XeSS requires Vulkan or the OpenGL->Vulkan upscale bridge. {reason}. Falling back to standard blit.");
+                Debug.RenderingError($"Intel XeSS requires Vulkan or the OpenGL->Vulkan upscale bridge. {reason}. No fallback blit will be rendered for an explicit vendor request.");
             }
 
             if (RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && !_reportedDlssApiMismatch)
             {
                 _reportedDlssApiMismatch = true;
-                Debug.LogWarning($"NVIDIA DLSS requires Vulkan or the OpenGL->Vulkan upscale bridge. {reason}. Falling back to standard blit.");
+                Debug.RenderingError($"NVIDIA DLSS requires Vulkan or the OpenGL->Vulkan upscale bridge. {reason}. No fallback blit will be rendered for an explicit vendor request.");
             }
         }
 
@@ -1022,6 +1076,22 @@ void main()
         private static bool IsBridgePathRequested()
             => RuntimeEngine.EffectiveSettings.EnableIntelXess || RuntimeEngine.EffectiveSettings.EnableNvidiaDlss;
 
+        private static bool IsVendorFeatureRequested()
+            => RuntimeEngine.EffectiveSettings.EnableIntelXess
+            || RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
+            || RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration
+            || NvidiaDlssManager.IsFrameGenerationRequested;
+
+        private static void FailRequestedVendorFeature(string path, string failureReason)
+        {
+            string reason = string.IsNullOrWhiteSpace(failureReason)
+                ? "no compatible vendor path completed"
+                : failureReason;
+            string message = $"Requested {path} failed: {reason}. No fallback blit will be rendered because a vendor upscaler or frame-generation mode was explicitly requested.";
+            Debug.RenderingError(message);
+            throw new InvalidOperationException(message);
+        }
+
         private static bool ShouldRecreateBridgeAfterDispatchFailure(string failureReason)
             => !NvidiaDlssManager.Native.IsTerminalBridgeFailureMessage(failureReason);
 
@@ -1032,24 +1102,477 @@ void main()
             cachedTexture = null;
         }
 
-        private bool TryRunXess()
+        private void DestroyNativeDlssResources()
         {
-            if (!RuntimeEngine.EffectiveSettings.EnableIntelXess || !IntelXessManager.IsSupported)
+            _nativeDlssSession?.Dispose();
+            _nativeDlssSession = null;
+            _nativeDlssRenderer = null;
+            _nativeDlssViewportId = 0;
+
+            _nativeDlssOutputFbo?.Destroy();
+            _nativeDlssOutputFbo = null;
+            _nativeDlssOutputTexture?.Destroy();
+            _nativeDlssOutputTexture = null;
+            _nativeDlssOutputWidth = 0;
+            _nativeDlssOutputHeight = 0;
+            _nativeDlssOutputHdr = false;
+            _nativeDlssDispatchHistoryValid = false;
+        }
+
+        private bool TryResolveNativeDlssDepthTexture(out XRTexture? depthTexture, out string failureReason)
+        {
+            depthTexture = null;
+            failureReason = string.Empty;
+
+            string? depthName = !string.IsNullOrWhiteSpace(DepthStencilTextureName)
+                ? DepthStencilTextureName
+                : DepthTextureName;
+            if (string.IsNullOrWhiteSpace(depthName))
+            {
+                failureReason = "NVIDIA DLSS native dispatch requires a depth texture.";
+                return false;
+            }
+
+            depthTexture = ActivePipelineInstance.GetTexture<XRTexture>(depthName);
+            if (depthTexture is not null)
+                return true;
+
+            failureReason = $"NVIDIA DLSS depth texture '{depthName}' was not found.";
+            return false;
+        }
+
+        private bool TryResolveNativeDlssMotionTexture(out XRTexture? motionTexture, out string failureReason)
+        {
+            motionTexture = null;
+            failureReason = string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(MotionFrameBufferName))
+            {
+                if (VPRCSourceTextureHelpers.TryResolveColorTexture(
+                        ActivePipelineInstance,
+                        null,
+                        MotionFrameBufferName,
+                        out motionTexture,
+                        out failureReason)
+                    && motionTexture is not null)
+                {
+                    return true;
+                }
+
+                failureReason = string.IsNullOrWhiteSpace(failureReason)
+                    ? $"NVIDIA DLSS motion framebuffer '{MotionFrameBufferName}' did not expose a color texture."
+                    : failureReason;
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(MotionTextureName))
+            {
+                failureReason = "NVIDIA DLSS native dispatch requires a motion-vector texture.";
+                return false;
+            }
+
+            motionTexture = ActivePipelineInstance.GetTexture<XRTexture>(MotionTextureName);
+            if (motionTexture is not null)
+                return true;
+
+            failureReason = $"NVIDIA DLSS motion texture '{MotionTextureName}' was not found.";
+            return false;
+        }
+
+        private XRTexture? ResolveNativeDlssExposureTexture(ColorGradingSettings? colorGrading)
+        {
+            if (colorGrading is null || !colorGrading.UseGpuAutoExposureThisFrame || string.IsNullOrWhiteSpace(AutoExposureTextureName))
+                return null;
+
+            return ActivePipelineInstance.GetTexture<XRTexture>(AutoExposureTextureName);
+        }
+
+        private (uint Width, uint Height) ResolveNativeDlssOutputExtent(XRViewport viewport)
+        {
+            XRFrameBuffer? target = TargetFrameBufferName is not null
+                ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName)
+                : null;
+
+            uint width = target is not null
+                ? Math.Max(1u, target.Width)
+                : (uint)Math.Max(1, viewport.Width);
+            uint height = target is not null
+                ? Math.Max(1u, target.Height)
+                : (uint)Math.Max(1, viewport.Height);
+            return (width, height);
+        }
+
+        private static bool ValidateNativeDlssInputSizes(
+            XRTexture sourceColor,
+            XRTexture depth,
+            XRTexture motion,
+            uint outputWidth,
+            uint outputHeight,
+            out string failureReason)
+        {
+            (uint sourceWidth, uint sourceHeight) = ResolveTextureExtent(sourceColor);
+            (uint depthWidth, uint depthHeight) = ResolveTextureExtent(depth);
+            (uint motionWidth, uint motionHeight) = ResolveTextureExtent(motion);
+
+            if (depthWidth != sourceWidth || depthHeight != sourceHeight)
+            {
+                failureReason = $"NVIDIA DLSS depth size mismatch: expected {sourceWidth}x{sourceHeight}, got {depthWidth}x{depthHeight}.";
+                return false;
+            }
+
+            if (motionWidth != sourceWidth || motionHeight != sourceHeight)
+            {
+                failureReason = $"NVIDIA DLSS motion size mismatch: expected {sourceWidth}x{sourceHeight}, got {motionWidth}x{motionHeight}.";
+                return false;
+            }
+
+            if (outputWidth == 0 || outputHeight == 0)
+            {
+                failureReason = $"NVIDIA DLSS output extent is invalid: {outputWidth}x{outputHeight}.";
+                return false;
+            }
+
+            failureReason = string.Empty;
+            return true;
+        }
+
+        private bool TryEnsureNativeDlssOutputTexture(
+            uint width,
+            uint height,
+            bool outputHdr,
+            out XRTexture2D? outputTexture,
+            out string failureReason)
+        {
+            outputTexture = null;
+            failureReason = string.Empty;
+
+            if (_nativeDlssOutputTexture is not null
+                && _nativeDlssOutputWidth == width
+                && _nativeDlssOutputHeight == height
+                && _nativeDlssOutputHdr == outputHdr)
+            {
+                outputTexture = _nativeDlssOutputTexture;
+                return true;
+            }
+
+            _nativeDlssOutputFbo?.Destroy();
+            _nativeDlssOutputFbo = null;
+            _nativeDlssOutputTexture?.Destroy();
+            _nativeDlssOutputTexture = null;
+
+            EPixelInternalFormat internalFormat = outputHdr
+                ? EPixelInternalFormat.Rgba16f
+                : EPixelInternalFormat.Rgba8;
+            EPixelType pixelType = outputHdr
+                ? EPixelType.HalfFloat
+                : EPixelType.UnsignedByte;
+            ESizedInternalFormat sizedFormat = outputHdr
+                ? ESizedInternalFormat.Rgba16f
+                : ESizedInternalFormat.Rgba8;
+
+            XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+                width,
+                height,
+                internalFormat,
+                EPixelFormat.Rgba,
+                pixelType,
+                EFrameBufferAttachment.ColorAttachment0);
+            texture.Name = "VendorUpscale.NativeDlss.Output";
+            texture.SamplerName = "VendorUpscale.NativeDlss.OutputTexture";
+            texture.Resizable = false;
+            texture.SizedInternalFormat = sizedFormat;
+            texture.RequiresStorageUsage = true;
+            texture.AutoGenerateMipmaps = false;
+
+            _nativeDlssOutputFbo = new XRFrameBuffer((texture, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+            {
+                Name = "VendorUpscale.NativeDlss.OutputFBO",
+            };
+
+            _nativeDlssOutputTexture = texture;
+            _nativeDlssOutputWidth = width;
+            _nativeDlssOutputHeight = height;
+            _nativeDlssOutputHdr = outputHdr;
+            _nativeDlssSession?.ResetResources();
+            _nativeDlssDispatchHistoryValid = false;
+            outputTexture = texture;
+            return true;
+        }
+
+        private bool TryEnsureNativeDlssSession(
+            VulkanRenderer renderer,
+            XRViewport viewport,
+            out string failureReason)
+        {
+            failureReason = string.Empty;
+            uint viewportId = unchecked((uint)viewport.GetHashCode());
+            if (viewportId == 0)
+                viewportId = 1;
+
+            if (_nativeDlssSession is not null
+                && ReferenceEquals(_nativeDlssRenderer, renderer)
+                && _nativeDlssViewportId == viewportId)
+            {
+                return true;
+            }
+
+            _nativeDlssSession?.Dispose();
+            _nativeDlssSession = null;
+            _nativeDlssRenderer = null;
+            _nativeDlssViewportId = 0;
+            _nativeDlssDispatchHistoryValid = false;
+
+            if (!NvidiaDlssManager.Native.TryCreateNativeVulkanSession(
+                    renderer,
+                    viewportId,
+                    out NvidiaDlssManager.Native.NativeVulkanSession? session,
+                    out failureReason)
+                || session is null)
+            {
+                return false;
+            }
+
+            _nativeDlssSession = session;
+            _nativeDlssRenderer = renderer;
+            _nativeDlssViewportId = viewportId;
+            return true;
+        }
+
+        private bool TryCreateNativeDlssDispatchParameters(
+            VulkanRenderer renderer,
+            XRViewport viewport,
+            XRCamera camera,
+            ColorGradingSettings? colorGrading,
+            XRTexture sourceColorTexture,
+            uint outputWidth,
+            uint outputHeight,
+            bool outputHdr,
+            bool hasExposureTexture,
+            out VulkanUpscaleBridgeDispatchParameters parameters,
+            out string failureReason)
+        {
+            parameters = default;
+            failureReason = string.Empty;
+
+            Matrix4x4 cameraViewToClip = camera.ProjectionMatrixUnjittered;
+            Matrix4x4 clipToCameraView = camera.InverseProjectionMatrixUnjittered;
+            Matrix4x4 currentViewProjectionUnjittered = camera.ViewProjectionMatrixUnjittered;
+            Matrix4x4 previousViewProjectionUnjittered = currentViewProjectionUnjittered;
+            Vector2 jitter = Vector2.Zero;
+            bool resetHistory = !_nativeDlssDispatchHistoryValid;
+
+            if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+            {
+                currentViewProjectionUnjittered = temporalData.CurrViewProjectionUnjittered;
+                previousViewProjectionUnjittered = temporalData.HistoryReady
+                    ? temporalData.PrevViewProjectionUnjittered
+                    : temporalData.CurrViewProjectionUnjittered;
+                jitter = temporalData.CurrentJitter;
+                resetHistory |= !temporalData.HistoryReady;
+            }
+            else
+            {
+                resetHistory = true;
+            }
+
+            if (!Matrix4x4.Invert(currentViewProjectionUnjittered, out Matrix4x4 currentInverseViewProjectionUnjittered))
+            {
+                failureReason = "Failed to invert the current unjittered view-projection matrix for native NVIDIA DLSS dispatch.";
+                return false;
+            }
+
+            if (!Matrix4x4.Invert(previousViewProjectionUnjittered, out Matrix4x4 previousInverseViewProjectionUnjittered))
+                previousInverseViewProjectionUnjittered = currentInverseViewProjectionUnjittered;
+
+            float aspectRatio = camera.Parameters.GetApproximateAspectRatio();
+            if (!float.IsFinite(aspectRatio) || aspectRatio <= 0.0f)
+                aspectRatio = Math.Max(1, viewport.Width) / (float)Math.Max(1, viewport.Height);
+
+            float verticalFovRadians = camera.Parameters.GetApproximateVerticalFov() * (MathF.PI / 180.0f);
+            if (!float.IsFinite(verticalFovRadians) || verticalFovRadians <= 0.0f)
+                verticalFovRadians = 60.0f * (MathF.PI / 180.0f);
+
+            (uint inputWidth, uint inputHeight) = ResolveTextureExtent(sourceColorTexture);
+            resetHistory |= ShouldResetNativeDlssHistory(
+                camera,
+                sourceColorTexture,
+                outputWidth,
+                outputHeight,
+                outputHdr);
+
+            parameters = new VulkanUpscaleBridgeDispatchParameters
+            {
+                Vendor = EVulkanUpscaleBridgeVendor.Dlss,
+                InputWidth = inputWidth,
+                InputHeight = inputHeight,
+                OutputWidth = outputWidth,
+                OutputHeight = outputHeight,
+                FrameIndex = unchecked((uint)Math.Min(uint.MaxValue, renderer.VulkanFrameCounter)),
+                ResetHistory = resetHistory,
+                ReverseDepth = camera.IsReversedDepth,
+                IsOrthographic = camera.Parameters is XROrthographicCameraParameters,
+                OutputHdr = outputHdr,
+                DlssQuality = RuntimeEngine.EffectiveSettings.DlssQuality,
+                XessQuality = RuntimeEngine.EffectiveSettings.XessQuality,
+                DlssSharpness = RuntimeEngine.Rendering.Settings.DlssSharpness,
+                XessSharpness = RuntimeEngine.Rendering.Settings.XessSharpness,
+                JitterOffsetX = jitter.X,
+                JitterOffsetY = jitter.Y,
+                HasExposureTexture = hasExposureTexture,
+                ExposureScale = ResolveBridgeExposureScale(colorGrading),
+                MotionVectorScaleX = BridgeMotionVectorNormalizationScale,
+                MotionVectorScaleY = BridgeMotionVectorNormalizationScale,
+                CameraViewToClip = cameraViewToClip,
+                ClipToCameraView = clipToCameraView,
+                ClipToPrevClip = currentInverseViewProjectionUnjittered * previousViewProjectionUnjittered,
+                PrevClipToClip = previousInverseViewProjectionUnjittered * currentViewProjectionUnjittered,
+                CameraPosition = camera.Transform?.RenderTranslation ?? Vector3.Zero,
+                CameraUp = camera.Transform?.RenderUp ?? Vector3.UnitY,
+                CameraRight = camera.Transform?.RenderRight ?? Vector3.UnitX,
+                CameraForward = camera.Transform?.RenderForward ?? -Vector3.UnitZ,
+                CameraNear = camera.NearZ,
+                CameraFar = camera.FarZ,
+                CameraFovRadians = verticalFovRadians,
+                CameraAspectRatio = aspectRatio,
+            };
+
+            return true;
+        }
+
+        private bool ShouldResetNativeDlssHistory(
+            XRCamera camera,
+            XRTexture sourceColorTexture,
+            uint outputWidth,
+            uint outputHeight,
+            bool outputHdr)
+        {
+            if (!_nativeDlssDispatchHistoryValid)
+                return true;
+
+            (uint inputWidth, uint inputHeight) = ResolveTextureExtent(sourceColorTexture);
+            if (!ReferenceEquals(_lastNativeDlssCamera, camera)
+                || !ReferenceEquals(_lastNativeDlssScene, ActivePipelineInstance.RenderState.Scene)
+                || _lastNativeDlssOutputHdr != outputHdr
+                || _lastNativeDlssReverseDepth != camera.IsReversedDepth
+                || _lastNativeDlssInputWidth != inputWidth
+                || _lastNativeDlssInputHeight != inputHeight
+                || _lastNativeDlssOutputWidth != outputWidth
+                || _lastNativeDlssOutputHeight != outputHeight)
+            {
+                return true;
+            }
+
+            if (IsLikelyNativeDlssCameraCut(camera))
+                return true;
+
+            return false;
+        }
+
+        private bool IsLikelyNativeDlssCameraCut(XRCamera camera)
+        {
+            Vector3 position = camera.Transform?.RenderTranslation ?? Vector3.Zero;
+            Vector3 forward = NormalizeSafe(camera.Transform?.RenderForward ?? -Vector3.UnitZ, -Vector3.UnitZ);
+            float positionDelta = Vector3.DistanceSquared(position, _lastNativeDlssCameraPosition);
+            float forwardDot = Vector3.Dot(forward, _lastNativeDlssCameraForward);
+            return positionDelta > 25.0f || forwardDot < 0.9f;
+        }
+
+        private void RememberNativeDlssDispatch(
+            XRCamera camera,
+            in VulkanUpscaleBridgeDispatchParameters dispatchParameters)
+        {
+            _nativeDlssDispatchHistoryValid = true;
+            _lastNativeDlssCamera = camera;
+            _lastNativeDlssScene = ActivePipelineInstance.RenderState.Scene;
+            _lastNativeDlssOutputHdr = dispatchParameters.OutputHdr;
+            _lastNativeDlssReverseDepth = dispatchParameters.ReverseDepth;
+            _lastNativeDlssInputWidth = dispatchParameters.InputWidth;
+            _lastNativeDlssInputHeight = dispatchParameters.InputHeight;
+            _lastNativeDlssOutputWidth = dispatchParameters.OutputWidth;
+            _lastNativeDlssOutputHeight = dispatchParameters.OutputHeight;
+            _lastNativeDlssCameraPosition = camera.Transform?.RenderTranslation ?? Vector3.Zero;
+            _lastNativeDlssCameraForward = NormalizeSafe(camera.Transform?.RenderForward ?? -Vector3.UnitZ, -Vector3.UnitZ);
+        }
+
+        private static (uint Width, uint Height) ResolveTextureExtent(XRTexture texture)
+        {
+            Vector3 size = texture.WidthHeightDepth;
+            return ((uint)Math.Max(1.0f, size.X), (uint)Math.Max(1.0f, size.Y));
+        }
+
+        private bool TryRunNativeVulkanVendor(out string failureReason)
+        {
+            failureReason = string.Empty;
+
+            bool preferDlss = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
+            if (preferDlss)
+            {
+                if (TryRunDlss(out failureReason))
+                    return true;
+
+                if (TryRunXess(out string xessFailure))
+                    return true;
+
+                if (string.IsNullOrWhiteSpace(failureReason))
+                    failureReason = xessFailure;
+                return false;
+            }
+
+            if (TryRunXess(out failureReason))
+                return true;
+
+            if (TryRunDlss(out string dlssFailure))
+                return true;
+
+            if (string.IsNullOrWhiteSpace(failureReason))
+                failureReason = dlssFailure;
+            return false;
+        }
+
+        private bool TryRunXess(out string failureReason)
+        {
+            failureReason = string.Empty;
+
+            if (!RuntimeEngine.EffectiveSettings.EnableIntelXess && !RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration)
                 return false;
 
             if (FrameBufferName is null)
+            {
+                failureReason = "Intel XeSS requires a source framebuffer.";
                 return false;
+            }
 
             var viewport = ActivePipelineInstance.RenderState.WindowViewport;
             if (viewport is null)
+            {
+                failureReason = "Intel XeSS requires an active viewport.";
                 return false;
+            }
 
             if (viewport.Window?.Renderer is not VulkanRenderer)
+            {
+                failureReason = "Intel XeSS native dispatch requires the Vulkan renderer.";
                 return false;
+            }
+
+            if (!RuntimeEngine.EffectiveSettings.EnableIntelXess)
+            {
+                failureReason = "Intel XeSS frame generation requires Intel XeSS upscaling to be enabled.";
+                return false;
+            }
+
+            if (!IntelXessManager.IsSupported)
+            {
+                failureReason = IntelXessManager.LastError ?? "Intel XeSS support probe failed.";
+                return false;
+            }
 
             var sourceFbo = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName);
             if (sourceFbo is null)
+            {
+                failureReason = $"Intel XeSS source framebuffer '{FrameBufferName}' was not found or is not an XRQuadFrameBuffer.";
                 return false;
+            }
 
             XRFrameBuffer? destination = null;
             if (TargetFrameBufferName is not null)
@@ -1074,11 +1597,15 @@ void main()
                     out int frameGenError,
                     out string? frameGenMessage);
 
-                if (!frameGenOk && !_reportedXessFrameGenUnavailable)
+                if (!frameGenOk)
                 {
-                    _reportedXessFrameGenUnavailable = true;
-                    string fgReason = frameGenMessage ?? $"errorCode={frameGenError}";
-                    Debug.LogWarning($"Intel XeSS frame generation is unavailable ({fgReason}). Continuing without frame generation.");
+                    failureReason = $"Intel XeSS frame generation failed ({frameGenMessage ?? $"errorCode={frameGenError}"}).";
+                    if (!_reportedXessFrameGenUnavailable)
+                    {
+                        _reportedXessFrameGenUnavailable = true;
+                        Debug.RenderingError(failureReason);
+                    }
+                    return false;
                 }
             }
 
@@ -1094,61 +1621,232 @@ void main()
             if (upscaleOk)
                 return true;
 
+            failureReason = IntelXessManager.LastError ?? $"errorCode={errorCode}";
             if (!_reportedXessFailure)
             {
                 _reportedXessFailure = true;
-                string reason = IntelXessManager.LastError ?? $"errorCode={errorCode}";
-                Debug.LogWarning($"Intel XeSS upscale failed ({reason}). Falling back to standard blit.");
+                Debug.RenderingError($"Intel XeSS upscale failed ({failureReason}).");
             }
 
             return false;
         }
 
-        private bool TryRunDlss()
+        private bool TryRunDlss(out string failureReason)
         {
-            if (!NvidiaDlssManager.IsSupported || !RuntimeEngine.EffectiveSettings.EnableNvidiaDlss)
+            failureReason = string.Empty;
+            bool dlssRequested = RuntimeEngine.EffectiveSettings.EnableNvidiaDlss;
+            bool frameGenRequested = NvidiaDlssManager.IsFrameGenerationRequested;
+
+            if (!dlssRequested && !frameGenRequested)
                 return false;
 
             if (FrameBufferName is null)
+            {
+                failureReason = "NVIDIA DLSS requires a source framebuffer.";
                 return false;
+            }
 
             var viewport = ActivePipelineInstance.RenderState.WindowViewport;
             if (viewport is null)
-                return false;
-
-            if (viewport.Window?.Renderer is not VulkanRenderer)
-                return false;
-
-            var sourceFbo = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName);
-            if (sourceFbo is null)
-                return false;
-
-            XRFrameBuffer? destination = null;
-            if (TargetFrameBufferName is not null)
-                destination = ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName);
-
-            var depth = DepthTextureName is not null
-                ? ActivePipelineInstance.GetTexture<XRTexture>(DepthTextureName)
-                : null;
-            var motion = MotionTextureName is not null
-                ? ActivePipelineInstance.GetTexture<XRTexture>(MotionTextureName)
-                : null;
-
-            bool ok = NvidiaDlssManager.Native.TryDispatchUpscale(
-                viewport,
-                sourceFbo,
-                destination,
-                depth,
-                motion,
-                out int errorCode);
-
-            if (!ok && !_reportedDlssFailure)
             {
-                _reportedDlssFailure = true;
-                Debug.RenderingWarning($"Streamline DLSS upscale failed (errorCode={errorCode}). Falling back to standard blit.");
+                failureReason = "NVIDIA DLSS requires an active viewport.";
+                return false;
             }
 
-            return ok;
+            if (viewport.Window?.Renderer is not VulkanRenderer renderer)
+            {
+                failureReason = "NVIDIA DLSS native dispatch requires the Vulkan renderer.";
+                return false;
+            }
+
+            if (frameGenRequested && !dlssRequested)
+            {
+                failureReason = "NVIDIA DLSS frame generation requires NVIDIA DLSS upscaling to be enabled.";
+                return false;
+            }
+
+            if (!NvidiaDlssManager.IsSupported)
+            {
+                failureReason = NvidiaDlssManager.LastError ?? "NVIDIA DLSS support probe failed.";
+                return false;
+            }
+
+            if (!VPRCSourceTextureHelpers.TryResolveColorTexture(
+                    ActivePipelineInstance,
+                    SourceTextureName,
+                    FrameBufferName,
+                    out XRTexture? sourceColorTexture,
+                    out string colorFailure)
+                || sourceColorTexture is null)
+            {
+                failureReason = colorFailure;
+                return false;
+            }
+
+            if (!TryResolveNativeDlssDepthTexture(out XRTexture? depthTexture, out string depthFailure)
+                || depthTexture is null)
+            {
+                failureReason = depthFailure;
+                return false;
+            }
+
+            if (!TryResolveNativeDlssMotionTexture(out XRTexture? motionTexture, out string motionFailure)
+                || motionTexture is null)
+            {
+                failureReason = motionFailure;
+                return false;
+            }
+
+            if (!TryResolveBridgeCamera(out XRCamera? camera, out string cameraFailure) || camera is null)
+            {
+                failureReason = cameraFailure;
+                return false;
+            }
+
+            ColorGradingSettings? colorGrading = ResolveBridgeColorGradingSettings(camera);
+            XRTexture? exposureTexture = ResolveNativeDlssExposureTexture(colorGrading);
+
+            bool outputHdr = ActivePipelineInstance.EffectiveOutputHDRThisFrame ?? false;
+            (uint outputWidth, uint outputHeight) = ResolveNativeDlssOutputExtent(viewport);
+
+            if (!ValidateNativeDlssInputSizes(sourceColorTexture, depthTexture, motionTexture, outputWidth, outputHeight, out string sizeFailure))
+            {
+                failureReason = sizeFailure;
+                return false;
+            }
+
+            if (!TryEnsureNativeDlssOutputTexture(outputWidth, outputHeight, outputHdr, out XRTexture2D? outputTexture, out string outputFailure)
+                || outputTexture is null)
+            {
+                failureReason = outputFailure;
+                return false;
+            }
+
+            if (!TryEnsureNativeDlssSession(renderer, viewport, out string sessionFailure))
+            {
+                failureReason = sessionFailure;
+                return false;
+            }
+
+            if (!TryCreateNativeDlssDispatchParameters(
+                    renderer,
+                    viewport,
+                    camera,
+                    colorGrading,
+                    sourceColorTexture,
+                    outputWidth,
+                    outputHeight,
+                    outputHdr,
+                    exposureTexture is not null,
+                    out VulkanUpscaleBridgeDispatchParameters dispatchParameters,
+                    out string dispatchFailure))
+            {
+                failureReason = dispatchFailure;
+                return false;
+            }
+
+            if (!renderer.TryResolveStreamlineImage(sourceColorTexture, depthOnly: false, out VulkanRenderer.VulkanStreamlineImage sourceColorImage, out string sourceImageFailure))
+            {
+                failureReason = sourceImageFailure;
+                return false;
+            }
+
+            if (!renderer.TryResolveStreamlineImage(depthTexture, depthOnly: true, out VulkanRenderer.VulkanStreamlineImage depthImage, out string depthImageFailure))
+            {
+                failureReason = depthImageFailure;
+                return false;
+            }
+
+            if (!renderer.TryResolveStreamlineImage(motionTexture, depthOnly: false, out VulkanRenderer.VulkanStreamlineImage motionImage, out string motionImageFailure))
+            {
+                failureReason = motionImageFailure;
+                return false;
+            }
+
+            if (!renderer.TryResolveStreamlineImage(outputTexture, depthOnly: false, out VulkanRenderer.VulkanStreamlineImage outputImage, out string outputImageFailure))
+            {
+                failureReason = outputImageFailure;
+                return false;
+            }
+
+            VulkanRenderer.VulkanStreamlineImage? exposureImage = null;
+            if (exposureTexture is not null)
+            {
+                if (!renderer.TryResolveStreamlineImage(exposureTexture, depthOnly: false, out VulkanRenderer.VulkanStreamlineImage resolvedExposure, out string exposureFailure))
+                {
+                    failureReason = exposureFailure;
+                    return false;
+                }
+
+                exposureImage = resolvedExposure;
+            }
+
+            if (frameGenRequested)
+            {
+                bool frameGenOk = NvidiaDlssManager.Native.TryDispatchFrameGeneration(
+                    viewport,
+                    in dispatchParameters,
+                    in depthImage,
+                    in motionImage,
+                    in outputImage,
+                    NvidiaDlssManager.ResolveFrameGenerationMode(),
+                    out int frameGenError,
+                    out string? frameGenMessage);
+
+                if (!frameGenOk)
+                {
+                    failureReason = frameGenMessage ?? NvidiaDlssManager.Native.LastError ?? $"errorCode={frameGenError}";
+                    if (!_reportedDlssFrameGenUnavailable)
+                    {
+                        _reportedDlssFrameGenUnavailable = true;
+                        Debug.RenderingError($"NVIDIA DLSS frame generation failed ({failureReason}).");
+                    }
+                    return false;
+                }
+            }
+
+            string destination = ResolveDestinationLabel(ActivePipelineInstance);
+            string passName = BuildQuadBlitPassName(FrameBufferName, destination);
+            int passIndex = ResolvePassIndex(passName, out bool hasRenderGraphMetadata);
+            if (passIndex == int.MinValue && hasRenderGraphMetadata)
+            {
+                failureReason = $"NVIDIA DLSS native dispatch could not resolve render-graph pass '{passName}'.";
+                return false;
+            }
+
+            renderer.EnqueueDlssUpscale(
+                passIndex,
+                _nativeDlssSession!,
+                sourceColorImage,
+                depthImage,
+                motionImage,
+                outputImage,
+                exposureImage,
+                dispatchParameters);
+
+            _fallbackSourceTexture = outputTexture;
+            _fallbackApplySharpen = false;
+            _fallbackSharpenStrength = 0.0f;
+            RememberNativeDlssDispatch(camera, dispatchParameters);
+
+            XRFrameBuffer? destFbo = ResolveDestinationFbo(
+                ActivePipelineInstance,
+                ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName));
+
+            using var passScope = passIndex != int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                : default;
+
+            _fallbackQuad?.Render(destFbo);
+
+            if (_diagEnabled)
+            {
+                Debug.Log(
+                    ELogCategory.Rendering,
+                    $"[VendorUpscaleDiag] NativeVulkanDLSS path. Source='{DescribeTexture(sourceColorTexture)}' Depth='{DescribeTexture(depthTexture)}' Motion='{DescribeTexture(motionTexture)}' Output='{DescribeTexture(outputTexture)}' Pass='{passName}' Frame={dispatchParameters.FrameIndex} Reset={dispatchParameters.ResetHistory}");
+            }
+
+            return true;
         }
     }
 }

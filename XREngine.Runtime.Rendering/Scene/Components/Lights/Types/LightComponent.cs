@@ -827,6 +827,7 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform(RuntimeEngine.Rendering.Constants.ShadowMaxPenumbra, MaxPenumbra);
             program.Uniform(RuntimeEngine.Rendering.Constants.SoftShadowMode, (int)SoftShadowMode);
             program.Uniform(RuntimeEngine.Rendering.Constants.LightSourceRadius, EffectiveLightSourceRadius);
+            program.Uniform("ShadowDepthMode", 0);
 
             program.Uniform(RuntimeEngine.Rendering.Constants.EnableCascadedShadows, EnableCascadedShadows);
             program.Uniform(RuntimeEngine.Rendering.Constants.EnableContactShadows, EnableContactShadows);

@@ -1012,6 +1012,11 @@ float XRENGINE_GetShadowBias(float diffuseFactor)
     return XRENGINE_GetShadowBiasRange(diffuseFactor, shadowParams.z, shadowParams.w);
 }
 
+float XRENGINE_GetDirectionalScreenSpaceContactBias(float contactDistance)
+{
+    return max(contactDistance * 0.001, 0.0001);
+}
+
 float XRENGINE_SampleForwardContactShadowScreenSpace(
     vec3 fragPosWS,
     vec3 normalWS,
@@ -1168,13 +1173,14 @@ float XRENGINE_ReadCascadeShadowMapDir(int lightIndex, DirLight light, vec3 frag
     float contact = 1.0;
     if (shadowI1.y != 0)
     {
+        float contactBias = XRENGINE_GetDirectionalScreenSpaceContactBias(shadowF2.y);
         contact = ForwardContactShadowsEnabled
             ? XRENGINE_SampleForwardContactShadowScreenSpace(
                 fragPos,
                 normal,
                 lightDirWS,
-                receiverOffset,
-                bias,
+                0.0,
+                contactBias,
                 shadowF2.y,
                 contactSampleCount,
                 shadowF2.z,
@@ -1342,20 +1348,19 @@ float XRENGINE_ReadDirectionalContactShadowOnly(int lightIndex, DirLight light, 
         return 1.0;
     }
 
-    vec4 biasProjectionParams = DirectionalShadowBiasProjectionParams[lightIndex];
-    float bias = max(biasProjectionParams.x, 0.0);
     float viewDepth = XRENGINE_GetForwardResolvedViewDepth(fragPos);
     int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
         shadowI1.z,
         viewDepth,
         shadowF2.y);
+    float contactBias = XRENGINE_GetDirectionalScreenSpaceContactBias(shadowF2.y);
 
     return XRENGINE_SampleForwardContactShadowScreenSpace(
         fragPos,
         normal,
         normalize(-light.Direction),
-        max(biasProjectionParams.y, 0.0),
-        bias,
+        0.0,
+        contactBias,
         shadowF2.y,
         contactSampleCount,
         shadowF2.z,
@@ -1458,13 +1463,14 @@ float XRENGINE_ReadShadowMapDir(int lightIndex, DirLight light, vec3 fragPos, ve
     float contact = 1.0;
     if (shadowI1.y != 0)
     {
+        float contactBias = XRENGINE_GetDirectionalScreenSpaceContactBias(shadowF2.y);
         contact = ForwardContactShadowsEnabled
             ? XRENGINE_SampleForwardContactShadowScreenSpace(
                 fragPos,
                 normal,
                 lightDirWS,
-                receiverOffset,
-                bias,
+                0.0,
+                contactBias,
                 shadowF2.y,
                 contactSampleCount,
                 shadowF2.z,
@@ -1491,6 +1497,7 @@ float XRENGINE_ReadShadowMapDir(int lightIndex, DirLight light, vec3 fragPos, ve
                 viewDepth);
     }
 
+    int encoding = DirectionalShadowMapEncoding[lightIndex];
     if (DirectionalShadowAtlasEnabled[lightIndex] != 0)
     {
         ivec4 atlasI0 = DirectionalShadowAtlasPacked0[atlasRecordIndex];
@@ -1506,6 +1513,25 @@ float XRENGINE_ReadShadowMapDir(int lightIndex, DirLight light, vec3 fragPos, ve
                 shadowF1.x,
                 biasProjectionParams.x,
                 ShadowBiasParams.y);
+            if (encoding != XRENGINE_SHADOW_ENCODING_DEPTH)
+            {
+                vec4 momentParams = DirectionalShadowMomentParams0[lightIndex];
+                vec2 atlasUv = XRENGINE_ShadowAtlasUvFromLocal(fragCoord.xy, atlasUvScaleBias);
+                float atlasMomentReceiverDepth = clamp(fragCoord.z - min(atlasBias, 0.01), 0.0, 1.0);
+                return XRENGINE_SampleShadowMoment2DArray(
+                    DirectionalShadowAtlas,
+                    atlasUv,
+                    float(atlasI0.y),
+                    atlasMomentReceiverDepth,
+                    encoding,
+                    momentParams.x,
+                    momentParams.y,
+                    momentParams.z,
+                    momentParams.w,
+                    0.0,
+                    false) * contact;
+            }
+
             return XRENGINE_SampleDirectionalAtlasPage(
                 atlasI0.y,
                 fragCoord,
@@ -1540,7 +1566,6 @@ float XRENGINE_ReadShadowMapDir(int lightIndex, DirLight light, vec3 fragPos, ve
             shadowI0.z) * contact;
     }
 
-    int encoding = DirectionalShadowMapEncoding[lightIndex];
     if (encoding != XRENGINE_SHADOW_ENCODING_DEPTH)
     {
         vec4 momentParams = DirectionalShadowMomentParams0[lightIndex];

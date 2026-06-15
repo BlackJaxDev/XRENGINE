@@ -1209,6 +1209,7 @@ namespace XREngine.Rendering.Vulkan
                         }
                         break;
                     case ComputeDispatchOp: computeCount++; break;
+                    case DlssUpscaleOp: computeCount++; break;
                 }
 
                 opScanIndex++;
@@ -1617,7 +1618,7 @@ namespace XREngine.Rendering.Vulkan
                 // same layouts we resolved here.
                 if (trackedLayouts is not null)
                     fboLayoutTracking[target] = trackedLayouts;
-                FrameBufferAttachmentSignature[] fboSignature = vkFrameBuffer.ResolveAttachmentSignatureForPass(passIndex, context.PassMetadata, trackedLayouts);
+                FrameBufferAttachmentSignature[] fboSignature = vkFrameBuffer.ResolveAttachmentSignatureForPass(passIndex, context.PassMetadata, trackedLayouts, CompiledRenderGraph.Synchronization);
                 bool passDepthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(passIndex, context.PassMetadata, trackedLayouts);
                 if (DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsWatchedFrameBufferName(fboName))
                 {
@@ -1745,7 +1746,7 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(passIndex, context.PassMetadata, trackedLayouts);
+                RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(passIndex, context.PassMetadata, trackedLayouts, CompiledRenderGraph.Synchronization);
 
                 Debug.VulkanEvery(
                     $"Vulkan.BeginRP.FBO.{fboName}.{passRenderPass.Handle:X}",
@@ -2218,6 +2219,13 @@ namespace XREngine.Rendering.Vulkan
                             RecordComputeDispatchOp(commandBuffer, imageIndex, computeOp);
                             CmdEndLabel(commandBuffer);
                         }
+                        break;
+
+                    case DlssUpscaleOp dlssOp:
+                        EndActiveRenderPass();
+                        CmdBeginLabel(commandBuffer, "DLSS.SuperResolution");
+                        RecordDlssUpscaleOp(commandBuffer, dlssOp);
+                        CmdEndLabel(commandBuffer);
                         break;
                         }
                     }

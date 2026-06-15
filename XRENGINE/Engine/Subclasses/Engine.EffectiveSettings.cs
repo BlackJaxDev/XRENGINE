@@ -420,6 +420,26 @@ namespace XREngine
                     UserSettings?.DlssQualityOverride);
 
             /// <summary>
+            /// Gets the effective NVIDIA DLSS frame generation setting.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static bool EnableNvidiaDlssFrameGeneration
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.EnableNvidiaDlssFrameGeneration,
+                    GameSettings?.EnableNvidiaDlssFrameGenerationOverride,
+                    UserSettings?.EnableNvidiaDlssFrameGenerationOverride);
+
+            /// <summary>
+            /// Gets the effective NVIDIA DLSS frame generation mode.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.NvidiaDlssFrameGenerationMode,
+                    GameSettings?.NvidiaDlssFrameGenerationModeOverride,
+                    UserSettings?.NvidiaDlssFrameGenerationModeOverride);
+
+            /// <summary>
             /// Gets the effective Intel XeSS setting.
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>

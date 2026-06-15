@@ -405,17 +405,22 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     public void DirectionalCascadeShaders_UsePerCascadeBiasAndReceiverOffset()
     {
         string forwardSource = LoadShaderSource("Snippets/ForwardLighting.glsl");
-        forwardSource.ShouldContain("float receiverOffset = DirectionalLights[0].CascadeReceiverOffsets[cascadeIndex];");
-        forwardSource.ShouldContain("DirectionalLights[0].CascadeBiasMin[cascadeIndex]");
-        forwardSource.ShouldContain("DirectionalLights[0].CascadeBiasMax[cascadeIndex]");
+        forwardSource.ShouldContain("float receiverOffset = light.CascadeReceiverOffsets[cascadeIndex];");
+        forwardSource.ShouldContain("light.CascadeBiasMin[cascadeIndex]");
+        forwardSource.ShouldContain("light.CascadeBiasMax[cascadeIndex]");
         forwardSource.ShouldContain("XRENGINE_GetShadowBiasRange(");
+        forwardSource.ShouldContain("float XRENGINE_GetDirectionalScreenSpaceContactBias(float contactDistance)");
+        forwardSource.ShouldContain("return max(contactDistance * 0.001, 0.0001);");
 
         string deferredSource = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
         deferredSource.ShouldContain("float CascadeBiasMin[MAX_CASCADES];");
         deferredSource.ShouldContain("float receiverOffset = LightData.CascadeReceiverOffsets[cascadeIndex];");
         deferredSource.ShouldContain("LightData.CascadeBiasMin[cascadeIndex]");
         deferredSource.ShouldContain("LightData.CascadeBiasMax[cascadeIndex]");
-        deferredSource.ShouldContain("SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), receiverOffset, bias, viewDepth)");
+        deferredSource.ShouldContain("float GetDeferredContactShadowCompareBias()");
+        deferredSource.ShouldContain("return max(ContactShadowDistance * 0.001f, 0.0001f);");
+        deferredSource.ShouldContain("SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), viewDepth)");
+        deferredSource.ShouldNotContain("SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), receiverOffset, bias, viewDepth)");
     }
 
     [Test]
@@ -717,7 +722,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
-    public void DirectionalCascadeAtlasGroupedPath_UsesAtlasBackendAndSequentialFallback()
+    public void DirectionalCascadeAtlasGroupedPath_UsesAtlasBackendAndLayeredRendering()
     {
         string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
         cascadeSource.ShouldContain("DirectionalCascadeShadowBackend");
@@ -727,6 +732,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         cascadeSource.ShouldContain("UnsupportedViewportScissorArray");
         cascadeSource.ShouldContain("UnsupportedVertexStageViewportIndexWrites");
         cascadeSource.ShouldContain("UnsupportedGeometryStageViewportIndexWrites");
+        cascadeSource.ShouldNotContain("VulkanGroupedAtlasDisabled");
         cascadeSource.ShouldContain("RenderGroupedCascadeShadowAtlasTiles(");
         cascadeSource.ShouldContain("PushIndexedViewportScissors");
         cascadeSource.ShouldContain("CascadeAtlasGeometryShadowMaterial");
@@ -747,6 +753,8 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         atlasManagerSource.ShouldContain("TryRenderDirectionalCascadeGroup");
         atlasManagerSource.ShouldContain("CanUseLegacyLayeredDirectionalCascadeShadowRendering");
         atlasManagerSource.ShouldContain("RenderGroupedCascadeShadowAtlasTiles(group, page.FrameBuffer");
+        atlasManagerSource.ShouldContain("allocation.LastRenderedFrame == _frameId");
+        atlasManagerSource.ShouldContain("allocation.ContentVersion == request.ContentHash");
 
         string frameDataSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Shadows", "ShadowAtlasFrameData.cs"));
         frameDataSource.ShouldContain("DirectionalCascadeGroups");
@@ -762,6 +770,20 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string rendererFramebufferSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "OpenGL", "OpenGLRenderer.Framebuffer.cs"));
         rendererFramebufferSource.ShouldContain("ViewportIndexed");
         rendererFramebufferSource.ShouldContain("ScissorIndexed");
+
+        string vulkanDeviceSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "Vulkan", "Objects", "LogicalDevice.cs"));
+        vulkanDeviceSource.ShouldContain("SupportsOpenGLViewportScissorArray");
+        vulkanDeviceSource.ShouldContain("SupportsOpenGLVertexShaderViewportIndex");
+        vulkanDeviceSource.ShouldContain("SupportsOpenGLGeometryShaderViewportIndex");
+
+        string vulkanCommandBufferSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "Vulkan", "Objects", "CommandBuffers.cs"));
+        vulkanCommandBufferSource.ShouldContain("CmdSetViewport");
+        vulkanCommandBufferSource.ShouldContain("CmdSetScissor");
+        vulkanCommandBufferSource.ShouldContain("ViewportScissorCount");
+
+        string vulkanFramebufferSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "Vulkan", "Objects", "Types", "VkFrameBuffer.cs"));
+        vulkanFramebufferSource.ShouldContain("ImageLayout.ShaderReadOnlyOptimal");
+        vulkanFramebufferSource.ShouldContain("off-graph FBOs such as shadow maps");
     }
 
     [Test]

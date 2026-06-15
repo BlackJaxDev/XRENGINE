@@ -1,5 +1,7 @@
 #version 450 core
 
+#pragma snippet "ScreenSpaceUtils"
+
 layout(location = 0) in vec3 FragPos;
 layout(location = 0) out vec4 OutColor;
 
@@ -15,6 +17,9 @@ uniform float DepthRejectThreshold;
 uniform float MaxBlurPixels;
 uniform float SampleFalloff;
 uniform int MaxSamples;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 
 bool IsValidUv(vec2 uv)
 {
@@ -34,7 +39,10 @@ void main()
         discard;
     }
 
-    vec2 uv = clipXY * 0.5f + 0.5f;
+    vec2 uv = clamp(
+        XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)),
+        vec2(0.0f),
+        vec2(1.0f));
     vec4 baseColor = texture(MotionBlur, uv);
     vec2 velocity = texture(Velocity, uv).xy;
     float depth = texture(DepthView, uv).r;

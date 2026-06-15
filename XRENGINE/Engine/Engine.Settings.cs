@@ -526,6 +526,8 @@ namespace XREngine
             // ── NVIDIA DLSS ──
             h[nameof(UserSettings.EnableNvidiaDlssOverride)] = Rendering.ApplyNvidiaDlssPreference;
             h[nameof(UserSettings.DlssQualityOverride)] = Rendering.ApplyNvidiaDlssPreference;
+            h[nameof(UserSettings.EnableNvidiaDlssFrameGenerationOverride)] = Rendering.ApplyNvidiaDlssPreference;
+            h[nameof(UserSettings.NvidiaDlssFrameGenerationModeOverride)] = Rendering.ApplyNvidiaDlssPreference;
 
             // ── Intel XeSS ──
             h[nameof(UserSettings.EnableIntelXessOverride)] = Rendering.ApplyIntelXessPreference;

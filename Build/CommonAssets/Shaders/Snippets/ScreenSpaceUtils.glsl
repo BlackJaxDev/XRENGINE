@@ -6,6 +6,11 @@
 uniform int ClipSpaceYDirection;
 #endif
 
+#ifndef XRENGINE_FRAMEBUFFER_TEXTURE_Y_DIRECTION_UNIFORM
+#define XRENGINE_FRAMEBUFFER_TEXTURE_Y_DIRECTION_UNIFORM
+uniform int FramebufferTextureYDirection;
+#endif
+
 #ifndef XRENGINE_SCREEN_SPACE_UTILS
 #define XRENGINE_SCREEN_SPACE_UTILS
 
@@ -31,6 +36,21 @@ vec2 XRENGINE_ClipXYToScreenUV(vec2 clipXY)
 {
     vec2 uv = clipXY * 0.5 + 0.5;
     if (ClipSpaceYDirection == 1)
+        uv.y = 1.0 - uv.y;
+    return uv;
+}
+
+vec2 XRENGINE_FramebufferTextureUVToClipXY(vec2 uv)
+{
+    if (FramebufferTextureYDirection == 1)
+        uv.y = 1.0 - uv.y;
+    return uv * 2.0 - 1.0;
+}
+
+vec2 XRENGINE_ClipXYToFramebufferTextureUV(vec2 clipXY)
+{
+    vec2 uv = clipXY * 0.5 + 0.5;
+    if (FramebufferTextureYDirection == 1)
         uv.y = 1.0 - uv.y;
     return uv;
 }

@@ -2267,6 +2267,8 @@ internal sealed class RuntimeRenderSettings
     public float DlssSharpness { get; set; }
     public bool EnableIntelXessFrameGeneration { get; set; }
     public bool EnableNvidiaDlss { get; set; }
+    public bool EnableNvidiaDlssFrameGeneration { get; set; }
+    public ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode { get; set; } = ENvidiaDlssFrameGenerationMode.Off;
     public EGpuSortDomainPolicy GpuSortDomainPolicy { get; set; } = EGpuSortDomainPolicy.OpaqueFrontToBackTransparentBackToFront;
     public uint LightProbeResolution { get; set; } = 128u;
     public bool LightProbesCaptureDepth { get; set; } = true;
@@ -2579,6 +2581,8 @@ internal sealed class RuntimeEffectiveSettings
     public bool EnableGpuIndirectValidationLogging { get; set; }
     public bool EnableIntelXess { get; set; }
     public bool EnableNvidiaDlss => Settings.EnableNvidiaDlss;
+    public bool EnableNvidiaDlssFrameGeneration => Settings.EnableNvidiaDlssFrameGeneration;
+    public ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode => Settings.NvidiaDlssFrameGenerationMode;
     public bool EnableVulkanBindlessMaterialTable { get; set; }
     public bool EnableVulkanDescriptorIndexing { get; set; }
     public bool EnableZeroReadbackMaterialScatter { get; set; }

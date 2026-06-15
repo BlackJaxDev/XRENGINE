@@ -12,6 +12,36 @@ uniform int ClipDepthRange;
 uniform int DepthMode;
 #endif
 
+#ifndef XRENGINE_SHADOW_DEPTH_MODE_UNIFORM
+#define XRENGINE_SHADOW_DEPTH_MODE_UNIFORM
+uniform int ShadowDepthMode = 0;
+#endif
+
+#ifndef XRENGINE_FRAMEBUFFER_TEXTURE_Y_DIRECTION_UNIFORM
+#define XRENGINE_FRAMEBUFFER_TEXTURE_Y_DIRECTION_UNIFORM
+uniform int FramebufferTextureYDirection;
+#endif
+
+vec2 XRENGINE_ContactShadowTextureUVToClipXY(vec2 uv)
+{
+    if (FramebufferTextureYDirection == 1)
+        uv.y = 1.0 - uv.y;
+    return uv * 2.0 - 1.0;
+}
+
+vec2 XRENGINE_ShadowClipXYToTextureUV(vec2 clipXY)
+{
+    vec2 uv = clipXY * 0.5 + 0.5;
+    if (FramebufferTextureYDirection == 1)
+        uv.y = 1.0 - uv.y;
+    return uv;
+}
+
+vec2 XRENGINE_ContactShadowClipXYToTextureUV(vec2 clipXY)
+{
+    return XRENGINE_ShadowClipXYToTextureUV(clipXY);
+}
+
 float XRENGINE_ShadowClipZToDepth(float clipZ)
 {
     return ClipDepthRange == 1 ? clipZ * 0.5 + 0.5 : clipZ;
@@ -24,7 +54,7 @@ float XRENGINE_ShadowDepthToClipZ(float depth)
 
 vec3 XRENGINE_ShadowClipCoordToUvDepth(vec3 clipCoord)
 {
-    return vec3(clipCoord.xy * 0.5 + 0.5, XRENGINE_ShadowClipZToDepth(clipCoord.z));
+    return vec3(XRENGINE_ShadowClipXYToTextureUV(clipCoord.xy), XRENGINE_ShadowClipZToDepth(clipCoord.z));
 }
 
 vec3 XRENGINE_ProjectShadowCoord(mat4 lightMatrix, vec3 fragPosWS)
@@ -43,20 +73,20 @@ bool XRENGINE_ShadowCoordInBounds(vec3 shadowCoord)
 
 float XRENGINE_ApplyShadowBias(float receiverDepth, float bias)
 {
-    return DepthMode == 1 ? receiverDepth + bias : receiverDepth - bias;
+    return ShadowDepthMode == 1 ? receiverDepth + bias : receiverDepth - bias;
 }
 
 float XRENGINE_ShadowLit(float receiverDepth, float sampleDepth, float bias)
 {
     float biasedReceiverDepth = XRENGINE_ApplyShadowBias(receiverDepth, bias);
-    return DepthMode == 1
+    return ShadowDepthMode == 1
         ? (biasedReceiverDepth >= sampleDepth ? 1.0 : 0.0)
         : (biasedReceiverDepth <= sampleDepth ? 1.0 : 0.0);
 }
 
 bool XRENGINE_IsShadowBlocker(float sampleDepth, float receiverDepth)
 {
-    return DepthMode == 1 ? sampleDepth > receiverDepth : sampleDepth < receiverDepth;
+    return ShadowDepthMode == 1 ? sampleDepth > receiverDepth : sampleDepth < receiverDepth;
 }
 
 const float XRENGINE_ShadowPi = 3.14159265359;
@@ -97,7 +127,7 @@ vec3 XRENGINE_ContactShadowViewPosFromDepth(
     int depthMode)
 {
     // InverseProjMatrix already matches the camera depth convention, including reversed-Z.
-    vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, XRENGINE_ShadowDepthToClipZ(depth), 1.0);
+    vec4 clipSpacePosition = vec4(XRENGINE_ContactShadowTextureUVToClipXY(uv), XRENGINE_ShadowDepthToClipZ(depth), 1.0);
     vec4 viewSpacePosition = inverseProjMatrix * clipSpacePosition;
     viewSpacePosition /= viewSpacePosition.w;
     return viewSpacePosition.xyz;
@@ -135,7 +165,7 @@ bool XRENGINE_TryProjectContactShadowWorldPos(
         return false;
 
     vec3 sampleNdc = sampleClip.xyz / sampleClip.w;
-    uv = sampleNdc.xy * 0.5 + 0.5;
+    uv = XRENGINE_ContactShadowClipXYToTextureUV(sampleNdc.xy);
     return uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0;
 }
 

@@ -73,6 +73,19 @@ namespace XREngine.Rendering.Pipelines.Commands
             DefaultRenderPipeline.StencilViewTextureName,
         ];
 
+        private static readonly string[] MotionBlurTextureInputs =
+        [
+            DefaultRenderPipeline.MotionBlurTextureName,
+            DefaultRenderPipeline.VelocityTextureName,
+            DefaultRenderPipeline.DepthViewTextureName,
+        ];
+
+        private static readonly string[] DepthOfFieldTextureInputs =
+        [
+            DefaultRenderPipeline.DepthOfFieldTextureName,
+            DefaultRenderPipeline.DepthViewTextureName,
+        ];
+
         private static bool _diagEnabled => RenderDiagnosticsFlags.DiagQuadBlit;
 
         public string? SourceQuadFBOName { get; set; }
@@ -387,15 +400,34 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.TsrUpscaleFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.TsrUpscaleFBOName, StringComparison.Ordinal))
+            if (string.Equals(sourceFboName, DefaultRenderPipeline.TsrUpscaleFBOName, StringComparison.Ordinal))
             {
                 DescribeTextureInputs(builder, TsrUpscaleTextureInputs);
                 return;
             }
 
+            if (string.Equals(sourceFboName, DefaultRenderPipeline.MotionBlurFBOName, StringComparison.Ordinal))
+            {
+                DescribeTextureInputs(builder, MotionBlurTextureInputs);
+                return;
+            }
+
+            if (string.Equals(sourceFboName, DefaultRenderPipeline.DepthOfFieldFBOName, StringComparison.Ordinal))
+            {
+                DescribeTextureInputs(builder, DepthOfFieldTextureInputs);
+                return;
+            }
+
             if (!string.Equals(sourceFboName, destination, StringComparison.Ordinal))
+            {
+                if (TryDescribeActualMaterialTextures(builder, sourceFboName))
+                    return;
+
+                if (TryDescribeActualFboColorInputs(builder, sourceFboName))
+                    return;
+
                 builder.SampleTexture(MakeFboColorResource(sourceFboName));
+            }
         }
 
         private static void DescribeColorOutput(
@@ -564,6 +596,35 @@ namespace XREngine.Rendering.Pipelines.Commands
                     continue;
 
                 builder.SampleTexture(MakeTextureResource(texture.Name));
+                described = true;
+            }
+
+            return described;
+        }
+
+        protected static bool TryDescribeActualFboColorInputs(RenderPassBuilder builder, string sourceFboName)
+        {
+            XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            if (instance is null ||
+                !instance.TryGetFBO(sourceFboName, out XRFrameBuffer? fbo) ||
+                fbo?.Targets is not { Length: > 0 } targets)
+            {
+                return false;
+            }
+
+            bool described = false;
+            for (int i = 0; i < targets.Length; i++)
+            {
+                var (target, attachment, mipLevel, _) = targets[i];
+                if (!IsColorAttachment(attachment) || target is not XRTexture texture || string.IsNullOrWhiteSpace(texture.Name))
+                    continue;
+
+                uint mip = mipLevel > 0 ? (uint)mipLevel : 0u;
+                if (mip == 0u)
+                    builder.SampleTexture(MakeTextureResource(texture.Name));
+                else
+                    builder.SampleTextureMip(MakeTextureResource(texture.Name), mip);
+
                 described = true;
             }
 

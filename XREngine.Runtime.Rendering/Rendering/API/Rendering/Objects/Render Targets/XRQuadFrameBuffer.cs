@@ -68,6 +68,7 @@ namespace XREngine.Rendering
             FullScreenMesh = new XRMeshRenderer(Mesh(useTriangle), mat);
             FullScreenMesh.Name = $"FullscreenQuad:{mat.Name ?? "Material"}";
             FullScreenMesh.GenerateAsync = false;
+            FullScreenMesh.CaptureUniformsOnRender = true;
             FullScreenMesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
             FullScreenMesh.SetShaderPipelinesAllowedForAllVersions(false);
             FullScreenMesh.EnsureRenderPipelineVersionsCreated();

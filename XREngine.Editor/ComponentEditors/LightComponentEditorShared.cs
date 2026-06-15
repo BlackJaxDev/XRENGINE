@@ -25,6 +25,7 @@ internal static class LightComponentEditorShared
     private const string ShadowMapEncodingItems = "Depth\0VSM (2 Moment)\0EVSM 2-Channel\0EVSM 4-Channel\0";
     private const string ShadowFilterModeItems =
         "Hard / PCF\0Fixed Soft (Poisson)\0PCSS / Contact Hardening\0Fixed Soft (Vogel)\0";
+    private const string CascadeRenderModeItems = "Sequential\0Instanced Layered\0Geometry Shader\0Auto\0";
     private static readonly EShadowMapStorageFormat[] LocalShadowMapStorageFormats =
     [
         EShadowMapStorageFormat.R16Float,
@@ -266,6 +267,17 @@ internal static class LightComponentEditorShared
                 light.EnableCascadedShadows = cascaded;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Use per-camera cascade slices for directional shadows.");
+
+            if (light is DirectionalLightComponent directionalLight)
+            {
+                int renderMode = (int)directionalLight.CascadeShadowRenderMode;
+                if (ImGui.Combo("Cascade Render Mode", ref renderMode, CascadeRenderModeItems))
+                    directionalLight.CascadeShadowRenderMode = (EDirectionalCascadeShadowRenderMode)renderMode;
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Selects sequential, instanced layered, geometry shader, or automatic cascade rendering. Unsupported backends fall back to sequential with a diagnostic reason.");
+
+                ImGui.TextDisabled($"Effective: {directionalLight.EffectiveCascadeShadowRenderMode}");
+            }
         }
     }
 

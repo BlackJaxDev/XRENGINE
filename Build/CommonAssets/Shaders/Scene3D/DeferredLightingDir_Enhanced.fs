@@ -378,7 +378,7 @@ void main()
     float depth = texture(DepthView, uv).r;
     
     // Early exit for skybox or invalid depth
-    if (depth >= 1.0f) 
+    if (XRENGINE_ResolveDepth(depth) >= 1.0f) 
     {
         OutColor = vec3(0.0f);
         return;

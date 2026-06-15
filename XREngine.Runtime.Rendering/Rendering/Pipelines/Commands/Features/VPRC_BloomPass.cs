@@ -184,7 +184,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 Enabled = ERenderParamUsage.Disabled,
             },
-            BlendModeAllDrawBuffers = BlendMode.Disabled()
+            BlendModeAllDrawBuffers = BlendMode.Disabled(),
+            RequiredEngineUniforms = EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy
         };
 
         private static RenderingParameters UpsampleBlendParams() => new()
@@ -212,7 +213,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 AlphaDstFactor = EBlendingFactor.One,
                 RgbEquation = EBlendEquationMode.FuncAdd,
                 AlphaEquation = EBlendEquationMode.FuncAdd,
-            }
+            },
+            RequiredEngineUniforms = EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy
         };
 
         private static int ResolveBloomMaxMip(uint width, uint height)
@@ -269,7 +271,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 : Stereo ? BloomUpsampleStereoFallbackScopeName : BloomUpsampleFallbackScopeName;
         }
 
-        private void RegenerateFBOs(uint width, uint height)
+        private void RegenerateFBOs(uint width, uint height, XRTexture? sourceTexture)
         {
             var instance = ActivePipelineInstance;
             if (instance is null)
@@ -295,11 +297,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             BloomRect4.Width = (int)(width * 0.0625f);
             BloomRect4.Height = (int)(height * 0.0625f);
 
-            bool useHdr = RuntimeEngine.Rendering.Settings.OutputHDR;
-            var internalFormat = useHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
-            var sizedInternalFormat = useHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
-            var pixelFormat = EPixelFormat.Rgba;
-            var pixelType = useHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
+            (EPixelInternalFormat internalFormat, ESizedInternalFormat sizedInternalFormat, EPixelFormat pixelFormat, EPixelType pixelType) =
+                ResolveBloomTextureFormat(sourceTexture, instance);
 
             XRTexture outputTexture = ResolveOrCreateBloomTexture(instance, width, height, _activeBloomMaxMip,
                 internalFormat, sizedInternalFormat, pixelFormat, pixelType);
@@ -443,12 +442,24 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
+            if (!VPRCSourceTextureHelpers.TryResolveColorTexture(
+                    instance,
+                    null,
+                    InputFBOName,
+                    out XRTexture? inputTexture,
+                    out string resolveFailure) ||
+                inputTexture is null)
+            {
+                LogGuardFailure(nameof(Execute), $"Input FBO '{InputFBOName}' has no bloom source texture: {resolveFailure}");
+                return;
+            }
+
             var mip0 = instance.GetFBO<XRQuadFrameBuffer>(BloomMip0FBOName);
             if (mip0 is null ||
                 inputFBO.Width != _lastWidth ||
                 inputFBO.Height != _lastHeight)
             {
-                RegenerateFBOs(inputFBO.Width, inputFBO.Height);
+                RegenerateFBOs(inputFBO.Width, inputFBO.Height, inputTexture);
                 mip0 = instance.GetFBO<XRQuadFrameBuffer>(BloomMip0FBOName);
                 if (mip0 is null)
                 {
@@ -459,18 +470,6 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             // Step 1: Copy HDR scene into bloom texture mip 0.
             {
-                if (!VPRCSourceTextureHelpers.TryResolveColorTexture(
-                        instance,
-                        null,
-                        InputFBOName,
-                        out XRTexture? inputTexture,
-                        out string resolveFailure) ||
-                    inputTexture is null)
-                {
-                    LogGuardFailure(nameof(Execute), $"Input FBO '{InputFBOName}' has no bloom source texture: {resolveFailure}");
-                    return;
-                }
-
                 _bloomCopySourceTexture = inputTexture;
                 int copyPassIndex = ResolvePassIndex(BloomCopyPassName);
                 using var copyPassScope = copyPassIndex != int.MinValue
@@ -681,6 +680,27 @@ namespace XREngine.Rendering.Pipelines.Commands
                 VWrap = texture.VWrap,
             };
             return view;
+        }
+
+        private static (EPixelInternalFormat InternalFormat, ESizedInternalFormat SizedInternalFormat, EPixelFormat PixelFormat, EPixelType PixelType)
+            ResolveBloomTextureFormat(XRTexture? sourceTexture, XRRenderPipelineInstance instance)
+        {
+            if (sourceTexture is XRTexture2D source2D && source2D.Mipmaps.Length > 0)
+            {
+                Mipmap2D mip = source2D.Mipmaps[0];
+                return (mip.InternalFormat, source2D.SizedInternalFormat, mip.PixelFormat, mip.PixelType);
+            }
+
+            if (sourceTexture is XRTexture2DArray sourceArray && sourceArray.Mipmaps is { Length: > 0 } mips)
+            {
+                Mipmap2D mip = mips[0];
+                return (mip.InternalFormat, sourceArray.SizedInternalFormat, mip.PixelFormat, mip.PixelType);
+            }
+
+            bool useHdr = instance.EffectiveOutputHDRThisFrame ?? DefaultRenderPipeline.ResolveOutputHDR();
+            return useHdr
+                ? (EPixelInternalFormat.Rgba16f, ESizedInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat)
+                : (EPixelInternalFormat.Rgba8, ESizedInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
         }
 
         // --- Uniform callbacks ---

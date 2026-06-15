@@ -478,6 +478,8 @@ namespace XREngine.Scene
                     !ShouldSubmitShadowAtlasRequest(light))
                     continue;
 
+                ShadowMapFormatSelection shadowFormat = light.ResolveShadowMapFormat(preferredStorageFormat: null);
+                EShadowMapEncoding encoding = shadowFormat.Encoding;
                 int activeCascadeCount = light.ActiveCascadeCount;
                 bool useCascadeAtlas = light.EnableCascadedShadows &&
                     light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(activeCascadeCount);
@@ -495,7 +497,8 @@ namespace XREngine.Scene
                             cascadeIndex,
                             cascadeCamera,
                             priority: 10000.0f - cascadeIndex * 100.0f,
-                            fallback: ShadowFallbackMode.StaleTile);
+                            fallback: ShadowFallbackMode.StaleTile,
+                            encoding: encoding);
                     }
                 }
 
@@ -510,7 +513,8 @@ namespace XREngine.Scene
                         faceOrCascadeIndex: 0,
                         primaryCamera,
                         priority: 9000.0f,
-                        fallback: ShadowFallbackMode.Legacy);
+                        fallback: ShadowFallbackMode.Legacy,
+                        encoding: encoding);
                 }
             }
         }
@@ -588,10 +592,10 @@ namespace XREngine.Scene
             XRCamera camera,
             float priority,
             ShadowFallbackMode fallback,
+            EShadowMapEncoding encoding = EShadowMapEncoding.Depth,
             uint? desiredResolutionOverride = null,
             SkipReason forcedSkipReason = SkipReason.None)
         {
-            EShadowMapEncoding encoding = EShadowMapEncoding.Depth;
             ShadowRequestKey key = light.CreateShadowRequestKey(projectionType, faceOrCascadeIndex, encoding);
             Matrix4x4 view = camera.Transform.InverseRenderMatrix;
             Matrix4x4 projection = camera.ProjectionMatrix;
@@ -733,8 +737,6 @@ namespace XREngine.Scene
         private bool ShouldRenderLegacyDirectionalShadowMap(DirectionalLightComponent light, out bool renderCascades)
         {
             renderCascades = true;
-            ShadowMapFormatSelection selection = light.ResolveShadowMapFormat(preferredStorageFormat: null);
-            bool momentSingleMap = selection.Encoding != EShadowMapEncoding.Depth;
             int activeCascadeCount = light.ActiveCascadeCount;
             bool needsCascadeAtlas = light.EnableCascadedShadows && activeCascadeCount > 0;
             bool cascadeAtlasUnsupported = light.UsesDirectionalShadowAtlasForCurrentEncoding &&
@@ -742,14 +744,12 @@ namespace XREngine.Scene
                 !light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(activeCascadeCount);
             if (!light.UsesDirectionalShadowAtlasForCurrentEncoding || cascadeAtlasUnsupported)
             {
-                renderCascades = !momentSingleMap;
+                renderCascades = light.EnableCascadedShadows && activeCascadeCount > 0;
                 LogDirectionalLegacyDecision(
                     light,
-                    momentSingleMap
-                        ? "MomentSingleMap"
-                        : cascadeAtlasUnsupported
-                            ? "AtlasGroupedCascadeBackendUnavailable"
-                            : "AtlasDisabled",
+                    cascadeAtlasUnsupported
+                        ? "AtlasGroupedCascadeBackendUnavailable"
+                        : "AtlasDisabled",
                     legacyRender: true,
                     renderCascades,
                     needsLegacyCascades: renderCascades,
@@ -763,7 +763,7 @@ namespace XREngine.Scene
                 : HasSampleableDirectionalPrimaryAtlas(light);
             if (!directionalAtlasReady)
             {
-                renderCascades = needsCascadeAtlas && !momentSingleMap;
+                renderCascades = needsCascadeAtlas;
                 LogDirectionalLegacyDecision(
                     light,
                     needsCascadeAtlas
@@ -1219,7 +1219,8 @@ namespace XREngine.Scene
             out ShadowAtlasAllocation allocation,
             out int shadowRecordIndex)
         {
-            ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalCascade, cascadeIndex, EShadowMapEncoding.Depth);
+            EShadowMapEncoding encoding = light.ResolveShadowMapFormat(preferredStorageFormat: null).Encoding;
+            ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalCascade, cascadeIndex, encoding);
             if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 
@@ -1233,7 +1234,8 @@ namespace XREngine.Scene
             out ShadowAtlasAllocation allocation,
             out int shadowRecordIndex)
         {
-            ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalPrimary, 0, EShadowMapEncoding.Depth);
+            EShadowMapEncoding encoding = light.ResolveShadowMapFormat(preferredStorageFormat: null).Encoding;
+            ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalPrimary, 0, encoding);
             if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 

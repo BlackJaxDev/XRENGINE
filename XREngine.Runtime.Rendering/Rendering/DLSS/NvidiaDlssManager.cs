@@ -28,7 +28,8 @@ namespace XREngine.Rendering.DLSS
         private const float BalancedScale = 0.58f;
         private const float QualityScale = 0.66f;
         private const float UltraQualityScale = 0.77f;
-        private static readonly string[] RequiredRuntimeLibraryNames = ["sl.interposer.dll", "nvngx_dlss.dll"];
+        private static readonly string[] RequiredRuntimeLibraryNames = ["sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "nvngx_dlss.dll"];
+        private static readonly string[] RequiredFrameGenerationRuntimeLibraryNames = ["sl.dlss_g.dll", "nvngx_dlssg.dll"];
 
         private static bool _probed;
         private static bool _cachedIsSupported;
@@ -40,6 +41,9 @@ namespace XREngine.Rendering.DLSS
         private static bool _runtimeDllsProbed;
         private static bool _cachedRuntimeDllsAvailable;
         private static string? _runtimeDllsUnavailableReason;
+        private static bool _frameGenerationRuntimeDllsProbed;
+        private static bool _cachedFrameGenerationRuntimeDllsAvailable;
+        private static string? _frameGenerationRuntimeDllsUnavailableReason;
 
         public static bool IsSupported
         {
@@ -77,6 +81,25 @@ namespace XREngine.Rendering.DLSS
             }
         }
 
+        public static bool FrameGenerationRuntimeDllsAvailable
+        {
+            get
+            {
+                EnsureFrameGenerationRuntimeDllsProbed();
+                return _cachedFrameGenerationRuntimeDllsAvailable;
+            }
+        }
+
+        public static string FrameGenerationRuntimeDllsUnavailableReason
+        {
+            get
+            {
+                EnsureFrameGenerationRuntimeDllsProbed();
+                return _frameGenerationRuntimeDllsUnavailableReason
+                    ?? "DLSS frame generation runtime is incomplete: required NVIDIA Streamline/DLSS-G DLLs are missing. " + MissingRuntimeRecoveryMessage;
+            }
+        }
+
         private static void EnsureRuntimeDllsProbed()
         {
             if (_runtimeDllsProbed)
@@ -109,6 +132,37 @@ namespace XREngine.Rendering.DLSS
 
         private static string BuildRuntimeDllsUnavailableReason(IReadOnlyList<string> missingLibraries)
             => $"DLSS runtime is incomplete: missing {string.Join(", ", missingLibraries)}. {MissingRuntimeRecoveryMessage}";
+
+        private static void EnsureFrameGenerationRuntimeDllsProbed()
+        {
+            if (_frameGenerationRuntimeDllsProbed)
+                return;
+
+            List<string>? missingLibraries = null;
+            for (int i = 0; i < RequiredFrameGenerationRuntimeLibraryNames.Length; i++)
+            {
+                string libraryName = RequiredFrameGenerationRuntimeLibraryNames[i];
+                if (TryProbeRuntimeLibrary(libraryName))
+                    continue;
+
+                missingLibraries ??= [];
+                missingLibraries.Add(libraryName);
+            }
+
+            if (missingLibraries is null)
+            {
+                _cachedFrameGenerationRuntimeDllsAvailable = true;
+                _frameGenerationRuntimeDllsUnavailableReason = null;
+            }
+            else
+            {
+                _cachedFrameGenerationRuntimeDllsAvailable = false;
+                _frameGenerationRuntimeDllsUnavailableReason =
+                    $"DLSS frame generation runtime is incomplete: missing {string.Join(", ", missingLibraries)}. {MissingRuntimeRecoveryMessage}";
+            }
+
+            _frameGenerationRuntimeDllsProbed = true;
+        }
 
         private static void EnsureDetected()
         {
@@ -251,6 +305,19 @@ namespace XREngine.Rendering.DLSS
 
         internal static float GetRecommendedRenderScale(object? settings = null)
             => ComputeScale();
+
+        internal static bool IsFrameGenerationRequested
+            => RuntimeEngine.EffectiveSettings.EnableNvidiaDlssFrameGeneration
+            && RuntimeEngine.EffectiveSettings.NvidiaDlssFrameGenerationMode != ENvidiaDlssFrameGenerationMode.Off;
+
+        internal static ENvidiaDlssFrameGenerationMode ResolveFrameGenerationMode()
+            => RuntimeEngine.EffectiveSettings.NvidiaDlssFrameGenerationMode switch
+            {
+                ENvidiaDlssFrameGenerationMode.OneX => ENvidiaDlssFrameGenerationMode.OneX,
+                ENvidiaDlssFrameGenerationMode.TwoX => ENvidiaDlssFrameGenerationMode.TwoX,
+                ENvidiaDlssFrameGenerationMode.ThreeX => ENvidiaDlssFrameGenerationMode.ThreeX,
+                _ => ENvidiaDlssFrameGenerationMode.Off,
+            };
 
         private static float ComputeScale()
         {

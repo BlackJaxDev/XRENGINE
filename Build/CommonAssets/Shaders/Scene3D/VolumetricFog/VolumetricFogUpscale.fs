@@ -150,7 +150,7 @@ float VolumetricFogDepthToClipZ(float depth)
 // the bilateral weight is invariant to perspective.
 float LinearEyeDistance(float rawDepth, vec2 uv)
 {
-    vec4 clip = vec4(uv * 2.0f - 1.0f, VolumetricFogDepthToClipZ(rawDepth), 1.0f);
+    vec4 clip = vec4(XRENGINE_FramebufferTextureUVToClipXY(uv), VolumetricFogDepthToClipZ(rawDepth), 1.0f);
     vec4 view = InverseProjMatrix * clip;
     float w = max(abs(view.w), 1e-5f);
     return abs(view.z / w);
@@ -158,7 +158,7 @@ float LinearEyeDistance(float rawDepth, vec2 uv)
 
 vec3 WorldPosFromDepthRaw(float rawDepth, vec2 uv)
 {
-    vec4 clip = vec4(uv * 2.0f - 1.0f, VolumetricFogDepthToClipZ(rawDepth), 1.0f);
+    vec4 clip = vec4(XRENGINE_FramebufferTextureUVToClipXY(uv), VolumetricFogDepthToClipZ(rawDepth), 1.0f);
     vec4 view = InverseProjMatrix * clip;
     view /= max(abs(view.w), 1e-5f) * sign(view.w == 0.0f ? 1.0f : view.w);
     return (InverseViewMatrix * view).xyz;

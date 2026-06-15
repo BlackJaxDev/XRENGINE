@@ -169,10 +169,12 @@ internal sealed class VulkanBarrierPlanner
                     (!string.Equals(stateKey, logicalResource, StringComparison.OrdinalIgnoreCase) &&
                         _lastImageStates.TryGetValue(logicalResource, out previousState)))
                 {
-                    if (syncEdge is not null)
+                    // Sync edges are keyed before texture-view/FBO aliases resolve. Keep
+                    // the physical tracker authoritative once it has seen the image.
+                    if (syncEdge is not null && previousState.Layout == ImageLayout.Undefined)
                     {
                         PlannedImageState syncPreviousState = PlannedImageState.FromSyncState(syncEdge.ProducerState, usage.ResourceType, group, pass.Stage);
-                        if (syncPreviousState.Layout != ImageLayout.Undefined || previousState.Layout == ImageLayout.Undefined)
+                        if (syncPreviousState.Layout != ImageLayout.Undefined)
                             previousState = syncPreviousState;
                     }
 

@@ -43,6 +43,19 @@ public unsafe partial class VulkanRenderer
     private double _queueOverlapFrameDeltaEmaMs = -1.0;
     private double _queueOverlapModeStartFrameDeltaMs = -1.0;
 
+    private static readonly HashSet<string> VulkanPlannerOptionalResourceNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "LightProbeIrradianceArray",
+        "LightProbePrefilterArray",
+        "LightProbePositions",
+        "LightProbeTetrahedra",
+        "LightProbeParameters",
+        "LightProbeGridCells",
+        "LightProbeGridIndices",
+        "AtmosphereColor",
+        "VolumetricFogColor"
+    };
+
     private readonly record struct QueueOverlapMetrics(
         int ComputePassCount,
         int TransferUsageCount,
@@ -772,6 +785,7 @@ public unsafe partial class VulkanRenderer
             return context;
         }
 
+        HashSet<int>? activePassIndices = BuildActiveFrameOpPassSet(ops);
         FrameOpContext primary = SelectPrimaryPlannerContext(ops);
         RenderResourceRegistry? mergedRegistry = BuildMergedFrameOpRegistry(ops, primary.ResourceRegistry);
         FrameOpContext plannerContext = mergedRegistry is null
@@ -779,8 +793,20 @@ public unsafe partial class VulkanRenderer
             : primary with { ResourceRegistry = mergedRegistry };
 
         plannerContext = RefreshPlannerExtentsFromLiveContext(plannerContext, ops);
-        UpdateResourcePlannerFromContext(plannerContext);
+        UpdateResourcePlannerFromContext(plannerContext, activePassIndices);
         return plannerContext;
+    }
+
+    private static HashSet<int>? BuildActiveFrameOpPassSet(FrameOp[] ops)
+    {
+        HashSet<int> passIndices = [];
+        foreach (FrameOp op in ops)
+        {
+            if (op.PassIndex != int.MinValue)
+                passIndices.Add(op.PassIndex);
+        }
+
+        return passIndices.Count > 0 ? passIndices : null;
     }
 
     private FrameOpContext RefreshPlannerExtentsFromLiveContext(FrameOpContext context, FrameOp[] ops)
@@ -999,11 +1025,16 @@ public unsafe partial class VulkanRenderer
         return false;
     }
 
-    private void UpdateResourcePlannerFromContext(in FrameOpContext context)
+    private void UpdateResourcePlannerFromContext(
+        in FrameOpContext context,
+        HashSet<int>? activePassIndices = null)
     {
-        VulkanCompiledRenderGraph compiledGraph = _renderGraphCompiler.Compile(context.PassMetadata);
-        VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership = BuildQueueOwnershipConfig(context.PassMetadata);
-        ulong plannerSignature = ComputeResourcePlannerSignature(context, queueOwnership, compiledGraph, context.PassMetadata);
+        IReadOnlyCollection<RenderPassMetadata>? activePassMetadata = FilterActivePassMetadata(
+            context.PassMetadata,
+            activePassIndices);
+        VulkanCompiledRenderGraph compiledGraph = _renderGraphCompiler.Compile(activePassMetadata);
+        VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership = BuildQueueOwnershipConfig(activePassMetadata);
+        ulong plannerSignature = ComputeResourcePlannerSignature(context, queueOwnership, compiledGraph, activePassMetadata);
         if (plannerSignature == _resourcePlannerSignature)
             return;
 
@@ -1012,7 +1043,7 @@ public unsafe partial class VulkanRenderer
         try
         {
             pendingPlanner.Sync(context.ResourceRegistry);
-            ValidateVulkanResourcePlanMetadata(context.PassMetadata, pendingPlanner);
+            ValidateVulkanResourcePlanMetadata(context.PassMetadata, pendingPlanner, activePassIndices);
             pendingAllocator.UpdatePlan(pendingPlanner.CurrentPlan);
             pendingAllocator.RebuildPhysicalPlan(
                 this,
@@ -1058,7 +1089,7 @@ public unsafe partial class VulkanRenderer
 
         _compiledRenderGraph = compiledGraph;
         _barrierPlanner.Rebuild(
-            context.PassMetadata,
+            activePassMetadata,
             _resourcePlanner,
             _resourceAllocator,
             _compiledRenderGraph.Synchronization,
@@ -1066,6 +1097,19 @@ public unsafe partial class VulkanRenderer
 
         _resourcePlannerSignature = plannerSignature;
         _resourcePlannerRevision++;
+    }
+
+    private static IReadOnlyCollection<RenderPassMetadata>? FilterActivePassMetadata(
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        HashSet<int>? activePassIndices)
+    {
+        if (passMetadata is null || passMetadata.Count == 0 || activePassIndices is not { Count: > 0 })
+            return passMetadata;
+
+        return passMetadata
+            .Where(pass => activePassIndices.Contains(pass.PassIndex))
+            .OrderBy(pass => pass.PassIndex)
+            .ToArray();
     }
 
     private void WaitForResourcePlanReplacementIdle(int imageCount, int bufferCount)
@@ -1085,18 +1129,22 @@ public unsafe partial class VulkanRenderer
 
     private static void ValidateVulkanResourcePlanMetadata(
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
-        VulkanResourcePlanner planner)
+        VulkanResourcePlanner planner,
+        HashSet<int>? activePassIndices)
     {
-        if (passMetadata is null || passMetadata.Count == 0)
+        if (passMetadata is null || passMetadata.Count == 0 || activePassIndices is not { Count: > 0 })
             return;
 
         foreach (RenderPassMetadata pass in passMetadata)
         {
+            if (!activePassIndices.Contains(pass.PassIndex))
+                continue;
+
             foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
             {
                 string resourceName = usage.ResourceName;
                 if (string.IsNullOrWhiteSpace(resourceName)
-                    || resourceName.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
+                    || IsVulkanExternalOutputResourceBinding(resourceName))
                 {
                     continue;
                 }
@@ -1111,6 +1159,7 @@ public unsafe partial class VulkanRenderer
                 {
                     string textureName = resourceName["tex::".Length..];
                     if (!string.IsNullOrWhiteSpace(textureName)
+                        && !IsVulkanPlannerOptionalResource(textureName)
                         && !planner.TryGetTextureDescriptor(textureName, out _))
                     {
                         Debug.VulkanWarningEvery(
@@ -1127,6 +1176,7 @@ public unsafe partial class VulkanRenderer
                 {
                     string bufferName = resourceName["buf::".Length..];
                     if (!string.IsNullOrWhiteSpace(bufferName)
+                        && !IsVulkanPlannerOptionalResource(bufferName)
                         && !planner.TryGetBufferDescriptor(bufferName, out _))
                     {
                         Debug.VulkanWarningEvery(
@@ -1152,6 +1202,9 @@ public unsafe partial class VulkanRenderer
             return;
 
         string frameBufferName = segments[1];
+        if (IsVulkanExternalOutputName(frameBufferName) || IsVulkanPlannerOptionalResource(frameBufferName))
+            return;
+
         string slot = segments.Length >= 3 ? segments[2] : "color";
         if (!planner.TryGetFrameBufferDescriptor(frameBufferName, out FrameBufferResourceDescriptor? descriptor)
             || descriptor is null)
@@ -1172,6 +1225,9 @@ public unsafe partial class VulkanRenderer
 
             if (!planner.TryGetTextureDescriptor(attachment.ResourceName, out _))
             {
+                if (IsVulkanPlannerOptionalResource(attachment.ResourceName))
+                    return;
+
                 Debug.VulkanWarningEvery(
                     $"VulkanResourcePlanner.MissingFBOAttachment.{pass.PassIndex}.{frameBufferName}.{attachment.ResourceName}",
                     TimeSpan.FromSeconds(2),
@@ -1192,6 +1248,24 @@ public unsafe partial class VulkanRenderer
             slot,
             usage.ResourceType);
     }
+
+    private static bool IsVulkanExternalOutputResourceBinding(string resourceName)
+    {
+        if (resourceName.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (!resourceName.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string[] segments = resourceName.Split("::", StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length >= 2 && IsVulkanExternalOutputName(segments[1]);
+    }
+
+    private static bool IsVulkanExternalOutputName(string resourceName)
+        => resourceName.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsVulkanPlannerOptionalResource(string resourceName)
+        => VulkanPlannerOptionalResourceNames.Contains(resourceName);
 
     private static bool MatchesVulkanFrameBufferSlot(EFrameBufferAttachment attachment, string slot)
     {

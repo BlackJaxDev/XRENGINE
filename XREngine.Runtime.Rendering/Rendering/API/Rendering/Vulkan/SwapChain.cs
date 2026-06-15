@@ -3,6 +3,7 @@ using System.Threading;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
+using XREngine.Rendering.DLSS;
 using Image = Silk.NET.Vulkan.Image;
 using Format = Silk.NET.Vulkan.Format;
 
@@ -49,6 +50,7 @@ public unsafe partial class VulkanRenderer
     private Image[]? swapChainImages;
     private bool[]? _swapchainImageEverPresented;
     private uint _lastPresentedImageIndex;
+    private bool _streamlineFrameGenerationSwapchainActive;
     //private VkBuffer<UniformBufferObject>[]? uniformBuffers;
     private Format swapChainImageFormat;
     private ColorSpaceKHR swapChainImageColorSpace;
@@ -60,6 +62,11 @@ public unsafe partial class VulkanRenderer
     private Format _swapchainDepthFormat;
     private ImageAspectFlags _swapchainDepthAspect;
     private int _recreateSwapChainInProgress;
+
+    internal bool StreamlineFrameGenerationSwapchainActive => _streamlineFrameGenerationSwapchainActive;
+    internal uint SwapchainImageCount => (uint)(swapChainImages?.Length ?? 0);
+    internal Format SwapchainImageFormat => swapChainImageFormat;
+    internal Extent2D SwapchainExtent => swapChainExtent;
 
     private void RecreateSwapChain()
     {
@@ -227,7 +234,29 @@ public unsafe partial class VulkanRenderer
         => FindSupportedFormat([Format.D32Sfloat, Format.D32SfloatS8Uint, Format.D24UnormS8Uint], ImageTiling.Optimal, FormatFeatureFlags.DepthStencilAttachmentBit);
 
     private void DestroySwapChain()
-        => khrSwapChain!.DestroySwapchain(device, swapChain, null);
+    {
+        if (swapChain.Handle == 0)
+            return;
+
+        if (_streamlineFrameGenerationSwapchainActive)
+        {
+            if (!NvidiaDlssManager.Native.TryDestroyProxySwapchain(this, swapChain, out string failureReason))
+            {
+                Debug.RenderingError(
+                    $"NVIDIA DLSS frame generation failed to destroy the Streamline proxy swapchain cleanly ({failureReason}). Attempting direct VK_KHR_swapchain destruction for teardown cleanup.");
+                khrSwapChain!.DestroySwapchain(device, swapChain, null);
+            }
+        }
+        else
+        {
+            khrSwapChain!.DestroySwapchain(device, swapChain, null);
+        }
+
+        swapChain = default;
+        swapChainImages = null;
+        _swapchainImageEverPresented = null;
+        _streamlineFrameGenerationSwapchainActive = false;
+    }
 
     private void CreateSwapChain()
     {
@@ -280,17 +309,58 @@ public unsafe partial class VulkanRenderer
 
         if (!Api!.TryGetDeviceExtension(instance, device, out khrSwapChain))
             throw new NotSupportedException("VK_KHR_swapchain extension not found.");
-        
-        if (khrSwapChain!.CreateSwapchain(device, ref createInfo, null, out swapChain) != Result.Success)
-            throw new Exception("Failed to create swap chain.");
-        
-        khrSwapChain.GetSwapchainImages(device, swapChain, ref imageCount, null);
+
+        bool requestStreamlineFrameGeneration = NvidiaDlssManager.IsFrameGenerationRequested;
+        Result createResult;
+        if (requestStreamlineFrameGeneration)
+        {
+            if (!NvidiaDlssManager.Native.TryCreateProxySwapchain(this, ref createInfo, out swapChain, out createResult, out string failureReason))
+                throw new InvalidOperationException($"Requested NVIDIA DLSS frame generation could not create a Streamline proxy swapchain: {failureReason}");
+        }
+        else
+        {
+            createResult = khrSwapChain!.CreateSwapchain(device, ref createInfo, null, out swapChain);
+        }
+
+        if (createResult != Result.Success)
+            throw new InvalidOperationException($"Failed to create swap chain ({createResult}){(requestStreamlineFrameGeneration ? " through Streamline for NVIDIA DLSS frame generation" : string.Empty)}.");
+
+        _streamlineFrameGenerationSwapchainActive = requestStreamlineFrameGeneration;
+
+        Result getImagesResult;
+        if (_streamlineFrameGenerationSwapchainActive)
+        {
+            if (!NvidiaDlssManager.Native.TryGetProxySwapchainImages(this, swapChain, ref imageCount, null, out getImagesResult, out string failureReason))
+                throw new InvalidOperationException($"Requested NVIDIA DLSS frame generation could not query Streamline proxy swapchain images: {failureReason}");
+        }
+        else
+        {
+            getImagesResult = khrSwapChain!.GetSwapchainImages(device, swapChain, ref imageCount, null);
+        }
+
+        if (getImagesResult != Result.Success)
+            throw new InvalidOperationException($"Failed to query swapchain image count ({getImagesResult}){(_streamlineFrameGenerationSwapchainActive ? " through Streamline" : string.Empty)}.");
+
+        if (imageCount == 0)
+            throw new InvalidOperationException("Swapchain image count was zero.");
+
         swapChainImages = new Image[imageCount];
         _swapchainImageEverPresented = new bool[imageCount];
         fixed (Image* swapChainImagesPtr = swapChainImages)
         {
-            khrSwapChain.GetSwapchainImages(device, swapChain, ref imageCount, swapChainImagesPtr);
+            if (_streamlineFrameGenerationSwapchainActive)
+            {
+                if (!NvidiaDlssManager.Native.TryGetProxySwapchainImages(this, swapChain, ref imageCount, swapChainImagesPtr, out getImagesResult, out string failureReason))
+                    throw new InvalidOperationException($"Requested NVIDIA DLSS frame generation could not fetch Streamline proxy swapchain images: {failureReason}");
+            }
+            else
+            {
+                getImagesResult = khrSwapChain!.GetSwapchainImages(device, swapChain, ref imageCount, swapChainImagesPtr);
+            }
         }
+
+        if (getImagesResult != Result.Success)
+            throw new InvalidOperationException($"Failed to fetch swapchain images ({getImagesResult}){(_streamlineFrameGenerationSwapchainActive ? " through Streamline" : string.Empty)}.");
 
         swapChainImageFormat = surfaceFormat.Format;
         swapChainImageColorSpace = surfaceFormat.ColorSpace;
@@ -306,6 +376,15 @@ public unsafe partial class VulkanRenderer
             swapChainExtent.Height,
             imageCount,
             ShouldEmulateOpenGlImGuiSrgbPassthrough());
+        if (_streamlineFrameGenerationSwapchainActive)
+        {
+            Debug.Rendering(
+                "[Vulkan] NVIDIA DLSS frame generation requested: swapchain created through Streamline proxy. format={0} extent={1}x{2} images={3}",
+                swapChainImageFormat,
+                swapChainExtent.Width,
+                swapChainExtent.Height,
+                imageCount);
+        }
         OnSwapchainExtentChanged(swapChainExtent);
     }
 

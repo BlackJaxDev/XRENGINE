@@ -2,7 +2,6 @@ using ImGuiNET;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Lights;
-using XREngine.Data.Rendering;
 using XREngine.Rendering;
 
 namespace XREngine.Editor.ComponentEditors;
@@ -23,7 +22,6 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
         ImGui.ColorConvertFloat4ToU32(new Vector4(0.0f, 1.0f, 1.0f, 1.0f)),  // Cyan
         ImGui.ColorConvertFloat4ToU32(new Vector4(1.0f, 0.5f, 0.7f, 1.0f)),  // Pink
     ];
-
     public void DrawInspector(XRComponent component, HashSet<object> visited)
     {
         if (component is not DirectionalLightComponent light)
@@ -69,18 +67,6 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
         ImGuiUndoHelper.TrackDragUndo("Shadow Volume Scale", light);
 
         ImGui.SeparatorText("Cascade Layout");
-
-        if (light.EnableCascadedShadows)
-        {
-            int renderMode = (int)light.CascadeShadowRenderMode;
-            if (ImGui.Combo("Cascade Render Mode", ref renderMode, "Sequential\0Instanced / Layered\0Geometry Shader\0"))
-                light.CascadeShadowRenderMode = (EDirectionalCascadeShadowRenderMode)Math.Clamp(
-                    renderMode,
-                    (int)EDirectionalCascadeShadowRenderMode.Sequential,
-                    (int)EDirectionalCascadeShadowRenderMode.GeometryShader);
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Sequential renders one cascade layer at a time.\nGeometry Shader renders all cascades into the texture array in one layered pass.\nInstanced / Layered is exposed for the upcoming vertex-layered path and currently falls back to sequential.");
-        }
 
         int cascades = light.CascadeCount;
         if (ImGui.SliderInt("Cascade Count", ref cascades, 1, 8))

@@ -331,21 +331,21 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         get
         {
             bool preferDlss = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
-            if (preferDlss && RuntimeEnableDlssUpscale)
+            if (preferDlss && RuntimeRequestDlssVendorFeature)
                 return true;
 
-            if (RuntimeEnableXessUpscale)
+            if (RuntimeRequestXessVendorFeature)
                 return true;
 
-            return !preferDlss && RuntimeEnableDlssUpscale;
+            return !preferDlss && RuntimeRequestDlssVendorFeature;
         }
     }
 
-    private static bool RuntimeEnableDlssUpscale
-        => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && NvidiaDlssManager.IsSupported;
+    private static bool RuntimeRequestDlssVendorFeature
+        => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss || NvidiaDlssManager.IsFrameGenerationRequested;
 
-    private static bool RuntimeEnableXessUpscale
-        => RuntimeEngine.EffectiveSettings.EnableIntelXess && IntelXessManager.IsSupported;
+    private static bool RuntimeRequestXessVendorFeature
+        => RuntimeEngine.EffectiveSettings.EnableIntelXess || RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration;
 
     /// <summary>
     /// True when FXAA should be active for the current rendering camera.

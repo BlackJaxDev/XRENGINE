@@ -16,6 +16,11 @@ uniform int ClipDepthRange;
 uniform int ClipSpaceYDirection;
 #endif
 
+#ifndef XRENGINE_FRAMEBUFFER_TEXTURE_Y_DIRECTION_UNIFORM
+#define XRENGINE_FRAMEBUFFER_TEXTURE_Y_DIRECTION_UNIFORM
+uniform int FramebufferTextureYDirection;
+#endif
+
 #ifndef XRENGINE_SCREEN_SPACE_UTILS
 #define XRENGINE_SCREEN_SPACE_UTILS
 
@@ -92,10 +97,17 @@ float XRENGINE_ClipZToDepth(float clipZ)
     return ClipDepthRange == 1 ? clipZ * 0.5 + 0.5 : clipZ;
 }
 
+vec2 XRENGINE_TextureUVToClipXY(vec2 uv)
+{
+    if (FramebufferTextureYDirection == 1)
+        uv.y = 1.0 - uv.y;
+    return uv * 2.0 - 1.0;
+}
+
 vec3 XRENGINE_WorldPosFromDepth(float depth, vec2 uv, mat4 invProj, mat4 cameraToWorld)
 {
     float z = XRENGINE_DepthToClipZ(XRENGINE_ResolveDepth(depth));
-    vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, z, 1.0);
+    vec4 clipSpacePosition = vec4(XRENGINE_TextureUVToClipXY(uv), z, 1.0);
     vec4 viewSpacePosition = invProj * clipSpacePosition;
     viewSpacePosition /= viewSpacePosition.w;
     vec4 worldSpacePosition = cameraToWorld * viewSpacePosition;
@@ -106,7 +118,7 @@ vec3 XRENGINE_WorldPosFromDepth(float depth, vec2 uv, mat4 invProj, mat4 cameraT
 // Matches the pattern used in deferred lighting / decal passes.
 vec3 XRENGINE_WorldPosFromDepthRaw(float depth, vec2 uv, mat4 invProj, mat4 invView)
 {
-    vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, XRENGINE_DepthToClipZ(depth), 1.0);
+    vec4 clipSpacePosition = vec4(XRENGINE_TextureUVToClipXY(uv), XRENGINE_DepthToClipZ(depth), 1.0);
     vec4 viewSpacePosition = invProj * clipSpacePosition;
     viewSpacePosition /= viewSpacePosition.w;
     return (invView * viewSpacePosition).xyz;
@@ -114,7 +126,7 @@ vec3 XRENGINE_WorldPosFromDepthRaw(float depth, vec2 uv, mat4 invProj, mat4 invV
 
 vec3 XRENGINE_ViewPosFromDepthRaw(float depth, vec2 uv, mat4 invProj)
 {
-    vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, XRENGINE_DepthToClipZ(depth), 1.0);
+    vec4 clipSpacePosition = vec4(XRENGINE_TextureUVToClipXY(uv), XRENGINE_DepthToClipZ(depth), 1.0);
     vec4 viewSpacePosition = invProj * clipSpacePosition;
     return viewSpacePosition.xyz / viewSpacePosition.w;
 }
@@ -122,7 +134,7 @@ vec3 XRENGINE_ViewPosFromDepthRaw(float depth, vec2 uv, mat4 invProj)
 vec3 XRENGINE_ViewPosFromDepth(float depth, vec2 uv, mat4 invProj)
 {
     float z = XRENGINE_DepthToClipZ(XRENGINE_ResolveDepth(depth));
-    vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, z, 1.0);
+    vec4 clipSpacePosition = vec4(XRENGINE_TextureUVToClipXY(uv), z, 1.0);
     vec4 viewSpacePosition = invProj * clipSpacePosition;
     return viewSpacePosition.xyz / viewSpacePosition.w;
 }
@@ -139,7 +151,7 @@ vec3 XRENGINE_ViewPosFromDepthFast(float depth, vec2 uv, float invProjX, float i
     float ndcZ = XRENGINE_DepthToClipZ(depth);
     float w = projWScale * ndcZ + projWBias;
     float recipW = 1.0 / max(abs(w), 1e-7) * sign(w);
-    vec2 ndcXY = uv * 2.0 - 1.0;
+    vec2 ndcXY = XRENGINE_TextureUVToClipXY(uv);
     return vec3(ndcXY.x * invProjX * recipW, ndcXY.y * invProjY * recipW, -recipW);
 }
 

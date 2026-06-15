@@ -1,5 +1,8 @@
 #version 450 core
 
+#pragma snippet "ScreenSpaceUtils"
+#pragma snippet "DepthUtils"
+
 layout(location = 0) in vec3 FragPos;
 layout(location = 0) out vec4 OutColor;
 
@@ -26,6 +29,9 @@ uniform float DoFPhysicalFocalLengthMm;
 uniform float DoFPhysicalFocusDistanceMm;
 uniform float DoFPhysicalCoCRefMm;
 uniform float DoFPhysicalPixelsPerMm;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
 
 const vec2 Poisson[12] = vec2[](
     vec2( 0.0,  0.0),
@@ -47,8 +53,7 @@ float ComputeCoC(float depth)
     if (DoFMode == 1)
     {
         // Convert normalized nonlinear depth to linear distance (matches XRCamera.DepthToDistance)
-        float depthSample = 2.0 * depth - 1.0;
-        float zM = (2.0 * CameraNearZ * CameraFarZ) / (CameraFarZ + CameraNearZ - depthSample * (CameraFarZ - CameraNearZ));
+        float zM = XRENGINE_LinearizeDepth(depth, CameraNearZ, CameraFarZ);
         float zMm = zM * 1000.0;
 
         float sMm = max(DoFPhysicalFocusDistanceMm, 0.001);
@@ -95,7 +100,10 @@ void main()
     if (clipXY.x > 1.0 || clipXY.y > 1.0)
         discard;
 
-    vec2 uv = clipXY * 0.5 + 0.5;
+    vec2 uv = clamp(
+        XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight)),
+        vec2(0.0),
+        vec2(1.0));
     float depth = texture(DepthView, uv).r;
     float coc = ComputeCoC(depth);
 

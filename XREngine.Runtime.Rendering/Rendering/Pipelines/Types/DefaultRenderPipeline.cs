@@ -331,21 +331,21 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         get
         {
             bool preferDlss = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
-            if (preferDlss && RuntimeEnableDlssUpscale)
+            if (preferDlss && RuntimeRequestDlssVendorFeature)
                 return true;
 
-            if (RuntimeEnableXessUpscale)
+            if (RuntimeRequestXessVendorFeature)
                 return true;
 
-            return !preferDlss && RuntimeEnableDlssUpscale;
+            return !preferDlss && RuntimeRequestDlssVendorFeature;
         }
     }
 
-    private static bool RuntimeEnableDlssUpscale
-        => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && NvidiaDlssManager.IsSupported;
+    private static bool RuntimeRequestDlssVendorFeature
+        => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss || NvidiaDlssManager.IsFrameGenerationRequested;
 
-    private static bool RuntimeEnableXessUpscale
-        => RuntimeEngine.EffectiveSettings.EnableIntelXess && IntelXessManager.IsSupported;
+    private static bool RuntimeRequestXessVendorFeature
+        => RuntimeEngine.EffectiveSettings.EnableIntelXess || RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration;
 
     private DeferredDebugViewMode _deferredDebugView = DeferredDebugViewMode.Disabled;
     [Category("Debug")]
@@ -2644,7 +2644,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     }
 
     private static bool ShouldFlipVulkanPresentSourceY(string sourceFboName)
-        => sourceFboName is not (FxaaFBOName or SmaaFBOName or TsrUpscaleFBOName);
+        => sourceFboName is not (FxaaFBOName or SmaaFBOName);
 
     private static string? ResolveVendorUpscaleSourceTextureName(string sourceFboName)
         => sourceFboName switch
@@ -2883,6 +2883,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         var container = new ViewportRenderCommandContainer(this);
 
         container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            MotionBlurCopyFBOName,
+            CreateMotionBlurCopyFBO,
+            GetDesiredFBOSizeInternal);
+
+        container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             MotionBlurFBOName,
             CreateMotionBlurFBO,
             GetDesiredFBOSizeInternal);
@@ -2896,8 +2901,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             blitStencil: false,
             linearFilter: false);
 
-        // Render the motion blur result back into the forward pass FBO
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(MotionBlurFBOName, ForwardPassFBOName);
+        // Render the motion blur result back into the forward pass FBO.
+        using (container.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = MotionBlurFBO_SettingUniforms))
+        {
+            container.Add<VPRC_RenderQuadToFBO>().SetTargets(MotionBlurFBOName, ForwardPassFBOName);
+        }
 
         return container;
     }

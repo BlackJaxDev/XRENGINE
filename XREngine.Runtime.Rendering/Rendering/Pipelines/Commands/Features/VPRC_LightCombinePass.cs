@@ -358,11 +358,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_currentLightComponent is DirectionalLightComponent directionalLight)
             {
                 ShadowMapFormatSelection directionalShadowFormat = directionalLight.ResolveShadowMapFormat(preferredStorageFormat: null);
-                bool directionalMomentSingleMap = directionalShadowFormat.Encoding != EShadowMapEncoding.Depth;
                 useDirectionalShadowAtlas = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding && directionalLight.CastsShadows;
                 var cameraComponent = ActivePipelineInstance.RenderState.WindowViewport?.CameraComponent;
                 useCascadedDirectionalShadows =
-                    !directionalMomentSingleMap &&
                     cameraComponent?.DirectionalShadowRenderingMode == global::XREngine.Components.EDirectionalShadowRenderingMode.Cascaded &&
                     directionalLight.EnableCascadedShadows &&
                     (useDirectionalShadowAtlas || directionalLight.CascadedShadowMapTexture is not null) &&
@@ -1004,7 +1002,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 //Render only the backside so that the light still shows if the camera is inside of the volume
                 //and the light does not add itself twice for the front and back faces.
                 CullMode = ECullMode.Front,
-                RequiredEngineUniforms = EUniformRequirements.Camera,
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy,
                 BlendModeAllDrawBuffers = new()
                 {
                     //Add the previous and current light colors together using FuncAdd with each mesh render
@@ -1063,7 +1061,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             return new RenderingParameters
             {
                 CullMode = ECullMode.Front,
-                RequiredEngineUniforms = EUniformRequirements.Camera,
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy,
                 BlendModeAllDrawBuffers = new()
                 {
                     Enabled = ERenderParamUsage.Enabled,

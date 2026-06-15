@@ -57,7 +57,11 @@ public unsafe partial class VulkanRenderer
             Generate();
         }
 
-        internal FrameBufferAttachmentSignature[] ResolveAttachmentSignatureForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata, ImageLayout[]? initialLayoutOverrides = null)
+        internal FrameBufferAttachmentSignature[] ResolveAttachmentSignatureForPass(
+            int passIndex,
+            IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+            ImageLayout[]? initialLayoutOverrides = null,
+            RenderGraphSynchronizationInfo? synchronization = null)
         {
             if (_attachmentSignature is null || _attachmentSignature.Length == 0)
                 return [];
@@ -122,7 +126,7 @@ public unsafe partial class VulkanRenderer
                 return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
             }
 
-            FrameBufferAttachmentSignature[] planned = BuildPlannedAttachmentSignature(pass, frameBufferName);
+            FrameBufferAttachmentSignature[] planned = BuildPlannedAttachmentSignature(pass, frameBufferName, synchronization);
 
             // Apply per-frame initial-layout overrides on top of metadata-driven planning.
             if (hasLayoutOverrides)
@@ -131,12 +135,16 @@ public unsafe partial class VulkanRenderer
             return planned;
         }
 
-        internal RenderPass ResolveRenderPassForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata, ImageLayout[]? initialLayoutOverrides = null)
+        internal RenderPass ResolveRenderPassForPass(
+            int passIndex,
+            IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+            ImageLayout[]? initialLayoutOverrides = null,
+            RenderGraphSynchronizationInfo? synchronization = null)
         {
             if (_attachmentSignature is null || _attachmentSignature.Length == 0)
                 return _renderPass;
 
-            FrameBufferAttachmentSignature[] planned = ResolveAttachmentSignatureForPass(passIndex, passMetadata, initialLayoutOverrides);
+            FrameBufferAttachmentSignature[] planned = ResolveAttachmentSignatureForPass(passIndex, passMetadata, initialLayoutOverrides, synchronization);
             if (planned.Length == 0 || SignatureEquals(_attachmentSignature, planned))
                 return _renderPass;
 
@@ -190,7 +198,7 @@ public unsafe partial class VulkanRenderer
             if (!referencesFrameBuffer)
                 return UsesReadOnlyDepthStencil(BaseSignature());
 
-            FrameBufferAttachmentSignature[] planned = BuildPlannedAttachmentSignature(pass, frameBufferName);
+            FrameBufferAttachmentSignature[] planned = BuildPlannedAttachmentSignature(pass, frameBufferName, synchronization: null);
             if (hasLayoutOverrides)
                 planned = ApplyInitialLayoutOverrides(planned, initialLayoutOverrides!);
 
@@ -525,7 +533,10 @@ public unsafe partial class VulkanRenderer
                 ? $"FBO[{Data.GetHashCode()}]"
                 : Data.Name!;
 
-        private FrameBufferAttachmentSignature[] BuildPlannedAttachmentSignature(RenderPassMetadata pass, string frameBufferName)
+        private FrameBufferAttachmentSignature[] BuildPlannedAttachmentSignature(
+            RenderPassMetadata pass,
+            string frameBufferName,
+            RenderGraphSynchronizationInfo? synchronization)
         {
             FrameBufferAttachmentSignature[] planned = (FrameBufferAttachmentSignature[])_attachmentSignature!.Clone();
             HashSet<int> touchedAttachments = [];
@@ -579,6 +590,9 @@ public unsafe partial class VulkanRenderer
                             existing.StencilStoreOp),
                     };
                     updated = WithReferenceLayout(updated, ResolveAttachmentReferenceLayout(updated, usage));
+                    ImageLayout finalLayout = ResolveAttachmentFinalLayoutFromNextConsumer(synchronization, pass, usage, updated);
+                    if (finalLayout != ImageLayout.Undefined)
+                        updated = WithFinalLayout(updated, finalLayout);
 
                     planned[index] = updated;
                     touchedAttachments.Add(index);
@@ -763,6 +777,92 @@ public unsafe partial class VulkanRenderer
                 signature.InitialLayout,
                 signature.FinalLayout,
                 referenceLayout);
+
+        private static FrameBufferAttachmentSignature WithFinalLayout(
+            FrameBufferAttachmentSignature signature,
+            ImageLayout finalLayout)
+            => new(
+                signature.Format,
+                signature.Samples,
+                signature.AspectMask,
+                signature.Role,
+                signature.ColorIndex,
+                signature.LoadOp,
+                signature.StoreOp,
+                signature.StencilLoadOp,
+                signature.StencilStoreOp,
+                signature.InitialLayout,
+                finalLayout,
+                signature.ReferenceLayout);
+
+        private static ImageLayout ResolveAttachmentFinalLayoutFromNextConsumer(
+            RenderGraphSynchronizationInfo? synchronization,
+            RenderPassMetadata pass,
+            RenderPassResourceUsage usage,
+            FrameBufferAttachmentSignature signature)
+        {
+            if (synchronization is null)
+                return ImageLayout.Undefined;
+
+            foreach (RenderGraphSynchronizationEdge edge in synchronization.Edges)
+            {
+                if (edge.DependencyOnly ||
+                    edge.ProducerPassIndex != pass.PassIndex ||
+                    string.IsNullOrEmpty(edge.ResourceName) ||
+                    !edge.ResourceName.Equals(usage.ResourceName, StringComparison.OrdinalIgnoreCase) ||
+                    !SubresourceRangesOverlap(edge.SubresourceRange, usage.SubresourceRange) ||
+                    edge.ConsumerState.Layout is not { } nextLayout)
+                {
+                    continue;
+                }
+
+                ImageLayout finalLayout = ToVkImageLayout(nextLayout, signature);
+                if (finalLayout != ImageLayout.Undefined)
+                    return finalLayout;
+            }
+
+            return ImageLayout.Undefined;
+        }
+
+        private static bool SubresourceRangesOverlap(
+            RenderGraphSubresourceRange first,
+            RenderGraphSubresourceRange second)
+        {
+            if (first.IsWholeResource || second.IsWholeResource)
+                return true;
+
+            return RangesOverlap(first.BaseMipLevel, first.MipLevelCount, second.BaseMipLevel, second.MipLevelCount) &&
+                   RangesOverlap(first.BaseArrayLayer, first.ArrayLayerCount, second.BaseArrayLayer, second.ArrayLayerCount);
+        }
+
+        private static bool RangesOverlap(uint firstStart, uint firstCount, uint secondStart, uint secondCount)
+        {
+            ulong firstEnd = firstCount == RenderGraphSubresourceRange.Remaining
+                ? ulong.MaxValue
+                : (ulong)firstStart + firstCount;
+            ulong secondEnd = secondCount == RenderGraphSubresourceRange.Remaining
+                ? ulong.MaxValue
+                : (ulong)secondStart + secondCount;
+
+            return (ulong)firstStart < secondEnd && (ulong)secondStart < firstEnd;
+        }
+
+        private static ImageLayout ToVkImageLayout(
+            RenderGraphImageLayout layout,
+            FrameBufferAttachmentSignature signature)
+            => layout switch
+            {
+                RenderGraphImageLayout.ColorAttachment => ImageLayout.ColorAttachmentOptimal,
+                RenderGraphImageLayout.DepthStencilAttachment => ImageLayout.DepthStencilAttachmentOptimal,
+                RenderGraphImageLayout.ShaderReadOnly => signature.Role == AttachmentRole.Color
+                    ? ImageLayout.ShaderReadOnlyOptimal
+                    : ImageLayout.DepthStencilReadOnlyOptimal,
+                RenderGraphImageLayout.General => ImageLayout.General,
+                RenderGraphImageLayout.TransferSource => ImageLayout.TransferSrcOptimal,
+                RenderGraphImageLayout.TransferDestination => ImageLayout.TransferDstOptimal,
+                RenderGraphImageLayout.Present => ImageLayout.PresentSrcKhr,
+                _ => ImageLayout.Undefined
+            };
 
         private static ImageLayout ResolveAttachmentReferenceLayout(
             FrameBufferAttachmentSignature signature,
@@ -978,14 +1078,13 @@ public unsafe partial class VulkanRenderer
             AttachmentLoadOp stencilLoad = AttachmentLoadOp.DontCare;
             AttachmentStoreOp stencilStore = hasStencil ? AttachmentStoreOp.Store : AttachmentStoreOp.DontCare;
 
-            // Color attachments stay in color-attachment layout at the pass
-            // boundary. The render graph emits explicit barriers to shader-read
-            // when a later pass samples them, which keeps the graph state and the
-            // live Vulkan layout in agreement. Sampled depth/stencil attachments
-            // still need to leave the pass in a read-only layout because their
-            // pass metadata may opt into read-only testing/sampling.
+            // Sampled attachments must leave the pass in a descriptor-compatible
+            // layout. Render-graph passes can infer this from declared consumers,
+            // but off-graph FBOs such as shadow maps still need a safe default.
             ImageLayout finalLayout = role == AttachmentRole.Color
-                ? ImageLayout.ColorAttachmentOptimal
+                ? (source.Usage & ImageUsageFlags.SampledBit) != 0
+                    ? ImageLayout.ShaderReadOnlyOptimal
+                    : ImageLayout.ColorAttachmentOptimal
                 : (source.Usage & ImageUsageFlags.SampledBit) != 0
                     ? ImageLayout.DepthStencilReadOnlyOptimal
                     : ImageLayout.DepthStencilAttachmentOptimal;

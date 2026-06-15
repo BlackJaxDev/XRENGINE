@@ -207,10 +207,10 @@ void main()
         vec2(1.0f));
 
     // Closest-depth velocity reduces edge fattening at silhouettes.
-    // MotionVectors.fs writes unjittered current-minus-previous NDC, so do
-    // not apply the temporal jitter delta again here.
+    // MotionVectors.fs writes unjittered current-minus-previous NDC, so the
+    // history lookup applies only the temporal jitter phase delta here.
     vec2 velocity = FindClosestVelocity(uv);
-    vec2 historyUV = uv - velocity * 0.5f;
+    vec2 historyUV = uv - velocity * 0.5f + (PreviousJitterUv - CurrentJitterUv);
 
     vec3 currentColorRaw = texture(TemporalColorInput, uv).rgb;
     vec3 currentColorFiltered = SampleCurrentReconstruction(TemporalColorInput, uv, TexelSize);

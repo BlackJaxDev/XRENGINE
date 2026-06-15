@@ -1314,7 +1314,7 @@ public partial class DefaultRenderPipeline
         if (overrideSource is not null)
         {
             var overrideChoice = c.Add<VPRC_IfElse>();
-            overrideChoice.ConditionEvaluator = () => IsValidFinalOutputSourceFboOverride(overrideSource, bypassVendorUpscale);
+            overrideChoice.ConditionEvaluator = () => IsValidFinalOutputSourceFboOverride(overrideSource);
             overrideChoice.TrueCommands = CreateOutputSourceOverrideCommands(overrideSource, bypassVendorUpscale);
             overrideChoice.FalseCommands = CreateStandardViewportFinalOutputCommands(bypassVendorUpscale);
             return;
@@ -1355,21 +1355,15 @@ public partial class DefaultRenderPipeline
     private ViewportRenderCommandContainer CreateOutputSourceOverrideCommands(string sourceFboName, bool bypassVendorUpscale)
     {
         var commands = new ViewportRenderCommandContainer(this);
-        if (bypassVendorUpscale)
-        {
-            commands.Add<VPRC_RenderQuadToFBO>().SetTargets(sourceFboName, null);
-        }
-        else
-        {
-            var vendorBlit = commands.Add<VPRC_VendorUpscale>();
-            vendorBlit.FrameBufferName = sourceFboName;
-            vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
-            vendorBlit.DepthTextureName = DepthViewTextureName;
-            vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
-            vendorBlit.MotionTextureName = VelocityTextureName;
-            vendorBlit.MotionFrameBufferName = VelocityFBOName;
-            vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
-        }
+        var vendorBlit = commands.Add<VPRC_VendorUpscale>();
+        vendorBlit.FrameBufferName = sourceFboName;
+        vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
+        vendorBlit.DepthTextureName = DepthViewTextureName;
+        vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
+        vendorBlit.MotionTextureName = VelocityTextureName;
+        vendorBlit.MotionFrameBufferName = VelocityFBOName;
+        vendorBlit.ForceFallbackBlit = bypassVendorUpscale;
+        vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
 
         return commands;
     }
@@ -1426,23 +1420,10 @@ public partial class DefaultRenderPipeline
             !string.Equals(raw, "off", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsValidFinalOutputSourceFboOverride(string sourceFboName, bool bypassVendorUpscale)
+    private static bool IsValidFinalOutputSourceFboOverride(string sourceFboName)
     {
         try
         {
-            if (bypassVendorUpscale)
-            {
-                if (GetFBO<XRQuadFrameBuffer>(sourceFboName) is not null)
-                    return true;
-
-                Debug.RenderingWarningEvery(
-                    $"DefaultRenderPipeline.InvalidOutputSourceFbo.Quad.{sourceFboName}",
-                    TimeSpan.FromSeconds(1),
-                    "[RenderDiag] XRE_OUTPUT_SOURCE_FBO='{0}' does not resolve to an XRQuadFrameBuffer required by XRE_BYPASS_VENDOR_UPSCALE=1. Falling back to standard final output.",
-                    sourceFboName);
-                return false;
-            }
-
             if (TryGetFBO(sourceFboName, out XRFrameBuffer? fbo) && fbo is not null)
                 return true;
 
