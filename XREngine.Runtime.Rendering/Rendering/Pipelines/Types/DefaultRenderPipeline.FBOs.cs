@@ -74,7 +74,7 @@ public partial class DefaultRenderPipeline
                     UpdateDepth = false,
                 },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy,
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
             }
         };
         var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false);
@@ -110,7 +110,7 @@ public partial class DefaultRenderPipeline
                     UpdateDepth = false,
                 },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy,
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
             }
         };
 
@@ -536,6 +536,7 @@ public partial class DefaultRenderPipeline
                 {
                     Enabled = ERenderParamUsage.Disabled,
                 },
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
 
@@ -1226,11 +1227,12 @@ public partial class DefaultRenderPipeline
                     Enabled = ERenderParamUsage.Disabled,
                     Function = EComparison.Always,
                     UpdateDepth = false,
-                }
+                },
+                RequiredEngineUniforms = EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = MotionBlurFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = MotionBlurFBOName };
         fbo.SettingUniforms += MotionBlurFBO_SettingUniforms;
         return fbo;
     }
@@ -1262,11 +1264,11 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
-                RequiredEngineUniforms = EUniformRequirements.Camera
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = DepthOfFieldFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DepthOfFieldFBOName };
         fbo.SettingUniforms += DepthOfFieldFBO_SettingUniforms;
         return fbo;
     }
@@ -1405,7 +1407,7 @@ public partial class DefaultRenderPipeline
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
-                RequiredEngineUniforms = EUniformRequirements.Camera,
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
                 BlendModeAllDrawBuffers = BlendMode.Disabled()
             }
         };
@@ -1679,7 +1681,7 @@ public partial class DefaultRenderPipeline
                 {
                     Enabled = ERenderParamUsage.Disabled,
                 },
-                RequiredEngineUniforms = EUniformRequirements.Camera
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy
             }
         };
 

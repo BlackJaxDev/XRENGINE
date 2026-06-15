@@ -9,6 +9,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
 
@@ -82,6 +83,17 @@ public unsafe partial class VulkanRenderer
         EMemoryBarrierMask Mask,
         FrameOpContext Context) : FrameOp(PassIndex, null, Context);
 
+    internal sealed record DlssUpscaleOp(
+        int PassIndex,
+        NvidiaDlssManager.Native.NativeVulkanSession Session,
+        VulkanStreamlineImage SourceColor,
+        VulkanStreamlineImage Depth,
+        VulkanStreamlineImage Motion,
+        VulkanStreamlineImage OutputColor,
+        VulkanStreamlineImage? Exposure,
+        VulkanUpscaleBridgeDispatchParameters Parameters,
+        FrameOpContext Context) : FrameOp(PassIndex, null, Context);
+
     internal sealed record TransformFeedbackOp(
         int PassIndex,
         XRFrameBuffer? Target,
@@ -144,6 +156,7 @@ public unsafe partial class VulkanRenderer
             IndirectDrawOp indirectDraw => indirectDraw with { PassIndex = validatedPassIndex },
             MeshTaskDispatchIndirectCountOp meshTaskDispatch => meshTaskDispatch with { PassIndex = validatedPassIndex },
             MemoryBarrierOp memoryBarrier => memoryBarrier with { PassIndex = validatedPassIndex },
+            DlssUpscaleOp dlssUpscale => dlssUpscale with { PassIndex = validatedPassIndex },
             TransformFeedbackOp transformFeedback => transformFeedback with { PassIndex = validatedPassIndex },
             ComputeDispatchOp computeDispatch => computeDispatch with { PassIndex = validatedPassIndex },
             _ => op
@@ -271,6 +284,7 @@ public unsafe partial class VulkanRenderer
                     hash.Add(meshDraw.Draw.CameraRight);
                     hash.Add(meshDraw.Draw.RenderAreaWidth);
                     hash.Add(meshDraw.Draw.RenderAreaHeight);
+                    HashProgramBindingSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot);
                     break;
                 case BlitOp blit:
                     hash.Add(blit.InFbo?.GetHashCode() ?? 0);
@@ -308,6 +322,22 @@ public unsafe partial class VulkanRenderer
                 case MemoryBarrierOp barrier:
                     hash.Add((int)barrier.Mask);
                     break;
+                case DlssUpscaleOp dlss:
+                    hash.Add(dlss.Session.GetHashCode());
+                    hash.Add(dlss.SourceColor.Image.Handle);
+                    hash.Add(dlss.Depth.Image.Handle);
+                    hash.Add(dlss.Motion.Image.Handle);
+                    hash.Add(dlss.OutputColor.Image.Handle);
+                    hash.Add(dlss.Exposure?.Image.Handle ?? 0UL);
+                    hash.Add(dlss.Parameters.InputWidth);
+                    hash.Add(dlss.Parameters.InputHeight);
+                    hash.Add(dlss.Parameters.OutputWidth);
+                    hash.Add(dlss.Parameters.OutputHeight);
+                    hash.Add(dlss.Parameters.FrameIndex);
+                    hash.Add(dlss.Parameters.ResetHistory);
+                    hash.Add(dlss.Parameters.OutputHdr);
+                    hash.Add(dlss.Parameters.DlssQuality);
+                    break;
                 case TransformFeedbackOp transformFeedback:
                     hash.Add(transformFeedback.TransformFeedback.GetHashCode());
                     hash.Add((int)transformFeedback.Operation);
@@ -325,16 +355,164 @@ public unsafe partial class VulkanRenderer
                     hash.Add(compute.GroupsX);
                     hash.Add(compute.GroupsY);
                     hash.Add(compute.GroupsZ);
-                    hash.Add(compute.Snapshot.Uniforms.Count);
-                    hash.Add(compute.Snapshot.Samplers.Count);
-                    hash.Add(compute.Snapshot.SamplersByName.Count);
-                    hash.Add(compute.Snapshot.Images.Count);
-                    hash.Add(compute.Snapshot.Buffers.Count);
+                    HashProgramBindingSnapshot(ref hash, compute.Snapshot);
                     break;
             }
         }
 
         return unchecked((ulong)hash.ToHashCode());
+    }
+
+    private static void HashProgramBindingSnapshot(ref HashCode hash, ComputeDispatchSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            hash.Add(0);
+            return;
+        }
+
+        hash.Add(1);
+        hash.Add(HashUniformBindings(snapshot.Uniforms));
+        hash.Add(HashSamplerUnitBindings(snapshot.Samplers));
+        hash.Add(HashSamplerNameBindings(snapshot.SamplersByName));
+        hash.Add(HashImageBindings(snapshot.Images));
+        hash.Add(HashBufferBindings(snapshot.Buffers));
+    }
+
+    private static int HashUniformBindings(Dictionary<string, ProgramUniformValue> uniforms)
+    {
+        HashCode hash = new();
+        hash.Add(uniforms.Count);
+        foreach (var pair in uniforms)
+        {
+            HashCode item = new();
+            item.Add(pair.Key, StringComparer.Ordinal);
+            item.Add((int)pair.Value.Type);
+            item.Add(pair.Value.IsArray);
+            HashUniformValue(ref item, pair.Value.Value);
+            hash.Add(item.ToHashCode());
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static int HashSamplerUnitBindings(Dictionary<uint, XRTexture> samplers)
+    {
+        HashCode hash = new();
+        hash.Add(samplers.Count);
+        foreach (var pair in samplers)
+        {
+            hash.Add(pair.Key);
+            hash.Add(pair.Value.GetHashCode());
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static int HashSamplerNameBindings(Dictionary<string, XRTexture> samplers)
+    {
+        HashCode hash = new();
+        hash.Add(samplers.Count);
+        foreach (var pair in samplers)
+        {
+            hash.Add(pair.Key, StringComparer.Ordinal);
+            hash.Add(pair.Value.GetHashCode());
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static int HashImageBindings(Dictionary<uint, ProgramImageBinding> images)
+    {
+        HashCode hash = new();
+        hash.Add(images.Count);
+        foreach (var pair in images)
+        {
+            ProgramImageBinding binding = pair.Value;
+            hash.Add(pair.Key);
+            hash.Add(binding.Texture.GetHashCode());
+            hash.Add(binding.Level);
+            hash.Add(binding.Layered);
+            hash.Add(binding.Layer);
+            hash.Add((int)binding.Access);
+            hash.Add((int)binding.Format);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static int HashBufferBindings(Dictionary<uint, XRDataBuffer> buffers)
+    {
+        HashCode hash = new();
+        hash.Add(buffers.Count);
+        foreach (var pair in buffers)
+        {
+            hash.Add(pair.Key);
+            hash.Add(pair.Value.GetHashCode());
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static void HashUniformValue(ref HashCode hash, object? value)
+    {
+        if (value is null)
+        {
+            hash.Add(0);
+            return;
+        }
+
+        if (value is Array array)
+        {
+            hash.Add(array.Length);
+            HashUniformArray(ref hash, array);
+            return;
+        }
+
+        hash.Add(value);
+    }
+
+    private static void HashUniformArray(ref HashCode hash, Array array)
+    {
+        switch (array)
+        {
+            case float[] values:
+                for (int i = 0; i < values.Length; i++)
+                    hash.Add(values[i]);
+                return;
+            case int[] values:
+                for (int i = 0; i < values.Length; i++)
+                    hash.Add(values[i]);
+                return;
+            case uint[] values:
+                for (int i = 0; i < values.Length; i++)
+                    hash.Add(values[i]);
+                return;
+            case bool[] values:
+                for (int i = 0; i < values.Length; i++)
+                    hash.Add(values[i]);
+                return;
+            case Vector2[] values:
+                for (int i = 0; i < values.Length; i++)
+                    hash.Add(values[i]);
+                return;
+            case Vector3[] values:
+                for (int i = 0; i < values.Length; i++)
+                    hash.Add(values[i]);
+                return;
+            case Vector4[] values:
+                for (int i = 0; i < values.Length; i++)
+                    hash.Add(values[i]);
+                return;
+            case Matrix4x4[] values:
+                for (int i = 0; i < values.Length; i++)
+                    hash.Add(values[i]);
+                return;
+            default:
+                for (int i = 0; i < array.Length; i++)
+                    HashUniformValue(ref hash, array.GetValue(i));
+                return;
+        }
     }
 
     #endregion

@@ -543,6 +543,11 @@ namespace XREngine.Scene
             bool useUnjittered = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
             XRCamera? leftCamera = RuntimeEngine.Rendering.State.RenderingCamera;
             program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)(leftCamera?.DepthMode ?? XRCamera.EDepthMode.Normal));
+            program.Uniform(EEngineUniform.ClipSpaceYDirection.ToStringFast(), (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
+            program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
+            program.Uniform(
+                EEngineUniform.FramebufferTextureYDirection.ToStringFast(),
+                (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.Current.CurrentRenderBackend));
 
             SetForwardLightingCameraUniforms(
                 program,
@@ -823,6 +828,7 @@ namespace XREngine.Scene
                     0.0f));
                 program.Uniform("ShadowBiasParams", firstDirLight.ShadowBiasParameters);
                 program.Uniform("ShadowBiasProjectionParams", firstDirLight.GetPrimaryShadowBiasProjectionParameters());
+                program.Uniform("ShadowDepthMode", 0);
                 program.Uniform("ShadowMapEncoding", (int)firstShadowFormat.Encoding);
                 program.Uniform("ShadowMomentParams0", new Vector4(
                     firstDirLight.ShadowMomentMinVariance,
@@ -837,8 +843,6 @@ namespace XREngine.Scene
 
                 if (firstDirLight.CastsShadows)
                 {
-                    bool firstMomentSingleMap = firstShadowFormat.Encoding != EShadowMapEncoding.Depth;
-
                     // 2D shadow map (non-cascaded / fallback path).
                     forwardShadowTex = FindShadowMapTexture(firstDirLight);
 
@@ -849,7 +853,6 @@ namespace XREngine.Scene
                     // all directional shadows (including the volumetric fog scatter pass).
                     var cameraComponent = currentPipeline?.RenderState.WindowViewport?.CameraComponent;
                     useCascadedDirectionalShadows =
-                        !firstMomentSingleMap &&
                         cameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded &&
                         firstDirLight.EnableCascadedShadows &&
                         (firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding || firstDirLight.CascadedShadowMapTexture is not null) &&
@@ -950,7 +953,6 @@ namespace XREngine.Scene
                 {
                     DirectionalLightComponent dirLight = DynamicDirectionalLights[i];
                     ShadowMapFormatSelection dirShadowFormat = dirLight.ResolveShadowMapFormat(preferredStorageFormat: null);
-                    bool perLightMomentSingleMap = dirShadowFormat.Encoding != EShadowMapEncoding.Depth;
                     bool perLightUseAtlas = dirLight.UsesDirectionalShadowAtlasForCurrentEncoding;
                     useDirectionalShadowAtlas |= perLightUseAtlas;
                     _directionalShadowBiasProjectionParams[i] = dirLight.GetPrimaryShadowBiasProjectionParameters();
@@ -971,7 +973,6 @@ namespace XREngine.Scene
                         if (!perLightUseAtlas)
                             perLightShadowTex = FindShadowMapTexture(dirLight);
                         perLightUseCascades =
-                            !perLightMomentSingleMap &&
                             directionalShadowCameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded &&
                             dirLight.EnableCascadedShadows &&
                             (perLightUseAtlas || dirLight.CascadedShadowMapTexture is not null) &&

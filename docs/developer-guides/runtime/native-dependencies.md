@@ -215,6 +215,14 @@ from NVIDIA, then copy the production x64 runtime files into
 - `nvngx_dlss.dll`
 - any accompanying `*.license.txt` files
 
+For NVIDIA DLSS frame generation experiments, the same folder must also contain
+the production DLSS-G runtime files from the official SDK, for example:
+
+- `sl.dlss_g.dll`
+- `nvngx_dlssg.dll`
+- Reflex/low-latency runtime DLLs included with the SDK, such as
+  `NvLowLatencyVk.dll` when required by that SDK version
+
 Rebuild the editor/app afterward so the build copies those files next to the
 executable. Use NVIDIA-provided SDK packages rather than third-party DLL
 download sites, and do not commit proprietary NVIDIA binaries. See the README
@@ -222,7 +230,10 @@ files under `ThirdParty/NVIDIA/` for folder-specific expectations.
 
 When these runtime DLLs are missing, the ImGui settings inspector shows a red
 `!` beside DLSS settings. Hover it for the exact reason those settings currently
-have no effect.
+have no effect. If DLSS upscale or frame generation is explicitly requested at
+runtime and the Vulkan/Streamline path cannot run, the default render pipeline
+logs a render error and stops instead of silently falling back to a standard
+blit.
 
 ### OVRLipSync
 

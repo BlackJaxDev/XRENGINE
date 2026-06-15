@@ -5,6 +5,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Resources;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
@@ -124,6 +125,7 @@ namespace XREngine.Rendering.Vulkan
 
         private int currentFrame = 0;
         private ulong _vkDebugFrameCounter = 0;
+        internal ulong VulkanFrameCounter => _vkDebugFrameCounter;
         private long _swapchainRecreateRequestedAt;
         private long _swapchainResizeLastChangedAt;
         private uint _pendingSurfaceWidth;
@@ -131,6 +133,20 @@ namespace XREngine.Rendering.Vulkan
         private long _lastFrameCompletedTimestamp;
         private int _consecutiveNotReadyCount;
         private const int MaxConsecutiveNotReadyBeforeRecreate = 3;
+
+        private void MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker marker)
+        {
+            if (!_streamlineFrameGenerationSwapchainActive)
+                return;
+
+            uint frameIndex = unchecked((uint)Math.Min(uint.MaxValue, _vkDebugFrameCounter));
+            if (NvidiaDlssManager.Native.TryMarkFrameGenerationPclMarker(this, marker, frameIndex, out string failureReason))
+                return;
+
+            string message = $"NVIDIA DLSS frame generation failed to set Streamline PCL marker {marker}: {failureReason}";
+            Debug.RenderingError(message);
+            throw new InvalidOperationException(message);
+        }
 
         private void DrainSkippedResizeFrameOps(string reason)
         {
@@ -393,20 +409,39 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
+            bool frameGenerationRequested = NvidiaDlssManager.IsFrameGenerationRequested;
+            if (_streamlineFrameGenerationSwapchainActive != frameGenerationRequested)
+            {
+                RecreateSwapchainImmediately(
+                    frameGenerationRequested
+                        ? "NVIDIA DLSS frame generation enabled; recreating swapchain through Streamline"
+                        : "NVIDIA DLSS frame generation disabled; recreating swapchain without Streamline");
+                return;
+            }
+
             // 1. Wait for the previous submission associated with this in-flight slot.
             long stageStartTimestamp = Stopwatch.GetTimestamp();
-            ulong slotWaitValue = _frameSlotTimelineValues![currentFrame];
-            WaitForTimelineValue(_graphicsTimelineSemaphore, slotWaitValue);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.WaitFrameSlot"))
+            {
+                ulong slotWaitValue = _frameSlotTimelineValues![currentFrame];
+                WaitForTimelineValue(_graphicsTimelineSemaphore, slotWaitValue);
+            }
             waitFenceTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
-            SampleFrameTimingQueries(currentFrame);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.SampleTimingQueries"))
+            {
+                SampleFrameTimingQueries(currentFrame);
+            }
 
             // Now that the GPU has finished all work for this frame slot, destroy
             // resources that were retired during its previous recording.
-            DrainRetiredDescriptorPools();
-            DrainRetiredPipelines();
-            DrainRetiredBuffers();
-            DrainRetiredFramebuffers();
-            DrainRetiredImages();
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DrainRetiredResources"))
+            {
+                DrainRetiredDescriptorPools();
+                DrainRetiredPipelines();
+                DrainRetiredBuffers();
+                DrainRetiredFramebuffers();
+                DrainRetiredImages();
+            }
 
             // Helpful when tracking down DPI / resize issues.
             Debug.VulkanEvery(
@@ -423,7 +458,23 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex = 0;
             stageStartTimestamp = Stopwatch.GetTimestamp();
             Semaphore acquireSemaphore = acquireBridgeSemaphores![currentFrame];
-            var result = khrSwapChain!.AcquireNextImage(device, swapChain, ulong.MaxValue, acquireSemaphore, default, ref imageIndex);
+            Result result;
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.AcquireNextImage"))
+            {
+                if (_streamlineFrameGenerationSwapchainActive)
+                {
+                    if (!NvidiaDlssManager.Native.TryAcquireProxyNextImage(this, swapChain, ulong.MaxValue, acquireSemaphore, default, ref imageIndex, out result, out string failureReason))
+                    {
+                        string message = $"NVIDIA DLSS frame generation failed to acquire the swapchain image through Streamline: {failureReason}";
+                        Debug.RenderingError(message);
+                        throw new InvalidOperationException(message);
+                    }
+                }
+                else
+                {
+                    result = khrSwapChain!.AcquireNextImage(device, swapChain, ulong.MaxValue, acquireSemaphore, default, ref imageIndex);
+                }
+            }
             acquireImageTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
             Debug.VulkanEvery(
@@ -519,7 +570,11 @@ namespace XREngine.Rendering.Vulkan
                 PSignalSemaphores = acquireSignalSemaphores,
             };
 
-            Result bridgeResult = SubmitToQueueTracked(graphicsQueue, ref acquireBridgeSubmit, default);
+            Result bridgeResult;
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.AcquireBridgeSubmit"))
+            {
+                bridgeResult = SubmitToQueueTracked(graphicsQueue, ref acquireBridgeSubmit, default);
+            }
             if (bridgeResult != Result.Success)
             {
                 if (bridgeResult == Result.ErrorDeviceLost)
@@ -528,23 +583,31 @@ namespace XREngine.Rendering.Vulkan
                 throw new Exception($"Failed to bridge swapchain acquire semaphore to timeline ({bridgeResult}).");
             }
 
-            if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
-                WaitForTimelineValue(_graphicsTimelineSemaphore, _swapchainImageTimelineValues[imageIndex]);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.WaitSwapchainImage"))
+            {
+                if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
+                    WaitForTimelineValue(_graphicsTimelineSemaphore, _swapchainImageTimelineValues[imageIndex]);
+            }
 
             // 4. Reset per-frame dynamic uniform ring buffer for this image.
-            ResetDynamicUniformRingBuffer(imageIndex);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.ResetDynamicUniformRing"))
+            {
+                ResetDynamicUniformRingBuffer(imageIndex);
+            }
 
             // 5. Record the command buffer
             // Note: This currently records a default pass (Clear + ImGui). 
             // Full integration with the engine's render queue happens via frame operations enqueued during the frame.
             stageStartTimestamp = Stopwatch.GetTimestamp();
-            try
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordCommandBuffer"))
             {
-                EnsureCommandBufferRecorded(imageIndex);
-            }
-            catch (Exception recordEx)
-            {
-                recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+                try
+                {
+                    EnsureCommandBufferRecorded(imageIndex);
+                }
+                catch (Exception recordEx)
+                {
+                    recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
                 // Recording failed (e.g. OOM during resource allocation). The acquire bridge
                 // already consumed the binary semaphore and advanced the timeline, but we have
@@ -552,16 +615,17 @@ namespace XREngine.Rendering.Vulkan
                 // uses the other in-flight slot, and schedule a swapchain recreate which calls
                 // DeviceWaitIdle + destroys/recreates all swapchain objects — this returns the
                 // acquired image to the presentation engine and resets semaphore state.
-                currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+                    currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
-                Debug.VulkanWarningEvery(
-                    $"Vulkan.Frame.{GetHashCode()}.RecordFailed",
-                    TimeSpan.FromSeconds(1),
-                    "[Vulkan] Command buffer recording failed. Scheduling swapchain recreate to recover. {0}",
-                    recordEx.Message);
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Frame.{GetHashCode()}.RecordFailed",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Command buffer recording failed. Scheduling swapchain recreate to recover. {0}",
+                        recordEx.Message);
 
-                RecreateSwapchainImmediately("Command buffer recording failed — recovering timeline/present state");
-                throw; // Re-throw so XRWindow's circuit breaker can track failure count
+                    RecreateSwapchainImmediately("Command buffer recording failed — recovering timeline/present state");
+                    throw; // Re-throw so XRWindow's circuit breaker can track failure count
+                }
             }
             recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
@@ -609,9 +673,14 @@ namespace XREngine.Rendering.Vulkan
 
             stageStartTimestamp = Stopwatch.GetTimestamp();
             Result submitResult;
-            lock (_oneTimeSubmitLock)
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.Submit"))
             {
-                submitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, default);
+                MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.RenderSubmitStart);
+                lock (_oneTimeSubmitLock)
+                {
+                    submitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, default);
+                }
+                MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.RenderSubmitEnd);
             }
 
             if (submitResult != Result.Success)
@@ -630,7 +699,10 @@ namespace XREngine.Rendering.Vulkan
 
             // Trim idle staging buffers so the pool does not grow unbounded.
             stageStartTimestamp = Stopwatch.GetTimestamp();
-            _stagingManager.Trim(this);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.TrimStaging"))
+            {
+                _stagingManager.Trim(this);
+            }
             trimStagingTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
             Debug.VulkanEvery(
@@ -653,8 +725,27 @@ namespace XREngine.Rendering.Vulkan
             };
 
             stageStartTimestamp = Stopwatch.GetTimestamp();
-            lock (_oneTimeSubmitLock)
-                result = khrSwapChain.QueuePresent(presentQueue, ref presentInfo);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.QueuePresent"))
+            {
+                MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.PresentStart);
+                lock (_oneTimeSubmitLock)
+                {
+                    if (_streamlineFrameGenerationSwapchainActive)
+                    {
+                        if (!NvidiaDlssManager.Native.TryQueueProxyPresent(this, presentQueue, ref presentInfo, out result, out string failureReason))
+                        {
+                            string message = $"NVIDIA DLSS frame generation failed to present through Streamline: {failureReason}";
+                            Debug.RenderingError(message);
+                            throw new InvalidOperationException(message);
+                        }
+                    }
+                    else
+                    {
+                        result = khrSwapChain!.QueuePresent(presentQueue, ref presentInfo);
+                    }
+                }
+                MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.PresentEnd);
+            }
             presentQueueTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
             _lastPresentedImageIndex = imageIndex;
 

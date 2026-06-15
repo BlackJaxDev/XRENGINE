@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -140,6 +141,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             string colorResource = MakeFboColorResource(frameBufferName);
             string depthResource = MakeFboDepthResource(frameBufferName);
+            XRFrameBuffer? frameBuffer = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.GetFBO<XRFrameBuffer>(frameBufferName);
 
             foreach (RenderPassMetadata pass in GetTopologicalPassOrder(metadata))
             {
@@ -151,7 +153,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
                     if (clearColor &&
                         usage.ResourceType == ERenderPassResourceType.ColorAttachment &&
-                        string.Equals(usage.ResourceName, colorResource, StringComparison.OrdinalIgnoreCase))
+                        (string.Equals(usage.ResourceName, colorResource, StringComparison.OrdinalIgnoreCase) ||
+                         MatchesFrameBufferAttachmentResource(frameBuffer, usage.ResourceName, colorAttachment: true)))
                     {
                         return pass.PassIndex;
                     }
@@ -159,7 +162,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                     if ((clearDepth || clearStencil) &&
                         (usage.ResourceType == ERenderPassResourceType.DepthAttachment ||
                          usage.ResourceType == ERenderPassResourceType.StencilAttachment) &&
-                        string.Equals(usage.ResourceName, depthResource, StringComparison.OrdinalIgnoreCase))
+                        (string.Equals(usage.ResourceName, depthResource, StringComparison.OrdinalIgnoreCase) ||
+                         MatchesFrameBufferAttachmentResource(frameBuffer, usage.ResourceName, colorAttachment: false)))
                     {
                         return pass.PassIndex;
                     }
@@ -167,6 +171,35 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             return int.MinValue;
+        }
+
+        private static bool MatchesFrameBufferAttachmentResource(
+            XRFrameBuffer? frameBuffer,
+            string resourceName,
+            bool colorAttachment)
+        {
+            if (frameBuffer?.Targets is not { Length: > 0 } targets ||
+                string.IsNullOrWhiteSpace(resourceName))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < targets.Length; i++)
+            {
+                var (target, attachment, _, _) = targets[i];
+                if (target is not XRTexture texture || string.IsNullOrWhiteSpace(texture.Name))
+                    continue;
+
+                bool isColorAttachment = attachment >= EFrameBufferAttachment.ColorAttachment0 &&
+                    attachment <= EFrameBufferAttachment.ColorAttachment31;
+                if (colorAttachment != isColorAttachment)
+                    continue;
+
+                if (string.Equals(resourceName, MakeTextureResource(texture.Name), StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
         }
 
         private static IReadOnlyList<RenderPassMetadata> GetTopologicalPassOrder(IReadOnlyCollection<RenderPassMetadata> metadata)

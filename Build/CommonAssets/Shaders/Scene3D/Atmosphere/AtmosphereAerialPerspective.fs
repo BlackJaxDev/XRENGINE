@@ -32,7 +32,7 @@ float AtmosphereDepthToClipZ(float depth)
 
 vec3 WorldPosFromDepthRaw(float rawDepth, vec2 uv)
 {
-  vec4 clipSpacePosition = vec4(uv * 2.0f - 1.0f, AtmosphereDepthToClipZ(rawDepth), 1.0f);
+  vec4 clipSpacePosition = vec4(XRENGINE_FramebufferTextureUVToClipXY(uv), AtmosphereDepthToClipZ(rawDepth), 1.0f);
   vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
   float safeW = max(abs(viewSpacePosition.w), 1e-5f);
   viewSpacePosition /= safeW * sign(viewSpacePosition.w == 0.0f ? 1.0f : viewSpacePosition.w);

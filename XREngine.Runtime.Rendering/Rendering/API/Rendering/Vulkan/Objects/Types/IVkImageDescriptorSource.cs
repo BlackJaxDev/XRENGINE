@@ -6,6 +6,7 @@ public unsafe partial class VulkanRenderer
     internal interface IVkImageDescriptorSource
     {
         Image DescriptorImage { get; }
+        DeviceMemory DescriptorMemory { get; }
         ImageView DescriptorView { get; }
         ImageViewType DescriptorViewType { get; }
         Sampler DescriptorSampler { get; }

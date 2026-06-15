@@ -4,6 +4,7 @@ using Shouldly;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
 
@@ -181,6 +182,59 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         allocator.TryGetPhysicalGroupForResource("DepthView", out VulkanPhysicalImageGroup? viewGroup).ShouldBeTrue();
         viewGroup.ShouldBeSameAs(group);
+    }
+
+    [Test]
+    public void VulkanBarrierPlanner_PhysicalTrackingWinsOverLogicalViewSyncEdges()
+    {
+        RenderResourceRegistry registry = new();
+        registry.RegisterTextureDescriptor(new TextureResourceDescriptor(
+            "DepthStencil",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(128u, 64u),
+            FormatLabel: ESizedInternalFormat.Depth24Stencil8.ToString(),
+            Usage: RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.DepthStencilAttachment,
+            SizedInternalFormat: ESizedInternalFormat.Depth24Stencil8));
+
+        registry.RegisterTextureDescriptor(new TextureResourceDescriptor(
+            "DepthView",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(128u, 64u),
+            FormatLabel: ESizedInternalFormat.Depth24Stencil8.ToString(),
+            Kind: RenderPipelineResourceKind.TextureView,
+            Usage: RenderPipelineResourceUsage.SampledTexture,
+            SizedInternalFormat: ESizedInternalFormat.Depth24Stencil8,
+            SourceTextureName: "DepthStencil",
+            DepthStencilAspect: EDepthStencilFmt.Depth));
+
+        registry.RegisterFrameBufferDescriptor(new FrameBufferResourceDescriptor(
+            "PostProcessOutputFBO",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(128u, 64u),
+            [new FrameBufferAttachmentDescriptor("DepthStencil", EFrameBufferAttachment.DepthStencilAttachment, 0, -1)]));
+
+        VulkanResourcePlanner resourcePlanner = new();
+        resourcePlanner.Sync(registry);
+
+        VulkanResourceAllocator allocator = new();
+        allocator.UpdatePlan(resourcePlanner.CurrentPlan);
+        allocator.RebuildPhysicalPlan(null!, null, resourcePlanner);
+
+        RenderPassMetadataCollection metadata = new();
+        metadata.ForPass(100, "PostProcess", ERenderGraphPassStage.Graphics)
+            .SampleTexture("tex::DepthView")
+            .UseDepthAttachment("fbo::PostProcessOutputFBO::depth", ERenderGraphAccess.Read);
+        metadata.ForPass(101, "Tsr", ERenderGraphPassStage.Graphics)
+            .SampleTexture("tex::DepthView");
+
+        VulkanBarrierPlanner barrierPlanner = new();
+        barrierPlanner.Rebuild(metadata.Build(), resourcePlanner, allocator);
+
+        barrierPlanner.ImageBarriers.ShouldContain(static barrier =>
+            barrier.PassIndex == 101 &&
+            barrier.ResourceName.Equals("DepthStencil", StringComparison.OrdinalIgnoreCase) &&
+            barrier.Previous.Layout == ImageLayout.DepthStencilAttachmentOptimal &&
+            barrier.Next.Layout == ImageLayout.DepthStencilReadOnlyOptimal);
     }
 
     [Test]

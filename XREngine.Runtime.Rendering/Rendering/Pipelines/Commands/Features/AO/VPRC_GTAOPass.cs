@@ -198,6 +198,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             RenderingParameters renderParams = new()
             {
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
                 DepthTest =
                 {
                     Enabled = ERenderParamUsage.Unchanged,

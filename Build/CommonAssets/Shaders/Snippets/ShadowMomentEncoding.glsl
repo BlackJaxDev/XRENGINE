@@ -16,6 +16,7 @@ uniform float ShadowMomentLightBleedReduction = 0.2;
 uniform float ShadowMomentPositiveExponent = 5.0;
 uniform float ShadowMomentNegativeExponent = 5.0;
 uniform float ShadowMomentMipBias = 0.0;
+uniform int ShadowDepthSourceMode = 0; // 0 = perspective camera depth, 1 = projected depth already normalized.
 #endif
 
 #ifndef XRENGINE_CAMERA_DEPTH_RANGE_UNIFORMS
@@ -106,7 +107,9 @@ void XRENGINE_WriteShadowCasterDepth(out vec4 outputDepth, float projectedDepth)
         return;
     }
 
-    float normalizedDepth = XRENGINE_LinearizeShadowDepth01(projectedDepth, CameraNearZ, CameraFarZ);
+    float normalizedDepth = ShadowDepthSourceMode == 1
+        ? clamp(projectedDepth, 0.0, 1.0)
+        : XRENGINE_LinearizeShadowDepth01(projectedDepth, CameraNearZ, CameraFarZ);
     outputDepth = XRENGINE_EncodeShadowMoments(
         ShadowMapEncoding,
         normalizedDepth,

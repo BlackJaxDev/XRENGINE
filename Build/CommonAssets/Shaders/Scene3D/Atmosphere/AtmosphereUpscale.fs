@@ -31,7 +31,7 @@ float AtmosphereDepthToClipZ(float depth)
 
 float LinearEyeDistance(float rawDepth, vec2 uv)
 {
-  vec4 clip = vec4(uv * 2.0f - 1.0f, AtmosphereDepthToClipZ(rawDepth), 1.0f);
+  vec4 clip = vec4(XRENGINE_FramebufferTextureUVToClipXY(uv), AtmosphereDepthToClipZ(rawDepth), 1.0f);
   vec4 view = InverseProjMatrix * clip;
   float w = max(abs(view.w), 1e-5f);
   return abs(view.z / w);

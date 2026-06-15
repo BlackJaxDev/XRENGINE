@@ -404,12 +404,20 @@ float GetShadowBias(in float NoL)
 	return GetShadowBiasRange(NoL, ShadowBiasMin, ShadowBiasMax);
 }
 
-float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDirWS, in float receiverOffset, in float compareBias, in float viewDepth)
+float GetDeferredContactShadowCompareBias()
+{
+	// Contact shadows compare camera-space depths, so keep the tolerance in world
+	// units instead of inheriting cascade/shadow-map texel bias.
+	return max(ContactShadowDistance * 0.001f, 0.0001f);
+}
+
+float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDirWS, in float viewDepth)
 {
 	int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
 		ContactShadowSamples,
 		viewDepth,
 		ContactShadowDistance);
+	float contactCompareBias = GetDeferredContactShadowCompareBias();
 #ifdef XRENGINE_MSAA_DEFERRED
 	return XRENGINE_SampleContactShadowScreenSpace(
 		DepthView,
@@ -423,8 +431,8 @@ float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDir
 		fragPosWS,
 		N,
 		lightDirWS,
-		receiverOffset,
-		compareBias,
+		0.0f,
+		contactCompareBias,
 		ContactShadowDistance,
 		contactSampleCount,
 		ContactShadowThickness,
@@ -445,8 +453,8 @@ float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDir
 		fragPosWS,
 		N,
 		lightDirWS,
-		receiverOffset,
-		compareBias,
+		0.0f,
+		contactCompareBias,
 		ContactShadowDistance,
 		contactSampleCount,
 		ContactShadowThickness,
@@ -509,7 +517,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewD
 			ShadowBiasProjectionParams.x,
 			max(ShadowBiasParams.y, 0.0f));
 		float contact = EnableContactShadows
-			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), receiverOffset, bias, viewDepth)
+			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), viewDepth)
 			: 1.0f;
 
 		if (DirectionalShadowAtlasEnabled)
@@ -526,6 +534,24 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewD
 					ShadowFilterRadius,
 					ShadowBiasProjectionParams.x,
 					max(ShadowBiasParams.y, 0.0f));
+				if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
+				{
+					vec2 atlasUv = XRENGINE_ShadowAtlasUvFromLocal(fragCoord.xy, atlasUvScaleBias);
+					float atlasMomentReceiverDepth = clamp(fragCoord.z - min(atlasBias, 0.01f), 0.0f, 1.0f);
+					return XRENGINE_SampleShadowMoment2DArray(
+						DirectionalShadowAtlas,
+						atlasUv,
+						float(atlasI0.y),
+						atlasMomentReceiverDepth,
+						ShadowMapEncoding,
+						ShadowMomentParams0.x,
+						ShadowMomentParams0.y,
+						ShadowMomentParams0.z,
+						ShadowMomentParams0.w,
+						0.0f,
+						false) * contact;
+				}
+
 				return SampleDirectionalAtlasPage(
 					atlasI0.y,
 					fragCoord,
@@ -665,7 +691,7 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 			constantBias,
 			LightData.CascadeBiasMax[cascadeIndex]);
 		float contact = EnableContactShadows
-			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), receiverOffset, bias, viewDepth)
+			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), viewDepth)
 			: 1.0f;
 
 		bool useMomentMipmaps = ShadowMomentFilterParams.z != 0.0f;

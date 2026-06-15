@@ -157,16 +157,23 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             var builder = context.GetOrCreateSyntheticPass($"RenderMotionVectors_{targetName}", ERenderGraphPassStage.Graphics);
+            string colorResource = string.Equals(targetName, DefaultRenderPipeline.VelocityFBOName, StringComparison.Ordinal)
+                ? MakeTextureResource(DefaultRenderPipeline.VelocityTextureName)
+                : MakeFboColorResource(targetName);
+            string depthResource = string.Equals(targetName, DefaultRenderPipeline.VelocityFBOName, StringComparison.Ordinal)
+                ? MakeTextureResource(DefaultRenderPipeline.DepthStencilTextureName)
+                : MakeFboDepthResource(targetName);
+
             builder
                 .UseEngineDescriptors()
                 .UseMaterialDescriptors()
                 .UseColorAttachment(
-                    MakeFboColorResource(targetName),
+                    colorResource,
                     context.CurrentRenderTarget!.ColorAccess,
                     context.CurrentRenderTarget.ConsumeColorLoadOp(),
                     context.CurrentRenderTarget.GetColorStoreOp())
                 .UseDepthAttachment(
-                    MakeFboDepthResource(targetName),
+                    depthResource,
                     ERenderGraphAccess.Read,
                     context.CurrentRenderTarget.ConsumeDepthLoadOp(),
                     context.CurrentRenderTarget.GetDepthStoreOp());

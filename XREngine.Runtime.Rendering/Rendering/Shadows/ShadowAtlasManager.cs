@@ -1959,11 +1959,7 @@ public sealed class ShadowAtlasManager
         int gutter = Math.Min(CalculateGutterTexels(request), Math.Max(0, (size - 1) / 2));
         BoundingRectangle pixelRect = new(x, y, size, size);
         BoundingRectangle innerRect = new(x + gutter, y + gutter, size - (gutter * 2), size - (gutter * 2));
-        Vector4 uv = new(
-            innerRect.Width / (float)_settings.PageSize,
-            innerRect.Height / (float)_settings.PageSize,
-            innerRect.X / (float)_settings.PageSize,
-            innerRect.Y / (float)_settings.PageSize);
+        Vector4 uv = CreateAtlasUvScaleBias(innerRect);
         int lod = CalculateLodLevel(resolution, _settings.PageSize);
         int atlasId = GetAtlasId(atlasKind, request.Encoding);
         ulong lastRendered = 0u;
@@ -2030,6 +2026,21 @@ public sealed class ShadowAtlasManager
             SkipReason: skipReason);
     }
 
+    private Vector4 CreateAtlasUvScaleBias(BoundingRectangle innerRect)
+    {
+        float invPageSize = 1.0f / _settings.PageSize;
+        Vector4 uv = new(
+            innerRect.Width / (float)_settings.PageSize,
+            innerRect.Height / (float)_settings.PageSize,
+            innerRect.X / (float)_settings.PageSize,
+            innerRect.Y / (float)_settings.PageSize);
+
+        if (RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.Current.CurrentRenderBackend) == ERenderClipSpaceYDirection.YDown)
+            uv.W = 1.0f - ((innerRect.Y + innerRect.Height) * invPageSize);
+
+        return uv;
+    }
+
     private static bool IsSameRegion(in ShadowAtlasAllocation prior, int x, int y, uint resolution)
         => prior.PixelRect.X == x &&
            prior.PixelRect.Y == y &&
@@ -2062,6 +2073,12 @@ public sealed class ShadowAtlasManager
     {
         if (allocation.LastRenderedFrame == 0u)
             return true;
+
+        if (allocation.LastRenderedFrame == _frameId &&
+            allocation.ContentVersion == request.ContentHash)
+        {
+            return false;
+        }
 
         if (!request.CanReusePreviousFrame)
             return true;

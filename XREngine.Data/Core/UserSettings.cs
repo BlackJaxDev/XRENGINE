@@ -223,6 +223,8 @@ namespace XREngine
         private OverrideableSetting<bool> _tickGroupedItemsInParallelOverride = new();
         private OverrideableSetting<bool> _enableNvidiaDlssOverride = new();
         private OverrideableSetting<EDlssQualityMode> _dlssQualityOverride = new();
+        private OverrideableSetting<bool> _enableNvidiaDlssFrameGenerationOverride = new();
+        private OverrideableSetting<ENvidiaDlssFrameGenerationMode> _nvidiaDlssFrameGenerationModeOverride = new();
         private OverrideableSetting<bool> _enableIntelXessOverride = new();
         private OverrideableSetting<EXessQualityMode> _xessQualityOverride = new();
 
@@ -446,6 +448,30 @@ namespace XREngine
         {
             get => _dlssQualityOverride;
             set => SetField(ref _dlssQualityOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for NVIDIA DLSS frame generation.
+        /// Takes precedence over project and engine defaults when HasOverride is true.
+        /// </summary>
+        [Category("Quality Overrides")]
+        [Description("User override for NVIDIA DLSS frame generation.")]
+        public OverrideableSetting<bool> EnableNvidiaDlssFrameGenerationOverride
+        {
+            get => _enableNvidiaDlssFrameGenerationOverride;
+            set => SetField(ref _enableNvidiaDlssFrameGenerationOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for NVIDIA DLSS frame generation mode.
+        /// Takes precedence over project and engine defaults when HasOverride is true.
+        /// </summary>
+        [Category("Quality Overrides")]
+        [Description("User override for NVIDIA DLSS frame generation mode.")]
+        public OverrideableSetting<ENvidiaDlssFrameGenerationMode> NvidiaDlssFrameGenerationModeOverride
+        {
+            get => _nvidiaDlssFrameGenerationModeOverride;
+            set => SetField(ref _nvidiaDlssFrameGenerationModeOverride, value ?? new());
         }
 
         /// <summary>

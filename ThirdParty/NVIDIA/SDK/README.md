@@ -21,11 +21,23 @@ Expected files for DLSS through Streamline (may vary by SDK/version):
 - `sl.dlss.dll`
 - `nvngx_dlss.dll`
 
+Expected files for DLSS frame generation experiments (may vary by SDK/version):
+- `sl.dlss_g.dll`
+- `nvngx_dlssg.dll`
+- Reflex/low-latency runtime DLLs included with the SDK, such as
+  `NvLowLatencyVk.dll` when required by that SDK version
+
 Other NVIDIA SDK files this folder may contain:
 - `nvngx_*.dll` (NGX/DLSS)
 - `NvLowLatencyVk.dll` (Reflex)
 - `sl.*.dll` (Streamline)
 - Any `*.license.txt` files that ship with the SDK
+
+Runtime policy: when the engine explicitly requests NVIDIA DLSS upscale or
+frame generation and the Vulkan/Streamline path cannot run, the renderer logs a
+hard error instead of silently falling back to a normal blit. The DLLs in this
+folder are necessary but not sufficient for DLSS-G until the renderer also wires
+Streamline/Reflex present interception.
 
 Use NVIDIA-provided SDK packages, not third-party DLL download sites. Do not
 commit these SDK files to git.

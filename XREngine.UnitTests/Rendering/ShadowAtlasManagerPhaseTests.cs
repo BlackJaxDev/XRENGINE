@@ -86,7 +86,7 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
-    public void DirectionalAtlas_IsDepthOnlyForCurrentEncoding()
+    public void DirectionalAtlas_AcceptsAllResolvedDirectionalEncodings()
     {
         bool previousUseDirectionalShadowAtlas = RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas;
         RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas = true;
@@ -98,13 +98,13 @@ public sealed class ShadowAtlasManagerPhaseTests
             light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeTrue();
 
             light.ShadowMapEncoding = EShadowMapEncoding.Variance2;
-            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeTrue();
 
             light.ShadowMapEncoding = EShadowMapEncoding.ExponentialVariance2;
-            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeTrue();
 
             light.ShadowMapEncoding = EShadowMapEncoding.ExponentialVariance4;
-            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeTrue();
         }
         finally
         {
@@ -228,6 +228,38 @@ public sealed class ShadowAtlasManagerPhaseTests
         group.Members[2].PixelRect.Y.ShouldBe(2048);
         group.Members[3].PixelRect.X.ShouldBe(2048);
         group.Members[3].PixelRect.Y.ShouldBe(2048);
+    }
+
+    [Test]
+    public void SolveAllocations_PublishesBackendAwareDirectionalAtlasUvBias()
+    {
+        ERenderClipSpaceYDirection previousClipY = RuntimeEngine.Rendering.Settings.ClipSpaceYDirection;
+        IRuntimeRenderingHostServices previousHost = RuntimeRenderingHostServices.Current;
+        try
+        {
+            RuntimeEngine.Rendering.Settings.ClipSpaceYDirection = ERenderClipSpaceYDirection.YUp;
+
+            ShadowAtlasAllocation glAllocation = AllocateSingleDirectionalCascade(RuntimeGraphicsApiKind.OpenGL);
+            ShadowAtlasAllocation vkAllocation = AllocateSingleDirectionalCascade(RuntimeGraphicsApiKind.Vulkan);
+
+            glAllocation.InnerPixelRect.ShouldBe(vkAllocation.InnerPixelRect);
+            glAllocation.UvScaleBias.X.ShouldBe(vkAllocation.UvScaleBias.X, 0.000001f);
+            glAllocation.UvScaleBias.Y.ShouldBe(vkAllocation.UvScaleBias.Y, 0.000001f);
+            glAllocation.UvScaleBias.Z.ShouldBe(vkAllocation.UvScaleBias.Z, 0.000001f);
+
+            float invPageSize = 1.0f / 1024.0f;
+            float expectedGlBiasY = glAllocation.InnerPixelRect.Y * invPageSize;
+            float expectedVkBiasY = 1.0f - ((vkAllocation.InnerPixelRect.Y + vkAllocation.InnerPixelRect.Height) * invPageSize);
+
+            glAllocation.UvScaleBias.W.ShouldBe(expectedGlBiasY, 0.000001f);
+            vkAllocation.UvScaleBias.W.ShouldBe(expectedVkBiasY, 0.000001f);
+            vkAllocation.UvScaleBias.W.ShouldNotBe(glAllocation.UvScaleBias.W);
+        }
+        finally
+        {
+            RuntimeEngine.Rendering.Settings.ClipSpaceYDirection = previousClipY;
+            RuntimeRenderingHostServices.Current = previousHost;
+        }
     }
 
     [Test]
@@ -950,6 +982,31 @@ public sealed class ShadowAtlasManagerPhaseTests
     private static DirectionalLightComponent CreateDirectionalLight(uint resolution)
         => CreateActiveLight<DirectionalLightComponent>(resolution);
 
+    private ShadowAtlasAllocation AllocateSingleDirectionalCascade(RuntimeGraphicsApiKind backend)
+    {
+        RuntimeRenderingHostServices.Current = ShadowAtlasTestRenderingHostServices.Create(
+            _previousRenderingHostServices,
+            new ShadowAtlasTestRenderPipeline(),
+            backend);
+
+        ShadowAtlasManager manager = CreateManager(pageSize: 1024u, maxPages: 1);
+        DirectionalLightComponent light = CreateDirectionalLight(1024u);
+        ShadowMapRequest request = CreateRequest(
+            light,
+            EShadowProjectionType.DirectionalCascade,
+            0,
+            desiredResolution: 512u,
+            minimumResolution: 128u,
+            priority: 10000.0f,
+            contentHash: 1u);
+
+        ShadowAtlasFrameData frameData = RunSolvedFrame(manager, (ulong)backend + 1UL, request);
+        frameData.TryGetAllocation(request.Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
+        allocation.AtlasKind.ShouldBe(EShadowAtlasKind.Directional);
+        allocation.IsResident.ShouldBeTrue();
+        return allocation;
+    }
+
     private static T CreateActiveLight<T>(uint resolution) where T : LightComponent
     {
         SceneNode node = new(typeof(T).Name);
@@ -973,15 +1030,18 @@ public sealed class ShadowAtlasManagerPhaseTests
     {
         public IRuntimeRenderingHostServices Inner { get; set; } = null!;
         public IRuntimeRenderPipelineHost DefaultPipeline { get; set; } = null!;
+        public RuntimeGraphicsApiKind? RenderBackendOverride { get; set; }
 
         public static IRuntimeRenderingHostServices Create(
             IRuntimeRenderingHostServices inner,
-            IRuntimeRenderPipelineHost defaultPipeline)
+            IRuntimeRenderPipelineHost defaultPipeline,
+            RuntimeGraphicsApiKind? renderBackendOverride = null)
         {
             IRuntimeRenderingHostServices proxy = Create<IRuntimeRenderingHostServices, ShadowAtlasTestRenderingHostServices>();
             ShadowAtlasTestRenderingHostServices state = (ShadowAtlasTestRenderingHostServices)(object)proxy;
             state.Inner = inner;
             state.DefaultPipeline = defaultPipeline;
+            state.RenderBackendOverride = renderBackendOverride;
             return proxy;
         }
 
@@ -992,6 +1052,12 @@ public sealed class ShadowAtlasManagerPhaseTests
 
             if (targetMethod.Name == nameof(IRuntimeRenderingHostServices.CreateDefaultRenderPipeline))
                 return DefaultPipeline;
+
+            if (targetMethod.Name == $"get_{nameof(IRuntimeRenderingHostServices.CurrentRenderBackend)}" &&
+                RenderBackendOverride is RuntimeGraphicsApiKind renderBackendOverride)
+            {
+                return renderBackendOverride;
+            }
 
             return targetMethod.Invoke(Inner, args);
         }

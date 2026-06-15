@@ -50,7 +50,7 @@ bool IsValidUV(vec2 uv)
 
 vec3 WorldPosFromDepthRaw(float rawDepth, vec2 uv)
 {
-    vec4 clipSpacePosition = vec4(uv * 2.0f - 1.0f, VolumetricFogDepthToClipZ(rawDepth), 1.0f);
+    vec4 clipSpacePosition = vec4(XRENGINE_FramebufferTextureUVToClipXY(uv), VolumetricFogDepthToClipZ(rawDepth), 1.0f);
     vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
     viewSpacePosition /= max(abs(viewSpacePosition.w), 1e-5f) * sign(viewSpacePosition.w == 0.0f ? 1.0f : viewSpacePosition.w);
     return (InverseViewMatrix * viewSpacePosition).xyz;
@@ -58,7 +58,7 @@ vec3 WorldPosFromDepthRaw(float rawDepth, vec2 uv)
 
 float LinearEyeDistance(float rawDepth, vec2 uv)
 {
-    vec4 clipSpacePosition = vec4(uv * 2.0f - 1.0f, VolumetricFogDepthToClipZ(rawDepth), 1.0f);
+    vec4 clipSpacePosition = vec4(XRENGINE_FramebufferTextureUVToClipXY(uv), VolumetricFogDepthToClipZ(rawDepth), 1.0f);
     vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
     float safeW = max(abs(viewSpacePosition.w), 1e-5f);
     return abs(viewSpacePosition.z / safeW);
@@ -93,7 +93,7 @@ bool ProjectToPreviousUv(vec3 worldPos, out vec2 previousUv)
     }
 
     vec2 previousNdc = previousClip.xy / previousClip.w;
-    previousUv = previousNdc * 0.5f + 0.5f;
+    previousUv = XRENGINE_ClipXYToFramebufferTextureUV(previousNdc);
     return IsValidUV(previousUv);
 }
 

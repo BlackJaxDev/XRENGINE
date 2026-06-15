@@ -477,6 +477,8 @@ namespace XREngine
                 private EDlssQualityMode _dlssQuality = EDlssQualityMode.Quality;
                 private float _dlssCustomScale = 0.77f;
                 private float _dlssSharpness = 0.2f;
+                private bool _enableNvidiaDlssFrameGeneration = false;
+                private ENvidiaDlssFrameGenerationMode _nvidiaDlssFrameGenerationMode = ENvidiaDlssFrameGenerationMode.Off;
                 private bool _enableIntelXess = false;
                 private EXessQualityMode _xessQuality = EXessQualityMode.Quality;
                 private float _xessCustomScale = 0.77f;
@@ -912,6 +914,28 @@ namespace XREngine
                 {
                     get => _dlssSharpness;
                     set => SetField(ref _dlssSharpness, Math.Clamp(value, 0.0f, 1.0f));
+                }
+
+                /// <summary>
+                /// Enables NVIDIA DLSS frame generation when the Vulkan renderer can provide the required Streamline present path.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("Enables NVIDIA DLSS frame generation when the Vulkan renderer can provide the required Streamline present path.")]
+                public bool EnableNvidiaDlssFrameGeneration
+                {
+                    get => _enableNvidiaDlssFrameGeneration;
+                    set => SetField(ref _enableNvidiaDlssFrameGeneration, value);
+                }
+
+                /// <summary>
+                /// NVIDIA DLSS frame generation multiplier request.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("NVIDIA DLSS frame generation multiplier request. Off disables generated frames; OneX through ThreeX request 1x-3x frame generation.")]
+                public ENvidiaDlssFrameGenerationMode NvidiaDlssFrameGenerationMode
+                {
+                    get => _nvidiaDlssFrameGenerationMode;
+                    set => SetField(ref _nvidiaDlssFrameGenerationMode, value);
                 }
 
                 /// <summary>
@@ -2193,7 +2217,9 @@ namespace XREngine
                 if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
                     || propertyName == nameof(EngineSettings.DlssQuality)
                     || propertyName == nameof(EngineSettings.DlssCustomScale)
-                    || propertyName == nameof(EngineSettings.DlssSharpness))
+                    || propertyName == nameof(EngineSettings.DlssSharpness)
+                    || propertyName == nameof(EngineSettings.EnableNvidiaDlssFrameGeneration)
+                    || propertyName == nameof(EngineSettings.NvidiaDlssFrameGenerationMode))
                 {
                     Engine.Rendering.ApplyNvidiaDlssPreference();
                 }

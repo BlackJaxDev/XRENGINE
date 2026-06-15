@@ -45,6 +45,21 @@ namespace XREngine.Rendering.Vulkan
                     return _image;
                 }
             }
+            DeviceMemory IVkImageDescriptorSource.DescriptorMemory
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+
+                    XRTexture viewedTexture = Data.GetViewedTexture();
+                    if (viewedTexture is null)
+                        return default;
+
+                    return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
+                        ? source.DescriptorMemory
+                        : default;
+                }
+            }
             ImageView IVkImageDescriptorSource.DescriptorView
             {
                 get
