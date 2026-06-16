@@ -522,12 +522,13 @@ namespace XREngine.Scene
             int visibleRenderables = 0;
 
             // GPU dispatch path: the GPU performs the authoritative frustum/BVH cull on its own
-            // command buffers. Doing a redundant CPU frustum-vs-box test on every renderable here
-            // is pure CPU overhead that scales O(N) and was a major contributor to GPU-path
-            // perf regressions vs. CpuDirect on Sponza-class scenes. We still need the layer,
-            // shadow, and mirror filters from AllowRender, so we pass cullingVolume=null which
-            // short-circuits the Intersects test to "contained".
-            IVolume? allowRenderVolume = modelDiagActive ? collectionVolume : null;
+            // command buffers for regular scene cameras. Shadow cameras can provide custom
+            // collection volumes (directional cascade slices, atlas tiles, cubemap faces) that
+            // are narrower than the render frustum, so keep those CPU-side or every cascade can
+            // submit the same caster set.
+            IVolume? allowRenderVolume = commands.IsOwnedByShadowPipeline || modelDiagActive
+                ? collectionVolume
+                : null;
 
             // Iterate by index to avoid per-frame ToArray() allocation.
             // _renderables is only mutated in PreCollectVisible (same thread), so direct iteration is safe.

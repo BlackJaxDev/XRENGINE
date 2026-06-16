@@ -1118,7 +1118,7 @@ namespace XREngine.Scene
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
-                "[DirectionalShadowAudit][LegacyDecision] frame={0} light='{1}' reason={2} useDirAtlas={3} legacyRender={4} renderCascades={5} needsLegacyCascades={6} needsLegacyPrimary={7} casts={8} cascadesEnabled={9} activeCascades={10} shadowMap={11} cascadeTex={12} slots={13}",
+                "[DirectionalShadowAudit][LegacyDecision] frame={0} light='{1}' reason={2} useDirAtlas={3} legacyRender={4} renderCascades={5} needsLegacyCascades={6} needsLegacyPrimary={7} casts={8} cascadesEnabled={9} activeCascades={10} shadowMap={11} cascadeColorTex={12} cascadeRasterDepthTex={13} cascadeReceiverTex={14} useRasterCascadeReceiver={15} slots={16}",
                 RuntimeEngine.Rendering.State.RenderFrameId,
                 light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
                 reason,
@@ -1131,7 +1131,10 @@ namespace XREngine.Scene
                 light.EnableCascadedShadows,
                 activeCascadeCount,
                 light.ShadowMap is not null,
-                light.CascadedShadowMapTexture is not null,
+                light.HasCascadeColorTexture,
+                light.HasCascadeRasterDepthTexture,
+                light.CascadedShadowReceiverTexture is not null,
+                light.UsesCascadeRasterDepthReceiver,
                 DescribeDirectionalCascadeSlots(light, activeCascadeCount));
         }
 

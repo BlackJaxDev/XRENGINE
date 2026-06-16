@@ -1,9 +1,10 @@
-﻿__type: XREngine.UserSettings
+﻿__assetType: XREngine.UserSettings
 VSync: Adaptive
 TextureQuality: Highest
 ModelQuality: Highest
 SoundQuality: Highest
 AudioDisableFadeSeconds: 0.5
+AudioSampleRate: 44100
 GlobalIlluminationMode: LightProbesAndIbl
 WindowedResolution:
   X: 1920
@@ -35,6 +36,12 @@ EnableGpuIndirectCpuFallbackOverride:
 EnableGpuIndirectValidationLoggingOverride:
   HasOverride: false
   Value: false
+EnableZeroReadbackMaterialScatterOverride:
+  HasOverride: false
+  Value: false
+ZeroReadbackMaterialDrawPathOverride:
+  HasOverride: false
+  Value: FullBucketScan
 AntiAliasingModeOverride:
   HasOverride: false
   Value: None
@@ -56,6 +63,12 @@ EnableNvidiaDlssOverride:
 DlssQualityOverride:
   HasOverride: false
   Value: UltraPerformance
+EnableNvidiaDlssFrameGenerationOverride:
+  HasOverride: false
+  Value: false
+NvidiaDlssFrameGenerationModeOverride:
+  HasOverride: false
+  Value: Off
 EnableIntelXessOverride:
   HasOverride: false
   Value: false

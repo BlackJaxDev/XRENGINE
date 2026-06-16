@@ -269,20 +269,21 @@ public abstract class RuntimeWorldObjectBase : XRObjectBase
 
     private static void InitializeReplicationMetadata()
     {
-        if (TryLoadReplicablePropertiesFromAotMetadata())
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+        {
+            LoadReplicablePropertiesFromAotMetadata();
             return;
+        }
 
         CollectReplicableProperties();
     }
 
-    private static bool TryLoadReplicablePropertiesFromAotMetadata()
+    private static void LoadReplicablePropertiesFromAotMetadata()
     {
-        if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
-            return false;
+        AotRuntimeMetadata metadata = AotRuntimeMetadataStore.RequireMetadata();
 
-        AotRuntimeMetadata? metadata = AotRuntimeMetadataStore.Metadata;
-        if (metadata?.WorldObjectReplications is null || metadata.WorldObjectReplications.Length == 0)
-            return false;
+        if (metadata.WorldObjectReplications is null)
+            throw new InvalidOperationException("Published AOT runtime metadata is missing world-object replication entries.");
 
         ReplicatedTypes.Clear();
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -313,8 +314,6 @@ public abstract class RuntimeWorldObjectBase : XRObjectBase
             if (replication.ReplicateOnChangePropertiesInternal.Count > 0 || replication.ReplicateOnTickPropertiesInternal.Count > 0)
                 ReplicatedTypes[type] = replication;
         }
-
-        return true;
     }
 
     private static void CollectReplicableProperties()

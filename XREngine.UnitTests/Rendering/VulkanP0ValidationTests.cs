@@ -451,11 +451,20 @@ public sealed class VulkanP0ValidationTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.ImGui.cs");
 
+        source.ShouldContain("private ImGuiDrawBufferSet[] _imguiDrawBuffers = [];");
+        source.ShouldContain("private int EnsureImGuiDrawBufferSlot(uint imageIndex)");
+        source.ShouldContain("Array.Resize(ref _imguiDrawBuffers, requiredSlots);");
+        source.ShouldContain("private int EnsureImGuiDrawBuffers(uint imageIndex, ulong vertexBytes, ulong indexBytes)");
         source.ShouldContain("ComputeImGuiBufferCapacity");
         source.ShouldContain("AlignUpToPowerOfTwoBucket");
         source.ShouldContain("64UL * 1024UL");
-        source.ShouldContain("_imguiVertexBufferSize = capacity");
-        source.ShouldContain("_imguiIndexBufferSize = capacity");
+        source.ShouldContain("buffers.VertexBufferSize = capacity");
+        source.ShouldContain("buffers.IndexBufferSize = capacity");
+        source.ShouldContain("int bufferSlot = EnsureImGuiDrawBuffers(imageIndex, vertexBytes, indexBytes);");
+        source.ShouldContain("Buffer vertexBuffer = buffers.VertexBuffer;");
+        source.ShouldContain("CmdBindIndexBuffer(commandBuffer, buffers.IndexBuffer, 0, IndexType.Uint16);");
+        source.ShouldContain("io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;");
+        source.ShouldNotContain("_ = imageIndex;");
     }
 
     [Test]
@@ -662,6 +671,16 @@ public sealed class VulkanP0ValidationTests
         var freeSetBit = Silk.NET.Vulkan.DescriptorPoolCreateFlags.FreeDescriptorSetBit;
         ((int)freeSetBit).ShouldNotBe(0,
             "FreeDescriptorSetBit should exist for ImGui pool usage");
+    }
+
+    [Test]
+    public void DescriptorPoolCreateFlags_ImGuiPool_AllocatesDescriptorForEverySet()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.ImGui.cs");
+
+        source.ShouldContain("private const uint ImGuiDescriptorPoolMaxSets = 256;");
+        source.ShouldContain("DescriptorCount = ImGuiDescriptorPoolMaxSets");
+        source.ShouldContain("MaxSets = ImGuiDescriptorPoolMaxSets");
     }
 
     [Test]

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 
 namespace XREngine.Extensions
 {
@@ -6,42 +7,28 @@ namespace XREngine.Extensions
     {
         public static async Task<T> ReadAsync<T>(this Stream stream) where T : unmanaged
         {
-            int size = Marshal.SizeOf<T>();
+            int size = Unsafe.SizeOf<T>();
             byte[] bytes = new byte[size];
             await ReadExactlyAsync(stream, bytes);
-            GCHandle handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
-            T result = Marshal.PtrToStructure<T>(handle.AddrOfPinnedObject());
-            handle.Free();
-            return result;
+            return MemoryMarshal.Read<T>(bytes);
         }
         public static T Read<T>(this Stream stream) where T : unmanaged
         {
-            int size = Marshal.SizeOf<T>();
+            int size = Unsafe.SizeOf<T>();
             byte[] bytes = new byte[size];
             ReadExactly(stream, bytes);
-            GCHandle handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
-            T result = Marshal.PtrToStructure<T>(handle.AddrOfPinnedObject());
-            handle.Free();
-            return result;
+            return MemoryMarshal.Read<T>(bytes);
         }
         public static async Task WriteAsync<T>(this Stream stream, T value) where T : unmanaged
         {
-            int size = Marshal.SizeOf<T>();
-            byte[] arr = new byte[size];
-            IntPtr ptr = Marshal.AllocHGlobal(size);
-            Marshal.StructureToPtr(value, ptr, true);
-            Marshal.Copy(ptr, arr, 0, size);
-            Marshal.FreeHGlobal(ptr);
+            byte[] arr = new byte[Unsafe.SizeOf<T>()];
+            MemoryMarshal.Write(arr, in value);
             await stream.WriteAsync(arr, 0, arr.Length);
         }
         public static void Write<T>(this Stream stream, T value) where T : unmanaged
         {
-            int size = Marshal.SizeOf<T>();
-            byte[] arr = new byte[size];
-            IntPtr ptr = Marshal.AllocHGlobal(size);
-            Marshal.StructureToPtr(value, ptr, true);
-            Marshal.Copy(ptr, arr, 0, size);
-            Marshal.FreeHGlobal(ptr);
+            byte[] arr = new byte[Unsafe.SizeOf<T>()];
+            MemoryMarshal.Write(arr, in value);
             stream.Write(arr, 0, arr.Length);
         }
 

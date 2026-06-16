@@ -14,4 +14,9 @@ public interface IRuntimeRenderPipelineDebugContext
     /// Gets a fuller descriptor used in render logs and presentation diagnostics.
     /// </summary>
     string DebugDescriptor { get; }
+
+    /// <summary>
+    /// True when the context belongs to a shadow-map render pipeline.
+    /// </summary>
+    bool IsShadowPipeline { get; }
 }

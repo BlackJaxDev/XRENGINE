@@ -109,6 +109,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public string DebugName
         => _pipeline?.DebugName ?? _pipeline?.GetType().Name ?? "UnknownPipeline";
 
+    public bool IsShadowPipeline
+        => _pipeline is XREngine.Components.Lights.ShadowRenderPipeline ||
+           _pipeline?.IsShadowPass == true;
+
     /// <summary>
     /// Profiler-stable identifier for this pipeline instance. Combines <see cref="DebugName"/>
     /// with <see cref="InstanceId"/> so the GPU profiler keeps separate graphs/hierarchies

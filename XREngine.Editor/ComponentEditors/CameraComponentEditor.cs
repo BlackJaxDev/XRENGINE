@@ -2062,7 +2062,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             if (!light.CastsShadows || !light.EnableCascadedShadows)
                 continue;
 
-            XRTexture2DArray? cascadeTexture = light.CascadedShadowMapTexture;
+            XRTexture2DArray? cascadeTexture = light.CascadedShadowPreviewTexture;
             int activeCascades = light.ActiveCascadeCount;
             if (cascadeTexture is null || activeCascades <= 0)
                 continue;

@@ -1124,11 +1124,12 @@ internal class Program
             out string? projectPath,
             out string? configurationArg,
             out string? platformArg,
-            out string? outputSubfolderArg,
-            out string? launcherNameArg,
-            out bool? publishNativeAot,
-            out string? defineConstantsArg,
-            out string? error))
+                out string? outputSubfolderArg,
+                out string? launcherNameArg,
+                out bool? publishNativeAot,
+                out bool? validateAotCompatibility,
+                out string? defineConstantsArg,
+                out string? error))
         {
             if (buildFlagSeen)
             {
@@ -1155,6 +1156,7 @@ internal class Program
                 outputSubfolderArg,
                 launcherNameArg,
                 publishNativeAot,
+                validateAotCompatibility,
                 defineConstantsArg);
 
             Environment.ExitCode = 0;
@@ -1341,6 +1343,7 @@ internal class Program
         out string? outputSubfolderArg,
         out string? launcherNameArg,
         out bool? publishNativeAot,
+        out bool? validateAotCompatibility,
         out string? defineConstantsArg,
         out string? error)
     {
@@ -1351,6 +1354,7 @@ internal class Program
         outputSubfolderArg = null;
         launcherNameArg = null;
         publishNativeAot = null;
+        validateAotCompatibility = null;
         defineConstantsArg = null;
         error = null;
 
@@ -1427,6 +1431,24 @@ internal class Program
                     publishNativeAot = boolValue;
                     break;
 
+                case "--validate-aot":
+                case "--aot-validation":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --validate-aot (expected true/false).";
+                        return false;
+                    }
+
+                    string validateArg = args[++i];
+                    if (!TryParseBooleanArgument(validateArg, out bool validateValue))
+                    {
+                        error = "--validate-aot must be true/false, yes/no, or 1/0.";
+                        return false;
+                    }
+
+                    validateAotCompatibility = validateValue;
+                    break;
+
                 case "--define-constants":
                 case "--launcher-define-constants":
                     if (i + 1 >= args.Length)
@@ -1459,6 +1481,7 @@ internal class Program
         string? outputSubfolderArg,
         string? launcherNameArg,
         bool? publishNativeAot,
+        bool? validateAotCompatibility,
         string? defineConstantsArg)
     {
         ConfigureMsBuildEnvironmentForHeadlessBuild();
@@ -1505,6 +1528,9 @@ internal class Program
 
         if (publishNativeAot.HasValue)
             settings.PublishLauncherAsNativeAot = publishNativeAot.Value;
+
+        if (validateAotCompatibility.HasValue)
+            settings.ValidateLauncherAotCompatibility = validateAotCompatibility.Value;
 
         settings.LauncherDefineConstants = XRRuntimeEnvironment.ComposeDefineConstants(
             defineConstantsArg,

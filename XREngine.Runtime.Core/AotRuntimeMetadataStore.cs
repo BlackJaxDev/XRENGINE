@@ -25,6 +25,10 @@ public static class AotRuntimeMetadataStore
         }
     }
 
+    public static AotRuntimeMetadata RequireMetadata()
+        => Metadata ?? throw new InvalidOperationException(
+            $"Published AOT runtime metadata is missing. Ensure '{MetadataFileName}' is present in the published config archive.");
+
     public static void ResetForTestsOrReconfiguration()
     {
         lock (Sync)
@@ -114,9 +118,9 @@ public static class AotRuntimeMetadataStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assemblyQualifiedName);
 
-        AotRuntimeMetadata? metadata = Metadata;
-        if (metadata is null)
-            return false;
+        AotRuntimeMetadata metadata = XRRuntimeEnvironment.IsAotRuntimeBuild
+            ? RequireMetadata()
+            : Metadata ?? new AotRuntimeMetadata();
 
         foreach (string candidate in metadata.PublishedRuntimeAssetTypeNames)
         {

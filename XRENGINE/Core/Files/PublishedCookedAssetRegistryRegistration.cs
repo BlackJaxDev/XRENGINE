@@ -12,6 +12,11 @@ internal static class EnginePublishedCookedAssetRegistryRegistration
     [ModuleInitializer]
     internal static void Register()
     {
+        RegisterMemoryPackAsset<GameStartupSettings>();
+        RegisterMemoryPackAsset<UserSettings>();
+        RegisterMemoryPackAsset<EditorPreferences>();
+        RegisterMemoryPackAsset<BuildSettings>();
+
         PublishedCookedAssetRegistry.Register(
             typeof(AnimationClip),
             static asset => MemoryPackSerializer.Serialize(AnimationClipSerialization.CreateModel((AnimationClip)asset)),
@@ -36,6 +41,14 @@ internal static class EnginePublishedCookedAssetRegistryRegistration
             typeof(AnimStateMachine),
             static asset => MemoryPackSerializer.Serialize(AnimStateMachineSerialization.CreateModel((AnimStateMachine)asset)),
             static (payload, assetType) => DeserializeAnimationAsset(payload, assetType));
+    }
+
+    private static void RegisterMemoryPackAsset<T>() where T : XRAsset
+    {
+        PublishedCookedAssetRegistry.Register(
+            typeof(T),
+            static asset => MemoryPackSerializer.Serialize((T)asset),
+            static (payload, _) => MemoryPackSerializer.Deserialize<T>(payload));
     }
 
     private static MotionBase? DeserializeMotion(byte[] payload, Type assetType)

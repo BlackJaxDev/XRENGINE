@@ -601,9 +601,12 @@ public partial class XRTexture2D
         if (string.IsNullOrWhiteSpace(typeName))
             return null;
 
-        Type? resolved = Type.GetType(typeName, throwOnError: false, ignoreCase: false);
+        Type? resolved = AotRuntimeMetadataStore.ResolveType(typeName);
         if (resolved is not null)
             return resolved;
+
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            return null;
 
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
         {

@@ -96,6 +96,8 @@ namespace XREngine.Components.Lights
             UnsupportedViewportScissorArray = 10,
             UnsupportedVertexStageViewportIndexWrites = 11,
             UnsupportedGeometryStageViewportIndexWrites = 12,
+            VulkanLayeredRenderingDisabled = 13,
+            VulkanCascadeAtlasGroupedRenderingDisabled = 14,
         }
 
         private enum DirectionalCascadeShadowBackend
@@ -176,7 +178,7 @@ namespace XREngine.Components.Lights
         private float[] _cascadePercentages = [0.1f, 0.2f, 0.3f, 0.4f];
         private CascadeShadowBiasOverride[] _cascadeBiasOverrides = CreateDefaultCascadeBiasOverrides(4);
         private float _cascadeOverlapPercent = 0.1f;
-        private EDirectionalCascadeShadowRenderMode _cascadeShadowRenderMode = EDirectionalCascadeShadowRenderMode.InstancedLayered;
+        private EDirectionalCascadeShadowRenderMode _cascadeShadowRenderMode = EDirectionalCascadeShadowRenderMode.Sequential;
         private bool _debugCascadeColors;
         private readonly object _cascadeDataLock = new();
         private readonly List<CascadedShadowAabb> _cascadeAabbs = new(4);
@@ -200,7 +202,7 @@ namespace XREngine.Components.Lights
         private XRMaterial? _cascadeInstancedShadowMaterial;
         private XRMaterial? _cascadeAtlasGeometryShadowMaterial;
         private XRMaterial? _cascadeAtlasInstancedShadowMaterial;
-        private EDirectionalCascadeShadowRenderMode _effectiveCascadeShadowRenderMode = EDirectionalCascadeShadowRenderMode.InstancedLayered;
+        private EDirectionalCascadeShadowRenderMode _effectiveCascadeShadowRenderMode = EDirectionalCascadeShadowRenderMode.Sequential;
         private DirectionalCascadeShadowBackend _effectiveCascadeShadowBackend = DirectionalCascadeShadowBackend.LegacyTextureArray;
         private DirectionalCascadeShadowFallbackReason _cascadeShadowRenderFallbackReason = DirectionalCascadeShadowFallbackReason.None;
 
@@ -323,6 +325,37 @@ namespace XREngine.Components.Lights
         /// Legacy non-atlas texture array containing the rendered cascade depth slices.
         /// </summary>
         public XRTexture2DArray? CascadedShadowMapTexture => _cascadeShadowMapTexture;
+
+        /// <summary>
+        /// Texture array that should be inspected when debugging cascade contents.
+        /// On Vulkan depth-shadow paths this is the raster depth receiver, not the
+        /// auxiliary color/moment output.
+        /// </summary>
+        public XRTexture2DArray? CascadedShadowPreviewTexture
+            => CascadedShadowReceiverTexture ?? _cascadeShadowMapTexture;
+
+        internal XRTexture2DArray? CascadedShadowReceiverTexture
+        {
+            get
+            {
+                bool needsRasterDepth = ShouldUseVulkanRasterDepthReceiverTexture();
+                if (CastsShadows &&
+                    EnableCascadedShadows &&
+                    (_cascadeShadowMapTexture is null ||
+                     (needsRasterDepth && _cascadeRasterDepthTexture is null)))
+                {
+                    EnsureCascadeShadowResources();
+                }
+
+                return needsRasterDepth
+                    ? _cascadeRasterDepthTexture
+                    : _cascadeShadowMapTexture;
+            }
+        }
+
+        internal bool HasCascadeColorTexture => _cascadeShadowMapTexture is not null;
+        internal bool HasCascadeRasterDepthTexture => _cascadeRasterDepthTexture is not null;
+        internal bool UsesCascadeRasterDepthReceiver => ShouldUseVulkanRasterDepthReceiverTexture();
 
         /// <summary>
         /// Number of cascades with currently published bounds and cameras.
@@ -1026,6 +1059,7 @@ namespace XREngine.Components.Lights
                 ? (ShadowMomentUseMipmaps ? ETexMinFilter.LinearMipmapLinear : ETexMinFilter.Linear)
                 : ETexMinFilter.Nearest;
             ETexMagFilter magFilter = selection.Format.RequiresLinearFiltering ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
+            int smallestAllowedMomentMip = ResolveShadowMomentSmallestAllowedMipmapLevel(momentEncoding, ShadowMomentUseMipmaps, width, height);
 
             bool recreateTexture = _cascadeShadowMapTexture is null ||
                 _cascadeShadowMapTexture.Depth != (uint)requiredCascades ||
@@ -1039,7 +1073,8 @@ namespace XREngine.Components.Lights
                 _cascadeRasterDepthTexture.SizedInternalFormat != depthFormat.SizedInternalFormat ||
                 _cascadeShadowMapTexture.MinFilter != minFilter ||
                 _cascadeShadowMapTexture.MagFilter != magFilter ||
-                _cascadeShadowMapTexture.AutoGenerateMipmaps != (momentEncoding && ShadowMomentUseMipmaps);
+                _cascadeShadowMapTexture.AutoGenerateMipmaps != (momentEncoding && ShadowMomentUseMipmaps) ||
+                _cascadeShadowMapTexture.SmallestAllowedMipmapLevel != smallestAllowedMomentMip;
 
             if (recreateTexture)
             {
@@ -1053,10 +1088,12 @@ namespace XREngine.Components.Lights
                     shadowFormat.PixelFormat,
                     shadowFormat.PixelType,
                     EFrameBufferAttachment.ColorAttachment0);
+                _cascadeShadowMapTexture.Name = GetCascadeShadowResourceName("ColorArray");
                 _cascadeShadowMapTexture.SamplerName = "ShadowMapArray";
                 _cascadeShadowMapTexture.MinFilter = minFilter;
                 _cascadeShadowMapTexture.MagFilter = magFilter;
                 _cascadeShadowMapTexture.AutoGenerateMipmaps = momentEncoding && ShadowMomentUseMipmaps;
+                _cascadeShadowMapTexture.SmallestAllowedMipmapLevel = smallestAllowedMomentMip;
 
                 _cascadeRasterDepthTexture = XRTexture2DArray.CreateFrameBufferTexture(
                     (uint)requiredCascades,
@@ -1066,12 +1103,14 @@ namespace XREngine.Components.Lights
                     depthFormat.PixelFormat,
                     depthFormat.PixelType,
                     EFrameBufferAttachment.DepthAttachment);
+                _cascadeRasterDepthTexture.Name = GetCascadeShadowResourceName("RasterDepthArray");
                 _cascadeRasterDepthTexture.SamplerName = "ShadowRasterDepthArray";
             }
 
             if (recreateTexture || _cascadeLayeredShadowFrameBuffer is null)
             {
                 _cascadeLayeredShadowFrameBuffer ??= new XRFrameBuffer();
+                _cascadeLayeredShadowFrameBuffer.Name = GetCascadeShadowResourceName("LayeredFbo");
                 _cascadeLayeredShadowFrameBuffer.SetRenderTargets(
                     (_cascadeShadowMapTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1),
                     (_cascadeRasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, -1));
@@ -1121,7 +1160,10 @@ namespace XREngine.Components.Lights
                 viewports[i] = viewport;
                 frameBuffers[i] = new XRFrameBuffer(
                     (_cascadeShadowMapTexture!, EFrameBufferAttachment.ColorAttachment0, 0, i),
-                    (_cascadeRasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, i));
+                    (_cascadeRasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, i))
+                {
+                    Name = GetCascadeShadowResourceName($"Layer{i}Fbo"),
+                };
             }
 
             _cascadeShadowTransforms = transforms;
@@ -1129,6 +1171,9 @@ namespace XREngine.Components.Lights
             _cascadeShadowViewports = viewports;
             _cascadeShadowFrameBuffers = frameBuffers;
         }
+
+        private string GetCascadeShadowResourceName(string suffix)
+            => $"DirectionalShadow.{ID:N}.Cascade.{suffix}";
 
         private void ReleaseCascadeShadowResources()
         {
@@ -1498,7 +1543,7 @@ namespace XREngine.Components.Lights
         private DirectionalCascadeShadowRenderPlan CreateCascadeShadowRenderPlan(int cascadeCount)
             => CreateCascadeShadowRenderPlan(
                 cascadeCount,
-                UsesDirectionalShadowAtlasForCurrentEncoding
+                CanUseDirectionalCascadeShadowAtlasForCurrentBackend(cascadeCount)
                     ? DirectionalCascadeShadowBackend.AtlasPage
                     : DirectionalCascadeShadowBackend.LegacyTextureArray,
                 hasGroupedAtlasAllocation: false);
@@ -1742,7 +1787,7 @@ namespace XREngine.Components.Lights
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
             int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
-            DirectionalCascadeShadowRenderPlan plan = CreateLegacyCascadeShadowRenderPlan(cascadeCount);
+            DirectionalCascadeShadowRenderPlan plan = CreateCascadeShadowRenderPlan(cascadeCount);
             PublishCascadeShadowRenderPlan(plan);
             bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedCascadeCollection(cascadeCount);
             if (plan.IsLayered && !prepareAtlasGroupedCommands)
@@ -1760,7 +1805,7 @@ namespace XREngine.Components.Lights
         }
 
         private bool ShouldPrepareAtlasGroupedCascadeCollection(int cascadeCount)
-            => UsesDirectionalShadowAtlasForCurrentEncoding &&
+            => CanUseDirectionalCascadeShadowAtlasForCurrentBackend(cascadeCount) &&
                 cascadeCount > 1 &&
                 SupportsDirectionalCascadeAtlasGroupedRendering(cascadeCount);
 
@@ -1769,9 +1814,8 @@ namespace XREngine.Components.Lights
             if (!UsesDirectionalShadowAtlasForCurrentEncoding)
                 return false;
 
-            // Grouped viewport/scissor rendering is an optimization. Keep atlas
-            // cascade submission available so unsupported modes can fall back to
-            // sequential atlas tiles through the render-plan capability checks.
+            // Grouped viewport/scissor rendering is an optimization. Atlas cascade
+            // submission itself is valid on Vulkan through sequential per-tile renders.
             return cascadeCount > 0;
         }
 
@@ -2147,7 +2191,7 @@ namespace XREngine.Components.Lights
             int cascadeCount,
             XRMaterial sequentialShadowMaterial)
         {
-            DirectionalCascadeShadowRenderPlan plan = CreateCascadeShadowRenderPlan(cascadeCount);
+            DirectionalCascadeShadowRenderPlan plan = CreateLegacyCascadeShadowRenderPlan(cascadeCount);
             PublishCascadeShadowRenderPlan(plan);
             var clearColor = GetShadowMapClearColor();
             for (int i = 0; i < cascadeCount; i++)
@@ -2247,7 +2291,7 @@ namespace XREngine.Components.Lights
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
-                "[DirectionalShadowAudit][CascadeUpdate] frame={0} light='{1}' sourceCamera={2} sourcePos={3} sourceNear={4:F3} sourceFar={5:F3} sourceShadowMax={6:F3} rangeNear={7:F3} rangeFar={8:F3} totalDepth={9:F3} activeCascades={10} requestedCascades={11} atlasSetting={12} cascadeTex={13}",
+                "[DirectionalShadowAudit][CascadeUpdate] frame={0} light='{1}' sourceCamera={2} sourcePos={3} sourceNear={4:F3} sourceFar={5:F3} sourceShadowMax={6:F3} rangeNear={7:F3} rangeFar={8:F3} totalDepth={9:F3} activeCascades={10} requestedCascades={11} atlasSetting={12} cascadeColorTex={13} cascadeRasterDepthTex={14} cascadeReceiverTex={15}",
                 RuntimeEngine.Rendering.State.RenderFrameId,
                 SceneNode?.Name ?? Name ?? GetType().Name,
                 sourceCamera.GetHashCode(),
@@ -2261,7 +2305,9 @@ namespace XREngine.Components.Lights
                 cascadeCount,
                 CascadeCount,
                 RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas,
-                _cascadeShadowMapTexture is not null);
+                _cascadeShadowMapTexture is not null,
+                _cascadeRasterDepthTexture is not null,
+                CascadedShadowReceiverTexture is not null);
 
             int detailCount = Math.Min(cascadeCount, Math.Min(4, slices.Length));
             for (int i = 0; i < detailCount; i++)
@@ -2358,7 +2404,7 @@ namespace XREngine.Components.Lights
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
-                "[DirectionalShadowAudit][LegacyRender] frame={0} light='{1}' useDirAtlas={2} renderCascades={3} hasShadowMap={4} hasShadowMaterial={5} cascadeRenderCount={6} activeCascades={7} cascadeTex={8}",
+                "[DirectionalShadowAudit][LegacyRender] frame={0} light='{1}' useDirAtlas={2} renderCascades={3} hasShadowMap={4} hasShadowMaterial={5} cascadeRenderCount={6} activeCascades={7} cascadeColorTex={8} cascadeRasterDepthTex={9} cascadeReceiverTex={10}",
                 RuntimeEngine.Rendering.State.RenderFrameId,
                 SceneNode?.Name ?? Name ?? GetType().Name,
                 RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas,
@@ -2367,7 +2413,9 @@ namespace XREngine.Components.Lights
                 hasShadowMaterial,
                 cascadeCount,
                 ActiveCascadeCount,
-                _cascadeShadowMapTexture is not null);
+                _cascadeShadowMapTexture is not null,
+                _cascadeRasterDepthTexture is not null,
+                CascadedShadowReceiverTexture is not null);
         }
 
         private static string FormatVector(Vector3 value)

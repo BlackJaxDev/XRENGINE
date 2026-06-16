@@ -323,6 +323,11 @@ if (Test-Path $inputIntegrationRoot) {
     [void]$sourceRoots.Add($inputIntegrationRoot)
 }
 
+$runtimeRenderingRoot = [System.IO.Path]::GetFullPath((Join-Path $projectFullPath '..\XREngine.Runtime.Rendering'))
+if (Test-Path $runtimeRenderingRoot) {
+    [void]$sourceRoots.Add($runtimeRenderingRoot)
+}
+
 $classes = @{}
 $classRegex = [regex]::new('(?m)^\s*(?:\[[^\r\n]*\]\s*)*(?<access>public|internal)\s+(?<mods>(?:(?:new|sealed|abstract|partial|static)\s+)*)class\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)(?<generic>\s*<[^>{;]+>)?(?<primary>\s*\([^\)]*\))?\s*(?::\s*(?<bases>[^\{\r\n]+))?', [System.Text.RegularExpressions.RegexOptions]::Multiline)
 
@@ -365,27 +370,26 @@ foreach ($info in $classes.Values) {
 $concreteTypes = @($classes.Values | Where-Object { -not $_.IsAbstract -and -not $_.IsStatic -and -not $_.IsGeneric })
 
 $transformTypes = @($concreteTypes |
-    Where-Object { $_.SameAssembly -and $_.HasAccessibleParameterlessConstructor -and (Test-InheritsSimpleName $_ 'TransformBase' $bySimpleName @{}) } |
+    Where-Object { $_.HasAccessibleParameterlessConstructor -and (Test-InheritsSimpleName $_ 'TransformBase' $bySimpleName @{}) } |
     Sort-Object FullName)
 
 $commandTypes = @($concreteTypes |
-    Where-Object { $_.SameAssembly -and $_.HasAccessibleParameterlessConstructor -and (Test-InheritsSimpleName $_ 'ViewportRenderCommand' $bySimpleName @{}) } |
+    Where-Object { $_.HasAccessibleParameterlessConstructor -and (Test-InheritsSimpleName $_ 'ViewportRenderCommand' $bySimpleName @{}) } |
     Sort-Object FullName)
 
 $cameraParameterTypes = @($concreteTypes |
     Where-Object {
-        $_.SameAssembly -and
         ($_.HasAccessibleParameterlessConstructor -or $_.HasFloatFloatConstructor -or $_.HasBoolFloatFloatConstructor) -and
         (Test-InheritsSimpleName $_ 'XRCameraParameters' $bySimpleName @{})
     } |
     Sort-Object FullName)
 
 $postProcessBackingTypes = @($concreteTypes |
-    Where-Object { $_.SameAssembly -and $_.HasAccessibleParameterlessConstructor -and (Test-InheritsSimpleName $_ 'PostProcessSettings' $bySimpleName @{}) } |
+    Where-Object { $_.HasAccessibleParameterlessConstructor -and (Test-InheritsSimpleName $_ 'PostProcessSettings' $bySimpleName @{}) } |
     Sort-Object FullName)
 
 $pipelineTypes = @($concreteTypes |
-    Where-Object { $_.SameAssembly -and $_.HasAccessibleParameterlessConstructor -and (Test-InheritsSimpleName $_ 'RenderPipeline' $bySimpleName @{}) } |
+    Where-Object { $_.HasAccessibleParameterlessConstructor -and (Test-InheritsSimpleName $_ 'RenderPipeline' $bySimpleName @{}) } |
     Sort-Object FullName)
 
 $localControllerTypes = @($concreteTypes |

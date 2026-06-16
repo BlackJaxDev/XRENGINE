@@ -74,8 +74,8 @@ public sealed class VPRC_ForEachCascade : ViewportRenderCommand
             else
                 variables.Remove(CascadeFrameBufferVariableName);
 
-            if (light.CascadedShadowMapTexture is not null)
-                variables.SetTexture(CascadeTextureVariableName, light.CascadedShadowMapTexture);
+            if (light.CascadedShadowReceiverTexture is not null)
+                variables.SetTexture(CascadeTextureVariableName, light.CascadedShadowReceiverTexture);
             else
                 variables.Remove(CascadeTextureVariableName);
 

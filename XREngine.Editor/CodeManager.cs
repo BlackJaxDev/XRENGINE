@@ -131,7 +131,11 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     /// </summary>
     /// <returns></returns>
     public string GetProjectName()
-        => Engine.GameSettings.Name ?? "GeneratedProject";
+        => !string.IsNullOrWhiteSpace(Engine.CurrentProject?.ProjectName)
+            ? Engine.CurrentProject.ProjectName
+            : !string.IsNullOrWhiteSpace(Engine.GameSettings.Name)
+                ? Engine.GameSettings.Name
+                : "GeneratedProject";
 
     /// <summary>
     /// Gets the path to the intermediate solution file for the game client.
@@ -541,14 +545,26 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 ["RuntimeIdentifier"] = "win-x64"
             };
 
+            if (settings.ValidateLauncherAotCompatibility)
+            {
+                extraProps["EnableTrimAnalyzer"] = "true";
+                extraProps["EnableAotAnalyzer"] = "true";
+                extraProps["IsAotCompatible"] = "true";
+                extraProps["SuppressTrimAnalysisWarnings"] = "false";
+                extraProps["TrimmerSingleWarn"] = "false";
+            }
+
             if (!string.IsNullOrWhiteSpace(defineConstants))
                 extraProps["DefineConstants"] = defineConstants;
 
             if (!BuildProjectFile(launcherProjectPath, configuration, platform, ["Publish"], extraProps, out string? publishLog))
             {
+                WriteLauncherPublishDiagnostics(publishDirectory, publishLog, settings.ValidateLauncherAotCompatibility);
                 Debug.Out(publishLog ?? "Failed to publish launcher project.");
                 throw new InvalidOperationException($"Failed to publish launcher executable. {publishLog}");
             }
+
+            WriteLauncherPublishDiagnostics(publishDirectory, publishLog, settings.ValidateLauncherAotCompatibility);
 
             string launcherExePath = Path.Combine(publishDirectory, $"{launcherAssemblyName}.exe");
             if (!File.Exists(launcherExePath))
@@ -616,6 +632,71 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         throw new FileNotFoundException("Launcher executable was not produced by the build.", Path.Combine(buildRoot, fileName));
     }
 
+    private static void WriteLauncherPublishDiagnostics(string publishDirectory, string? publishLog, bool validationEnabled)
+    {
+        Directory.CreateDirectory(publishDirectory);
+
+        string logPath = Path.Combine(publishDirectory, "aot-publish.log");
+        File.WriteAllText(logPath, publishLog ?? string.Empty, Encoding.UTF8);
+
+        string reportPath = Path.Combine(publishDirectory, "aot-publish-warnings.md");
+        string[] warningLines = ExtractAotWarningLines(publishLog);
+        var report = new StringBuilder();
+        report.AppendLine("# AOT Publish Warnings");
+        report.AppendLine();
+        report.AppendLine($"Validation analyzers: {(validationEnabled ? "enabled" : "disabled")}");
+        report.AppendLine($"Raw log: `{Path.GetFileName(logPath)}`");
+        report.AppendLine();
+
+        if (warningLines.Length == 0)
+        {
+            report.AppendLine("No IL2xxx/IL3xxx warnings were emitted by this publish.");
+        }
+        else
+        {
+            report.AppendLine("Unclassified IL2xxx/IL3xxx warnings:");
+            report.AppendLine();
+            foreach (string warningLine in warningLines)
+                report.AppendLine($"- `{warningLine}`");
+        }
+
+        File.WriteAllText(reportPath, report.ToString(), Encoding.UTF8);
+    }
+
+    private static string[] ExtractAotWarningLines(string? publishLog)
+    {
+        if (string.IsNullOrWhiteSpace(publishLog))
+            return [];
+
+        return [.. publishLog
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static line => ContainsAotWarningCode(line))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static line => line, StringComparer.Ordinal)];
+    }
+
+    private static bool ContainsAotWarningCode(string line)
+    {
+        for (int i = 0; i <= line.Length - 6; i++)
+        {
+            if ((line[i] != 'I' && line[i] != 'i') ||
+                (line[i + 1] != 'L' && line[i + 1] != 'l') ||
+                (line[i + 2] != '2' && line[i + 2] != '3'))
+            {
+                continue;
+            }
+
+            if (char.IsDigit(line[i + 3]) &&
+                char.IsDigit(line[i + 4]) &&
+                char.IsDigit(line[i + 5]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Gets the paths to all engine assemblies that should be referenced by game projects.
     /// This allows game code to use engine types like XRComponent, XRMenuItem, etc.
@@ -635,7 +716,12 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             "XREngine.Animation.dll",
             "XREngine.Audio.dll",
             "XREngine.Input.dll",
-            "XREngine.Modeling.dll"
+            "XREngine.Modeling.dll",
+            "XREngine.Runtime.Core.dll",
+            "XREngine.Runtime.Rendering.dll",
+            "XREngine.Runtime.InputIntegration.dll",
+            "XREngine.Runtime.AnimationIntegration.dll",
+            "XREngine.Runtime.ModelingBridge.dll"
         ];
 
         List<string> validPaths = [];
@@ -881,7 +967,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 if (string.IsNullOrWhiteSpace(kvp.Key))
                     continue;
 
-                string value = kvp.Value ?? string.Empty;
+                string value = EscapeMsBuildPropertyValue(kvp.Value ?? string.Empty);
                 startInfo.ArgumentList.Add($"/p:{kvp.Key}={value}");
             }
         }
@@ -896,6 +982,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         log = string.Concat(stdout, string.IsNullOrWhiteSpace(stderr) ? string.Empty : Environment.NewLine + stderr);
         return process.ExitCode == 0;
     }
+
+    private static string EscapeMsBuildPropertyValue(string value)
+        => value.Replace(";", "%3B", StringComparison.Ordinal);
 
     private static string EnsureTrailingSlash(string path)
     {
@@ -946,9 +1035,11 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string escapedUser = EscapeForLiteral(userSettingsAssetName);
 
         var sb = new StringBuilder();
+        sb.AppendLine("using MemoryPack;");
         sb.AppendLine("using System;");
         sb.AppendLine("using System.IO;");
         sb.AppendLine("using XREngine;");
+        sb.AppendLine("using XREngine.Core.Files;");
         sb.AppendLine();
         sb.AppendLine("namespace GeneratedLauncher;");
         sb.AppendLine();
@@ -964,18 +1055,12 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("#else");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);");
         sb.AppendLine("#endif");
-        sb.AppendLine($"        string archivePath = string.IsNullOrWhiteSpace(\"{escapedConfigFolder}\") ?");
-        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedConfigArchive}\") :");
-        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedConfigFolder}\", \"{escapedConfigArchive}\");");
+        sb.AppendLine($"        string archivePath = ResolvePublishedArchivePath(\"{escapedConfigFolder}\", \"{escapedConfigArchive}\");");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);");
         sb.AppendLine();
-        sb.AppendLine($"        string contentArchivePath = string.IsNullOrWhiteSpace(\"{escapedContentFolder}\") ?");
-        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedContentArchive}\") :");
-        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedContentFolder}\", \"{escapedContentArchive}\");");
+        sb.AppendLine($"        string contentArchivePath = ResolvePublishedArchivePath(\"{escapedContentFolder}\", \"{escapedContentArchive}\");");
         sb.AppendLine();
-        sb.AppendLine($"        string commonAssetsArchivePath = string.IsNullOrWhiteSpace(\"{escapedContentFolder}\") ?");
-        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedCommonAssetsArchive}\") :");
-        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedContentFolder}\", \"{escapedCommonAssetsArchive}\");");
+        sb.AppendLine($"        string commonAssetsArchivePath = ResolvePublishedArchivePath(\"{escapedContentFolder}\", \"{escapedCommonAssetsArchive}\");");
         sb.AppendLine();
         sb.AppendLine("#if XRE_PUBLISHED");
         sb.AppendLine("        if (!File.Exists(archivePath))");
@@ -1007,8 +1092,100 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("        if (userSettings is not null)");
         sb.AppendLine("            Engine.UserSettings = userSettings;");
         sb.AppendLine();
+        sb.AppendLine("#if XRE_PUBLISHED");
+        sb.AppendLine("        if (HasArg(args, \"--aot-smoke\"))");
+        sb.AppendLine("        {");
+        sb.AppendLine("            RunAotSmoke(archivePath, contentArchivePath, commonAssetsArchivePath);");
+        sb.AppendLine("            return;");
+        sb.AppendLine("        }");
+        sb.AppendLine("#endif");
+        sb.AppendLine();
         sb.AppendLine("        Engine.Run(startup, Engine.LoadOrGenerateGameState());");
         sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static string ResolvePublishedArchivePath(string folder, string fileName)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        string baseDirectory = AppContext.BaseDirectory;");
+        sb.AppendLine("        string primary = string.IsNullOrWhiteSpace(folder)");
+        sb.AppendLine("            ? Path.Combine(baseDirectory, fileName)");
+        sb.AppendLine("            : Path.Combine(baseDirectory, folder, fileName);");
+        sb.AppendLine("        if (File.Exists(primary) || string.IsNullOrWhiteSpace(folder))");
+        sb.AppendLine("            return primary;");
+        sb.AppendLine();
+        sb.AppendLine("        string? publishRoot = Directory.GetParent(baseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))?.FullName;");
+        sb.AppendLine("        if (!string.IsNullOrWhiteSpace(publishRoot))");
+        sb.AppendLine("        {");
+        sb.AppendLine("            string sibling = Path.Combine(publishRoot, folder, fileName);");
+        sb.AppendLine("            if (File.Exists(sibling))");
+        sb.AppendLine("                return sibling;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        return primary;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static bool HasArg(string[] args, string name)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        foreach (string arg in args)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (string.Equals(arg, name, StringComparison.OrdinalIgnoreCase))");
+        sb.AppendLine("                return true;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        return false;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("#if XRE_PUBLISHED");
+        sb.AppendLine("    private static void RunAotSmoke(string configArchivePath, string contentArchivePath, string commonAssetsArchivePath)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        AotRuntimeMetadata metadata = AotRuntimeMetadataStore.RequireMetadata();");
+        sb.AppendLine("        VerifyArchiveAsset(configArchivePath, AotRuntimeMetadataStore.MetadataFileName);");
+        sb.AppendLine("        VerifyRuntimeBinaryAsset(configArchivePath, \"startup.asset\", typeof(GameStartupSettings));");
+        sb.AppendLine("        VerifyRuntimeBinaryAsset(configArchivePath, \"user_settings.asset\", typeof(UserSettings));");
+        sb.AppendLine();
+        sb.AppendLine("        if (AssetArchiveContains(configArchivePath, \"editor_preferences.asset\"))");
+        sb.AppendLine("            VerifyRuntimeBinaryAsset(configArchivePath, \"editor_preferences.asset\", typeof(EditorPreferences));");
+        sb.AppendLine();
+        sb.AppendLine("        if (!File.Exists(contentArchivePath))");
+        sb.AppendLine("            throw new FileNotFoundException(\"Content archive was not produced for the published launcher.\", contentArchivePath);");
+        sb.AppendLine();
+        sb.AppendLine("        int contentAssetCount = AssetPacker.GetAssetPaths(contentArchivePath).Count;");
+        sb.AppendLine("        int commonAssetCount = File.Exists(commonAssetsArchivePath) ? AssetPacker.GetAssetPaths(commonAssetsArchivePath).Count : 0;");
+        sb.AppendLine("        Console.WriteLine($\"AOT smoke passed: {metadata.KnownTypeAssemblyQualifiedNames.Length} metadata types, {metadata.PublishedRuntimeAssetTypeNames.Length} registered runtime asset types, {contentAssetCount} content assets, {commonAssetCount} common assets.\");");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static void VerifyRuntimeBinaryAsset(string archivePath, string assetPath, Type expectedType)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        byte[] bytes = VerifyArchiveAsset(archivePath, assetPath);");
+        sb.AppendLine("        CookedAssetBlob blob = MemoryPackSerializer.Deserialize<CookedAssetBlob>(bytes);");
+        sb.AppendLine("        if (blob.Format != CookedAssetFormat.RuntimeBinaryV1)");
+        sb.AppendLine("            throw new InvalidOperationException($\"Published AOT asset '{assetPath}' must use {CookedAssetFormat.RuntimeBinaryV1}, but was {blob.Format}.\");");
+        sb.AppendLine();
+        sb.AppendLine("        if (!CookedAssetTypeReference.MatchesExpectedType(blob.TypeName, expectedType))");
+        sb.AppendLine("            throw new InvalidOperationException($\"Published AOT asset '{assetPath}' type reference '{blob.TypeName}' does not match expected type '{expectedType}'.\");");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static byte[] VerifyArchiveAsset(string archivePath, string assetPath)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        if (!File.Exists(archivePath))");
+        sb.AppendLine("            throw new FileNotFoundException(\"Published archive was not found.\", archivePath);");
+        sb.AppendLine();
+        sb.AppendLine("        if (!AssetArchiveContains(archivePath, assetPath))");
+        sb.AppendLine("            throw new FileNotFoundException($\"Published archive '{archivePath}' is missing required asset '{assetPath}'.\", assetPath);");
+        sb.AppendLine();
+        sb.AppendLine("        return AssetPacker.GetAsset(archivePath, assetPath);");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static bool AssetArchiveContains(string archivePath, string assetPath)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        foreach (string candidate in AssetPacker.GetAssetPaths(archivePath))");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (string.Equals(candidate, assetPath, StringComparison.Ordinal))");
+        sb.AppendLine("                return true;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        return false;");
+        sb.AppendLine("    }");
+        sb.AppendLine("#endif");
         sb.AppendLine("}");
         return sb.ToString();
     }

@@ -28,6 +28,12 @@ namespace XREngine.Components.Lights
 
         private Vector3 _scale = Vector3.One;
         private float _cascadedShadowDistance = 200.0f;
+        private readonly float[] _uniformCascadeSplits = new float[MaxCascadeRenderCount];
+        private readonly float[] _uniformCascadeBlendWidths = new float[MaxCascadeRenderCount];
+        private readonly float[] _uniformCascadeBiasMins = new float[MaxCascadeRenderCount];
+        private readonly float[] _uniformCascadeBiasMaxes = new float[MaxCascadeRenderCount];
+        private readonly float[] _uniformCascadeReceiverOffsets = new float[MaxCascadeRenderCount];
+        private readonly Matrix4x4[] _uniformCascadeMatrices = new Matrix4x4[MaxCascadeRenderCount];
 
         /// <summary>
         /// Creates a directional light with tuned default shadow filtering and contact-shadow settings.
@@ -77,7 +83,11 @@ namespace XREngine.Components.Lights
                 if (!RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas)
                     return false;
 
-                return ResolveDirectionalSamplingShadowMapFormat().Encoding is
+                EShadowMapEncoding encoding = ResolveDirectionalSamplingShadowMapFormat().Encoding;
+                if (IsVulkanDirectionalShadowBackend())
+                    return encoding == EShadowMapEncoding.Depth;
+
+                return encoding is
                     EShadowMapEncoding.Depth or
                     EShadowMapEncoding.Variance2 or
                     EShadowMapEncoding.ExponentialVariance2 or
@@ -227,12 +237,12 @@ namespace XREngine.Components.Lights
             program.Uniform($"{flatPrefix}WorldToLightInvViewMatrix", ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
             program.Uniform($"{flatPrefix}WorldToLightSpaceMatrix", lightViewProj);  // Pre-computed for deferred shadow mapping
 
-            Span<float> cascadeSplits = stackalloc float[MaxCascadeRenderCount];
-            Span<float> cascadeBlendWidths = stackalloc float[MaxCascadeRenderCount];
-            Span<float> cascadeBiasMins = stackalloc float[MaxCascadeRenderCount];
-            Span<float> cascadeBiasMaxes = stackalloc float[MaxCascadeRenderCount];
-            Span<float> cascadeReceiverOffsets = stackalloc float[MaxCascadeRenderCount];
-            Span<Matrix4x4> cascadeMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
+            float[] cascadeSplits = _uniformCascadeSplits;
+            float[] cascadeBlendWidths = _uniformCascadeBlendWidths;
+            float[] cascadeBiasMins = _uniformCascadeBiasMins;
+            float[] cascadeBiasMaxes = _uniformCascadeBiasMaxes;
+            float[] cascadeReceiverOffsets = _uniformCascadeReceiverOffsets;
+            Matrix4x4[] cascadeMatrices = _uniformCascadeMatrices;
             CopyPublishedCascadeUniformData(
                 cascadeSplits,
                 cascadeBlendWidths,
@@ -243,6 +253,16 @@ namespace XREngine.Components.Lights
                 out int cascadeCount);
 
             program.Uniform($"{flatPrefix}CascadeCount", cascadeCount);
+            if (IsVulkanDirectionalShadowBackend())
+            {
+                program.Uniform($"{flatPrefix}CascadeSplits", cascadeSplits);
+                program.Uniform($"{flatPrefix}CascadeBlendWidths", cascadeBlendWidths);
+                program.Uniform($"{flatPrefix}CascadeBiasMin", cascadeBiasMins);
+                program.Uniform($"{flatPrefix}CascadeBiasMax", cascadeBiasMaxes);
+                program.Uniform($"{flatPrefix}CascadeReceiverOffsets", cascadeReceiverOffsets);
+                program.Uniform($"{flatPrefix}CascadeMatrices", cascadeMatrices);
+            }
+
             for (int i = 0; i < MaxCascadeRenderCount; i++)
             {
                 program.Uniform($"{flatPrefix}CascadeSplits[{i}]", cascadeSplits[i]);
@@ -306,6 +326,7 @@ namespace XREngine.Components.Lights
             [
                 new XRTexture2D(width, height, depthFormat.InternalFormat, depthFormat.PixelFormat, depthFormat.PixelType)
                 {
+                    Name = GetDirectionalShadowResourceName("PrimaryRasterDepth"),
                     MinFilter = ETexMinFilter.Nearest,
                     MagFilter = ETexMagFilter.Nearest,
                     UWrap = ETexWrapMode.ClampToEdge,
@@ -315,6 +336,7 @@ namespace XREngine.Components.Lights
                 },
                 new XRTexture2D(width, height, shadowFormat.InternalFormat, shadowFormat.PixelFormat, shadowFormat.PixelType)
                 {
+                    Name = GetDirectionalShadowResourceName("PrimaryColor"),
                     MinFilter = minFilter,
                     MagFilter = magFilter,
                     UWrap = ETexWrapMode.ClampToEdge,
@@ -322,6 +344,7 @@ namespace XREngine.Components.Lights
                     FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
                     SamplerName = "ShadowMap",
                     AutoGenerateMipmaps = momentEncoding && ShadowMomentUseMipmaps,
+                    SmallestAllowedMipmapLevel = ResolveShadowMomentSmallestAllowedMipmapLevel(momentEncoding, ShadowMomentUseMipmaps, width, height),
                 },
             ];
 
@@ -335,8 +358,45 @@ namespace XREngine.Components.Lights
             return mat;
         }
 
+        private string GetDirectionalShadowResourceName(string suffix)
+            => $"DirectionalShadow.{ID:N}.{suffix}";
+
+        private static int ResolveShadowMomentSmallestAllowedMipmapLevel(bool momentEncoding, bool useMipmaps, uint width, uint height)
+            => momentEncoding && useMipmaps
+                ? XRTexture.GetSmallestMipmapLevel(width, height)
+                : 1000;
+
         private ShadowMapFormatSelection ResolveDirectionalSamplingShadowMapFormat()
             => ResolveShadowMapFormat(preferredStorageFormat: null);
+
+        private static bool IsVulkanDirectionalShadowBackend()
+            => RuntimeEngine.Rendering.State.IsVulkan ||
+               RuntimeEngine.Rendering.IsVulkanRendererActive();
+
+        private bool ShouldUseVulkanRasterDepthReceiverTexture()
+            => IsVulkanDirectionalShadowBackend() &&
+               ResolveDirectionalSamplingShadowMapFormat().Encoding == EShadowMapEncoding.Depth;
+
+        internal XRTexture? PrimaryShadowReceiverTexture
+            => FindShadowMapMaterialTexture(
+                ShouldUseVulkanRasterDepthReceiverTexture()
+                    ? "ShadowRasterDepth"
+                    : "ShadowMap");
+
+        private XRTexture? FindShadowMapMaterialTexture(string samplerName)
+        {
+            if (!CastsShadows ||
+                ShadowMap?.Material?.Textures is not { } textures)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < textures.Count; i++)
+                if (textures[i]?.SamplerName == samplerName)
+                    return textures[i];
+
+            return null;
+        }
 
         protected override ColorF4 GetShadowMapClearColor()
         {

@@ -394,10 +394,14 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         string forwardLighting = LoadShaderSource(Path.Combine("Snippets", "ForwardLighting.glsl"));
 
         forwardLighting.ShouldContain("layout(std430, binding = 22) readonly buffer ForwardDirectionalLightsBuffer");
-        forwardLighting.ShouldContain("layout(std430, binding = 23) readonly buffer ForwardPointLightsBuffer");
-        forwardLighting.ShouldContain("layout(std430, binding = 26) readonly buffer ForwardSpotLightsBuffer");
-        forwardLighting.ShouldContain("layout(std430, binding = 27) readonly buffer ForwardPointShadowMetadataBuffer");
-        forwardLighting.ShouldContain("layout(std430, binding = 28) readonly buffer ForwardSpotShadowMetadataBuffer");
+        forwardLighting.ShouldContain("layout(std430, binding = 35) readonly buffer ForwardPointLightsBuffer");
+        forwardLighting.ShouldContain("layout(std430, binding = 36) readonly buffer ForwardSpotLightsBuffer");
+        forwardLighting.ShouldContain("layout(std430, binding = 37) readonly buffer ForwardPointShadowMetadataBuffer");
+        forwardLighting.ShouldContain("layout(std430, binding = 38) readonly buffer ForwardSpotShadowMetadataBuffer");
+        forwardLighting.ShouldContain("layout(binding = 23) uniform sampler2D SpotLightShadowMaps");
+        forwardLighting.ShouldContain("layout(binding = 28) uniform sampler2D ForwardContactDepthView;");
+        forwardLighting.ShouldNotContain("layout(std430, binding = 23) readonly buffer ForwardPointLightsBuffer");
+        forwardLighting.ShouldNotContain("layout(std430, binding = 28) readonly buffer ForwardSpotShadowMetadataBuffer");
         forwardLighting.ShouldNotContain("uniform DirLight DirectionalLights");
         forwardLighting.ShouldNotContain("uniform PointLight PointLights");
         forwardLighting.ShouldNotContain("uniform SpotLight SpotLights");

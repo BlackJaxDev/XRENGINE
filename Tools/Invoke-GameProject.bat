@@ -64,11 +64,13 @@ if /I "%MODE_NORM%"=="dev" (
     set "BUILD_CONFIG=Development"
     set "OUTPUT_SUBFOLDER=Game"
     set "PUBLISH_NATIVE_AOT=false"
+    set "VALIDATE_AOT=false"
     set "RUN_MODE=dev"
 ) else (
     set "BUILD_CONFIG=Release"
     set "OUTPUT_SUBFOLDER=Publish"
     set "PUBLISH_NATIVE_AOT=true"
+    set "VALIDATE_AOT=true"
     set "RUN_MODE=publish"
 )
 set "LAUNCHER_NAME=Game.exe"
@@ -84,6 +86,7 @@ if /I "%~1"=="--launcher-name" goto :arg_launcher
 if /I "%~1"=="--build-platform" goto :arg_platform
 if /I "%~1"=="--build-configuration" goto :arg_config
 if /I "%~1"=="--publish-native-aot" goto :arg_nativeaot
+if /I "%~1"=="--validate-aot" goto :arg_validateaot
 
 echo ERROR: Unknown option "%~1".
 goto :usage_error
@@ -138,6 +141,16 @@ shift
 shift
 goto :parse_args
 
+:arg_validateaot
+if "%~2"=="" (
+    echo ERROR: Missing value after --validate-aot.
+    goto :usage_error
+)
+set "VALIDATE_AOT=%~2"
+shift
+shift
+goto :parse_args
+
 :args_done
 if /I not "%ACTION_NORM%"=="run" (
     call :run_build_step
@@ -159,7 +172,7 @@ if /I "%ACTION_NORM%"=="compile" (
 )
 
 echo Building game launcher ^(%BUILD_CONFIG%^|%BUILD_PLATFORM%^)...
-dotnet run --project "%EDITOR_CSPROJ%" -c Debug -p:Platform=AnyCPU -- --build-project "%PROJECT_PATH%" --build-configuration "%BUILD_CONFIG%" --build-platform "%BUILD_PLATFORM%" --output-subfolder "%OUTPUT_SUBFOLDER%" --launcher-name "%LAUNCHER_NAME%" --publish-native-aot "%PUBLISH_NATIVE_AOT%"
+    dotnet run --project "%EDITOR_CSPROJ%" -c Debug -p:Platform=AnyCPU -- --build-project "%PROJECT_PATH%" --build-configuration "%BUILD_CONFIG%" --build-platform "%BUILD_PLATFORM%" --output-subfolder "%OUTPUT_SUBFOLDER%" --launcher-name "%LAUNCHER_NAME%" --publish-native-aot "%PUBLISH_NATIVE_AOT%" --validate-aot "%VALIDATE_AOT%"
 exit /b %ERRORLEVEL%
 
 :run_launch_step
@@ -223,6 +236,7 @@ echo   --launcher-name ^<name^>      Launcher executable name ^(default Game.exe
 echo   --build-platform ^<name^>     Build platform override ^(default Windows64^).
 echo   --build-configuration ^<name^> Build config override.
 echo   --publish-native-aot ^<bool^>  Override AOT publish flag.
+echo   --validate-aot ^<bool^>        Enable trim/AOT analyzer validation for launcher publish.
 echo.
 echo Examples:
 echo   %~nx0 build dev "D:\MyGame\GameProject\MyGame.xrproj"

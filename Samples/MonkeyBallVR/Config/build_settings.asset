@@ -1,11 +1,15 @@
-﻿__type: XREngine.BuildSettings
-Configuration: Development
+﻿__assetType: XREngine.BuildSettings
+Configuration: Release
 Platform: Windows64
-OutputSubfolder: Game
+OutputSubfolder: Publish
 CleanOutputDirectory: true
 CookContent: true
+BuildManagedAssemblies: true
+CopyGameAssemblies: true
 CopyEngineBinaries: true
 BuildLauncherExecutable: true
+PublishLauncherAsNativeAot: true
+ValidateLauncherAotCompatibility: true
 GenerateConfigArchive: true
 SaveSettingsBeforeBuild: true
 ContentArchiveName: GameContent.pak
@@ -14,5 +18,7 @@ ContentOutputFolder: Content
 ConfigOutputFolder: Config
 BinariesOutputFolder: Binaries
 LauncherExecutableName: Game.exe
+LauncherDefineConstants: XRE_PUBLISHED;XRE_AOT_RUNTIME
+ArchiveCopyBufferBytes: 1048576
 ID: 75c177ae-8266-4de6-a262-415812f289f3
 Name: Build Settings

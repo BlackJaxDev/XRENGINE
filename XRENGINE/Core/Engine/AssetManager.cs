@@ -31,11 +31,9 @@ namespace XREngine
         private const string ImportOptionsFileExtension = "import.yaml";
         private const string EngineAssetsPathEnvVar = "XRE_ENGINE_ASSETS_PATH";
         private const string GameAssetsPathEnvVar = "XRE_GAME_ASSETS_PATH";
-#if XRE_PUBLISHED
         private static string? _publishedConfigArchivePath;
         private static string? _publishedGameContentArchivePath;
         private static string? _publishedEngineContentArchivePath;
-#endif
 
         private static bool IsOnJobThread
             => JobManager.IsJobWorkerThread;

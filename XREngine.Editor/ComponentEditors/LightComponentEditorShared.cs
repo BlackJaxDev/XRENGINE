@@ -696,7 +696,7 @@ internal static class LightComponentEditorShared
 
         if (light is global::XREngine.Components.Lights.DirectionalLightComponent dirLight &&
             dirLight.EnableCascadedShadows &&
-            dirLight.CascadedShadowMapTexture is XRTexture2DArray cascadeTexture &&
+            dirLight.CascadedShadowPreviewTexture is XRTexture2DArray cascadeTexture &&
             dirLight.ActiveCascadeCount > 0)
         {
             DrawDirectionalCascadePreview(dirLight, cascadeTexture, dirLight.ActiveCascadeCount);

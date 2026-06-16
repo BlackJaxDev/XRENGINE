@@ -393,7 +393,7 @@ internal static class ProjectBuilder
                     .OrderBy(x => x.LegacyTypeName, StringComparer.Ordinal)
                     .ThenBy(x => x.FullName, StringComparer.Ordinal)],
                 WorldObjectReplications = [.. allTypes
-                    .Where(t => !t.IsAbstract && typeof(XRWorldObjectBase).IsAssignableFrom(t))
+                    .Where(t => !t.IsAbstract && typeof(RuntimeWorldObjectBase).IsAssignableFrom(t))
                     .Select(BuildReplicationInfo)
                     .Where(x => x is not null)
                     .Cast<AotWorldObjectReplicationInfo>()
@@ -618,7 +618,8 @@ internal static class ProjectBuilder
                     archivePath: commonAssetsArchivePath,
                     intermediateDirectory: context.IntermediateDirectory,
                     deltaFolderName: "CommonAssetsDelta",
-                    transformFile: static (source, destination) => File.Copy(source, destination, true));
+                    transformFile: static (source, destination) => File.Copy(source, destination, true),
+                    packFullSourceDirectly: true);
             }
         }
     }
@@ -749,7 +750,8 @@ internal static class ProjectBuilder
         string archivePath,
         string intermediateDirectory,
         string deltaFolderName,
-        Action<string, string> transformFile)
+        Action<string, string> transformFile,
+        bool packFullSourceDirectly = false)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
 
@@ -757,6 +759,12 @@ internal static class ProjectBuilder
 
         if (!File.Exists(archivePath))
         {
+            if (packFullSourceDirectly)
+            {
+                AssetPacker.Pack(sourceDirectory, archivePath);
+                return;
+            }
+
             string fullStagingDir = Path.Combine(intermediateDirectory, "Build", deltaFolderName + "_Full");
             StageFiles(sourceDirectory, fullStagingDir, currentSnapshot.Keys, transformFile);
             AssetPacker.Pack(fullStagingDir, archivePath);
@@ -772,6 +780,15 @@ internal static class ProjectBuilder
         catch
         {
             // Corrupt or unreadable archive — do a full repack
+            if (packFullSourceDirectly)
+            {
+                if (File.Exists(archivePath))
+                    File.Delete(archivePath);
+
+                AssetPacker.Pack(sourceDirectory, archivePath);
+                return;
+            }
+
             string fullStagingDir = Path.Combine(intermediateDirectory, "Build", deltaFolderName + "_FallbackFull");
             StageFiles(sourceDirectory, fullStagingDir, currentSnapshot.Keys, transformFile);
             if (File.Exists(archivePath))

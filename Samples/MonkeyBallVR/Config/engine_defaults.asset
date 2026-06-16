@@ -1,0 +1,132 @@
+﻿__assetType: XREngine.Engine+Rendering+EngineSettings
+EnableFrameLogging: true
+DebugOutputMinElapsedMs: 1
+TextureLogMode: Summary
+TextureSlowCpuDecodeResizeMilliseconds: 5
+TextureSlowMipBuildMilliseconds: 5
+TextureSlowUploadChunkMilliseconds: 2
+TextureSlowTransitionMilliseconds: 8
+TextureSlowQueueWaitMilliseconds: 100
+TextureUploadFrameBudgetMilliseconds: 2
+EnableZeroReadbackMaterialScatter: true
+ForceMeshSubmissionStrategy: CpuDirect
+OutputVerbosity: Verbose
+UseIntegerWeightingIds: true
+TransformReplicationKeyframeIntervalSec: 5
+TimeBetweenReplications: 0.1
+EnableVramBudget: true
+VramBudgetMB: 20480
+CullShadowCollectionByCameraFrusta: true
+UseSpotShadowAtlas: true
+UseDirectionalShadowAtlas: true
+UsePointShadowAtlas: true
+ShadowAtlasPageSize: 4096
+MaxShadowAtlasPages: 1
+MaxShadowTilesRenderedPerFrame: 16
+MaxShadowRenderMilliseconds: 2
+MinShadowAtlasTileResolution: 128
+MaxShadowAtlasTileResolution: 4096
+DefaultLuminance: 0.299 0.587 0.114
+OutputHDR: true
+MsaaSampleCount: 4
+AntiAliasingMode: Tsr
+TsrRenderScale: 0.67
+DlssQuality: Quality
+DlssCustomScale: 0.77
+DlssSharpness: 0.2
+XessQuality: Quality
+XessCustomScale: 0.77
+XessSharpness: 0.2
+AllowShaderPipelines: true
+UseIntegerUniformsInShaders: true
+TickGroupedItemsInParallel: true
+RecalcChildMatricesLoopType: Asynchronous
+LightProbeResolution: 512
+AllowBinaryProgramCaching: true
+AsyncProgramBinaryUpload: true
+AsyncProgramCompilation: true
+OpenGLProgramCompileLinkWorkerCount: 1
+MaxAsyncShaderProgramsPerFrame: 16
+OpenGLShaderCompilerThreadCount: 1
+OpenGLParallelShaderCompileProbeEnabled: true
+OpenGLParallelShaderCompileProbeTimeoutMs: 25
+CalculateBlendshapesInComputeShader: true
+EnableBlendshapePrecombineForDirectVertexPath: true
+BlendshapePrecombineComputeMinActiveShapes: 8
+BlendshapePrecombineDirectMinActiveShapes: 8
+BlendshapePrecombineMinAffectedVertices: 1024
+CalculateSkinningInComputeShader: true
+UseDetailPreservingComputeMipmaps: true
+UseGlobalBlendshapeWeightsBufferForComputeSkinning: true
+CalculateSkinnedBoundsInComputeShader: true
+SkinnedBoundsGpuDirectAabbWrite: true
+AllowInitialSkinnedBoundsBuildWhenNever: true
+UseGpuBvh: true
+CpuSceneCullingStructure: Bvh
+VulkanGpuDrivenProfile: Diagnostics
+EnableVulkanDescriptorIndexing: true
+EnableVulkanBindlessMaterialTable: true
+ValidateVulkanDescriptorContracts: true
+GpuCullingDataLayout: AoSHot
+GpuSortDomainPolicy: OpaqueFrontToBackTransparentBackToFront
+GpuOcclusionCullingMode: CpuQueryAsync
+CpuQueryOcclusionRetestPeriodFrames: 6
+CpuSocBufferWidth: 256
+CpuSocBufferHeight: 128
+CpuSocOccluderTriangleBudget: 5000
+CpuSocMaxOccluders: 64
+CpuSocMinOccluderScreenArea: 0.005
+CpuSocUseAvx2: true
+BvhLeafMaxPrims: 4
+BvhRefitOnlyWhenStable: true
+UseSkinnedBvhRefitOptimize: true
+RaycastBufferSize: 1024
+EnableGpuBvhTimingQueries: true
+DefaultFontFolder: Roboto
+DefaultFontFileName: Roboto-Medium.ttf
+AllowSkinning: true
+AllowBlendshapes: true
+RemapBlendshapeDeltas: true
+PreferNVStereo: true
+RenderWindowsWhileInVR: true
+VrMirrorComposeFromEyeTextures: true
+OpenXrCullWithFrustum: true
+OpenXrPrepareFrameAfterDesktopRender: true
+OpenXrDeadlineSafetyMarginMs: 1
+OpenXrCollectVisibleFrustumPaddingDegrees: 2
+OpenXrRenderPacingMode: PostRenderCallback
+VrFoveationCenterUv: 0.5 0.5
+VrFoveationInnerRadius: 0.35
+VrFoveationOuterRadius: 0.85
+VrFoveationShadingRates: 1 0.7 0.5
+VrFoveationVisibilityMargin: 0.05
+VrFoveationForceFullResForUiAndNearField: true
+VrFoveationFullResNearDistanceMeters: 1.5
+PhysicsGpuMemorySettings:
+  __assetType: XREngine.PhysicsGpuMemorySettings
+  MaxRigidContactCount: 1500000
+  MaxRigidPatchCount: 1000000
+  TempBufferCapacity: 33554432
+  HeapCapacity: 268435456
+  FoundLostPairsCapacity: 1000000
+  FoundLostAggregatePairsCapacity: 500000
+  TotalAggregatePairsCapacity: 1500000
+  MaxSoftBodyContacts: 250000
+  MaxFemClothContacts: 250000
+  MaxParticleContacts: 250000
+  CollisionStackSize: 33554432
+  MaxHairContacts: 250000
+  ID: 71a1e3c2-6fa0-40c5-9d44-d34cabd83e86
+PhysicsVisualizeSettings:
+  __assetType: XREngine.PhysicsVisualizeSettings
+  ID: fc5c8707-1b67-4c0c-ae28-84fe5795ad3e
+VulkanRobustnessSettings:
+  AllocatorBackend: Vma
+  SyncBackend: Sync2
+  DescriptorUpdateBackend: Template
+  DynamicUniformBufferEnabled: true
+PopulateVertexDataInParallel: true
+ProcessMeshImportsAsynchronously: true
+TransformCullingIsAxisAligned: true
+ID: 79c78d7b-ed7e-4c51-af3b-347d540c3330
+Name: Project Engine Defaults

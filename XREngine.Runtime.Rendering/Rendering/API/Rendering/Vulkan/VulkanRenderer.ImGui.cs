@@ -31,6 +31,7 @@ public unsafe partial class VulkanRenderer
     private DescriptorSetLayout _imguiDescriptorSetLayout;
     private DescriptorPool _imguiDescriptorPool;
     private DescriptorSet _imguiFontDescriptorSet;
+    private const uint ImGuiDescriptorPoolMaxSets = 256;
     private readonly Dictionary<nint, DescriptorSet> _imguiTextureDescriptorSets = [];
     private readonly Dictionary<XRTexture, ImGuiTextureRegistration> _imguiRegisteredTextures = [];
     private nint _nextImGuiTextureId = 2;
@@ -41,13 +42,7 @@ public unsafe partial class VulkanRenderer
     private Sampler _imguiFontSampler;
     private bool _imguiFontReady;
 
-    private Buffer _imguiVertexBuffer;
-    private DeviceMemory _imguiVertexBufferMemory;
-    private ulong _imguiVertexBufferSize;
-
-    private Buffer _imguiIndexBuffer;
-    private DeviceMemory _imguiIndexBufferMemory;
-    private ulong _imguiIndexBufferSize;
+    private ImGuiDrawBufferSet[] _imguiDrawBuffers = [];
 
     protected override bool SupportsImGui => true;
 
@@ -58,6 +53,16 @@ public unsafe partial class VulkanRenderer
         public ulong ImageViewHandle;
         public ulong SamplerHandle;
         public ImageLayout ImageLayout;
+    }
+
+    private struct ImGuiDrawBufferSet
+    {
+        public Buffer VertexBuffer;
+        public DeviceMemory VertexBufferMemory;
+        public ulong VertexBufferSize;
+        public Buffer IndexBuffer;
+        public DeviceMemory IndexBufferMemory;
+        public ulong IndexBufferSize;
     }
 
     private sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDisposable
@@ -238,6 +243,7 @@ public unsafe partial class VulkanRenderer
             // The GPU texture upload happens later in EnsureImGuiFontResources(),
             // but the CPU-side atlas must be built now so NewFrame() doesn't AV.
             var io = ImGui.GetIO();
+            io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;
             if (!ImGuiControllerUtilities.TryUseDefaultEditorFont(io, 18.0f))
             {
                 if (io.Fonts.Fonts.Size == 0)
@@ -660,21 +666,28 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyImGuiDrawBuffers()
     {
-        if (_imguiVertexBuffer.Handle != 0)
+        for (int i = 0; i < _imguiDrawBuffers.Length; i++)
         {
-            DestroyBuffer(_imguiVertexBuffer, _imguiVertexBufferMemory);
-            _imguiVertexBuffer = default;
-            _imguiVertexBufferMemory = default;
-            _imguiVertexBufferSize = 0;
+            ref ImGuiDrawBufferSet buffers = ref _imguiDrawBuffers[i];
+
+            if (buffers.VertexBuffer.Handle != 0)
+            {
+                DestroyBuffer(buffers.VertexBuffer, buffers.VertexBufferMemory);
+                buffers.VertexBuffer = default;
+                buffers.VertexBufferMemory = default;
+                buffers.VertexBufferSize = 0;
+            }
+
+            if (buffers.IndexBuffer.Handle != 0)
+            {
+                DestroyBuffer(buffers.IndexBuffer, buffers.IndexBufferMemory);
+                buffers.IndexBuffer = default;
+                buffers.IndexBufferMemory = default;
+                buffers.IndexBufferSize = 0;
+            }
         }
 
-        if (_imguiIndexBuffer.Handle != 0)
-        {
-            DestroyBuffer(_imguiIndexBuffer, _imguiIndexBufferMemory);
-            _imguiIndexBuffer = default;
-            _imguiIndexBufferMemory = default;
-            _imguiIndexBufferSize = 0;
-        }
+        _imguiDrawBuffers = [];
     }
 
     private void DestroyImGuiPipelineResources()
@@ -899,7 +912,7 @@ public unsafe partial class VulkanRenderer
         DescriptorPoolSize poolSize = new()
         {
             Type = DescriptorType.CombinedImageSampler,
-            DescriptorCount = 1
+            DescriptorCount = ImGuiDescriptorPoolMaxSets
         };
 
         DescriptorPoolCreateInfo poolInfo = new()
@@ -907,7 +920,7 @@ public unsafe partial class VulkanRenderer
             SType = StructureType.DescriptorPoolCreateInfo,
             PoolSizeCount = 1,
             PPoolSizes = &poolSize,
-            MaxSets = 256,
+            MaxSets = ImGuiDescriptorPoolMaxSets,
             Flags = DescriptorPoolCreateFlags.FreeDescriptorSetBit
         };
 
@@ -1281,36 +1294,55 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void EnsureImGuiDrawBuffers(ulong vertexBytes, ulong indexBytes)
+    private int EnsureImGuiDrawBufferSlot(uint imageIndex)
     {
+        int requiredSlots = Math.Max(MAX_FRAMES_IN_FLIGHT, swapChainImages?.Length ?? 0);
+        if (imageIndex >= (uint)requiredSlots)
+            requiredSlots = (int)imageIndex + 1;
+        if (requiredSlots <= 0)
+            requiredSlots = 1;
+
+        if (_imguiDrawBuffers.Length < requiredSlots)
+            Array.Resize(ref _imguiDrawBuffers, requiredSlots);
+
+        return imageIndex < (uint)_imguiDrawBuffers.Length ? (int)imageIndex : 0;
+    }
+
+    private int EnsureImGuiDrawBuffers(uint imageIndex, ulong vertexBytes, ulong indexBytes)
+    {
+        int bufferSlot = EnsureImGuiDrawBufferSlot(imageIndex);
+        ref ImGuiDrawBufferSet buffers = ref _imguiDrawBuffers[bufferSlot];
+
         ulong requiredVertexBytes = Math.Max(vertexBytes, 1UL);
         ulong requiredIndexBytes = Math.Max(indexBytes, 1UL);
 
-        if (_imguiVertexBuffer.Handle == 0 || _imguiVertexBufferSize < requiredVertexBytes)
+        if (buffers.VertexBuffer.Handle == 0 || buffers.VertexBufferSize < requiredVertexBytes)
         {
-            if (_imguiVertexBuffer.Handle != 0)
-                RetireBuffer(_imguiVertexBuffer, _imguiVertexBufferMemory);
+            if (buffers.VertexBuffer.Handle != 0)
+                RetireBuffer(buffers.VertexBuffer, buffers.VertexBufferMemory);
 
-            ulong capacity = ComputeImGuiBufferCapacity(_imguiVertexBufferSize, requiredVertexBytes);
-            (_imguiVertexBuffer, _imguiVertexBufferMemory) = CreateBufferRaw(
+            ulong capacity = ComputeImGuiBufferCapacity(buffers.VertexBufferSize, requiredVertexBytes);
+            (buffers.VertexBuffer, buffers.VertexBufferMemory) = CreateBufferRaw(
                 capacity,
                 BufferUsageFlags.VertexBufferBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
-            _imguiVertexBufferSize = capacity;
+            buffers.VertexBufferSize = capacity;
         }
 
-        if (_imguiIndexBuffer.Handle == 0 || _imguiIndexBufferSize < requiredIndexBytes)
+        if (buffers.IndexBuffer.Handle == 0 || buffers.IndexBufferSize < requiredIndexBytes)
         {
-            if (_imguiIndexBuffer.Handle != 0)
-                RetireBuffer(_imguiIndexBuffer, _imguiIndexBufferMemory);
+            if (buffers.IndexBuffer.Handle != 0)
+                RetireBuffer(buffers.IndexBuffer, buffers.IndexBufferMemory);
 
-            ulong capacity = ComputeImGuiBufferCapacity(_imguiIndexBufferSize, requiredIndexBytes);
-            (_imguiIndexBuffer, _imguiIndexBufferMemory) = CreateBufferRaw(
+            ulong capacity = ComputeImGuiBufferCapacity(buffers.IndexBufferSize, requiredIndexBytes);
+            (buffers.IndexBuffer, buffers.IndexBufferMemory) = CreateBufferRaw(
                 capacity,
                 BufferUsageFlags.IndexBufferBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
-            _imguiIndexBufferSize = capacity;
+            buffers.IndexBufferSize = capacity;
         }
+
+        return bufferSlot;
     }
 
     private static ulong ComputeImGuiBufferCapacity(ulong currentCapacity, ulong requiredBytes)
@@ -1363,8 +1395,6 @@ public unsafe partial class VulkanRenderer
 
     private void RenderImGui(CommandBuffer commandBuffer, uint imageIndex)
     {
-        _ = imageIndex;
-
         if (!_imguiDrawData.TryConsume(out ImGuiFrameSnapshot? drawData) || drawData is null)
             return;
 
@@ -1376,17 +1406,18 @@ public unsafe partial class VulkanRenderer
 
         ulong vertexBytes = (ulong)(drawData.TotalVertexCount * sizeof(ImDrawVert));
         ulong indexBytes = (ulong)(drawData.TotalIndexCount * sizeof(ushort));
-        EnsureImGuiDrawBuffers(vertexBytes, indexBytes);
+        int bufferSlot = EnsureImGuiDrawBuffers(imageIndex, vertexBytes, indexBytes);
+        ref ImGuiDrawBufferSet buffers = ref _imguiDrawBuffers[bufferSlot];
 
         void* mappedVertex = null;
         void* mappedIndex = null;
 
-        if (!TryMapBufferMemory(_imguiVertexBuffer, _imguiVertexBufferMemory, 0, vertexBytes, out mappedVertex))
+        if (!TryMapBufferMemory(buffers.VertexBuffer, buffers.VertexBufferMemory, 0, vertexBytes, out mappedVertex))
             throw new InvalidOperationException("Failed to map ImGui vertex buffer.");
 
-        if (!TryMapBufferMemory(_imguiIndexBuffer, _imguiIndexBufferMemory, 0, indexBytes, out mappedIndex))
+        if (!TryMapBufferMemory(buffers.IndexBuffer, buffers.IndexBufferMemory, 0, indexBytes, out mappedIndex))
         {
-            UnmapBufferMemory(_imguiVertexBuffer, _imguiVertexBufferMemory);
+            UnmapBufferMemory(buffers.VertexBuffer, buffers.VertexBufferMemory);
             throw new InvalidOperationException("Failed to map ImGui index buffer.");
         }
 
@@ -1396,8 +1427,8 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
-            UnmapBufferMemory(_imguiIndexBuffer, _imguiIndexBufferMemory);
-            UnmapBufferMemory(_imguiVertexBuffer, _imguiVertexBufferMemory);
+            UnmapBufferMemory(buffers.IndexBuffer, buffers.IndexBufferMemory);
+            UnmapBufferMemory(buffers.VertexBuffer, buffers.VertexBufferMemory);
         }
 
         Api.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _imguiPipeline);
@@ -1405,10 +1436,10 @@ public unsafe partial class VulkanRenderer
         DescriptorSet boundDescriptorSet = default;
         bool hasBoundDescriptorSet = false;
 
-        Buffer vertexBuffer = _imguiVertexBuffer;
+        Buffer vertexBuffer = buffers.VertexBuffer;
         ulong vertexOffset = 0;
         Api.CmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &vertexOffset);
-        Api.CmdBindIndexBuffer(commandBuffer, _imguiIndexBuffer, 0, IndexType.Uint16);
+        Api.CmdBindIndexBuffer(commandBuffer, buffers.IndexBuffer, 0, IndexType.Uint16);
 
         Vector2 clipOff = drawData.DisplayPos;
         Vector2 clipScale = drawData.FramebufferScale;

@@ -51,8 +51,9 @@ namespace XREngine.Core
                 if (_initialized)
                     return;
 
-                if (TryInitializeFromAotMetadata())
+                if (XRRuntimeEnvironment.IsAotRuntimeBuild)
                 {
+                    InitializeFromAotMetadata();
                     _initialized = true;
                     return;
                 }
@@ -110,14 +111,11 @@ namespace XREngine.Core
             }
         }
 
-        private static bool TryInitializeFromAotMetadata()
+        private static void InitializeFromAotMetadata()
         {
-            if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
-                return false;
-
-            AotRuntimeMetadata? metadata = AotRuntimeMetadataStore.Metadata;
-            if (metadata?.TypeRedirects is null || metadata.TypeRedirects.Length == 0)
-                return false;
+            AotRuntimeMetadata metadata = AotRuntimeMetadataStore.RequireMetadata();
+            if (metadata.TypeRedirects is null)
+                return;
 
             foreach (AotTypeRedirectInfo redirect in metadata.TypeRedirects)
             {
@@ -128,8 +126,6 @@ namespace XREngine.Core
                     redirect.LegacyTypeName,
                     new RedirectTarget(redirect.FullName, redirect.AssemblyQualifiedName));
             }
-
-            return true;
         }
     }
 }

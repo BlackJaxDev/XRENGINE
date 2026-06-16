@@ -201,6 +201,47 @@ void main()
         size.ShouldBe(112u);
     }
 
+    [Test]
+    public void Diagnostic_DumpDirLightLayout_FromRealDeferredLightingDirShader()
+    {
+        LoadedShaderSource loadedShader = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
+        object blockInfo = RewriteForVulkanAutoUniformBlockInfo(loadedShader.Source, EShaderType.Fragment);
+        uint blockSize = GetProperty<uint>(blockInfo, "Size");
+        TestContext.WriteLine($"Auto-uniform block size = {blockSize}");
+
+        object lightData = GetMember(blockInfo, "LightData");
+        uint lightDataOffset = GetProperty<uint>(lightData, "Offset");
+        uint lightDataSize = GetProperty<uint>(lightData, "Size");
+        TestContext.WriteLine($"LightData offset={lightDataOffset} size={lightDataSize}");
+
+        object? structMembers = GetProperty<object?>(lightData, "StructMembers");
+        structMembers.ShouldNotBeNull();
+        foreach (object field in (System.Collections.IEnumerable)structMembers!)
+        {
+            string? name = GetProperty<string>(field, "Name");
+            string? glslType = GetProperty<string>(field, "GlslType");
+            bool isArray = GetProperty<bool>(field, "IsArray");
+            uint arrayLength = GetProperty<uint>(field, "ArrayLength");
+            uint offset = GetProperty<uint>(field, "Offset");
+            uint stride = GetProperty<uint>(field, "ArrayStride");
+            uint size = GetProperty<uint>(field, "Size");
+            TestContext.WriteLine($"  {name,-28} type={glslType,-6} isArray={isArray,-5} len={arrayLength} offset={offset} stride={stride} size={size}");
+        }
+
+        // The struct must contain ALL six cascade arrays + CascadeCount, at correct std140 offsets.
+        object cascadeMatrices = GetStructMember(lightData, "CascadeMatrices");
+        GetProperty<uint>(cascadeMatrices, "Offset").ShouldBe(864u);
+        GetProperty<uint>(cascadeMatrices, "ArrayStride").ShouldBe(64u);
+        GetProperty<uint>(cascadeMatrices, "ArrayLength").ShouldBe(8u);
+
+        object cascadeSplits = GetStructMember(lightData, "CascadeSplits");
+        GetProperty<uint>(cascadeSplits, "Offset").ShouldBe(224u);
+        GetProperty<uint>(cascadeSplits, "ArrayStride").ShouldBe(16u);
+
+        object cascadeCount = GetStructMember(lightData, "CascadeCount");
+        GetProperty<uint>(cascadeCount, "Offset").ShouldBe(1376u);
+    }
+
     private static string RewriteForVulkanFragment(string source)
     {
         Type? autoUniformType = typeof(VulkanShaderCompiler).Assembly

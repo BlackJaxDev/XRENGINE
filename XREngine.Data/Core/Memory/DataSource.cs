@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using MemoryPack;
 using SixLabors.ImageSharp.PixelFormats;
@@ -173,17 +173,17 @@ namespace XREngine.Data
             return source;
         }
 
-        public static DataSource FromStruct<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] T>(T structObj) where T : struct
+        public static unsafe DataSource FromStruct<T>(T structObj) where T : unmanaged
         {
-            var size = Marshal.SizeOf<T>();
+            var size = Unsafe.SizeOf<T>();
             DataSource source = new((uint)size);
-            Marshal.StructureToPtr(structObj, source.Address, false);
+            Unsafe.WriteUnaligned((void*)source.Address, structObj);
             return source;
         }
 
-        public T ToStruct<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] T>() where T : struct
+        public unsafe T ToStruct<T>() where T : unmanaged
         {
-            return Marshal.PtrToStructure<T>(Address);
+            return Unsafe.ReadUnaligned<T>((void*)Address);
         }
         public unsafe T* ToStructPtr<T>() where T : unmanaged
         {

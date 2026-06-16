@@ -1,0 +1,392 @@
+﻿__assetType: XREngine.EditorPreferencesOverrides
+Theme:
+  ThemeNameOverride:
+    HasOverride: false
+    Value: 
+  QuadtreeIntersectedBoundsColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  QuadtreeContainedBoundsColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  OctreeIntersectedBoundsColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  OctreeContainedBoundsColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  MeshBoundsContainedColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  MeshBoundsIntersectedColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  MeshBoundsDisjointColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  Bounds2DColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  Bounds3DColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  TransformPointColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  TransformLineColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  TransformCapsuleColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  ConsoleGeneralColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  ConsoleAssetsColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  ConsoleMeshesColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  ConsoleTexturesColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  ConsoleRenderingColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  ConsoleLightingColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  ConsoleOpenGLColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  ConsolePhysicsColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  ConsoleAnimationColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+  ConsoleUIColorOverride:
+    HasOverride: false
+    Value: 0 0 0 0
+Debug:
+  RenderMesh3DBoundsOverride:
+    HasOverride: false
+    Value: false
+  RenderMesh2DBoundsOverride:
+    HasOverride: false
+    Value: false
+  RenderTransformDebugInfoOverride:
+    HasOverride: false
+    Value: false
+  RenderUITransformCoordinateOverride:
+    HasOverride: false
+    Value: false
+  RenderTransformLinesOverride:
+    HasOverride: false
+    Value: false
+  RenderTransformPointsOverride:
+    HasOverride: false
+    Value: false
+  RenderTransformCapsulesOverride:
+    HasOverride: false
+    Value: false
+  VisualizeDirectionalLightVolumesOverride:
+    HasOverride: false
+    Value: false
+  Preview3DWorldOctreeOverride:
+    HasOverride: false
+    Value: false
+  Preview2DWorldQuadtreeOverride:
+    HasOverride: false
+    Value: false
+  PreviewTracesOverride:
+    HasOverride: false
+    Value: false
+  RenderCullingVolumesOverride:
+    HasOverride: false
+    Value: false
+  VisualizeTransformIdOverride:
+    HasOverride: false
+    Value: false
+  VisualizeTransparencyModeOverlayOverride:
+    HasOverride: false
+    Value: false
+  VisualizeTransparencyClassificationOverlayOverride:
+    HasOverride: false
+    Value: false
+  VisualizeTransparencyAccumulationOverride:
+    HasOverride: false
+    Value: false
+  VisualizeTransparencyRevealageOverride:
+    HasOverride: false
+    Value: false
+  VisualizeTransparencyOverdrawHeatmapOverride:
+    HasOverride: false
+    Value: false
+  RenderLightProbeTetrahedraOverride:
+    HasOverride: false
+    Value: false
+  DebugTextMaxLifespanOverride:
+    HasOverride: false
+    Value: 0
+  DebugPointSizeOverride:
+    HasOverride: false
+    Value: 0
+  DebugLineWidthOverride:
+    HasOverride: false
+    Value: 0
+  EnableThreadAllocationTrackingOverride:
+    HasOverride: false
+    Value: false
+  UseDebugOpaquePipelineOverride:
+    HasOverride: false
+    Value: false
+  ForceGpuPassthroughCullingOverride:
+    HasOverride: false
+    Value: false
+  AllowGpuCpuFallbackOverride:
+    HasOverride: false
+    Value: false
+  EnableZeroReadbackMaterialScatterOverride:
+    HasOverride: false
+    Value: false
+  ZeroReadbackMaterialDrawPathOverride:
+    HasOverride: false
+    Value: FullBucketScan
+  EnableProfilerFrameLoggingOverride:
+    HasOverride: false
+    Value: false
+  EnableProfilerComponentTimingOverride:
+    HasOverride: false
+    Value: false
+  EnableRenderStatisticsTrackingOverride:
+    HasOverride: false
+    Value: false
+  EnableGpuRenderPipelineProfilingOverride:
+    HasOverride: false
+    Value: false
+  EnableMainThreadInvokeDiagnosticsOverride:
+    HasOverride: false
+    Value: false
+  EnableUILayoutDebugLoggingOverride:
+    HasOverride: false
+    Value: false
+  EnableProfilerUdpSendingOverride:
+    HasOverride: false
+    Value: false
+  StartExternalProfilerOnStartupOverride:
+    HasOverride: false
+    Value: false
+  CodeProfilerDebugOutputMinElapsedMsOverride:
+    HasOverride: false
+    Value: 0
+  CodeProfilerStatsThreadIntervalMsOverride:
+    HasOverride: false
+    Value: 0
+  CodeProfilerSnapshotIntervalMsOverride:
+    HasOverride: false
+    Value: 0
+  CodeProfilerThreadHistoryCapacityOverride:
+    HasOverride: false
+    Value: 0
+  CodeProfilerMaxOverflowPerCycleOverride:
+    HasOverride: false
+    Value: 0
+  CodeProfilerMaxOverflowQueueSizeOverride:
+    HasOverride: false
+    Value: 0
+  CodeProfilerProducerBufferCapacityOverride:
+    HasOverride: false
+    Value: 0
+  CodeProfilerFpsDropBaselineWindowSamplesOverride:
+    HasOverride: false
+    Value: 0
+  CodeProfilerFpsDropMinPreviousFpsOverride:
+    HasOverride: false
+    Value: 0
+  CodeProfilerFpsDropMinDeltaMsOverride:
+    HasOverride: false
+    Value: 0
+  CodeProfilerRenderStallThresholdMsOverride:
+    HasOverride: false
+    Value: 0
+  ProfilerPanelPausedOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelSortByTimeOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelSmoothingAlphaOverride:
+    HasOverride: false
+    Value: 0
+  ProfilerPanelUpdateIntervalSecondsOverride:
+    HasOverride: false
+    Value: 0
+  ProfilerPanelPersistenceSecondsOverride:
+    HasOverride: false
+    Value: 0
+  ProfilerPanelGraphSampleCountOverride:
+    HasOverride: false
+    Value: 0
+  ProfilerPanelRootHierarchyMinMsOverride:
+    HasOverride: false
+    Value: 0
+  ProfilerPanelRootHierarchyMaxMsOverride:
+    HasOverride: false
+    Value: 0
+  ProfilerPanelShowCpuTimingRawMsLineOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelShowCpuTimingSmoothedMsLineOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelInterpolateCpuTimingGraphsOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelCpuTimingDisplayModeOverride:
+    HasOverride: false
+    Value: Latest
+  ProfilerPanelShowGpuTimingRawMsLineOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelShowGpuTimingSmoothedMsLineOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelInterpolateGpuTimingGraphsOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelGpuTimingDisplayModeOverride:
+    HasOverride: false
+    Value: Latest
+  ProfilerPanelShowTreeOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelShowFpsDropSpikesOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelShowRenderStatsOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelShowGpuPipelineOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelShowThreadAllocationsOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelShowComponentTimingsOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelShowBvhMetricsOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelShowJobSystemOverride:
+    HasOverride: false
+    Value: false
+  ProfilerPanelShowMainThreadInvokesOverride:
+    HasOverride: false
+    Value: false
+  DebugShapePopulationModeOverride:
+    HasOverride: false
+    Value: Tasks
+  DebugVisualizerPopulationModeOverride:
+    HasOverride: false
+    Value: TasksWithParallelFor
+  DebugPrimitiveBufferFormatOverride:
+    HasOverride: false
+    Value: Expanded
+ViewportPresentationModeOverride:
+  HasOverride: false
+  Value: FullViewportBehindImGuiUI
+SceneDepthModeOverride:
+  HasOverride: false
+  Value: UseProjectDefault
+ScenePanelResizeDebounceMsOverride:
+  HasOverride: false
+  Value: 0
+HoverOutlineEnabledOverride:
+  HasOverride: false
+  Value: false
+SelectionOutlineEnabledOverride:
+  HasOverride: false
+  Value: false
+HoverOutlineColorOverride:
+  HasOverride: false
+  Value: 0 0 0 0
+SelectionOutlineColorOverride:
+  HasOverride: false
+  Value: 0 0 0 0
+ConfirmBeforeEnteringPlayModeOverride:
+  HasOverride: false
+  Value: false
+ConfirmBeforeExitingPlayModeOverride:
+  HasOverride: false
+  Value: false
+McpServerEnabledOverride:
+  HasOverride: false
+  Value: false
+McpServerPortOverride:
+  HasOverride: false
+  Value: 0
+McpServerRequireAuthOverride:
+  HasOverride: false
+  Value: false
+McpServerAuthTokenOverride:
+  HasOverride: false
+  Value: 
+McpServerCorsAllowlistOverride:
+  HasOverride: false
+  Value: 
+McpServerMaxRequestBytesOverride:
+  HasOverride: false
+  Value: 0
+McpServerRequestTimeoutMsOverride:
+  HasOverride: false
+  Value: 0
+McpServerReadOnlyOverride:
+  HasOverride: false
+  Value: false
+McpServerAllowedToolsOverride:
+  HasOverride: false
+  Value: 
+McpServerDeniedToolsOverride:
+  HasOverride: false
+  Value: 
+McpServerRateLimitEnabledOverride:
+  HasOverride: false
+  Value: false
+McpServerRateLimitRequestsOverride:
+  HasOverride: false
+  Value: 0
+McpServerRateLimitWindowSecondsOverride:
+  HasOverride: false
+  Value: 0
+McpServerIncludeStatusInPingOverride:
+  HasOverride: false
+  Value: false
+McpPermissionPolicyOverride:
+  HasOverride: false
+  Value: AlwaysAsk
+McpDispatchModeOverride:
+  HasOverride: false
+  Value: Direct
+FbxImporterBackendOverride:
+  HasOverride: false
+  Value: Auto
+GltfImporterBackendOverride:
+  HasOverride: false
+  Value: Auto
+AudioTransportOverride:
+  HasOverride: false
+  Value: OpenAL
+AudioEffectsOverride:
+  HasOverride: false
+  Value: OpenAL_EFX
+AudioArchitectureV2Override:
+  HasOverride: false
+  Value: false
+AudioSampleRateOverride:
+  HasOverride: false
+  Value: 0
+ID: 98c94e75-4bbc-42ec-b9cc-4768bd6a9f53
+Name: Editor Preferences Overrides

@@ -213,9 +213,15 @@ internal static class RenderResourceDescriptorFactory
         };
 
     private static uint ResolveMipLevelCount(XRTexture texture)
-        => texture switch
+    {
+        if (texture is XRTextureViewBase viewBase)
+            return Math.Max(1u, viewBase.NumLevels);
+
+        if (texture.AutoGenerateMipmaps)
+            return (uint)Math.Max(1, texture.SmallestMipmapLevel + 1);
+
+        return texture switch
         {
-            XRTextureViewBase viewBase => Math.Max(1u, viewBase.NumLevels),
             XRTexture1D tex1D => (uint)Math.Max(1, tex1D.Mipmaps.Length),
             XRTexture1DArray tex1DArray when tex1DArray.Textures.Length > 0 => (uint)Math.Max(1, tex1DArray.Textures[0].Mipmaps.Length),
             XRTexture2D tex2D => (uint)Math.Max(1, tex2D.Mipmaps.Length),
@@ -225,6 +231,7 @@ internal static class RenderResourceDescriptorFactory
             XRTextureCubeArray texCubeArray when texCubeArray.Cubes.Length > 0 => (uint)Math.Max(1, texCubeArray.Cubes[0].Mipmaps.Length),
             _ => 1u
         };
+    }
 
     private static uint ResolveLayerCount(XRTexture texture, uint fallbackDepth)
         => texture switch
