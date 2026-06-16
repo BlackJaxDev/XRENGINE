@@ -61,10 +61,9 @@ internal static partial class UberShaderVariantBuilder
         public required string[] PipelineMacros { get; init; }
     }
 
-    private sealed class MaterialVariantAxes
+    private sealed class PreResolvedMaterialVariantAxes
     {
         public required string[] EnabledFeatures { get; init; }
-        public required string[] PipelineMacros { get; init; }
         public required string[] AnimatedProperties { get; init; }
         public required string[] StaticProperties { get; init; }
         public required ulong VertexPermutationHash { get; init; }
@@ -127,10 +126,13 @@ internal static partial class UberShaderVariantBuilder
     internal static PreparedUberVariant PrepareVariant(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest, CancellationToken cancellationToken = default)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
+        PreResolvedMaterialVariantAxes preResolvedAxes = BuildPreResolvedMaterialAxes(material, canonicalShader, manifest);
+        cancellationToken.ThrowIfCancellationRequested();
+
         ResolvedUberShaderSource resolvedSource = ResolveCanonicalVariantSource(canonicalShader);
         cancellationToken.ThrowIfCancellationRequested();
 
-        UberMaterialVariantRequest request = BuildRequest(material, canonicalShader, manifest, resolvedSource);
+        UberMaterialVariantRequest request = BuildRequest(material, preResolvedAxes, resolvedSource);
         UberVariantCacheKey cacheKey = new(request.VariantHash, request.SourceVersion, resolvedSource.SourcePathHash, request.SourcePath);
         PruneStaleSourceEntries(request.SourcePath, resolvedSource.SourcePathHash, request.SourceVersion);
 
@@ -167,13 +169,13 @@ internal static partial class UberShaderVariantBuilder
         };
     }
 
-    private static UberMaterialVariantRequest BuildRequest(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest, ResolvedUberShaderSource resolvedSource)
+    private static UberMaterialVariantRequest BuildRequest(XRMaterial material, PreResolvedMaterialVariantAxes axes, ResolvedUberShaderSource resolvedSource)
     {
-        MaterialVariantAxes axes = BuildMaterialAxes(material, canonicalShader, manifest, resolvedSource);
+        string[] pipelineMacros = BuildPostResolvedPipelineMacros(material, axes.EnabledFeatures, resolvedSource.PipelineMacros);
 
         ulong variantHash = ComputeVariantHash(
             axes.EnabledFeatures,
-            axes.PipelineMacros,
+            pipelineMacros,
             axes.AnimatedProperties,
             axes.StaticProperties,
             material.RenderPass,
@@ -184,7 +186,7 @@ internal static partial class UberShaderVariantBuilder
             VariantHash = variantHash,
             VertexPermutationHash = axes.VertexPermutationHash,
             EnabledFeatures = axes.EnabledFeatures,
-            PipelineMacros = axes.PipelineMacros,
+            PipelineMacros = pipelineMacros,
             AnimatedProperties = axes.AnimatedProperties,
             StaticProperties = axes.StaticProperties,
             RenderPass = material.RenderPass,
@@ -193,7 +195,7 @@ internal static partial class UberShaderVariantBuilder
         };
     }
 
-    private static MaterialVariantAxes BuildMaterialAxes(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest, ResolvedUberShaderSource resolvedSource)
+    private static PreResolvedMaterialVariantAxes BuildPreResolvedMaterialAxes(XRMaterial material, XRShader canonicalShader, ShaderUiManifest manifest)
     {
         ManifestDerivedData manifestData = GetManifestDerivedData(manifest);
 
@@ -206,22 +208,6 @@ internal static partial class UberShaderVariantBuilder
 
         enabledFeatures.Sort(StringComparer.Ordinal);
         HashSet<string> enabledFeatureSet = new(enabledFeatures, StringComparer.Ordinal);
-        HashSet<string> pipelineMacros = new(resolvedSource.PipelineMacros, StringComparer.Ordinal);
-        bool forwardLightingEnabled = RequiresForwardLighting(material, enabledFeatureSet);
-        bool forwardShadowsEnabled = forwardLightingEnabled && RequiresForwardShadows(material);
-        if (!forwardLightingEnabled)
-            pipelineMacros.Add(DisableForwardLightingMacro);
-        if (!forwardLightingEnabled || !material.RenderOptions.RequiredEngineUniforms.HasFlag(EUniformRequirements.AmbientOcclusion))
-            pipelineMacros.Add(DisableForwardAmbientOcclusionMacro);
-        if (!forwardShadowsEnabled)
-            pipelineMacros.Add(DisableForwardShadowsMacro);
-        if (!forwardShadowsEnabled || !RequiresForwardContactShadows(material))
-            pipelineMacros.Add(DisableForwardContactShadowsMacro);
-        if (!forwardLightingEnabled || !RequiresForwardPbrResources(material))
-            pipelineMacros.Add(DisableForwardPbrResourcesMacro);
-
-        string[] pipelineMacroArray = [.. pipelineMacros];
-        Array.Sort(pipelineMacroArray, StringComparer.Ordinal);
 
         List<string> animatedProperties = [];
         List<string> staticProperties = [];
@@ -249,14 +235,38 @@ internal static partial class UberShaderVariantBuilder
         animatedProperties.Sort(StringComparer.Ordinal);
         staticProperties.Sort(StringComparer.Ordinal);
 
-        return new MaterialVariantAxes
+        return new PreResolvedMaterialVariantAxes
         {
             EnabledFeatures = [.. enabledFeatures],
-            PipelineMacros = pipelineMacroArray,
             AnimatedProperties = [.. animatedProperties],
             StaticProperties = [.. staticProperties],
             VertexPermutationHash = ComputeVertexPermutationHash(material),
         };
+    }
+
+    private static string[] BuildPostResolvedPipelineMacros(
+        XRMaterial material,
+        IReadOnlyList<string> enabledFeatures,
+        IReadOnlyCollection<string> resolvedPipelineMacros)
+    {
+        HashSet<string> enabledFeatureSet = new(enabledFeatures, StringComparer.Ordinal);
+        HashSet<string> pipelineMacros = new(resolvedPipelineMacros, StringComparer.Ordinal);
+        bool forwardLightingEnabled = RequiresForwardLighting(material, enabledFeatureSet);
+        bool forwardShadowsEnabled = forwardLightingEnabled && RequiresForwardShadows(material);
+        if (!forwardLightingEnabled)
+            pipelineMacros.Add(DisableForwardLightingMacro);
+        if (!forwardLightingEnabled || !material.RenderOptions.RequiredEngineUniforms.HasFlag(EUniformRequirements.AmbientOcclusion))
+            pipelineMacros.Add(DisableForwardAmbientOcclusionMacro);
+        if (!forwardShadowsEnabled)
+            pipelineMacros.Add(DisableForwardShadowsMacro);
+        if (!forwardShadowsEnabled || !RequiresForwardContactShadows(material))
+            pipelineMacros.Add(DisableForwardContactShadowsMacro);
+        if (!forwardLightingEnabled || !RequiresForwardPbrResources(material))
+            pipelineMacros.Add(DisableForwardPbrResourcesMacro);
+
+        string[] pipelineMacroArray = [.. pipelineMacros];
+        Array.Sort(pipelineMacroArray, StringComparer.Ordinal);
+        return pipelineMacroArray;
     }
 
     private static bool RequiresForwardLighting(XRMaterial material, IReadOnlySet<string> enabledFeatures)
@@ -314,12 +324,12 @@ internal static partial class UberShaderVariantBuilder
         Dictionary<string, string> staticLiterals = ResolveStaticLiteralMap(request.StaticProperties);
         HashSet<string> staticPropertyNames = new(staticLiterals.Keys, StringComparer.Ordinal);
 
-        string strippedSource = StripRecognizedDefines(resolvedSource, manifestData.KnownConditionalMacros, request.PipelineMacros);
-        strippedSource = PruneKnownConditionalBlocks(
-            strippedSource,
+        string strippedSource = StripRecognizedDefinesStaticUniformsAndPruneKnownConditionals(
+            resolvedSource,
             manifestData.KnownConditionalMacros,
+            request.PipelineMacros,
+            staticPropertyNames,
             ResolveDefinedConditionalMacros(disabledFeatureMacros, request.PipelineMacros));
-        strippedSource = StripStaticUniformDeclarations(strippedSource, staticPropertyNames);
         strippedSource = InlineStaticPropertyLiterals(strippedSource, staticLiterals);
         strippedSource = PruneStaticIfBlocks(strippedSource);
         strippedSource = ResolvedShaderSourceOptimizer.Optimize(
@@ -556,44 +566,67 @@ internal static partial class UberShaderVariantBuilder
         return [.. macros.Distinct(StringComparer.Ordinal)];
     }
 
-    private static string StripRecognizedDefines(string source, IEnumerable<string> featureGuardMacros, IEnumerable<string> pipelineMacros)
+    private static string StripRecognizedDefinesStaticUniformsAndPruneKnownConditionals(
+        string source,
+        IReadOnlySet<string> knownConditionalMacros,
+        IEnumerable<string> pipelineMacros,
+        IReadOnlySet<string> staticPropertyNames,
+        IReadOnlySet<string> definedConditionalMacros)
     {
         HashSet<string> macrosToStrip = new(StringComparer.Ordinal);
         foreach (string macro in PipelineAxisMacros)
             macrosToStrip.Add(macro);
-        foreach (string macro in featureGuardMacros)
+        foreach (string macro in knownConditionalMacros)
             macrosToStrip.Add(macro);
         foreach (string macro in pipelineMacros)
             macrosToStrip.Add(macro);
 
-        if (macrosToStrip.Count == 0)
-            return source;
-
-        return DefineLineRegex().Replace(source, match =>
-            macrosToStrip.Contains(match.Groups["name"].Value)
-                ? string.Empty
-                : match.Value);
-    }
-
-    private static string StripStaticUniformDeclarations(string source, HashSet<string> staticPropertyNames)
-    {
-        if (staticPropertyNames.Count == 0)
-            return source;
-
-        StringBuilder builder = new(source.Length);
+        bool stripStaticUniforms = staticPropertyNames.Count > 0;
+        List<string> lines = [];
+        bool previousBlank = false;
         foreach (string line in SplitLinesPreservingNewlines(source))
         {
-            Match match = UberStaticUniformRegex().Match(line);
-            if (match.Success)
+            Match defineMatch = DefineLineRegex().Match(line);
+            if (defineMatch.Success && macrosToStrip.Contains(defineMatch.Groups["name"].Value))
+                continue;
+
+            if (stripStaticUniforms)
             {
-                string uniformName = match.Groups["name"].Value;
-                if (staticPropertyNames.Contains(uniformName))
+                Match uniformMatch = UberStaticUniformRegex().Match(line);
+                if (uniformMatch.Success && staticPropertyNames.Contains(uniformMatch.Groups["name"].Value))
                     continue;
             }
 
-            builder.Append(line);
+            bool blank = IsBlankLine(line);
+            if (blank && previousBlank)
+                continue;
+
+            lines.Add(line);
+            previousBlank = blank;
         }
 
+        if (lines.Count == 0)
+            return string.Empty;
+
+        try
+        {
+            return ProcessConditionalRange(lines, 0, lines.Count, knownConditionalMacros, definedConditionalMacros);
+        }
+        catch
+        {
+            return JoinLines(lines);
+        }
+    }
+
+    private static string JoinLines(IReadOnlyList<string> lines)
+    {
+        int capacity = 0;
+        foreach (string line in lines)
+            capacity += line.Length;
+
+        StringBuilder builder = new(capacity);
+        foreach (string line in lines)
+            builder.Append(line);
         return builder.ToString();
     }
 
@@ -940,23 +973,46 @@ internal static partial class UberShaderVariantBuilder
             return source;
 
         Match versionMatch = Regex.Match(source, @"^[ \t]*#version.*$", RegexOptions.Multiline);
+        string newline = Environment.NewLine;
         int defineBlockLength = 0;
         foreach (string define in defines)
-            defineBlockLength += define.Length + Environment.NewLine.Length;
+            defineBlockLength += define.Length + newline.Length;
 
-        StringBuilder defineBuilder = new(defineBlockLength);
-        foreach (string define in defines)
-            defineBuilder.Append(define).Append(Environment.NewLine);
-        string defineBlock = defineBuilder.ToString();
+        int capacity = source.Length + defineBlockLength + (newline.Length * 2);
+        StringBuilder builder = new(capacity);
         if (!versionMatch.Success)
-            return defineBlock + source;
+        {
+            AppendDefineBlock(builder, defines, newline);
+            builder.Append(source);
+            return builder.ToString();
+        }
 
         int insertIndex = versionMatch.Index + versionMatch.Length;
-        string prefix = source[..insertIndex];
-        string suffix = insertIndex < source.Length ? source[insertIndex..].TrimStart('\r', '\n') : string.Empty;
-        return string.IsNullOrEmpty(suffix)
-            ? prefix + Environment.NewLine + defineBlock
-            : prefix + Environment.NewLine + defineBlock + Environment.NewLine + suffix;
+        int versionEnd = insertIndex;
+        if (versionEnd > 0 && source[versionEnd - 1] == '\r')
+            versionEnd--;
+
+        builder.Append(source.AsSpan(0, versionEnd));
+        builder.Append(newline);
+        AppendDefineBlock(builder, defines, newline);
+
+        int suffixStart = insertIndex;
+        while (suffixStart < source.Length && source[suffixStart] is '\r' or '\n')
+            suffixStart++;
+
+        if (suffixStart < source.Length)
+        {
+            builder.Append(newline);
+            builder.Append(source.AsSpan(suffixStart));
+        }
+
+        return builder.ToString();
+    }
+
+    private static void AppendDefineBlock(StringBuilder builder, IReadOnlyList<string> defines, string newline)
+    {
+        foreach (string define in defines)
+            builder.Append(define).Append(newline);
     }
 
     private static bool ResolveFeatureEnabled(XRMaterial material, XRShader canonicalShader, ShaderUiFeature feature)
@@ -1120,11 +1176,25 @@ internal static partial class UberShaderVariantBuilder
         if (float.IsNaN(value) || float.IsInfinity(value))
             throw new InvalidOperationException($"Uber static literal '{value}' is not a finite float.");
 
-        if (value == 0.0f)
-            return "0.0";
+        if (TryFormatCommonFloatLiteral(value, out string? literal))
+            return literal!;
 
         string text = value.ToString("0.0################", CultureInfo.InvariantCulture);
         return text.StartsWith("-0.0", StringComparison.Ordinal) ? "0.0" : text;
+    }
+
+    private static bool TryFormatCommonFloatLiteral(float value, out string? literal)
+    {
+        literal = value switch
+        {
+            0.0f => "0.0",
+            1.0f => "1.0",
+            -1.0f => "-1.0",
+            0.5f => "0.5",
+            _ => null,
+        };
+
+        return literal is not null;
     }
 
     private static int CountReferencedSamplers(ShaderUiManifest manifest, UberMaterialVariantRequest request, string generatedSource)
@@ -1239,9 +1309,15 @@ internal static partial class UberShaderVariantBuilder
         XxHash64 hash = new();
         AppendInt32(hash, 2); // hash schema: xxHash64 vertex permutation
 
-        foreach (XRShader shader in material.Shaders
-            .Where(static x => x is not null && x.Type != EShaderType.Fragment)
-            .OrderBy(static x => x.Type))
+        List<XRShader> nonFragmentShaders = new(material.Shaders.Count);
+        foreach (XRShader shader in material.Shaders)
+        {
+            if (shader is not null && shader.Type != EShaderType.Fragment)
+                nonFragmentShaders.Add(shader);
+        }
+
+        nonFragmentShaders.Sort(static (left, right) => left.Type.CompareTo(right.Type));
+        foreach (XRShader shader in nonFragmentShaders)
         {
             ResolvedUberShaderSource resolved = ResolveShaderSourceCached(shader, emitIncludeDeadCodeMarkers: false);
             VertexPermutationCacheKey cacheKey = new(

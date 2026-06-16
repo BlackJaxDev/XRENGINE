@@ -70,14 +70,12 @@ namespace XREngine
 
                     string normalizedExtension = extension[1..].ToLowerInvariant();
 
-#if XRE_PUBLISHED
                     if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, out T? publishedAsset))
                     {
                         AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Loaded published asset from archive.", 1.0f);
                         PostLoaded(filePath, publishedAsset);
                         return publishedAsset;
                     }
-#endif
 
                     if (!File.Exists(filePath))
                     {
@@ -140,14 +138,12 @@ namespace XREngine
 
                     string normalizedExtension = extension[1..].ToLowerInvariant();
 
-#if XRE_PUBLISHED
                     if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, type, out XRAsset? publishedAsset))
                     {
                         AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.Completed, "Loaded published asset from archive.", 1.0f);
                         PostLoaded(filePath, publishedAsset);
                         return publishedAsset;
                     }
-#endif
 
                     if (!File.Exists(filePath))
                     {

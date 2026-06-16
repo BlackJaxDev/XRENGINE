@@ -15,14 +15,11 @@ namespace XREngine
             string? gameContentArchivePath,
             string? engineContentArchivePath)
         {
-#if XRE_PUBLISHED
             _publishedConfigArchivePath = NormalizeExistingArchivePath(configArchivePath);
             _publishedGameContentArchivePath = NormalizeExistingArchivePath(gameContentArchivePath);
             _publishedEngineContentArchivePath = NormalizeExistingArchivePath(engineContentArchivePath);
-#endif
         }
 
-#if XRE_PUBLISHED
         [RequiresUnreferencedCode("Cooked asset loading from archives uses reflection and requires runtime metadata.")]
         [RequiresDynamicCode("Cooked asset loading from archives uses reflection and cannot be fully AOT-analyzed.")]
         private static bool TryLoadPublishedAssetFromArchive<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
@@ -50,7 +47,6 @@ namespace XREngine
                 catch (Exception ex)
                 {
                     Debug.LogWarning($"Failed to load published asset '{candidateAssetPath}' from '{candidateArchivePath}': {ex.Message}");
-                    return false;
                 }
             }
 
@@ -84,7 +80,6 @@ namespace XREngine
                 catch (Exception ex)
                 {
                     Debug.LogWarning($"Failed to load published asset '{candidateAssetPath}' from '{candidateArchivePath}': {ex.Message}");
-                    return false;
                 }
             }
 
@@ -95,6 +90,9 @@ namespace XREngine
         {
             archivePath = string.Empty;
             archiveAssetPath = string.Empty;
+
+            if (!XRRuntimeEnvironment.IsPublishedBuild)
+                return false;
 
             if (!string.Equals(Path.GetExtension(filePath), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase))
                 return false;
@@ -121,9 +119,11 @@ namespace XREngine
         private static IEnumerable<string> EnumerateArchivePathCandidates(string filePath)
         {
             string normalizedPath = filePath.Replace('\\', '/');
+            string fileName = Path.GetFileName(normalizedPath);
             bool looksLikeEngineAsset = normalizedPath.Contains("/Build/CommonAssets/", StringComparison.OrdinalIgnoreCase)
                 || normalizedPath.Contains("/CommonAssets/", StringComparison.OrdinalIgnoreCase);
-            bool looksLikeConfigAsset = normalizedPath.Contains("/Config/", StringComparison.OrdinalIgnoreCase);
+            bool looksLikeConfigAsset = normalizedPath.Contains("/Config/", StringComparison.OrdinalIgnoreCase)
+                || IsPublishedConfigAssetName(fileName);
             bool looksLikeGameAsset = normalizedPath.Contains("/Assets/", StringComparison.OrdinalIgnoreCase)
                 || (!looksLikeEngineAsset && !looksLikeConfigAsset);
 
@@ -164,6 +164,13 @@ namespace XREngine
             foreach (string path in results)
                 yield return path;
         }
+
+        private static bool IsPublishedConfigAssetName(string fileName)
+            => string.Equals(fileName, "startup.asset", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fileName, "game_settings.asset", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fileName, "user_settings.asset", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fileName, "editor_preferences.asset", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fileName, "build_settings.asset", StringComparison.OrdinalIgnoreCase);
 
         private static IEnumerable<string> EnumerateArchiveAssetPathCandidates(string filePath)
         {
@@ -223,6 +230,5 @@ namespace XREngine
                 return null;
             }
         }
-#endif
     }
 }

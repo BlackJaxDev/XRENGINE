@@ -1,6 +1,5 @@
 using XREngine.Extensions;
 using MemoryPack;
-using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -424,8 +423,7 @@ namespace XREngine.Rendering
         /// <typeparam name="T">The type of value to read.</typeparam>
         /// <param name="offset">The offset into the buffer, in bytes.</param>
         /// <returns>The T value at the given offset.</returns>
-        [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.", Justification = "<Pending>")]
-        public T? Get<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(uint offset) where T : struct
+        public T? Get<T>(uint offset) where T : unmanaged
             => _clientSideSource != null ? ReadStructValue<T>(_clientSideSource.Address + offset) : default;
 
         /// <summary>
@@ -436,13 +434,13 @@ namespace XREngine.Rendering
         /// <typeparam name="T">The type of value to write.</typeparam>
         /// <param name="index">The index of the value in the buffer.</param>
         /// <param name="value">The value to write.</param>
-        public void Set<T>(uint index, T value) where T : struct
+        public void Set<T>(uint index, T value) where T : unmanaged
         {
             if (_clientSideSource != null)
                 WriteStructValue(_clientSideSource.Address[index, ElementSize], value);
         }
         
-        public void SetByOffset<T>(uint offset, T value) where T : struct
+        public void SetByOffset<T>(uint offset, T value) where T : unmanaged
         {
             if (_clientSideSource != null)
                 WriteStructValue(_clientSideSource.Address + offset, value);
@@ -502,28 +500,15 @@ namespace XREngine.Rendering
             _clientSideSource = DataSource.Allocate(byteLength);
         }
 
-        private static bool CanUseDirectStructAccess<T>() where T : struct
-            => !RuntimeHelpers.IsReferenceOrContainsReferences<T>();
+        private static unsafe void WriteStructValue<T>(VoidPtr address, in T value) where T : unmanaged
+            => Unsafe.WriteUnaligned(address.Pointer, value);
 
-        private static unsafe void WriteStructValue<T>(VoidPtr address, in T value) where T : struct
+        private static unsafe T ReadStructValue<T>(VoidPtr address) where T : unmanaged
+            => Unsafe.ReadUnaligned<T>(address.Pointer);
+
+        private static unsafe bool TryWriteContiguousStructSpan<T>(VoidPtr destination, uint stride, ReadOnlySpan<T> data) where T : unmanaged
         {
-            if (CanUseDirectStructAccess<T>())
-            {
-                Unsafe.WriteUnaligned(address.Pointer, value);
-                return;
-            }
-
-            Marshal.StructureToPtr(value, (IntPtr)address, true);
-        }
-
-        private static unsafe T ReadStructValue<T>(VoidPtr address) where T : struct
-            => CanUseDirectStructAccess<T>()
-                ? Unsafe.ReadUnaligned<T>(address.Pointer)
-                : Marshal.PtrToStructure<T>((IntPtr)address);
-
-        private static unsafe bool TryWriteContiguousStructSpan<T>(VoidPtr destination, uint stride, ReadOnlySpan<T> data) where T : struct
-        {
-            if (!CanUseDirectStructAccess<T>() || stride != (uint)Unsafe.SizeOf<T>())
+            if (stride != (uint)Unsafe.SizeOf<T>())
                 return false;
 
             if (data.IsEmpty)
@@ -536,9 +521,9 @@ namespace XREngine.Rendering
             return true;
         }
 
-        private static unsafe bool TryReadContiguousStructSpan<T>(VoidPtr source, uint stride, Span<T> data) where T : struct
+        private static unsafe bool TryReadContiguousStructSpan<T>(VoidPtr source, uint stride, Span<T> data) where T : unmanaged
         {
-            if (!CanUseDirectStructAccess<T>() || stride != (uint)Unsafe.SizeOf<T>())
+            if (stride != (uint)Unsafe.SizeOf<T>())
                 return false;
 
             if (data.IsEmpty)
@@ -569,7 +554,7 @@ namespace XREngine.Rendering
             return false;
         }
 
-        private bool TrySetContiguousStructData<T>(ReadOnlySpan<T> data) where T : struct
+        private bool TrySetContiguousStructData<T>(ReadOnlySpan<T> data) where T : unmanaged
         {
             _elementCount = (uint)data.Length;
             EnsureClientSideSourceLength(Length);
@@ -581,7 +566,7 @@ namespace XREngine.Rendering
             return true;
         }
 
-        private static void ConfigureRawComponentLayout<T>(out EComponentType componentType, out uint componentCount) where T : struct
+        private static void ConfigureRawComponentLayout<T>(out EComponentType componentType, out uint componentCount) where T : unmanaged
         {
             componentCount = 1;
 
@@ -706,7 +691,7 @@ namespace XREngine.Rendering
             return PadEndingToVec4 ? byteLength.Align(0x10) : byteLength;
         }
 
-        public void Allocate<T>(uint listCount) where T : struct
+        public void Allocate<T>(uint listCount) where T : unmanaged
         {
             ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
 
@@ -727,14 +712,14 @@ namespace XREngine.Rendering
             EnsureClientSideSourceLength(stride * count);
         }
 
-        public void SetDataRawAtIndex<T>(uint index, T data) where T : struct
+        public void SetDataRawAtIndex<T>(uint index, T data) where T : unmanaged
         {
             if (_clientSideSource is null)
                 throw new InvalidOperationException($"Cannot set data at index {index}: client-side buffer has not been allocated.");
             WriteStructValue(_clientSideSource.Address[index, ElementSize], data);
         }
         
-        public T GetDataRawAtIndex<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(uint index) where T : struct
+        public T GetDataRawAtIndex<T>(uint index) where T : unmanaged
         {
             if (_clientSideSource is null)
                 throw new InvalidOperationException($"Cannot get data at index {index}: client-side buffer has not been allocated.");
@@ -743,7 +728,7 @@ namespace XREngine.Rendering
             return ReadStructValue<T>(_clientSideSource.Address[index, ElementSize]);
         }
 
-        public void SetDataArrayRawAtIndex<T>(uint index, T[] data) where T : struct
+        public void SetDataArrayRawAtIndex<T>(uint index, T[] data) where T : unmanaged
         {
             if (_clientSideSource is null)
                 throw new InvalidOperationException($"Cannot set data array at index {index}: client-side buffer has not been allocated.");
@@ -764,7 +749,7 @@ namespace XREngine.Rendering
         /// <param name="index"></param>
         /// <param name="count"></param>
         /// <returns></returns>
-        public T[] GetDataArrayRawAtIndex<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(uint index, int count) where T : struct
+        public T[] GetDataArrayRawAtIndex<T>(uint index, int count) where T : unmanaged
         {
             T[] arr = new T[count];
             uint stride = ElementSize;
@@ -815,7 +800,7 @@ namespace XREngine.Rendering
         public unsafe Vector4 GetVector4AtOffset(uint offset)
             => ((Vector4*)(_clientSideSource!.Address + offset).Pointer)[0];
 
-        public Remapper? SetDataRaw<T>(IEnumerable<T> items, int count, bool remap = false) where T : struct
+        public Remapper? SetDataRaw<T>(IEnumerable<T> items, int count, bool remap = false) where T : unmanaged
         {
             ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
 
@@ -860,7 +845,7 @@ namespace XREngine.Rendering
                 return null;
             }
         }
-        public Remapper? SetDataRaw<T>(IList<T> list, bool remap = false) where T : struct
+        public Remapper? SetDataRaw<T>(IList<T> list, bool remap = false) where T : unmanaged
         {
             ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
 
@@ -965,7 +950,7 @@ namespace XREngine.Rendering
             return remapper;
         }
 
-        public Remapper? GetDataRaw<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(out T[] array, bool remap = true, bool validateTypes = true) where T : struct
+        public Remapper? GetDataRaw<T>(out T[] array, bool remap = true, bool validateTypes = true) where T : unmanaged
         {
             if (validateTypes)
             {
@@ -1182,7 +1167,7 @@ namespace XREngine.Rendering
             }
         }
 
-        private void Print<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>() where T : struct
+        private void Print<T>() where T : unmanaged
         {
             GetDataRaw(out T[] array);
             StringBuilder sb = new();

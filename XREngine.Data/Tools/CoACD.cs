@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -137,19 +138,19 @@ namespace XREngine.Data.Tools
                 _ => "info"
             });
 
-        private static IReadOnlyList<ConvexHullMesh> ExtractMeshes(NativeMeshArray nativeArray)
+        private static unsafe IReadOnlyList<ConvexHullMesh> ExtractMeshes(NativeMeshArray nativeArray)
         {
             if (nativeArray.MeshesPtr == IntPtr.Zero || nativeArray.MeshesCount == 0)
                 return [];
 
             int meshCount = checked((int)nativeArray.MeshesCount);
             var meshes = new List<ConvexHullMesh>(meshCount);
-            int meshSize = Marshal.SizeOf<NativeMesh>();
+            int meshSize = Unsafe.SizeOf<NativeMesh>();
 
             for (int i = 0; i < meshCount; i++)
             {
                 IntPtr meshPtr = IntPtr.Add(nativeArray.MeshesPtr, i * meshSize);
-                NativeMesh mesh = Marshal.PtrToStructure<NativeMesh>(meshPtr)!;
+                NativeMesh mesh = Unsafe.ReadUnaligned<NativeMesh>((void*)meshPtr);
                 int vertexCount = checked((int)mesh.VerticesCount);
                 if (vertexCount == 0 || mesh.VerticesPtr == IntPtr.Zero)
                     continue;

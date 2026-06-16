@@ -1,15 +1,40 @@
+using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
+using XREngine;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
+using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
 public sealed class LightShadowMapStorageFormatTests
 {
+    private IRuntimeRenderingHostServices _previousRenderingHostServices = RuntimeRenderingHostServices.Current;
+    private IRuntimeShaderServices? _previousShaderServices;
+
+    [OneTimeSetUp]
+    public void OneTimeSetUp()
+    {
+        _previousRenderingHostServices = RuntimeRenderingHostServices.Current;
+        _previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeRenderingHostServices.Current = TestRenderingHostServices.Create(
+            _previousRenderingHostServices,
+            new TestRenderPipeline());
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+    }
+
+    [OneTimeTearDown]
+    public void OneTimeTearDown()
+    {
+        RuntimeRenderingHostServices.Current = _previousRenderingHostServices;
+        RuntimeShaderServices.Current = _previousShaderServices;
+    }
+
     [Test]
     public void SpotLight_UsesSelectedColorShadowStorageFormat()
     {
@@ -58,10 +83,28 @@ public sealed class LightShadowMapStorageFormatTests
         rasterDepth.Mipmaps[0].InternalFormat.ShouldBe(EPixelInternalFormat.DepthComponent32f);
         rasterDepth.Mipmaps[0].PixelFormat.ShouldBe(EPixelFormat.DepthComponent);
         rasterDepth.Mipmaps[0].PixelType.ShouldBe(EPixelType.Float);
+        (rasterDepth.Name ?? string.Empty).ShouldContain(".PrimaryRasterDepth");
         shadowMap.SizedInternalFormat.ShouldBe(ESizedInternalFormat.R16f);
         shadowMap.FrameBufferAttachment.ShouldBe(EFrameBufferAttachment.ColorAttachment0);
+        (shadowMap.Name ?? string.Empty).ShouldContain(".PrimaryColor");
         light.CascadedShadowMapTexture.ShouldNotBeNull();
-        light.CascadedShadowMapTexture!.SizedInternalFormat.ShouldBe(ESizedInternalFormat.DepthComponent32f);
+        light.CascadedShadowMapTexture!.SizedInternalFormat.ShouldBe(ESizedInternalFormat.R16f);
+        (light.CascadedShadowMapTexture.Name ?? string.Empty).ShouldContain(".Cascade.ColorArray");
+        light.GetCascadeFrameBuffer(0).ShouldNotBeNull();
+        (light.GetCascadeFrameBuffer(0)!.Name ?? string.Empty).ShouldContain(".Cascade.Layer0Fbo");
+
+        bool previousIsVulkan = RuntimeEngine.Rendering.State.IsVulkan;
+        try
+        {
+            RuntimeEngine.Rendering.State.IsVulkan = true;
+            light.CascadedShadowReceiverTexture.ShouldNotBeNull();
+            light.CascadedShadowReceiverTexture!.SizedInternalFormat.ShouldBe(ESizedInternalFormat.DepthComponent32f);
+            (light.CascadedShadowReceiverTexture.Name ?? string.Empty).ShouldContain(".Cascade.RasterDepthArray");
+        }
+        finally
+        {
+            RuntimeEngine.Rendering.State.IsVulkan = previousIsVulkan;
+        }
     }
 
     [Test]
@@ -100,5 +143,44 @@ public sealed class LightShadowMapStorageFormatTests
 
         Assert.Fail($"{attachment} texture of type {typeof(TTexture).Name} was not found.");
         return null!;
+    }
+
+    private class TestRenderingHostServices : DispatchProxy
+    {
+        public IRuntimeRenderingHostServices Inner { get; set; } = null!;
+        public IRuntimeRenderPipelineHost DefaultPipeline { get; set; } = null!;
+
+        public static IRuntimeRenderingHostServices Create(
+            IRuntimeRenderingHostServices inner,
+            IRuntimeRenderPipelineHost defaultPipeline)
+        {
+            IRuntimeRenderingHostServices proxy = Create<IRuntimeRenderingHostServices, TestRenderingHostServices>();
+            TestRenderingHostServices state = (TestRenderingHostServices)(object)proxy;
+            state.Inner = inner;
+            state.DefaultPipeline = defaultPipeline;
+            return proxy;
+        }
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod is null)
+                return null;
+
+            if (targetMethod.Name == nameof(IRuntimeRenderingHostServices.CreateDefaultRenderPipeline))
+                return DefaultPipeline;
+
+            return targetMethod.Invoke(Inner, args);
+        }
+    }
+
+    private sealed class TestRenderPipeline : RenderPipeline
+    {
+        protected override Lazy<XRMaterial> InvalidMaterialFactory => new(() => new XRMaterial());
+
+        protected override ViewportRenderCommandContainer GenerateCommandChain()
+            => new(this);
+
+        protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
+            => [];
     }
 }

@@ -1,10 +1,17 @@
 using NUnit.Framework;
 using Shouldly;
+using System;
 using System.IO;
+using System.Reflection;
+using System.Threading.Tasks;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
+using XREngine.Core.Files;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Shadows;
 
 namespace XREngine.UnitTests.Rendering;
@@ -12,6 +19,27 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
 {
+    private IRuntimeRenderingHostServices _previousRenderingHostServices = RuntimeRenderingHostServices.Current;
+    private IRuntimeShaderServices? _previousShaderServices;
+
+    [OneTimeSetUp]
+    public void OneTimeSetUp()
+    {
+        _previousRenderingHostServices = RuntimeRenderingHostServices.Current;
+        _previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeRenderingHostServices.Current = TestRenderingHostServices.Create(
+            _previousRenderingHostServices,
+            new TestRenderPipeline());
+        RuntimeShaderServices.Current = new FileSystemRuntimeShaderServices(ShaderBasePath);
+    }
+
+    [OneTimeTearDown]
+    public void OneTimeTearDown()
+    {
+        RuntimeRenderingHostServices.Current = _previousRenderingHostServices;
+        RuntimeShaderServices.Current = _previousShaderServices;
+    }
+
     [Test]
     public void SpotLight_Evsm4ShadowMaterialUsesMomentTextureAndWriter()
     {
@@ -71,6 +99,40 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         string? shaderSource = material.FragmentShaders[0].Source.Text;
         shaderSource.ShouldNotBeNull();
         shaderSource!.ShouldContain("ShadowDepthSourceMode");
+    }
+
+    [Test]
+    public void DirectionalLight_MomentMipmapsPublishVulkanSizedMipChains()
+    {
+        const uint shadowSize = 64u;
+        DirectionalLightComponent light = new()
+        {
+            ShadowMapEncoding = EShadowMapEncoding.Variance2,
+            ShadowMomentUseMipmaps = true,
+        };
+
+        light.SetShadowMapResolution(shadowSize, shadowSize);
+
+        XRMaterial material = light.GetShadowMapMaterial(shadowSize, shadowSize);
+        XRTexture2D shadowMap = FindShadowMapTexture<XRTexture2D>(material);
+        int expectedSmallestMip = XRTexture.GetSmallestMipmapLevel(shadowSize, shadowSize);
+
+        shadowMap.AutoGenerateMipmaps.ShouldBeTrue();
+        shadowMap.SmallestAllowedMipmapLevel.ShouldBe(expectedSmallestMip);
+        (shadowMap.Name ?? string.Empty).ShouldContain(".PrimaryColor");
+        light.CascadedShadowMapTexture.ShouldNotBeNull();
+        light.CascadedShadowMapTexture!.AutoGenerateMipmaps.ShouldBeTrue();
+        light.CascadedShadowMapTexture.SmallestAllowedMipmapLevel.ShouldBe(expectedSmallestMip);
+        (light.CascadedShadowMapTexture.Name ?? string.Empty).ShouldContain(".Cascade.ColorArray");
+
+        string vkTexture2D = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "Vulkan", "Objects", "Types", "Textures", "VkTexture2D.cs"));
+        string vkTexture2DArray = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "Vulkan", "Objects", "Types", "Textures", "VkTexture2DArray.cs"));
+        string resourceDescriptorFactory = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Resources", "RenderResourceDescriptorFactory.cs"));
+
+        vkTexture2D.ShouldContain("Data.AutoGenerateMipmaps || hasExplicitMipRange");
+        vkTexture2DArray.ShouldContain("Data.AutoGenerateMipmaps || hasExplicitMipRange");
+        resourceDescriptorFactory.ShouldContain("if (texture.AutoGenerateMipmaps)");
+        resourceDescriptorFactory.ShouldContain("texture.SmallestMipmapLevel + 1");
     }
 
     [Test]
@@ -179,13 +241,18 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
     public void DirectionalCascadeMomentPath_UsesColorArrayDepthAttachmentAndScalarBlend()
     {
         string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
+        string forEachCascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Commands", "Flow", "VPRC_ForEachCascade.cs"));
         string forwardLighting = LoadShaderSource("Snippets/ForwardLighting.glsl");
         string deferredDirectional = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
 
         cascadeSource.ShouldContain("private XRTexture2DArray? _cascadeRasterDepthTexture;");
-        cascadeSource.ShouldContain("momentEncoding ? EFrameBufferAttachment.ColorAttachment0 : EFrameBufferAttachment.DepthAttachment");
         cascadeSource.ShouldContain("(_cascadeRasterDepthTexture!, EFrameBufferAttachment.DepthAttachment");
+        cascadeSource.ShouldContain("GetCascadeShadowResourceName(\"ColorArray\")");
+        cascadeSource.ShouldContain("GetCascadeShadowResourceName(\"RasterDepthArray\")");
+        cascadeSource.ShouldContain("GetCascadeShadowResourceName($\"Layer{i}Fbo\")");
         cascadeSource.ShouldContain("GenerateCascadeMomentShadowMipmapsIfNeeded();");
+        forEachCascadeSource.ShouldContain("light.CascadedShadowReceiverTexture");
+        forEachCascadeSource.ShouldNotContain("light.CascadedShadowMapTexture");
 
         forwardLighting.ShouldContain("XRENGINE_SampleShadowMoment2DArray(");
         forwardLighting.ShouldContain("float shadow0 = XRENGINE_ReadCascadeShadowMapDir");
@@ -213,9 +280,57 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         shadowCollectionSource.ShouldContain("renderCascades = needsCascadeAtlas;");
 
         deferredBindings.ShouldContain("useDirectionalShadowAtlas = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding && directionalLight.CastsShadows;");
+        deferredBindings.ShouldContain("XRTexture2DArray? directionalCascadeReceiverTexture = directionalLight.CascadedShadowReceiverTexture;");
         deferredBindings.ShouldNotContain("!directionalMomentSingleMap &&");
+        deferredBindings.ShouldContain("if (useCascadedDirectionalShadows && directionalCascadeReceiverTexture is not null)");
         deferredBindings.ShouldContain("directionalHasShadowMap |= !useDirectionalShadowAtlas && hasShadowMap;");
-        deferredBindings.ShouldContain("materialProgram.Sampler(\"ShadowMap\", !useDirectionalShadowAtlas && selectedShadowMap is XRTexture2D shadow2D ? shadow2D : DummyShadowMap, 4);");
+        deferredBindings.ShouldContain("selectedShadowMap = selectedDirectionalLight.PrimaryShadowReceiverTexture;");
+    }
+
+    [Test]
+    public void DirectionalDepthCascadeAtlasFallbacks_KeepReceiverArrayBound()
+    {
+        string directionalSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
+        string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
+        string forwardBindings = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Lights3DCollection.ForwardLighting.cs"));
+        string deferredBindings = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Commands", "Features", "VPRC_LightCombinePass.cs"));
+
+        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeSplits\", cascadeSplits);");
+        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeBlendWidths\", cascadeBlendWidths);");
+        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeBiasMin\", cascadeBiasMins);");
+        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeBiasMax\", cascadeBiasMaxes);");
+        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeReceiverOffsets\", cascadeReceiverOffsets);");
+        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeMatrices\", cascadeMatrices);");
+        directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeSplits[{i}]\", cascadeSplits[i]);");
+
+        cascadeSource.ShouldContain("Atlas cascade");
+        cascadeSource.ShouldContain("sequential per-tile renders");
+        cascadeSource.ShouldNotContain("if (IsVulkanDirectionalShadowBackend())\r\n                return false;");
+        cascadeSource.ShouldContain("private void RenderCascadeShadowMaps(");
+        cascadeSource.ShouldContain("DirectionalCascadeShadowRenderPlan plan = CreateLegacyCascadeShadowRenderPlan(cascadeCount);");
+        cascadeSource.IndexOf("requestedMode == EDirectionalCascadeShadowRenderMode.Sequential", StringComparison.Ordinal)
+            .ShouldBeLessThan(cascadeSource.IndexOf("DirectionalCascadeShadowFallbackReason.VulkanLayeredRenderingDisabled", StringComparison.Ordinal));
+
+        forwardBindings.ShouldContain("if (perLightUseCascades)");
+        forwardBindings.ShouldContain("perLightCascadeTex = dirLight.CascadedShadowReceiverTexture;");
+        forwardBindings.ShouldNotContain("if (perLightUseCascades && !perLightUseAtlas)");
+
+        deferredBindings.ShouldContain("if (useCascadedDirectionalShadows && directionalCascadeReceiverTexture is not null)");
+        deferredBindings.ShouldNotContain("useCascadedDirectionalShadows && !useDirectionalShadowAtlas && directionalCascadeReceiverTexture is not null");
+    }
+
+    [Test]
+    public void VulkanTextureArrayPartialAttachmentLayouts_TransitionPerLayerForSampling()
+    {
+        string vkTextureSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "Vulkan", "Objects", "Types", "Textures", "VkImageBackedTexture.cs"));
+
+        vkTextureSource.ShouldContain("if (_hasPartialAttachmentLayouts)");
+        vkTextureSource.ShouldContain("TryTransitionPartialAttachmentLayoutsTo(newLayout)");
+        vkTextureSource.ShouldContain("AttachmentLayoutKey key = new(mip, layer, 1u);");
+        vkTextureSource.ShouldContain("barrier.SubresourceRange.BaseMipLevel = mip;");
+        vkTextureSource.ShouldContain("barrier.SubresourceRange.BaseArrayLayer = layer;");
+        vkTextureSource.ShouldContain("barrier.SubresourceRange.LayerCount = 1;");
+        vkTextureSource.ShouldContain("ResetAttachmentLayoutTracking();");
     }
 
     [Test]
@@ -301,5 +416,84 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
 
         Assert.Inconclusive($"Repository source file not found: {relativePath}");
         return string.Empty;
+    }
+
+    private class TestRenderingHostServices : DispatchProxy
+    {
+        public IRuntimeRenderingHostServices Inner { get; set; } = null!;
+        public IRuntimeRenderPipelineHost DefaultPipeline { get; set; } = null!;
+
+        public static IRuntimeRenderingHostServices Create(
+            IRuntimeRenderingHostServices inner,
+            IRuntimeRenderPipelineHost defaultPipeline)
+        {
+            IRuntimeRenderingHostServices proxy = Create<IRuntimeRenderingHostServices, TestRenderingHostServices>();
+            TestRenderingHostServices state = (TestRenderingHostServices)(object)proxy;
+            state.Inner = inner;
+            state.DefaultPipeline = defaultPipeline;
+            return proxy;
+        }
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod is null)
+                return null;
+
+            if (targetMethod.Name == nameof(IRuntimeRenderingHostServices.CreateDefaultRenderPipeline))
+                return DefaultPipeline;
+
+            return targetMethod.Invoke(Inner, args);
+        }
+    }
+
+    private sealed class TestRenderPipeline : RenderPipeline
+    {
+        protected override Lazy<XRMaterial> InvalidMaterialFactory => new(() => new XRMaterial());
+
+        protected override ViewportRenderCommandContainer GenerateCommandChain()
+            => new(this);
+
+        protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
+            => [];
+    }
+
+    private sealed class FileSystemRuntimeShaderServices(string shaderBasePath) : IRuntimeShaderServices
+    {
+        private readonly string _shaderBasePath = shaderBasePath;
+
+        public T? LoadAsset<T>(string filePath) where T : XRAsset, new()
+            => typeof(T) == typeof(XRShader) ? (T?)(object?)LoadShader(filePath) : default;
+
+        public T LoadEngineAsset<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
+        {
+            if (typeof(T) != typeof(XRShader))
+                throw new NotSupportedException($"Test shader services only support {nameof(XRShader)} assets, not '{typeof(T)}'.");
+
+            string fullPath = Path.Combine(_shaderBasePath, relativePath);
+            return (T)(XRAsset)LoadShader(fullPath);
+        }
+
+        public Task<T> LoadEngineAssetAsync<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath) where T : XRAsset, new()
+            => Task.FromResult(LoadEngineAsset<T>(priority, bypassJobThread, assetRoot, relativePath));
+
+        public void LogWarning(string message)
+        {
+        }
+
+        private static XRShader LoadShader(string fullPath)
+        {
+            if (!File.Exists(fullPath))
+                throw new FileNotFoundException("Shader file not found for test runtime services.", fullPath);
+
+            string source = File.ReadAllText(fullPath);
+            TextFile text = TextFile.FromText(source);
+            text.FilePath = fullPath;
+            text.Name = Path.GetFileName(fullPath);
+
+            return new XRShader(XRShader.ResolveType(Path.GetExtension(fullPath)), text)
+            {
+                Name = Path.GetFileNameWithoutExtension(fullPath),
+            };
+        }
     }
 }

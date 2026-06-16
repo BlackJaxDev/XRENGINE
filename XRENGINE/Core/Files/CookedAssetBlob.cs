@@ -74,10 +74,10 @@ namespace XREngine.Core.Files
         {
             Type resolvedType = ResolveAssetType(blob.TypeName, expectedType);
 
-            if (XRRuntimeEnvironment.IsAotRuntimeBuild && PublishedCookedAssetRegistry.IsRegistered(resolvedType))
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
             {
                 throw new NotSupportedException(
-                    $"Cooked asset type '{resolvedType}' was published with legacy '{CookedAssetFormat.BinaryV1}'. Republish content so it uses '{CookedAssetFormat.RuntimeBinaryV1}'.");
+                    $"Cooked asset type '{resolvedType}' was published with legacy '{CookedAssetFormat.BinaryV1}', which is not supported in published AOT runtime builds. Register the asset type with {nameof(PublishedCookedAssetRegistry)} and republish content so it uses '{CookedAssetFormat.RuntimeBinaryV1}'.");
             }
 
             return CookedBinarySerializer.Deserialize(resolvedType, blob.Payload);

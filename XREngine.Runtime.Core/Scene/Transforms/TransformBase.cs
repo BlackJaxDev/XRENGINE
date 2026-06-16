@@ -66,8 +66,8 @@ namespace XREngine.Scene.Transforms
             if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
                 return GetAllTransformTypes();
 
-            AotRuntimeMetadata? metadata = AotRuntimeMetadataStore.Metadata;
-            if (metadata?.TransformTypes is null || metadata.TransformTypes.Length == 0)
+            AotRuntimeMetadata metadata = AotRuntimeMetadataStore.RequireMetadata();
+            if (metadata.TransformTypes is null || metadata.TransformTypes.Length == 0)
                 return [];
 
             return [.. metadata.TransformTypes
@@ -84,8 +84,8 @@ namespace XREngine.Scene.Transforms
 
         private static string[] ResolveFriendlyTransformNamesFromMetadata()
         {
-            AotRuntimeMetadata? metadata = AotRuntimeMetadataStore.Metadata;
-            if (metadata?.TransformTypes is null || metadata.TransformTypes.Length == 0)
+            AotRuntimeMetadata metadata = AotRuntimeMetadataStore.RequireMetadata();
+            if (metadata.TransformTypes is null || metadata.TransformTypes.Length == 0)
                 return [];
 
             return [.. metadata.TransformTypes.Select(x => x.FriendlyName)];

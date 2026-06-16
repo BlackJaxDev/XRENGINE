@@ -24,7 +24,7 @@ public unsafe partial class VulkanRenderer
             // the texture needs a specific mip chain (e.g. bloom stereo). Use SmallestMipmapLevel + 1.
             // Otherwise, default to 1 mip level (framebuffer targets don't need mip chains).
             bool hasExplicitMipRange = Data.SmallestAllowedMipmapLevel < 1000;
-            uint mipLevels = hasExplicitMipRange
+            uint mipLevels = Data.AutoGenerateMipmaps || hasExplicitMipRange
                 ? (uint)Math.Max(1, Data.SmallestMipmapLevel + 1)
                 : 1;
             return new TextureLayout(new Extent3D(width, height, 1), layers, mipLevels);

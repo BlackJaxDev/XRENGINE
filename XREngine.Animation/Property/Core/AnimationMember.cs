@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Linq.Expressions;
 using System.Numerics;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Core;
 
 namespace XREngine.Animation
@@ -864,7 +865,7 @@ namespace XREngine.Animation
                     ? Expression.Assign(Expression.Field(null, fieldInfo), valueExpr)
                     : Expression.Assign(Expression.Field(targetExpr, fieldInfo), valueExpr);
 
-                return Expression.Lambda<Action<object?, T>>(assignExpr, targetParam, valueParam).Compile();
+                return CompileLambda(Expression.Lambda<Action<object?, T>>(assignExpr, targetParam, valueParam));
             }
             catch
             {
@@ -894,7 +895,7 @@ namespace XREngine.Animation
                     ? Expression.Call(setMethod, valueExpr)
                     : Expression.Call(targetExpr, setMethod, valueExpr);
 
-                return Expression.Lambda<Action<object?, T>>(callExpr, targetParam, valueParam).Compile();
+                return CompileLambda(Expression.Lambda<Action<object?, T>>(callExpr, targetParam, valueParam));
             }
             catch
             {
@@ -946,7 +947,7 @@ namespace XREngine.Animation
                     ? (Expression)call
                     : Expression.Block(call, Expression.Empty());
 
-                return Expression.Lambda<DelTypedMethodInvoker<T>>(body, targetParam, memberParam, valueParam).Compile();
+                return CompileLambda(Expression.Lambda<DelTypedMethodInvoker<T>>(body, targetParam, memberParam, valueParam));
             }
             catch
             {
@@ -983,13 +984,19 @@ namespace XREngine.Animation
                     : Expression.Block(call, Expression.Empty());
 
                 var lambda = Expression.Lambda<Action<object?, object?[]?>>(body, targetParam, argsParam);
-                return lambda.Compile();
+                return CompileLambda(lambda);
             }
             catch
             {
                 return null;
             }
         }
+
+        private static TDelegate CompileLambda<TDelegate>(Expression<TDelegate> expression)
+            => RuntimeFeature.IsDynamicCodeSupported
+                ? expression.Compile()
+                : expression.Compile(preferInterpretation: true);
+
         /// <summary>
         /// Registers to the AnimationHasEnded method in the animation tree
         /// and returns the total amount of animations this member and its child members contain.

@@ -23,10 +23,12 @@ namespace XREngine.Scene
         private const int ForwardMaxCascades = 8;
         private const int ForwardDirectionalShadowRecordCount = MaxForwardDirectionalLights * ForwardMaxCascades;
         private const uint ForwardDirectionalLightsBinding = 22;
-        private const uint ForwardPointLightsBinding = 23;
-        private const uint ForwardSpotLightsBinding = 26;
-        private const uint ForwardPointShadowMetadataBinding = 27;
-        private const uint ForwardSpotShadowMetadataBinding = 28;
+        // Keep forward SSBO bindings out of the sampler binding range used by the
+        // same GLSL snippet. Vulkan descriptor bindings share one namespace per set.
+        private const uint ForwardPointLightsBinding = 35;
+        private const uint ForwardSpotLightsBinding = 36;
+        private const uint ForwardPointShadowMetadataBinding = 37;
+        private const uint ForwardSpotShadowMetadataBinding = 38;
         private const uint ForwardPlusLocalLightsBinding = 20;
         private const uint ForwardPlusVisibleIndicesBinding = 21;
         private const int ForwardPlusFallbackTileSize = 16;
@@ -783,7 +785,10 @@ namespace XREngine.Scene
             bool useDirectionalShadowAtlas = false;
             bool directionalAtlasSampleable = false;
             bool anyDirectionalShadowEnabled = false;
-            var directionalShadowCameraComponent = currentPipeline?.RenderState.WindowViewport?.CameraComponent;
+            CameraComponent? directionalShadowCameraComponent = ResolveForwardDirectionalShadowCameraComponent();
+            bool directionalShadowCameraWantsCascades =
+                directionalShadowCameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded ||
+                HasActiveCascadedDirectionalShadowViewport();
 
             Array.Clear(_directionalShadowMapEnabled);
             Array.Clear(_directionalUseCascadedShadows);
@@ -844,22 +849,21 @@ namespace XREngine.Scene
                 if (firstDirLight.CastsShadows)
                 {
                     // 2D shadow map (non-cascaded / fallback path).
-                    forwardShadowTex = FindShadowMapTexture(firstDirLight);
+                    forwardShadowTex = FindDirectionalShadowReceiverTexture(firstDirLight);
 
                     // Cascaded shadow array — evaluated independently of the 2D map because
                     // in cascaded mode the 2D ShadowMap may never be populated but the
                     // cascade array IS available. Previously this branch was nested inside
                     // the 2D-map-populated check, so cascaded-only configs silently dropped
                     // all directional shadows (including the volumetric fog scatter pass).
-                    var cameraComponent = currentPipeline?.RenderState.WindowViewport?.CameraComponent;
                     useCascadedDirectionalShadows =
-                        cameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded &&
+                        directionalShadowCameraWantsCascades &&
                         firstDirLight.EnableCascadedShadows &&
-                        (firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding || firstDirLight.CascadedShadowMapTexture is not null) &&
+                        (firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding || firstDirLight.CascadedShadowReceiverTexture is not null) &&
                         firstDirLight.ActiveCascadeCount > 0;
 
                     if (useCascadedDirectionalShadows)
-                        forwardCascadeShadowTex = firstDirLight.CascadedShadowMapTexture;
+                        forwardCascadeShadowTex = firstDirLight.CascadedShadowReceiverTexture;
 
                     useDirectionalShadowAtlas =
                         firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding &&
@@ -868,7 +872,6 @@ namespace XREngine.Scene
                     if (useDirectionalShadowAtlas)
                     {
                         forwardShadowTex = null;
-                        forwardCascadeShadowTex = null;
                     }
 
                     if (forwardShadowTex is null && forwardCascadeShadowTex is null)
@@ -878,6 +881,12 @@ namespace XREngine.Scene
                         string reason = firstDirLight.ShadowMap is null ? "ShadowMap=null,CascadeTex=null" :
                                         firstDirLight.ShadowMap.Material is null ? "ShadowMap.Material=null,CascadeTex=null" :
                                         $"Textures.Count={firstDirLight.ShadowMap.Material.Textures.Count},CascadeTex=null";
+                        reason += $",UseRasterCascadeReceiver={firstDirLight.UsesCascadeRasterDepthReceiver}" +
+                                  $",CascadeColor={firstDirLight.HasCascadeColorTexture}" +
+                                  $",CascadeRaster={firstDirLight.HasCascadeRasterDepthTexture}" +
+                                  $",CascadeReceiver={firstDirLight.CascadedShadowReceiverTexture is not null}" +
+                                  $",ActiveCascades={firstDirLight.ActiveCascadeCount}" +
+                                  $",Atlas={firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding}";
                         if (reason != _lastForwardShadowNoTexReason)
                         {
                             _lastForwardShadowNoTexReason = reason;
@@ -971,15 +980,15 @@ namespace XREngine.Scene
                     if (dirLight.CastsShadows)
                     {
                         if (!perLightUseAtlas)
-                            perLightShadowTex = FindShadowMapTexture(dirLight);
+                            perLightShadowTex = FindDirectionalShadowReceiverTexture(dirLight);
                         perLightUseCascades =
-                            directionalShadowCameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded &&
+                            directionalShadowCameraWantsCascades &&
                             dirLight.EnableCascadedShadows &&
-                            (perLightUseAtlas || dirLight.CascadedShadowMapTexture is not null) &&
+                            (perLightUseAtlas || dirLight.CascadedShadowReceiverTexture is not null) &&
                             dirLight.ActiveCascadeCount > 0;
 
-                        if (perLightUseCascades && !perLightUseAtlas)
-                            perLightCascadeTex = dirLight.CascadedShadowMapTexture;
+                        if (perLightUseCascades)
+                            perLightCascadeTex = dirLight.CascadedShadowReceiverTexture;
                     }
 
                     bool perLightShadowEnabled = perLightShadowTex is not null || perLightCascadeTex is not null;
@@ -1298,6 +1307,31 @@ namespace XREngine.Scene
             return null;
         }
 
+        private static XRTexture? FindDirectionalShadowReceiverTexture(DirectionalLightComponent light)
+            => light.PrimaryShadowReceiverTexture ?? FindShadowMapTexture(light);
+
+        private CameraComponent? ResolveForwardDirectionalShadowCameraComponent()
+        {
+            var currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera
+                ?? currentPipeline?.RenderState.SceneCamera
+                ?? currentPipeline?.RenderState.RenderingCamera
+                ?? currentPipeline?.LastSceneCamera
+                ?? currentPipeline?.LastRenderingCamera;
+
+            if (camera is not null)
+            {
+                for (int i = 0; i < World.FramebufferCameras.Count; i++)
+                {
+                    CameraComponent component = World.FramebufferCameras[i];
+                    if (ReferenceEquals(component.Camera, camera))
+                        return component;
+                }
+            }
+
+            return currentPipeline?.RenderState.WindowViewport?.CameraComponent;
+        }
+
         private void LogForwardDirectionalShadowBinding(
             DirectionalLightComponent? light,
             bool requested,
@@ -1319,7 +1353,7 @@ namespace XREngine.Scene
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
-                "[DirectionalShadowAudit][ForwardBind] frame={0} light='{1}' requestedAtlas={2} shaderAtlasEnabled={3} cascades={4} activeCascades={5} shadowMapTex={6} cascadeTex={7} atlasRequests={8} atlasRenderedThisFrame={9} atlasPages={10} c0={11} c1={12} c2={13} c3={14}",
+                "[DirectionalShadowAudit][ForwardBind] frame={0} light='{1}' requestedAtlas={2} shaderAtlasEnabled={3} cascades={4} activeCascades={5} shadowMapTex={6} cascadeTex={7} cascadeColorTex={8} cascadeRasterDepthTex={9} useRasterCascadeReceiver={10} atlasRequests={11} atlasRenderedThisFrame={12} atlasPages={13} c0={14} c1={15} c2={16} c3={17}",
                 RuntimeEngine.Rendering.State.RenderFrameId,
                 light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
                 requested,
@@ -1328,6 +1362,9 @@ namespace XREngine.Scene
                 light.ActiveCascadeCount,
                 forwardShadowTex?.GetType().Name ?? "null",
                 forwardCascadeShadowTex?.GetType().Name ?? "null",
+                light.HasCascadeColorTexture,
+                light.HasCascadeRasterDepthTexture,
+                light.UsesCascadeRasterDepthReceiver,
                 metrics.RequestCount,
                 metrics.TilesScheduledThisFrame,
                 metrics.PageCount,

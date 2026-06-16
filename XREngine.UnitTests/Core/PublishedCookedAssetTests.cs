@@ -52,11 +52,42 @@ public sealed class PublishedCookedAssetTests
     [Test]
     public void CookedAssetReader_RuntimeBinaryV1_Rejects_UnregisteredAotType()
     {
+        string archivePath = CreateConfigArchive(new AotRuntimeMetadata
+        {
+            KnownTypeAssemblyQualifiedNames = [typeof(XRMesh).AssemblyQualifiedName!],
+            PublishedRuntimeAssetTypeNames = [],
+        });
+
         XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);
+
         XRMesh original = CreateSampleMesh();
         byte[] cooked = CreateRuntimeCookedAsset(original);
 
         Should.Throw<NotSupportedException>(() => CookedAssetReader.LoadAsset<XRMesh>(cooked));
+    }
+
+    [Test]
+    public void CookedAssetReader_BinaryV1_IsRejectedInPublishedAot()
+    {
+        string archivePath = CreateConfigArchive(new AotRuntimeMetadata
+        {
+            KnownTypeAssemblyQualifiedNames = [typeof(XRMesh).AssemblyQualifiedName!],
+            PublishedRuntimeAssetTypeNames = [typeof(XRMesh).AssemblyQualifiedName!],
+        });
+
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);
+
+        CookedAssetBlob blob = new(
+            CookedAssetTypeReference.Encode(typeof(XRMesh)),
+            CookedAssetFormat.BinaryV1,
+            []);
+
+        byte[] cooked = MemoryPackSerializer.Serialize(blob);
+
+        NotSupportedException ex = Should.Throw<NotSupportedException>(() => CookedAssetReader.LoadAsset<XRMesh>(cooked));
+        ex.Message.ShouldContain(CookedAssetFormat.BinaryV1.ToString());
     }
 
     [Test]
@@ -76,6 +107,71 @@ public sealed class PublishedCookedAssetTests
 
         clone.ShouldNotBeNull();
         AssertMeshesEquivalent(original, clone!);
+    }
+
+    [Test]
+    public void CookedAssetReader_RuntimeBinaryV1_RoundTrips_GameStartupSettings()
+    {
+        GameStartupSettings original = new()
+        {
+            Name = "PublishedStartup",
+            TargetFramesPerSecond = 72.0f,
+            FixedFramesPerSecond = 72.0f,
+            NetworkingType = ENetworkingType.Local,
+        };
+
+        string archivePath = CreateConfigArchive(new AotRuntimeMetadata
+        {
+            KnownTypeAssemblyQualifiedNames = [typeof(GameStartupSettings).AssemblyQualifiedName!],
+            PublishedRuntimeAssetTypeNames = [typeof(GameStartupSettings).AssemblyQualifiedName!],
+        });
+
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);
+
+        GameStartupSettings? clone = CookedAssetReader.LoadAsset<GameStartupSettings>(CreateRuntimeCookedAsset(original));
+
+        clone.ShouldNotBeNull();
+        clone!.Name.ShouldBe(original.Name);
+        clone.TargetFramesPerSecond.ShouldBe(original.TargetFramesPerSecond);
+        clone.FixedFramesPerSecond.ShouldBe(original.FixedFramesPerSecond);
+        clone.NetworkingType.ShouldBe(original.NetworkingType);
+    }
+
+    [Test]
+    public void AotRuntimeMetadataStore_RequireMetadata_LoadsPublishedConfigArchive()
+    {
+        string meshTypeName = typeof(XRMesh).AssemblyQualifiedName!;
+        string archivePath = CreateConfigArchive(new AotRuntimeMetadata
+        {
+            KnownTypeAssemblyQualifiedNames = [meshTypeName],
+            PublishedRuntimeAssetTypeNames = [meshTypeName],
+        });
+
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);
+
+        AotRuntimeMetadata metadata = AotRuntimeMetadataStore.RequireMetadata();
+
+        metadata.KnownTypeAssemblyQualifiedNames.ShouldContain(meshTypeName);
+        AotRuntimeMetadataStore.ResolveType(meshTypeName).ShouldBe(typeof(XRMesh));
+    }
+
+    [Test]
+    public void AotRuntimeMetadataStore_RequireMetadata_FailsFastWhenMissing()
+    {
+        string staging = Path.Combine(_tempRoot, "config-without-metadata");
+        Directory.CreateDirectory(staging);
+        File.WriteAllText(Path.Combine(staging, "placeholder.txt"), "no metadata");
+
+        string archivePath = Path.Combine(_tempRoot, "config-without-metadata.archive");
+        AssetPacker.Pack(staging, archivePath);
+
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);
+
+        InvalidOperationException ex = Should.Throw<InvalidOperationException>(() => AotRuntimeMetadataStore.RequireMetadata());
+        ex.Message.ShouldContain(AotRuntimeMetadataStore.MetadataFileName);
     }
 
     [Test]

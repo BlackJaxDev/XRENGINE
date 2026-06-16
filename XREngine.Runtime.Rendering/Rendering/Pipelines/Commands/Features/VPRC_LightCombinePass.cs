@@ -358,12 +358,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_currentLightComponent is DirectionalLightComponent directionalLight)
             {
                 ShadowMapFormatSelection directionalShadowFormat = directionalLight.ResolveShadowMapFormat(preferredStorageFormat: null);
+                XRTexture2DArray? directionalCascadeReceiverTexture = directionalLight.CascadedShadowReceiverTexture;
                 useDirectionalShadowAtlas = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding && directionalLight.CastsShadows;
                 var cameraComponent = ActivePipelineInstance.RenderState.WindowViewport?.CameraComponent;
                 useCascadedDirectionalShadows =
                     cameraComponent?.DirectionalShadowRenderingMode == global::XREngine.Components.EDirectionalShadowRenderingMode.Cascaded &&
                     directionalLight.EnableCascadedShadows &&
-                    (useDirectionalShadowAtlas || directionalLight.CascadedShadowMapTexture is not null) &&
+                    (useDirectionalShadowAtlas || directionalCascadeReceiverTexture is not null) &&
                     directionalLight.ActiveCascadeCount > 0;
 
                 materialProgram.Uniform("ShadowMapEncoding", (int)directionalShadowFormat.Encoding);
@@ -387,9 +388,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 if (useDirectionalShadowAtlas && !directionalAtlasSampleable)
                     useDirectionalShadowAtlas = false;
 
-                if (useCascadedDirectionalShadows && !useDirectionalShadowAtlas && directionalLight.CascadedShadowMapTexture is not null)
+                if (useCascadedDirectionalShadows && directionalCascadeReceiverTexture is not null)
                 {
-                    materialProgram.Sampler("ShadowMapArray", directionalLight.CascadedShadowMapTexture, 5);
+                    materialProgram.Sampler("ShadowMapArray", directionalCascadeReceiverTexture, 5);
                     legacyDirectionalCascadeBound = true;
                 }
                 else
@@ -408,7 +409,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             // This is done here rather than in SetUniforms to avoid overwriting material texture units
             // during forward rendering.
             XRTexture? selectedShadowMap = null;
-            if (_currentLightComponent.CastsShadows && _currentLightComponent.ShadowMap?.Material?.Textures is { Count: > 0 } shadowTextures)
+            if (_currentLightComponent is DirectionalLightComponent selectedDirectionalLight)
+            {
+                selectedShadowMap = selectedDirectionalLight.PrimaryShadowReceiverTexture;
+                if (selectedShadowMap is not null)
+                    materialProgram.Sampler("ShadowMap", selectedShadowMap, 4);
+            }
+            else if (_currentLightComponent.CastsShadows && _currentLightComponent.ShadowMap?.Material?.Textures is { Count: > 0 } shadowTextures)
             {
                 // Prefer the texture with SamplerName="ShadowMap" (the R16f distance cubemap);
                 // fall back to the first non-null texture otherwise.
@@ -746,7 +753,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
-                "[DirectionalShadowAudit][DeferredBind] frame={0} light='{1}' requestedAtlas={2} shaderAtlasEnabled={3} cascades={4} activeCascades={5} shadowMap={6} cascadeTex={7} atlasRequests={8} atlasRenderedThisFrame={9} atlasPages={10} c0={11} c1={12} c2={13} c3={14}",
+                "[DirectionalShadowAudit][DeferredBind] frame={0} light='{1}' requestedAtlas={2} shaderAtlasEnabled={3} cascades={4} activeCascades={5} shadowMap={6} cascadeColorTex={7} cascadeRasterDepthTex={8} cascadeReceiverTex={9} useRasterCascadeReceiver={10} atlasRequests={11} atlasRenderedThisFrame={12} atlasPages={13} c0={14} c1={15} c2={16} c3={17}",
                 RuntimeEngine.Rendering.State.RenderFrameId,
                 light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
                 requested,
@@ -754,7 +761,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 useCascadedDirectionalShadows,
                 light.ActiveCascadeCount,
                 light.ShadowMap is not null,
-                light.CascadedShadowMapTexture is not null,
+                light.HasCascadeColorTexture,
+                light.HasCascadeRasterDepthTexture,
+                light.CascadedShadowReceiverTexture is not null,
+                light.UsesCascadeRasterDepthReceiver,
                 metrics.RequestCount,
                 metrics.TilesScheduledThisFrame,
                 metrics.PageCount,

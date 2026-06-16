@@ -170,12 +170,12 @@ layout(std430, binding = 22) readonly buffer ForwardDirectionalLightsBuffer
     DirLight DirectionalLights[];
 };
 
-layout(std430, binding = 23) readonly buffer ForwardPointLightsBuffer
+layout(std430, binding = 35) readonly buffer ForwardPointLightsBuffer
 {
     PointLight PointLights[];
 };
 
-layout(std430, binding = 26) readonly buffer ForwardSpotLightsBuffer
+layout(std430, binding = 36) readonly buffer ForwardSpotLightsBuffer
 {
     SpotLight SpotLights[];
 };
@@ -236,12 +236,12 @@ struct ForwardSpotShadowData
     vec4 Params6;  // depth bias texels, slope bias texels, normal bias texels, reserved
 };
 
-layout(std430, binding = 27) readonly buffer ForwardPointShadowMetadataBuffer
+layout(std430, binding = 37) readonly buffer ForwardPointShadowMetadataBuffer
 {
     ForwardPointShadowData PointLightShadows[];
 };
 
-layout(std430, binding = 28) readonly buffer ForwardSpotShadowMetadataBuffer
+layout(std430, binding = 38) readonly buffer ForwardSpotShadowMetadataBuffer
 {
     ForwardSpotShadowData SpotLightShadows[];
 };
@@ -1396,7 +1396,7 @@ float XRENGINE_ReadShadowMapDir(int lightIndex, DirLight light, vec3 fragPos, ve
             float splitFar = light.CascadeSplits[i];
             bool isLast = (i == cascadeCount - 1);
 
-            if (viewDepth <= splitFar)
+            if (viewDepth <= splitFar || isLast)
             {
                 float shadow0 = XRENGINE_ReadCascadeShadowMapDir(lightIndex, light, fragPos, normal, diffuseFactor, i);
                 if (shadow0 < 0.0) shadow0 = 1.0;

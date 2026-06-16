@@ -113,6 +113,48 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
+    public void DirectionalAtlas_VulkanUsesDepthOnlyContractWithoutChangingOpenGl()
+    {
+        bool previousUseDirectionalShadowAtlas = RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas;
+        IRuntimeRenderingHostServices previousHost = RuntimeRenderingHostServices.Current;
+        RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas = true;
+        try
+        {
+            DirectionalLightComponent light = CreateDirectionalLight(512u);
+
+            RuntimeRenderingHostServices.Current = ShadowAtlasTestRenderingHostServices.Create(
+                previousHost,
+                new ShadowAtlasTestRenderPipeline(),
+                RuntimeGraphicsApiKind.OpenGL);
+            light.ShadowMapEncoding = EShadowMapEncoding.ExponentialVariance4;
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeTrue();
+            light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(4).ShouldBeTrue();
+
+            RuntimeRenderingHostServices.Current = ShadowAtlasTestRenderingHostServices.Create(
+                previousHost,
+                new ShadowAtlasTestRenderPipeline(),
+                RuntimeGraphicsApiKind.Vulkan);
+            light.ShadowMapEncoding = EShadowMapEncoding.Depth;
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeTrue();
+            light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(4).ShouldBeTrue();
+
+            light.ShadowMapEncoding = EShadowMapEncoding.Variance2;
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+
+            light.ShadowMapEncoding = EShadowMapEncoding.ExponentialVariance2;
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+
+            light.ShadowMapEncoding = EShadowMapEncoding.ExponentialVariance4;
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+        }
+        finally
+        {
+            RuntimeRenderingHostServices.Current = previousHost;
+            RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas = previousUseDirectionalShadowAtlas;
+        }
+    }
+
+    [Test]
     public void NormalizeTileResolution_RoundsClampsAndHonorsPageSize()
     {
         ShadowAtlasManager.NormalizeTileResolution(300u, 128u, 1024u, 4096u).ShouldBe(512u);

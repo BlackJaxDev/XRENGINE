@@ -104,7 +104,7 @@ namespace XREngine.Rendering
                 bool integral = false,
                 bool isMapped = false,
                 uint instanceDivisor = 0,
-                EBufferTarget target = EBufferTarget.ArrayBuffer) where T : struct
+                EBufferTarget target = EBufferTarget.ArrayBuffer) where T : unmanaged
             {
                 XRDataBuffer buffer = new(bindingName, target, integral)
                 {
@@ -145,13 +145,13 @@ namespace XREngine.Rendering
                 return _buffers.TryGetValue(bindingName, out var buffer) ? buffer.GetData(out array, remap) : null;
             }
 
-            public Remapper? GetBufferRaw<T>(string bindingName, out T[]? array, bool remap = false) where T : struct
+            public Remapper? GetBufferRaw<T>(string bindingName, out T[]? array, bool remap = false) where T : unmanaged
             {
                 array = null;
                 return _buffers.TryGetValue(bindingName, out var buffer) ? buffer.GetDataRaw(out array, remap) : null;
             }
 
-            private void AddOrUpdateBufferRaw<T>(IList<T> bufferData, string bindingName, bool remap, uint instanceDivisor, XRDataBuffer buffer) where T : struct
+            private void AddOrUpdateBufferRaw<T>(IList<T> bufferData, string bindingName, bool remap, uint instanceDivisor, XRDataBuffer buffer) where T : unmanaged
             {
                 if (!_buffers.TryAdd(bindingName, buffer))
                     _buffers[bindingName] = buffer;

@@ -24,6 +24,7 @@ namespace XREngine
         private bool _includePdbFiles = false;
         private bool _buildLauncherExecutable = true;
         private bool _publishLauncherAsNativeAot = false;
+        private bool _validateLauncherAotCompatibility = false;
         private bool _generateConfigArchive = true;
         private bool _saveSettingsBeforeBuild = true;
         private string _contentArchiveName = "GameContent.pak";
@@ -111,6 +112,14 @@ namespace XREngine
         {
             get => _publishLauncherAsNativeAot;
             set => SetField(ref _publishLauncherAsNativeAot, value);
+        }
+
+        [Category("Build Steps")]
+        [Description("When enabled for a NativeAOT launcher publish, MSBuild trim/AOT analyzers are enabled for the generated launcher closure and the publish log is written beside the generated launcher artifacts for warning triage.")]
+        public bool ValidateLauncherAotCompatibility
+        {
+            get => _validateLauncherAotCompatibility;
+            set => SetField(ref _validateLauncherAotCompatibility, value);
         }
 
         [Category("Build Steps")]

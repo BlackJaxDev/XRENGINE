@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using Shouldly;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 
@@ -149,6 +150,52 @@ public class XRDataBufferWriteModelTests
     }
 
     [Test]
+    public void RawUnmanagedSpan_RoundTripsStructPayloadWithoutMarshallingFallback()
+    {
+        PackedSample[] expected =
+        [
+            new PackedSample(7, 1.25f, 3),
+            new PackedSample(8, 2.5f, 4),
+        ];
+
+        XRDataBuffer buffer = new("PackedSpan", EBufferTarget.ShaderStorageBuffer, integral: false)
+        {
+            PadEndingToVec4 = false,
+        };
+
+        buffer.SetDataRaw<PackedSample>(expected);
+        buffer.GetDataRaw<PackedSample>(out PackedSample[] actual, validateTypes: false);
+
+        buffer.ComponentType.ShouldBe(EComponentType.Struct);
+        buffer.ElementSize.ShouldBe((uint)Unsafe.SizeOf<PackedSample>());
+        actual.ShouldBe(expected);
+    }
+
+    [Test]
+    public void RawUnmanagedIndexAccess_RoundTripsStructPayloadWithoutMarshallingFallback()
+    {
+        PackedSample expected = new(42, 3.75f, 9);
+        XRDataBuffer buffer = new(
+            "PackedIndex",
+            EBufferTarget.ShaderStorageBuffer,
+            elementCount: 2u,
+            componentType: EComponentType.Struct,
+            componentCount: (uint)Unsafe.SizeOf<PackedSample>(),
+            normalize: false,
+            integral: false)
+        {
+            PadEndingToVec4 = false,
+        };
+
+        PackedSample first = new(1, 0.5f, 2);
+        buffer.SetDataRawAtIndex(0u, first);
+        buffer.SetDataRawAtIndex(1u, expected);
+
+        buffer.GetDataRawAtIndex<PackedSample>(0u).ShouldBe(first);
+        buffer.GetDataRawAtIndex<PackedSample>(1u).ShouldBe(expected);
+    }
+
+    [Test]
     public void CommitDirtyElements_PreservesLayoutAndRecordsRange()
     {
         XRDataBuffer buffer = new("Float2", EBufferTarget.ShaderStorageBuffer, 4u, EComponentType.Float, 2u, false, false)
@@ -235,4 +282,6 @@ public class XRDataBufferWriteModelTests
             PadEndingToVec4 = false,
             DefaultMemoryPolicy = XRBufferMemoryPolicy.CpuToGpuDynamic,
         };
+
+    private readonly record struct PackedSample(int Id, float Weight, byte Flags);
 }

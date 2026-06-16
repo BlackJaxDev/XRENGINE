@@ -754,6 +754,25 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
+			"label": "Publish-AOT-FinalGame-Smoke",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Publish-AotFinalGame.ps1",
+				"-ProjectPath",
+				"${workspaceFolder}\\Samples\\MonkeyBallVR\\MonkeyBallVR.xrproj"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Report-BuildWarnings",
 			"type": "shell",
 			"command": "powershell",

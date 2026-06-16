@@ -22,7 +22,7 @@ public unsafe partial class VulkanRenderer
             // the texture needs a specific mip chain (e.g. bloom). Use SmallestMipmapLevel + 1.
             // Otherwise, use the CPU mipmap data count (1 if none — typical for framebuffer textures).
             bool hasExplicitMipRange = Data.SmallestAllowedMipmapLevel < 1000;
-            uint mipLevels = hasExplicitMipRange
+            uint mipLevels = Data.AutoGenerateMipmaps || hasExplicitMipRange
                 ? (uint)Math.Max(1, Data.SmallestMipmapLevel + 1)
                 : (uint)Math.Max(Data.Mipmaps?.Length ?? 1, 1);
             return new TextureLayout(new Extent3D(width, height, 1), 1, mipLevels);

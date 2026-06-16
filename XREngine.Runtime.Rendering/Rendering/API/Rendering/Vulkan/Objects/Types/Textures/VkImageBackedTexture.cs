@@ -397,6 +397,9 @@ public unsafe partial class VulkanRenderer
             if (_physicalGroup is not null || _image.Handle == 0)
                 return false;
 
+            if (_hasPartialAttachmentLayouts)
+                return TryTransitionPartialAttachmentLayoutsTo(newLayout);
+
             ImageLayout currentLayout = _currentImageLayout;
             if (currentLayout != oldLayout)
                 oldLayout = currentLayout;
@@ -405,6 +408,69 @@ public unsafe partial class VulkanRenderer
                 return true;
 
             TransitionImageLayout(oldLayout, newLayout);
+            return true;
+        }
+
+        private bool TryTransitionPartialAttachmentLayoutsTo(ImageLayout newLayout)
+        {
+            if (Renderer.IsDeviceLost || _image.Handle == 0)
+                return false;
+
+            newLayout = CoerceLayoutForUsage(newLayout);
+            uint mipCount = Math.Max(ResolvedMipLevels, 1u);
+            uint layerCount = Math.Max(ResolvedArrayLayers, 1u);
+            int maxBarrierCount = checked((int)(mipCount * layerCount));
+            Span<ImageMemoryBarrier> barriers = maxBarrierCount <= 64
+                ? stackalloc ImageMemoryBarrier[maxBarrierCount]
+                : new ImageMemoryBarrier[maxBarrierCount];
+            int barrierCount = 0;
+            PipelineStageFlags sourceStages = 0;
+            PipelineStageFlags destinationStages = 0;
+
+            for (uint mip = 0; mip < mipCount; mip++)
+            {
+                for (uint layer = 0; layer < layerCount; layer++)
+                {
+                    AttachmentLayoutKey key = new(mip, layer, 1u);
+                    ImageLayout oldLayout = _attachmentLayouts.TryGetValue(key, out ImageLayout trackedLayout)
+                        ? trackedLayout
+                        : ImageLayout.Undefined;
+                    oldLayout = CoerceLayoutForUsage(oldLayout);
+                    if (oldLayout == newLayout)
+                        continue;
+
+                    AssembleTransitionImageLayout(oldLayout, newLayout, out ImageMemoryBarrier barrier, out PipelineStageFlags src, out PipelineStageFlags dst);
+                    barrier.SubresourceRange.BaseMipLevel = mip;
+                    barrier.SubresourceRange.LevelCount = 1;
+                    barrier.SubresourceRange.BaseArrayLayer = layer;
+                    barrier.SubresourceRange.LayerCount = 1;
+                    barriers[barrierCount++] = barrier;
+                    sourceStages |= src;
+                    destinationStages |= dst;
+                }
+            }
+
+            if (barrierCount > 0)
+            {
+                using var scope = Renderer.NewCommandScope();
+                fixed (ImageMemoryBarrier* barriersPtr = barriers)
+                {
+                    Renderer.CmdPipelineBarrierTracked(
+                        scope.CommandBuffer,
+                        sourceStages,
+                        destinationStages,
+                        0,
+                        0,
+                        null,
+                        0,
+                        null,
+                        (uint)barrierCount,
+                        barriersPtr);
+                }
+            }
+
+            _currentImageLayout = newLayout;
+            ResetAttachmentLayoutTracking();
             return true;
         }
 

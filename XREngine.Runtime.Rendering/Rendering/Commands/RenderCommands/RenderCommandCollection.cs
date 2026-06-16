@@ -43,7 +43,7 @@ namespace XREngine.Rendering.Commands
 
         internal static CpuSoftwareOcclusionCuller CpuSoftwareOcclusion => s_cpuSoftwareOcclusionCuller;
 
-        public bool IsShadowPass { get; private set; } = false;
+        public bool IsShadowPass => IsOwnedByShadowPipeline;
         public void SetRenderPasses(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters, IEnumerable<RenderPassMetadata>? passMetadata = null)
         {
             using (_lock.EnterScope())
@@ -211,6 +211,9 @@ namespace XREngine.Rendering.Commands
             foreach (KeyValuePair<int, GPURenderPassCollection> pair in _gpuPasses)
                 pair.Value.SetDebugContext(_ownerPipeline, pair.Key);
         }
+
+        internal bool IsOwnedByShadowPipeline
+            => _ownerPipeline?.IsShadowPipeline == true;
 
         private readonly Lock _lock = new();
 
