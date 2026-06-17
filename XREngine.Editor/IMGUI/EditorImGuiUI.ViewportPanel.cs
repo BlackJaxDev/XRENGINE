@@ -14,6 +14,8 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
+    private const int MinScenePanelRenderExtent = 2;
+
     private static bool _scenePanelInteracting;
 
     private static BoundingRectangle? _scenePanelRenderRegion;
@@ -122,7 +124,7 @@ public static partial class EditorImGuiUI
 
         // Get the content region size for the image
         Vector2 contentSize = ImGui.GetContentRegionAvail();
-        if (contentSize.X <= 1 || contentSize.Y <= 1)
+        if (contentSize.X < MinScenePanelRenderExtent || contentSize.Y < MinScenePanelRenderExtent)
             return;
 
         Vector2 uv0 = flipTextureY ? new Vector2(0.0f, 1.0f) : new Vector2(0.0f, 0.0f);
@@ -172,7 +174,7 @@ public static partial class EditorImGuiUI
         Vector2 contentPos = ImGui.GetCursorScreenPos() - mainViewport.Pos;
         Vector2 contentSize = ImGui.GetContentRegionAvail();
 
-        if (contentSize.X <= 1 || contentSize.Y <= 1)
+        if (contentSize.X < MinScenePanelRenderExtent || contentSize.Y < MinScenePanelRenderExtent)
         {
             _scenePanelRenderRegion = null;
             return;
@@ -205,7 +207,7 @@ public static partial class EditorImGuiUI
         if (x + w > fb.X) w = fb.X - x;
         if (y + h > fb.Y) h = fb.Y - y;
 
-        if (w <= 0 || h <= 0)
+        if (w < MinScenePanelRenderExtent || h < MinScenePanelRenderExtent)
         {
             _scenePanelRenderRegion = null;
             return;

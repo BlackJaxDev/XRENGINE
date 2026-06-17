@@ -11,6 +11,7 @@ using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Shadows;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 
 namespace XREngine.Rendering;
@@ -209,6 +210,41 @@ public interface IRuntimeRenderingHostServices
     /// Gets whether Vulkan dynamic uniform ring buffers should be enabled.
     /// </summary>
     bool VulkanDynamicUniformBufferEnabled { get; }
+
+    /// <summary>
+    /// Gets whether Vulkan bindless material-table population is enabled.
+    /// </summary>
+    bool EnableVulkanBindlessMaterialTable => RuntimeRenderingHostServiceDefaults.EnableVulkanBindlessMaterialTable;
+
+    /// <summary>
+    /// Gets whether Vulkan descriptor indexing should be requested.
+    /// </summary>
+    bool EnableVulkanDescriptorIndexing => RuntimeRenderingHostServiceDefaults.EnableVulkanDescriptorIndexing;
+
+    /// <summary>
+    /// Gets whether Vulkan descriptor contracts should be validated.
+    /// </summary>
+    bool ValidateVulkanDescriptorContracts => RuntimeRenderingHostServiceDefaults.ValidateVulkanDescriptorContracts;
+
+    /// <summary>
+    /// Gets the Vulkan bindless material-table mode.
+    /// </summary>
+    EVulkanBindlessMaterialMode VulkanBindlessMaterialMode => RuntimeRenderingHostServiceDefaults.VulkanBindlessMaterialMode;
+
+    /// <summary>
+    /// Gets the Vulkan geometry fetch strategy.
+    /// </summary>
+    EVulkanGeometryFetchMode VulkanGeometryFetchMode => RuntimeRenderingHostServiceDefaults.VulkanGeometryFetchMode;
+
+    /// <summary>
+    /// Gets the Vulkan GPU-driven feature profile.
+    /// </summary>
+    EVulkanGpuDrivenProfile VulkanGpuDrivenProfile => RuntimeRenderingHostServiceDefaults.VulkanGpuDrivenProfile;
+
+    /// <summary>
+    /// Gets the Vulkan queue-overlap policy.
+    /// </summary>
+    EVulkanQueueOverlapMode VulkanQueueOverlapMode => RuntimeRenderingHostServiceDefaults.VulkanQueueOverlapMode;
 
     /// <summary>
     /// Subscribes a callback to host rendering setting changes.
@@ -1087,6 +1123,7 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVulkanDescriptorPoolReset();
     void RecordRenderVulkanDynamicUniformAllocation(long bytes);
     void RecordRenderVulkanDynamicUniformExhaustion();
+    void RecordRenderVulkanRecordCommandBufferAllocation(long bytes);
     void RecordRenderVulkanFrameDiagnostics(
         int droppedFrameOps,
         int droppedDrawOps,

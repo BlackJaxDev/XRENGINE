@@ -148,14 +148,19 @@ public sealed class VulkanP0ValidationTests
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
         string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.State.cs");
         string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+        string registrySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Resources/RenderResourceRegistry.cs");
 
         commandBufferSource.ShouldContain("_commandBufferFrameOpSignatures");
         commandBufferSource.ShouldContain("_commandBufferPlannerRevisions");
         commandBufferSource.ShouldContain("ResourcePlannerRevision");
         stateSource.ShouldContain("ComputeResourcePlannerSignature");
         stateSource.ShouldContain("ComputePassMetadataSignature(passMetadata)");
-        stateSource.ShouldContain("registry.TextureRecords.OrderBy");
-        stateSource.ShouldContain("registry.FrameBufferRecords.OrderBy");
+        stateSource.ShouldContain("registry?.DescriptorSignature ?? 0");
+        registrySource.ShouldContain("DescriptorRevision");
+        registrySource.ShouldContain("DescriptorSignature");
+        registrySource.ShouldContain("_cachedDescriptorSignatureRevision");
+        registrySource.ShouldContain("_textures.OrderBy");
+        registrySource.ShouldContain("_frameBuffers.OrderBy");
         stateSource.ShouldContain("viewport?.Width ?? 0");
         stateSource.ShouldContain("viewport?.InternalWidth ?? 0");
         meshSource.ShouldContain("hash.Add(op.Context.ViewportIdentity)");

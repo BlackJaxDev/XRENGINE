@@ -21,6 +21,8 @@ param(
     [switch]$NoClearCachesBetweenVariants,
     [switch]$NoP3Logging,
     [switch]$FailOnSteadyStateResourceChurn,
+    [switch]$FailOnSteadyStateCommandBufferAllocations,
+    [long]$MaxSteadyStateRecordCommandBufferAllocatedBytes = 0,
     [int]$ShutdownGraceSec = 20,
     [int]$NoSampleHangSec = 15,
     [int]$RetainedRunCount = 3,
@@ -677,6 +679,7 @@ function Measure-Variant {
     $vkWaitSwapchainImage = Get-NumericStats -Samples $samples -Property 'vulkan_frame_wait_swapchain_image_ms' -PositiveOnly
     $vkResetDynamicUniformRing = Get-NumericStats -Samples $samples -Property 'vulkan_frame_reset_dynamic_uniform_ring_ms' -PositiveOnly
     $vkRecordCommandBuffer = Get-NumericStats -Samples $samples -Property 'vulkan_frame_record_command_buffer_ms' -PositiveOnly
+    $vkRecordCommandBufferAllocatedBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_record_command_buffer_allocated_bytes'
     $vkSubmit = Get-NumericStats -Samples $samples -Property 'vulkan_frame_submit_ms' -PositiveOnly
     $vkTrimStaging = Get-NumericStats -Samples $samples -Property 'vulkan_frame_trim_ms' -PositiveOnly
     $vkQueuePresent = Get-NumericStats -Samples $samples -Property 'vulkan_frame_present_ms' -PositiveOnly
@@ -708,6 +711,9 @@ function Measure-Variant {
     }
     if ($FailOnSteadyStateResourceChurn -and $vkResourcePlanReplacementsTotal -gt 0) {
         $noteParts.Add("steady-state resource churn failure resourcePlanReplacements=$vkResourcePlanReplacementsTotal images=$vkResourcePlanImagesTotal buffers=$vkResourcePlanBuffersTotal") | Out-Null
+    }
+    if ($FailOnSteadyStateCommandBufferAllocations -and $vkRecordCommandBufferAllocatedBytesTotal -gt $MaxSteadyStateRecordCommandBufferAllocatedBytes) {
+        $noteParts.Add("steady-state command-buffer allocation failure bytes=$vkRecordCommandBufferAllocatedBytesTotal threshold=$MaxSteadyStateRecordCommandBufferAllocatedBytes") | Out-Null
     }
 
     return [pscustomobject]@{
@@ -770,6 +776,7 @@ function Measure-Variant {
         VulkanRecordCommandBufferP50Ms = $vkRecordCommandBuffer.P50
         VulkanRecordCommandBufferP95Ms = $vkRecordCommandBuffer.P95
         VulkanRecordCommandBufferMaxMs = $vkRecordCommandBuffer.Max
+        VulkanRecordCommandBufferAllocatedBytesTotal = $vkRecordCommandBufferAllocatedBytesTotal
         VulkanSubmitP50Ms = $vkSubmit.P50
         VulkanSubmitP95Ms = $vkSubmit.P95
         VulkanSubmitMaxMs = $vkSubmit.Max
@@ -861,7 +868,7 @@ foreach ($strategy in $Strategies) {
 }
 
 Write-Host '=== GAME LOOP / DEFAULT RENDER PIPELINE SUMMARY ===' -ForegroundColor Green
-$results | Format-Table -AutoSize Strategy, Repetition, CacheMode, Samples, AllSamples, RenderP50Ms, RenderP95Ms, RenderP99Ms, GpuP50Ms, GpuP95Ms, VulkanFrameP50Ms, VulkanFrameP95Ms, VulkanRecordCommandBufferP95Ms, VulkanDrainRetiredResourcesP95Ms, VulkanSubmitP95Ms, VulkanQueuePresentP95Ms, VulkanCommandBufferRecordsTotal, VulkanResourcePlanReplacementsTotal, VulkanRetiredImagesTotal, DrawCallsP50, VisibleRenderersP50, SkinnedRenderersP50, TextureBindsTotal, GpuReadbackBytesTotal, AllGpuReadbackBytesTotal, GpuDrivenFullBucketScansTotal, FallbackEventsTotal, AllFallbackEventsTotal, LastRenderMs, GpuTimingDumpFiles, Note
+$results | Format-Table -AutoSize Strategy, Repetition, CacheMode, Samples, AllSamples, RenderP50Ms, RenderP95Ms, RenderP99Ms, GpuP50Ms, GpuP95Ms, VulkanFrameP50Ms, VulkanFrameP95Ms, VulkanRecordCommandBufferP95Ms, VulkanRecordCommandBufferAllocatedBytesTotal, VulkanDrainRetiredResourcesP95Ms, VulkanSubmitP95Ms, VulkanQueuePresentP95Ms, VulkanCommandBufferRecordsTotal, VulkanResourcePlanReplacementsTotal, VulkanRetiredImagesTotal, DrawCallsP50, VisibleRenderersP50, SkinnedRenderersP50, TextureBindsTotal, GpuReadbackBytesTotal, AllGpuReadbackBytesTotal, GpuDrivenFullBucketScansTotal, FallbackEventsTotal, AllFallbackEventsTotal, LastRenderMs, GpuTimingDumpFiles, Note
 
 $stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
 $profileRunDir = New-SpeedProfileRunDirectory -Stamp $stamp
@@ -915,5 +922,19 @@ if ($FailOnSteadyStateResourceChurn) {
             "$($_.Strategy) r$($_.Repetition): replacements=$($_.VulkanResourcePlanReplacementsTotal) images=$($_.VulkanResourcePlanImagesTotal) buffers=$($_.VulkanResourcePlanBuffersTotal)"
         }
         throw "Steady-state Vulkan resource churn detected: $($details -join '; ')"
+    }
+}
+
+if ($FailOnSteadyStateCommandBufferAllocations) {
+    $allocationFailures = @($results | Where-Object {
+        $value = $_.VulkanRecordCommandBufferAllocatedBytesTotal
+        $null -ne $value -and [long]$value -gt $MaxSteadyStateRecordCommandBufferAllocatedBytes
+    })
+
+    if ($allocationFailures.Count -gt 0) {
+        $details = $allocationFailures | ForEach-Object {
+            "$($_.Strategy) r$($_.Repetition): recordCommandBufferAllocatedBytes=$($_.VulkanRecordCommandBufferAllocatedBytesTotal) threshold=$MaxSteadyStateRecordCommandBufferAllocatedBytes"
+        }
+        throw "Steady-state Vulkan command-buffer allocations exceeded threshold: $($details -join '; ')"
     }
 }

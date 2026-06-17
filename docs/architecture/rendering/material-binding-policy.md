@@ -1,6 +1,6 @@
 # Material Binding Policy
 
-Last updated: 2026-06-08
+Last updated: 2026-06-17
 
 ## Production Rule
 
@@ -8,7 +8,7 @@ General scene materials use the GPU material table:
 
 - `MaterialTable` stores compact material rows.
 - Each material row stores base color/opacity, roughness/metallic/specular/emission constants, and texture handle or descriptor indices.
-- `MaterialTextureHandleTable` stores OpenGL bindless texture handles, or maps to Vulkan descriptor-indexing slots.
+- `MaterialTextureHandleTable` stores OpenGL bindless texture handles. Vulkan bindless rows store descriptor-array indices directly in the material row.
 
 The current material row is the standard opaque-deferred row. Its canonical contract is `MaterialBindingLayouts.OpaqueDeferred`; `GPUMaterialTable`, the generated material-table draw shader, and the shared GLSL material table header must agree on that layout hash and 48-byte row shape.
 
@@ -29,7 +29,14 @@ OpenGL `BindlessMaterialTable` uses `GL_ARB_bindless_texture` handles made resid
 
 `MaterialEntry -> handle index -> 64-bit OpenGL handle`
 
-Vulkan uses the same material entry indices as descriptor indices into the descriptor-indexed material texture array. Shaders that use that path must read through `nonuniformEXT`.
+Vulkan `BindlessMaterialTable` uses renderer-owned descriptor slots. The material row stores descriptor indices into `XR_BindlessMaterialTextures` at `set = 2`, `binding = 31`; descriptor index `0` is reserved for null/fallback and causes generated shaders to use the material fallback constant instead of sampling. Shaders that use the Vulkan path must read through `nonuniformEXT`.
+
+The two modes are intentionally distinct:
+
+- OpenGL rows store compact indices into `MaterialTextureHandleTable`; that second table stores resident 64-bit handles.
+- Vulkan rows store descriptor indices directly; no OpenGL handle table is bound for the Vulkan descriptor-indexed variant.
+
+The runtime texture reference contract is `GPUMaterialTextureReference`, with backend payloads for `OpenGLBindlessHandle` and `VulkanDescriptorIndex`.
 
 ## Per-Draw Texture Binding Ladder
 

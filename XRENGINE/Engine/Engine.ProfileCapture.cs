@@ -634,6 +634,7 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_frame_op_signature_dirty_count", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferFrameOpSignatureDirtyCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_planner_dirty_count", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferPlannerDirtyCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_buffer_profiler_dirty_count", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferProfilerDirtyCount, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_record_command_buffer_allocated_bytes", Engine.Rendering.Stats.Vulkan.VulkanRecordCommandBufferAllocatedBytes, ref first);
             AppendStringField(s_lineBuilder, "vulkan_command_buffer_dirty_summary", Engine.Rendering.Stats.Vulkan.VulkanCommandBufferDirtySummary, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_resource_plan_replacements", Engine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanReplacements, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_retired_resource_plan_images", Engine.Rendering.Stats.Vulkan.VulkanRetiredResourcePlanImages, ref first);

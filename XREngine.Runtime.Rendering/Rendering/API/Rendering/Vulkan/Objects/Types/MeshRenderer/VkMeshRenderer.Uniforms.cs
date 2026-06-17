@@ -123,7 +123,7 @@ public unsafe partial class VulkanRenderer
 			int bufferCount = UniformBufferArrayLength;
 			if (_engineUniformBuffers.TryGetValue(name, out EngineUniformBuffer[]? existing))
 			{
-				bool valid = existing.Length == bufferCount && existing.All(e => e.Buffer.Handle != 0 && e.Size >= size);
+				bool valid = EngineUniformBuffersValid(existing, bufferCount, size);
 				if (valid)
 					return true;
 
@@ -155,7 +155,7 @@ public unsafe partial class VulkanRenderer
 			int bufferCount = UniformBufferArrayLength;
 			if (_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? existing))
 			{
-				bool valid = existing.Length == bufferCount && existing.All(e => e.Buffer.Handle != 0 && e.Size >= size);
+				bool valid = AutoUniformBuffersValid(existing, bufferCount, size);
 				if (valid)
 					return true;
 
@@ -172,6 +172,34 @@ public unsafe partial class VulkanRenderer
 			}
 
 			_autoUniformBuffers[name] = buffers;
+			return true;
+		}
+
+		private static bool EngineUniformBuffersValid(EngineUniformBuffer[] buffers, int expectedCount, uint requiredSize)
+		{
+			if (buffers.Length != expectedCount)
+				return false;
+
+			for (int i = 0; i < buffers.Length; i++)
+			{
+				if (buffers[i].Buffer.Handle == 0 || buffers[i].Size < requiredSize)
+					return false;
+			}
+
+			return true;
+		}
+
+		private static bool AutoUniformBuffersValid(AutoUniformBuffer[] buffers, int expectedCount, uint requiredSize)
+		{
+			if (buffers.Length != expectedCount)
+				return false;
+
+			for (int i = 0; i < buffers.Length; i++)
+			{
+				if (buffers[i].Buffer.Handle == 0 || buffers[i].Size < requiredSize)
+					return false;
+			}
+
 			return true;
 		}
 
@@ -309,11 +337,21 @@ public unsafe partial class VulkanRenderer
 			if (member.StructMembers is { Count: > 0 })
 				return TryWriteStructUniformValue(data, member, member.Name, member.Offset);
 
+			bool wrote;
+
 			if (TryResolveEngineUniformValue(member.Name, draw, out object? engineValue, out EShaderVarType engineType))
-				return engineValue is not null && TryWriteAutoUniformValue(data, member, engineValue, engineType);
+			{
+				wrote = engineValue is not null && TryWriteAutoUniformValue(data, member, engineValue, engineType);
+				LogMaterialAutoUniform(member, material, "engine", engineValue, engineType, wrote);
+				return wrote;
+			}
 
 			if (_program is not null && _program.TryGetUniformValue(member.Name, out ProgramUniformValue programValue))
-				return TryWriteProgramUniformValue(data, member, programValue);
+			{
+				wrote = TryWriteProgramUniformValue(data, member, programValue);
+				LogMaterialAutoUniform(member, material, "program", programValue.Value, programValue.Type, wrote);
+				return wrote;
+			}
 
 			if (member.IsArray && TryWriteIndexedProgramUniformArray(data, member, member.Name))
 				return true;
@@ -322,19 +360,79 @@ public unsafe partial class VulkanRenderer
 			if (parameter is not null)
 			{
 				if (member.IsArray)
-					return TryWriteAutoUniformArray(data, member, parameter);
+				{
+					wrote = TryWriteAutoUniformArray(data, member, parameter);
+					LogMaterialAutoUniform(member, material, "material-array", parameter.GenericValue, parameter.TypeName, wrote);
+					return wrote;
+				}
 
-				return TryWriteAutoUniformValue(data, member, parameter.GenericValue, parameter.TypeName);
+				wrote = TryWriteAutoUniformValue(data, member, parameter.GenericValue, parameter.TypeName);
+				LogMaterialAutoUniform(member, material, "material", parameter.GenericValue, parameter.TypeName, wrote);
+				return wrote;
 			}
 
 			if (member.IsArray && member.DefaultArrayValues is { Count: > 0 })
-				return TryWriteAutoUniformArrayDefaults(data, member);
+			{
+				wrote = TryWriteAutoUniformArrayDefaults(data, member);
+				LogMaterialAutoUniform(member, material, "default-array", $"count={member.DefaultArrayValues.Count}", member.EngineType ?? EShaderVarType._float, wrote);
+				return wrote;
+			}
 
 			if (member.DefaultValue is { } defaultValue)
-				return TryWriteAutoUniformValue(data, member, defaultValue.Value, defaultValue.Type);
+			{
+				wrote = TryWriteAutoUniformValue(data, member, defaultValue.Value, defaultValue.Type);
+				LogMaterialAutoUniform(member, material, "default", defaultValue.Value, defaultValue.Type, wrote);
+				return wrote;
+			}
 
+			LogMaterialAutoUniform(member, material, "missing", null, member.EngineType ?? EShaderVarType._float, false);
 			return false;
 		}
+
+		private void LogMaterialAutoUniform(
+			AutoUniformMember member,
+			XRMaterial material,
+			string source,
+			object? value,
+			EShaderVarType type,
+			bool wrote)
+		{
+			if (!MaterialBindingDiagnosticsEnabled || !IsMaterialAutoUniform(member.Name))
+				return;
+
+			Debug.VulkanEvery(
+				$"Vulkan.MaterialAutoUniform.{GetHashCode()}.{_program?.Data?.Name}.{material.Name}.{member.Name}",
+				TimeSpan.FromSeconds(1),
+				"[VkMaterialAutoUniform] program='{0}' mesh='{1}' material='{2}' member='{3}' type={4} source={5} wrote={6} offset={7} size={8} value={9}",
+				_program?.Data?.Name ?? "<null>",
+				Mesh?.Name ?? "<null>",
+				material.Name ?? "<null>",
+				member.Name,
+				type,
+				source,
+				wrote,
+				member.Offset,
+				member.Size,
+				FormatMaterialUniformDiagnosticValue(value));
+		}
+
+		private static bool IsMaterialAutoUniform(string name)
+			=> name is "BaseColor" or "Opacity" or "Specular" or "Roughness" or "Metallic" or "Emission" or "AlphaCutoff";
+
+		private static string FormatMaterialUniformDiagnosticValue(object? value)
+			=> value switch
+			{
+				null => "<null>",
+				float f => f.ToString("G4", System.Globalization.CultureInfo.InvariantCulture),
+				int i => i.ToString(System.Globalization.CultureInfo.InvariantCulture),
+				uint u => u.ToString(System.Globalization.CultureInfo.InvariantCulture),
+				Vector2 v => $"({v.X:G4},{v.Y:G4})",
+				Vector3 v => $"({v.X:G4},{v.Y:G4},{v.Z:G4})",
+				Vector4 v => $"({v.X:G4},{v.Y:G4},{v.Z:G4},{v.W:G4})",
+				ColorF3 c => $"({c.R:G4},{c.G:G4},{c.B:G4})",
+				ColorF4 c => $"({c.R:G4},{c.G:G4},{c.B:G4},{c.A:G4})",
+				_ => value.ToString() ?? "<null>",
+			};
 
 		private bool TryWriteStructUniformValue(Span<byte> data, AutoUniformMember member, string uniformPrefix, uint baseOffset)
 		{

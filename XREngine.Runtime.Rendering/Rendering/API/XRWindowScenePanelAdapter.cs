@@ -12,6 +12,8 @@ namespace XREngine.Rendering
     /// </summary>
     internal sealed class XRWindowScenePanelAdapter : IRuntimeWindowScenePanelAdapter
     {
+        private const int MinScenePanelRenderExtent = 2;
+
         private XRTexture2D? _scenePanelTexture;
         private XRFrameBuffer? _scenePanelFBO;
 
@@ -78,7 +80,9 @@ namespace XREngine.Rendering
         public bool TryRenderScenePanelMode(XRWindow window)
         {
             BoundingRectangle? region = RuntimeRenderingHostServices.Current.GetScenePanelRenderRegion(window);
-            if (!region.HasValue || region.Value.Width <= 0 || region.Value.Height <= 0)
+            if (!region.HasValue ||
+                region.Value.Width < MinScenePanelRenderExtent ||
+                region.Value.Height < MinScenePanelRenderExtent)
             {
                 Debug.RenderingEvery(
                     $"XRWindow.RenderCallback.{window.GetHashCode()}.ScenePanelRegionMissing",

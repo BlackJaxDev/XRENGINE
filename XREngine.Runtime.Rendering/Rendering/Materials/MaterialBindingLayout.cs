@@ -37,6 +37,13 @@ namespace XREngine.Rendering.Materials
         Invalid,
     }
 
+    public enum EMaterialTableTextureReferenceMode
+    {
+        None = 0,
+        OpenGLBindlessHandleTable,
+        VulkanDescriptorIndexTable,
+    }
+
     public sealed record MaterialBindingOutput(
         string Name,
         int Location,
@@ -639,9 +646,20 @@ namespace XREngine.Rendering.Materials
             bool bindless,
             uint materialTableBinding = MaterialBindingLayouts.MaterialTableSsboBinding,
             uint textureHandleTableBinding = MaterialBindingLayouts.MaterialTextureHandleTableSsboBinding)
+            => GenerateMaterialTableDefinitions(
+                layout,
+                bindless ? EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable : EMaterialTableTextureReferenceMode.None,
+                materialTableBinding,
+                textureHandleTableBinding);
+
+        public static string GenerateMaterialTableDefinitions(
+            MaterialBindingLayout layout,
+            EMaterialTableTextureReferenceMode textureReferenceMode,
+            uint materialTableBinding = MaterialBindingLayouts.MaterialTableSsboBinding,
+            uint textureHandleTableBinding = MaterialBindingLayouts.MaterialTextureHandleTableSsboBinding)
         {
             StringBuilder sb = new();
-            AppendMaterialTableDefinitions(sb, layout, bindless, materialTableBinding, textureHandleTableBinding);
+            AppendMaterialTableDefinitions(sb, layout, textureReferenceMode, materialTableBinding, textureHandleTableBinding);
             return sb.ToString();
         }
 
@@ -649,6 +667,19 @@ namespace XREngine.Rendering.Materials
             StringBuilder sb,
             MaterialBindingLayout layout,
             bool bindless,
+            uint materialTableBinding = MaterialBindingLayouts.MaterialTableSsboBinding,
+            uint textureHandleTableBinding = MaterialBindingLayouts.MaterialTextureHandleTableSsboBinding)
+            => AppendMaterialTableDefinitions(
+                sb,
+                layout,
+                bindless ? EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable : EMaterialTableTextureReferenceMode.None,
+                materialTableBinding,
+                textureHandleTableBinding);
+
+        public static void AppendMaterialTableDefinitions(
+            StringBuilder sb,
+            MaterialBindingLayout layout,
+            EMaterialTableTextureReferenceMode textureReferenceMode,
             uint materialTableBinding = MaterialBindingLayouts.MaterialTableSsboBinding,
             uint textureHandleTableBinding = MaterialBindingLayouts.MaterialTextureHandleTableSsboBinding)
         {
@@ -675,10 +706,21 @@ namespace XREngine.Rendering.Materials
             sb.AppendLine($"        material = {BuildDefaultRecordConstructor(layout)};");
             sb.AppendLine("}");
 
-            if (!bindless)
+            if (textureReferenceMode == EMaterialTableTextureReferenceMode.None)
                 return;
 
             sb.AppendLine();
+            if (textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable)
+            {
+                AppendVulkanDescriptorIndexTextureTableDefinitions(sb);
+                return;
+            }
+
+            AppendOpenGLBindlessTextureHandleTableDefinitions(sb, textureHandleTableBinding);
+        }
+
+        private static void AppendOpenGLBindlessTextureHandleTableDefinitions(StringBuilder sb, uint textureHandleTableBinding)
+        {
             sb.AppendLine("struct TextureHandleEntry");
             sb.AppendLine("{");
             sb.AppendLine("    uvec2 Handle;");
@@ -703,6 +745,21 @@ namespace XREngine.Rendering.Materials
             sb.AppendLine("vec4 SampleBindlessTexture(uint handleIndex, vec2 uv, vec4 fallback)");
             sb.AppendLine("{");
             sb.AppendLine("    return XR_TEXTURE2D(handleIndex, uv, fallback);");
+            sb.AppendLine("}");
+        }
+
+        private static void AppendVulkanDescriptorIndexTextureTableDefinitions(StringBuilder sb)
+        {
+            sb.AppendLine("layout(set = 2, binding = 31) uniform sampler2D XR_BindlessMaterialTextures[];");
+            sb.AppendLine("vec4 XR_TEXTURE2D(uint descriptorIndex, vec2 uv, vec4 fallback)");
+            sb.AppendLine("{");
+            sb.AppendLine("    if (descriptorIndex == 0u)");
+            sb.AppendLine("        return fallback;");
+            sb.AppendLine("    return texture(XR_BindlessMaterialTextures[nonuniformEXT(descriptorIndex)], uv);");
+            sb.AppendLine("}");
+            sb.AppendLine("vec4 SampleBindlessTexture(uint descriptorIndex, vec2 uv, vec4 fallback)");
+            sb.AppendLine("{");
+            sb.AppendLine("    return XR_TEXTURE2D(descriptorIndex, uv, fallback);");
             sb.AppendLine("}");
         }
 

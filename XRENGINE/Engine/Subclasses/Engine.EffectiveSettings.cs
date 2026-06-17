@@ -100,6 +100,12 @@ namespace XREngine
                 => Rendering.Settings.EnableVulkanBindlessMaterialTable;
 
             /// <summary>
+            /// Gets the effective Vulkan bindless material-table policy.
+            /// </summary>
+            public static EVulkanBindlessMaterialMode VulkanBindlessMaterialMode
+                => Rendering.Settings.VulkanBindlessMaterialMode;
+
+            /// <summary>
             /// Gets whether Vulkan descriptor contracts should be validated.
             /// </summary>
             public static bool ValidateVulkanDescriptorContracts

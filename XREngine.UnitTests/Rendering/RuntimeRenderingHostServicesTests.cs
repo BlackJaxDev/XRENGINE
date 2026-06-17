@@ -1046,6 +1046,10 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
+        public void RecordRenderVulkanRecordCommandBufferAllocation(long bytes)
+        {
+        }
+
         public void RecordRenderVulkanFrameDiagnostics(
             int droppedFrameOps,
             int droppedDrawOps,

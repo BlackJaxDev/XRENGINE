@@ -21,6 +21,8 @@ param(
     [switch]$NoClearCachesBetweenVariants,
     [switch]$NoP3Logging,
     [switch]$FailOnSteadyStateResourceChurn,
+    [switch]$FailOnSteadyStateCommandBufferAllocations,
+    [long]$MaxSteadyStateRecordCommandBufferAllocatedBytes = 0,
     [int]$ShutdownGraceSec = 20,
     [int]$NoSampleHangSec = 15,
     [int]$RetainedRunCount = 5,
@@ -49,6 +51,7 @@ $arguments = @{
     RenderScale = $RenderScale
     GpuClockPolicy = $GpuClockPolicy
     TargetRefreshHz = $TargetRefreshHz
+    MaxSteadyStateRecordCommandBufferAllocatedBytes = $MaxSteadyStateRecordCommandBufferAllocatedBytes
     ShutdownGraceSec = $ShutdownGraceSec
     NoSampleHangSec = $NoSampleHangSec
     RetainedRunCount = $RetainedRunCount
@@ -69,6 +72,10 @@ if ($NoP3Logging) {
 
 if ($FailOnSteadyStateResourceChurn) {
     $arguments['FailOnSteadyStateResourceChurn'] = $true
+}
+
+if ($FailOnSteadyStateCommandBufferAllocations) {
+    $arguments['FailOnSteadyStateCommandBufferAllocations'] = $true
 }
 
 & $measureScript @arguments

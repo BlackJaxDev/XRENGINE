@@ -32,6 +32,9 @@ public unsafe partial class VulkanRenderer
 			string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_FRAME_DATA_REUSE_DIAG"), "1", StringComparison.Ordinal) ||
 			string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_DESCRIPTOR_FINGERPRINT_DIAG"), "1", StringComparison.Ordinal);
 
+		private static readonly bool MaterialBindingDiagnosticsEnabled =
+			string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_MATERIAL_BINDING_DIAG"), "1", StringComparison.Ordinal);
+
 		/// <summary>
 		/// Ensures descriptor sets are allocated and written for all swapchain frames.
 		/// Uses a schema fingerprint to detect layout changes and avoid redundant
@@ -67,7 +70,7 @@ public unsafe partial class VulkanRenderer
 				_descriptorPool.Handle != 0 &&
 				_descriptorSchemaFingerprint == schemaFingerprint &&
 				_descriptorSets.Length == descriptorFrameSlotCount &&
-				_descriptorSets.All(s => s.Length == setCount);
+				DescriptorSetsHaveSetCount(_descriptorSets, setCount);
 
 			if (!_descriptorDirty && canReuseDescriptorAllocation && _descriptorResourceFingerprint == resourceFingerprint)
 				return true;
@@ -264,7 +267,7 @@ public unsafe partial class VulkanRenderer
 			HashCode hash = new();
 			hash.Add(setCount);
 
-			foreach (DescriptorBindingInfo binding in bindings.OrderBy(b => b.Set).ThenBy(b => b.Binding))
+			foreach (DescriptorBindingInfo binding in bindings)
 			{
 				hash.Add(binding.Set);
 				hash.Add(binding.Binding);
@@ -314,18 +317,7 @@ public unsafe partial class VulkanRenderer
 
 		private ulong ComputeCachedBufferResourceFingerprint()
 		{
-			HashCode hash = new();
-			foreach (var pair in _bufferCache.OrderBy(p => p.Key, StringComparer.Ordinal))
-			{
-				VkDataBuffer buffer = pair.Value;
-				hash.Add(pair.Key);
-				hash.Add(buffer.BufferHandle?.Handle ?? 0UL);
-				hash.Add(buffer.Data.Length);
-				hash.Add((int)buffer.Data.Target);
-				hash.Add(buffer.Data.BindingIndexOverride ?? uint.MaxValue);
-			}
-
-			return unchecked((ulong)hash.ToHashCode());
+			return ComputeCachedBufferResourceFingerprintCore();
 		}
 
 		private ulong ComputeMaterialTextureResourceFingerprint(XRMaterial material)
@@ -339,30 +331,12 @@ public unsafe partial class VulkanRenderer
 
 		private ulong ComputeEngineUniformResourceFingerprint()
 		{
-			HashCode hash = new();
-			foreach (var pair in _engineUniformBuffers.OrderBy(p => p.Key, StringComparer.Ordinal))
-			{
-				hash.Add(pair.Key);
-				hash.Add(pair.Value.Length);
-				foreach (EngineUniformBuffer buffer in pair.Value)
-					hash.Add(buffer.Size);
-			}
-
-			return unchecked((ulong)hash.ToHashCode());
+			return ComputeEngineUniformResourceFingerprintCore();
 		}
 
 		private ulong ComputeAutoUniformResourceFingerprint()
 		{
-			HashCode hash = new();
-			foreach (var pair in _autoUniformBuffers.OrderBy(p => p.Key, StringComparer.Ordinal))
-			{
-				hash.Add(pair.Key);
-				hash.Add(pair.Value.Length);
-				foreach (AutoUniformBuffer buffer in pair.Value)
-					hash.Add(buffer.Size);
-			}
-
-			return unchecked((ulong)hash.ToHashCode());
+			return ComputeAutoUniformResourceFingerprintCore();
 		}
 
 		private ulong ComputeDescriptorResourceFingerprint(XRMaterial material, int frameCount)
@@ -371,15 +345,7 @@ public unsafe partial class VulkanRenderer
 			hash.Add(frameCount);
 			hash.Add(MeshRenderer.SkinnedOutputVersion);
 
-			foreach (var pair in _bufferCache.OrderBy(p => p.Key, StringComparer.Ordinal))
-			{
-				VkDataBuffer buffer = pair.Value;
-				hash.Add(pair.Key);
-				hash.Add(buffer.BufferHandle?.Handle ?? 0UL);
-				hash.Add(buffer.Data.Length);
-				hash.Add((int)buffer.Data.Target);
-				hash.Add(buffer.Data.BindingIndexOverride ?? uint.MaxValue);
-			}
+			hash.Add(ComputeCachedBufferResourceFingerprintCore());
 
 			hash.Add(material.Textures.Count);
 			for (int i = 0; i < material.Textures.Count; i++)
@@ -388,25 +354,8 @@ public unsafe partial class VulkanRenderer
 				AddTextureDescriptorResourceFingerprint(ref hash, texture);
 			}
 
-			foreach (var pair in _engineUniformBuffers.OrderBy(p => p.Key, StringComparer.Ordinal))
-			{
-				hash.Add(pair.Key);
-				hash.Add(pair.Value.Length);
-				foreach (EngineUniformBuffer buffer in pair.Value)
-				{
-					hash.Add(buffer.Size);
-				}
-			}
-
-			foreach (var pair in _autoUniformBuffers.OrderBy(p => p.Key, StringComparer.Ordinal))
-			{
-				hash.Add(pair.Key);
-				hash.Add(pair.Value.Length);
-				foreach (AutoUniformBuffer buffer in pair.Value)
-				{
-					hash.Add(buffer.Size);
-				}
-			}
+			hash.Add(ComputeEngineUniformResourceFingerprintCore());
+			hash.Add(ComputeAutoUniformResourceFingerprintCore());
 
 			// Program-bound named samplers (material textures, engine/FBO blit bindings)
 			// participate in image descriptor resolution, so changes to them must rewrite
@@ -415,6 +364,101 @@ public unsafe partial class VulkanRenderer
 			_program?.AddBoundBufferResourceFingerprint(ref hash);
 
 			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private static bool DescriptorSetsHaveSetCount(DescriptorSet[][] descriptorSets, int setCount)
+		{
+			for (int i = 0; i < descriptorSets.Length; i++)
+			{
+				if (descriptorSets[i].Length != setCount)
+					return false;
+			}
+
+			return true;
+		}
+
+		private ulong ComputeCachedBufferResourceFingerprintCore()
+		{
+			ulong xor = 0;
+			ulong sum = 0;
+			foreach (KeyValuePair<string, VkDataBuffer> pair in _bufferCache)
+				AddUnorderedFingerprintItem(ref xor, ref sum, ComputeCachedBufferResourceFingerprintItem(pair.Key, pair.Value));
+
+			HashCode hash = new();
+			hash.Add(_bufferCache.Count);
+			hash.Add(xor);
+			hash.Add(sum);
+			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private static ulong ComputeCachedBufferResourceFingerprintItem(string name, VkDataBuffer buffer)
+		{
+			HashCode item = new();
+			item.Add(name, StringComparer.Ordinal);
+			item.Add(buffer.BufferHandle?.Handle ?? 0UL);
+			item.Add(buffer.Data.Length);
+			item.Add((int)buffer.Data.Target);
+			item.Add(buffer.Data.BindingIndexOverride ?? uint.MaxValue);
+			return unchecked((ulong)item.ToHashCode());
+		}
+
+		private ulong ComputeEngineUniformResourceFingerprintCore()
+		{
+			ulong xor = 0;
+			ulong sum = 0;
+			foreach (KeyValuePair<string, EngineUniformBuffer[]> pair in _engineUniformBuffers)
+				AddUnorderedFingerprintItem(ref xor, ref sum, ComputeEngineUniformBufferArrayFingerprintItem(pair.Key, pair.Value));
+
+			HashCode hash = new();
+			hash.Add(_engineUniformBuffers.Count);
+			hash.Add(xor);
+			hash.Add(sum);
+			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private ulong ComputeAutoUniformResourceFingerprintCore()
+		{
+			ulong xor = 0;
+			ulong sum = 0;
+			foreach (KeyValuePair<string, AutoUniformBuffer[]> pair in _autoUniformBuffers)
+				AddUnorderedFingerprintItem(ref xor, ref sum, ComputeAutoUniformBufferArrayFingerprintItem(pair.Key, pair.Value));
+
+			HashCode hash = new();
+			hash.Add(_autoUniformBuffers.Count);
+			hash.Add(xor);
+			hash.Add(sum);
+			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private static ulong ComputeEngineUniformBufferArrayFingerprintItem(string name, EngineUniformBuffer[] buffers)
+		{
+			HashCode item = new();
+			item.Add(name, StringComparer.Ordinal);
+			item.Add(buffers.Length);
+			for (int i = 0; i < buffers.Length; i++)
+				item.Add(buffers[i].Size);
+
+			return unchecked((ulong)item.ToHashCode());
+		}
+
+		private static ulong ComputeAutoUniformBufferArrayFingerprintItem(string name, AutoUniformBuffer[] buffers)
+		{
+			HashCode item = new();
+			item.Add(name, StringComparer.Ordinal);
+			item.Add(buffers.Length);
+			for (int i = 0; i < buffers.Length; i++)
+				item.Add(buffers[i].Size);
+
+			return unchecked((ulong)item.ToHashCode());
+		}
+
+		private static void AddUnorderedFingerprintItem(ref ulong xor, ref ulong sum, ulong itemHash)
+		{
+			unchecked
+			{
+				xor ^= itemHash;
+				sum += System.Numerics.BitOperations.RotateLeft(itemHash, (int)(itemHash & 31));
+			}
 		}
 
 		private void AddTextureDescriptorResourceFingerprint(ref HashCode hash, XRTexture? texture)
@@ -834,9 +878,15 @@ public unsafe partial class VulkanRenderer
 					if (TryResolveProgramBoundBuffer(binding, out buffer))
 						goto BufferResolved;
 
-					buffer = _bufferCache.Values.FirstOrDefault(b =>
-						b.Data.Target == EBufferTarget.ShaderStorageBuffer &&
-						b.Data.BindingIndexOverride == binding.Binding);
+					foreach (VkDataBuffer candidate in _bufferCache.Values)
+					{
+						if (candidate.Data.Target == EBufferTarget.ShaderStorageBuffer &&
+							candidate.Data.BindingIndexOverride == binding.Binding)
+						{
+							buffer = candidate;
+							break;
+						}
+					}
 				}
 
 				if (buffer is not null)
@@ -855,7 +905,16 @@ public unsafe partial class VulkanRenderer
 				// Step 3: Generic fallback — only match buffers whose target type
 				// is compatible with the descriptor's expected type.
 				if (binding.DescriptorType == DescriptorType.UniformBuffer)
-					buffer = _bufferCache.Values.FirstOrDefault(b => b.Data.Target == EBufferTarget.UniformBuffer);
+				{
+					foreach (VkDataBuffer candidate in _bufferCache.Values)
+					{
+						if (candidate.Data.Target == EBufferTarget.UniformBuffer)
+						{
+							buffer = candidate;
+							break;
+						}
+					}
+				}
 			}
 
 			if (buffer is null)
@@ -1113,6 +1172,7 @@ public unsafe partial class VulkanRenderer
 				{
 					LogPostProcessDescriptor(binding, arrayIndex, null, imageInfo, "placeholder-missing-texture");
 					LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, null, null, imageInfo, "placeholder-missing-texture");
+					LogMaterialDescriptor(binding, material, arrayIndex, textureBinding, null, null, imageInfo, "placeholder-missing-texture");
 					RecordDescriptorFallback(binding);
 					return true;
 				}
@@ -1165,6 +1225,7 @@ public unsafe partial class VulkanRenderer
 					};
 					LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}/{aspectLabel}");
 					LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}/{aspectLabel}");
+					LogMaterialDescriptor(binding, material, arrayIndex, textureBinding, texture, source, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}/{aspectLabel}");
 					return true;
 				}
 
@@ -1182,6 +1243,7 @@ public unsafe partial class VulkanRenderer
 					WarnOnce($"Texture for descriptor binding '{binding.Name}' cannot provide expected view type '{binding.ExpectedImageViewType}'. Using placeholder.");
 					LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, "placeholder-view-type");
 					LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, "placeholder-view-type");
+					LogMaterialDescriptor(binding, material, arrayIndex, textureBinding, texture, source, imageInfo, "placeholder-view-type");
 					RecordDescriptorFallback(binding);
 					return true;
 				}
@@ -1202,6 +1264,7 @@ public unsafe partial class VulkanRenderer
 			};
 			LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}");
 			LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}");
+			LogMaterialDescriptor(binding, material, arrayIndex, textureBinding, texture, source, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}");
 			return imageInfo.ImageView.Handle != 0;
 		}
 
@@ -1292,6 +1355,54 @@ public unsafe partial class VulkanRenderer
 				$"detail={detail}");
 		}
 
+		private void LogMaterialDescriptor(
+			DescriptorBindingInfo binding,
+			XRMaterial material,
+			int arrayIndex,
+			MaterialTextureBindingResolution resolution,
+			XRTexture? texture,
+			IVkImageDescriptorSource? source,
+			DescriptorImageInfo imageInfo,
+			string detail)
+		{
+			if (!MaterialBindingDiagnosticsEnabled || !IsMaterialSampler(binding.Name))
+				return;
+
+			string textureLabel = texture is null
+				? "<null>"
+				: $"{(string.IsNullOrWhiteSpace(texture.Name) ? texture.GetType().Name : texture.Name)}#{texture.GetHashCode():X8}";
+			string sourceLayout = source is null ? "<null>" : source.TrackedImageLayout.ToString();
+			string sourceUsage = source is null ? "<null>" : source.DescriptorUsage.ToString();
+			string programName = _program?.Data?.Name ?? "<null>";
+			string meshName = Mesh?.Name ?? "<null>";
+			string materialName = material.Name ?? "<null>";
+
+			Debug.VulkanEvery(
+				$"Vulkan.MaterialDescriptor.{GetHashCode()}.{programName}.{materialName}.{binding.Name}.{arrayIndex}",
+				TimeSpan.FromSeconds(1),
+				"[VkMaterialDescriptor] program='{0}' mesh='{1}' material='{2}' name='{3}' set={4} binding={5} arrayIndex={6} type={7} " +
+				"rung={8} resolvedIndex={9} resolvedSampler='{10}' reason='{11}' texture={12} imageLayout={13} view=0x{14:X} sampler=0x{15:X} sourceLayout={16} sourceUsage={17} detail={18}",
+				programName,
+				meshName,
+				materialName,
+				binding.Name ?? "<null>",
+				binding.Set,
+				binding.Binding,
+				arrayIndex,
+				binding.DescriptorType,
+				resolution.Rung,
+				resolution.TextureIndex,
+				resolution.SamplerName ?? "<null>",
+				resolution.Reason,
+				textureLabel,
+				imageInfo.ImageLayout,
+				imageInfo.ImageView.Handle,
+				imageInfo.Sampler.Handle,
+				sourceLayout,
+				sourceUsage,
+				detail);
+		}
+
 		private static bool IsPostProcessSampler(string? name)
 			=> string.Equals(name, "HDRSceneTex", StringComparison.Ordinal)
 			|| string.Equals(name, "BloomBlurTexture", StringComparison.Ordinal)
@@ -1300,6 +1411,10 @@ public unsafe partial class VulkanRenderer
 			|| string.Equals(name, "AutoExposureTex", StringComparison.Ordinal)
 			|| string.Equals(name, "AtmosphereColor", StringComparison.Ordinal)
 			|| string.Equals(name, "VolumetricFogColor", StringComparison.Ordinal);
+
+		private static bool IsMaterialSampler(string? name)
+			=> name is not null &&
+			   name.StartsWith("Texture", StringComparison.Ordinal);
 
 		private static bool RequiresStencilOnlyDescriptor(DescriptorBindingInfo binding)
 			=> binding.Name?.Contains("Stencil", StringComparison.OrdinalIgnoreCase) == true;

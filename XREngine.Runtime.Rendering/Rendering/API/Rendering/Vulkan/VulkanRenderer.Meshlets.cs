@@ -68,6 +68,7 @@ public unsafe partial class VulkanRenderer
             stride,
             byteOffset,
             countByteOffset,
+            CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp(),
             context));
 
         failureReason = string.Empty;

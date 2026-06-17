@@ -276,6 +276,7 @@ public static partial class EditorImGuiUI
         if (_engineProfilerDataSource is not null) return;
         _engineProfilerDataSource = new EngineProfilerDataSource();
         _engineProfilerRenderer = new ProfilerPanelRenderer(_engineProfilerDataSource);
+        _engineProfilerRenderer.CpuFrameTimingDumpRequested = DumpCpuFrameTimingHistory;
         _engineProfilerRenderer.GpuPipelineTimingDumpRequested = DumpGpuPipelineTimingHistory;
 
         if (!_profilerAppThreadHooked)
@@ -322,12 +323,14 @@ public static partial class EditorImGuiUI
 
     private static ProfilerPanelRenderer.GpuPipelineTimingDumpResult DumpGpuPipelineTimingHistory(string pipelineName)
     {
-        if (Engine.Rendering.Stats.GpuPipelineProfiler.TryDumpGpuRenderPipelineTimingHistory(pipelineName, out string fileName, out string? error))
-            return new ProfilerPanelRenderer.GpuPipelineTimingDumpResult(true, $"GPU timing dump written: {fileName}");
+        ProfilerDiagnosticDumps.DumpResult result = ProfilerDiagnosticDumps.DumpGpuRenderPipelineTimingHistory(pipelineName);
+        return new ProfilerPanelRenderer.GpuPipelineTimingDumpResult(result.Success, result.Message);
+    }
 
-        return new ProfilerPanelRenderer.GpuPipelineTimingDumpResult(
-            false,
-            string.IsNullOrWhiteSpace(error) ? $"GPU timing dump failed for '{pipelineName}'." : error);
+    private static ProfilerPanelRenderer.CpuFrameTimingDumpResult DumpCpuFrameTimingHistory()
+    {
+        ProfilerDiagnosticDumps.DumpResult result = ProfilerDiagnosticDumps.DumpCpuFrameTimingHistory();
+        return new ProfilerPanelRenderer.CpuFrameTimingDumpResult(result.Success, result.Message);
     }
 
     private static void DrawSpeedProfileControls()

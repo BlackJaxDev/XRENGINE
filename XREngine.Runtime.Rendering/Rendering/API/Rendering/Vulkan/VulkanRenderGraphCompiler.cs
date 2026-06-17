@@ -18,6 +18,8 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     internal sealed class VulkanRenderGraphCompiler
     {
+        private readonly List<SecondaryRecordingBucket> _secondaryRecordingBucketScratch = new(32);
+
         /// <summary>
         /// Describes one contiguous run of compatible operations that can be recorded into
         /// secondary command buffers as a batch.
@@ -109,7 +111,13 @@ public unsafe partial class VulkanRenderer
             public IReadOnlyDictionary<int, int> PassOrder { get; }
         }
 
+        private sealed class CompiledGraphCacheEntry(IReadOnlyCollection<RenderPassMetadata> metadata)
+        {
+            public VulkanCompiledRenderGraph Graph { get; } = BuildCompiledGraph(metadata);
+        }
+
         private static readonly ConditionalWeakTable<IReadOnlyCollection<RenderPassMetadata>, PassOrderCacheEntry> PassOrderCache = new();
+        private static readonly ConditionalWeakTable<IReadOnlyCollection<RenderPassMetadata>, CompiledGraphCacheEntry> CompiledGraphCache = new();
 
         /// <summary>
         /// Compiles the high-level pass metadata into:
@@ -125,6 +133,11 @@ public unsafe partial class VulkanRenderer
             if (passMetadata is null || passMetadata.Count == 0)
                 return VulkanCompiledRenderGraph.Empty;
 
+            return CompiledGraphCache.GetValue(passMetadata, static metadata => new CompiledGraphCacheEntry(metadata)).Graph;
+        }
+
+        private static VulkanCompiledRenderGraph BuildCompiledGraph(IReadOnlyCollection<RenderPassMetadata> passMetadata)
+        {
             // Topological order ensures producers are recorded before their consumers.
             IReadOnlyList<RenderPassMetadata> orderedPasses = RenderGraphSynchronizationPlanner.TopologicallySort(passMetadata);
 
@@ -326,7 +339,8 @@ public unsafe partial class VulkanRenderer
             if (ops.Length == 0)
                 return Array.Empty<SecondaryRecordingBucket>();
 
-            List<SecondaryRecordingBucket> buckets = [];
+            List<SecondaryRecordingBucket> buckets = _secondaryRecordingBucketScratch;
+            buckets.Clear();
             int runStart = -1;
             int runPassIndex = int.MinValue;
             int runSchedulingIdentity = int.MinValue;

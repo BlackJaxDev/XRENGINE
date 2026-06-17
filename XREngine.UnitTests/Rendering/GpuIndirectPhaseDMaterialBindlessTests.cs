@@ -67,12 +67,33 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
     }
 
     [Test]
+    public void MaterialTable_PacksVulkanDescriptorIndices_DirectlyInMaterialRows()
+    {
+        using GPUMaterialTable table = new(initialCapacity: 4, initialHandleCapacity: 4);
+
+        GPUMaterialTextureReferences textureReferences = new(
+            GPUMaterialTextureReference.FromVulkanDescriptorIndex(5u),
+            GPUMaterialTextureReference.FromVulkanDescriptorIndex(6u),
+            GPUMaterialTextureReference.None);
+
+        table.AddOrUpdate(1u, new GPUMaterialEntry { Flags = 0x80000003u }, textureReferences);
+
+        ReadUInt(table.Buffer, 1u, 0u).ShouldBe(5u);
+        ReadUInt(table.Buffer, 1u, 1u).ShouldBe(6u);
+        ReadUInt(table.Buffer, 1u, 2u).ShouldBe(0u);
+        table.ActiveTextureHandles.ShouldBeEmpty();
+
+        table.Remove(1u).ShouldBeTrue();
+        table.TryConsumeRetiredHandle(out _).ShouldBeFalse();
+    }
+
+    [Test]
     public void PhaseD_SourceContracts_ArePresent()
     {
         string glRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs");
         string glBindlessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLRenderer.Bindless.cs");
         string materialTableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialTable.cs");
-        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
+        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
         string materialScatterSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderMaterialScatter.comp");
         string vulkanDescriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanDescriptorLayoutCache.cs");
@@ -80,7 +101,7 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         string vkBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkDataBuffer.cs");
         string vkAddressSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanSceneDatabaseAddresses.cs");
         string renderParametersSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Materials/Options/RenderingParameters.cs");
-        string gpuSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene.cs");
+        string gpuSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.Soa.cs");
         string vulkanShaderInclude = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/VulkanBindlessMaterialTable.glsl");
         string policyDoc = ReadWorkspaceFile("docs/architecture/rendering/material-binding-policy.md");
 
@@ -89,6 +110,8 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         glBindlessSource.ShouldContain("MakeTextureHandleResident");
         materialTableSource.ShouldContain("MaterialTextureHandleTable");
         materialTableSource.ShouldContain("GPUMaterialTextureHandles");
+        materialTableSource.ShouldContain("GPUMaterialTextureReferences");
+        materialTableSource.ShouldContain("EGPUMaterialTextureReferenceKind.VulkanDescriptorIndex");
         materialTableSource.ShouldContain("MaterialBindingLayouts.OpaqueDeferred");
         materialTableSource.ShouldContain("BaseColorOpacity");
         materialTableSource.ShouldContain("RMSE");
@@ -157,12 +180,12 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         // Invariant 2: material-table program cache key does not depend on material identity.
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
         hybridSource.ShouldContain(
-            "(bool bindless, int rendererKey, string layoutHash) cacheKey = (bindless, rendererKey, layout.LayoutHash);",
-            customMessage: "EnsureMaterialTableDrawProgram cache key changed shape. Phase D acceptance requires the material-table draw program to be keyed on (bindless, rendererKey) only — never on material identity. (The separate EnsureCombinedProgram per-material cache is unrelated.)");
+            "(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash) cacheKey =",
+            customMessage: "EnsureMaterialTableDrawProgram cache key changed shape. Phase D acceptance requires the material-table draw program to be keyed on texture-reference mode, renderer identity, and layout only - never on material identity. (The separate EnsureCombinedProgram per-material cache is unrelated.)");
 
         // Sanity: the shadow short-circuit that routes every shadow-pass draw to the Shadow family
         // is what keeps shadow PSO count constant across diverse material inputs.
-        string gpuSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene.cs");
+        string gpuSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.Soa.cs");
         gpuSceneSource.ShouldContain("RuntimeEngine.Rendering.State.IsShadowPass");
         gpuSceneSource.ShouldContain("return EGpuMaterialStateClass.Shadow;");
     }

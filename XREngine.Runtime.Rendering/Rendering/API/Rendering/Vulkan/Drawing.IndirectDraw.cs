@@ -172,6 +172,7 @@ namespace XREngine.Rendering.Vulkan
                 byteOffset,
                 0,
                 UseCount: false,
+                CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp(),
                 context));
 
             RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
@@ -217,6 +218,7 @@ namespace XREngine.Rendering.Vulkan
                 byteOffset,
                 countByteOffset,
                 UseCount: true,
+                CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp(),
                 context));
 
             RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();

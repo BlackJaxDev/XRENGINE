@@ -625,6 +625,7 @@ namespace XREngine.Rendering.Vulkan
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordCommandBuffer"))
             {
+                long recordAllocationStart = GC.GetAllocatedBytesForCurrentThread();
                 try
                 {
                     EnsureCommandBufferRecorded(imageIndex);
@@ -649,6 +650,11 @@ namespace XREngine.Rendering.Vulkan
 
                     RecreateSwapchainImmediately("Command buffer recording failed — recovering timeline/present state");
                     throw; // Re-throw so XRWindow's circuit breaker can track failure count
+                }
+                finally
+                {
+                    long allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - recordAllocationStart;
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRecordCommandBufferAllocation(allocatedBytes);
                 }
             }
             recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);

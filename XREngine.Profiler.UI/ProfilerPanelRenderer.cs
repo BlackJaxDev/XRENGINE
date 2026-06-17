@@ -11,6 +11,7 @@ namespace XREngine.Profiler.UI;
 /// </summary>
 public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 {
+    public readonly record struct CpuFrameTimingDumpResult(bool Success, string Message);
     public readonly record struct GpuPipelineTimingDumpResult(bool Success, string Message);
     public readonly record struct PanelVisibility(
         bool ProfilerTree,
@@ -150,6 +151,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private string _gpuPipelineDisplayStatusMessage = string.Empty;
     private double _gpuPipelineDisplayFrameMs;
     private GpuPipelineTimingNodeData[] _gpuPipelineDisplayRoots = [];
+    private string _cpuFrameDumpStatusMessage = string.Empty;
+    private bool _cpuFrameDumpStatusSuccess;
     private string _gpuPipelineDumpStatusMessage = string.Empty;
     private bool _gpuPipelineDumpStatusSuccess;
     private readonly Dictionary<string, TimingGraphInterpolationState> _cpuTimingInterpolationStates = new(StringComparer.Ordinal);
@@ -257,6 +260,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         set => _gpuTimingDisplayMode = value;
     }
 
+    public Func<CpuFrameTimingDumpResult>? CpuFrameTimingDumpRequested { get; set; }
     public Func<string, GpuPipelineTimingDumpResult>? GpuPipelineTimingDumpRequested { get; set; }
 
     /// <summary>Process the latest data from the source (call once per frame).</summary>
@@ -368,6 +372,16 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         }
 
         var nowUtc = DateTime.UtcNow;
+
+        DrawCpuFrameDumpButton();
+        if (!string.IsNullOrWhiteSpace(_cpuFrameDumpStatusMessage))
+        {
+            Vector4 statusColor = _cpuFrameDumpStatusSuccess
+                ? new Vector4(0.45f, 0.95f, 0.55f, 1.0f)
+                : new Vector4(1.00f, 0.45f, 0.40f, 1.0f);
+            ImGui.SameLine();
+            ImGui.TextColored(statusColor, _cpuFrameDumpStatusMessage);
+        }
 
         // Status
         if (_threadCache.Count == 0)
@@ -483,6 +497,23 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         }
 
         ImGui.End();
+    }
+
+    private void DrawCpuFrameDumpButton()
+    {
+        Func<CpuFrameTimingDumpResult>? dumpHandler = CpuFrameTimingDumpRequested;
+        if (dumpHandler is null)
+            return;
+
+        if (ImGui.Button("Dump CPU Frame Log"))
+        {
+            CpuFrameTimingDumpResult result = dumpHandler();
+            _cpuFrameDumpStatusSuccess = result.Success;
+            _cpuFrameDumpStatusMessage = result.Message;
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Write a unique LLM-oriented log for the latest CPU profiler frame snapshot.");
     }
 
     public void DrawFpsDropSpikesPanel(ref bool open, bool allowClose = true)

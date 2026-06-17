@@ -16,6 +16,7 @@ public unsafe partial class VulkanRenderer
         SampleCountFlags DescriptorSamples { get; }
         uint DescriptorMipLevels => 1u;
         uint DescriptorArrayLayers => 1u;
+        bool IsDescriptorReady => true;
 
         /// <summary>
         /// Returns the most recently tracked <see cref="ImageLayout"/> for the backing VkImage.

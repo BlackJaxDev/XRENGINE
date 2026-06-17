@@ -74,6 +74,13 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public EVulkanSynchronizationBackend VulkanSynchronizationBackend => Engine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend;
     public EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend => Engine.Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend;
     public bool VulkanDynamicUniformBufferEnabled => Engine.Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled;
+    public bool EnableVulkanBindlessMaterialTable => Engine.EffectiveSettings.EnableVulkanBindlessMaterialTable;
+    public bool EnableVulkanDescriptorIndexing => Engine.EffectiveSettings.EnableVulkanDescriptorIndexing;
+    public bool ValidateVulkanDescriptorContracts => Engine.EffectiveSettings.ValidateVulkanDescriptorContracts;
+    public EVulkanBindlessMaterialMode VulkanBindlessMaterialMode => Engine.EffectiveSettings.VulkanBindlessMaterialMode;
+    public EVulkanGeometryFetchMode VulkanGeometryFetchMode => Engine.EffectiveSettings.VulkanGeometryFetchMode;
+    public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile => Engine.EffectiveSettings.VulkanGpuDrivenProfile;
+    public EVulkanQueueOverlapMode VulkanQueueOverlapMode => Engine.EffectiveSettings.VulkanQueueOverlapMode;
 
     public void SubscribeRenderingSettingsChanged(Action callback)
         => Engine.Rendering.SettingsChanged += callback;
@@ -800,6 +807,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void RecordRenderVulkanDynamicUniformExhaustion()
         => Engine.Rendering.Stats.Vulkan.RecordVulkanDynamicUniformExhaustion();
+
+    public void RecordRenderVulkanRecordCommandBufferAllocation(long bytes)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanRecordCommandBufferAllocation(bytes);
 
     public void RecordRenderVulkanFrameDiagnostics(
         int droppedFrameOps,

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using System.Text;
 using Silk.NET.Vulkan;
@@ -249,6 +250,23 @@ internal sealed class VulkanResourceAllocator
     {
         foreach (VulkanPhysicalBufferGroup group in _physicalBufferGroups.Values)
             group.Destroy(renderer);
+    }
+
+    internal static int ComputePhysicalPlanUsageSignature(
+        VulkanResourcePlanner planner,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    {
+        Dictionary<string, VulkanUsageProfile> usageProfiles = BuildUsageProfiles(passMetadata, planner);
+        HashCode hash = new();
+        hash.Add(usageProfiles.Count);
+
+        foreach (KeyValuePair<string, VulkanUsageProfile> pair in usageProfiles.OrderBy(static p => p.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            hash.Add(pair.Key, StringComparer.OrdinalIgnoreCase);
+            hash.Add(pair.Value.Signature);
+        }
+
+        return hash.ToHashCode();
     }
 
     private static Dictionary<string, VulkanUsageProfile> BuildUsageProfiles(
@@ -807,6 +825,18 @@ internal sealed class VulkanResourceAllocator
     private sealed class VulkanUsageProfile
     {
         private readonly HashSet<ERenderPassResourceType> _types = [];
+
+        public int Signature
+        {
+            get
+            {
+                HashCode hash = new();
+                foreach (ERenderPassResourceType type in _types.OrderBy(static t => (int)t))
+                    hash.Add((int)type);
+
+                return hash.ToHashCode();
+            }
+        }
 
         public void Add(ERenderPassResourceType type)
             => _types.Add(type);

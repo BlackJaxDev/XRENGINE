@@ -1,4 +1,5 @@
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering;
 
@@ -40,6 +41,13 @@ public static class RuntimeRenderingHostServiceDefaults
     public const EVulkanSynchronizationBackend VulkanSynchronizationBackend = EVulkanSynchronizationBackend.Sync2;
     public const EVulkanDescriptorUpdateBackend VulkanDescriptorUpdateBackend = EVulkanDescriptorUpdateBackend.Template;
     public const bool VulkanDynamicUniformBufferEnabled = true;
+    public const bool EnableVulkanBindlessMaterialTable = true;
+    public const bool EnableVulkanDescriptorIndexing = true;
+    public const bool ValidateVulkanDescriptorContracts = true;
+    public const EVulkanBindlessMaterialMode VulkanBindlessMaterialMode = EVulkanBindlessMaterialMode.Auto;
+    public const EVulkanGeometryFetchMode VulkanGeometryFetchMode = EVulkanGeometryFetchMode.Atlas;
+    public const EVulkanGpuDrivenProfile VulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Auto;
+    public const EVulkanQueueOverlapMode VulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
 
     public const bool IsRenderThread = true;
     public const bool IsRendererActive = false;
