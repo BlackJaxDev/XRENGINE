@@ -1,1 +1,16 @@
+global using System.Numerics;
+global using Valve.VR;
+global using XREngine.Core;
 global using XREngine.Data;
+global using XREngine.Data.Colors;
+global using XREngine.Data.Core;
+global using XREngine.Data.Geometry;
+global using XREngine.Data.Profiling;
+global using XREngine.Data.Rendering;
+global using XREngine.Data.Trees;
+global using XREngine.Data.Transforms.Rotations;
+global using XREngine.Input;
+global using XREngine.Rendering.Commands;
+global using XREngine.Scene;
+global using CameraComponent = XREngine.Components.CameraComponent;
+global using XRComponent = XREngine.Components.XRComponent;

@@ -400,7 +400,7 @@ Prerequisite chain: dynamic rendering becomes the default first, then shader obj
 - [ ] Bindless resources + descriptor buffers + buffer device address.
 - [ ] GPU-driven submission: indirect-count, multi-draw, device-generated commands, GPU culling/LOD.
 - [ ] Mesh/task shaders with meshlet-level culling.
-- [ ] Ray tracing / hybrid via ray query (RT pipelines stay as `VkPipeline`).
+- [ ] Ray tracing / hybrid via ray query (RT pipelines stay as `VkPipeline`). See [Vulkan ReSTIR Radiance Cache GI TODO](rendering/vulkan-restir-radiance-cache-gi-todo.md).
 - [ ] Pipeline binary caching (`VK_KHR_pipeline_binary`).
 - [ ] Cooperative matrix/vector for in-engine ML (denoisers, neural upscalers).
 

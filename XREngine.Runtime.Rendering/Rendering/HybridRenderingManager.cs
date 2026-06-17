@@ -120,8 +120,8 @@ namespace XREngine.Rendering
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _materialPrograms = [];
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _pendingMaterialPrograms = [];
         private readonly Dictionary<(uint materialId, int rendererKey), XRRenderProgramDescriptor> _materialProgramUseDescriptors = [];
-        private readonly Dictionary<(bool bindless, bool sceneDatabaseBda, int rendererKey, string layoutHash), MaterialTableProgramCache> _materialTablePrograms = [];
-        private readonly Dictionary<(bool bindless, EMeshShaderDialect dialect, bool skinned, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
+        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash), MaterialTableProgramCache> _materialTablePrograms = [];
+        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, EMeshShaderDialect dialect, bool skinned, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
         private XRDataBuffer? _indirectTextRotationsBuffer;
@@ -2441,21 +2441,32 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            bool useBindless = bindlessRequested && SupportsOpenGLBindlessMaterialTable();
-            XRDataBuffer? materialTextureHandleBuffer = useBindless ? renderPasses.MaterialTextureHandleBuffer : null;
-            if (useBindless && materialTextureHandleBuffer is null)
-                useBindless = false;
+            EMaterialTableTextureReferenceMode textureReferenceMode = ResolveMaterialTableTextureReferenceMode(
+                bindlessRequested,
+                out string bindlessUnavailableReason);
+            XRDataBuffer? materialTextureHandleBuffer =
+                textureReferenceMode == EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable
+                    ? renderPasses.MaterialTextureHandleBuffer
+                    : null;
+            if (textureReferenceMode == EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable &&
+                materialTextureHandleBuffer is null)
+            {
+                textureReferenceMode = EMaterialTableTextureReferenceMode.None;
+                bindlessUnavailableReason = "OpenGL bindless material-table shader selected but the material texture handle buffer is missing.";
+            }
 
-            if (bindlessRequested && !useBindless && _bindlessMaterialTableUnsupportedLogBudget > 0)
+            if (bindlessRequested &&
+                textureReferenceMode == EMaterialTableTextureReferenceMode.None &&
+                _bindlessMaterialTableUnsupportedLogBudget > 0)
             {
                 _bindlessMaterialTableUnsupportedLogBudget--;
                 WarnMeshletMaterialFallback(
                     currentRenderPass,
                     requestedStrategy,
-                    "Bindless/descriptor-indexed material-table meshlets were requested, but the active backend cannot bind the material texture handle table.");
+                    $"Bindless/descriptor-indexed material-table meshlets were requested, but the active backend cannot use them. {bindlessUnavailableReason}");
             }
 
-            XRRenderProgram? program = EnsureMeshletMaterialTableProgram(useBindless, layout, renderer.MeshShaderDialect, skinned: false);
+            XRRenderProgram? program = EnsureMeshletMaterialTableProgram(textureReferenceMode, layout, renderer.MeshShaderDialect, skinned: false);
             if (program is null)
             {
                 WarnMeshletMaterialFallback(
@@ -2469,13 +2480,13 @@ namespace XREngine.Rendering
             {
                 renderPasses.RecordZeroReadbackProgramPending();
                 WarnZeroReadbackProgramWarmup(
-                    useBindless ? "GpuMeshletBindlessMaterialTable" : "GpuMeshletMaterialTable",
+                    textureReferenceMode == EMaterialTableTextureReferenceMode.None ? "GpuMeshletMaterialTable" : $"GpuMeshlet{textureReferenceMode}MaterialTable",
                     currentRenderPass,
                     pendingCount: 1);
                 return false;
             }
 
-            if (!TryUseIndirectGraphicsProgram(program, useBindless ? "GpuMeshletBindlessMaterialTable" : "GpuMeshletMaterialTable"))
+            if (!TryUseIndirectGraphicsProgram(program, textureReferenceMode == EMaterialTableTextureReferenceMode.None ? "GpuMeshletMaterialTable" : $"GpuMeshlet{textureReferenceMode}MaterialTable"))
             {
                 WarnMeshletMaterialFallback(
                     currentRenderPass,
@@ -2509,6 +2520,7 @@ namespace XREngine.Rendering
 
             bool submitted = false;
             TimeSpan dispatchElapsed = TimeSpan.Zero;
+            string failureReason = string.Empty;
             try
             {
                 renderer.MemoryBarrier(
@@ -2517,12 +2529,39 @@ namespace XREngine.Rendering
                     EMemoryBarrierMask.TextureFetch);
 
                 System.Diagnostics.Stopwatch dispatchStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                submitted = renderer.TryDrawMeshTasksIndirectCount(
-                    dispatchIndirectBuffer,
-                    dispatchCountBuffer,
-                    GPUMeshletLayout.MeshTaskIndirectCommandMaxDrawCount,
-                    GPUMeshletLayout.MeshTaskIndirectCommandStride,
-                    out string failureReason);
+                VulkanRenderer? vulkanRenderer = textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable
+                    ? renderer as VulkanRenderer
+                    : null;
+                bool bindlessScopeActive = false;
+                try
+                {
+                    if (vulkanRenderer is not null)
+                    {
+                        bindlessScopeActive = vulkanRenderer.BeginGlobalMaterialTextureDescriptorScope(
+                            program,
+                            "GpuMeshletVulkanDescriptorIndexMaterialTable");
+                        if (!bindlessScopeActive)
+                        {
+                            failureReason = "Vulkan global material texture descriptor table could not be bound.";
+                            submitted = false;
+                        }
+                    }
+
+                    if (bindlessScopeActive || vulkanRenderer is null)
+                    {
+                        submitted = renderer.TryDrawMeshTasksIndirectCount(
+                            dispatchIndirectBuffer,
+                            dispatchCountBuffer,
+                            GPUMeshletLayout.MeshTaskIndirectCommandMaxDrawCount,
+                            GPUMeshletLayout.MeshTaskIndirectCommandStride,
+                            out failureReason);
+                    }
+                }
+                finally
+                {
+                    if (bindlessScopeActive)
+                        vulkanRenderer?.EndGlobalMaterialTextureDescriptorScope(program);
+                }
                 dispatchStopwatch.Stop();
                 dispatchElapsed = dispatchStopwatch.Elapsed;
 
@@ -2548,13 +2587,13 @@ namespace XREngine.Rendering
         }
 
         private XRRenderProgram? EnsureMeshletMaterialTableProgram(
-            bool bindless,
+            EMaterialTableTextureReferenceMode textureReferenceMode,
             MaterialBindingLayout layout,
             EMeshShaderDialect dialect,
             bool skinned)
         {
-            (bool bindless, EMeshShaderDialect dialect, bool skinned, string layoutHash) cacheKey =
-                (bindless, dialect, skinned, layout.LayoutHash);
+            (EMaterialTableTextureReferenceMode textureReferenceMode, EMeshShaderDialect dialect, bool skinned, string layoutHash) cacheKey =
+                (textureReferenceMode, dialect, skinned, layout.LayoutHash);
 
             if (_meshletMaterialTablePrograms.TryGetValue(cacheKey, out MeshletMaterialTableProgramCache existing))
             {
@@ -2570,7 +2609,7 @@ namespace XREngine.Rendering
 
             XRShader taskShader = ShaderHelper.LoadEngineShader(taskShaderPath, EShaderType.Task);
             XRShader meshShader = ShaderHelper.LoadEngineShader(meshShaderPath, EShaderType.Mesh);
-            XRShader fragmentShader = CreateMeshletMaterialTableFragmentShader(bindless, layout);
+            XRShader fragmentShader = CreateMeshletMaterialTableFragmentShader(textureReferenceMode, layout);
             var shaderList = new List<XRShader> { taskShader, meshShader, fragmentShader };
             var program = new XRRenderProgram(false, false, shaderList);
             program.AllowLink();
@@ -2735,18 +2774,22 @@ namespace XREngine.Rendering
                 requestedStrategy);
         }
 
-        private XRRenderProgram? EnsureMaterialTableDrawProgram(XRMeshRenderer? vaoRenderer, bool bindless, MaterialBindingLayout layout)
+        private XRRenderProgram? EnsureMaterialTableDrawProgram(
+            XRMeshRenderer? vaoRenderer,
+            EMaterialTableTextureReferenceMode textureReferenceMode,
+            MaterialBindingLayout layout)
         {
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
             bool sceneDatabaseBda = ShouldUseVulkanSceneDatabaseDeviceAddresses();
-            (bool bindless, bool sceneDatabaseBda, int rendererKey, string layoutHash) cacheKey = (bindless, sceneDatabaseBda, rendererKey, layout.LayoutHash);
+            (EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash) cacheKey =
+                (textureReferenceMode, sceneDatabaseBda, rendererKey, layout.LayoutHash);
 
             if (_materialTablePrograms.TryGetValue(cacheKey, out var existing))
             {
                 GpuDebug(
                     LogCategory.Validation,
-                    "Material-table program cache hit bindless={0} sceneDatabaseBda={1} rendererKey={2} layout={3} hash={4}",
-                    bindless,
+                    "Material-table program cache hit textureReferenceMode={0} sceneDatabaseBda={1} rendererKey={2} layout={3} hash={4}",
+                    textureReferenceMode,
                     sceneDatabaseBda,
                     rendererKey,
                     layout.Name,
@@ -2764,7 +2807,7 @@ namespace XREngine.Rendering
             if (generatedVertexShader is null)
                 return null;
 
-            XRShader fragmentShader = CreateMaterialTableFragmentShader(bindless, layout);
+            XRShader fragmentShader = CreateMaterialTableFragmentShader(textureReferenceMode, layout);
             var shaderList = new List<XRShader> { fragmentShader, generatedVertexShader };
             var program = new XRRenderProgram(false, false, shaderList);
             program.AllowLink();
@@ -2774,8 +2817,8 @@ namespace XREngine.Rendering
             _materialTablePrograms[cacheKey] = cacheEntry;
             GpuDebug(
                 LogCategory.Validation,
-                "Material-table program cache miss bindless={0} sceneDatabaseBda={1} rendererKey={2} layout={3} hash={4} rowBytes={5}",
-                bindless,
+                "Material-table program cache miss textureReferenceMode={0} sceneDatabaseBda={1} rendererKey={2} layout={3} hash={4} rowBytes={5}",
+                textureReferenceMode,
                 sceneDatabaseBda,
                 rendererKey,
                 layout.Name,
@@ -2788,6 +2831,31 @@ namespace XREngine.Rendering
             => AbstractRenderer.Current is VulkanRenderer renderer &&
                renderer.SupportsBufferDeviceAddress &&
                VulkanFeatureProfile.ActiveGeometryFetchMode == EVulkanGeometryFetchMode.BufferDeviceAddressPrototype;
+
+        private static EMaterialTableTextureReferenceMode ResolveMaterialTableTextureReferenceMode(
+            bool bindlessRequested,
+            out string unavailableReason)
+        {
+            unavailableReason = string.Empty;
+            if (!bindlessRequested)
+                return EMaterialTableTextureReferenceMode.None;
+
+            if (SupportsOpenGLBindlessMaterialTable())
+                return EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable;
+
+            if (AbstractRenderer.Current is VulkanRenderer vulkanRenderer)
+            {
+                VulkanBindlessMaterialCapability capability = vulkanRenderer.BindlessMaterialCapability;
+                if (capability.Tier >= EVulkanBindlessMaterialCapabilityTier.BindlessMaterialTableShaderReady)
+                    return EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable;
+
+                unavailableReason = $"Vulkan capability tier={capability.Tier}, mode={capability.Mode}, reason='{capability.Reason}'.";
+                return EMaterialTableTextureReferenceMode.None;
+            }
+
+            unavailableReason = "The active renderer does not expose OpenGL bindless handles or Vulkan descriptor-indexed material textures.";
+            return EMaterialTableTextureReferenceMode.None;
+        }
 
         private static bool SupportsOpenGLBindlessMaterialTable()
         {
@@ -2874,14 +2942,21 @@ namespace XREngine.Rendering
             sb.AppendLine($"uniform uint {SceneDatabaseTransformFloatCountUniform};");
         }
 
-        private static XRShader CreateMaterialTableFragmentShader(bool bindless, MaterialBindingLayout layout)
+        private static XRShader CreateMaterialTableFragmentShader(
+            EMaterialTableTextureReferenceMode textureReferenceMode,
+            MaterialBindingLayout layout)
         {
             var sb = new StringBuilder();
             sb.AppendLine("#version 460 core");
-            if (bindless)
+            bool samplesMaterialTextures = textureReferenceMode != EMaterialTableTextureReferenceMode.None;
+            if (textureReferenceMode == EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable)
             {
                 sb.AppendLine("#extension GL_ARB_gpu_shader_int64 : require");
                 sb.AppendLine("#extension GL_ARB_bindless_texture : require");
+            }
+            else if (textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable)
+            {
+                sb.AppendLine("#extension GL_EXT_nonuniform_qualifier : require");
             }
             sb.AppendLine();
             sb.AppendLine("layout(location=1) in vec3 FragNorm;");
@@ -2896,7 +2971,7 @@ namespace XREngine.Rendering
             MaterialBindingGlslGenerator.AppendMaterialTableDefinitions(
                 sb,
                 layout,
-                bindless,
+                textureReferenceMode,
                 MaterialTableSsboBinding,
                 MaterialTextureHandleTableSsboBinding);
             sb.AppendLine();
@@ -2925,7 +3000,7 @@ namespace XREngine.Rendering
             sb.AppendLine("    vec4 rmse = material.RMSE;");
             sb.AppendLine("    vec3 baseColor = baseColorOpacity.rgb;");
             sb.AppendLine("    float opacity = baseColorOpacity.a;");
-            if (bindless)
+            if (samplesMaterialTextures)
             {
                 sb.AppendLine("    if ((flags & 1u) != 0u)");
                 sb.AppendLine("    {");
@@ -2944,18 +3019,27 @@ namespace XREngine.Rendering
 
             return new XRShader(EShaderType.Fragment, sb.ToString())
             {
-                Name = bindless ? "GPUIndirect_BindlessMaterialTableFS" : "GPUIndirect_MaterialTableFS"
+                Name = textureReferenceMode == EMaterialTableTextureReferenceMode.None
+                    ? "GPUIndirect_MaterialTableFS"
+                    : $"GPUIndirect_{textureReferenceMode}MaterialTableFS"
             };
         }
 
-        private static XRShader CreateMeshletMaterialTableFragmentShader(bool bindless, MaterialBindingLayout layout)
+        private static XRShader CreateMeshletMaterialTableFragmentShader(
+            EMaterialTableTextureReferenceMode textureReferenceMode,
+            MaterialBindingLayout layout)
         {
             var sb = new StringBuilder();
             sb.AppendLine("#version 460 core");
-            if (bindless)
+            bool samplesMaterialTextures = textureReferenceMode != EMaterialTableTextureReferenceMode.None;
+            if (textureReferenceMode == EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable)
             {
                 sb.AppendLine("#extension GL_ARB_gpu_shader_int64 : require");
                 sb.AppendLine("#extension GL_ARB_bindless_texture : require");
+            }
+            else if (textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable)
+            {
+                sb.AppendLine("#extension GL_EXT_nonuniform_qualifier : require");
             }
             sb.AppendLine();
             sb.AppendLine("const uint XRE_TRANSPARENCY_MASKED = 1u;");
@@ -2991,7 +3075,7 @@ namespace XREngine.Rendering
             MaterialBindingGlslGenerator.AppendMaterialTableDefinitions(
                 sb,
                 layout,
-                bindless,
+                textureReferenceMode,
                 MaterialTableSsboBinding,
                 MaterialTextureHandleTableSsboBinding);
             sb.AppendLine();
@@ -3036,7 +3120,7 @@ namespace XREngine.Rendering
             sb.AppendLine("    vec4 rmse = material.RMSE;");
             sb.AppendLine("    vec3 baseColor = baseColorOpacity.rgb;");
             sb.AppendLine("    float opacity = baseColorOpacity.a;");
-            if (bindless)
+            if (samplesMaterialTextures)
             {
                 sb.AppendLine("    if ((flags & 1u) != 0u)");
                 sb.AppendLine("    {");
@@ -3057,7 +3141,9 @@ namespace XREngine.Rendering
 
             return new XRShader(EShaderType.Fragment, sb.ToString())
             {
-                Name = bindless ? "GpuMeshlet_BindlessMaterialTableFS" : "GpuMeshlet_MaterialTableFS"
+                Name = textureReferenceMode == EMaterialTableTextureReferenceMode.None
+                    ? "GpuMeshlet_MaterialTableFS"
+                    : $"GpuMeshlet_{textureReferenceMode}MaterialTableFS"
             };
         }
 
@@ -4873,18 +4959,29 @@ namespace XREngine.Rendering
                 return;
             }
 
-            bool useBindless = bindless && SupportsOpenGLBindlessMaterialTable();
-            XRDataBuffer? materialTextureHandleBuffer = useBindless ? renderPasses.MaterialTextureHandleBuffer : null;
-            if (useBindless && materialTextureHandleBuffer is null)
-                useBindless = false;
-
-            if (bindless && !useBindless && _bindlessMaterialTableUnsupportedLogBudget > 0)
+            EMaterialTableTextureReferenceMode textureReferenceMode = ResolveMaterialTableTextureReferenceMode(
+                bindless,
+                out string bindlessUnavailableReason);
+            XRDataBuffer? materialTextureHandleBuffer =
+                textureReferenceMode == EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable
+                    ? renderPasses.MaterialTextureHandleBuffer
+                    : null;
+            if (textureReferenceMode == EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable &&
+                materialTextureHandleBuffer is null)
             {
-                _bindlessMaterialTableUnsupportedLogBudget--;
-                Debug.MeshesWarning("[RenderDispatch] Bindless material-table draw path requested, but the active OpenGL renderer does not expose GL_ARB_bindless_texture + GL_ARB_gpu_shader_int64. Falling back to material-table shader.");
+                textureReferenceMode = EMaterialTableTextureReferenceMode.None;
+                bindlessUnavailableReason = "OpenGL bindless material-table shader selected but the material texture handle buffer is missing.";
             }
 
-            XRRenderProgram? program = EnsureMaterialTableDrawProgram(vaoRenderer, useBindless, layout);
+            if (bindless &&
+                textureReferenceMode == EMaterialTableTextureReferenceMode.None &&
+                _bindlessMaterialTableUnsupportedLogBudget > 0)
+            {
+                _bindlessMaterialTableUnsupportedLogBudget--;
+                Debug.MeshesWarning($"[RenderDispatch] Bindless material-table draw path requested, but the active backend cannot use it. {bindlessUnavailableReason} Falling back to material-table shader.");
+            }
+
+            XRRenderProgram? program = EnsureMaterialTableDrawProgram(vaoRenderer, textureReferenceMode, layout);
             if (program is null)
             {
                 RenderZeroReadbackMaterialTiers(renderPasses, camera, scene, vaoRenderer, currentRenderPass, materialMap);
@@ -4895,7 +4992,7 @@ namespace XREngine.Rendering
             {
                 renderPasses.RecordZeroReadbackProgramPending();
                 WarnZeroReadbackProgramWarmup(
-                    useBindless ? "ZeroReadbackBindlessMaterialTable" : "ZeroReadbackMaterialTable",
+                    textureReferenceMode == EMaterialTableTextureReferenceMode.None ? "ZeroReadbackMaterialTable" : $"ZeroReadback{textureReferenceMode}MaterialTable",
                     currentRenderPass,
                     pendingCount: 1);
                 return;
@@ -4927,7 +5024,7 @@ namespace XREngine.Rendering
             if (renderer is not null && invalidMaterial is not null)
                 renderer.ApplyRenderParameters(invalidMaterial.RenderOptions);
 
-            if (!TryUseIndirectGraphicsProgram(program, bindless ? "ZeroReadbackBindlessMaterialTable" : "ZeroReadbackMaterialTable"))
+            if (!TryUseIndirectGraphicsProgram(program, textureReferenceMode == EMaterialTableTextureReferenceMode.None ? "ZeroReadbackMaterialTable" : $"ZeroReadback{textureReferenceMode}MaterialTable"))
                 return;
 
             // O-7: one coalesced barrier ahead of the material-table bucket loop.
@@ -4963,6 +5060,7 @@ namespace XREngine.Rendering
                     defaultModelMatrix,
                     materialTableBuffer,
                     materialTextureHandleBuffer,
+                    bindVulkanMaterialTextureDescriptorTable: textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable,
                     allowMaxDrawFallback: true,
                     emitBarrier: false);
             }
@@ -5129,6 +5227,7 @@ namespace XREngine.Rendering
             Matrix4x4 modelMatrix,
             XRDataBuffer? materialTableBuffer = null,
             XRDataBuffer? materialTextureHandleBuffer = null,
+            bool bindVulkanMaterialTextureDescriptorTable = false,
             bool allowMaxDrawFallback = false,
             bool emitBarrier = true)
         {
@@ -5235,7 +5334,30 @@ namespace XREngine.Rendering
                     }
 
                     using (RuntimeEngine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectWithOffset"))
-                        renderer.MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, indirectByteOffset);
+                    {
+                        VulkanRenderer? vulkanRenderer = bindVulkanMaterialTextureDescriptorTable
+                            ? renderer as VulkanRenderer
+                            : null;
+                        bool bindlessScopeActive = false;
+                        try
+                        {
+                            if (vulkanRenderer is not null)
+                            {
+                                bindlessScopeActive = vulkanRenderer.BeginGlobalMaterialTextureDescriptorScope(
+                                    graphicsProgram,
+                                    "ZeroReadbackVulkanDescriptorIndexMaterialTable");
+                                if (!bindlessScopeActive)
+                                    return;
+                            }
+
+                            renderer.MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, indirectByteOffset);
+                        }
+                        finally
+                        {
+                            if (bindlessScopeActive)
+                                vulkanRenderer?.EndGlobalMaterialTextureDescriptorScope(graphicsProgram);
+                        }
+                    }
                 }
                 finally
                 {
@@ -5287,7 +5409,28 @@ namespace XREngine.Rendering
                         : uint.MaxValue;
                     LogIndirectDrawSizes("DispatchRenderIndirectCountBucket", maxDrawCount, stride, indirectDrawBuffer, parameterBuffer, indirectByteOffset, countByteOffset);
                     GPURenderPassCollection.Crumb($"MDIC.BUCKET.BEGIN bucket={bucketIndex} maxCmd={maxDrawCount} stride={stride} indirectOff={indirectByteOffset} countOff={countByteOffset} indCap={indirectDrawBuffer.ElementCount} paramCap={parameterBuffer.ElementCount}");
-                    renderer.MultiDrawElementsIndirectCount(maxDrawCount, stride, indirectByteOffset, countByteOffset);
+                    VulkanRenderer? vulkanRenderer = bindVulkanMaterialTextureDescriptorTable
+                        ? renderer as VulkanRenderer
+                        : null;
+                    bool bindlessScopeActive = false;
+                    try
+                    {
+                        if (vulkanRenderer is not null)
+                        {
+                            bindlessScopeActive = vulkanRenderer.BeginGlobalMaterialTextureDescriptorScope(
+                                graphicsProgram,
+                                "ZeroReadbackVulkanDescriptorIndexMaterialTable");
+                            if (!bindlessScopeActive)
+                                return;
+                        }
+
+                        renderer.MultiDrawElementsIndirectCount(maxDrawCount, stride, indirectByteOffset, countByteOffset);
+                    }
+                    finally
+                    {
+                        if (bindlessScopeActive)
+                            vulkanRenderer?.EndGlobalMaterialTextureDescriptorScope(graphicsProgram);
+                    }
                     if (P3Diagnostics.FinishAfterMultiDrawIndirectCount)
                     {
                         GPURenderPassCollection.Crumb("MDIC.BUCKET.FINISH.BEGIN");

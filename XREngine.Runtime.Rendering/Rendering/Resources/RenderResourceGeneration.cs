@@ -2,31 +2,13 @@ using System.Diagnostics;
 
 namespace XREngine.Rendering.Resources;
 
-public enum RenderResourceGenerationStatus
-{
-    Created,
-    Building,
-    Ready,
-    Active,
-    Failed,
-    Superseded,
-    Retired,
-    Disposed,
-}
-
-public sealed class RenderResourceGeneration : IDisposable
+public sealed class RenderResourceGeneration(ResourceGenerationKey key, RenderPipelineResourceLayout layout) : IDisposable
 {
     private readonly List<string> _diagnostics = [];
     private readonly Stopwatch _buildTimer = new();
 
-    public RenderResourceGeneration(ResourceGenerationKey key, RenderPipelineResourceLayout layout)
-    {
-        Key = key;
-        Layout = layout;
-    }
-
-    public ResourceGenerationKey Key { get; }
-    public RenderPipelineResourceLayout Layout { get; }
+    public ResourceGenerationKey Key { get; } = key;
+    public RenderPipelineResourceLayout Layout { get; } = layout;
     public RenderResourceRegistry Registry { get; } = new();
     public RenderResourceGenerationStatus Status { get; private set; } = RenderResourceGenerationStatus.Created;
     public string? CommitReason { get; private set; }

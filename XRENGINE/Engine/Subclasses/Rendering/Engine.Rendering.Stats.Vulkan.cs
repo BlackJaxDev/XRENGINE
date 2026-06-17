@@ -67,6 +67,7 @@ namespace XREngine
                     private static long _vulkanFrameAcquireBridgeSubmitTicks;
                     private static long _vulkanFrameWaitSwapchainImageTicks;
                     private static long _vulkanFrameResetDynamicUniformRingTicks;
+                    private static long _vulkanRecordCommandBufferAllocatedBytes;
                     private static int _lastFrameVulkanIndirectCountPathCalls;
                     private static int _lastFrameVulkanIndirectNonCountPathCalls;
                     private static int _lastFrameVulkanIndirectLoopFallbackCalls;
@@ -123,6 +124,7 @@ namespace XREngine
                     private static long _lastFrameVulkanFrameAcquireBridgeSubmitTicks;
                     private static long _lastFrameVulkanFrameWaitSwapchainImageTicks;
                     private static long _lastFrameVulkanFrameResetDynamicUniformRingTicks;
+                    private static long _lastFrameVulkanRecordCommandBufferAllocatedBytes;
                     private static int _vulkanDeviceLocalAllocationCount;
                     private static long _vulkanDeviceLocalAllocatedBytes;
                     private static int _vulkanUploadAllocationCount;
@@ -339,6 +341,7 @@ namespace XREngine
                     public static double VulkanFrameAcquireBridgeSubmitMs => TimeSpan.FromTicks(_lastFrameVulkanFrameAcquireBridgeSubmitTicks).TotalMilliseconds;
                     public static double VulkanFrameWaitSwapchainImageMs => TimeSpan.FromTicks(_lastFrameVulkanFrameWaitSwapchainImageTicks).TotalMilliseconds;
                     public static double VulkanFrameResetDynamicUniformRingMs => TimeSpan.FromTicks(_lastFrameVulkanFrameResetDynamicUniformRingTicks).TotalMilliseconds;
+                    public static long VulkanRecordCommandBufferAllocatedBytes => _lastFrameVulkanRecordCommandBufferAllocatedBytes;
                     public static int VulkanDeviceLocalAllocationCount => _lastFrameVulkanDeviceLocalAllocationCount;
                     public static long VulkanDeviceLocalAllocatedBytes => _lastFrameVulkanDeviceLocalAllocatedBytes;
                     public static int VulkanUploadAllocationCount => _lastFrameVulkanUploadAllocationCount;
@@ -803,6 +806,14 @@ namespace XREngine
                         Interlocked.Exchange(ref _vulkanFrameResetDynamicUniformRingTicks, resetDynamicUniformRing.Ticks);
                     }
 
+                    public static void RecordVulkanRecordCommandBufferAllocation(long bytes)
+                    {
+                        if (!EnableTracking || bytes <= 0)
+                            return;
+
+                        Interlocked.Add(ref _vulkanRecordCommandBufferAllocatedBytes, bytes);
+                    }
+
                     public static void RecordVulkanFrameGpuCommandBufferTime(TimeSpan commandBufferTime)
                     {
                         if (!EnableTracking)
@@ -1091,6 +1102,7 @@ namespace XREngine
                         _lastFrameVulkanFrameAcquireBridgeSubmitTicks = _vulkanFrameAcquireBridgeSubmitTicks;
                         _lastFrameVulkanFrameWaitSwapchainImageTicks = _vulkanFrameWaitSwapchainImageTicks;
                         _lastFrameVulkanFrameResetDynamicUniformRingTicks = _vulkanFrameResetDynamicUniformRingTicks;
+                        _lastFrameVulkanRecordCommandBufferAllocatedBytes = _vulkanRecordCommandBufferAllocatedBytes;
                         _lastFrameVulkanDeviceLocalAllocationCount = _vulkanDeviceLocalAllocationCount;
                         _lastFrameVulkanDeviceLocalAllocatedBytes = _vulkanDeviceLocalAllocatedBytes;
                         _lastFrameVulkanUploadAllocationCount = _vulkanUploadAllocationCount;
@@ -1229,6 +1241,7 @@ namespace XREngine
                         _vulkanFrameAcquireBridgeSubmitTicks = 0;
                         _vulkanFrameWaitSwapchainImageTicks = 0;
                         _vulkanFrameResetDynamicUniformRingTicks = 0;
+                        _vulkanRecordCommandBufferAllocatedBytes = 0;
                         _vulkanDeviceLocalAllocationCount = 0;
                         _vulkanDeviceLocalAllocatedBytes = 0;
                         _vulkanUploadAllocationCount = 0;

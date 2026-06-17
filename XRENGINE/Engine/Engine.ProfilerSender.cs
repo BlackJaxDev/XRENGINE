@@ -371,6 +371,7 @@ public static partial class Engine
                 FrameAcquireBridgeSubmitMs = Rendering.Stats.Vulkan.VulkanFrameAcquireBridgeSubmitMs,
                 FrameWaitSwapchainImageMs = Rendering.Stats.Vulkan.VulkanFrameWaitSwapchainImageMs,
                 FrameResetDynamicUniformRingMs = Rendering.Stats.Vulkan.VulkanFrameResetDynamicUniformRingMs,
+                RecordCommandBufferAllocatedBytes = Rendering.Stats.Vulkan.VulkanRecordCommandBufferAllocatedBytes,
                 FrameOpTotalCount = Rendering.Stats.Vulkan.VulkanFrameOpTotalCount,
                 FrameOpClearCount = Rendering.Stats.Vulkan.VulkanFrameOpClearCount,
                 FrameOpMeshDrawCount = Rendering.Stats.Vulkan.VulkanFrameOpMeshDrawCount,

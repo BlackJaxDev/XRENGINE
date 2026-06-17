@@ -523,6 +523,7 @@ namespace XREngine
                 private EVulkanQueueOverlapMode _vulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
                 private bool _enableVulkanDescriptorIndexing = true;
                 private bool _enableVulkanBindlessMaterialTable = true;
+                private EVulkanBindlessMaterialMode _vulkanBindlessMaterialMode = EVulkanBindlessMaterialMode.Auto;
                 private bool _validateVulkanDescriptorContracts = true;
                 private EVulkanGeometryFetchMode _vulkanGeometryFetchMode = EVulkanGeometryFetchMode.Atlas;
                 private EGpuCullingDataLayout _gpuCullingDataLayout = EGpuCullingDataLayout.AoSHot;
@@ -1479,6 +1480,20 @@ namespace XREngine
                 {
                     get => _enableVulkanBindlessMaterialTable;
                     set => SetField(ref _enableVulkanBindlessMaterialTable, value);
+                }
+
+                /// <summary>
+                /// Selects Vulkan bindless material-table policy. Environment override:
+                /// XRE_VULKAN_BINDLESS_MATERIAL_MODE=Auto|Disabled|Required|Diagnostics.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Selects Vulkan bindless material-table policy. Auto is conservative, Required fails visibly when unsupported, Diagnostics adds capability logging.")]
+                public EVulkanBindlessMaterialMode VulkanBindlessMaterialMode
+                {
+                    get => _vulkanBindlessMaterialMode;
+                    set => SetField(ref _vulkanBindlessMaterialMode, value,
+                        null,
+                        _ => Rendering.LogVulkanFeatureProfileFingerprint());
                 }
 
                 /// <summary>

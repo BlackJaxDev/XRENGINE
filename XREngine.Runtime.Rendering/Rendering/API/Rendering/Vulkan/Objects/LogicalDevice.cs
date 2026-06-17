@@ -40,6 +40,7 @@ public unsafe partial class VulkanRenderer
         if (!IsLogicalDeviceReady)
             return;
 
+        DestroyGlobalMaterialTextureDescriptorTable();
         DestroyDescriptorUpdateTemplateCache();
         DestroyCachedDescriptorSetLayouts();
         DestroyVulkanPipelineCache();
@@ -1139,6 +1140,8 @@ public unsafe partial class VulkanRenderer
                 "[Vulkan] Descriptor indexing enabled without storage-image update-after-bind support; storage image bindings will not use UPDATE_AFTER_BIND flags.");
             }
 
+            ValidateRequiredVulkanBindlessMaterialCapability();
+
             if (!enableShaderDrawParametersFeature && !shaderDrawParametersExtensionEnabled)
             {
                 Debug.VulkanWarning(
@@ -1465,6 +1468,17 @@ public unsafe partial class VulkanRenderer
 
         LogCapability("AccelerationStructure", hasAccelerationStructure, "Optional");
         LogCapability("DescriptorIndexing", _supportsDescriptorIndexing, "Optional");
+        VulkanBindlessMaterialCapability bindlessMaterialCapability = RefreshBindlessMaterialCapability();
+        LogCapability("BindlessMaterialTextures", bindlessMaterialCapability.Tier >= EVulkanBindlessMaterialCapabilityTier.DescriptorIndexingReady, bindlessMaterialCapability.Mode.ToString());
+        Debug.Vulkan(
+            "[Vulkan] Capability.BindlessMaterialTextures mode={0} tier={1} capacity={2} tableReady={3} shaderReady={4} drawPathReady={5} reason='{6}'",
+            bindlessMaterialCapability.Mode,
+            bindlessMaterialCapability.Tier,
+            bindlessMaterialCapability.DescriptorCapacity,
+            bindlessMaterialCapability.GlobalDescriptorTableReady,
+            bindlessMaterialCapability.ShaderReady,
+            bindlessMaterialCapability.DrawPathReady,
+            bindlessMaterialCapability.Reason);
         LogCapability("DrawIndirectCount", _supportsDrawIndirectCount, "Optional");
         LogCapability("MeshShaderEXT", SupportsVulkanMeshTaskIndirectCount, "Optional");
         LogCapability("Multiview", RuntimeEngine.Rendering.State.HasVulkanMultiView, "Optional");

@@ -69,7 +69,7 @@ public sealed partial class McpAssistantWindow
         sb.AppendLine();
         sb.AppendLine("Phase 1 — GATHER CONTEXT (do this FIRST, before any mutations):");
         sb.AppendLine("  • Read the user's request fully and identify what information you need.");
-        sb.AppendLine("  • Use read-only tools to survey the current scene state: list_worlds, list_scene_nodes, list_components, get_component_schema, get_component_snapshot, get_scene_statistics, get_render_state, capture_viewport_screenshot.");
+        sb.AppendLine("  • Use read-only tools to survey the current scene state: list_worlds, list_scene_nodes, list_components, get_component_schema, get_component_snapshot, get_scene_statistics, get_render_state, capture_viewport_screenshot, dump_cpu_frame_profile, dump_gpu_render_pipeline_profile.");
         sb.AppendLine("  • If you need to understand engine types, APIs, or component capabilities, use the introspection tools: search_types, get_type_info, get_type_members, get_derived_types, get_method_info, get_enum_values, list_component_types.");
         sb.AppendLine("  • If you need deeper engine documentation beyond what the introspection tools and this prompt provide, you can fetch pages from the DocFX API reference site. The site is generated from source-code XML doc comments and covers every public type, method, property, and event in the engine. It is served locally at http://localhost:8080/ when the DocFX server is running (started via Tools/Start-DocFxServer.bat). Key URL patterns:");
         sb.AppendLine("    - API index: http://localhost:8080/apiref/");

@@ -31,6 +31,13 @@ namespace XREngine.Rendering.Commands
         private int _resolveMaterialLogBudget = 16;
         private readonly HashSet<uint> _lastMaterialTableIds = [];
         private int _materialResidencyLogBudget = 12;
+
+        private enum EMaterialTextureReferenceBuildMode
+        {
+            None = 0,
+            OpenGLBindlessHandles,
+            VulkanDescriptorIndices,
+        }
         
         /// <summary>
         /// When true, sorts commands by material ID on CPU to create contiguous batches.
@@ -1237,22 +1244,60 @@ namespace XREngine.Rendering.Commands
                 _materialTable.Remove(removedId);
             }
 
-            bool buildBindlessHandles =
-                ZeroReadbackMaterialDrawPath == EZeroReadbackMaterialDrawPath.BindlessMaterialTable &&
+            bool bindlessMaterialTableRequested =
+                ZeroReadbackMaterialDrawPath == EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
+            VulkanRenderer? vulkanRenderer = AbstractRenderer.Current as VulkanRenderer;
+            EMaterialTextureReferenceBuildMode textureReferenceMode = EMaterialTextureReferenceBuildMode.None;
+            if (bindlessMaterialTableRequested &&
                 AbstractRenderer.Current is OpenGLRenderer glRenderer &&
-                glRenderer.SupportsBindlessTextureHandles;
+                glRenderer.SupportsBindlessTextureHandles)
+            {
+                textureReferenceMode = EMaterialTextureReferenceBuildMode.OpenGLBindlessHandles;
+            }
+            else if (bindlessMaterialTableRequested && vulkanRenderer is not null)
+            {
+                if (vulkanRenderer.TryEnsureGlobalMaterialTextureDescriptorTable(out string reason))
+                {
+                    textureReferenceMode = EMaterialTextureReferenceBuildMode.VulkanDescriptorIndices;
+                }
+                else
+                {
+                    string message = $"{FormatDebugPrefix("Materials")} Vulkan bindless material-table requested but unavailable: {reason}";
+                    if (VulkanFeatureProfile.RequireBindlessMaterialTable)
+                    {
+                        _skipGpuSubmissionThisPass = true;
+                        _skipGpuSubmissionReason = message;
+                        Debug.MeshesWarning(message);
+                        return false;
+                    }
+
+                    if (_materialResidencyLogBudget > 0)
+                    {
+                        Debug.MeshesWarning(message + " Falling back to non-bindless material-table rows.");
+                        _materialResidencyLogBudget--;
+                    }
+                }
+            }
 
             foreach (var (materialId, material) in scene.MaterialMap)
             {
                 XRMaterial? effectiveMaterial = ResolveEffectiveGpuMaterial(material, overrideMaterial, useDepthNormalMaterialVariants);
-                GPUMaterialEntry entry = BuildMaterialEntry(effectiveMaterial, buildBindlessHandles, out GPUMaterialTextureHandles handles, out bool resident);
-                _materialTable.AddOrUpdate(materialId, entry, handles);
+                GPUMaterialEntry entry = BuildMaterialEntry(
+                    effectiveMaterial,
+                    textureReferenceMode,
+                    vulkanRenderer,
+                    out GPUMaterialTextureReferences textureReferences,
+                    out bool resident);
+                _materialTable.AddOrUpdate(materialId, entry, textureReferences);
                 allResident &= resident;
             }
 
             _materialTable.TrimTrailingUnused(128u);
             _materialTable.Buffer.PushSubData();
-            _materialTable.TextureHandleBuffer.PushSubData();
+            if (textureReferenceMode == EMaterialTextureReferenceBuildMode.OpenGLBindlessHandles)
+                _materialTable.TextureHandleBuffer.PushSubData();
+            else if (textureReferenceMode == EMaterialTextureReferenceBuildMode.VulkanDescriptorIndices)
+                vulkanRenderer?.FlushGlobalMaterialTextureDescriptorUpdates();
 
             if (AbstractRenderer.Current is OpenGLRenderer openGlRenderer)
             {
@@ -1290,11 +1335,12 @@ namespace XREngine.Rendering.Commands
 
         private static GPUMaterialEntry BuildMaterialEntry(
             XRMaterial? material,
-            bool buildBindlessHandles,
-            out GPUMaterialTextureHandles handles,
+            EMaterialTextureReferenceBuildMode textureReferenceMode,
+            VulkanRenderer? vulkanRenderer,
+            out GPUMaterialTextureReferences textureReferences,
             out bool resident)
         {
-            handles = new GPUMaterialTextureHandles();
+            textureReferences = GPUMaterialTextureReferences.Empty;
             resident = true;
             uint flags = 0u;
 
@@ -1311,22 +1357,22 @@ namespace XREngine.Rendering.Commands
             if (albedo is not null)
             {
                 flags |= 1u << 0;
-                resident &= TryResolveMaterialTexture(material, albedo, buildBindlessHandles, out ulong handle);
-                handles = handles with { Albedo = handle };
+                resident &= TryResolveMaterialTexture(material, albedo, "Albedo", textureReferenceMode, vulkanRenderer, out GPUMaterialTextureReference reference);
+                textureReferences = textureReferences with { Albedo = reference };
             }
 
             if (normal is not null)
             {
                 flags |= 1u << 1;
-                resident &= TryResolveMaterialTexture(material, normal, buildBindlessHandles, out ulong handle);
-                handles = handles with { Normal = handle };
+                resident &= TryResolveMaterialTexture(material, normal, "Normal", textureReferenceMode, vulkanRenderer, out GPUMaterialTextureReference reference);
+                textureReferences = textureReferences with { Normal = reference };
             }
 
             if (rm is not null)
             {
                 flags |= 1u << 2;
-                resident &= TryResolveMaterialTexture(material, rm, buildBindlessHandles, out ulong handle);
-                handles = handles with { RM = handle };
+                resident &= TryResolveMaterialTexture(material, rm, "RM", textureReferenceMode, vulkanRenderer, out GPUMaterialTextureReference reference);
+                textureReferences = textureReferences with { RM = reference };
             }
 
             if (resident)
@@ -1371,14 +1417,38 @@ namespace XREngine.Rendering.Commands
             return new Vector4(roughness, metallic, specular, emission);
         }
 
-        private static bool TryResolveMaterialTexture(XRMaterial material, XRTexture texture, bool buildBindlessHandles, out ulong handle)
+        private static bool TryResolveMaterialTexture(
+            XRMaterial material,
+            XRTexture texture,
+            string semantic,
+            EMaterialTextureReferenceBuildMode textureReferenceMode,
+            VulkanRenderer? vulkanRenderer,
+            out GPUMaterialTextureReference reference)
         {
-            handle = 0ul;
+            reference = GPUMaterialTextureReference.None;
             if (!IsTextureArrayAllowedForMaterialTable(material, texture))
                 return false;
 
-            if (buildBindlessHandles)
-                return TryResolveOpenGLBindlessTextureHandle(texture, out handle);
+            if (textureReferenceMode == EMaterialTextureReferenceBuildMode.OpenGLBindlessHandles)
+            {
+                if (!TryResolveOpenGLBindlessTextureHandle(texture, out ulong handle))
+                    return false;
+
+                reference = GPUMaterialTextureReference.FromOpenGLBindlessHandle(handle);
+                return true;
+            }
+
+            if (textureReferenceMode == EMaterialTextureReferenceBuildMode.VulkanDescriptorIndices)
+            {
+                if (vulkanRenderer is null)
+                    return false;
+
+                if (!vulkanRenderer.TryGetOrCreateMaterialTextureDescriptorIndex(texture, semantic, out uint descriptorIndex, out _))
+                    return false;
+
+                reference = GPUMaterialTextureReference.FromVulkanDescriptorIndex(descriptorIndex);
+                return true;
+            }
 
             return IsTextureResident(texture);
         }

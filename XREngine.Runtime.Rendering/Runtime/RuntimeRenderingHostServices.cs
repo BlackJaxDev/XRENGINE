@@ -801,6 +801,10 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RecordRenderVulkanRecordCommandBufferAllocation(long bytes)
+        {
+        }
+
         public void RecordRenderVulkanFrameDiagnostics(
             int droppedFrameOps,
             int droppedDrawOps,

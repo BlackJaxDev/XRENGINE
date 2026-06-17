@@ -28,7 +28,7 @@ namespace XREngine.Rendering.Vulkan
         private readonly object _commandBindStateLock = new();
         private readonly Dictionary<ulong, CommandBufferBindState> _commandBindStates = new();
         private bool _enableSecondaryCommandBuffers = true;
-        private bool _enableParallelSecondaryCommandBufferRecording = true;
+        private bool _enableParallelSecondaryCommandBufferRecording = !IsParallelSecondaryCommandBufferRecordingDisabled();
         private int _parallelSecondaryIndirectRunThreshold = 4;
         private static readonly int FrameOpSignatureDiffLogLimit = ReadFrameOpSignatureDiffLogLimit();
         private static readonly bool FrameOpSignatureDiffDiagnosticsEnabled =
@@ -41,6 +41,28 @@ namespace XREngine.Rendering.Vulkan
         private string? _vulkanDiagnosticLastTitle;
         private int _vulkanLastFrameDroppedDrawOps;
         private int _vulkanLastFrameDroppedOps;
+        private readonly Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket> _secondaryBucketByStartScratch = new();
+        private readonly Dictionary<int, int> _swapchainWritesByPipelineScratch = new();
+        private readonly Dictionary<int, string> _swapchainWriterLabelByPipelineScratch = new();
+        private readonly Dictionary<int, string> _swapchainWriterDetailByPipelineScratch = new();
+        private readonly Dictionary<int, FrameOp> _swapchainWriterOpByPipelineScratch = new();
+        private readonly Dictionary<int, int> _swapchainWriterDynamicUiDrawCountByPipelineScratch = new();
+        private readonly Dictionary<int, int> _swapchainWriterPassByPipelineScratch = new();
+        private readonly Dictionary<int, int> _swapchainWriterOpIndexByPipelineScratch = new();
+        private readonly Dictionary<int, string> _pipelineNameByIdentityScratch = new();
+        private readonly Dictionary<VkMeshRenderer, int> _recordMeshDrawSlotsByRendererScratch = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<VkMeshRenderer, int> _refreshMeshDrawSlotsByRendererScratch = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<VkMeshRenderer, int> _dynamicUiMeshDrawSlotsByRendererScratch = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<XRFrameBuffer, ImageLayout[]> _fboLayoutTrackingScratch = new(ReferenceEqualityComparer.Instance);
+        private readonly List<KeyValuePair<int, int>> _swapchainWriterCountSortScratch = new();
+        private readonly StringBuilder _swapchainWriterSummaryBuilder = new(256);
+        private int _secondaryBucketByStartCapacityHint = 1;
+        private int _recordSwapchainWriterCapacityHint = 1;
+        private int _recordPipelineNameCapacityHint = 1;
+        private int _recordMeshDrawSlotCapacityHint = 1;
+        private int _recordFboLayoutCapacityHint = 1;
+        private int _refreshMeshDrawSlotCapacityHint = 1;
+        private int _dynamicUiMeshDrawSlotCapacityHint = 1;
         private static readonly bool BloomVulkanDiagnosticsEnabled =
             string.Equals(Environment.GetEnvironmentVariable("XRE_BLOOM_DIAG"), "1", StringComparison.Ordinal);
 
@@ -64,6 +86,14 @@ namespace XREngine.Rendering.Vulkan
         private static bool IsBloomDiagnosticName(string? name)
             => !string.IsNullOrWhiteSpace(name) &&
                name.Contains("Bloom", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsParallelSecondaryCommandBufferRecordingDisabled()
+        {
+            string? value = Environment.GetEnvironmentVariable("XRE_VULKAN_DISABLE_PARALLEL_SECONDARY_RECORDING");
+            return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+        }
 
         private static int ReadFrameOpSignatureDiffLogLimit()
         {
@@ -170,6 +200,103 @@ namespace XREngine.Rendering.Vulkan
                 _ =>
                     $"pass={op.PassIndex} pipe={op.Context.PipelineIdentity}({pipelineLabel}) vp={op.Context.ViewportIdentity} op={op.GetType().Name}"
             };
+        }
+
+        private static void AppendSwapchainWriterSummary(
+            StringBuilder builder,
+            List<KeyValuePair<int, int>> sortedWriters,
+            Dictionary<int, string> writerLabels,
+            Dictionary<int, string> pipelineNames,
+            int maxEntries)
+        {
+            int emitted = 0;
+            for (int i = 0; i < sortedWriters.Count && emitted < maxEntries; i++)
+            {
+                KeyValuePair<int, int> writer = sortedWriters[i];
+                if (emitted > 0)
+                    builder.Append(", ");
+
+                string label = writerLabels.TryGetValue(writer.Key, out string? resolvedLabel)
+                    ? resolvedLabel
+                    : "Unknown";
+                string pipelineName = pipelineNames.TryGetValue(writer.Key, out string? resolvedPipeline)
+                    ? resolvedPipeline
+                    : "UnknownPipeline";
+                builder
+                    .Append(label)
+                    .Append("#P")
+                    .Append(writer.Key)
+                    .Append('[')
+                    .Append(pipelineName)
+                    .Append("]:")
+                    .Append(writer.Value);
+                emitted++;
+            }
+        }
+
+        private static void AppendSwapchainWriterDetails(
+            StringBuilder builder,
+            List<KeyValuePair<int, int>> sortedWriters,
+            Dictionary<int, string> writerLabels,
+            Dictionary<int, string> writerDetails,
+            Dictionary<int, FrameOp> writerOps,
+            Dictionary<int, int> writerDynamicUiDrawCounts,
+            Dictionary<int, int> writerPasses,
+            Dictionary<int, int> writerOpIndices,
+            int maxEntries)
+        {
+            int emitted = 0;
+            for (int i = 0; i < sortedWriters.Count && emitted < maxEntries; i++)
+            {
+                KeyValuePair<int, int> writer = sortedWriters[i];
+                if (emitted > 0)
+                    builder.Append(" | ");
+
+                string label = writerLabels.TryGetValue(writer.Key, out string? resolvedLabel)
+                    ? resolvedLabel
+                    : "Unknown";
+                int passIndex = writerPasses.TryGetValue(writer.Key, out int pass)
+                    ? pass
+                    : int.MinValue;
+                int opIndex = writerOpIndices.TryGetValue(writer.Key, out int op)
+                    ? op
+                    : -1;
+                builder
+                    .Append(label)
+                    .Append("@pass")
+                    .Append(passIndex)
+                    .Append("/op")
+                    .Append(opIndex)
+                    .Append(": ");
+                AppendSwapchainWriterDetail(builder, writer.Key, writerDetails, writerOps, writerDynamicUiDrawCounts);
+                emitted++;
+            }
+        }
+
+        private static void AppendSwapchainWriterDetail(
+            StringBuilder builder,
+            int pipelineIdentity,
+            Dictionary<int, string> writerDetails,
+            Dictionary<int, FrameOp> writerOps,
+            Dictionary<int, int> writerDynamicUiDrawCounts)
+        {
+            if (writerOps.TryGetValue(pipelineIdentity, out FrameOp? writerOp))
+            {
+                builder.Append(BuildSwapchainWriterDetail(writerOp));
+                return;
+            }
+
+            if (writerDynamicUiDrawCounts.TryGetValue(pipelineIdentity, out int dynamicDrawCount))
+            {
+                builder
+                    .Append("secondary overlay draws=")
+                    .Append(dynamicDrawCount);
+                return;
+            }
+
+            builder.Append(writerDetails.TryGetValue(pipelineIdentity, out string? detail)
+                ? detail
+                : "<no detail>");
         }
 
         private static bool IsUiBatchTextDrawOp(FrameOp op)
@@ -564,14 +691,14 @@ namespace XREngine.Rendering.Vulkan
             PipelineLayout layout,
             uint firstSet,
             DescriptorSet[] sets)
-            => BindDescriptorSetsTracked(commandBuffer, bindPoint, layout, firstSet, sets, ReadOnlySpan<uint>.Empty);
+            => BindDescriptorSetsTracked(commandBuffer, bindPoint, layout, firstSet, (ReadOnlySpan<DescriptorSet>)sets, ReadOnlySpan<uint>.Empty);
 
         internal void BindDescriptorSetsTracked(
             CommandBuffer commandBuffer,
             PipelineBindPoint bindPoint,
             PipelineLayout layout,
             uint firstSet,
-            DescriptorSet[] sets,
+            ReadOnlySpan<DescriptorSet> sets,
             ReadOnlySpan<uint> dynamicOffsets)
         {
             if (sets.Length == 0)
@@ -1241,19 +1368,29 @@ namespace XREngine.Rendering.Vulkan
             bool profilerDirty = false;
             bool frameDataDirty = false;
             bool gpuPipelineProfilingActive = RenderPipelineGpuProfiler.Instance.IsProfilingActive;
-            var ops = DrainFrameOps(out ulong rawFrameOpsSignature);
-            ops = FilterDiagnosticSkippedFrameOps(ops);
+            FrameOp[] ops;
+            ulong rawFrameOpsSignature;
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DrainFrameOps"))
+            {
+                ops = DrainFrameOps(out rawFrameOpsSignature);
+                ops = FilterDiagnosticSkippedFrameOps(ops);
+            }
+
             FrameOp[] dynamicUiBatchTextOps = Array.Empty<FrameOp>();
             bool hasFrameOps = ops.Length > 0;
             ulong frameOpsSignature = rawFrameOpsSignature;
 
             if (hasFrameOps)
             {
-                VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
-                ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
-                SplitDynamicUiBatchTextFrameOps(ops, out FrameOp[] staticOps, out dynamicUiBatchTextOps);
-                ops = staticOps;
-                frameOpsSignature = ComputeFrameOpsSignature(ops);
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps"))
+                {
+                    VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                    SplitDynamicUiBatchTextFrameOps(ops, out FrameOp[] staticOps, out dynamicUiBatchTextOps);
+                    ops = staticOps;
+                    frameOpsSignature = ComputeFrameOpsSignature(ops);
+                }
+
                 if (FrameOpSignatureDiffDiagnosticsEnabled && rawFrameOpsSignature != frameOpsSignature)
                 {
                     Debug.VulkanEvery(
@@ -1268,41 +1405,57 @@ namespace XREngine.Rendering.Vulkan
 
             bool hasStaticFrameOps = ops.Length > 0;
 
-            _ = hasStaticFrameOps
-                ? PrepareResourcePlannerForFrameOps(ops)
-                : PrepareResourcePlannerForFrameOps([]);
-            ulong plannerRevision = ResourcePlannerRevision;
-
-            if (!dirty && hasFrameOps && _commandBufferFrameOpSignatures[imageIndex] != frameOpsSignature)
-            {
-                LogFrameOpSignatureDiff(imageIndex, _commandBufferFrameOpSignatures[imageIndex], frameOpsSignature, ops);
-                dirty = true;
-                frameOpSignatureDirty = true;
-            }
-
-            if (!dirty && _commandBufferPlannerRevisions[imageIndex] != plannerRevision)
-            {
-                dirty = true;
-                plannerDirty = true;
-            }
-
             int commandBufferImageSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
-            if (!dirty && IsVulkanGpuProfilerCommandBufferStateDirty(imageIndex, gpuPipelineProfilingActive, commandBufferImageSlot))
+            ulong plannerRevision;
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.ResourcePlan"))
             {
-                dirty = true;
-                profilerDirty = true;
+                _ = hasStaticFrameOps
+                    ? PrepareResourcePlannerForFrameOps(ops)
+                    : PrepareResourcePlannerForFrameOps([]);
+                plannerRevision = ResourcePlannerRevision;
+            }
+
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DirtyEvaluation"))
+            {
+                if (!dirty && hasFrameOps && _commandBufferFrameOpSignatures[imageIndex] != frameOpsSignature)
+                {
+                    LogFrameOpSignatureDiff(imageIndex, _commandBufferFrameOpSignatures[imageIndex], frameOpsSignature, ops);
+                    dirty = true;
+                    frameOpSignatureDirty = true;
+                }
+
+                if (!dirty && _commandBufferPlannerRevisions[imageIndex] != plannerRevision)
+                {
+                    dirty = true;
+                    plannerDirty = true;
+                }
+
+                if (!dirty && IsVulkanGpuProfilerCommandBufferStateDirty(imageIndex, gpuPipelineProfilingActive, commandBufferImageSlot))
+                {
+                    dirty = true;
+                    profilerDirty = true;
+                }
             }
 
             if (!dirty)
             {
-                if (hasStaticFrameOps && !TryRefreshReusableCommandBufferFrameData(imageIndex, ops))
+                bool refreshedReusableFrameData = true;
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RefreshFrameData"))
+                {
+                    refreshedReusableFrameData = !hasStaticFrameOps ||
+                        TryRefreshReusableCommandBufferFrameData(imageIndex, ops);
+                }
+
+                if (!refreshedReusableFrameData)
                 {
                     dirty = true;
                     frameDataDirty = true;
                 }
                 else
                 {
-                    RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, dynamicUiBatchTextOps);
+                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
+                        RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, dynamicUiBatchTextOps);
+
                     StoreFrameOpSignatureDebugParts(imageIndex, ops);
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
                         reusedClean: true,
@@ -1340,8 +1493,11 @@ namespace XREngine.Rendering.Vulkan
             _isRecordingCommandBuffer = true;
             try
             {
-                RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, dynamicUiBatchTextOps);
-                RecordCommandBuffer(imageIndex, ops, dynamicUiBatchTextOps.Length);
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
+                    RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, dynamicUiBatchTextOps);
+
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordPrimary"))
+                    RecordCommandBuffer(imageIndex, ops, dynamicUiBatchTextOps.Length);
             }
             finally
             {
@@ -1641,7 +1797,9 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(indirect.Stride);
             hash.Add(indirect.ByteOffset);
             hash.Add(indirect.UseCount);
-            AddSignaturePart(parts, opIndex, opType, "indirect", hash, $"draws={indirect.DrawCount} stride={indirect.Stride} useCount={indirect.UseCount}");
+            hash.Add(indirect.BindlessMaterialTextures?.Program.GetHashCode() ?? 0);
+            hash.Add(indirect.BindlessMaterialTextures?.Consumer, StringComparer.Ordinal);
+            AddSignaturePart(parts, opIndex, opType, "indirect", hash, $"draws={indirect.DrawCount} stride={indirect.Stride} useCount={indirect.UseCount} bindlessMaterialTextures={indirect.BindlessMaterialTextures.HasValue}");
         }
 
         private static void AddMeshTaskSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, MeshTaskDispatchIndirectCountOp meshTask)
@@ -1653,7 +1811,9 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(meshTask.Stride);
             hash.Add(meshTask.ByteOffset);
             hash.Add(meshTask.CountByteOffset);
-            AddSignaturePart(parts, opIndex, opType, "meshTask", hash, $"maxDraws={meshTask.MaxDrawCount} stride={meshTask.Stride}");
+            hash.Add(meshTask.BindlessMaterialTextures?.Program.GetHashCode() ?? 0);
+            hash.Add(meshTask.BindlessMaterialTextures?.Consumer, StringComparer.Ordinal);
+            AddSignaturePart(parts, opIndex, opType, "meshTask", hash, $"maxDraws={meshTask.MaxDrawCount} stride={meshTask.Stride} bindlessMaterialTextures={meshTask.BindlessMaterialTextures.HasValue}");
         }
 
         private static void AddMemoryBarrierSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, MemoryBarrierOp barrier)
@@ -1893,7 +2053,9 @@ namespace XREngine.Rendering.Vulkan
             VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
             ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
 
-            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = new(ReferenceEqualityComparer.Instance);
+            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _refreshMeshDrawSlotsByRendererScratch;
+            meshDrawSlotsByRenderer.Clear();
+            meshDrawSlotsByRenderer.EnsureCapacity(_refreshMeshDrawSlotCapacityHint);
             int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
             {
                 meshDrawSlotsByRenderer.TryGetValue(renderer, out int slot);
@@ -1954,6 +2116,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
+            _refreshMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
             return true;
         }
 
@@ -2027,10 +2190,11 @@ namespace XREngine.Rendering.Vulkan
                 ? CreateSwapchainDynamicRenderingFormatSignature(swapChainImageFormat, _swapchainDepthFormat)
                 : default;
 
-            Dictionary<VkMeshRenderer, int>? meshDrawSlotsByRenderer = null;
+            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _dynamicUiMeshDrawSlotsByRendererScratch;
+            meshDrawSlotsByRenderer.Clear();
+            meshDrawSlotsByRenderer.EnsureCapacity(_dynamicUiMeshDrawSlotCapacityHint);
             int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
             {
-                meshDrawSlotsByRenderer ??= new Dictionary<VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
                 meshDrawSlotsByRenderer.TryGetValue(renderer, out int slot);
                 meshDrawSlotsByRenderer[renderer] = slot + 1;
                 return slot;
@@ -2084,6 +2248,8 @@ namespace XREngine.Rendering.Vulkan
 
             if (Api!.EndCommandBuffer(secondaryCommandBuffer) != Result.Success)
                 throw new Exception("Failed to end dynamic UI text secondary command buffer.");
+
+            _dynamicUiMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
         }
 
         private void RecordCommandBuffer(uint imageIndex, FrameOp[] ops, int dynamicUiBatchTextOpCount)
@@ -2141,9 +2307,12 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket>? secondaryBucketByStart = null;
             if (secondaryBuckets.Count > 8)
             {
-                secondaryBucketByStart = new Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket>(secondaryBuckets.Count);
+                secondaryBucketByStart = _secondaryBucketByStartScratch;
+                secondaryBucketByStart.Clear();
+                secondaryBucketByStart.EnsureCapacity(Math.Max(_secondaryBucketByStartCapacityHint, secondaryBuckets.Count));
                 foreach (VulkanRenderGraphCompiler.SecondaryRecordingBucket bucket in secondaryBuckets)
                     secondaryBucketByStart[bucket.StartIndex] = bucket;
+                _secondaryBucketByStartCapacityHint = Math.Max(1, secondaryBucketByStart.Count);
             }
 
             // Ensure swapchain resources are transitioned appropriately before any rendering.
@@ -2179,13 +2348,34 @@ namespace XREngine.Rendering.Vulkan
             int swapchainLastWriterOpIndex = -1;
 
             // Per-pipeline context identity tracking for swapchain writes
-            Dictionary<int, int> swapchainWritesByPipeline = [];
-            Dictionary<int, string> swapchainWriterLabelByPipeline = [];
-            Dictionary<int, string> swapchainWriterDetailByPipeline = [];
-            Dictionary<int, int> swapchainWriterPassByPipeline = [];
-            Dictionary<int, int> swapchainWriterOpIndexByPipeline = [];
-            Dictionary<int, string> pipelineNameByIdentity = [];
-            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = new(ReferenceEqualityComparer.Instance);
+            Dictionary<int, int> swapchainWritesByPipeline = _swapchainWritesByPipelineScratch;
+            Dictionary<int, string> swapchainWriterLabelByPipeline = _swapchainWriterLabelByPipelineScratch;
+            Dictionary<int, string> swapchainWriterDetailByPipeline = _swapchainWriterDetailByPipelineScratch;
+            Dictionary<int, FrameOp> swapchainWriterOpByPipeline = _swapchainWriterOpByPipelineScratch;
+            Dictionary<int, int> swapchainWriterDynamicUiDrawCountByPipeline = _swapchainWriterDynamicUiDrawCountByPipelineScratch;
+            Dictionary<int, int> swapchainWriterPassByPipeline = _swapchainWriterPassByPipelineScratch;
+            Dictionary<int, int> swapchainWriterOpIndexByPipeline = _swapchainWriterOpIndexByPipelineScratch;
+            Dictionary<int, string> pipelineNameByIdentity = _pipelineNameByIdentityScratch;
+            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _recordMeshDrawSlotsByRendererScratch;
+            swapchainWritesByPipeline.Clear();
+            swapchainWriterLabelByPipeline.Clear();
+            swapchainWriterDetailByPipeline.Clear();
+            swapchainWriterOpByPipeline.Clear();
+            swapchainWriterDynamicUiDrawCountByPipeline.Clear();
+            swapchainWriterPassByPipeline.Clear();
+            swapchainWriterOpIndexByPipeline.Clear();
+            pipelineNameByIdentity.Clear();
+            meshDrawSlotsByRenderer.Clear();
+            int writerCapacityHint = Math.Max(1, _recordSwapchainWriterCapacityHint);
+            swapchainWritesByPipeline.EnsureCapacity(writerCapacityHint);
+            swapchainWriterLabelByPipeline.EnsureCapacity(writerCapacityHint);
+            swapchainWriterDetailByPipeline.EnsureCapacity(writerCapacityHint);
+            swapchainWriterOpByPipeline.EnsureCapacity(writerCapacityHint);
+            swapchainWriterDynamicUiDrawCountByPipeline.EnsureCapacity(writerCapacityHint);
+            swapchainWriterPassByPipeline.EnsureCapacity(writerCapacityHint);
+            swapchainWriterOpIndexByPipeline.EnsureCapacity(writerCapacityHint);
+            pipelineNameByIdentity.EnsureCapacity(Math.Max(1, _recordPipelineNameCapacityHint));
+            meshDrawSlotsByRenderer.EnsureCapacity(Math.Max(1, _recordMeshDrawSlotCapacityHint));
 
             void RememberPipelineName(in FrameOpContext context)
             {
@@ -2205,7 +2395,7 @@ namespace XREngine.Rendering.Vulkan
                 return slot;
             }
 
-            void MarkSwapchainWriter(string writerLabel, string writerDetail, int passIndex, int opIndex, int pipelineIdentity)
+            void MarkSwapchainWriterCore(string writerLabel, int passIndex, int opIndex, int pipelineIdentity)
             {
                 swapchainLastWriter = writerLabel;
                 swapchainLastWriterPass = passIndex;
@@ -2213,9 +2403,32 @@ namespace XREngine.Rendering.Vulkan
                 swapchainWritesByPipeline.TryGetValue(pipelineIdentity, out int count);
                 swapchainWritesByPipeline[pipelineIdentity] = count + 1;
                 swapchainWriterLabelByPipeline[pipelineIdentity] = writerLabel;
-                swapchainWriterDetailByPipeline[pipelineIdentity] = writerDetail;
                 swapchainWriterPassByPipeline[pipelineIdentity] = passIndex;
                 swapchainWriterOpIndexByPipeline[pipelineIdentity] = opIndex;
+            }
+
+            void MarkSwapchainFrameOpWriter(string writerLabel, FrameOp op, int passIndex, int opIndex, int pipelineIdentity)
+            {
+                MarkSwapchainWriterCore(writerLabel, passIndex, opIndex, pipelineIdentity);
+                swapchainWriterOpByPipeline[pipelineIdentity] = op;
+                swapchainWriterDetailByPipeline.Remove(pipelineIdentity);
+                swapchainWriterDynamicUiDrawCountByPipeline.Remove(pipelineIdentity);
+            }
+
+            void MarkSwapchainStaticWriter(string writerLabel, string writerDetail, int passIndex, int opIndex, int pipelineIdentity)
+            {
+                MarkSwapchainWriterCore(writerLabel, passIndex, opIndex, pipelineIdentity);
+                swapchainWriterDetailByPipeline[pipelineIdentity] = writerDetail;
+                swapchainWriterOpByPipeline.Remove(pipelineIdentity);
+                swapchainWriterDynamicUiDrawCountByPipeline.Remove(pipelineIdentity);
+            }
+
+            void MarkSwapchainDynamicUiWriter(string writerLabel, int drawCount, int passIndex, int opIndex, int pipelineIdentity)
+            {
+                MarkSwapchainWriterCore(writerLabel, passIndex, opIndex, pipelineIdentity);
+                swapchainWriterDynamicUiDrawCountByPipeline[pipelineIdentity] = drawCount;
+                swapchainWriterOpByPipeline.Remove(pipelineIdentity);
+                swapchainWriterDetailByPipeline.Remove(pipelineIdentity);
             }
 
             void LogSwapchainWritersByPipeline(string phase)
@@ -2223,55 +2436,56 @@ namespace XREngine.Rendering.Vulkan
                 if (swapchainWritesByPipeline.Count == 0)
                     return;
 
-                string byPipeline = string.Join(", ",
-                    swapchainWritesByPipeline
-                        .OrderByDescending(kv => kv.Value)
-                        .Take(6)
-                        .Select(kv =>
-                        {
-                            string label = swapchainWriterLabelByPipeline.TryGetValue(kv.Key, out string? l)
-                                ? l
-                                : "Unknown";
-                            string pipelineName = pipelineNameByIdentity.TryGetValue(kv.Key, out string? n)
-                                ? n
-                                : "UnknownPipeline";
-                            return $"{label}#P{kv.Key}[{pipelineName}]:{kv.Value}";
-                        }));
+                TimeSpan logInterval = TimeSpan.FromSeconds(1);
+                string summaryKey = $"Vulkan.FrameOpsByPipeline.{phase}.{GetHashCode()}";
+                string detailKey = $"Vulkan.FrameOpsByPipeline.{phase}.Details.{GetHashCode()}";
+                bool shouldLogSummary = Debug.ShouldLogEvery(summaryKey, logInterval);
+                bool shouldLogDetails = Debug.ShouldLogEvery(detailKey, logInterval);
+                if (!shouldLogSummary && !shouldLogDetails)
+                    return;
 
-                Debug.VulkanEvery(
-                    $"Vulkan.FrameOpsByPipeline.{phase}.{GetHashCode()}",
-                    TimeSpan.FromSeconds(1),
-                    "[Vulkan] Swapchain writers by pipeline ({0}): {1}",
-                    phase,
-                    byPipeline);
+                List<KeyValuePair<int, int>> sortedWriters = _swapchainWriterCountSortScratch;
+                sortedWriters.Clear();
+                sortedWriters.EnsureCapacity(swapchainWritesByPipeline.Count);
+                foreach (KeyValuePair<int, int> pair in swapchainWritesByPipeline)
+                    sortedWriters.Add(pair);
+                sortedWriters.Sort(static (left, right) => right.Value.CompareTo(left.Value));
 
-                string detailSummary = string.Join(" | ",
-                    swapchainWritesByPipeline
-                        .OrderByDescending(kv => kv.Value)
-                        .Take(4)
-                        .Select(kv =>
-                        {
-                            string label = swapchainWriterLabelByPipeline.TryGetValue(kv.Key, out string? l)
-                                ? l
-                                : "Unknown";
-                            string detail = swapchainWriterDetailByPipeline.TryGetValue(kv.Key, out string? d)
-                                ? d
-                                : "<no detail>";
-                            int passIndex = swapchainWriterPassByPipeline.TryGetValue(kv.Key, out int pass)
-                                ? pass
-                                : int.MinValue;
-                            int opIndex = swapchainWriterOpIndexByPipeline.TryGetValue(kv.Key, out int op)
-                                ? op
-                                : -1;
-                            return $"{label}@pass{passIndex}/op{opIndex}: {detail}";
-                        }));
+                if (shouldLogSummary)
+                {
+                    StringBuilder builder = _swapchainWriterSummaryBuilder;
+                    builder.Clear();
+                    AppendSwapchainWriterSummary(
+                        builder,
+                        sortedWriters,
+                        swapchainWriterLabelByPipeline,
+                        pipelineNameByIdentity,
+                        maxEntries: 6);
+                    Debug.Vulkan(
+                        "[Vulkan] Swapchain writers by pipeline ({0}): {1}",
+                        phase,
+                        builder.ToString());
+                }
 
-                Debug.VulkanEvery(
-                    $"Vulkan.FrameOpsByPipeline.{phase}.Details.{GetHashCode()}",
-                    TimeSpan.FromSeconds(1),
-                    "[Vulkan] Swapchain writer details ({0}): {1}",
-                    phase,
-                    detailSummary);
+                if (shouldLogDetails)
+                {
+                    StringBuilder builder = _swapchainWriterSummaryBuilder;
+                    builder.Clear();
+                    AppendSwapchainWriterDetails(
+                        builder,
+                        sortedWriters,
+                        swapchainWriterLabelByPipeline,
+                        swapchainWriterDetailByPipeline,
+                        swapchainWriterOpByPipeline,
+                        swapchainWriterDynamicUiDrawCountByPipeline,
+                        swapchainWriterPassByPipeline,
+                        swapchainWriterOpIndexByPipeline,
+                        maxEntries: 4);
+                    Debug.Vulkan(
+                        "[Vulkan] Swapchain writer details ({0}): {1}",
+                        phase,
+                        builder.ToString());
+                }
             }
 
             int opScanIndex = 0;
@@ -2286,7 +2500,7 @@ namespace XREngine.Rendering.Vulkan
                         {
                             swapchainWriteCount++;
                             swapchainClearWrites++;
-                            MarkSwapchainWriter(nameof(ClearOp), BuildSwapchainWriterDetail(clear), clear.PassIndex, opScanIndex, clear.Context.PipelineIdentity);
+                            MarkSwapchainFrameOpWriter(nameof(ClearOp), clear, clear.PassIndex, opScanIndex, clear.Context.PipelineIdentity);
                         }
                         break;
                     case MeshDrawOp meshDraw:
@@ -2297,7 +2511,7 @@ namespace XREngine.Rendering.Vulkan
                         {
                             swapchainWriteCount++;
                             swapchainDrawWrites++;
-                            MarkSwapchainWriter(nameof(MeshDrawOp), BuildSwapchainWriterDetail(meshDraw), meshDraw.PassIndex, opScanIndex, meshDraw.Context.PipelineIdentity);
+                            MarkSwapchainFrameOpWriter(nameof(MeshDrawOp), meshDraw, meshDraw.PassIndex, opScanIndex, meshDraw.Context.PipelineIdentity);
                         }
                         else
                         {
@@ -2310,7 +2524,7 @@ namespace XREngine.Rendering.Vulkan
                         indirectDrawCount++;
                         swapchainWriteCount++;
                         swapchainDrawWrites++;
-                        MarkSwapchainWriter(nameof(IndirectDrawOp), BuildSwapchainWriterDetail(indirectDraw), indirectDraw.PassIndex, opScanIndex, indirectDraw.Context.PipelineIdentity);
+                        MarkSwapchainFrameOpWriter(nameof(IndirectDrawOp), indirectDraw, indirectDraw.PassIndex, opScanIndex, indirectDraw.Context.PipelineIdentity);
                         break;
                     case MeshTaskDispatchIndirectCountOp meshTaskDispatch:
                         RememberPipelineName(meshTaskDispatch.Context);
@@ -2318,7 +2532,7 @@ namespace XREngine.Rendering.Vulkan
                         meshTaskDispatchCount++;
                         swapchainWriteCount++;
                         swapchainDrawWrites++;
-                        MarkSwapchainWriter(nameof(MeshTaskDispatchIndirectCountOp), BuildSwapchainWriterDetail(meshTaskDispatch), meshTaskDispatch.PassIndex, opScanIndex, meshTaskDispatch.Context.PipelineIdentity);
+                        MarkSwapchainFrameOpWriter(nameof(MeshTaskDispatchIndirectCountOp), meshTaskDispatch, meshTaskDispatch.PassIndex, opScanIndex, meshTaskDispatch.Context.PipelineIdentity);
                         break;
                     case BlitOp blit:
                         RememberPipelineName(blit.Context);
@@ -2327,7 +2541,7 @@ namespace XREngine.Rendering.Vulkan
                         {
                             swapchainWriteCount++;
                             swapchainBlitWrites++;
-                            MarkSwapchainWriter(nameof(BlitOp), BuildSwapchainWriterDetail(blit), blit.PassIndex, opScanIndex, blit.Context.PipelineIdentity);
+                            MarkSwapchainFrameOpWriter(nameof(BlitOp), blit, blit.PassIndex, opScanIndex, blit.Context.PipelineIdentity);
                         }
                         else
                         {
@@ -2415,7 +2629,9 @@ namespace XREngine.Rendering.Vulkan
             // (→ initialLayout = Undefined);  after EndActiveRenderPass we store
             // the finalLayout of each attachment so the next BeginRenderPassForTarget
             // can set initialLayout correctly and preserve content across passes.
-            Dictionary<XRFrameBuffer, ImageLayout[]> fboLayoutTracking = [];
+            Dictionary<XRFrameBuffer, ImageLayout[]> fboLayoutTracking = _fboLayoutTrackingScratch;
+            fboLayoutTracking.Clear();
+            fboLayoutTracking.EnsureCapacity(Math.Max(1, _recordFboLayoutCapacityHint));
             int swapchainPresentTransitions = 0;
             bool usedSwapchainDynamicRendering = false;
             bool swapchainInColorAttachmentLayout = false;
@@ -3105,9 +3321,9 @@ namespace XREngine.Rendering.Vulkan
                         swapchainWriteCount++;
                         swapchainDrawWrites++;
                         overlaySwapchainWriters++;
-                        MarkSwapchainWriter(
+                        MarkSwapchainDynamicUiWriter(
                             "DynamicUIBatchText",
-                            $"secondary overlay draws={dynamicUiBatchTextOpCount}",
+                            dynamicUiBatchTextOpCount,
                             activePassIndex != int.MinValue ? activePassIndex : VulkanBarrierPlanner.SwapchainPassIndex,
                             ops.Length,
                             hasActiveContext ? activeContext.PipelineIdentity : initialContext.PipelineIdentity);
@@ -3709,7 +3925,7 @@ namespace XREngine.Rendering.Vulkan
                     swapchainWriteCount++;
                     swapchainClearWrites++;
                     forcedDiagnosticSwapchainWriters++;
-                    MarkSwapchainWriter("ForceMagenta", "forced debug clear", activePassIndex, ops.Length, hasActiveContext ? activeContext.PipelineIdentity : 0);
+                    MarkSwapchainStaticWriter("ForceMagenta", "forced debug clear", activePassIndex, ops.Length, hasActiveContext ? activeContext.PipelineIdentity : 0);
 
                     Debug.VulkanEvery(
                         $"Vulkan.ForceSwapchainMagenta.{GetHashCode()}",
@@ -3731,7 +3947,7 @@ namespace XREngine.Rendering.Vulkan
                     CmdEndLabel(commandBuffer);
                     swapchainWriteCount++;
                     overlaySwapchainWriters++;
-                    MarkSwapchainWriter("ImGui", "overlay draw", activePassIndex, ops.Length, hasActiveContext ? activeContext.PipelineIdentity : 0);
+                    MarkSwapchainStaticWriter("ImGui", "overlay draw", activePassIndex, ops.Length, hasActiveContext ? activeContext.PipelineIdentity : 0);
                     LogSwapchainWritersByPipeline("PostOverlay");
                 }
                 else if (SupportsImGui && skipImGui)
@@ -3742,18 +3958,31 @@ namespace XREngine.Rendering.Vulkan
                         "[Vulkan] Skipping ImGui overlay due to XRE_SKIP_IMGUI=1.");
                 }
 
-                string pipelineLabel = hasActiveContext
-                    ? (!string.IsNullOrWhiteSpace(activeContext.PipelineInstance?.Pipeline?.GetType().Name)
-                        ? $"{activeContext.PipelineInstance!.Pipeline!.GetType().Name}#{activeContext.PipelineIdentity}"
-                        : $"Pipeline#{activeContext.PipelineIdentity}")
-                    : "None";
-                ColorF4 clearColor = GetClearColorValue();
-                string swapchainWriterSummary =
-                    $"{swapchainLastWriter}@p{swapchainLastWriterPass}:w{swapchainWriteCount}(scene={sceneSwapchainWriters} overlay={overlaySwapchainWriters} diag={forcedDiagnosticSwapchainWriters} C{swapchainClearWrites}D{swapchainDrawWrites}B{swapchainBlitWrites}) presentTransitions={swapchainPresentTransitions} ops={ops.Length} fboD={fboOnlyDrawOps} fboB={fboOnlyBlitOps} comp={computeCount}";
-                UpdateVulkanOnScreenDiagnostic(pipelineLabel, clearColor, droppedDrawOps, droppedFrameOps, swapchainWriterSummary);
+                bool needsFrameDiagnosticSummary = droppedFrameOps > 0 || missingSceneSwapchainWriters;
+                bool shouldUpdateOnScreenDiagnostic =
+                    needsFrameDiagnosticSummary ||
+                    droppedDrawOps > 0 ||
+                    Debug.ShouldLogEvery($"Vulkan.OnScreenDiagnostic.{GetHashCode()}", TimeSpan.FromSeconds(1));
+                string? swapchainWriterSummary = shouldUpdateOnScreenDiagnostic || needsFrameDiagnosticSummary
+                    ? $"{swapchainLastWriter}@p{swapchainLastWriterPass}:w{swapchainWriteCount}(scene={sceneSwapchainWriters} overlay={overlaySwapchainWriters} diag={forcedDiagnosticSwapchainWriters} C{swapchainClearWrites}D{swapchainDrawWrites}B{swapchainBlitWrites}) presentTransitions={swapchainPresentTransitions} ops={ops.Length} fboD={fboOnlyDrawOps} fboB={fboOnlyBlitOps} comp={computeCount}"
+                    : null;
+                if (shouldUpdateOnScreenDiagnostic)
+                {
+                    string pipelineLabel = hasActiveContext
+                        ? (!string.IsNullOrWhiteSpace(activeContext.PipelineInstance?.Pipeline?.GetType().Name)
+                            ? $"{activeContext.PipelineInstance!.Pipeline!.GetType().Name}#{activeContext.PipelineIdentity}"
+                            : $"Pipeline#{activeContext.PipelineIdentity}")
+                        : "None";
+                    UpdateVulkanOnScreenDiagnostic(
+                        pipelineLabel,
+                        GetClearColorValue(),
+                        droppedDrawOps,
+                        droppedFrameOps,
+                        swapchainWriterSummary!);
+                }
 
                 string? frameDiagnosticSummary = null;
-                if (droppedFrameOps > 0 || missingSceneSwapchainWriters)
+                if (needsFrameDiagnosticSummary)
                 {
                     frameDiagnosticSummary = BuildVulkanFrameDiagnosticSummary(
                         ops,
@@ -3766,7 +3995,7 @@ namespace XREngine.Rendering.Vulkan
                         forcedDiagnosticSwapchainWriters,
                         fboOnlyDrawOps,
                         fboOnlyBlitOps,
-                        swapchainWriterSummary,
+                        swapchainWriterSummary!,
                         hasActiveContext ? activeContext : initialContext,
                         firstFailure);
                 }
@@ -3790,6 +4019,11 @@ namespace XREngine.Rendering.Vulkan
                     firstFailure?.ShaderName,
                     firstFailure?.Message,
                     frameDiagnosticSummary);
+
+                _recordSwapchainWriterCapacityHint = Math.Max(1, swapchainWritesByPipeline.Count);
+                _recordPipelineNameCapacityHint = Math.Max(1, pipelineNameByIdentity.Count);
+                _recordMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
+                _recordFboLayoutCapacityHint = Math.Max(1, fboLayoutTracking.Count);
 
                 EndActiveRenderPass(finalClose: true);
 
@@ -4324,6 +4558,15 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
+            if (op.BindlessMaterialTextures is { } bindlessMaterialTextures &&
+                !TryBindGlobalMaterialTextureDescriptorSet(
+                    commandBuffer,
+                    bindlessMaterialTextures.Program,
+                    bindlessMaterialTextures.Consumer))
+            {
+                return;
+            }
+
             if (op.UseCount && _supportsDrawIndirectCount && _khrDrawIndirectCount is not null)
             {
                 // Use VK_KHR_draw_indirect_count path
@@ -4491,6 +4734,15 @@ namespace XREngine.Rendering.Vulkan
                     "Vulkan.MeshTaskIndirect.ZeroMaxDrawCount",
                     TimeSpan.FromSeconds(1),
                     "RecordMeshTaskDispatchIndirectCountOp skipped: maxDrawCount was zero.");
+                return;
+            }
+
+            if (op.BindlessMaterialTextures is { } bindlessMaterialTextures &&
+                !TryBindGlobalMaterialTextureDescriptorSet(
+                    commandBuffer,
+                    bindlessMaterialTextures.Program,
+                    bindlessMaterialTextures.Consumer))
+            {
                 return;
             }
 

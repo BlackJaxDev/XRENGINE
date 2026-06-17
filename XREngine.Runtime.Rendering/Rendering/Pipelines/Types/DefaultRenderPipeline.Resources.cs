@@ -391,6 +391,22 @@ public partial class DefaultRenderPipeline
             .Factory(CreateLightingAccumFBO)
             .Add();
 
+        builder.FrameBuffer(LightCombineFBOName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(
+                AlbedoOpacityTextureName,
+                NormalTextureName,
+                RMSETextureName,
+                AmbientOcclusionIntensityTextureName,
+                DepthViewTextureName,
+                LightingAccumTextureName,
+                BRDFTextureName)
+            .Color(0, DiffuseTextureName)
+            .Factory(CreateLightCombineFBO)
+            .Add();
+
         builder.FrameBuffer(ForwardPassFBOName)
             .Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent)

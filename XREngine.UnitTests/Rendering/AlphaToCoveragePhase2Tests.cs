@@ -291,10 +291,15 @@ public sealed class AlphaToCoveragePhase2Tests
         string pipelineFboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs").Replace("\r\n", "\n");
         pipelineFboSource.ShouldContain("BlendModeAllDrawBuffers = BlendMode.Disabled()");
 
+        string pipelineResourceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.Resources.cs").Replace("\r\n", "\n");
+        pipelineResourceSource.ShouldContain("builder.FrameBuffer(LightingAccumFBOName)");
+        pipelineResourceSource.ShouldContain(".Factory(CreateLightingAccumFBO)");
+        pipelineResourceSource.ShouldContain("builder.FrameBuffer(LightCombineFBOName)");
+        pipelineResourceSource.ShouldContain(".Factory(CreateLightCombineFBO)");
+
         string pipelineCommandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
-        pipelineCommandChainSource.ShouldContain("LightingAccumFBOName,\n            CreateLightingAccumFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateLightingAccumFbo)");
         pipelineCommandChainSource.ShouldContain("x.SetOptions(LightingAccumFBOName, clearDepth: false, clearStencil: false)");
-        pipelineCommandChainSource.ShouldContain("LightCombineFBOName,\n            CreateLightCombineFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateLightCombineFbo)\n            .UseLifetime(RenderResourceLifetime.Transient);");
+        pipelineCommandChainSource.ShouldNotContain("LightCombineFBOName,\n            CreateLightCombineFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateLightCombineFbo)");
 
         string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("private bool NeedsRecreateLightCombineFbo(XRFrameBuffer fbo)");

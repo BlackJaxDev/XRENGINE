@@ -256,6 +256,7 @@ public sealed partial class VulkanFrameLoopTelemetryData
     public double FrameAcquireBridgeSubmitMs { get; set; }
     public double FrameWaitSwapchainImageMs { get; set; }
     public double FrameResetDynamicUniformRingMs { get; set; }
+    public long RecordCommandBufferAllocatedBytes { get; set; }
     public int FrameOpTotalCount { get; set; }
     public int FrameOpClearCount { get; set; }
     public int FrameOpMeshDrawCount { get; set; }

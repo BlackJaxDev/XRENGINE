@@ -420,6 +420,7 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
                 FrameAcquireBridgeSubmitMs = Engine.Rendering.Stats.Vulkan.VulkanFrameAcquireBridgeSubmitMs,
                 FrameWaitSwapchainImageMs = Engine.Rendering.Stats.Vulkan.VulkanFrameWaitSwapchainImageMs,
                 FrameResetDynamicUniformRingMs = Engine.Rendering.Stats.Vulkan.VulkanFrameResetDynamicUniformRingMs,
+                RecordCommandBufferAllocatedBytes = Engine.Rendering.Stats.Vulkan.VulkanRecordCommandBufferAllocatedBytes,
                 FrameOpTotalCount = Engine.Rendering.Stats.Vulkan.VulkanFrameOpTotalCount,
                 FrameOpClearCount = Engine.Rendering.Stats.Vulkan.VulkanFrameOpClearCount,
                 FrameOpMeshDrawCount = Engine.Rendering.Stats.Vulkan.VulkanFrameOpMeshDrawCount,

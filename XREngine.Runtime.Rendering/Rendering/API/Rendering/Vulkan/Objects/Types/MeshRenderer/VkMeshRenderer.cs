@@ -21,6 +21,18 @@ public unsafe partial class VulkanRenderer
 
     private readonly Lock _frameOpsLock = new();
     private readonly List<FrameOp> _frameOps = [];
+    private FrameOp[] _drainedFrameOpsBuffer = Array.Empty<FrameOp>();
+    private const int FrameOpKindUnknown = 0;
+    private const int FrameOpKindClear = 1;
+    private const int FrameOpKindMeshDraw = 2;
+    private const int FrameOpKindBlit = 3;
+    private const int FrameOpKindIndirectDraw = 4;
+    private const int FrameOpKindMeshTaskDispatchIndirectCount = 5;
+    private const int FrameOpKindMemoryBarrier = 6;
+    private const int FrameOpKindDlssUpscale = 7;
+    private const int FrameOpKindDlssFrameGeneration = 8;
+    private const int FrameOpKindTransformFeedback = 9;
+    private const int FrameOpKindComputeDispatch = 10;
 
     internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpContext Context);
 
@@ -35,6 +47,10 @@ public unsafe partial class VulkanRenderer
         uint Stencil,
         Rect2D Rect,
         FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
+
+    internal readonly record struct VulkanBindlessMaterialDescriptorBinding(
+        VkRenderProgram Program,
+        string Consumer);
 
     internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw, FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
 
@@ -66,6 +82,7 @@ public unsafe partial class VulkanRenderer
         nuint ByteOffset,
         nuint CountByteOffset,
         bool UseCount,
+        VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures,
         FrameOpContext Context) : FrameOp(PassIndex, null, Context);
 
     internal sealed record MeshTaskDispatchIndirectCountOp(
@@ -76,6 +93,7 @@ public unsafe partial class VulkanRenderer
         uint Stride,
         nuint ByteOffset,
         nuint CountByteOffset,
+        VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures,
         FrameOpContext Context) : FrameOp(PassIndex, null, Context);
 
     internal sealed record MemoryBarrierOp(
@@ -185,22 +203,26 @@ public unsafe partial class VulkanRenderer
                 return Array.Empty<FrameOp>();
             }
 
-            var ops = _frameOps.ToArray();
+            int opCount = _frameOps.Count;
+            if (_drainedFrameOpsBuffer.Length != opCount)
+                _drainedFrameOpsBuffer = new FrameOp[opCount];
+
+            _frameOps.CopyTo(_drainedFrameOpsBuffer);
             _frameOps.Clear();
-            signature = ComputeFrameOpsSignature(ops);
-            return ops;
+            signature = ComputeFrameOpsSignature(_drainedFrameOpsBuffer);
+            return _drainedFrameOpsBuffer;
         }
     }
 
     private static ulong ComputeFrameOpsSignature(FrameOp[] ops)
     {
-        HashCode hash = new();
+        FrameOpSignatureHasher hash = new();
         hash.Add(ops.Length);
 
         for (int i = 0; i < ops.Length; i++)
         {
             FrameOp op = ops[i];
-            hash.Add(op.GetType().Name, StringComparer.Ordinal);
+            hash.Add(GetFrameOpKindId(op));
             hash.Add(op.PassIndex);
             hash.Add(op.Target?.GetHashCode() ?? 0);
             hash.Add(op.Context.PipelineIdentity);
@@ -329,7 +351,7 @@ public unsafe partial class VulkanRenderer
                     hash.Add(dlss.Parameters.FrameIndex);
                     hash.Add(dlss.Parameters.ResetHistory);
                     hash.Add(dlss.Parameters.OutputHdr);
-                    hash.Add(dlss.Parameters.DlssQuality);
+                    hash.Add((int)dlss.Parameters.DlssQuality);
                     break;
                 case DlssFrameGenerationOp dlssFrameGeneration:
                     hash.Add(dlssFrameGeneration.Session.GetHashCode());
@@ -366,10 +388,70 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        return unchecked((ulong)hash.ToHashCode());
+        return hash.ToHash();
     }
 
-    private static void HashProgramBindingSnapshot(ref HashCode hash, ComputeDispatchSnapshot? snapshot)
+    private static int GetFrameOpKindId(FrameOp op)
+        => op switch
+        {
+            ClearOp => FrameOpKindClear,
+            MeshDrawOp => FrameOpKindMeshDraw,
+            BlitOp => FrameOpKindBlit,
+            IndirectDrawOp => FrameOpKindIndirectDraw,
+            MeshTaskDispatchIndirectCountOp => FrameOpKindMeshTaskDispatchIndirectCount,
+            MemoryBarrierOp => FrameOpKindMemoryBarrier,
+            DlssUpscaleOp => FrameOpKindDlssUpscale,
+            DlssFrameGenerationOp => FrameOpKindDlssFrameGeneration,
+            TransformFeedbackOp => FrameOpKindTransformFeedback,
+            ComputeDispatchOp => FrameOpKindComputeDispatch,
+            _ => FrameOpKindUnknown
+        };
+
+    private struct FrameOpSignatureHasher
+    {
+        private const ulong OffsetBasis = 14695981039346656037UL;
+        private const ulong Prime = 1099511628211UL;
+        private ulong _value;
+
+        public FrameOpSignatureHasher()
+        {
+            _value = OffsetBasis;
+        }
+
+        public void Add(bool value) => Add(value ? 1 : 0);
+        public void Add(int value) => Mix(unchecked((uint)value));
+        public void Add(uint value) => Mix(value);
+        public void Add(ulong value) => Mix(value);
+        public void Add(float value) => Add(BitConverter.SingleToUInt32Bits(value));
+
+        public void Add(string? value)
+        {
+            if (value is null)
+            {
+                Add(-1);
+                return;
+            }
+
+            Add(value.Length);
+            for (int i = 0; i < value.Length; i++)
+                Add(value[i]);
+        }
+
+        public ulong ToHash() => _value;
+
+        private void Mix(ulong value)
+        {
+            unchecked
+            {
+                _value ^= value;
+                _value *= Prime;
+                _value ^= value >> 32;
+                _value *= Prime;
+            }
+        }
+    }
+
+    private static void HashProgramBindingSnapshot(ref FrameOpSignatureHasher hash, ComputeDispatchSnapshot? snapshot)
     {
         if (snapshot is null)
         {
@@ -385,24 +467,26 @@ public unsafe partial class VulkanRenderer
         hash.Add(HashBufferBindings(snapshot.Buffers));
     }
 
-    private static int HashUniformBindingLayout(Dictionary<string, ProgramUniformValue> uniforms)
+    private static ulong HashUniformBindingLayout(Dictionary<string, ProgramUniformValue> uniforms)
     {
-        HashCode hash = new();
-        hash.Add(uniforms.Count);
-        foreach (var pair in uniforms.OrderBy(p => p.Key, StringComparer.Ordinal))
+        ulong xor = 0;
+        ulong sum = 0;
+        foreach (var pair in uniforms)
         {
-            hash.Add(pair.Key, StringComparer.Ordinal);
-            hash.Add((int)pair.Value.Type);
-            hash.Add(pair.Value.IsArray);
+            FrameOpSignatureHasher item = new();
+            item.Add(pair.Key);
+            item.Add((int)pair.Value.Type);
+            item.Add(pair.Value.IsArray);
+            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 
-        return hash.ToHashCode();
+        return FinishUnorderedHash(uniforms.Count, xor, sum);
     }
 
     private static int HashUniformBindings(Dictionary<string, ProgramUniformValue> uniforms)
     {
-        HashCode hash = new();
-        hash.Add(uniforms.Count);
+        ulong xor = 0;
+        ulong sum = 0;
         foreach (var pair in uniforms)
         {
             HashCode item = new();
@@ -410,68 +494,94 @@ public unsafe partial class VulkanRenderer
             item.Add((int)pair.Value.Type);
             item.Add(pair.Value.IsArray);
             HashUniformValue(ref item, pair.Value.Value);
-            hash.Add(item.ToHashCode());
+            AddUnorderedItemHash(ref xor, ref sum, unchecked((ulong)item.ToHashCode()));
         }
 
-        return hash.ToHashCode();
+        return unchecked((int)FinishUnorderedHash(uniforms.Count, xor, sum));
     }
 
-    private static int HashSamplerUnitBindings(Dictionary<uint, XRTexture> samplers)
+    private static ulong HashSamplerUnitBindings(Dictionary<uint, XRTexture> samplers)
     {
-        HashCode hash = new();
-        hash.Add(samplers.Count);
+        ulong xor = 0;
+        ulong sum = 0;
         foreach (var pair in samplers)
         {
-            hash.Add(pair.Key);
-            hash.Add(pair.Value.GetHashCode());
+            FrameOpSignatureHasher item = new();
+            item.Add(pair.Key);
+            item.Add(pair.Value.GetHashCode());
+            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 
-        return hash.ToHashCode();
+        return FinishUnorderedHash(samplers.Count, xor, sum);
     }
 
-    private static int HashSamplerNameBindings(Dictionary<string, XRTexture> samplers)
+    private static ulong HashSamplerNameBindings(Dictionary<string, XRTexture> samplers)
     {
-        HashCode hash = new();
-        hash.Add(samplers.Count);
+        ulong xor = 0;
+        ulong sum = 0;
         foreach (var pair in samplers)
         {
-            hash.Add(pair.Key, StringComparer.Ordinal);
-            hash.Add(pair.Value.GetHashCode());
+            FrameOpSignatureHasher item = new();
+            item.Add(pair.Key);
+            item.Add(pair.Value.GetHashCode());
+            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 
-        return hash.ToHashCode();
+        return FinishUnorderedHash(samplers.Count, xor, sum);
     }
 
-    private static int HashImageBindings(Dictionary<uint, ProgramImageBinding> images)
+    private static ulong HashImageBindings(Dictionary<uint, ProgramImageBinding> images)
     {
-        HashCode hash = new();
-        hash.Add(images.Count);
+        ulong xor = 0;
+        ulong sum = 0;
         foreach (var pair in images)
         {
             ProgramImageBinding binding = pair.Value;
-            hash.Add(pair.Key);
-            hash.Add(binding.Texture.GetHashCode());
-            hash.Add(binding.Level);
-            hash.Add(binding.Layered);
-            hash.Add(binding.Layer);
-            hash.Add((int)binding.Access);
-            hash.Add((int)binding.Format);
+            FrameOpSignatureHasher item = new();
+            item.Add(pair.Key);
+            item.Add(binding.Texture.GetHashCode());
+            item.Add(binding.Level);
+            item.Add(binding.Layered);
+            item.Add(binding.Layer);
+            item.Add((int)binding.Access);
+            item.Add((int)binding.Format);
+            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 
-        return hash.ToHashCode();
+        return FinishUnorderedHash(images.Count, xor, sum);
     }
 
-    private static int HashBufferBindings(Dictionary<uint, XRDataBuffer> buffers)
+    private static ulong HashBufferBindings(Dictionary<uint, XRDataBuffer> buffers)
     {
-        HashCode hash = new();
-        hash.Add(buffers.Count);
+        ulong xor = 0;
+        ulong sum = 0;
         foreach (var pair in buffers)
         {
-            hash.Add(pair.Key);
-            hash.Add(pair.Value.GetHashCode());
+            FrameOpSignatureHasher item = new();
+            item.Add(pair.Key);
+            item.Add(pair.Value.GetHashCode());
+            AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 
-        return hash.ToHashCode();
+        return FinishUnorderedHash(buffers.Count, xor, sum);
+    }
+
+    private static void AddUnorderedItemHash(ref ulong xor, ref ulong sum, ulong itemHash)
+    {
+        unchecked
+        {
+            xor ^= itemHash;
+            sum += BitOperations.RotateLeft(itemHash, (int)(itemHash & 31));
+        }
+    }
+
+    private static ulong FinishUnorderedHash(int count, ulong xor, ulong sum)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(count);
+        hash.Add(xor);
+        hash.Add(sum);
+        return hash.ToHash();
     }
 
     private static void HashUniformValue(ref HashCode hash, object? value)

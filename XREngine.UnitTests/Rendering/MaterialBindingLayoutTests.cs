@@ -66,6 +66,21 @@ public sealed class MaterialBindingLayoutTests
     }
 
     [Test]
+    public void GlslGenerator_EmitsVulkanDescriptorIndexedTextureTable()
+    {
+        string glsl = MaterialBindingGlslGenerator.GenerateMaterialTableDefinitions(
+            MaterialBindingLayouts.OpaqueDeferred,
+            EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable);
+
+        glsl.ShouldContain("layout(set = 2, binding = 31) uniform sampler2D XR_BindlessMaterialTextures[];");
+        glsl.ShouldContain("XR_BindlessMaterialTextures[nonuniformEXT(descriptorIndex)]");
+        glsl.ShouldContain("if (descriptorIndex == 0u)");
+        glsl.ShouldNotContain("GL_ARB_bindless_texture");
+        glsl.ShouldNotContain("uint64_t");
+        glsl.ShouldNotContain("XR_TextureHandleTable");
+    }
+
+    [Test]
     public void LayoutValidation_RejectsDuplicateFieldSemantic()
     {
         Should.Throw<ArgumentException>(() => new MaterialBindingLayout(

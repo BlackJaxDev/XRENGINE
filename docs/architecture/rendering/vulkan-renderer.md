@@ -32,6 +32,7 @@ This document describes how the Vulkan renderer is initialized, how it manages t
   - [Staging Manager](#staging-manager)
   - [Pipeline Cache](#pipeline-cache)
   - [Descriptor Management](#descriptor-management)
+  - [Bindless Material Texture Table](#bindless-material-texture-table)
   - [Resource Allocator](#resource-allocator)
 - [ImGui Integration](#imgui-integration)
 - [Advanced Features](#advanced-features)
@@ -79,6 +80,8 @@ The renderer targets **Vulkan 1.3** (instance) with a **1.1 minimum** API versio
 | `VulkanPipelineCache.cs` | Persistent pipeline cache (disk save/load) |
 | `VulkanDescriptorLayoutCache.cs` | Descriptor set layout caching |
 | `VulkanDescriptorContracts.cs` | Descriptor binding contracts |
+| `VulkanBindlessMaterialDescriptors.cs` | Reserved descriptor-indexed material texture table binding contract |
+| `VulkanRenderer.BindlessMaterialTextureTable.cs` | Renderer-owned global material texture descriptor table and descriptor-index material row integration |
 | `VulkanComputeDescriptors.cs` | Compute shader descriptor management |
 | `VulkanFeatureProfile.cs` | Feature toggles/profile configuration |
 | `VulkanRenderTargetMode.cs` | Dynamic-rendering vs legacy render-pass target selection |
@@ -237,6 +240,19 @@ After logical-device feature resolution, Vulkan selects a render target path fro
 | `LegacyRenderPass` | Routes swapchain, FBO, and ImGui graphics targets through the retained `VkRenderPass` / `VkFramebuffer` path. |
 
 Startup diagnostics report the requested mode, resolved mode, and dynamic-rendering feature support.
+
+**Bindless material mode:**
+
+Vulkan material bindless mode is selected by `Engine.Rendering.Settings.VulkanBindlessMaterialMode` or the `XRE_VULKAN_BINDLESS_MATERIAL_MODE` environment variable:
+
+| Value | Behavior |
+|-------|----------|
+| `Auto` | Uses the descriptor-indexed material path when the feature profile and device capabilities allow it. |
+| `Disabled` | Disables the Vulkan global material texture table and routes material-table shaders through non-bindless rows. |
+| `Required` | Fails visibly when descriptor indexing, runtime descriptor arrays, partially-bound descriptors, or update-after-bind are unavailable. |
+| `Diagnostics` | Enables the same table path as Auto and keeps extra diagnostics/warnings visible. |
+
+Startup logs include `Capability.BindlessMaterialTextures` with mode, tier, capacity, `tableReady`, `shaderReady`, `drawPathReady`, and a reason string when any tier is unavailable.
 
 ### Command Pool
 
@@ -603,10 +619,47 @@ Multiple files handle descriptor set management:
 
 - **`VulkanDescriptorLayoutCache`** — Caches `VkDescriptorSetLayout` objects to avoid duplicate creation
 - **`VulkanDescriptorContracts`** — Defines descriptor binding contracts (what resources a shader expects)
+- **`VulkanBindlessMaterialDescriptors`** — Reserves the global material texture descriptor array at set 2 / binding 31
 - **`VulkanComputeDescriptors`** — Specialized descriptor management for compute shaders
 - **Per-swapchain descriptor pools/sets** — Allocated in `CreateAllSwapChainObjects()`, rebuilt on swapchain recreation
 
 Compute auto-uniform and unresolved fallback uniform buffers are cached per program/image/set/binding. They are updated in place and destroyed with the program instead of being allocated as one-frame transient buffers.
+
+### Bindless Material Texture Table
+
+Vulkan bindless material texturing uses one renderer-owned global descriptor table:
+
+- Descriptor array: `XR_BindlessMaterialTextures`, `set = 2`, `binding = 31`.
+- Descriptor type: `CombinedImageSampler`.
+- Descriptor index `0`: reserved null/fallback. Generated material-table shaders return the row fallback constant when an index is zero.
+- Capacity: clamped to `VulkanBindlessMaterialDescriptors.MaxTextureDescriptorCount`, `MaxDescriptorSetSampledImages`, and `MaxPerStageDescriptorSampledImages`.
+- Layout/pool flags: update-after-bind, partially-bound, and variable descriptor count are used only when enabled device features support them.
+- Slot lifetime: material textures receive stable descriptor slots keyed by `XRTexture`, track generation and last-used frame, and retire after the in-flight safety delay.
+- Updates: dirty descriptor slots are flushed without rewriting the full table, using pooled update scratch arrays.
+
+The material row contract is backend-neutral. OpenGL rows store indices into `MaterialTextureHandleTable`; Vulkan rows store descriptor indices directly. `GPUMaterialTextureReference` carries the backend-specific payload and `GPUMaterialTable` packs the shader-facing row.
+
+The descriptor-index shader variant emits `GL_EXT_nonuniform_qualifier` and samples `XR_BindlessMaterialTextures[nonuniformEXT(index)]`. It does not emit OpenGL bindless extensions or `uint64_t` sampler handles.
+
+`VulkanRenderer.BindlessMaterialCapability` exposes the current tier:
+
+| Tier | Meaning |
+|------|---------|
+| `DescriptorIndexingUnavailable` | Required descriptor-indexing features are missing or disabled. |
+| `DescriptorIndexingReady` | Device/profile prerequisites are available. |
+| `GlobalMaterialTextureTableReady` | The global descriptor table, pool, layout, and set are allocated. |
+| `BindlessMaterialTableShaderReady` | Generated Vulkan material-table shaders can use descriptor indices. |
+| `BindlessMaterialDrawPathReady` | Reserved for the production Vulkan material draw path once the broader GPU dispatch gate is enabled. |
+
+Current diagnostics expose descriptor capacity, used slots, dirty slots, descriptor writes, slot retirements, and fallback references through renderer properties. Descriptor fallback/binding failures are also reported through the Vulkan descriptor fallback/failure stats.
+
+Troubleshooting bindless material textures:
+
+- If `Capability.BindlessMaterialTextures` reports `DescriptorIndexingUnavailable`, check descriptor indexing, runtime descriptor arrays, partially-bound descriptors, and update-after-bind support in the same startup log.
+- If mode is `Disabled`, check `VulkanBindlessMaterialMode`, `EnableVulkanBindlessMaterialTable`, and `XRE_VULKAN_BINDLESS_MATERIAL_MODE`.
+- If the table is ready but a draw is skipped, check descriptor binding failures for `GlobalMaterialTextureTable`; Required mode intentionally fails visibly instead of silently falling back.
+- If textured materials sample fallback constants, inspect material rows for zero descriptor indices and check fallback reference counters for missing, unready, or non-sampled textures.
+- If validation reports descriptor set/layout mismatches, verify the shader variant declares `XR_BindlessMaterialTextures` at set 2 / binding 31 and that the frame op was stamped with a bindless material descriptor binding.
 
 ### Resource Allocator
 

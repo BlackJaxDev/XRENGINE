@@ -365,16 +365,6 @@ public partial class DefaultRenderPipeline
     {
         c.Add<VPRC_SyncLightProbeResources>();
 
-        // AO modes still replace AmbientOcclusionIntensityTexture during command execution
-        // and invalidate LightCombineFBO. Keep the combine quad command-owned until AO is
-        // migrated into generation ownership so it can be rebuilt after AO refreshes.
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            LightCombineFBOName,
-            CreateLightCombineFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateLightCombineFbo)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
         c.Add<VPRC_SetClears>().Set(ColorF4.Black, null, null);
 
         var msaaMarkBranch = c.Add<VPRC_IfElse>();

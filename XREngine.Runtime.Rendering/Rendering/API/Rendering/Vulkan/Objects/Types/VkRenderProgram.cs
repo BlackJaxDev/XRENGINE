@@ -974,26 +974,13 @@ public unsafe partial class VulkanRenderer
             lock (_bindingLock)
             {
                 hash.Add(_samplersByName.Count);
-                foreach (KeyValuePair<string, XRTexture> pair in _samplersByName.OrderBy(static p => p.Key, StringComparer.Ordinal))
-                {
-                    hash.Add(pair.Key);
-                    XRTexture? texture = pair.Value;
-                    hash.Add(texture?.GetHashCode() ?? 0);
-                    if (texture is not null && Renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is IVkImageDescriptorSource source)
-                    {
-                        hash.Add(source.DescriptorImage.Handle);
-                        hash.Add(source.DescriptorView.Handle);
-                        hash.Add(source.DescriptorSampler.Handle);
-                        hash.Add(source.DescriptorViewType);
-                        hash.Add(source.DescriptorFormat);
-                        hash.Add(source.DescriptorAspect);
-                        hash.Add(source.DescriptorUsage);
-                    }
-                    else
-                    {
-                        hash.Add(0UL);
-                    }
-                }
+                ulong xor = 0;
+                ulong sum = 0;
+                foreach (KeyValuePair<string, XRTexture> pair in _samplersByName)
+                    AddUnorderedFingerprintItem(ref xor, ref sum, ComputeSamplerResourceFingerprintItem(pair.Key, pair.Value));
+
+                hash.Add(xor);
+                hash.Add(sum);
             }
         }
 
@@ -1009,34 +996,13 @@ public unsafe partial class VulkanRenderer
             lock (_bindingLock)
             {
                 hash.Add(_buffersByBinding.Count);
-                foreach (KeyValuePair<uint, XRDataBuffer> pair in _buffersByBinding.OrderBy(static p => p.Key))
-                {
-                    hash.Add(pair.Key);
+                ulong xor = 0;
+                ulong sum = 0;
+                foreach (KeyValuePair<uint, XRDataBuffer> pair in _buffersByBinding)
+                    AddUnorderedFingerprintItem(ref xor, ref sum, ComputeBoundBufferResourceFingerprintItem(pair.Key, pair.Value));
 
-                    XRDataBuffer? buffer = pair.Value;
-                    hash.Add(buffer?.GetHashCode() ?? 0);
-                    if (buffer is null)
-                    {
-                        hash.Add(0UL);
-                        continue;
-                    }
-
-                    hash.Add(buffer.AttributeName, StringComparer.Ordinal);
-                    hash.Add(buffer.Name, StringComparer.Ordinal);
-                    hash.Add(buffer.Length);
-                    hash.Add((int)buffer.Target);
-                    hash.Add(buffer.BindingIndexOverride ?? uint.MaxValue);
-
-                    if (Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: false) is VkDataBuffer vkBuffer)
-                    {
-                        hash.Add(vkBuffer.BufferHandle?.Handle ?? 0UL);
-                        hash.Add(vkBuffer.AllocatedByteSize);
-                    }
-                    else
-                    {
-                        hash.Add(0UL);
-                    }
-                }
+                hash.Add(xor);
+                hash.Add(sum);
             }
         }
 
@@ -1045,6 +1011,68 @@ public unsafe partial class VulkanRenderer
             HashCode hash = new();
             AddBoundBufferResourceFingerprint(ref hash);
             return unchecked((ulong)hash.ToHashCode());
+        }
+
+        private ulong ComputeSamplerResourceFingerprintItem(string name, XRTexture? texture)
+        {
+            HashCode item = new();
+            item.Add(name, StringComparer.Ordinal);
+            item.Add(texture?.GetHashCode() ?? 0);
+            if (texture is not null && Renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is IVkImageDescriptorSource source)
+            {
+                item.Add(source.DescriptorImage.Handle);
+                item.Add(source.DescriptorView.Handle);
+                item.Add(source.DescriptorSampler.Handle);
+                item.Add(source.DescriptorViewType);
+                item.Add(source.DescriptorFormat);
+                item.Add(source.DescriptorAspect);
+                item.Add(source.DescriptorUsage);
+            }
+            else
+            {
+                item.Add(0UL);
+            }
+
+            return unchecked((ulong)item.ToHashCode());
+        }
+
+        private ulong ComputeBoundBufferResourceFingerprintItem(uint binding, XRDataBuffer? buffer)
+        {
+            HashCode item = new();
+            item.Add(binding);
+            item.Add(buffer?.GetHashCode() ?? 0);
+            if (buffer is null)
+            {
+                item.Add(0UL);
+                return unchecked((ulong)item.ToHashCode());
+            }
+
+            item.Add(buffer.AttributeName, StringComparer.Ordinal);
+            item.Add(buffer.Name, StringComparer.Ordinal);
+            item.Add(buffer.Length);
+            item.Add((int)buffer.Target);
+            item.Add(buffer.BindingIndexOverride ?? uint.MaxValue);
+
+            if (Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: false) is VkDataBuffer vkBuffer)
+            {
+                item.Add(vkBuffer.BufferHandle?.Handle ?? 0UL);
+                item.Add(vkBuffer.AllocatedByteSize);
+            }
+            else
+            {
+                item.Add(0UL);
+            }
+
+            return unchecked((ulong)item.ToHashCode());
+        }
+
+        private static void AddUnorderedFingerprintItem(ref ulong xor, ref ulong sum, ulong itemHash)
+        {
+            unchecked
+            {
+                xor ^= itemHash;
+                sum += BitOperations.RotateLeft(itemHash, (int)(itemHash & 31));
+            }
         }
 
         private void BuildDescriptorLayouts()

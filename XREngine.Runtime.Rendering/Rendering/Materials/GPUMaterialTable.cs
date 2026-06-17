@@ -36,6 +36,47 @@ namespace XREngine.Rendering.Materials
 
     public readonly record struct GPUMaterialTextureHandles(ulong Albedo, ulong Normal, ulong RM);
 
+    public enum EGPUMaterialTextureReferenceKind : byte
+    {
+        None = 0,
+        OpenGLBindlessHandle,
+        VulkanDescriptorIndex,
+    }
+
+    public readonly record struct GPUMaterialTextureReference(EGPUMaterialTextureReferenceKind Kind, ulong Payload)
+    {
+        public static GPUMaterialTextureReference None => default;
+
+        public static GPUMaterialTextureReference FromOpenGLBindlessHandle(ulong handle)
+            => handle == 0ul
+                ? None
+                : new GPUMaterialTextureReference(EGPUMaterialTextureReferenceKind.OpenGLBindlessHandle, handle);
+
+        public static GPUMaterialTextureReference FromVulkanDescriptorIndex(uint descriptorIndex)
+            => descriptorIndex == GPUMaterialTable.InvalidTextureHandleIndex
+                ? None
+                : new GPUMaterialTextureReference(EGPUMaterialTextureReferenceKind.VulkanDescriptorIndex, descriptorIndex);
+
+        public uint VulkanDescriptorIndex
+            => Kind == EGPUMaterialTextureReferenceKind.VulkanDescriptorIndex
+                ? checked((uint)Payload)
+                : GPUMaterialTable.InvalidTextureHandleIndex;
+    }
+
+    public readonly record struct GPUMaterialTextureReferences(
+        GPUMaterialTextureReference Albedo,
+        GPUMaterialTextureReference Normal,
+        GPUMaterialTextureReference RM)
+    {
+        public static readonly GPUMaterialTextureReferences Empty = new();
+
+        public static GPUMaterialTextureReferences FromOpenGLHandles(GPUMaterialTextureHandles handles)
+            => new(
+                GPUMaterialTextureReference.FromOpenGLBindlessHandle(handles.Albedo),
+                GPUMaterialTextureReference.FromOpenGLBindlessHandle(handles.Normal),
+                GPUMaterialTextureReference.FromOpenGLBindlessHandle(handles.RM));
+    }
+
     public readonly record struct GPUMaterialRetiredHandle(ulong Handle);
 
     public readonly record struct GPUMaterialTableUpdate(uint MaterialID, GPUMaterialEntry Entry);
@@ -107,9 +148,12 @@ namespace XREngine.Rendering.Materials
         }
 
         public uint AddOrUpdate(uint materialID, GPUMaterialEntry entry)
-            => AddOrUpdate(materialID, entry, new GPUMaterialTextureHandles());
+            => AddOrUpdate(materialID, entry, GPUMaterialTextureReferences.Empty);
 
         public uint AddOrUpdate(uint materialID, GPUMaterialEntry entry, GPUMaterialTextureHandles textureHandles)
+            => AddOrUpdate(materialID, entry, GPUMaterialTextureReferences.FromOpenGLHandles(textureHandles));
+
+        public uint AddOrUpdate(uint materialID, GPUMaterialEntry entry, GPUMaterialTextureReferences textureReferences)
         {
             if (materialID >= Capacity)
                 Resize(Math.Max(Capacity * 2, materialID + 1));
@@ -117,13 +161,13 @@ namespace XREngine.Rendering.Materials
             ReleaseMaterialHandleRefs(materialID);
 
             GPUMaterialHandleIndices indices = new(
-                AddHandleReference(textureHandles.Albedo),
-                AddHandleReference(textureHandles.Normal),
-                AddHandleReference(textureHandles.RM));
+                ResolveTextureReference(textureReferences.Albedo, out uint albedoHandleIndex),
+                ResolveTextureReference(textureReferences.Normal, out uint normalHandleIndex),
+                ResolveTextureReference(textureReferences.RM, out uint rmHandleIndex));
 
-            entry.AlbedoHandleIndex = indices.Albedo;
-            entry.NormalHandleIndex = indices.Normal;
-            entry.RMHandleIndex = indices.RM;
+            entry.AlbedoHandleIndex = ResolveShaderTextureIndex(textureReferences.Albedo, albedoHandleIndex);
+            entry.NormalHandleIndex = ResolveShaderTextureIndex(textureReferences.Normal, normalHandleIndex);
+            entry.RMHandleIndex = ResolveShaderTextureIndex(textureReferences.RM, rmHandleIndex);
 
             Buffer.SetDataRawAtIndex(materialID, PackMaterialEntry(entry));
 
@@ -133,6 +177,23 @@ namespace XREngine.Rendering.Materials
             _activeMaterialIds.Add(materialID);
             return materialID;
         }
+
+        private uint ResolveTextureReference(GPUMaterialTextureReference reference, out uint openGlHandleIndex)
+        {
+            openGlHandleIndex = InvalidTextureHandleIndex;
+            if (reference.Kind == EGPUMaterialTextureReferenceKind.OpenGLBindlessHandle)
+                openGlHandleIndex = AddHandleReference(reference.Payload);
+
+            return openGlHandleIndex;
+        }
+
+        private static uint ResolveShaderTextureIndex(GPUMaterialTextureReference reference, uint openGlHandleIndex)
+            => reference.Kind switch
+            {
+                EGPUMaterialTextureReferenceKind.OpenGLBindlessHandle => openGlHandleIndex,
+                EGPUMaterialTextureReferenceKind.VulkanDescriptorIndex => reference.VulkanDescriptorIndex,
+                _ => InvalidTextureHandleIndex,
+            };
 
         public bool Remove(uint materialID)
         {

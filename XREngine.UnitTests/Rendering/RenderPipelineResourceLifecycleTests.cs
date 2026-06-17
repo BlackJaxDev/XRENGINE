@@ -127,6 +127,82 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void Registry_DescriptorSignatureCachesUntilDescriptorsChange()
+    {
+        RenderResourceRegistry registry = new();
+        TextureResourceDescriptor color = new(
+            "Color",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(64u, 32u),
+            FormatLabel: ESizedInternalFormat.Rgba8.ToString(),
+            Usage: RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment,
+            SizedInternalFormat: ESizedInternalFormat.Rgba8);
+
+        registry.RegisterTextureDescriptor(color);
+        int firstRevision = registry.DescriptorRevision;
+        int firstSignature = registry.DescriptorSignature;
+
+        registry.RegisterTextureDescriptor(color);
+        registry.DescriptorRevision.ShouldBe(firstRevision);
+        registry.DescriptorSignature.ShouldBe(firstSignature);
+
+        FrameBufferResourceDescriptor fbo = new(
+            "ColorFBO",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(64u, 32u),
+            [new FrameBufferAttachmentDescriptor("Color", EFrameBufferAttachment.ColorAttachment0, 0, -1)]);
+        registry.RegisterFrameBufferDescriptor(fbo);
+        int fboRevision = registry.DescriptorRevision;
+        int fboSignature = registry.DescriptorSignature;
+        fboRevision.ShouldBeGreaterThan(firstRevision);
+
+        FrameBufferResourceDescriptor equivalentFbo = new(
+            "ColorFBO",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(64u, 32u),
+            [new FrameBufferAttachmentDescriptor("Color", EFrameBufferAttachment.ColorAttachment0, 0, -1)]);
+        registry.RegisterFrameBufferDescriptor(equivalentFbo);
+        registry.DescriptorRevision.ShouldBe(fboRevision);
+        registry.DescriptorSignature.ShouldBe(fboSignature);
+
+        registry.RegisterTextureDescriptor(color with { Usage = color.Usage | RenderPipelineResourceUsage.StorageImage });
+        registry.DescriptorRevision.ShouldBeGreaterThan(fboRevision);
+        registry.DescriptorSignature.ShouldNotBe(fboSignature);
+    }
+
+    [Test]
+    public void RenderPassMetadata_RevisionsAndCachedViewsChangeOnlyOnMutation()
+    {
+        RenderPassMetadataCollection collection = new();
+        RenderPassBuilder passBuilder = collection.ForPass(3, "Main", ERenderGraphPassStage.Graphics);
+        RenderPassMetadata pass = collection.Build().Single();
+
+        int initialRevision = pass.Revision;
+        var initialDependencies = pass.ExplicitDependencies;
+        var initialSchemas = pass.DescriptorSchemas;
+        var resourceUsages = pass.ResourceUsages;
+
+        pass.ExplicitDependencies.ShouldBeSameAs(initialDependencies);
+        pass.DescriptorSchemas.ShouldBeSameAs(initialSchemas);
+        pass.ResourceUsages.ShouldBeSameAs(resourceUsages);
+
+        passBuilder.UseEngineDescriptors();
+        pass.Revision.ShouldBe(initialRevision);
+        pass.DescriptorSchemas.ShouldBeSameAs(initialSchemas);
+
+        passBuilder.DependsOn(1);
+        pass.Revision.ShouldBeGreaterThan(initialRevision);
+        pass.ExplicitDependencies.ShouldNotBeSameAs(initialDependencies);
+        pass.ExplicitDependencies.ShouldBe([1]);
+
+        int dependencyRevision = pass.Revision;
+        passBuilder.SampleTexture("Color");
+        pass.Revision.ShouldBeGreaterThan(dependencyRevision);
+        pass.ResourceUsages.ShouldBeSameAs(resourceUsages);
+        pass.ResourceUsages.Count.ShouldBe(1);
+    }
+
+    [Test]
     public void VulkanPlanner_AllocatesSourceTexturesAndResolvesViewsToPhysicalGroups()
     {
         RenderResourceRegistry registry = new();
@@ -262,7 +338,7 @@ public sealed class RenderPipelineResourceLifecycleTests
         layout.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.StencilViewTextureName);
         layout.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.DeferredGBufferFBOName);
         layout.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.ForwardPassFBOName);
-        layout.ResourcesByName.Keys.ShouldNotContain(DefaultRenderPipeline.LightCombineFBOName);
+        layout.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.LightCombineFBOName);
         layout.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.PostProcessOutputFBOName);
         layout.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.FinalPostProcessOutputFBOName);
         layout.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.FxaaFBOName);
@@ -279,14 +355,31 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
-    public void DefaultRenderPipeline_LightCombineFbo_RemainsCommandOwnedUntilAoMigration()
+    public void DefaultRenderPipeline_LightCombineFbo_IsGenerationOwnedAfterAoMigration()
     {
+        DefaultRenderPipeline pipeline = new();
+        RenderPipelineResourceLayout layout = pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u));
+
+        FrameBufferSpec lightCombine = layout.ResourcesByName[DefaultRenderPipeline.LightCombineFBOName]
+            .ShouldBeOfType<FrameBufferSpec>();
+
+        lightCombine.Lifetime.ShouldBe(RenderResourceLifetime.Transient);
+        lightCombine.Attachments.Select(x => x.ResourceName).ToArray().ShouldBe([DefaultRenderPipeline.DiffuseTextureName]);
+        lightCombine.Dependencies.ShouldContain(DefaultRenderPipeline.AlbedoOpacityTextureName);
+        lightCombine.Dependencies.ShouldContain(DefaultRenderPipeline.NormalTextureName);
+        lightCombine.Dependencies.ShouldContain(DefaultRenderPipeline.RMSETextureName);
+        lightCombine.Dependencies.ShouldContain(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName);
+        lightCombine.Dependencies.ShouldContain(DefaultRenderPipeline.DepthViewTextureName);
+        lightCombine.Dependencies.ShouldContain(DefaultRenderPipeline.LightingAccumTextureName);
+        lightCombine.Dependencies.ShouldContain(DefaultRenderPipeline.BRDFTextureName);
+
         string source = File.ReadAllText(Path.Combine(
             TestContext.CurrentContext.TestDirectory,
             "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs"))
             .Replace("\r\n", "\n");
 
-        source.ShouldContain("LightCombineFBOName,\n            CreateLightCombineFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateLightCombineFbo)");
+        source.ShouldNotContain("LightCombineFBOName,\n            CreateLightCombineFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateLightCombineFbo)");
+        source.ShouldNotContain("DependentFboNames = new[] { LightCombineFBOName }");
     }
 
     [Test]

@@ -1,3 +1,5 @@
+using System;
+
 namespace XREngine.Rendering.Vulkan;
 
 public enum EVulkanGpuDrivenProfile
@@ -16,6 +18,36 @@ public enum EVulkanQueueOverlapMode
     GraphicsComputeTransfer,
 }
 
+public enum EVulkanBindlessMaterialMode
+{
+    Auto = 0,
+    Disabled,
+    Required,
+    Diagnostics,
+}
+
+public enum EVulkanBindlessMaterialCapabilityTier
+{
+    DescriptorIndexingUnavailable = 0,
+    DescriptorIndexingReady,
+    GlobalMaterialTextureTableReady,
+    BindlessMaterialTableShaderReady,
+    BindlessMaterialDrawPathReady,
+}
+
+public readonly record struct VulkanBindlessMaterialCapability(
+    EVulkanBindlessMaterialMode Mode,
+    EVulkanBindlessMaterialCapabilityTier Tier,
+    bool DescriptorIndexing,
+    bool RuntimeDescriptorArray,
+    bool PartiallyBound,
+    bool UpdateAfterBind,
+    uint DescriptorCapacity,
+    bool GlobalDescriptorTableReady,
+    bool ShaderReady,
+    bool DrawPathReady,
+    string Reason);
+
 /// <summary>
 /// Centralised feature-gate queries for the Vulkan CPU-octree render path.
 /// Pipelines and render commands should consult this profile to decide whether
@@ -24,6 +56,8 @@ public enum EVulkanQueueOverlapMode
 /// </summary>
 public static class VulkanFeatureProfile
 {
+    public const string BindlessMaterialModeEnvVar = "XRE_VULKAN_BINDLESS_MATERIAL_MODE";
+
     /// <summary>
     /// Returns <c>true</c> when the Vulkan renderer is the currently active backend
     /// and the safe feature profile should be used to restrict unsupported features.
@@ -181,6 +215,29 @@ public static class VulkanFeatureProfile
         return !IsActive || ProfileAllowsBindlessMaterialTable;
     }
 
+    public static EVulkanBindlessMaterialMode ResolveBindlessMaterialMode(
+        EVulkanBindlessMaterialMode configuredMode,
+        bool legacyEnabled)
+    {
+        if (TryGetBindlessMaterialModeEnvOverride(out EVulkanBindlessMaterialMode envMode))
+            return envMode;
+
+        if (!legacyEnabled)
+            return EVulkanBindlessMaterialMode.Disabled;
+
+        return configuredMode;
+    }
+
+    private static bool TryGetBindlessMaterialModeEnvOverride(out EVulkanBindlessMaterialMode mode)
+    {
+        mode = EVulkanBindlessMaterialMode.Auto;
+        string? raw = Environment.GetEnvironmentVariable(BindlessMaterialModeEnvVar);
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        return Enum.TryParse(raw.Trim(), ignoreCase: true, out mode);
+    }
+
     public static bool ResolveDescriptorContractValidationPreference(bool requested)
     {
         if (!requested)
@@ -259,8 +316,21 @@ public static class VulkanFeatureProfile
     public static bool EnableDescriptorIndexing
         => ResolveDescriptorIndexingPreference(RuntimeEngine.EffectiveSettings.EnableVulkanDescriptorIndexing);
 
+    public static EVulkanBindlessMaterialMode ActiveBindlessMaterialMode
+        => ResolveBindlessMaterialMode(
+            RuntimeEngine.EffectiveSettings.VulkanBindlessMaterialMode,
+            RuntimeEngine.EffectiveSettings.EnableVulkanBindlessMaterialTable);
+
     public static bool EnableBindlessMaterialTable
-        => ResolveBindlessMaterialTablePreference(RuntimeEngine.EffectiveSettings.EnableVulkanBindlessMaterialTable);
+        => ActiveBindlessMaterialMode != EVulkanBindlessMaterialMode.Disabled &&
+           ResolveBindlessMaterialTablePreference(true);
+
+    public static bool RequireBindlessMaterialTable
+        => ActiveBindlessMaterialMode == EVulkanBindlessMaterialMode.Required;
+
+    public static bool DiagnoseBindlessMaterialTable
+        => ActiveBindlessMaterialMode == EVulkanBindlessMaterialMode.Diagnostics ||
+           ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;
 
     public static bool EnableDescriptorContractValidation
         => ResolveDescriptorContractValidationPreference(RuntimeEngine.EffectiveSettings.ValidateVulkanDescriptorContracts);
