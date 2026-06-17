@@ -364,7 +364,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (RuntimeEngine.Rendering.State.IsStereoPass)
                 ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
-            camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion);
+            camera.SetAmbientOcclusionUniforms(
+                program,
+                AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
+                ResolveSettingsPipeline());
+
+            // The visibility-bitmask GTAO variant currently over-occludes under Vulkan
+            // clip/depth conventions; use the classic horizon integration there.
+            if (RuntimeEngine.Rendering.IsVulkanRendererActive())
+            {
+                program.Uniform("UseVisibilityBitmask", false);
+            }
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
@@ -416,9 +426,12 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private AmbientOcclusionSettings? GetCurrentSettings()
         {
-            var stage = GetCurrentCamera()?.GetPostProcessStageState<AmbientOcclusionSettings>();
+            var stage = GetCurrentCamera()?.GetPostProcessStageState<AmbientOcclusionSettings>(ResolveSettingsPipeline());
             return stage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true ? backing : null;
         }
+
+        private RenderPipeline? ResolveSettingsPipeline()
+            => ActivePipelineInstance?.AssignedPipeline ?? ParentPipeline;
 
         private XRCamera? GetCurrentCamera()
             => ActivePipelineInstance.RenderState.SceneCamera

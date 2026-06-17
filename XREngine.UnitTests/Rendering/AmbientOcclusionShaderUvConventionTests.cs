@@ -69,7 +69,7 @@ public sealed class AmbientOcclusionShaderUvConventionTests
         source.ShouldContain("uniform int ClipDepthRange;");
         source.ShouldContain("float AODepthToClipZ(float depth)");
         source.ShouldContain("ClipDepthRange == 1 ? depth * 2.0f - 1.0f : depth");
-        source.ShouldContain("if (ClipSpaceYDirection == 1)");
+        source.ShouldContain("if (FramebufferTextureYDirection == 1)");
         source.ShouldContain("AODepthToClipZ(depth)");
         source.ShouldNotContain("vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f)");
     }

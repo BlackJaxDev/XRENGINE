@@ -55,6 +55,7 @@ call :AddTool "Deps" "Tools\Dependencies\Get-CoACD.ps1" "Download CoACD convex d
 call :AddTool "Deps" "Tools\Dependencies\Build-CoACD.ps1" "Build CoACD from source (requires CMake + C++ compiler)"
 call :AddTool "Deps" "Tools\Dependencies\Get-FfmpegFromFlyleaf.ps1" "Download FFmpeg DLLs from Flyleaf GitHub repo"
 call :AddTool "Deps" "Tools\Dependencies\Get-NvComp.ps1" "Download NVIDIA nvCOMP compression native binaries"
+call :AddTool "Deps" "Tools\Dependencies\Get-StreamlineSdk.ps1" "Download NVIDIA Streamline/DLSS SDK runtime binaries"
 call :AddTool "Deps" "Tools\Dependencies\Get-Phonon.ps1" "Download Steam Audio (Phonon) native library"
 call :AddTool "Deps" "Tools\Dependencies\Get-UltralightResources.ps1" "Download Ultralight runtime resources (icudt67l.dat, cacert.pem)"
 call :AddTool "Deps" "Tools\Dependencies\Get-YtDlp.ps1" "Download yt-dlp for YouTube URL extraction"

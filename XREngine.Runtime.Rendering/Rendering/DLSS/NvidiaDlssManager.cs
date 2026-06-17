@@ -29,7 +29,15 @@ namespace XREngine.Rendering.DLSS
         private const float QualityScale = 0.66f;
         private const float UltraQualityScale = 0.77f;
         private static readonly string[] RequiredRuntimeLibraryNames = ["sl.interposer.dll", "sl.common.dll", "sl.dlss.dll", "nvngx_dlss.dll"];
-        private static readonly string[] RequiredFrameGenerationRuntimeLibraryNames = ["sl.dlss_g.dll", "nvngx_dlssg.dll"];
+        private static readonly string[] RequiredFrameGenerationRuntimeLibraryNames =
+        [
+            "sl.interposer.dll",
+            "sl.common.dll",
+            "sl.dlss_g.dll",
+            "sl.reflex.dll",
+            "sl.pcl.dll",
+            "nvngx_dlssg.dll"
+        ];
 
         private static bool _probed;
         private static bool _cachedIsSupported;
@@ -322,6 +330,9 @@ namespace XREngine.Rendering.DLSS
         private static float ComputeScale()
         {
             EnsureDetected();
+
+            if (RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa)
+                return MaxScale;
 
             if (!RuntimeEngine.EffectiveSettings.EnableNvidiaDlss || !_cachedIsSupported)
                 return MaxScale;

@@ -37,16 +37,23 @@ namespace XREngine.Scene
         /// This prevents sampling from stale texture unit state.
         /// </summary>
         private static XRTexture2D? _dummyShadowMap;
-        private static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);
+        internal static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);
 
         /// <summary>
         /// A 1x1x1 dummy depth texture array used as a fallback for forward cascaded shadow sampling.
         /// </summary>
         private static XRTexture2DArray? _dummyShadowMapArray;
-        private static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= new XRTexture2DArray(
+        internal static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= new XRTexture2DArray(
             1, 1, 1,
             EPixelInternalFormat.DepthComponent16,
             EPixelFormat.DepthComponent,
+            EPixelType.Float);
+
+        private static XRTexture2DArray? _dummyPbrTextureArray;
+        internal static XRTexture2DArray DummyPbrTextureArray => _dummyPbrTextureArray ??= new XRTexture2DArray(
+            1, 1, 1,
+            EPixelInternalFormat.Rgb16f,
+            EPixelFormat.Rgb,
             EPixelType.Float);
 
         private static XRTextureCube? _dummyPointShadowMap;

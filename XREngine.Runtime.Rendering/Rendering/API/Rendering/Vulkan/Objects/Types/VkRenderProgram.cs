@@ -981,8 +981,14 @@ public unsafe partial class VulkanRenderer
                     hash.Add(texture?.GetHashCode() ?? 0);
                     if (texture is not null && Renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is IVkImageDescriptorSource source)
                     {
+                        hash.Add(source.DescriptorImage.Handle);
                         hash.Add(source.DescriptorView.Handle);
                         hash.Add(source.DescriptorSampler.Handle);
+                        hash.Add(source.DescriptorViewType);
+                        hash.Add(source.DescriptorFormat);
+                        hash.Add(source.DescriptorAspect);
+                        hash.Add(source.DescriptorUsage);
+                        hash.Add(source.TrackedImageLayout);
                     }
                     else
                     {

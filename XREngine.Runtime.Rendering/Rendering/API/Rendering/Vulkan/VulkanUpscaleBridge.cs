@@ -587,9 +587,9 @@ public sealed class VulkanUpscaleBridge : IDisposable
             AntiAliasingMode: antiAliasingMode,
             MsaaSampleCount: antiAliasingMode == EAntiAliasingMode.Msaa ? msaaSampleCount : 1u,
             Stereo: stereo,
-            EnableDlss: RuntimeEngine.EffectiveSettings.EnableNvidiaDlss,
+            EnableDlss: RuntimeEngine.EffectiveSettings.EnableNvidiaDlss || antiAliasingMode == EAntiAliasingMode.Dlaa,
             DlssQuality: RuntimeEngine.EffectiveSettings.DlssQuality,
-            EnableXess: RuntimeEngine.EffectiveSettings.EnableIntelXess,
+            EnableXess: antiAliasingMode != EAntiAliasingMode.Dlaa && RuntimeEngine.EffectiveSettings.EnableIntelXess,
             XessQuality: RuntimeEngine.EffectiveSettings.XessQuality,
             QueueModel: RuntimeEngine.Rendering.VulkanUpscaleBridgeQueueModel);
     }

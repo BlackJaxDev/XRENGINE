@@ -327,7 +327,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (RuntimeEngine.Rendering.State.IsStereoPass)
                 ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
-            rc.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype);
+            rc.SetAmbientOcclusionUniforms(
+                program,
+                AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype,
+                ActivePipelineInstance.AssignedPipeline ?? ParentPipeline);
 
             Debug.RenderingEvery(
                 $"AO.MSVO.GenUniforms.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",

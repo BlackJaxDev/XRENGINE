@@ -42,7 +42,8 @@ public unsafe partial class VulkanRenderer
 			int passIndex,
 			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
 			bool depthStencilReadOnly,
-			string pipelineName)
+			string pipelineName,
+			int drawUniformSlot)
 		{
 			var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 			if (!TryPrepareForRendering(material, out string prepareReason))
@@ -117,7 +118,7 @@ public unsafe partial class VulkanRenderer
 					uniformsNotified = true;
 				}
 
-				if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy))
+				if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot))
 				{
 					if (verboseTrace)
 						Debug.MeshesWarning("[DrawTrace] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
@@ -202,7 +203,7 @@ public unsafe partial class VulkanRenderer
 						uniformsNotified = true;
 					}
 
-					if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy))
+					if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot))
 						return;
 
 					PushPerDrawConstants(commandBuffer, material, drawCopy);
@@ -297,7 +298,7 @@ public unsafe partial class VulkanRenderer
 		/// renderer-owned descriptor path because it carries per-draw engine and auto
 		/// uniform buffers in addition to material resources.
 		/// </summary>
-		private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw)
+		private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw, int drawUniformSlot)
 		{
 			if (_program is null)
 				return true;
@@ -314,7 +315,7 @@ public unsafe partial class VulkanRenderer
 			if (imageIndex < 0)
 				imageIndex = 0;
 
-			if (!EnsureDescriptorSets(material))
+			if (!EnsureDescriptorSets(material, drawUniformSlot))
 			{
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=EnsureDescriptorSets returned false");
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
@@ -344,16 +345,15 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			if (imageIndex >= _descriptorSets.Length)
-				imageIndex = 0;
+			int descriptorSlotIndex = ResolveUniformBufferIndex(imageIndex, drawUniformSlot, _descriptorSets.Length);
 
-			UpdateEngineUniformBuffersForDraw(imageIndex, draw);
-			UpdateAutoUniformBuffersForDraw(imageIndex, material, draw);
+			UpdateEngineUniformBuffersForDraw(imageIndex, drawUniformSlot, draw);
+			UpdateAutoUniformBuffersForDraw(imageIndex, drawUniformSlot, material, draw);
 
-			DescriptorSet[] sets = _descriptorSets[imageIndex];
+			DescriptorSet[] sets = _descriptorSets[descriptorSlotIndex];
 			if (sets.Length == 0)
 			{
-				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor set array at imageIndex {imageIndex} is empty");
+				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor set array at imageIndex {imageIndex}, drawSlot {drawUniformSlot} is empty");
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 					programName,
 					"descriptor-set",
@@ -362,7 +362,7 @@ public unsafe partial class VulkanRenderer
 					0,
 					skippedDraw: true,
 					skippedDispatch: false,
-					$"mesh={meshName} descriptor set array at imageIndex {imageIndex} is empty");
+					$"mesh={meshName} descriptor set array at imageIndex {imageIndex}, drawSlot {drawUniformSlot} is empty");
 				return false;
 			}
 

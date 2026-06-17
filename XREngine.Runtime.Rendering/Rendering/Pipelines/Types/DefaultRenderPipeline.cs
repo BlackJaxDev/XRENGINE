@@ -287,10 +287,13 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
     {
+        EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
+        if (mode == EAntiAliasingMode.Dlaa)
+            return 1.0f;
+
         if (TryResolveVendorInternalResolutionScale(out float vendorScale))
             return vendorScale;
 
-        EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
         return mode == EAntiAliasingMode.Tsr
             ? Math.Clamp(camera?.TsrRenderScaleOverride ?? RuntimeEngine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f)
             : null;
@@ -342,10 +345,13 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     }
 
     private static bool RuntimeRequestDlssVendorFeature
-        => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss || NvidiaDlssManager.IsFrameGenerationRequested;
+        => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
+        || ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa
+        || NvidiaDlssManager.IsFrameGenerationRequested;
 
     private static bool RuntimeRequestXessVendorFeature
-        => RuntimeEngine.EffectiveSettings.EnableIntelXess || RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration;
+        => ResolveAntiAliasingMode() != EAntiAliasingMode.Dlaa
+        && (RuntimeEngine.EffectiveSettings.EnableIntelXess || RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration);
 
     private DeferredDebugViewMode _deferredDebugView = DeferredDebugViewMode.Disabled;
     [Category("Debug")]
@@ -1678,6 +1684,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private void ApplyAntiAliasingResolutionHint()
     {
+        if (RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa)
+        {
+            RequestedInternalResolution = 1.0f;
+            return;
+        }
+
         if (TryResolveVendorInternalResolutionScale(out float vendorScale))
         {
             RequestedInternalResolution = vendorScale;
@@ -1980,6 +1992,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             {
                 [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusResolveCommands(),
                 [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOResolveCommands(),
+                [(int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion] = CreateSpatialHashAOResolveCommands(),
             };
             aoResolveSwitch.DefaultCase = CreateAmbientOcclusionResolveCommands();
 
@@ -2630,6 +2643,37 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     /// </summary>
     private ViewportRenderCommandContainer CreateFinalBlitCommands(string sourceFboName, bool bypassVendorUpscale)
     {
+        if (bypassVendorUpscale)
+            return CreateDirectWindowPresentCommands(sourceFboName);
+
+        var cmds = new ViewportRenderCommandContainer(this);
+        var presentChoice = cmds.Add<VPRC_IfElse>();
+        presentChoice.Label = "FinalPresentPath";
+        presentChoice.ConditionEvaluator = ShouldUseDirectVulkanFinalPresent;
+        presentChoice.TrueCommands = CreateDirectWindowPresentCommands(sourceFboName);
+        presentChoice.FalseCommands = CreateVendorUpscaleBlitCommands(sourceFboName, false);
+        return cmds;
+    }
+
+    private ViewportRenderCommandContainer CreateDirectWindowPresentCommands(string sourceFboName)
+    {
+        var cmds = new ViewportRenderCommandContainer(this);
+        var present = cmds.Add<VPRC_RenderToWindow>();
+        string? sourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
+        if (!string.IsNullOrWhiteSpace(sourceTextureName))
+            present.SourceTextureName = sourceTextureName;
+        else
+            present.SourceFBOName = sourceFboName;
+
+        present.FlipSourceYOnVulkan = ShouldFlipVulkanPresentSourceY(sourceFboName);
+        return cmds;
+    }
+
+    private static bool ShouldUseDirectVulkanFinalPresent()
+        => AbstractRenderer.Current is VulkanRenderer && !RuntimeEnableVendorUpscale;
+
+    private ViewportRenderCommandContainer CreateVendorUpscaleBlitCommands(string sourceFboName, bool forceFallback)
+    {
         var cmds = new ViewportRenderCommandContainer(this);
         var vendorBlit = cmds.Add<VPRC_VendorUpscale>();
         vendorBlit.FrameBufferName = sourceFboName;
@@ -2638,7 +2682,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
         vendorBlit.MotionTextureName = VelocityTextureName;
         vendorBlit.MotionFrameBufferName = VelocityFBOName;
-        vendorBlit.ForceFallbackBlit = bypassVendorUpscale;
+        vendorBlit.ForceFallbackBlit = forceFallback;
         vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
         return cmds;
     }
@@ -2670,18 +2714,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         => Stereo ? "TransparentOverdrawDebugStereo.fs" : "TransparentOverdrawDebug.fs";
 
     private ViewportRenderCommandContainer CreateVendorUpscaleCommands(string sourceFboName)
-    {
-        var c = new ViewportRenderCommandContainer(this);
-        var vendorBlit = c.Add<VPRC_VendorUpscale>();
-        vendorBlit.FrameBufferName = sourceFboName;
-        vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
-        vendorBlit.DepthTextureName = DepthViewTextureName;
-        vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
-        vendorBlit.MotionTextureName = VelocityTextureName;
-        vendorBlit.MotionFrameBufferName = VelocityFBOName;
-        vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
-        return c;
-    }
+        => CreateVendorUpscaleBlitCommands(sourceFboName, false);
 
     private void CacheTextures(ViewportRenderCommandContainer c)
     {
@@ -2790,9 +2823,15 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         {
             BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
         };
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName);
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, HBAOPlusBlurIntermediateFBOName);
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(HBAOPlusBlurIntermediateFBOName, GBufferFBOName);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantHBAOPlus);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionBlurFBOName, HBAOPlusBlurIntermediateFBOName)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantHBAOPlus);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(HBAOPlusBlurIntermediateFBOName, GBufferFBOName)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantHBAOPlus);
         return container;
     }
 
@@ -2832,11 +2871,23 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         {
             BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
         };
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName, matchDestinationRenderArea: true);
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, GTAOBlurIntermediateFBOName, matchDestinationRenderArea: true);
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(GTAOBlurIntermediateFBOName, GBufferFBOName, matchDestinationRenderArea: true);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantGTAO);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionBlurFBOName, GTAOBlurIntermediateFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantGTAO);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(GTAOBlurIntermediateFBOName, GBufferFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantGTAO);
         return container;
     }
+
+    private ViewportRenderCommandContainer CreateSpatialHashAOResolveCommands()
+        => new(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
 
     private ViewportRenderCommandContainer CreateVXAOPassCommands()
     {
@@ -3221,6 +3272,16 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     private const string LightProbeGridIndexBufferName = "LightProbeGridIndices";
     private const string LightProbeIrradianceArrayName = "LightProbeIrradianceArray";
     private const string LightProbePrefilterArrayName = "LightProbePrefilterArray";
+    private const uint ForwardLightProbePositionBufferBinding = 0u;
+    private const uint ForwardLightProbeTetraBufferBinding = 1u;
+    private const uint ForwardLightProbeParamBufferBinding = 2u;
+    private const uint ForwardLightProbeGridCellBufferBinding = 3u;
+    private const uint ForwardLightProbeGridIndexBufferBinding = 4u;
+    private const uint DeferredLightProbePositionBufferBinding = 20u;
+    private const uint DeferredLightProbeTetraBufferBinding = 21u;
+    private const uint DeferredLightProbeParamBufferBinding = 22u;
+    private const uint DeferredLightProbeGridCellBufferBinding = 23u;
+    private const uint DeferredLightProbeGridIndexBufferBinding = 24u;
     private Vector3 _probeGridOrigin;
     private float _probeGridCellSize;
     private IVector3 _probeGridDims;
@@ -3318,7 +3379,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         program.Uniform("AmbientOcclusionMultiBounce", multiBounce);
         program.Uniform("SpecularOcclusionEnabled", specularOcclusion);
 
-        BindPbrLightingResources(program);
+        BindPbrLightingResources(program, deferredProbeBufferBindings: true);
 
         if (DeferredLightingDiagnostics.Enabled &&
             Debug.ShouldLogEvery($"DeferredLighting.LightCombineUniforms.{GetHashCode()}.{program.GetHashCode()}", TimeSpan.FromSeconds(1)))
@@ -3332,23 +3393,29 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         }
     }
 
-    public bool BindPbrLightingResources(XRRenderProgram program)
+    public bool BindPbrLightingResources(XRRenderProgram program, bool deferredProbeBufferBindings = false)
     {
-        void SuppressOptionalProbeSamplers()
+        void BindDisabledPbrResources()
         {
+            program.SuppressFallbackSamplerWarning("BRDF");
             program.SuppressFallbackSamplerWarning("IrradianceArray");
             program.SuppressFallbackSamplerWarning("PrefilterArray");
+            program.Sampler("BRDF", Lights3DCollection.DummyShadowMap, 6);
+            program.Sampler("IrradianceArray", Lights3DCollection.DummyPbrTextureArray, 7);
+            program.Sampler("PrefilterArray", Lights3DCollection.DummyPbrTextureArray, 8);
         }
 
         XRTexture? brdfTexture = GetTexture<XRTexture>(BRDFTextureName);
         if (brdfTexture is not null)
             program.Sampler("BRDF", brdfTexture, 6);
+        else
+            program.Sampler("BRDF", Lights3DCollection.DummyShadowMap, 6);
 
         if (!UsesLightProbeGI)
         {
             Debug.LightingEvery("ProbeGI.Disabled", TimeSpan.FromSeconds(5),
                 "[ProbeGI] GI mode disabled (UsesLightProbeGI=false)");
-            SuppressOptionalProbeSamplers();
+            BindDisabledPbrResources();
             program.Uniform("ForwardPbrResourcesEnabled", false);
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
@@ -3358,7 +3425,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
         if (IsProbeGiSamplingSuppressedForCurrentPass())
         {
-            SuppressOptionalProbeSamplers();
+            BindDisabledPbrResources();
             program.Uniform("ForwardPbrResourcesEnabled", false);
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
@@ -3372,7 +3439,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         program.Uniform("ForwardPbrResourcesEnabled", _probeBindingResourcesEnabled);
         if (!_probeBindingResourcesEnabled)
         {
-            SuppressOptionalProbeSamplers();
+            BindDisabledPbrResources();
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
             program.Uniform("UseProbeGrid", false);
@@ -3382,15 +3449,31 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         program.Sampler("IrradianceArray", _probeIrradianceArray!, 7);
         program.Sampler("PrefilterArray", _probePrefilterArray!, 8);
 
+        uint positionBinding = deferredProbeBufferBindings
+            ? DeferredLightProbePositionBufferBinding
+            : ForwardLightProbePositionBufferBinding;
+        uint tetraBinding = deferredProbeBufferBindings
+            ? DeferredLightProbeTetraBufferBinding
+            : ForwardLightProbeTetraBufferBinding;
+        uint paramBinding = deferredProbeBufferBindings
+            ? DeferredLightProbeParamBufferBinding
+            : ForwardLightProbeParamBufferBinding;
+        uint gridCellBinding = deferredProbeBufferBindings
+            ? DeferredLightProbeGridCellBufferBinding
+            : ForwardLightProbeGridCellBufferBinding;
+        uint gridIndexBinding = deferredProbeBufferBindings
+            ? DeferredLightProbeGridIndexBufferBinding
+            : ForwardLightProbeGridIndexBufferBinding;
+
         program.Uniform("ProbeCount", _probeBindingProbeCount);
-        _probePositionBuffer!.BindTo(program, 0);
-        _probeParamBuffer!.BindTo(program, 2);
+        _probePositionBuffer!.BindTo(program, positionBinding);
+        _probeParamBuffer!.BindTo(program, paramBinding);
         program.Uniform("UseProbeGrid", _probeBindingUseGrid);
 
         if (_probeBindingUseGrid)
         {
-            _probeGridCellBuffer!.BindTo(program, 3);
-            _probeGridIndexBuffer!.BindTo(program, 4);
+            _probeGridCellBuffer!.BindTo(program, gridCellBinding);
+            _probeGridIndexBuffer!.BindTo(program, gridIndexBinding);
             program.Uniform("ProbeGridOrigin", _probeGridOrigin);
             program.Uniform("ProbeGridCellSize", _probeGridCellSize);
             program.Uniform("ProbeGridDims", _probeGridDims);
@@ -3399,7 +3482,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         program.Uniform("TetraCount", _probeBindingTetraCount);
         if (_probeBindingTetraCount > 0)
         {
-            _probeTetraBuffer!.BindTo(program, 1);
+            _probeTetraBuffer!.BindTo(program, tetraBinding);
 
             ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             if (RuntimeEngine.EditorPreferences.Debug.RenderLightProbeTetrahedra
@@ -3544,7 +3627,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             return null;
         }
 
-        var stage = camera.GetPostProcessStageState<AmbientOcclusionSettings>();
+        var stage = camera.GetPostProcessStageState<AmbientOcclusionSettings>(this);
         if (stage is null)
         {
             var pps = camera.GetActivePostProcessState();

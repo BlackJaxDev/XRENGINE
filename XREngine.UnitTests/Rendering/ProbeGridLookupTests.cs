@@ -244,12 +244,15 @@ public sealed class ProbeGridLookupTests
         source.ShouldContain("vec3 probeAmbient = vec3(1.0f);");
         source.ShouldContain("probeAmbient = irradianceColor;");
         source.ShouldContain("vec3 diffuse = GlobalAmbient * probeAmbient * albedoColor;");
+        source.ShouldContain("vec3 diffuseAO = AmbientOcclusionMultiBounce ? MultiBounceAO(ao, albedoColor) : vec3(ao);");
+        source.ShouldNotContain("XRENGINE_MIN_DEFERRED_GLOBAL_AMBIENT_VISIBILITY");
+        source.ShouldNotContain("ResolveGlobalAmbientVisibility");
     }
 
     [Test]
     public void ProbePacking_SphereRadiiAreStoredInWComponents()
     {
-        string source = ReadCSharpFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
 
         source.ShouldContain("InfluenceInner = new Vector4(probe.InfluenceBoxInnerExtents, probe.InfluenceSphereInnerRadius)");
         source.ShouldContain("InfluenceOuter = new Vector4(probe.InfluenceBoxOuterExtents, probe.InfluenceSphereOuterRadius)");
@@ -289,7 +292,7 @@ public sealed class ProbeGridLookupTests
     {
         string source = ReadShaderFile("Build/CommonAssets/Shaders/Snippets/ForwardLighting.glsl");
 
-        source.ShouldContain("bary = vec4(w, uvw);");
+        source.ShouldContain("bary = vec4(w0, u, vCoord, wCoord);");
         source.ShouldNotContain("bary = vec4(uvw, w);");
     }
 
@@ -302,7 +305,7 @@ public sealed class ProbeGridLookupTests
         source.ShouldContain("XRENGINE_ResolveProbeWeightsGrid(fragPos, probeWeights, probeIndices, isBarycentric);");
         source.ShouldContain("float weight = isBarycentric");
         source.ShouldContain("? probeWeights[i]");
-        source.ShouldContain(": probeWeights[i] * XRENGINE_ComputeInfluenceWeight(probeIndices[i], fragPos);");
+        source.ShouldContain(": probeWeights[i] * XRENGINE_ComputeInfluenceWeight(probeIndex, fragPos);");
     }
 
     [Test]
@@ -340,7 +343,7 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void Pipeline_GridBuildUpgradesFromFallbackOnlyToCellTetraCandidates()
     {
-        string source = ReadCSharpFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
 
         source.ShouldContain("BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, null);");
         source.ShouldContain("BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, tetraList);");
@@ -350,7 +353,7 @@ public sealed class ProbeGridLookupTests
     [Test]
     public void PipelineDefineConstant_Exists()
     {
-        string source = ReadCSharpFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+        string source = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
         source.ShouldContain("ProbeDebugFallbackDefine");
         source.ShouldContain("XRENGINE_PROBE_DEBUG_FALLBACK");
     }

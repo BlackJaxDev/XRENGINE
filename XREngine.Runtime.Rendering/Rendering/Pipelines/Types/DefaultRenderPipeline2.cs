@@ -301,10 +301,13 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
 
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
     {
+        EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
+        if (mode == EAntiAliasingMode.Dlaa)
+            return 1.0f;
+
         if (TryResolveVendorInternalResolutionScale(out float vendorScale))
             return vendorScale;
 
-        EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
         return mode == EAntiAliasingMode.Tsr
             ? Math.Clamp(camera?.TsrRenderScaleOverride ?? RuntimeEngine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f)
             : null;
@@ -342,10 +345,13 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     }
 
     private static bool RuntimeRequestDlssVendorFeature
-        => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss || NvidiaDlssManager.IsFrameGenerationRequested;
+        => RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
+        || ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa
+        || NvidiaDlssManager.IsFrameGenerationRequested;
 
     private static bool RuntimeRequestXessVendorFeature
-        => RuntimeEngine.EffectiveSettings.EnableIntelXess || RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration;
+        => ResolveAntiAliasingMode() != EAntiAliasingMode.Dlaa
+        && (RuntimeEngine.EffectiveSettings.EnableIntelXess || RuntimeEngine.Rendering.Settings.EnableIntelXessFrameGeneration);
 
     /// <summary>
     /// True when FXAA should be active for the current rendering camera.
@@ -1661,6 +1667,12 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
 
     private void ApplyAntiAliasingResolutionHint()
     {
+        if (RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa)
+        {
+            RequestedInternalResolution = 1.0f;
+            return;
+        }
+
         if (TryResolveVendorInternalResolutionScale(out float vendorScale))
         {
             RequestedInternalResolution = vendorScale;
@@ -1883,24 +1895,30 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         program.Uniform("AmbientOcclusionMultiBounce", multiBounce);
         program.Uniform("SpecularOcclusionEnabled", specularOcclusion);
 
-        BindPbrLightingResources(program);
+        BindPbrLightingResources(program, deferredProbeBufferBindings: true);
     }
 
-    public bool BindPbrLightingResources(XRRenderProgram program)
+    public bool BindPbrLightingResources(XRRenderProgram program, bool deferredProbeBufferBindings = false)
     {
-        void SuppressOptionalProbeSamplers()
+        void BindDisabledPbrResources()
         {
+            program.SuppressFallbackSamplerWarning("BRDF");
             program.SuppressFallbackSamplerWarning("IrradianceArray");
             program.SuppressFallbackSamplerWarning("PrefilterArray");
+            program.Sampler("BRDF", Lights3DCollection.DummyShadowMap, 6);
+            program.Sampler("IrradianceArray", Lights3DCollection.DummyPbrTextureArray, 7);
+            program.Sampler("PrefilterArray", Lights3DCollection.DummyPbrTextureArray, 8);
         }
 
         XRTexture? brdfTexture = GetTexture<XRTexture>(BRDFTextureName);
         if (brdfTexture is not null)
             program.Sampler("BRDF", brdfTexture, 6);
+        else
+            program.Sampler("BRDF", Lights3DCollection.DummyShadowMap, 6);
 
         if (!UsesLightProbeGI)
         {
-            SuppressOptionalProbeSamplers();
+            BindDisabledPbrResources();
             program.Uniform("ForwardPbrResourcesEnabled", false);
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
@@ -1910,7 +1928,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
 
         if (IsProbeGiSamplingSuppressedForCurrentPass())
         {
-            SuppressOptionalProbeSamplers();
+            BindDisabledPbrResources();
             program.Uniform("ForwardPbrResourcesEnabled", false);
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
@@ -1924,7 +1942,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         program.Uniform("ForwardPbrResourcesEnabled", _probeBindingResourcesEnabled);
         if (!_probeBindingResourcesEnabled)
         {
-            SuppressOptionalProbeSamplers();
+            BindDisabledPbrResources();
             program.Uniform("ProbeCount", 0);
             program.Uniform("TetraCount", 0);
             program.Uniform("UseProbeGrid", false);
@@ -1935,10 +1953,22 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         program.Sampler("PrefilterArray", _probePrefilterArray!, 8);
 
         program.Uniform("ProbeCount", _probeBindingProbeCount);
+        if (deferredProbeBufferBindings)
+        {
+            _probePositionBuffer!.BindTo(program, LightProbePositionBufferBinding);
+            _probeParamBuffer!.BindTo(program, LightProbeParamBufferBinding);
+        }
+
         program.Uniform("UseProbeGrid", _probeBindingUseGrid);
 
         if (_probeBindingUseGrid)
         {
+            if (deferredProbeBufferBindings)
+            {
+                _probeGridCellBuffer!.BindTo(program, LightProbeGridCellBufferBinding);
+                _probeGridIndexBuffer!.BindTo(program, LightProbeGridIndexBufferBinding);
+            }
+
             program.Uniform("ProbeGridOrigin", _probeGridOrigin);
             program.Uniform("ProbeGridCellSize", _probeGridCellSize);
             program.Uniform("ProbeGridDims", _probeGridDims);
@@ -1947,6 +1977,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         program.Uniform("TetraCount", _probeBindingTetraCount);
         if (_probeBindingTetraCount > 0)
         {
+            if (deferredProbeBufferBindings)
+                _probeTetraBuffer!.BindTo(program, LightProbeTetraBufferBinding);
+
             ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             if (RuntimeEngine.EditorPreferences.Debug.RenderLightProbeTetrahedra
                 && _probeTetrahedraDebugRenderFrameId != frameId)
@@ -2056,7 +2089,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         if (camera is null)
             return null;
 
-        var stage = camera.GetPostProcessStageState<AmbientOcclusionSettings>();
+        var stage = camera.GetPostProcessStageState<AmbientOcclusionSettings>(this);
         if (stage is null)
             return null;
 

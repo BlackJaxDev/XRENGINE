@@ -315,7 +315,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     }
 
     private static bool ShouldUseTemporalJitter(EAntiAliasingMode mode)
-        => mode == EAntiAliasingMode.Taa || mode == EAntiAliasingMode.Tsr;
+        => mode == EAntiAliasingMode.Taa
+        || mode == EAntiAliasingMode.Tsr
+        || mode == EAntiAliasingMode.Dlaa;
 
     private static bool ShouldRunInternalAccumulation(EAntiAliasingMode mode)
         => mode == EAntiAliasingMode.Taa;

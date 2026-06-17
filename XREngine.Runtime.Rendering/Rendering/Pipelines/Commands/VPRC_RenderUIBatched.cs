@@ -1,6 +1,7 @@
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.UI;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using System;
 
 namespace XREngine.Rendering.Pipelines.Commands;
@@ -28,7 +29,22 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
 
     protected override void Execute()
     {
-        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_renderPass);
+        int activePassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
+        bool preserveParentSwapchainPass =
+            activePassIndex != int.MinValue &&
+            ActivePipelineInstance.RenderState.OutputFBO is null;
+
+        using IDisposable? passScope = preserveParentSwapchainPass
+            ? null
+            : RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_renderPass);
+
+        XRCamera? camera = ActivePipelineInstance.RenderState.RenderingCamera
+            ?? ActivePipelineInstance.RenderState.SceneCamera
+            ?? ActivePipelineInstance.LastRenderingCamera
+            ?? ActivePipelineInstance.LastSceneCamera;
+        using IDisposable? cameraScope = camera is null
+            ? null
+            : ActivePipelineInstance.RenderState.PushRenderingCamera(camera);
 
         // Batched UI elements inject lightweight marker commands during collect-visible.
         // Rendering the CPU pass now executes inline batch groups and normal CPU fallback

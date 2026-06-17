@@ -406,7 +406,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (RuntimeEngine.Rendering.State.IsStereoPass)
                 instance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
-                rc.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.ScreenSpace);
+                rc.SetAmbientOcclusionUniforms(
+                    program,
+                    AmbientOcclusionSettings.EType.ScreenSpace,
+                    instance.AssignedPipeline ?? ParentPipeline);
 
             var region = instance.RenderState.CurrentRenderRegion;
             /*

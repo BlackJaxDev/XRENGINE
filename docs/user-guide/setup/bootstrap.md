@@ -77,6 +77,10 @@ dotnet restore
 dotnet build XRENGINE.slnx
 ```
 
+The `Deps` installer path also stages public optional downloads such as the
+NVIDIA Streamline SDK runtime files. Those files remain local under
+`ThirdParty/NVIDIA/SDK/win-x64/` and are ignored by Git.
+
 The Vulkan Memory Allocator header is retrieved by the `Deps` installer path, and the native bridge is built automatically by the runtime rendering project. If you need to run those pieces manually:
 
 ```powershell
@@ -110,7 +114,8 @@ Or use the VS Code launch/task setup already included in the repo.
 
 You should go beyond the default bootstrap when you are working on subsystem-specific features such as:
 
-- NVIDIA integrations
+- NVIDIA integrations beyond the pinned public Streamline runtime
+- NVIDIA SDK versions newer than the pinned Streamline installer
 - advanced audio / Audio2Face flows
 - optional native tooling for content import or processing
 - any workflow that explicitly mentions a dependency installer or vendor SDK in its docs

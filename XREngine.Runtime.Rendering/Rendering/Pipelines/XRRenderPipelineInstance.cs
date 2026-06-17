@@ -94,6 +94,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private int _activeRenderGraphBranchDepth;
 
     private RenderPipeline? _pipeline;
+    internal RenderPipeline? AssignedPipeline => _pipeline;
     public RenderPipeline? Pipeline
     {
         get => _pipeline ?? SetFieldReturn(ref _pipeline, CreateDefaultRenderPipeline());
@@ -351,7 +352,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 }
                 else
                     InvalidMaterial = null;
-                DestroyCache();
+                DestroyCacheIfResourcesExist();
                 break;
         }
     }
@@ -825,6 +826,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         DestroyCacheOnRenderThread();
     }
 
+    private void DestroyCacheIfResourcesExist()
+    {
+        if (!HasAnyTrackedResources())
+            return;
+
+        DestroyCache();
+    }
+
     private void EnqueueDestroyCache()
     {
         if (System.Threading.Interlocked.Exchange(ref _destroyCacheQueued, 1) != 0)
@@ -845,6 +854,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
     private void DestroyCacheOnRenderThread()
     {
+        if (!HasAnyTrackedResources())
+            return;
+
         LogDefaultRenderPipelineResourceDestruction("DestroyCache");
         WaitForGpuBeforePhysicalResourceDestruction("DestroyCache");
         PendingGeneration?.Dispose();
@@ -866,6 +878,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (EnqueueResourceMutationIfOffRenderThread(InvalidatePhysicalResources, "XRRenderPipelineInstance.InvalidatePhysicalResources"))
             return;
 
+        if (!HasAnyTrackedResources())
+            return;
+
         XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
         if (viewport is not null
             && RequestResourceGeneration(
@@ -883,6 +898,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         Resources.DestroyAllPhysicalResources(retainDescriptors: true);
         ResourceGeneration++;
     }
+
+    private bool HasAnyTrackedResources()
+        => ActiveGeneration is not null
+        || PendingGeneration is not null
+        || _retiredGenerations.Count != 0
+        || _legacyResources.TextureRecords.Count != 0
+        || _legacyResources.FrameBufferRecords.Count != 0
+        || _legacyResources.BufferRecords.Count != 0
+        || _legacyResources.RenderBufferRecords.Count != 0;
 
     internal void RemoveTextureResource(string name, string reason)
     {

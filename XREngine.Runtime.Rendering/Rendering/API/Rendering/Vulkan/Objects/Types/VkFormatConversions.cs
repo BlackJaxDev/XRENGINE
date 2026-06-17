@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using XREngine.Data;
 using XREngine.Data.Rendering;
 using Format = Silk.NET.Vulkan.Format;
 
@@ -248,6 +249,169 @@ public unsafe partial class VulkanRenderer
 
                 _ => 0,
             };
+
+        internal static unsafe DataSource? CreateNormalizedUploadData2D(
+            Mipmap2D mipmap,
+            Format destinationFormat,
+            out bool ownsData)
+        {
+            ownsData = false;
+
+            DataSource? sourceData = mipmap.Data;
+            if (sourceData is null || sourceData.Length == 0)
+                return sourceData;
+
+            if (!TryGetDestinationByteColorLayout(destinationFormat, out ByteColorDestination destination))
+                return sourceData;
+
+            if (!TryGetSourceByteColorLayout(mipmap.PixelFormat, mipmap.PixelType, out ByteColorSource source))
+                return sourceData;
+
+            ulong texelCount = (ulong)mipmap.Width * mipmap.Height;
+            if (texelCount == 0)
+                return sourceData;
+
+            ulong expectedSourceBytes = texelCount * (uint)source.ComponentCount;
+            ulong expectedDestinationBytes = texelCount * (uint)destination.ComponentCount;
+            if (expectedSourceBytes > sourceData.Length || expectedDestinationBytes > uint.MaxValue)
+                return sourceData;
+
+            if (sourceData.Length == expectedDestinationBytes && LayoutsMatch(source, destination))
+                return sourceData;
+
+            if (!CanRepack(source, destination))
+                return sourceData;
+
+            DataSource repacked = new((uint)expectedDestinationBytes);
+            byte* src = (byte*)sourceData.Address.Pointer;
+            byte* dst = (byte*)repacked.Address.Pointer;
+
+            for (ulong i = 0; i < texelCount; i++)
+            {
+                byte* srcTexel = src + (i * (uint)source.ComponentCount);
+                byte r = ReadSourceChannel(srcTexel, source.RedIndex, 0);
+                byte g = ReadSourceChannel(srcTexel, source.GreenIndex, r);
+                byte b = ReadSourceChannel(srcTexel, source.BlueIndex, r);
+                byte a = ReadSourceChannel(srcTexel, source.AlphaIndex, 255);
+                byte* dstTexel = dst + (i * (uint)destination.ComponentCount);
+
+                switch (destination.Kind)
+                {
+                    case ByteColorDestinationKind.R:
+                        dstTexel[0] = r;
+                        break;
+                    case ByteColorDestinationKind.RG:
+                        dstTexel[0] = r;
+                        dstTexel[1] = g;
+                        break;
+                    case ByteColorDestinationKind.RGBA:
+                        dstTexel[0] = r;
+                        dstTexel[1] = g;
+                        dstTexel[2] = b;
+                        dstTexel[3] = a;
+                        break;
+                    case ByteColorDestinationKind.BGRA:
+                        dstTexel[0] = b;
+                        dstTexel[1] = g;
+                        dstTexel[2] = r;
+                        dstTexel[3] = a;
+                        break;
+                }
+            }
+
+            ownsData = true;
+            return repacked;
+        }
+
+        private static byte ReadSourceChannel(byte* srcTexel, int channelIndex, byte fallback)
+            => channelIndex >= 0 ? srcTexel[channelIndex] : fallback;
+
+        private static bool TryGetDestinationByteColorLayout(Format format, out ByteColorDestination destination)
+        {
+            destination = default;
+
+            destination = format switch
+            {
+                Format.R8Unorm or Format.R8SNorm or Format.R8Uint or Format.R8Sint
+                    => new(ByteColorDestinationKind.R, 1),
+                Format.R8G8Unorm or Format.R8G8SNorm or Format.R8G8Uint or Format.R8G8Sint
+                    => new(ByteColorDestinationKind.RG, 2),
+                Format.R8G8B8A8Unorm or Format.R8G8B8A8SNorm or Format.R8G8B8A8Uint or Format.R8G8B8A8Sint or Format.R8G8B8A8Srgb
+                    => new(ByteColorDestinationKind.RGBA, 4),
+                Format.B8G8R8A8Unorm or Format.B8G8R8A8Srgb
+                    => new(ByteColorDestinationKind.BGRA, 4),
+                _ => default
+            };
+
+            return destination.ComponentCount != 0;
+        }
+
+        private static bool TryGetSourceByteColorLayout(EPixelFormat format, EPixelType type, out ByteColorSource source)
+        {
+            source = default;
+            if (type is not EPixelType.UnsignedByte and not EPixelType.Byte)
+                return false;
+
+            source = format switch
+            {
+                EPixelFormat.Red or EPixelFormat.RedInteger or EPixelFormat.Luminance
+                    => new(1, 0, -1, -1, -1, EPixelFormat.Red),
+                EPixelFormat.Alpha or EPixelFormat.AlphaInteger
+                    => new(1, 0, -1, -1, 0, EPixelFormat.Alpha),
+                EPixelFormat.Rg or EPixelFormat.RgInteger or EPixelFormat.LuminanceAlpha
+                    => new(2, 0, 1, -1, format == EPixelFormat.LuminanceAlpha ? 1 : -1, EPixelFormat.Rg),
+                EPixelFormat.Rgb or EPixelFormat.RgbInteger
+                    => new(3, 0, 1, 2, -1, EPixelFormat.Rgb),
+                EPixelFormat.Bgr or EPixelFormat.BgrInteger
+                    => new(3, 2, 1, 0, -1, EPixelFormat.Bgr),
+                EPixelFormat.Rgba or EPixelFormat.RgbaInteger
+                    => new(4, 0, 1, 2, 3, EPixelFormat.Rgba),
+                EPixelFormat.Bgra or EPixelFormat.BgraInteger
+                    => new(4, 2, 1, 0, 3, EPixelFormat.Bgra),
+                _ => default
+            };
+
+            return source.ComponentCount != 0;
+        }
+
+        private static bool LayoutsMatch(ByteColorSource source, ByteColorDestination destination)
+            => destination.Kind switch
+            {
+                ByteColorDestinationKind.R => source.CanonicalFormat is EPixelFormat.Red,
+                ByteColorDestinationKind.RG => source.CanonicalFormat is EPixelFormat.Rg,
+                ByteColorDestinationKind.RGBA => source.CanonicalFormat is EPixelFormat.Rgba,
+                ByteColorDestinationKind.BGRA => source.CanonicalFormat is EPixelFormat.Bgra,
+                _ => false
+            };
+
+        private static bool CanRepack(ByteColorSource source, ByteColorDestination destination)
+            => destination.Kind switch
+            {
+                ByteColorDestinationKind.R => true,
+                ByteColorDestinationKind.RG => source.ComponentCount >= 2,
+                ByteColorDestinationKind.RGBA or ByteColorDestinationKind.BGRA => source.ComponentCount >= 3,
+                _ => false
+            };
+
+        private readonly record struct ByteColorSource(
+            int ComponentCount,
+            int RedIndex,
+            int GreenIndex,
+            int BlueIndex,
+            int AlphaIndex,
+            EPixelFormat CanonicalFormat);
+
+        private readonly record struct ByteColorDestination(
+            ByteColorDestinationKind Kind,
+            int ComponentCount);
+
+        private enum ByteColorDestinationKind
+        {
+            R,
+            RG,
+            RGBA,
+            BGRA
+        }
 
         /// <summary>
         /// Returns <c>true</c> if the given <see cref="Format"/> is a depth or depth-stencil format.

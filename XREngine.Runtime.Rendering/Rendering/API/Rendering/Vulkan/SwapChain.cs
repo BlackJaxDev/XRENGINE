@@ -25,6 +25,12 @@ public unsafe partial class VulkanRenderer
         new(Format.A2R10G10B10UnormPack32, ColorSpaceKHR.SpaceHdr10ST2084Ext),
     ];
 
+    private static readonly SurfaceFormatPreference[] DlssFrameGenerationHdrSurfacePreferences =
+    [
+        new(Format.A2B10G10R10UnormPack32, ColorSpaceKHR.SpaceHdr10ST2084Ext),
+        new(Format.A2R10G10B10UnormPack32, ColorSpaceKHR.SpaceHdr10ST2084Ext),
+    ];
+
     private static readonly SurfaceFormatPreference[] SDRSurfacePreferences =
     [
         new(Format.B8G8R8A8Srgb, ColorSpaceKHR.SpaceSrgbNonlinearKhr),
@@ -37,6 +43,11 @@ public unsafe partial class VulkanRenderer
     public ColorSpaceKHR PreferredColorSpace { get; set; } = ColorSpaceKHR.SpaceSrgbNonlinearKhr;
     public PresentModeKHR PreferredPresentMode { get; set; } = PresentModeKHR.MailboxKhr;
     public PresentModeKHR FallbackPresentMode { get; set; } = PresentModeKHR.FifoKhr;
+    private static readonly PresentModeKHR[] DlssFrameGenerationPresentModePreferences =
+    [
+        PresentModeKHR.MailboxKhr,
+        PresentModeKHR.ImmediateKhr,
+    ];
 
     struct SwapChainSupportDetails
     {
@@ -84,6 +95,7 @@ public unsafe partial class VulkanRenderer
             Window.DoEvents();
         }
 
+        DisableStreamlineFrameGenerationBeforeSwapchainMutation("swapchain recreation");
         DeviceWaitIdle();
         DestroyAllSwapChainObjects();
         CreateAllSwapChainObjects();
@@ -113,6 +125,34 @@ public unsafe partial class VulkanRenderer
         DestroySwapChain();
         //DestroyUniformBuffers();
         DestroyDescriptorPool();
+    }
+
+    private void DisableStreamlineFrameGenerationBeforeSwapchainMutation(string reason)
+    {
+        if (!_streamlineFrameGenerationSwapchainActive)
+            return;
+
+        var viewports = XRWindow.Viewports;
+        if (viewports.Count == 0)
+        {
+            Debug.RenderingWarning(
+                "NVIDIA DLSS frame generation is active, but no viewport was available to send DLSSGMode.Off before {0}.",
+                reason);
+            return;
+        }
+
+        for (int i = 0; i < viewports.Count; i++)
+        {
+            XRViewport viewport = viewports[i];
+            if (NvidiaDlssManager.Native.TryDisableFrameGeneration(this, viewport, out string failureReason))
+                continue;
+
+            Debug.RenderingError(
+                "NVIDIA DLSS frame generation could not be disabled before {0} for viewport {1}: {2}",
+                reason,
+                viewport.Index,
+                failureReason);
+        }
     }
 
     private void CreateAllSwapChainObjects()
@@ -237,6 +277,8 @@ public unsafe partial class VulkanRenderer
     {
         if (swapChain.Handle == 0)
             return;
+
+        DisableStreamlineFrameGenerationBeforeSwapchainMutation("swapchain destruction");
 
         if (_streamlineFrameGenerationSwapchainActive)
         {
@@ -392,6 +434,15 @@ public unsafe partial class VulkanRenderer
     {
         bool requestHdr = XRWindow.PreferHDROutput;
 
+        if (requestHdr
+            && NvidiaDlssManager.IsFrameGenerationRequested
+            && TrySelectSurfaceFormat(availableFormats, DlssFrameGenerationHdrSurfacePreferences, out SurfaceFormatKHR dlssFrameGenerationHdrFormat))
+        {
+            PreferredFormat = dlssFrameGenerationHdrFormat.Format;
+            PreferredColorSpace = dlssFrameGenerationHdrFormat.ColorSpace;
+            return dlssFrameGenerationHdrFormat;
+        }
+
         if (requestHdr && TrySelectSurfaceFormat(availableFormats, HDRSurfacePreferences, out SurfaceFormatKHR hdrFormat))
         {
             PreferredFormat = hdrFormat.Format;
@@ -429,6 +480,25 @@ public unsafe partial class VulkanRenderer
 
     private PresentModeKHR ChoosePresentMode(IReadOnlyList<PresentModeKHR> availablePresentModes)
     {
+        if (NvidiaDlssManager.IsFrameGenerationRequested)
+        {
+            for (int preferenceIndex = 0; preferenceIndex < DlssFrameGenerationPresentModePreferences.Length; preferenceIndex++)
+            {
+                PresentModeKHR preferred = DlssFrameGenerationPresentModePreferences[preferenceIndex];
+                foreach (PresentModeKHR availablePresentMode in availablePresentModes)
+                {
+                    if (availablePresentMode == preferred)
+                        return availablePresentMode;
+                }
+            }
+
+            Debug.RenderingWarningEvery(
+                "Vulkan.DLSSG.PresentMode.FifoFallback",
+                TimeSpan.FromSeconds(5),
+                "NVIDIA DLSS frame generation requested, but the Vulkan surface did not expose Mailbox or Immediate present modes. Falling back to {0}; Vulkan VSync with DLSS-G is not supported by Streamline.",
+                FallbackPresentMode);
+        }
+
         foreach (var availablePresentMode in availablePresentModes)
             if (availablePresentMode == PreferredPresentMode)
                 return availablePresentMode;

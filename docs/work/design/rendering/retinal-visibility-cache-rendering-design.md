@@ -1,12 +1,13 @@
 # Retinal Visibility Cache Rendering Design
 
-Last Updated: 2026-05-29
+Last Updated: 2026-06-16
 Status: design proposal
 Scope: advanced quad-view foveated VR rendering for opaque geometry, shared lighting, transparency fallback, and staged integration with XREngine's current OpenXR and GPU-driven renderer work.
 
 ## Related Docs
 
 - [OpenXR VR Rendering](../../../architecture/rendering/openxr-vr-rendering.md)
+- [Retinal Visibility Cache Rendering TODO](../../todo/rendering/vr/retinal-visibility-cache-rendering-todo.md)
 - [OpenXR Future Work TODO](../../todo/rendering/vr/openxr-future-work-todo.md)
 - [Engine Rendering Optimization Design](engine-optimization-and-avatar-optimizer-design.md)
 - [GPU Meshlet Zero-Readback Rendering Design](gpu-meshlet-zero-readback-rendering-design.md)
@@ -20,8 +21,12 @@ Scope: advanced quad-view foveated VR rendering for opaque geometry, shared ligh
 - OpenXR quad-view config `XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO` (from `XR_VARJO_quad_views`, promoted into OpenXR 1.1): <https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_VARJO_quad_views.html>
 - OpenXR `XR_VARJO_foveated_rendering` view configuration sizing and dual-swapchain recommendation: <https://registry.khronos.org/OpenXR/specs/1.0/man/html/XrFoveatedViewConfigurationViewVARJO.html>
 - Vulkan multiview: <https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_multiview.html>
-- Direct3D 12 variable rate shading: <https://microsoft.github.io/DirectX-Specs/d3d/VariableRateShading.html>
+- Vulkan dynamic rendering: <https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_dynamic_rendering.html>
+- Vulkan descriptor indexing: <https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_descriptor_indexing.html>
+- Vulkan fragment shading rate: <https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_fragment_shading_rate.html>
 - Vulkan fragment shading rate sample: <https://docs.vulkan.org/samples/latest/samples/extensions/fragment_shading_rate/README.html>
+- Vulkan mesh shaders: <https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_mesh_shader.html>
+- Vulkan synchronization2: <https://docs.vulkan.org/refpages/latest/refpages/source/VK_KHR_synchronization2.html>
 - Visibility buffer rendering, Burns/Hunt: <https://jcgt.org/published/0002/02/04/>
 - Decoupled Sampling for Graphics Pipelines: <https://people.csail.mit.edu/jrk/decoupledsampling/ds.pdf>
 - Analytic texture gradients from barycentric partials (visibility-buffer material reconstruction): <https://momentsingraphics.de/ToyRenderer3RenderingBasics.html>
@@ -57,7 +62,7 @@ In one sentence: RVC renders four visibility buffers, then tries very hard not t
 
 ## 2. Why This Exists
 
-XREngine is Windows-first, OpenGL 4.6 is the current production backend, and Vulkan/DX12-class explicit APIs are the long-term path for advanced VR renderer features. The engine already has:
+XREngine is Windows-first, OpenGL 4.6 is the current production backend, and Vulkan is the long-term target for advanced VR renderer features. The engine already has:
 
 - OpenXR and OpenVR render paths.
 - A three-phase OpenXR frame model with predicted and late poses.
@@ -93,7 +98,7 @@ A deferred path also struggles with transparency, MSAA, alpha test details, and 
 
 ### 3.2 Classic Forward+
 
-Forward+ is flexible and fits XREngine's current material/shader shape better than a large deferred rewrite. It handles transparency and MSAA more naturally, and it can use multiview and variable rate shading. The drawback is duplicated material and lighting work:
+Forward+ is flexible and fits XREngine's current material/shader shape better than a large deferred rewrite. It handles transparency and MSAA more naturally, and the Vulkan path can use multiview and fragment shading rate where supported. The drawback is duplicated material and lighting work:
 
 ```text
 shade left wide
@@ -302,8 +307,7 @@ Visibility pass rules:
 Backend notes:
 
 - OpenGL 4.6 can prototype with layered FBOs, SSBOs, image load/store, and multi-draw indirect, but true multiview (`OVR_multiview`/`OVR_multiview2`) is vendor/extension-sensitive and patchy on desktop NVIDIA. Do not commit the multiview visibility path to the OpenGL prototype; emulate with layered FBOs only for correctness and treat Vulkan as the multiview target.
-- Vulkan is the intended backend for true multiview, fragment shading rate, explicit barriers, and future async overlap.
-- DX12 is a future peer for VRS and view instancing if/when a backend exists.
+- Vulkan is the intended backend for true multiview, `VK_KHR_fragment_shading_rate`, explicit barriers, descriptor indexing, dynamic rendering, mesh/task shader paths, and future async overlap.
 
 ## 13. Pass 2: Foveated Shade Request Generation
 
@@ -330,7 +334,7 @@ Suggested shading rates:
 | Periphery | 1 per 4x4 or 1 per 8x8 | Aggregate lighting and simpler BRDF. |
 | Near UI/controllers | 1 per pixel | Overrides foveation region. |
 
-Where the GPU exposes Tier 2 variable rate shading (DX12 shading-rate image or `VK_KHR_fragment_shading_rate`), the periphery coarsening can be expressed directly as a per-tile shading-rate image instead of compute-side shadelet quantization. This is the recommended fast path for materials that are not yet ported to compute-side material reconstruction: it captures most of the peripheral shading win with no compute derivative work and lets Stage 3 ship before the full shadelet cache exists. Compute-side shadelet quantization remains the path for cross-view/stereo reuse and for backends without VRS.
+Where Vulkan exposes `VK_KHR_fragment_shading_rate`, the periphery coarsening can be expressed directly as a per-tile shading-rate image instead of compute-side shadelet quantization. This is the recommended fast path for materials that are not yet ported to compute-side material reconstruction: it captures most of the peripheral shading win with no compute derivative work and lets Stage 3 ship before the full shadelet cache exists. Compute-side shadelet quantization remains the path for cross-view/stereo reuse and for Vulkan devices without fragment shading rate support.
 
 The shadelet key must be conservative enough to prevent visible reuse errors:
 
@@ -756,7 +760,7 @@ compute queue:   shade requests/material/lighting for previous visibility slice
 graphics queue:  resolve/transparent/post
 ```
 
-This is Vulkan/DX12 territory. OpenGL should stay simpler.
+This is Vulkan territory. OpenGL should stay simpler.
 
 ## 23. Backend Plan
 
@@ -783,24 +787,27 @@ OpenGL should implement RVC slices only when they do not distort the clean Vulka
 
 Vulkan is the target for full RVC:
 
-- Core multiview in Vulkan 1.1.
-- Explicit render pass/dynamic rendering control.
-- Descriptor indexing.
-- Fragment shading rate where supported.
+- Core multiview in Vulkan 1.1 or `VK_KHR_multiview`.
+- Explicit render pass or `VK_KHR_dynamic_rendering` control.
+- Descriptor indexing through Vulkan 1.2 or `VK_EXT_descriptor_indexing`.
+- Fragment shading rate through `VK_KHR_fragment_shading_rate` where supported.
+- Mesh/task shader paths through `VK_EXT_mesh_shader` where they beat indirect or compute meshlet expansion.
+- Synchronization2 and timeline semaphores for explicit barriers and queue handoff.
 - Better fit for async compute and GPU-driven frame graphs.
 - Cleaner integration with OpenXR Vulkan swapchain images.
 
-### 23.3 DX12 Future
+### 23.3 Vulkan Extension Policy
 
-DX12 is not a current backend, but the design should remain compatible:
+Full RVC should use Vulkan extensions aggressively when they are available and make missing support visible:
 
-- View instancing.
-- VRS Tier 2 shading-rate image.
-- `ExecuteIndirect`.
-- Mesh shaders.
-- Descriptor heaps.
+- Prefer multiview for geometry, depth, visibility, and other view-replicated passes.
+- Prefer fragment shading rate for peripheral material classes that are not yet on compute-side shadelets.
+- Prefer descriptor indexing for material and texture tables.
+- Prefer dynamic rendering and synchronization2 for simpler pass construction and explicit barriers.
+- Prefer `VK_EXT_mesh_shader` for production meshlet expansion only when device support and profiling justify it; keep the Vulkan indirect/compute meshlet path available as the visible fallback.
+- Use async compute only when the queue family, timeline synchronization, and profiling show a real frame-time win.
 
-Do not bake Vulkan-only concepts into public engine APIs.
+Do not dilute RVC for future backend parity. Advanced RVC is Vulkan-only; public engine APIs should remain backend-neutral only where that serves the current renderer architecture.
 
 ## 24. Implementation Stages
 
@@ -855,7 +862,7 @@ Goal: decouple visibility rate from shading rate.
 - Build shadelet keys from visibility.
 - Add pixel-to-shadelet maps.
 - Support 1x1, 2x2, 4x4, and 8x8 regions.
-- Add a VRS-only fast path (DX12 shading-rate image / `VK_KHR_fragment_shading_rate`) for materials not yet ported to the compute material cache, so most of the peripheral win lands before the full shadelet cache exists.
+- Add a Vulkan fragment-shading-rate fast path (`VK_KHR_fragment_shading_rate`) for materials not yet ported to the compute material cache, so most of the peripheral win lands before the full shadelet cache exists.
 - Add edge-aware rejection at depth/normal/material boundaries.
 - Add shadelet density overlay.
 
@@ -978,7 +985,7 @@ Foveal latency is the dominant artifact source. Borrow Kalman or learned saccade
 
 ### 26.9 Checkerboard/Quad Rotation In The Periphery
 
-Rotate hardware-quad/checkerboard sample patterns across frames in the periphery, fused with the temporal cache, for effective rate reduction beyond static VRS at near-zero cost.
+Rotate hardware-quad/checkerboard sample patterns across frames in the periphery, fused with the temporal cache, for effective rate reduction beyond static Vulkan fragment shading rate at near-zero cost.
 
 Priority recommendation: fold in material sort/bin (26.5), reservoir-based shared lighting (26.3/26.4), and the world-space hash-grid temporal store (26.6) first. Each replaces a hand-rolled, artifact-prone RVC piece with a more principled, better-tested mechanism.
 

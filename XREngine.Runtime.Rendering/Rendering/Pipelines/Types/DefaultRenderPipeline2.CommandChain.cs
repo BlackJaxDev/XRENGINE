@@ -409,6 +409,7 @@ public partial class DefaultRenderPipeline2
         {
             [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusResolveCommands(),
             [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOResolveCommands(),
+            [(int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion] = CreateSpatialHashAOResolveCommands(),
         };
         aoResolveSwitch.DefaultCase = CreateAmbientOcclusionResolveCommands();
         EndGpuScope(c, "AO Resolve");
@@ -1580,20 +1581,7 @@ public partial class DefaultRenderPipeline2
     }
 
     private ViewportRenderCommandContainer CreateOutputSourceOverrideCommands(string sourceFboName, bool bypassVendorUpscale)
-    {
-        var commands = new ViewportRenderCommandContainer(this);
-        var vendorBlit = commands.Add<VPRC_VendorUpscale>();
-        vendorBlit.FrameBufferName = sourceFboName;
-        vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
-        vendorBlit.DepthTextureName = DepthViewTextureName;
-        vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
-        vendorBlit.MotionTextureName = VelocityTextureName;
-        vendorBlit.MotionFrameBufferName = VelocityFBOName;
-        vendorBlit.ForceFallbackBlit = bypassVendorUpscale;
-        vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
-
-        return commands;
-    }
+        => CreateFinalBlitCommands(sourceFboName, bypassVendorUpscale);
 
     private static string? ResolveOutputSourceFboOverride()
         => RenderDiagnosticsFlags.OutputSourceFboOverride;
@@ -1680,6 +1668,37 @@ public partial class DefaultRenderPipeline2
     /// </summary>
     private ViewportRenderCommandContainer CreateFinalBlitCommands(string sourceFboName, bool bypassVendorUpscale)
     {
+        if (bypassVendorUpscale)
+            return CreateDirectWindowPresentCommands(sourceFboName);
+
+        var cmds = new ViewportRenderCommandContainer(this);
+        var presentChoice = cmds.Add<VPRC_IfElse>();
+        presentChoice.Label = "FinalPresentPath";
+        presentChoice.ConditionEvaluator = ShouldUseDirectVulkanFinalPresent;
+        presentChoice.TrueCommands = CreateDirectWindowPresentCommands(sourceFboName);
+        presentChoice.FalseCommands = CreateVendorUpscaleBlitCommands(sourceFboName, false);
+        return cmds;
+    }
+
+    private ViewportRenderCommandContainer CreateDirectWindowPresentCommands(string sourceFboName)
+    {
+        var cmds = new ViewportRenderCommandContainer(this);
+        var present = cmds.Add<VPRC_RenderToWindow>();
+        string? sourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
+        if (!string.IsNullOrWhiteSpace(sourceTextureName))
+            present.SourceTextureName = sourceTextureName;
+        else
+            present.SourceFBOName = sourceFboName;
+
+        present.FlipSourceYOnVulkan = ShouldFlipVulkanPresentSourceY(sourceFboName);
+        return cmds;
+    }
+
+    private static bool ShouldUseDirectVulkanFinalPresent()
+        => AbstractRenderer.Current is XREngine.Rendering.Vulkan.VulkanRenderer && !RuntimeEnableVendorUpscale;
+
+    private ViewportRenderCommandContainer CreateVendorUpscaleBlitCommands(string sourceFboName, bool forceFallback)
+    {
         var cmds = new ViewportRenderCommandContainer(this);
         var vendorBlit = cmds.Add<VPRC_VendorUpscale>();
         vendorBlit.FrameBufferName = sourceFboName;
@@ -1688,7 +1707,7 @@ public partial class DefaultRenderPipeline2
         vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
         vendorBlit.MotionTextureName = VelocityTextureName;
         vendorBlit.MotionFrameBufferName = VelocityFBOName;
-        vendorBlit.ForceFallbackBlit = bypassVendorUpscale;
+        vendorBlit.ForceFallbackBlit = forceFallback;
         vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
         return cmds;
     }
@@ -1720,18 +1739,7 @@ public partial class DefaultRenderPipeline2
         => Stereo ? "TransparentOverdrawDebugStereo.fs" : "TransparentOverdrawDebug.fs";
 
     private ViewportRenderCommandContainer CreateVendorUpscaleCommands(string sourceFboName)
-    {
-        var c = new ViewportRenderCommandContainer(this);
-        var vendorBlit = c.Add<VPRC_VendorUpscale>();
-        vendorBlit.FrameBufferName = sourceFboName;
-        vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
-        vendorBlit.DepthTextureName = DepthViewTextureName;
-        vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
-        vendorBlit.MotionTextureName = VelocityTextureName;
-        vendorBlit.MotionFrameBufferName = VelocityFBOName;
-        vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
-        return c;
-    }
+        => CreateVendorUpscaleBlitCommands(sourceFboName, false);
 
 
     private void CacheTextures(ViewportRenderCommandContainer c)
@@ -2152,9 +2160,15 @@ public partial class DefaultRenderPipeline2
         {
             BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
         };
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName);
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, HBAOPlusBlurIntermediateFBOName);
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(HBAOPlusBlurIntermediateFBOName, GBufferFBOName);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantHBAOPlus);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionBlurFBOName, HBAOPlusBlurIntermediateFBOName)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantHBAOPlus);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(HBAOPlusBlurIntermediateFBOName, GBufferFBOName)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantHBAOPlus);
         return container;
     }
 
@@ -2194,11 +2208,23 @@ public partial class DefaultRenderPipeline2
         {
             BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
         };
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName, matchDestinationRenderArea: true);
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, GTAOBlurIntermediateFBOName, matchDestinationRenderArea: true);
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(GTAOBlurIntermediateFBOName, GBufferFBOName, matchDestinationRenderArea: true);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantGTAO);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionBlurFBOName, GTAOBlurIntermediateFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantGTAO);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(GTAOBlurIntermediateFBOName, GBufferFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantGTAO);
         return container;
     }
+
+    private ViewportRenderCommandContainer CreateSpatialHashAOResolveCommands()
+        => new(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
 
     private ViewportRenderCommandContainer CreateVXAOPassCommands()
     {

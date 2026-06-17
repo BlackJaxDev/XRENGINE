@@ -510,22 +510,35 @@ public unsafe partial class VulkanRenderer
             // Compute framebuffer dimensions accounting for mip-level targets.
             // When an FBO targets a specific mip level (e.g. bloom downsample), the
             // VkFramebuffer width/height must match the mip-level extent, not the base.
-            uint fbWidth = Math.Max(Data.Width, 1u);
-            uint fbHeight = Math.Max(Data.Height, 1u);
             var targets = Data.Targets;
-            if (targets is not null && targets.Length > 0)
+            if (targets is null || targets.Length == 0)
+                return (Math.Max(Data.Width, 1u), Math.Max(Data.Height, 1u));
+
+            uint fbWidth = uint.MaxValue;
+            uint fbHeight = uint.MaxValue;
+            bool found = false;
+            foreach (var (target, _, mip, _) in targets)
             {
-                int maxMip = 0;
-                foreach (var (_, _, mip, _) in targets)
-                    maxMip = Math.Max(maxMip, mip);
-                if (maxMip > 0)
+                if (target is null)
+                    continue;
+
+                uint width = Math.Max(target.Width, 1u);
+                uint height = Math.Max(target.Height, 1u);
+                int mipLevel = Math.Max(mip, 0);
+                if (mipLevel > 0)
                 {
-                    fbWidth = Math.Max(fbWidth >> maxMip, 1u);
-                    fbHeight = Math.Max(fbHeight >> maxMip, 1u);
+                    width = Math.Max(width >> mipLevel, 1u);
+                    height = Math.Max(height >> mipLevel, 1u);
                 }
+
+                fbWidth = Math.Min(fbWidth, width);
+                fbHeight = Math.Min(fbHeight, height);
+                found = true;
             }
 
-            return (fbWidth, fbHeight);
+            return found
+                ? (fbWidth, fbHeight)
+                : (Math.Max(Data.Width, 1u), Math.Max(Data.Height, 1u));
         }
 
         private string DescribeFrameBuffer()

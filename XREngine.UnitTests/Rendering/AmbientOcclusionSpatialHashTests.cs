@@ -129,11 +129,27 @@ public sealed class AmbientOcclusionSpatialHashTests
     [Test]
     public void SpatialHashComputePass_UsesSharedRadiusAndKeepsHashHistoryAcrossCameraMotion()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/AO/VPRC_SpatialHashAOPass.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_SpatialHashAOPass.cs").Replace("\r\n", "\n");
 
         source.ShouldContain("Radius = settings?.Radius > 0.0f ? settings.Radius : AmbientOcclusionSettings.SpatialHashDefaultRadius,");
         source.ShouldNotContain("ClearSpatialHashData");
         source.ShouldNotContain("cameraMovedSinceLastFrame");
+    }
+
+    [Test]
+    public void SpatialHashComputePass_OnlyPublishesStorageMetadataWhenSpatialHashIsSelected()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_SpatialHashAOPass.cs").Replace("\r\n", "\n");
+
+        source.ShouldContain("protected override bool ShouldExecuteThisFrame()");
+        source.ShouldContain("IsSpatialHashAmbientOcclusionSelected(RuntimeEngine.Rendering.State.CurrentRenderingPipeline)");
+        source.ShouldContain("AmbientOcclusionSettings.NormalizeType(settings.Type) == AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion");
+
+        int guardIndex = source.IndexOf("if (!IsSpatialHashAmbientOcclusionSelected(RuntimeEngine.Rendering.State.CurrentRenderingPipeline))", StringComparison.Ordinal);
+        int storageIndex = source.IndexOf("builder.ReadWriteTexture(MakeTextureResource(IntensityTextureName));", StringComparison.Ordinal);
+
+        guardIndex.ShouldBeGreaterThanOrEqualTo(0);
+        storageIndex.ShouldBeGreaterThan(guardIndex);
     }
 
     [TestCase("Build/CommonAssets/Shaders/Compute/AO/SpatialHashAO.comp")]

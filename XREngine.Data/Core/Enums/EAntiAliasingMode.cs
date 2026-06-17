@@ -16,6 +16,8 @@ namespace XREngine
         /// <summary>Temporal anti-aliasing.</summary>
         Taa,
         /// <summary>Temporal super-resolution.</summary>
-        Tsr
+        Tsr,
+        /// <summary>NVIDIA DLSS anti-aliasing at native resolution.</summary>
+        Dlaa
     }
 }

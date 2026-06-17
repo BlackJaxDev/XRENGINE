@@ -1,4 +1,5 @@
 using System;
+using XREngine.Data;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using Buffer = Silk.NET.Vulkan.Buffer;
@@ -48,13 +49,25 @@ public unsafe partial class VulkanRenderer
                 if (mip is null)
                     continue;
 
-                if (!TryCreateStagingBuffer(mip.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
-                    continue;
+                DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, ResolvedFormat, out bool ownsUploadData);
+                Buffer stagingBuffer;
+                DeviceMemory stagingMemory;
+                ulong uploadDataSize = uploadData?.Length ?? 0u;
+                try
+                {
+                    if (!TryCreateStagingBuffer(uploadData, out stagingBuffer, out stagingMemory))
+                        continue;
+                }
+                finally
+                {
+                    if (ownsUploadData)
+                        uploadData?.Dispose();
+                }
 
                 try
                 {
                     Extent3D extent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1);
-                    CopyBufferToImage(stagingBuffer, level, 0, 1, extent, (ulong)(mip.Data?.Length ?? 0));
+                    CopyBufferToImage(stagingBuffer, level, 0, 1, extent, uploadDataSize);
                 }
                 finally
                 {

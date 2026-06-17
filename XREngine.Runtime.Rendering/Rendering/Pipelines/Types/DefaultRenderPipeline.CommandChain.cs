@@ -354,6 +354,7 @@ public partial class DefaultRenderPipeline
         {
             [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusResolveCommands(),
             [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOResolveCommands(),
+            [(int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion] = CreateSpatialHashAOResolveCommands(),
         };
         aoResolveSwitch.DefaultCase = CreateAmbientOcclusionResolveCommands();
 
@@ -1353,20 +1354,7 @@ public partial class DefaultRenderPipeline
     }
 
     private ViewportRenderCommandContainer CreateOutputSourceOverrideCommands(string sourceFboName, bool bypassVendorUpscale)
-    {
-        var commands = new ViewportRenderCommandContainer(this);
-        var vendorBlit = commands.Add<VPRC_VendorUpscale>();
-        vendorBlit.FrameBufferName = sourceFboName;
-        vendorBlit.SourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
-        vendorBlit.DepthTextureName = DepthViewTextureName;
-        vendorBlit.DepthStencilTextureName = DepthStencilTextureName;
-        vendorBlit.MotionTextureName = VelocityTextureName;
-        vendorBlit.MotionFrameBufferName = VelocityFBOName;
-        vendorBlit.ForceFallbackBlit = bypassVendorUpscale;
-        vendorBlit.FlipSourceYOnVulkanFallback = ShouldFlipVulkanPresentSourceY(sourceFboName);
-
-        return commands;
-    }
+        => CreateFinalBlitCommands(sourceFboName, bypassVendorUpscale);
 
     private static string? ResolveOutputSourceFboOverride()
         => RenderDiagnosticsFlags.OutputSourceFboOverride;

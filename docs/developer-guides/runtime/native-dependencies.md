@@ -205,9 +205,18 @@ This includes local enablement for features such as:
 - Streamline
 - ReSTIR GI bridge binaries
 
-For DLSS through Streamline, download the official NVIDIA Streamline/DLSS SDK
-from NVIDIA, then copy the production x64 runtime files into
-`ThirdParty/NVIDIA/SDK/win-x64/`:
+For DLSS through Streamline, use the repository installer:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Dependencies\Get-StreamlineSdk.ps1
+```
+
+The installer downloads the public NVIDIA-RTX Streamline SDK release, verifies
+the archive digest, and copies the production x64 runtime files into
+`ThirdParty/NVIDIA/SDK/win-x64/`. You can also run the `Install-StreamlineSdk`
+VS Code task or the matching `ExecTool` dependency entry.
+
+The staged files include:
 
 - `sl.interposer.dll`
 - `sl.common.dll`
@@ -215,18 +224,21 @@ from NVIDIA, then copy the production x64 runtime files into
 - `nvngx_dlss.dll`
 - any accompanying `*.license.txt` files
 
-For NVIDIA DLSS frame generation experiments, the same folder must also contain
-the production DLSS-G runtime files from the official SDK, for example:
+For NVIDIA DLSS frame generation experiments, the same installer stages the
+production DLSS-G runtime files from the official SDK, including:
 
 - `sl.dlss_g.dll`
+- `sl.reflex.dll`
+- `sl.pcl.dll`
 - `nvngx_dlssg.dll`
 - Reflex/low-latency runtime DLLs included with the SDK, such as
   `NvLowLatencyVk.dll` when required by that SDK version
 
 Rebuild the editor/app afterward so the build copies those files next to the
 executable. Use NVIDIA-provided SDK packages rather than third-party DLL
-download sites, and do not commit proprietary NVIDIA binaries. See the README
-files under `ThirdParty/NVIDIA/` for folder-specific expectations.
+download sites, and do not commit proprietary NVIDIA binaries. Manual SDK drops
+are still supported; see the README files under `ThirdParty/NVIDIA/` for
+folder-specific expectations.
 
 When these runtime DLLs are missing, the ImGui settings inspector shows a red
 `!` beside DLSS settings. Hover it for the exact reason those settings currently
@@ -251,6 +263,7 @@ If present, it is copied into app outputs.
 - `Install-YtDlp`
 - `Install-MsdfAtlasGen`
 - `Install-NvComp`
+- `Install-StreamlineSdk`
 - `Install-Phonon`
 - `Install-Audio2Face3D-SDK`
 - `Install-TensorRT`

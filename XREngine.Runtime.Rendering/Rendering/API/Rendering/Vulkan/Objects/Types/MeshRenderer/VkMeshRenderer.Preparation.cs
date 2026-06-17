@@ -64,7 +64,7 @@ public unsafe partial class VulkanRenderer
 			ApplyScopedProgramBindingsForPreparation(material);
 			BuildVertexInputState();
 
-			if (!EnsureDescriptorSets(material))
+			if (!EnsureDescriptorSets(material, 0))
 				return SetPrepareResult(false, "DescriptorsPending", "Descriptor sets are not allocated or populated for the active program/material layout.", out reason);
 
 			string layoutSummary = _geometryLayoutSignature.DebugSummary;
