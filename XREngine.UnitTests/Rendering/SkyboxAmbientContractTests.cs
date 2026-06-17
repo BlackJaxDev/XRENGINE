@@ -41,6 +41,15 @@ public sealed class SkyboxAmbientContractTests
         pipeline2.ShouldContain("program.Uniform(\"GlobalAmbient\", ResolveGlobalAmbient());");
     }
 
+    [Test]
+    public void DeferredPipeline2_LightCombineFbosApplyAmbientAndProbeBindings()
+    {
+        string fboSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs");
+
+        fboSource.ShouldContain("lightCombineMat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");
+        fboSource.ShouldContain("mat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");
+    }
+
     private static string ReadCSharpFile(string relativePath)
     {
         string repoRoot = ResolveRepoRoot();

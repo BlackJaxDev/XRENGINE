@@ -855,6 +855,21 @@ public sealed class VulkanP0ValidationTests
     }
 
     [Test]
+    public void VulkanAsyncGraphicsPipelineQueue_CapacityCountsOnlyActiveJobs()
+    {
+        string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanPipelineCompileQueue.cs");
+
+        string enqueueMethod = SliceMethod(queueSource, "internal bool TryEnqueueVulkanGraphicsPipelineCompile");
+        enqueueMethod.ShouldContain("int activeJobCount = CountActiveVulkanGraphicsPipelineCompileJobs()");
+        enqueueMethod.ShouldContain("if (activeJobCount >= capacity)");
+        enqueueMethod.ShouldContain("completed=");
+        enqueueMethod.ShouldNotContain("_vulkanGraphicsPipelineCompileJobs.Count >= capacity");
+
+        string countMethod = SliceMethod(queueSource, "private int CountActiveVulkanGraphicsPipelineCompileJobs()");
+        countMethod.ShouldContain("if (!job.Task.IsCompleted)");
+    }
+
+    [Test]
     public void VulkanPipelinePrewarmIdentity_DoesNotPersistVulkanHandles()
     {
         string prewarmSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanPipelinePrewarmDatabase.cs");

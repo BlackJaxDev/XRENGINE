@@ -40,7 +40,7 @@ float FastAcos(float x)
     return x < 0.0f ? PI - r : r;
 }
 
-vec3 GetViewNormal(vec2 uv, vec3 centerPos, float invProjX, float invProjY, float projWScale, float projWBias)
+vec3 GetViewNormal(vec2 uv, vec3 centerPos)
 {
     if (UseInputNormals)
     {
@@ -55,8 +55,8 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos, float invProjX, float invProjY, floa
     float depthY = texture(DepthView, uvY).r;
     if (AOIsFarDepth(depthX) || AOIsFarDepth(depthY))
         return vec3(0.0f, 0.0f, 1.0f);
-    vec3 posX = XRENGINE_ViewPosFromDepthFast(depthX, uvX, invProjX, invProjY, projWScale, projWBias);
-    vec3 posY = XRENGINE_ViewPosFromDepthFast(depthY, uvY, invProjX, invProjY, projWScale, projWBias);
+    vec3 posX = XRENGINE_ViewPosFromDepthRaw(depthX, uvX, InverseProjMatrix);
+    vec3 posY = XRENGINE_ViewPosFromDepthRaw(depthY, uvY, InverseProjMatrix);
     return normalize(cross(posX - centerPos, posY - centerPos));
 }
 
@@ -129,12 +129,8 @@ void main()
     if (FragPos.x > 1.0f || FragPos.y > 1.0f)
         discard;
     vec2 uv = AOTextureUVFromFragPos(FragPos);
-
-    // Precompute fast reconstruction constants once per pixel
     float invProjX = 1.0f / ProjMatrix[0][0];
     float invProjY = 1.0f / ProjMatrix[1][1];
-    float projWScale = InverseProjMatrix[2][3];
-    float projWBias  = InverseProjMatrix[3][3];
 
     float depth = texture(DepthView, uv).r;
     if (AOIsFarDepth(depth))
@@ -142,8 +138,8 @@ void main()
         OutIntensity = 1.0f;
         return;
     }
-    vec3 centerPos = XRENGINE_ViewPosFromDepthFast(depth, uv, invProjX, invProjY, projWScale, projWBias);
-    vec3 centerNormal = GetViewNormal(uv, centerPos, invProjX, invProjY, projWScale, projWBias);
+    vec3 centerPos = XRENGINE_ViewPosFromDepthRaw(depth, uv, InverseProjMatrix);
+    vec3 centerNormal = GetViewNormal(uv, centerPos);
     vec3 viewDir = normalize(-centerPos);
 
     float radiusVS = max(Radius, 0.001f);
@@ -204,7 +200,7 @@ void main()
                 float fDepth = texture(DepthView, fUV).r;
                 if (!AOIsFarDepth(fDepth))
                 {
-                    vec3 fPos = XRENGINE_ViewPosFromDepthFast(fDepth, fUV, invProjX, invProjY, projWScale, projWBias);
+                    vec3 fPos = XRENGINE_ViewPosFromDepthRaw(fDepth, fUV, InverseProjMatrix);
                     vec3 delta = fPos - centerPos;
                     float dist = length(delta);
 
@@ -250,7 +246,7 @@ void main()
                 float bDepth = texture(DepthView, bUV).r;
                 if (!AOIsFarDepth(bDepth))
                 {
-                    vec3 bPos = XRENGINE_ViewPosFromDepthFast(bDepth, bUV, invProjX, invProjY, projWScale, projWBias);
+                    vec3 bPos = XRENGINE_ViewPosFromDepthRaw(bDepth, bUV, InverseProjMatrix);
                     vec3 delta = bPos - centerPos;
                     float dist = length(delta);
 

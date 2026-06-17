@@ -109,8 +109,8 @@ public unsafe partial class VulkanRenderer
         /// <remarks>
         /// Pass order must dominate scheduling groups so consumers cannot be recorded before
         /// producers when different pipeline/viewport contexts enqueue related work. The pass
-        /// rank is resolved from each op's own context metadata because a frame can contain
-        /// DefaultRenderPipeline work and probe/scene-capture work at the same time.
+        /// rank is resolved from the compiled frame graph first; per-context metadata is only
+        /// a fallback for nested work that is absent from the active graph.
         /// First occurrence is still used as the group tie-breaker instead of raw scheduling hash
         /// so same-pass operations preserve inter-pipeline enqueue order.
         /// </remarks>
@@ -153,6 +153,9 @@ public unsafe partial class VulkanRenderer
 
         private static int ResolvePassOrder(FrameOp op, VulkanCompiledRenderGraph graph)
         {
+            if (graph.PassOrder.TryGetValue(op.PassIndex, out int graphOrder))
+                return graphOrder;
+
             if (op.Context.PassMetadata is { Count: > 0 } metadata)
             {
                 IReadOnlyDictionary<int, int> contextPassOrder = PassOrderCache.GetValue(
@@ -163,9 +166,7 @@ public unsafe partial class VulkanRenderer
                     return contextOrder;
             }
 
-            return graph.PassOrder.TryGetValue(op.PassIndex, out int graphOrder)
-                ? graphOrder
-                : int.MaxValue;
+            return int.MaxValue;
         }
 
         /// <summary>

@@ -642,6 +642,9 @@ namespace XREngine.Rendering.Vulkan
                 CreateSampler();
             }
 
+            internal void RefreshDescriptorFromViewedTextureIfStale()
+                => RefreshFromViewedTextureIfStale();
+
             private void RefreshFromViewedTextureIfStale()
             {
                 if (_texelBufferView.Handle != 0)

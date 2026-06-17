@@ -592,6 +592,7 @@ public unsafe partial class VulkanRenderer
             MeshTaskDispatchIndirectCountOp meshTask => $"MeshTaskDispatchIndirectCount[max={meshTask.MaxDrawCount}; stride={meshTask.Stride}]",
             TransformFeedbackOp transformFeedback => $"TransformFeedback[{transformFeedback.Operation}; target={GetTargetName(transformFeedback.Target)}]",
             ComputeDispatchOp compute => $"ComputeDispatch[program={GetDisplayName(compute.Program.Data.Name, "UnnamedProgram")}; groups={compute.GroupsX}x{compute.GroupsY}x{compute.GroupsZ}]",
+            DlssFrameGenerationOp frameGeneration => $"DLSS.FrameGenerationInputs[{frameGeneration.Parameters.InputWidth}x{frameGeneration.Parameters.InputHeight}->{frameGeneration.Parameters.OutputWidth}x{frameGeneration.Parameters.OutputHeight}]",
             MemoryBarrierOp barrier => $"MemoryBarrier[mask={barrier.Mask}]",
             _ => op.GetType().Name,
         };

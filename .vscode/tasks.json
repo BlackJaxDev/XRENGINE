@@ -982,6 +982,22 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Install-StreamlineSdk",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\Dependencies\\Get-StreamlineSdk.ps1"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Install-Phonon",
 			"type": "shell",
 			"command": "powershell",

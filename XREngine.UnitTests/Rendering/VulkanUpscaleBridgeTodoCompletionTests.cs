@@ -186,15 +186,19 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         vendorSource.ShouldContain("ValidateNativeDlssInputSizes(sourceColorTexture, depthTexture, motionTexture, outputWidth, outputHeight");
         vendorSource.ShouldContain("TryEnsureNativeDlssOutputTexture(outputWidth, outputHeight, outputHdr");
         vendorSource.ShouldContain("TryEnsureNativeDlssSession(renderer, viewport");
+        vendorSource.ShouldContain("TryEnsureNativeDlssFrameGenerationSession(renderer, viewport");
         vendorSource.ShouldContain("renderer.TryResolveStreamlineImage(sourceColorTexture, depthOnly: false");
         vendorSource.ShouldContain("renderer.EnqueueDlssUpscale(");
+        vendorSource.ShouldContain("renderer.EnqueueDlssFrameGeneration(");
         vendorSource.ShouldContain("RememberNativeDlssDispatch(camera, dispatchParameters);");
         vendorSource.ShouldContain("NVIDIA DLSS frame generation failed");
         vendorSource.ShouldContain("NvidiaDlssManager.Native.TryDispatchFrameGeneration(");
+        vendorSource.ShouldContain("VulkanRenderer.VulkanStreamlineImage hudlessImage = dlssRequested");
         vendorSource.ShouldContain("in dispatchParameters");
         vendorSource.ShouldContain("in depthImage");
         vendorSource.ShouldContain("in motionImage");
-        vendorSource.ShouldContain("in outputImage");
+        vendorSource.ShouldContain("in hudlessImage");
+        vendorSource.ShouldContain("NVIDIA DLSS frame generation requires a HUD-less color buffer matching the backbuffer.");
 
         string interopSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanStreamlineInterop.cs").Replace("\r\n", "\n");
         interopSource.ShouldContain("internal readonly record struct VulkanStreamlineImage");
@@ -202,31 +206,56 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         interopSource.ShouldContain("DeviceMemory memory = source.DescriptorMemory;");
         interopSource.ShouldContain("internal void EnqueueDlssUpscale(");
         interopSource.ShouldContain("EnqueueFrameOp(new DlssUpscaleOp(");
+        interopSource.ShouldContain("internal void EnqueueDlssFrameGeneration(");
+        interopSource.ShouldContain("EnqueueFrameOp(new DlssFrameGenerationOp(");
 
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.Dlss.cs").Replace("\r\n", "\n");
         commandBufferSource.ShouldContain("private void RecordDlssUpscaleOp(CommandBuffer commandBuffer, DlssUpscaleOp op)");
         commandBufferSource.ShouldContain("TransitionStreamlineImageToGeneral(commandBuffer, op.SourceColor)");
         commandBufferSource.ShouldContain("NvidiaDlssManager.Native.TryRecordNativeVulkanUpscale(");
         commandBufferSource.ShouldContain("Debug.RenderingError($\"Requested NVIDIA DLSS upscale failed during Vulkan command recording");
+        commandBufferSource.ShouldContain("private void RecordDlssFrameGenerationOp(CommandBuffer commandBuffer, DlssFrameGenerationOp op)");
+        commandBufferSource.ShouldContain("TransitionStreamlineImageToGeneral(commandBuffer, op.HudlessColor)");
+        commandBufferSource.ShouldContain("NvidiaDlssManager.Native.TryRecordNativeVulkanFrameGeneration(");
+        commandBufferSource.ShouldContain("Debug.RenderingError($\"Requested NVIDIA DLSS frame generation failed during Vulkan command recording");
 
         string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs").Replace("\r\n", "\n");
         meshRendererSource.ShouldContain("internal sealed record DlssUpscaleOp(");
+        meshRendererSource.ShouldContain("internal sealed record DlssFrameGenerationOp(");
         meshRendererSource.ShouldContain("DlssUpscaleOp dlssUpscale => dlssUpscale with { PassIndex = validatedPassIndex },");
+        meshRendererSource.ShouldContain("DlssFrameGenerationOp dlssFrameGeneration => dlssFrameGeneration with { PassIndex = validatedPassIndex },");
 
         string streamlineSource = ReadWorkspaceFile("XRENGINE/Rendering/DLSS/StreamlineNative.cs").Replace("\r\n", "\n");
         streamlineSource.ShouldContain("internal static bool TryCreateNativeVulkanSession(");
         streamlineSource.ShouldContain("internal static bool TryRecordNativeVulkanUpscale(");
         streamlineSource.ShouldContain("internal sealed class NativeVulkanSession : IDisposable");
+        streamlineSource.ShouldContain("internal static bool TryCreateNativeFrameGenerationSession(");
+        streamlineSource.ShouldContain("internal static bool TryRecordNativeVulkanFrameGeneration(");
+        streamlineSource.ShouldContain("internal sealed class NativeFrameGenerationSession : IDisposable");
         streamlineSource.ShouldContain("Device = renderer.Device,");
         streamlineSource.ShouldContain("StreamlineResource CreateResource(in VulkanRenderer.VulkanStreamlineImage image");
         streamlineSource.ShouldContain("StreamlineResult evaluateResult = _evaluateFeature(FeatureDlss, frameToken, (IntPtr)inputs, 1, commandBufferPtr);");
+        streamlineSource.ShouldContain("private const ulong StreamlineSdkVersion = 0x0002000B0001FEDC;");
         streamlineSource.ShouldContain("FeatureDlssG = 1000;");
+        streamlineSource.ShouldContain("FeatureReflex = 3;");
+        streamlineSource.ShouldContain("FeaturePcl = 4;");
         streamlineSource.ShouldContain("BufferTypeHudLessColor = 2;");
         streamlineSource.ShouldContain("slDLSSGSetOptions");
         streamlineSource.ShouldContain("slDLSSGGetState");
+        streamlineSource.ShouldContain("slReflexSetOptions");
+        streamlineSource.ShouldContain("slPCLSetMarker");
+        streamlineSource.ShouldContain("EnsureFrameGenerationRequirements");
+        streamlineSource.ShouldContain("StreamlineResourceLifecycle.ValidUntilPresent, outputExtent");
+        streamlineSource.ShouldContain("TryDisableFrameGeneration");
         streamlineSource.ShouldContain("TryCreateProxySwapchain");
         streamlineSource.ShouldContain("TryAcquireProxyNextImage");
         streamlineSource.ShouldContain("TryQueueProxyPresent");
+
+        string swapchainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/SwapChain.cs").Replace("\r\n", "\n");
+        swapchainSource.ShouldContain("DlssFrameGenerationHdrSurfacePreferences");
+        swapchainSource.ShouldContain("DisableStreamlineFrameGenerationBeforeSwapchainMutation");
+        swapchainSource.ShouldContain("NvidiaDlssManager.Native.TryDisableFrameGeneration");
+        swapchainSource.ShouldContain("Vulkan VSync with DLSS-G is not supported by Streamline.");
     }
 
     [Test]
@@ -234,18 +263,23 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     {
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("if (TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
+        pipelineSource.ShouldContain("if (mode == EAntiAliasingMode.Dlaa)\n            return 1.0f;");
+        pipelineSource.ShouldContain("RequestedInternalResolution = 1.0f;");
         pipelineSource.ShouldContain("RequestedInternalResolution = vendorScale;");
         pipelineSource.ShouldContain("NvidiaDlssManager.GetRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
         pipelineSource.ShouldContain("IntelXessManager.GetRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("if (TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
+        pipeline2Source.ShouldContain("if (mode == EAntiAliasingMode.Dlaa)\n            return 1.0f;");
+        pipeline2Source.ShouldContain("RequestedInternalResolution = 1.0f;");
         pipeline2Source.ShouldContain("RequestedInternalResolution = vendorScale;");
         pipeline2Source.ShouldContain("NvidiaDlssManager.GetRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
         pipeline2Source.ShouldContain("IntelXessManager.GetRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
 
         string dlssManagerSource = ReadWorkspaceFile("XRENGINE/Rendering/DLSS/NvidiaDlssManager.cs").Replace("\r\n", "\n");
         dlssManagerSource.ShouldContain("internal static float GetRecommendedRenderScale(object? settings = null)");
+        dlssManagerSource.ShouldContain("if (RuntimeEngine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa)\n                return MaxScale;");
         dlssManagerSource.ShouldContain("if (!RuntimeEngine.EffectiveSettings.EnableNvidiaDlss || !_cachedIsSupported)");
 
         string xessManagerSource = ReadWorkspaceFile("XRENGINE/Rendering/XeSS/IntelXessManager.cs").Replace("\r\n", "\n");
@@ -257,17 +291,23 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     {
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("private static bool RuntimeEnableVendorUpscale");
+        pipelineSource.ShouldContain("|| ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa");
         pipelineSource.ShouldContain("private static bool RuntimeEnableFxaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;");
         pipelineSource.ShouldContain("private static bool RuntimeEnableSmaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;");
         pipelineSource.ShouldContain("private static bool RuntimeNeedsTsrUpscale\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;");
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("private static bool RuntimeEnableVendorUpscale");
+        pipeline2Source.ShouldContain("|| ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa");
         pipeline2Source.ShouldContain("private static bool RuntimeEnableFxaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;");
         pipeline2Source.ShouldContain("private static bool RuntimeEnableSmaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;");
         pipeline2Source.ShouldContain("private static bool RuntimeNeedsTsrUpscale\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;");
 
         string vendorUpscaleSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs").Replace("\r\n", "\n");
+        vendorUpscaleSource.ShouldContain("private static bool IsNvidiaDlssFeatureRequested()");
+        vendorUpscaleSource.ShouldContain("private static bool IsNvidiaDlaaRequested()");
+        vendorUpscaleSource.ShouldContain("if (IsNvidiaDlaaRequested())\n                return TryRunDlss(out failureReason);");
+        vendorUpscaleSource.ShouldContain("=> RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Dlaa;");
         int explicitSourceIndex = vendorUpscaleSource.IndexOf("if (!string.IsNullOrWhiteSpace(SourceTextureName))", StringComparison.Ordinal);
         int sourceFboIndex = vendorUpscaleSource.IndexOf("if (sourceFrameBuffer is not null && FrameBufferHasColorAttachment(sourceFrameBuffer))", StringComparison.Ordinal);
 
@@ -415,6 +455,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     {
         string dlssManagerSource = ReadWorkspaceFile("XRENGINE/Rendering/DLSS/NvidiaDlssManager.cs").Replace("\r\n", "\n");
         string readmeSource = ReadWorkspaceFile("ThirdParty/NVIDIA/SDK/README.md").Replace("\r\n", "\n");
+        string installerSource = ReadWorkspaceFile("Tools/Dependencies/Get-StreamlineSdk.ps1").Replace("\r\n", "\n");
         string imguiPropertyEditorSource = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.PropertyEditor.cs").Replace("\r\n", "\n");
 
         dlssManagerSource.ShouldContain("Download the official NVIDIA Streamline/DLSS SDK");
@@ -428,7 +469,11 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         readmeSource.ShouldContain("sl.dlss.dll");
         readmeSource.ShouldContain("nvngx_dlss.dll");
         readmeSource.ShouldContain("sl.dlss_g.dll");
+        readmeSource.ShouldContain("sl.reflex.dll");
+        readmeSource.ShouldContain("sl.pcl.dll");
         readmeSource.ShouldContain("nvngx_dlssg.dll");
+        installerSource.ShouldContain("\"sl.reflex.dll\",");
+        installerSource.ShouldContain("\"sl.pcl.dll\",");
 
         imguiPropertyEditorSource.ShouldContain("DrawInspectorMemberLabel(property, displayName, description, activeOverride);");
         imguiPropertyEditorSource.ShouldContain("NvidiaDlssManager.RequiredRuntimeDllsAvailable");

@@ -45,8 +45,8 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
         settings.GTAOUseNormalWeightedBlur.ShouldBeTrue();
     }
 
-    [TestCase("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs")]
-    [TestCase("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs")]
+    [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs")]
+    [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs")]
     public void GtaoSchemaDefaults_UseCentralizedRuntimeConstants(string relativePath)
     {
         string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
@@ -70,7 +70,7 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
     [Test]
     public void GtaoRuntimeFallbacks_AndShaderDefaults_MatchRequestedTuning()
     {
-        string settingsSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/GroundTruthAmbientOcclusionSettings.cs").Replace("\r\n", "\n");
+        string settingsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Camera/GroundTruthAmbientOcclusionSettings.cs").Replace("\r\n", "\n");
         settingsSource.ShouldContain("program.Uniform(\"Radius\", PositiveOr(Owner.Radius, AmbientOcclusionSettings.DefaultRadius));");
         settingsSource.ShouldContain("program.Uniform(\"Bias\", PositiveOr(Owner.Bias, AmbientOcclusionSettings.DefaultBias));");
         settingsSource.ShouldContain("program.Uniform(\"Power\", PositiveOr(Owner.Power, AmbientOcclusionSettings.DefaultPower));");
@@ -79,7 +79,7 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
         settingsSource.ShouldContain("program.Uniform(\"DenoiseSharpness\", PositiveOr(DenoiseSharpness, DefaultDenoiseSharpness));");
         settingsSource.ShouldContain("program.Uniform(\"VisibilityBitmaskThickness\", PositiveOr(VisibilityBitmaskThickness, DefaultVisibilityBitmaskThickness));");
 
-        string blurPassSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/AO/VPRC_GTAOPass.cs").Replace("\r\n", "\n");
+        string blurPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_GTAOPass.cs").Replace("\r\n", "\n");
         blurPassSource.ShouldContain("program.Uniform(\"DenoiseRadius\", Math.Clamp(settings?.GTAODenoiseRadius ?? GroundTruthAmbientOcclusionSettings.DefaultDenoiseRadius, 0, 16));");
         blurPassSource.ShouldContain("program.Uniform(\"DenoiseSharpness\", settings?.GTAODenoiseSharpness is > 0.0f ? settings.GTAODenoiseSharpness : GroundTruthAmbientOcclusionSettings.DefaultDenoiseSharpness);");
 

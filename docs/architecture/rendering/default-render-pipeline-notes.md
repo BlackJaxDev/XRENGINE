@@ -439,7 +439,7 @@ The temporal resolve already used motion vectors, depth rejection, neighborhood 
 - Use `GeometryInstability` to find edges being over-rejected by depth discontinuities.
 - Use `HistoryAcceptance` to distinguish outright history rejection from low-confidence blending.
 - In the editor, these Temporal AA controls only affect the camera that is actually driving the active viewport. If the scene panel is rendering through the editor flying camera, changing a different camera component's Temporal AA settings will not change the scene panel output.
-- The Temporal AA controls only affect the live output when the active camera's effective AA mode is `TAA` or `TSR`; if the camera is using `None`, `MSAA`, `FXAA`, or `SMAA`, the temporal stage settings are intentionally inert.
+- The Temporal AA controls only affect the live output when the active camera's effective AA mode is `TAA` or `TSR`; if the camera is using `None`, `MSAA`, `FXAA`, `SMAA`, or `DLAA`, the temporal resolve settings are intentionally inert. `DLAA` still uses temporal jitter and motion/depth inputs, but the resolve is owned by NVIDIA DLSS/Streamline rather than the engine's temporal accumulation shader.
 
 ---
 
@@ -562,3 +562,11 @@ The stage owns broad render-pipeline diagnostics, not only GPU BVH wireframes. I
 - `Meshlet Debug Display`: requests meshlet debug colors through production meshlet dispatch when available, or through the diagnostic direct-dispatch overlay on OpenGL NV mesh-shader hardware. Keep `VPRC_RenderMeshletDebugDisplay` wired in both default pipelines so the inspector toggle is visible on the active pipeline as well as V2.
 
 Keep the full-overdraw pass mono-only (`!Stereo`) and after post-process resource caching but before final output. The count pass is intentionally debug-only mesh submission with a forced simple material, so it should not be used for performance numbers except to locate screen regions with repeated pixel coverage.
+
+---
+
+## 27. DLAA And MFAA AA Modes
+
+`DLAA` is a first-class AA mode in the default render pipeline. It requests the existing NVIDIA DLSS vendor path at native internal resolution, bypasses the in-engine FXAA/SMAA/TSR post-AA chain, and fails visibly when the DLSS runtime or compatible NVIDIA path is unavailable.
+
+`MFAA` is not exposed as a selectable engine AA mode. NVIDIA MFAA is a driver-side enhancement for MSAA rather than an OpenGL/Vulkan render-pipeline pass the engine can require. Use `MSAA` in XRENGINE and enable MFAA in the NVIDIA driver when testing that path; do not label plain MSAA as MFAA in engine diagnostics.

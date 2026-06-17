@@ -82,27 +82,59 @@ public unsafe partial class VulkanRenderer
 	{
 		#region Uniform Buffer Allocation
 
+		private int UniformBufferSlotCount => Math.Max(_uniformDrawSlotCapacity, 1);
+
+		private int UniformBufferFrameCount => Math.Max(Renderer.swapChainImages?.Length ?? 1, 1);
+
+		private int UniformBufferArrayLength => UniformBufferFrameCount * UniformBufferSlotCount;
+
+		private void EnsureUniformDrawSlotCapacity(int requiredSlots)
+		{
+			requiredSlots = Math.Max(requiredSlots, 1);
+			if (requiredSlots <= _uniformDrawSlotCapacity)
+				return;
+
+			int newCapacity = Math.Max(_uniformDrawSlotCapacity, 1);
+			while (newCapacity < requiredSlots)
+				newCapacity <<= 1;
+
+			_uniformDrawSlotCapacity = newCapacity;
+			DestroyDescriptors();
+			_descriptorDirty = true;
+		}
+
+		private int ResolveUniformBufferIndex(int frameIndex, int drawUniformSlot, int bufferCount)
+		{
+			if (bufferCount <= 1)
+				return 0;
+
+			int frame = Math.Clamp(frameIndex, 0, UniformBufferFrameCount - 1);
+			int slot = Math.Clamp(drawUniformSlot, 0, UniformBufferSlotCount - 1);
+			int index = frame * UniformBufferSlotCount + slot;
+			return Math.Clamp(index, 0, bufferCount - 1);
+		}
+
 		/// <summary>
-		/// Ensures a per-frame engine uniform buffer exists and is large enough.
-		/// Destroys and recreates if the frame count or size has changed.
+		/// Ensures per-frame/per-draw-slot engine uniform buffers exist and are large enough.
+		/// Destroys and recreates if the frame count, slot count, or size has changed.
 		/// </summary>
 		private bool EnsureEngineUniformBuffer(string name, uint size)
 		{
-			int frames = Renderer.swapChainImages?.Length ?? 1;
+			int bufferCount = UniformBufferArrayLength;
 			if (_engineUniformBuffers.TryGetValue(name, out EngineUniformBuffer[]? existing))
 			{
-				bool valid = existing.Length == frames && existing.All(e => e.Buffer.Handle != 0 && e.Size >= size);
+				bool valid = existing.Length == bufferCount && existing.All(e => e.Buffer.Handle != 0 && e.Size >= size);
 				if (valid)
 					return true;
 
 				DestroyEngineUniformBuffers(name);
 			}
 
-			EngineUniformBuffer[] buffers = new EngineUniformBuffer[frames];
+			EngineUniformBuffer[] buffers = new EngineUniformBuffer[bufferCount];
 			BufferUsageFlags usage = string.Equals(name, FallbackDescriptorUniformName, StringComparison.Ordinal)
 				? BufferUsageFlags.UniformBufferBit | BufferUsageFlags.StorageBufferBit
 				: BufferUsageFlags.UniformBufferBit;
-			for (int i = 0; i < frames; i++)
+			for (int i = 0; i < bufferCount; i++)
 			{
 				if (!CreateHostVisibleBuffer(size, usage, out var buffer, out var memory))
 					return false;
@@ -115,23 +147,23 @@ public unsafe partial class VulkanRenderer
 		}
 
 		/// <summary>
-		/// Ensures a per-frame auto uniform buffer exists and is large enough.
-		/// Destroys and recreates if the frame count or size has changed.
+		/// Ensures per-frame/per-draw-slot auto uniform buffers exist and are large enough.
+		/// Destroys and recreates if the frame count, slot count, or size has changed.
 		/// </summary>
 		private bool EnsureAutoUniformBuffer(string name, uint size)
 		{
-			int frames = Renderer.swapChainImages?.Length ?? 1;
+			int bufferCount = UniformBufferArrayLength;
 			if (_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? existing))
 			{
-				bool valid = existing.Length == frames && existing.All(e => e.Buffer.Handle != 0 && e.Size >= size);
+				bool valid = existing.Length == bufferCount && existing.All(e => e.Buffer.Handle != 0 && e.Size >= size);
 				if (valid)
 					return true;
 
 				DestroyAutoUniformBuffers(name);
 			}
 
-			AutoUniformBuffer[] buffers = new AutoUniformBuffer[frames];
-			for (int i = 0; i < frames; i++)
+			AutoUniformBuffer[] buffers = new AutoUniformBuffer[bufferCount];
+			for (int i = 0; i < bufferCount; i++)
 			{
 				if (!CreateHostVisibleBuffer(size, BufferUsageFlags.UniformBufferBit, out var buffer, out var memory))
 					return false;
@@ -192,7 +224,7 @@ public unsafe partial class VulkanRenderer
 		/// Writes engine-uniform data into all active engine UBOs for the current frame.
 		/// Called once per draw before descriptor binding.
 		/// </summary>
-		private void UpdateEngineUniformBuffersForDraw(int frameIndex, in PendingMeshDraw draw)
+		private void UpdateEngineUniformBuffersForDraw(int frameIndex, int drawUniformSlot, in PendingMeshDraw draw)
 		{
 			if (_engineUniformBuffers.Count == 0)
 				return;
@@ -203,7 +235,7 @@ public unsafe partial class VulkanRenderer
 				if (buffers.Length == 0)
 					continue;
 
-				int idx = Math.Clamp(frameIndex, 0, buffers.Length - 1);
+				int idx = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, buffers.Length);
 				EngineUniformBuffer buffer = buffers[idx];
 				if (buffer.Buffer.Handle == 0)
 					continue;
@@ -216,7 +248,7 @@ public unsafe partial class VulkanRenderer
 		/// Writes auto-uniform block data into all active auto UBOs for the current frame.
 		/// Auto uniforms are populated from engine state, program overrides, and material parameters.
 		/// </summary>
-		private void UpdateAutoUniformBuffersForDraw(int frameIndex, XRMaterial material, in PendingMeshDraw draw)
+		private void UpdateAutoUniformBuffersForDraw(int frameIndex, int drawUniformSlot, XRMaterial material, in PendingMeshDraw draw)
 		{
 			if (_program is null || _autoUniformBuffers.Count == 0)
 				return;
@@ -228,7 +260,7 @@ public unsafe partial class VulkanRenderer
 				if (!_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)
 					continue;
 
-				int idx = Math.Clamp(frameIndex, 0, buffers.Length - 1);
+				int idx = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, buffers.Length);
 				AutoUniformBuffer buffer = buffers[idx];
 				if (buffer.Buffer.Handle == 0)
 					continue;

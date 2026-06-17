@@ -446,7 +446,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (RuntimeEngine.Rendering.State.IsStereoPass)
                 ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
-            camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiViewCustom);
+            camera.SetAmbientOcclusionUniforms(
+                program,
+                AmbientOcclusionSettings.EType.MultiViewCustom,
+                ResolveSettingsPipeline());
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             Debug.RenderingEvery(
@@ -480,13 +483,22 @@ namespace XREngine.Rendering.Pipelines.Commands
                 "[AO][MVAO] Blur depthMode={0}",
                 camera?.DepthMode.ToString() ?? "null");
 
-            var stage = ActivePipelineInstance.RenderState.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+            var stage = GetCurrentCamera()?.GetPostProcessStageState<AmbientOcclusionSettings>(ResolveSettingsPipeline());
             var settings = stage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true ? backing : null;
             float depthPhi = settings?.DepthPhi is > 0.0f ? settings.DepthPhi : 4.0f;
             float normalPhi = settings?.NormalPhi is > 0.0f ? settings.NormalPhi : 64.0f;
             program.Uniform("DepthPhi", depthPhi);
             program.Uniform("NormalPhi", normalPhi);
         }
+
+        private RenderPipeline? ResolveSettingsPipeline()
+            => ActivePipelineInstance?.AssignedPipeline ?? ParentPipeline;
+
+        private XRCamera? GetCurrentCamera()
+            => ActivePipelineInstance.RenderState.SceneCamera
+                ?? ActivePipelineInstance.RenderState.RenderingCamera
+                ?? ActivePipelineInstance.LastSceneCamera
+                ?? ActivePipelineInstance.LastRenderingCamera;
 
         private XRTexture2D GetOrCreateNoiseTexture(XRRenderPipelineInstance instance, InstanceState state)
         {

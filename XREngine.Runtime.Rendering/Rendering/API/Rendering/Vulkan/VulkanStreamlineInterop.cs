@@ -99,6 +99,25 @@ public unsafe partial class VulkanRenderer
             motion,
             outputColor,
             exposure,
+                parameters,
+                context));
+    }
+
+    internal void EnqueueDlssFrameGeneration(
+        int passIndex,
+        NvidiaDlssManager.Native.NativeFrameGenerationSession session,
+        in VulkanStreamlineImage depth,
+        in VulkanStreamlineImage motion,
+        in VulkanStreamlineImage hudlessColor,
+        in VulkanUpscaleBridgeDispatchParameters parameters)
+    {
+        FrameOpContext context = CaptureFrameOpContext();
+        EnqueueFrameOp(new DlssFrameGenerationOp(
+            passIndex,
+            session,
+            depth,
+            motion,
+            hudlessColor,
             parameters,
             context));
     }

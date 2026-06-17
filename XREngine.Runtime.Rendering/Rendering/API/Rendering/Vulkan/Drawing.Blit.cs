@@ -256,9 +256,9 @@ namespace XREngine.Rendering.Vulkan
             if (apiObject is VkTextureView textureView)
             {
                 // Texture views can outlive backing physical image reallocations.
-                // Rebuild the view so DescriptorImage points at a currently valid VkImage.
-                textureView.Destroy();
-                textureView.Generate();
+                // Refresh the descriptor handles in place so readback/blit resolution
+                // does not re-enter view destruction/generation while resolving source state.
+                textureView.RefreshDescriptorFromViewedTextureIfStale();
                 apiObject = textureView;
             }
 
@@ -648,6 +648,30 @@ namespace XREngine.Rendering.Vulkan
             return source.TrackedImageLayout;
         }
 
+        private static ImageLayout ResolvePostTransferReadLayout(in BlitImageInfo info)
+        {
+            if (info.DescriptorSource is { } descriptorSource)
+            {
+                ImageUsageFlags usage = descriptorSource.DescriptorUsage;
+                if ((usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0)
+                {
+                    return IsDepthOrStencilAspect(info.AspectMask)
+                        ? ImageLayout.DepthStencilReadOnlyOptimal
+                        : ImageLayout.ShaderReadOnlyOptimal;
+                }
+
+                if ((usage & ImageUsageFlags.StorageBit) != 0)
+                    return ImageLayout.General;
+            }
+
+            if (info.PreferredLayout != ImageLayout.Undefined)
+                return info.PreferredLayout;
+
+            return IsDepthOrStencilAspect(info.AspectMask)
+                ? ImageLayout.DepthStencilAttachmentOptimal
+                : ImageLayout.ColorAttachmentOptimal;
+        }
+
         private static int ResolveBlitInfoLayerIndex(in BlitImageInfo info)
             => info.LayerCount == 1u
                 ? checked((int)info.BaseArrayLayer)
@@ -762,9 +786,7 @@ namespace XREngine.Rendering.Vulkan
                 using var scope = NewCommandScope();
 
                 ImageLayout preTransferLayout = source.PreferredLayout;
-                ImageLayout postTransferLayout = preTransferLayout != ImageLayout.Undefined
-                    ? preTransferLayout
-                    : ImageLayout.ColorAttachmentOptimal;
+                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(source);
 
                 TransitionForBlit(
                     scope.CommandBuffer,
@@ -853,9 +875,7 @@ namespace XREngine.Rendering.Vulkan
                 using var scope = NewCommandScope();
 
                 ImageLayout preTransferLayout = source.PreferredLayout;
-                ImageLayout postTransferLayout = preTransferLayout != ImageLayout.Undefined
-                    ? preTransferLayout
-                    : ImageLayout.ColorAttachmentOptimal;
+                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(source);
 
                 TransitionForBlit(
                     scope.CommandBuffer,
@@ -1263,11 +1283,7 @@ namespace XREngine.Rendering.Vulkan
                 using var scope = NewCommandScope();
 
                 ImageLayout preTransferLayout = source.PreferredLayout;
-                ImageLayout postTransferLayout = preTransferLayout != ImageLayout.Undefined
-                    ? preTransferLayout
-                    : (IsDepthOrStencilAspect(source.AspectMask)
-                        ? ImageLayout.DepthStencilAttachmentOptimal
-                        : ImageLayout.ColorAttachmentOptimal);
+                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(source);
 
                 TransitionForBlit(
                     scope.CommandBuffer,
@@ -1352,9 +1368,7 @@ namespace XREngine.Rendering.Vulkan
                 using var scope = NewCommandScope();
 
                 ImageLayout preTransferLayout = source.PreferredLayout;
-                ImageLayout postTransferLayout = preTransferLayout != ImageLayout.Undefined
-                    ? preTransferLayout
-                    : ImageLayout.DepthStencilAttachmentOptimal;
+                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(source);
 
                 TransitionForBlit(
                     scope.CommandBuffer,

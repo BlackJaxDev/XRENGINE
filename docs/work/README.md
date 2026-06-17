@@ -50,6 +50,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Octahedral billboard capture | Active | [todo/octahedral-billboard-capture-todo.md](todo/octahedral-billboard-capture-todo.md) | Phased repair plan for model/submesh impostor capture, runtime billboards, HLOD integration, and asset persistence. |
 | Shader and snippet optimization | Active | [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md) | Active shader performance and preprocessing tracker. |
 | Resolved shader source optimization | Active | [todo/rendering/resolved-shader-source-optimization-todo.md](todo/rendering/resolved-shader-source-optimization-todo.md) | Architectural restructuring to resolve all shader includes/snippets first, then prune compiler-facing source generically for every shader family. |
+| XRDataBuffer RHI write model | Stable doc + testing | [../architecture/rendering/xrdatabuffer-rhi-write-model.md](../architecture/rendering/xrdatabuffer-rhi-write-model.md), [testing/xrdatabuffer-rhi-write-model-validation.md](testing/xrdatabuffer-rhi-write-model-validation.md) | Core write model and representative migrations have landed; remaining work is hardware, barrier, and GPU submission strategy validation. |
 | OpenGL shader program deduplication | Active | [todo/rendering/opengl-shader-program-deduplication-todo.md](todo/rendering/opengl-shader-program-deduplication-todo.md) | Tracker for reducing duplicate logical shader-program wrappers and adding grouped Shader Program Links diagnostics. |
 | Vulkan wrapper parity | Active | [todo/rendering/vulkan-wrapper-parity/README.md](todo/rendering/vulkan-wrapper-parity/README.md) | Consolidated open parity tracker for Vulkan mesh renderer, mesh ownership, material, shader, texture, and data buffer behavior against OpenGL. |
 | GPU softbody rigging | Active | [todo/gpu-softbody-mesh-rigging-todo.md](todo/gpu-softbody-mesh-rigging-todo.md) | Still an active work item. |
@@ -164,6 +165,7 @@ Generated audit outputs should be treated as disposable report artifacts rather 
 - [testing/texture-management-runtime-baseline-2026-05-01.md](testing/texture-management-runtime-baseline-2026-05-01.md)
 - [testing/texture-runtime-streaming-validation.md](testing/texture-runtime-streaming-validation.md)
 - [testing/texture-streaming-run-analysis-2026-05-01-180642.md](testing/texture-streaming-run-analysis-2026-05-01-180642.md)
+- [testing/xrdatabuffer-rhi-write-model-validation.md](testing/xrdatabuffer-rhi-write-model-validation.md)
 
 ## Notes
 

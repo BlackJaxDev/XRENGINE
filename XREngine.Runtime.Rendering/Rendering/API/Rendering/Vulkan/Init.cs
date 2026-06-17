@@ -85,6 +85,7 @@ namespace XREngine.Rendering.Vulkan
             if (device.Handle != 0)
                 DeviceWaitIdle();
 
+            DrainVulkanPipelineCompileQueueForShutdown();
             WaitForPendingReadbackTasks(TimeSpan.FromSeconds(6));
             DestroyComputeTransientResources();
             DestroyDanglingMaterialWrappers();
@@ -140,6 +141,7 @@ namespace XREngine.Rendering.Vulkan
             // Flush once more before destroying the logical device to catch any
             // handles retired by sync/command-pool teardown.
             ForceFlushAllRetiredResources();
+            DestroySharedGraphicsPipelineLibraries();
 
             DestroyLogicalDevice();
             DestroyValidationLayers();

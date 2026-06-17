@@ -12,7 +12,7 @@ namespace XREngine.Rendering.DLSS
         internal static class Native
         {
             private const string StreamlineLibrary = "sl.interposer.dll";
-            private const ulong StreamlineSdkVersion = 0x000200090000FEDC;
+            private const ulong StreamlineSdkVersion = 0x0002000B0001FEDC;
             private const string StreamlineProjectId = "f61b5f80-6a02-4c83-8bb2-96ab8e33d2d7";
             private const uint FeatureDlss = 0;
             private const uint FeatureReflex = 3;
@@ -31,10 +31,13 @@ namespace XREngine.Rendering.DLSS
 
             private static bool _initialized;
             private static bool _runtimeInitialized;
+            private static bool _runtimeIncludesDlss;
             private static bool _runtimeIncludesFrameGeneration;
             private static bool _vulkanInfoInitialized;
             private static bool _featureFunctionsResolved;
             private static bool _frameGenerationFeatureFunctionsResolved;
+            private static bool _frameGenerationRequirementsChecked;
+            private static bool _frameGenerationRequirementsValid;
             private static bool _vulkanProxyFunctionsResolved;
             private static bool _reflexEnabled;
             private static int _activeBridgeSessions;
@@ -46,6 +49,7 @@ namespace XREngine.Rendering.DLSS
             private static string? _lastError;
             private static string? _lastStreamlineMessage;
             private static string? _lastStreamlineWarningOrError;
+            private static string? _frameGenerationRequirementsFailure;
             private static string? _terminalBridgeFailureReason;
             private static int _bridgeFailureGeneration;
 
@@ -240,6 +244,46 @@ namespace XREngine.Rendering.DLSS
                     in parameters,
                     out failureReason);
 
+            internal static bool TryCreateNativeFrameGenerationSession(
+                VulkanRenderer renderer,
+                uint viewportId,
+                out NativeFrameGenerationSession? session,
+                out string failureReason)
+            {
+                session = null;
+                failureReason = string.Empty;
+
+                lock (Sync)
+                {
+                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: false)
+                        || !ResolveFrameGenerationFeatureFunctions(out failureReason))
+                    {
+                        return false;
+                    }
+
+                    _activeNativeVulkanSessions++;
+                }
+
+                session = new NativeFrameGenerationSession(viewportId);
+                return true;
+            }
+
+            internal static bool TryRecordNativeVulkanFrameGeneration(
+                NativeFrameGenerationSession session,
+                CommandBuffer commandBuffer,
+                in VulkanRenderer.VulkanStreamlineImage depth,
+                in VulkanRenderer.VulkanStreamlineImage motion,
+                in VulkanRenderer.VulkanStreamlineImage hudlessColor,
+                in VulkanUpscaleBridgeDispatchParameters parameters,
+                out string failureReason)
+                => session.Record(
+                    commandBuffer,
+                    depth,
+                    motion,
+                    hudlessColor,
+                    in parameters,
+                    out failureReason);
+
             internal static bool IsFrameGenerationAvailable(out string? error)
             {
                 error = null;
@@ -253,7 +297,8 @@ namespace XREngine.Rendering.DLSS
 
                 lock (Sync)
                 {
-                    if (!EnsureRuntimeInitialized(includeFrameGeneration: true, out string failureReason))
+                    if (!EnsureRuntimeInitialized(includeFrameGeneration: true, out string failureReason, includeDlss: false)
+                        || !ResolveFrameGenerationFeatureFunctions(out failureReason))
                     {
                         error = failureReason;
                         _lastError = error;
@@ -308,10 +353,26 @@ namespace XREngine.Rendering.DLSS
                     return false;
                 }
 
+                if (renderer.SwapchainImageFormat == Format.R16G16B16A16Sfloat)
+                {
+                    errorMessage =
+                        "NVIDIA DLSS frame generation does not support FP16/scRGB backbuffers. " +
+                        "Use an RGB10/UINT10 HDR10 swapchain format or disable HDR while DLSS-G is enabled.";
+                    _lastError = errorMessage;
+                    return false;
+                }
+
                 lock (Sync)
                 {
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out string failureReason)
+                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out string failureReason, includeDlss: false)
                         || !ResolveFrameGenerationFeatureFunctions(out failureReason))
+                    {
+                        errorMessage = failureReason;
+                        _lastError = errorMessage;
+                        return false;
+                    }
+
+                    if (!EnsureFrameGenerationRequirements(out failureReason))
                     {
                         errorMessage = failureReason;
                         _lastError = errorMessage;
@@ -386,6 +447,43 @@ namespace XREngine.Rendering.DLSS
                     errorCode = (int)StreamlineResult.Ok;
                     errorMessage = null;
                     return true;
+                }
+            }
+
+            internal static bool TryDisableFrameGeneration(
+                VulkanRenderer renderer,
+                XRViewport viewport,
+                out string failureReason)
+            {
+                failureReason = string.Empty;
+
+                lock (Sync)
+                {
+                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: false)
+                        || !ResolveFrameGenerationFeatureFunctions(out failureReason))
+                    {
+                        return false;
+                    }
+
+                    StreamlineViewportHandle streamlineViewport = CreateViewportHandle(viewport);
+                    StreamlineDlssGOptions options = new()
+                    {
+                        Base = CreateBase(DlssGOptionsStructType, 5),
+                        Mode = StreamlineDlssGMode.Off,
+                        NumFramesToGenerate = 1,
+                    };
+
+                    StreamlineResult result = _setFrameGenerationOptions!(ref streamlineViewport, ref options);
+                    if (result == StreamlineResult.Ok)
+                        return true;
+
+                    failureReason = $"slDLSSGSetOptions(Off) failed with {result}.";
+                    string? streamlineMessage = _lastStreamlineWarningOrError ?? _lastStreamlineMessage;
+                    if (!string.IsNullOrWhiteSpace(streamlineMessage))
+                        failureReason += $" Last Streamline message: {streamlineMessage}.";
+
+                    _lastError = failureReason;
+                    return false;
                 }
             }
 
@@ -491,7 +589,7 @@ namespace XREngine.Rendering.DLSS
             {
                 lock (Sync)
                 {
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason)
+                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: false)
                         || !ResolveFrameGenerationFeatureFunctions(out failureReason))
                     {
                         return false;
@@ -543,11 +641,15 @@ namespace XREngine.Rendering.DLSS
                 return true;
             }
 
-            private static unsafe bool EnsureNativeVulkanRuntime(VulkanRenderer renderer, bool includeFrameGeneration, out string failureReason)
+            private static unsafe bool EnsureNativeVulkanRuntime(
+                VulkanRenderer renderer,
+                bool includeFrameGeneration,
+                out string failureReason,
+                bool includeDlss = true)
             {
                 failureReason = string.Empty;
 
-                if (!EnsureRuntimeInitialized(includeFrameGeneration, out failureReason))
+                if (!EnsureRuntimeInitialized(includeFrameGeneration, out failureReason, includeDlss))
                     return false;
 
                 if (_vulkanInfoInitialized && !MatchesBoundDevice(renderer))
@@ -560,7 +662,7 @@ namespace XREngine.Rendering.DLSS
                     }
 
                     ShutdownRuntimeUnsafe();
-                    if (!EnsureRuntimeInitialized(includeFrameGeneration, out failureReason))
+                    if (!EnsureRuntimeInitialized(includeFrameGeneration, out failureReason, includeDlss))
                         return false;
                 }
 
@@ -581,7 +683,7 @@ namespace XREngine.Rendering.DLSS
                     _boundPhysicalDeviceHandle = renderer.PhysicalDevice.Handle;
                 }
 
-                if (!_featureFunctionsResolved && !ResolveFeatureFunctions(out failureReason))
+                if (includeDlss && !_featureFunctionsResolved && !ResolveFeatureFunctions(out failureReason))
                 {
                     MarkTerminalBridgeFailure(failureReason);
                     return false;
@@ -643,7 +745,10 @@ namespace XREngine.Rendering.DLSS
                 return true;
             }
 
-            private static unsafe bool EnsureRuntimeInitialized(bool includeFrameGeneration, out string failureReason)
+            private static unsafe bool EnsureRuntimeInitialized(
+                bool includeFrameGeneration,
+                out string failureReason,
+                bool includeDlss = true)
             {
                 failureReason = string.Empty;
 
@@ -660,13 +765,17 @@ namespace XREngine.Rendering.DLSS
                     return false;
                 }
 
-                if (_runtimeInitialized && includeFrameGeneration && !_runtimeIncludesFrameGeneration)
+                bool needsAdditionalFeatures =
+                    _runtimeInitialized &&
+                    ((includeDlss && !_runtimeIncludesDlss) ||
+                     (includeFrameGeneration && !_runtimeIncludesFrameGeneration));
+                if (needsAdditionalFeatures)
                 {
                     if (_activeBridgeSessions != 0 || _activeNativeVulkanSessions != 0)
                     {
                         failureReason =
-                            "Streamline was initialized without DLSS-G and active Streamline sessions are still using it. " +
-                            "Recreate the renderer or disable/re-enable the DLSS pipeline so Streamline can reload with DLSS-G, Reflex, and PCL.";
+                            "Streamline was initialized without all requested features and active Streamline sessions are still using it. " +
+                            "Recreate the renderer or disable/re-enable the DLSS pipeline so Streamline can reload with the required DLSS-G/DLSS/Reflex/PCL feature set.";
                         _lastError = failureReason;
                         return false;
                     }
@@ -678,8 +787,9 @@ namespace XREngine.Rendering.DLSS
                     return true;
 
                 uint* features = stackalloc uint[4];
-                uint featureCount = 1;
-                features[0] = FeatureDlss;
+                uint featureCount = 0;
+                if (includeDlss)
+                    features[featureCount++] = FeatureDlss;
                 if (includeFrameGeneration)
                 {
                     features[featureCount++] = FeatureDlssG;
@@ -699,6 +809,7 @@ namespace XREngine.Rendering.DLSS
                     }
 
                     _runtimeInitialized = true;
+                    _runtimeIncludesDlss = includeDlss;
                     _runtimeIncludesFrameGeneration = includeFrameGeneration;
                     _vulkanInfoInitialized = false;
                     _featureFunctionsResolved = false;
@@ -807,6 +918,69 @@ namespace XREngine.Rendering.DLSS
                 return true;
             }
 
+            private static bool EnsureFrameGenerationRequirements(out string failureReason)
+            {
+                if (_frameGenerationRequirementsChecked)
+                {
+                    failureReason = _frameGenerationRequirementsValid
+                        ? string.Empty
+                        : _frameGenerationRequirementsFailure ?? "NVIDIA DLSS frame generation requirements were not met.";
+                    return _frameGenerationRequirementsValid;
+                }
+
+                _frameGenerationRequirementsChecked = true;
+                _frameGenerationRequirementsValid = false;
+                _frameGenerationRequirementsFailure = null;
+                failureReason = string.Empty;
+
+                if (_getFeatureRequirements is null)
+                {
+                    failureReason = "Streamline feature-requirements export was not resolved.";
+                    _frameGenerationRequirementsFailure = failureReason;
+                    _lastError = failureReason;
+                    return false;
+                }
+
+                StreamlineFeatureRequirements requirements = new()
+                {
+                    Base = CreateBase(FeatureRequirementsStructType, 2),
+                };
+
+                StreamlineResult result = _getFeatureRequirements(FeatureDlssG, ref requirements);
+                if (result != StreamlineResult.Ok)
+                {
+                    failureReason = $"slGetFeatureRequirements(DLSS-G) failed with {result}.";
+                    AppendLastStreamlineMessage(ref failureReason);
+                    _frameGenerationRequirementsFailure = failureReason;
+                    _lastError = failureReason;
+                    return false;
+                }
+
+                if ((requirements.Flags & StreamlineFeatureRequirementFlags.VulkanSupported) == 0)
+                {
+                    failureReason =
+                        "NVIDIA DLSS frame generation reported no Vulkan support for the current runtime configuration. " +
+                        $"OS detected={requirements.OsVersionDetected.Major}.{requirements.OsVersionDetected.Minor}.{requirements.OsVersionDetected.Build}, " +
+                        $"OS required={requirements.OsVersionRequired.Major}.{requirements.OsVersionRequired.Minor}.{requirements.OsVersionRequired.Build}, " +
+                        $"driver detected={requirements.DriverVersionDetected.Major}.{requirements.DriverVersionDetected.Minor}.{requirements.DriverVersionDetected.Build}, " +
+                        $"driver required={requirements.DriverVersionRequired.Major}.{requirements.DriverVersionRequired.Minor}.{requirements.DriverVersionRequired.Build}, " +
+                        $"flags={requirements.Flags}.";
+                    _frameGenerationRequirementsFailure = failureReason;
+                    _lastError = failureReason;
+                    return false;
+                }
+
+                _frameGenerationRequirementsValid = true;
+                return true;
+            }
+
+            private static void AppendLastStreamlineMessage(ref string message)
+            {
+                string? streamlineMessage = _lastStreamlineWarningOrError ?? _lastStreamlineMessage;
+                if (!string.IsNullOrWhiteSpace(streamlineMessage))
+                    message += $" Last Streamline message: {streamlineMessage}.";
+            }
+
             private static bool TryResolveFeatureFunction<T>(uint feature, string name, out T? del, bool required = true) where T : Delegate
             {
                 del = null;
@@ -845,7 +1019,7 @@ namespace XREngine.Rendering.DLSS
             {
                 lock (Sync)
                 {
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason)
+                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: false)
                         || !EnsureVulkanProxyFunctionsResolved(out failureReason))
                     {
                         return false;
@@ -1247,10 +1421,14 @@ namespace XREngine.Rendering.DLSS
                     _shutdown();
 
                 _runtimeInitialized = false;
+                _runtimeIncludesDlss = false;
                 _runtimeIncludesFrameGeneration = false;
                 _vulkanInfoInitialized = false;
                 _featureFunctionsResolved = false;
                 _frameGenerationFeatureFunctionsResolved = false;
+                _frameGenerationRequirementsChecked = false;
+                _frameGenerationRequirementsValid = false;
+                _frameGenerationRequirementsFailure = null;
                 _vulkanProxyFunctionsResolved = false;
                 _reflexEnabled = false;
                 _boundDeviceHandle = 0;
@@ -1687,6 +1865,236 @@ namespace XREngine.Rendering.DLSS
                 }
 
                 private static unsafe StreamlineResourceTag CreateResourceTag(StreamlineResource* resource, uint bufferType, StreamlineResourceLifecycle lifecycle, StreamlineExtent extent)
+                {
+                    return new StreamlineResourceTag
+                    {
+                        Base = CreateBase(ResourceTagStructType, 1),
+                        Resource = (IntPtr)resource,
+                        Type = bufferType,
+                        Lifecycle = lifecycle,
+                        Extent = extent,
+                    };
+                }
+
+                private static StreamlineFloat4x4 ToFloat4x4(Matrix4x4 matrix)
+                {
+                    return new StreamlineFloat4x4
+                    {
+                        Row0 = new StreamlineFloat4(matrix.M11, matrix.M12, matrix.M13, matrix.M14),
+                        Row1 = new StreamlineFloat4(matrix.M21, matrix.M22, matrix.M23, matrix.M24),
+                        Row2 = new StreamlineFloat4(matrix.M31, matrix.M32, matrix.M33, matrix.M34),
+                        Row3 = new StreamlineFloat4(matrix.M41, matrix.M42, matrix.M43, matrix.M44),
+                    };
+                }
+            }
+
+            internal sealed class NativeFrameGenerationSession : IDisposable
+            {
+                private readonly StreamlineViewportHandle _viewport;
+                private bool _disposed;
+                private bool _firstDispatch = true;
+
+                public NativeFrameGenerationSession(uint viewportId)
+                {
+                    _viewport = new StreamlineViewportHandle
+                    {
+                        Base = CreateBase(ViewportStructType, 1),
+                        Value = viewportId,
+                    };
+                }
+
+                public unsafe bool Record(
+                    CommandBuffer commandBuffer,
+                    in VulkanRenderer.VulkanStreamlineImage depthImage,
+                    in VulkanRenderer.VulkanStreamlineImage motionImage,
+                    in VulkanRenderer.VulkanStreamlineImage hudlessColorImage,
+                    in VulkanUpscaleBridgeDispatchParameters parameters,
+                    out string failureReason)
+                {
+                    failureReason = string.Empty;
+
+                    if (_disposed)
+                    {
+                        failureReason = "Native Vulkan DLSS-G session was already disposed.";
+                        return false;
+                    }
+
+                    if (_setTagForFrame is null || _setConstants is null || _getNewFrameToken is null)
+                    {
+                        failureReason = "Streamline core exports are not fully initialized for DLSS-G resource tagging.";
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    if (depthImage.Width != parameters.InputWidth || depthImage.Height != parameters.InputHeight)
+                    {
+                        failureReason = $"DLSS-G depth extent mismatch: expected {parameters.InputWidth}x{parameters.InputHeight}, got {depthImage.Width}x{depthImage.Height}.";
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    if (motionImage.Width != parameters.InputWidth || motionImage.Height != parameters.InputHeight)
+                    {
+                        failureReason = $"DLSS-G motion-vector extent mismatch: expected {parameters.InputWidth}x{parameters.InputHeight}, got {motionImage.Width}x{motionImage.Height}.";
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    if (hudlessColorImage.Width != parameters.OutputWidth || hudlessColorImage.Height != parameters.OutputHeight)
+                    {
+                        failureReason = $"DLSS-G HUD-less color extent must match the backbuffer: expected {parameters.OutputWidth}x{parameters.OutputHeight}, got {hudlessColorImage.Width}x{hudlessColorImage.Height}.";
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    StreamlineViewportHandle viewport = _viewport;
+                    uint frameIndex = parameters.FrameIndex;
+                    StreamlineResult frameTokenResult = _getNewFrameToken(out IntPtr frameToken, ref frameIndex);
+                    if (frameTokenResult != StreamlineResult.Ok || frameToken == IntPtr.Zero)
+                    {
+                        failureReason = $"slGetNewFrameToken failed for DLSS-G with {frameTokenResult}.";
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    StreamlineResource depth = CreateResource(depthImage, parameters.InputWidth, parameters.InputHeight);
+                    StreamlineResource motion = CreateResource(motionImage, parameters.InputWidth, parameters.InputHeight);
+                    StreamlineResource hudlessColor = CreateResource(hudlessColorImage, parameters.OutputWidth, parameters.OutputHeight);
+
+                    StreamlineExtent inputExtent = new()
+                    {
+                        Top = 0,
+                        Left = 0,
+                        Width = parameters.InputWidth,
+                        Height = parameters.InputHeight,
+                    };
+                    StreamlineExtent outputExtent = new()
+                    {
+                        Top = 0,
+                        Left = 0,
+                        Width = parameters.OutputWidth,
+                        Height = parameters.OutputHeight,
+                    };
+
+                    StreamlineResourceTag* tags = stackalloc StreamlineResourceTag[3];
+                    tags[0] = CreateResourceTag(&depth, BufferTypeDepth, StreamlineResourceLifecycle.ValidUntilPresent, inputExtent);
+                    tags[1] = CreateResourceTag(&motion, BufferTypeMotionVectors, StreamlineResourceLifecycle.ValidUntilPresent, inputExtent);
+                    tags[2] = CreateResourceTag(&hudlessColor, BufferTypeHudLessColor, StreamlineResourceLifecycle.ValidUntilPresent, outputExtent);
+
+                    IntPtr commandBufferPtr = ToIntPtr(commandBuffer.Handle);
+                    StreamlineResult tagResult = _setTagForFrame(frameToken, ref viewport, (IntPtr)tags, 3, commandBufferPtr);
+                    if (tagResult != StreamlineResult.Ok)
+                    {
+                        failureReason = DescribeFailure("slSetTagForFrame", tagResult, in parameters);
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    StreamlineConstants constants = CreateConstants(parameters, _firstDispatch);
+                    StreamlineResult constantsResult = _setConstants(ref constants, frameToken, ref viewport);
+                    if (constantsResult != StreamlineResult.Ok)
+                    {
+                        failureReason = DescribeFailure("slSetConstants", constantsResult, in parameters);
+                        _lastError = failureReason;
+                        return false;
+                    }
+
+                    _firstDispatch = false;
+                    return true;
+                }
+
+                public void Dispose()
+                {
+                    if (_disposed)
+                        return;
+
+                    _disposed = true;
+                    ReleaseNativeVulkanRuntime();
+                }
+
+                public void ResetHistory()
+                {
+                    if (!_disposed)
+                        _firstDispatch = true;
+                }
+
+                private static string DescribeFailure(
+                    string apiName,
+                    StreamlineResult result,
+                    in VulkanUpscaleBridgeDispatchParameters parameters)
+                {
+                    string reason =
+                        $"{apiName} failed for DLSS-G with {result}. " +
+                        $"input={parameters.InputWidth}x{parameters.InputHeight}, output={parameters.OutputWidth}x{parameters.OutputHeight}, " +
+                        $"frame={parameters.FrameIndex}, reset={parameters.ResetHistory}.";
+
+                    string? streamlineMessage = _lastStreamlineWarningOrError ?? _lastStreamlineMessage;
+                    if (!string.IsNullOrWhiteSpace(streamlineMessage))
+                        reason += $" Last Streamline message: {streamlineMessage}.";
+
+                    return reason;
+                }
+
+                private static StreamlineConstants CreateConstants(in VulkanUpscaleBridgeDispatchParameters parameters, bool firstDispatch)
+                {
+                    return new StreamlineConstants
+                    {
+                        Base = CreateBase(ConstantsStructType, 2),
+                        CameraViewToClip = ToFloat4x4(parameters.CameraViewToClip),
+                        ClipToCameraView = ToFloat4x4(parameters.ClipToCameraView),
+                        ClipToLensClip = ToFloat4x4(Matrix4x4.Identity),
+                        ClipToPrevClip = ToFloat4x4(parameters.ClipToPrevClip),
+                        PrevClipToClip = ToFloat4x4(parameters.PrevClipToClip),
+                        JitterOffset = new StreamlineFloat2(parameters.JitterOffsetX, parameters.JitterOffsetY),
+                        MotionVectorScale = new StreamlineFloat2(parameters.MotionVectorScaleX, parameters.MotionVectorScaleY),
+                        CameraPinholeOffset = new StreamlineFloat2(float.MaxValue, float.MaxValue),
+                        CameraPosition = new StreamlineFloat3(parameters.CameraPosition.X, parameters.CameraPosition.Y, parameters.CameraPosition.Z),
+                        CameraUp = new StreamlineFloat3(parameters.CameraUp.X, parameters.CameraUp.Y, parameters.CameraUp.Z),
+                        CameraRight = new StreamlineFloat3(parameters.CameraRight.X, parameters.CameraRight.Y, parameters.CameraRight.Z),
+                        CameraForward = new StreamlineFloat3(parameters.CameraForward.X, parameters.CameraForward.Y, parameters.CameraForward.Z),
+                        CameraNear = parameters.CameraNear,
+                        CameraFar = parameters.CameraFar,
+                        CameraFov = parameters.CameraFovRadians,
+                        CameraAspectRatio = parameters.CameraAspectRatio,
+                        MotionVectorsInvalidValue = float.MaxValue,
+                        DepthInverted = parameters.ReverseDepth ? StreamlineBoolean.True : StreamlineBoolean.False,
+                        CameraMotionIncluded = StreamlineBoolean.True,
+                        MotionVectors3D = StreamlineBoolean.False,
+                        Reset = parameters.ResetHistory || firstDispatch ? StreamlineBoolean.True : StreamlineBoolean.False,
+                        OrthographicProjection = parameters.IsOrthographic ? StreamlineBoolean.True : StreamlineBoolean.False,
+                        MotionVectorsDilated = StreamlineBoolean.False,
+                        MotionVectorsJittered = StreamlineBoolean.False,
+                        MinRelativeLinearDepthObjectSeparation = 40.0f,
+                    };
+                }
+
+                private static StreamlineResource CreateResource(in VulkanRenderer.VulkanStreamlineImage image, uint width, uint height)
+                {
+                    return new StreamlineResource
+                    {
+                        Base = CreateBase(ResourceStructType, 1),
+                        Type = StreamlineResourceType.Texture2D,
+                        Native = ToIntPtr(image.Image.Handle),
+                        Memory = ToIntPtr(image.Memory.Handle),
+                        View = ToIntPtr(image.View.Handle),
+                        State = (uint)image.Layout,
+                        Width = width,
+                        Height = height,
+                        NativeFormat = (uint)image.Format,
+                        MipLevels = 1,
+                        ArrayLayers = 1,
+                        GpuVirtualAddress = 0,
+                        Flags = 0,
+                        Usage = (uint)image.Usage,
+                        Reserved = 0,
+                    };
+                }
+
+                private static unsafe StreamlineResourceTag CreateResourceTag(
+                    StreamlineResource* resource,
+                    uint bufferType,
+                    StreamlineResourceLifecycle lifecycle,
+                    StreamlineExtent extent)
                 {
                     return new StreamlineResourceTag
                     {

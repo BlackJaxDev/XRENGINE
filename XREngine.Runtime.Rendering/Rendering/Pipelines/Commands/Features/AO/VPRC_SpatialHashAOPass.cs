@@ -128,6 +128,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             OutputFBOName = outputFbo;
         }
 
+        protected override bool ShouldExecuteThisFrame()
+        {
+            XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            return IsSpatialHashAmbientOcclusionSelected(instance, ResolveSettingsPipeline(instance));
+        }
+
         protected override void Execute()
         {
             var instance = ActivePipelineInstance;
@@ -157,9 +163,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (width <= 0 || height <= 0)
                 return;
 
-            var camera = instance.RenderState.SceneCamera;
-            var stage = camera?.GetPostProcessStageState<AmbientOcclusionSettings>();
-            var settings = stage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true ? backing : null;
+            var settings = ResolveCurrentSettings(instance, ResolveSettingsPipeline(instance));
             SpatialHashRuntimeSettings runtimeSettings = ResolveRuntimeSettings(settings);
 
             VPRC_TemporalAccumulationPass.TemporalUniformData temporalData = default;
@@ -259,6 +263,30 @@ namespace XREngine.Rendering.Pipelines.Commands
                 TemporalDepthRejectThreshold = Math.Max(settings?.SpatialHashTemporalDepthRejectThreshold ?? SpatialHashAmbientOcclusionSettings.DefaultTemporalDepthRejectThreshold, 0.0001f),
                 TemporalMotionRejectionScale = Math.Max(settings?.SpatialHashTemporalMotionRejectionScale ?? SpatialHashAmbientOcclusionSettings.DefaultTemporalMotionRejectionScale, 0.0001f)
             };
+        }
+
+        private RenderPipeline? ResolveSettingsPipeline(XRRenderPipelineInstance? instance)
+            => instance?.AssignedPipeline ?? ParentPipeline;
+
+        private static AmbientOcclusionSettings? ResolveCurrentSettings(XRRenderPipelineInstance? instance, RenderPipeline? pipeline)
+        {
+            XRCamera? camera = instance?.RenderState.SceneCamera
+                ?? instance?.RenderState.RenderingCamera
+                ?? instance?.LastSceneCamera
+                ?? instance?.LastRenderingCamera;
+
+            if (camera is null || pipeline is null)
+                return null;
+
+            var stage = camera.GetPostProcessStageState<AmbientOcclusionSettings>(pipeline);
+            return stage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true ? backing : null;
+        }
+
+        private static bool IsSpatialHashAmbientOcclusionSelected(XRRenderPipelineInstance? instance, RenderPipeline? pipeline)
+        {
+            AmbientOcclusionSettings? settings = ResolveCurrentSettings(instance, pipeline);
+            return settings?.Enabled == true
+                && AmbientOcclusionSettings.NormalizeType(settings.Type) == AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion;
         }
 
         private static int ComputeSettingsHash(in SpatialHashRuntimeSettings settings, bool stereo)
@@ -870,6 +898,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {
             base.DescribeRenderPass(context);
+
+            XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            if (!IsSpatialHashAmbientOcclusionSelected(instance, ResolveSettingsPipeline(instance)))
+                return;
 
             var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_SpatialHashAOPass), ERenderGraphPassStage.Compute);
             builder.SampleTexture(MakeTextureResource(NormalTextureName));

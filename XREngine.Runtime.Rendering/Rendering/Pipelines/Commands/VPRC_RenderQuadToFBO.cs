@@ -17,6 +17,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_RenderQuadToFBO : ViewportRenderCommand
     {
+        public const string AmbientOcclusionResolveVariantHBAOPlus = "HBAOPlus";
+        public const string AmbientOcclusionResolveVariantGTAO = "GTAO";
+
         private const string LightProbeIrradianceArrayTextureName = "LightProbeIrradianceArray";
         private const string LightProbePrefilterArrayTextureName = "LightProbePrefilterArray";
         private const string LightProbePositionBufferName = "LightProbePositions";
@@ -102,6 +105,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
         public bool RenderToSourceFrameBuffer { get; set; }
         public bool MatchDestinationRenderArea { get; set; }
+        public string? RenderGraphPassVariant { get; set; }
 
         public override string GpuProfilingName
         {
@@ -126,6 +130,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             DestinationFBOName = destinationFBOName;
             RenderToSourceFrameBuffer = false;
             MatchDestinationRenderArea = matchDestinationRenderArea;
+            return this;
+        }
+
+        public VPRC_RenderQuadToFBO SetRenderGraphPassVariant(string? variant)
+        {
+            RenderGraphPassVariant = variant;
             return this;
         }
 
@@ -166,8 +176,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? activeInstance?.RenderState.OutputFBO;
         }
 
-        protected static string BuildQuadBlitPassName(string sourceFboName, string destination)
-            => $"QuadBlit_{sourceFboName}_to_{destination}";
+        protected static string BuildQuadBlitPassName(string sourceFboName, string destination, string? variant = null)
+            => string.IsNullOrWhiteSpace(variant)
+                ? $"QuadBlit_{sourceFboName}_to_{destination}"
+                : $"QuadBlit_{variant}_{sourceFboName}_to_{destination}";
 
         private string ResolveShaderLabel(XRRenderPipelineInstance? activeInstance)
         {
@@ -224,7 +236,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             string destination = ResolveDestinationLabel(activeInstance);
 
-            string passName = BuildQuadBlitPassName(SourceQuadFBOName, destination);
+            string passName = BuildQuadBlitPassName(SourceQuadFBOName, destination, RenderGraphPassVariant);
             int passIndex = ResolvePassIndex(passName, out bool hasRenderGraphMetadata);
             if (passIndex == int.MinValue && hasRenderGraphMetadata)
             {
@@ -298,11 +310,59 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Debug.Log(ELogCategory.Rendering, $"[QuadBlitDiag] Rendering '{SourceQuadFBOName}' → '{DestinationFBOName ?? "<current>"}' (dest has targets: {hasTargets}, dest type: {destFBO?.GetType().Name ?? "null"})");
             }
 
-            using var renderAreaScope = MatchDestinationRenderArea && destFBO is { Width: > 0, Height: > 0 }
-                ? activeInstance.RenderState.PushRenderArea((int)destFBO.Width, (int)destFBO.Height)
+            using var renderAreaScope = MatchDestinationRenderArea && TryResolveDestinationRenderArea(destFBO, out int renderWidth, out int renderHeight)
+                ? activeInstance.RenderState.PushRenderArea(renderWidth, renderHeight)
                 : default;
 
             sourceFBO.Render(destFBO);
+        }
+
+        internal static bool TryResolveDestinationRenderArea(XRFrameBuffer? destination, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+
+            if (destination?.Targets is not { Length: > 0 } targets)
+            {
+                if (destination is { Width: > 0, Height: > 0 })
+                {
+                    width = (int)destination.Width;
+                    height = (int)destination.Height;
+                    return true;
+                }
+
+                return false;
+            }
+
+            uint minWidth = uint.MaxValue;
+            uint minHeight = uint.MaxValue;
+            bool found = false;
+
+            foreach (var (target, _, mipLevel, _) in targets)
+            {
+                if (target is null)
+                    continue;
+
+                uint targetWidth = Math.Max(target.Width, 1u);
+                uint targetHeight = Math.Max(target.Height, 1u);
+                int mip = Math.Max(mipLevel, 0);
+                if (mip > 0)
+                {
+                    targetWidth = Math.Max(targetWidth >> mip, 1u);
+                    targetHeight = Math.Max(targetHeight >> mip, 1u);
+                }
+
+                minWidth = Math.Min(minWidth, targetWidth);
+                minHeight = Math.Min(minHeight, targetHeight);
+                found = true;
+            }
+
+            if (!found)
+                return false;
+
+            width = (int)Math.Min(minWidth, int.MaxValue);
+            height = (int)Math.Min(minHeight, int.MaxValue);
+            return width > 0 && height > 0;
         }
 
         protected int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
@@ -337,9 +397,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? context.CurrentRenderTarget?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
-            var builder = context.GetOrCreateSyntheticPass(BuildQuadBlitPassName(SourceQuadFBOName, destination));
+            var builder = context.GetOrCreateSyntheticPass(BuildQuadBlitPassName(SourceQuadFBOName, destination, RenderGraphPassVariant));
             builder.WithStage(ERenderGraphPassStage.Graphics);
             DescribeQuadMaterialInputs(builder, SourceQuadFBOName, destination);
+            DescribeAmbientOcclusionDependencies(context, builder, SourceQuadFBOName, destination, RenderGraphPassVariant);
 
             if (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal) &&
                 string.Equals(destination, DefaultRenderPipeline.ForwardPassFBOName, StringComparison.Ordinal))
@@ -362,7 +423,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 access = bound.ColorAccess;
             }
 
-            DescribeColorOutput(builder, SourceQuadFBOName, destination, access, colorLoad, colorStore);
+            DescribeColorOutput(builder, SourceQuadFBOName, destination, access, colorLoad, colorStore, RenderGraphPassVariant);
 
             if (SamplesSharedDepthView(SourceQuadFBOName, destination))
             {
@@ -373,6 +434,49 @@ namespace XREngine.Rendering.Pipelines.Commands
                     ERenderPassStoreOp.Store);
             }
         }
+
+        private static void DescribeAmbientOcclusionDependencies(
+            RenderGraphDescribeContext context,
+            RenderPassBuilder builder,
+            string sourceFboName,
+            string destination,
+            string? variant)
+        {
+            if (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal) &&
+                (string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal) ||
+                 string.Equals(destination, DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName, StringComparison.Ordinal) ||
+                 string.Equals(destination, DefaultRenderPipeline.GTAOBlurIntermediateFBOName, StringComparison.Ordinal)))
+            {
+                builder.DependsOn(GetQuadBlitPassIndex(
+                    context,
+                    DefaultRenderPipeline.AmbientOcclusionFBOName,
+                    DefaultRenderPipeline.AmbientOcclusionBlurFBOName,
+                    variant));
+            }
+
+            if (string.Equals(sourceFboName, DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName, StringComparison.Ordinal) &&
+                string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal))
+            {
+                builder.DependsOn(GetQuadBlitPassIndex(
+                    context,
+                    DefaultRenderPipeline.AmbientOcclusionBlurFBOName,
+                    DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName,
+                    variant));
+            }
+
+            if (string.Equals(sourceFboName, DefaultRenderPipeline.GTAOBlurIntermediateFBOName, StringComparison.Ordinal) &&
+                string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal))
+            {
+                builder.DependsOn(GetQuadBlitPassIndex(
+                    context,
+                    DefaultRenderPipeline.AmbientOcclusionBlurFBOName,
+                    DefaultRenderPipeline.GTAOBlurIntermediateFBOName,
+                    variant));
+            }
+        }
+
+        private static int GetQuadBlitPassIndex(RenderGraphDescribeContext context, string sourceFboName, string destination, string? variant)
+            => context.GetOrCreateSyntheticPass(BuildQuadBlitPassName(sourceFboName, destination, variant)).PassIndex;
 
         private static void DescribeQuadMaterialInputs(RenderPassBuilder builder, string sourceFboName, string destination)
         {
@@ -436,12 +540,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             string destination,
             ERenderGraphAccess access,
             ERenderPassLoadOp colorLoad,
-            ERenderPassStoreOp colorStore)
+            ERenderPassStoreOp colorStore,
+            string? variant)
         {
             if (TryDescribeActualColorOutputs(builder, destination, access, colorLoad, colorStore))
                 return;
 
-            if (TryDescribeAmbientOcclusionColorOutput(builder, sourceFboName, destination, access, colorLoad, colorStore))
+            if (TryDescribeAmbientOcclusionColorOutput(builder, sourceFboName, destination, access, colorLoad, colorStore, variant))
                 return;
 
             builder.UseColorAttachment(MakeColorTargetResource(destination), access, colorLoad, colorStore);
@@ -453,14 +558,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             string destination,
             ERenderGraphAccess access,
             ERenderPassLoadOp colorLoad,
-            ERenderPassStoreOp colorStore)
+            ERenderPassStoreOp colorStore,
+            string? variant)
         {
             if (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionFBOName, StringComparison.Ordinal) &&
                 string.Equals(destination, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal))
             {
-                builder.UseColorAttachment(MakeTextureResource(DefaultRenderPipeline.AmbientOcclusionRawTextureName), access, colorLoad, colorStore);
-                builder.UseColorAttachment(MakeTextureResource(DefaultRenderPipeline.HBAOPlusRawTextureName), access, colorLoad, colorStore);
-                builder.UseColorAttachment(MakeTextureResource(DefaultRenderPipeline.GTAORawTextureName), access, colorLoad, colorStore);
+                builder.UseColorAttachment(MakeTextureResource(ResolveAmbientOcclusionRawOutputTexture(variant)), access, colorLoad, colorStore);
                 return true;
             }
 
@@ -488,6 +592,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             return false;
+        }
+
+        private static string ResolveAmbientOcclusionRawOutputTexture(string? variant)
+        {
+            if (string.Equals(variant, AmbientOcclusionResolveVariantHBAOPlus, StringComparison.Ordinal))
+                return DefaultRenderPipeline.HBAOPlusRawTextureName;
+
+            if (string.Equals(variant, AmbientOcclusionResolveVariantGTAO, StringComparison.Ordinal))
+                return DefaultRenderPipeline.GTAORawTextureName;
+
+            return DefaultRenderPipeline.AmbientOcclusionRawTextureName;
         }
 
         private static bool TryDescribeActualColorOutputs(

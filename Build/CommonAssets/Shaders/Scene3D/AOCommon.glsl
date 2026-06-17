@@ -50,10 +50,9 @@ vec2 AOClipXYFromTextureUV(vec2 uv)
 
 vec2 AOTextureUVFromFragPos(vec3 fragPos)
 {
-    vec2 screenSize = vec2(ScreenWidth, ScreenHeight);
-    if (screenSize.x > 0.0f && screenSize.y > 0.0f)
-        return clamp((gl_FragCoord.xy - ScreenOrigin) / screenSize, vec2(0.0f), vec2(1.0f));
-
+    // FullscreenTri.vs emits clip-space FragPos. Deriving AO UVs from the
+    // interpolated clip position keeps FBO orientation consistent across
+    // OpenGL and Vulkan negative-height viewport rendering.
     return AOTextureUVFromClipXY(fragPos.xy);
 }
 

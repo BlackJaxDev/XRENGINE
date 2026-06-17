@@ -1582,9 +1582,12 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="program">The shader program to set uniforms on.</param>
         /// <param name="overrideType">Optional override for the AO algorithm type.</param>
-        public virtual void SetAmbientOcclusionUniforms(XRRenderProgram program, AmbientOcclusionSettings.EType? overrideType = null)
+        public virtual void SetAmbientOcclusionUniforms(
+            XRRenderProgram program,
+            AmbientOcclusionSettings.EType? overrideType = null,
+            RenderPipeline? pipeline = null)
         {
-            var stage = GetPostProcessStageState<AmbientOcclusionSettings>();
+            var stage = GetPostProcessStageState<AmbientOcclusionSettings>(pipeline);
             if (stage?.TryGetBacking(out AmbientOcclusionSettings? settings) == true)
             {
                 settings?.SetUniforms(program, overrideType);

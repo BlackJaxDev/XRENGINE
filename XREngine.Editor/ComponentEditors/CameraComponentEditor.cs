@@ -680,7 +680,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         "FXAA",
         "SMAA",
         "TAA",
-        "TSR"
+        "TSR",
+        "DLAA"
     ];
 
     private static readonly EAntiAliasingMode[] AntiAliasingModes =
@@ -691,6 +692,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         EAntiAliasingMode.Smaa,
         EAntiAliasingMode.Taa,
         EAntiAliasingMode.Tsr,
+        EAntiAliasingMode.Dlaa,
     ];
 
     private static readonly Vector4 WarningTextColor = new(1.0f, 0.7f, 0.2f, 1.0f);

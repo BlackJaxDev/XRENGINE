@@ -97,24 +97,38 @@ public unsafe partial class VulkanRenderer
     internal XRFrameBuffer? GetCurrentDrawFrameBuffer()
         => XRFrameBuffer.BoundForWriting ?? _boundDrawFrameBuffer;
 
-    private static Extent2D ResolveFrameBufferDrawExtent(XRFrameBuffer fbo)
+    internal static Extent2D ResolveFrameBufferDrawExtent(XRFrameBuffer fbo)
     {
-        uint width = Math.Max(fbo.Width, 1u);
-        uint height = Math.Max(fbo.Height, 1u);
         var targets = fbo.Targets;
         if (targets is null || targets.Length == 0)
-            return new Extent2D(width, height);
+            return new Extent2D(Math.Max(fbo.Width, 1u), Math.Max(fbo.Height, 1u));
 
-        int maxMip = 0;
-        foreach (var (_, _, mip, _) in targets)
-            maxMip = Math.Max(maxMip, mip);
+        uint minWidth = uint.MaxValue;
+        uint minHeight = uint.MaxValue;
+        bool found = false;
 
-        if (maxMip <= 0)
-            return new Extent2D(width, height);
+        foreach (var (target, _, mip, _) in targets)
+        {
+            if (target is null)
+                continue;
 
-        return new Extent2D(
-            Math.Max(width >> maxMip, 1u),
-            Math.Max(height >> maxMip, 1u));
+            uint width = Math.Max(target.Width, 1u);
+            uint height = Math.Max(target.Height, 1u);
+            int mipLevel = Math.Max(mip, 0);
+            if (mipLevel > 0)
+            {
+                width = Math.Max(width >> mipLevel, 1u);
+                height = Math.Max(height >> mipLevel, 1u);
+            }
+
+            minWidth = Math.Min(minWidth, width);
+            minHeight = Math.Min(minHeight, height);
+            found = true;
+        }
+
+        return found
+            ? new Extent2D(minWidth, minHeight)
+            : new Extent2D(Math.Max(fbo.Width, 1u), Math.Max(fbo.Height, 1u));
     }
 
     internal XRFrameBuffer? GetCurrentReadFrameBuffer()
@@ -2035,9 +2049,12 @@ public unsafe partial class VulkanRenderer
         if (passIndex != int.MinValue && (!hasMetadata || passDefinedInMetadata))
             return passIndex;
 
+        int currentPassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
+        if (passIndex != int.MinValue && passIndex == currentPassIndex)
+            return passIndex;
+
         if (passIndex == int.MinValue)
         {
-            int currentPassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             bool currentPassDefined = currentPassIndex != int.MinValue &&
                 (!hasMetadata || passMetadata!.Any(m => m.PassIndex == currentPassIndex));
 

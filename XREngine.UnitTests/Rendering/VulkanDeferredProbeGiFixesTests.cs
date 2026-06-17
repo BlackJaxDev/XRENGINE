@@ -51,6 +51,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
     public void DeferredLightCombine_ProbeStorageBindings_DoNotOverlapGBufferSamplers()
     {
         string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/DeferredLightCombine.fs");
+        string legacyPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
         string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs");
         string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
 
@@ -61,11 +62,20 @@ public sealed class VulkanDeferredProbeGiFixesTests
         shaderSource.ShouldContain("layout(std430, binding = 20) buffer LightProbePositions");
         shaderSource.ShouldContain("layout(std430, binding = 24) buffer LightProbeGridIndices");
 
+        legacyPipelineSource.ShouldContain("private const uint ForwardLightProbePositionBufferBinding = 0u");
+        legacyPipelineSource.ShouldContain("private const uint DeferredLightProbePositionBufferBinding = 20u");
+        legacyPipelineSource.ShouldContain("BindPbrLightingResources(program, deferredProbeBufferBindings: true)");
+        legacyPipelineSource.ShouldContain("_probePositionBuffer!.BindTo(program, positionBinding);");
+        legacyPipelineSource.ShouldContain("_probeGridIndexBuffer!.BindTo(program, gridIndexBinding);");
+
         pipelineSource.ShouldContain("private const uint LightProbePositionBufferBinding = 20u");
         pipelineSource.ShouldContain("private const uint LightProbeTetraBufferBinding = 21u");
         pipelineSource.ShouldContain("private const uint LightProbeParamBufferBinding = 22u");
         pipelineSource.ShouldContain("private const uint LightProbeGridCellBufferBinding = 23u");
         pipelineSource.ShouldContain("private const uint LightProbeGridIndexBufferBinding = 24u");
+        pipelineSource.ShouldContain("BindPbrLightingResources(program, deferredProbeBufferBindings: true)");
+        pipelineSource.ShouldContain("_probePositionBuffer!.BindTo(program, LightProbePositionBufferBinding);");
+        pipelineSource.ShouldContain("_probeGridIndexBuffer!.BindTo(program, LightProbeGridIndexBufferBinding);");
 
         commandSource.ShouldContain("x.BindingLocation = LightProbePositionBufferBinding;");
         commandSource.ShouldContain("x.BindingLocation = LightProbeTetraBufferBinding;");
@@ -75,10 +85,88 @@ public sealed class VulkanDeferredProbeGiFixesTests
     }
 
     [Test]
+    public void AmbientOcclusionQuadMetadata_DeclaresResolveChainDependencies()
+    {
+        string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderQuadToFBO.cs");
+
+        commandSource.ShouldContain("DescribeAmbientOcclusionDependencies(context, builder, SourceQuadFBOName, destination, RenderGraphPassVariant)");
+        commandSource.ShouldContain("DefaultRenderPipeline.AmbientOcclusionFBOName");
+        commandSource.ShouldContain("DefaultRenderPipeline.AmbientOcclusionBlurFBOName");
+        commandSource.ShouldContain("DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName");
+        commandSource.ShouldContain("DefaultRenderPipeline.GTAOBlurIntermediateFBOName");
+        commandSource.ShouldContain("builder.DependsOn(GetQuadBlitPassIndex(");
+    }
+
+    [Test]
+    public void AmbientOcclusionResolveBranches_UseDistinctVulkanPassMetadata()
+    {
+        string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderQuadToFBO.cs");
+        string defaultPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
+
+        commandSource.ShouldContain("RenderGraphPassVariant");
+        commandSource.ShouldContain("BuildQuadBlitPassName(SourceQuadFBOName, destination, RenderGraphPassVariant)");
+        commandSource.ShouldContain("ResolveAmbientOcclusionRawOutputTexture(variant)");
+        commandSource.ShouldNotContain("builder.UseColorAttachment(MakeTextureResource(DefaultRenderPipeline.HBAOPlusRawTextureName), access, colorLoad, colorStore);\n                builder.UseColorAttachment(MakeTextureResource(DefaultRenderPipeline.GTAORawTextureName), access, colorLoad, colorStore);");
+
+        defaultPipelineSource.ShouldContain("SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantGTAO)");
+        defaultPipelineSource.ShouldContain("SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantHBAOPlus)");
+        defaultPipelineSource.ShouldContain("[(int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion] = CreateSpatialHashAOResolveCommands()");
+
+        pipeline2Source.ShouldContain("SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantGTAO)");
+        pipeline2Source.ShouldContain("SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantHBAOPlus)");
+        pipeline2Source.ShouldContain("[(int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion] = CreateSpatialHashAOResolveCommands()");
+    }
+
+    [Test]
+    public void AmbientOcclusionSettingsLookups_DoNotCreateDefaultCameraPipelines()
+    {
+        string spatialHashSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_SpatialHashAOPass.cs");
+        string lightingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs");
+        string pipelineInstanceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
+
+        pipelineInstanceSource.ShouldContain("internal RenderPipeline? AssignedPipeline => _pipeline;");
+        spatialHashSource.ShouldContain("ResolveCurrentSettings(instance, ResolveSettingsPipeline(instance))");
+        spatialHashSource.ShouldContain("camera.GetPostProcessStageState<AmbientOcclusionSettings>(pipeline)");
+        spatialHashSource.ShouldContain("IsSpatialHashAmbientOcclusionSelected(instance, ResolveSettingsPipeline(instance))");
+        spatialHashSource.ShouldNotContain("GetPostProcessStageState<AmbientOcclusionSettings>();");
+        lightingSource.ShouldContain("currentPipeline?.AssignedPipeline");
+        lightingSource.ShouldContain("ambientOcclusionCamera?.GetPostProcessStageState<AmbientOcclusionSettings>(currentRenderPipeline)");
+        lightingSource.ShouldNotContain("ambientOcclusionCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();");
+    }
+
+    [Test]
+    public void VulkanTransferReads_RestoreSampledSourcesToShaderReadLayout()
+    {
+        string blitSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Blit.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+
+        blitSource.ShouldContain("ResolvePostTransferReadLayout");
+        blitSource.ShouldContain("ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit");
+        blitSource.ShouldContain(": ImageLayout.ShaderReadOnlyOptimal;");
+        blitSource.ShouldContain("ImageLayout postTransferLayout = ResolvePostTransferReadLayout(source);");
+
+        commandBufferSource.ShouldContain("DerivePostBlitLayout(in BlitImageInfo info, bool isDestination)");
+        commandBufferSource.ShouldContain("if ((usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0)");
+        commandBufferSource.ShouldContain(": ImageLayout.ShaderReadOnlyOptimal;");
+    }
+
+    [Test]
+    public void VulkanBlitReadback_RefreshesTextureViewsWithoutRegeneratingThem()
+    {
+        string blitSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Blit.cs").Replace("\r\n", "\n");
+        string textureViewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkTextureView.cs");
+
+        blitSource.ShouldContain("textureView.RefreshDescriptorFromViewedTextureIfStale();");
+        blitSource.ShouldNotContain("textureView.Destroy();\n                textureView.Generate();");
+        textureViewSource.ShouldContain("internal void RefreshDescriptorFromViewedTextureIfStale()");
+    }
+
+    [Test]
     public void ProgramBoundSsboDescriptors_AreResolvedAndFingerprintTracked()
     {
-        string descriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Descriptors.cs");
-        string preparationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Preparation.cs");
+        string descriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Descriptors.cs");
+        string preparationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Preparation.cs");
         string renderingStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderingState.cs");
         string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
         string rendererStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.State.cs");
@@ -109,7 +197,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
     [Test]
     public void VulkanPreparation_PreBindsDescriptorAffectingLightingResources()
     {
-        string preparationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Preparation.cs");
+        string preparationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Preparation.cs");
 
         int prebindIndex = preparationSource.IndexOf("ApplyScopedProgramBindingsForPreparation(material);", StringComparison.Ordinal);
         int descriptorIndex = preparationSource.IndexOf("EnsureDescriptorSets(material)", StringComparison.Ordinal);
@@ -125,7 +213,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
     [Test]
     public void VulkanMeshDrawDescriptors_DoNotBypassPerDrawUniformUploads()
     {
-        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Drawing.cs");
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
 
         drawingSource.ShouldContain("renderer-owned descriptor path");
         drawingSource.ShouldNotContain("vkMaterial.TryBindDescriptorSets(commandBuffer, _program, imageIndex)");
@@ -221,36 +309,37 @@ public sealed class VulkanDeferredProbeGiFixesTests
     [Test]
     public void AttachmentLayoutTracking_FallsBackToKnownWholeImageLayout()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkImageBackedTexture.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkImageBackedTexture.cs");
 
         source.ShouldContain("TryResolveAllLayerAttachmentLayout");
-        source.ShouldContain("return _physicalGroup is not null ? _physicalGroup.LastKnownLayout : _currentImageLayout;");
+        source.ShouldContain("ResolvePhysicalGroupWholeImageLayout()");
+        source.ShouldContain("return knownLayout != ImageLayout.Undefined");
+        source.ShouldContain(": _physicalGroup.LastKnownLayout;");
         source.ShouldContain("BeginPartialAttachmentLayoutTracking()");
     }
 
     [Test]
     public void PartialAttachmentLayoutTracking_DoesNotPromoteMissingLayersToWholeImageLayout()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkImageBackedTexture.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkImageBackedTexture.cs");
 
         source.ShouldContain("if (_hasPartialAttachmentLayouts)");
-        source.ShouldContain("return TryResolveAllLayerAttachmentLayout(mipLevel, out ImageLayout layout)");
+        source.ShouldContain("if (layerIndex < 0 && TryResolveAllLayerAttachmentLayout((uint)Math.Max(mipLevel, 0), out layout))");
         source.ShouldContain("return ImageLayout.Undefined;");
 
         int descriptorPartialCheck = source.IndexOf("ImageLayout IVkImageDescriptorSource.TrackedImageLayout", StringComparison.Ordinal);
         int descriptorUndefinedFallback = source.IndexOf(": ImageLayout.Undefined;", descriptorPartialCheck, StringComparison.Ordinal);
         int attachmentQuery = source.IndexOf("ImageLayout IVkFrameBufferAttachmentSource.GetAttachmentTrackedLayout", StringComparison.Ordinal);
         int attachmentPartialFallback = source.IndexOf("return ImageLayout.Undefined;", attachmentQuery, StringComparison.Ordinal);
-        int wholeImageFallback = source.IndexOf(
-            "return _physicalGroup is not null ? _physicalGroup.LastKnownLayout : _currentImageLayout;",
-            attachmentPartialFallback,
-            StringComparison.Ordinal);
+        int wholeImageResolver = source.IndexOf("private ImageLayout ResolvePhysicalGroupWholeImageLayout()", StringComparison.Ordinal);
+        int wholeImageFallback = source.IndexOf(": _physicalGroup.LastKnownLayout;", wholeImageResolver, StringComparison.Ordinal);
 
         descriptorPartialCheck.ShouldBeGreaterThanOrEqualTo(0);
         descriptorUndefinedFallback.ShouldBeGreaterThan(descriptorPartialCheck);
         attachmentQuery.ShouldBeGreaterThan(descriptorPartialCheck);
         attachmentPartialFallback.ShouldBeGreaterThan(descriptorPartialCheck);
-        wholeImageFallback.ShouldBeGreaterThan(attachmentPartialFallback);
+        wholeImageResolver.ShouldBeGreaterThan(attachmentQuery);
+        wholeImageFallback.ShouldBeGreaterThan(wholeImageResolver);
     }
 
     [Test]
@@ -261,7 +350,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
         string graphCompilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderGraphCompiler.cs");
         string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
         string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkDataBuffer.cs");
-        string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkImageBackedTexture.cs");
+        string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkImageBackedTexture.cs");
         string gpuBvhSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuMeshBvh.cs");
         string bvhRaycastSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/BvhRaycastDispatcher.cs");
         string worldSource = ReadWorkspaceFile("XREngine/Rendering/XRWorldInstance.cs");
@@ -332,15 +421,16 @@ public sealed class VulkanDeferredProbeGiFixesTests
     }
 
     [Test]
-    public void VulkanFrameOpSort_UsesEachOperationContextMetadata()
+    public void VulkanFrameOpSort_UsesCompiledGraphBeforeContextMetadataFallback()
     {
         string compilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderGraphCompiler.cs");
 
         compilerSource.ShouldContain("PassOrderCache");
         compilerSource.ShouldContain("ResolvePassOrder(op, graph)");
+        compilerSource.ShouldContain("if (graph.PassOrder.TryGetValue(op.PassIndex, out int graphOrder))");
         compilerSource.ShouldContain("op.Context.PassMetadata is { Count: > 0 } metadata");
         compilerSource.ShouldContain("RenderGraphSynchronizationPlanner.TopologicallySort(metadata)");
-        compilerSource.ShouldContain("rank is resolved from each op's own context metadata");
+        compilerSource.ShouldContain("per-context metadata is only");
     }
 
     [Test]
@@ -348,7 +438,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
     {
         string runtimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngineFacade.cs");
         string engineStateSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.State.cs");
-        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
         string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
         string materialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.RenderState.cs");
 
@@ -382,7 +472,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
     [Test]
     public void FrameOps_CaptureContextBeforePassValidation()
     {
-        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
         string blitSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Blit.cs");
         string clearSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Init.cs");
         string indirectSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.IndirectDraw.cs");

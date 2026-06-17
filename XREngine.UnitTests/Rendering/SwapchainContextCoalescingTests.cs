@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using NUnit.Framework;
 using Shouldly;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.Vulkan.VulkanRenderer;
 using static XREngine.Rendering.Vulkan.VulkanRenderer.VulkanRenderGraphCompiler;
@@ -100,10 +102,45 @@ public sealed class SwapchainContextCoalescingTests
     /// Pass indices not present in this map default to <c>int.MaxValue</c> during sort.
     /// </summary>
     private static VulkanCompiledRenderGraph GraphWithPassOrder(Dictionary<int, int> passOrder) =>
-        new(Array.Empty<XREngine.Rendering.RenderGraph.RenderPassMetadata>(),
+        new(Array.Empty<RenderPassMetadata>(),
             passOrder,
             Array.Empty<VulkanCompiledPassBatch>(),
-            XREngine.Rendering.RenderGraph.RenderGraphSynchronizationInfo.Empty);
+            RenderGraphSynchronizationInfo.Empty);
+
+    private static IReadOnlyCollection<RenderPassMetadata> Metadata(params (int PassIndex, string Name, int[] Dependencies)[] passes)
+    {
+        RenderPassMetadataCollection collection = new();
+        foreach (var pass in passes)
+        {
+            var builder = collection.ForPass(pass.PassIndex, pass.Name, ERenderGraphPassStage.Graphics);
+            foreach (int dependency in pass.Dependencies)
+                builder.DependsOn(dependency);
+        }
+
+        return collection.Build();
+    }
+
+    private static string ReadWorkspaceFile(string relativePath)
+    {
+        string repoRoot = ResolveRepoRoot();
+        string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
+        return File.ReadAllText(path);
+    }
+
+    private static string ResolveRepoRoot()
+    {
+        string? directory = TestContext.CurrentContext.TestDirectory;
+        while (!string.IsNullOrEmpty(directory))
+        {
+            if (File.Exists(Path.Combine(directory, "XRENGINE.slnx")))
+                return directory;
+
+            directory = Directory.GetParent(directory)?.FullName;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repository root from test directory.");
+    }
 
     #endregion
 
@@ -474,6 +511,36 @@ public sealed class SwapchainContextCoalescingTests
     #region End-to-end: Coalesce + Sort
 
     [Test]
+    public void EndToEnd_NestedScreenSpaceUi_StaysAfterFinalSwapchainOutput()
+    {
+        const int finalSceneOutputPass = 100057;
+        const int screenSpaceUiPass = 100100;
+        const int uiLocalOnTopPass = 10;
+
+        var sceneMetadata = Metadata(
+            (finalSceneOutputPass, "FinalOutput", []),
+            (screenSpaceUiPass, "VPRC_RenderScreenSpaceUI", [finalSceneOutputPass]));
+        var uiMetadata = Metadata(
+            (uiLocalOnTopPass, "RenderUIBatched_OnTopForward", []));
+
+        FrameOpContext sceneContext = CtxPipelineA with { PassMetadata = sceneMetadata };
+        FrameOpContext nestedUiContext = CtxPipelineB with { PassMetadata = uiMetadata };
+        var graph = new VulkanRenderGraphCompiler().Compile(sceneMetadata);
+
+        FrameOp[] ops =
+        [
+            SwapchainBlit(finalSceneOutputPass, sceneContext),
+            SwapchainDraw(screenSpaceUiPass, nestedUiContext),
+        ];
+
+        VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+
+        sorted.Select(op => op.PassIndex).ToArray().ShouldBe([finalSceneOutputPass, screenSpaceUiPass]);
+        sorted[1].Context.ShouldBe(sceneContext);
+    }
+
+    [Test]
     public void EndToEnd_CoalesceThenSort_EliminatesContextChanges()
     {
         // This is the full regression scenario:
@@ -574,6 +641,30 @@ public sealed class SwapchainContextCoalescingTests
         int[] expected = allResults[0];
         for (int run = 1; run < 100; run++)
             allResults[run].ShouldBe(expected, $"Run {run} produced different order than run 0");
+    }
+
+    #endregion
+
+    #region Screen-space UI contracts
+
+    [Test]
+    public void RenderUiBatched_PreservesParentSwapchainPass_ForNestedScreenSpaceUi()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderUIBatched.cs");
+
+        source.ShouldContain("preserveParentSwapchainPass");
+        source.ShouldContain("ActivePipelineInstance.RenderState.OutputFBO is null");
+        source.ShouldContain("RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_renderPass)");
+    }
+
+    [Test]
+    public void VulkanPassValidation_AllowsActiveParentPassAcrossNestedPipelineMetadata()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.State.cs");
+
+        source.ShouldContain("int currentPassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;");
+        source.ShouldContain("if (passIndex != int.MinValue && passIndex == currentPassIndex)");
+        source.ShouldContain("return passIndex;");
     }
 
     #endregion

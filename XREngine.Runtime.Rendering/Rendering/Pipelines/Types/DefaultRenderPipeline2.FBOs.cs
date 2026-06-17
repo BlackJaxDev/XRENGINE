@@ -1131,6 +1131,7 @@ public partial class DefaultRenderPipeline2
                 BlendModeAllDrawBuffers = BlendMode.Disabled()
             }
         };
+        lightCombineMat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);
 
         var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false) { Name = LightCombineFBOName };
 
@@ -1380,6 +1381,7 @@ public partial class DefaultRenderPipeline2
                 RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy
             }
         };
+        mat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);
 
         var fbo = new XRQuadFrameBuffer(mat, true, false) { Name = MsaaLightCombineFBOName };
         return fbo;

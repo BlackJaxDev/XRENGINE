@@ -346,7 +346,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (RuntimeEngine.Rendering.State.IsStereoPass)
                 ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
-            camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.HorizonBasedPlus);
+            camera.SetAmbientOcclusionUniforms(
+                program,
+                AmbientOcclusionSettings.EType.HorizonBasedPlus,
+                ResolveSettingsPipeline());
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
@@ -380,9 +383,12 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private AmbientOcclusionSettings? GetCurrentSettings()
         {
-            var stage = GetCurrentCamera()?.GetPostProcessStageState<AmbientOcclusionSettings>();
+            var stage = GetCurrentCamera()?.GetPostProcessStageState<AmbientOcclusionSettings>(ResolveSettingsPipeline());
             return stage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true ? backing : null;
         }
+
+        private RenderPipeline? ResolveSettingsPipeline()
+            => ActivePipelineInstance?.AssignedPipeline ?? ParentPipeline;
 
         private XRCamera? GetCurrentCamera()
             => ActivePipelineInstance.RenderState.SceneCamera

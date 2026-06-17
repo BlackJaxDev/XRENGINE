@@ -625,7 +625,10 @@ namespace XREngine.Scene
                 ?? currentPipeline?.RenderState.SceneCamera
                 ?? currentPipeline?.LastSceneCamera
                 ?? currentPipeline?.LastRenderingCamera;
-            var aoStage = ambientOcclusionCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+            var currentRenderPipeline = currentPipeline?.AssignedPipeline;
+            var aoStage = currentRenderPipeline is not null
+                ? ambientOcclusionCamera?.GetPostProcessStageState<AmbientOcclusionSettings>(currentRenderPipeline)
+                : null;
             AmbientOcclusionSettings? aoSettings = aoStage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true
                 ? backing
                 : null;
@@ -674,6 +677,9 @@ namespace XREngine.Scene
                 program.SuppressFallbackSamplerWarning("BRDF");
                 program.SuppressFallbackSamplerWarning("IrradianceArray");
                 program.SuppressFallbackSamplerWarning("PrefilterArray");
+                program.Sampler("BRDF", DummyShadowMap, 6);
+                program.Sampler("IrradianceArray", DummyPbrTextureArray, 7);
+                program.Sampler("PrefilterArray", DummyPbrTextureArray, 8);
                 program.Uniform("ForwardPbrResourcesEnabled", false);
                 program.Uniform("ProbeCount", 0);
                 program.Uniform("TetraCount", 0);

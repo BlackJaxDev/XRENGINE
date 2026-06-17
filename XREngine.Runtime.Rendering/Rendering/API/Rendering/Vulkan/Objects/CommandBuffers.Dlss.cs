@@ -36,6 +36,30 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    private void RecordDlssFrameGenerationOp(CommandBuffer commandBuffer, DlssFrameGenerationOp op)
+    {
+        VulkanStreamlineImage depth = TransitionStreamlineImageToGeneral(commandBuffer, op.Depth);
+        VulkanStreamlineImage motion = TransitionStreamlineImageToGeneral(commandBuffer, op.Motion);
+        VulkanStreamlineImage hudlessColor = TransitionStreamlineImageToGeneral(commandBuffer, op.HudlessColor);
+        VulkanUpscaleBridgeDispatchParameters parameters = op.Parameters;
+
+        if (!NvidiaDlssManager.Native.TryRecordNativeVulkanFrameGeneration(
+                op.Session,
+                commandBuffer,
+                depth,
+                motion,
+                hudlessColor,
+                in parameters,
+                out string failureReason))
+        {
+            string message = string.IsNullOrWhiteSpace(failureReason)
+                ? "Streamline returned an unspecified failure."
+                : failureReason;
+            Debug.RenderingError($"Requested NVIDIA DLSS frame generation failed during Vulkan command recording: {message}");
+            throw new InvalidOperationException($"Requested NVIDIA DLSS frame generation failed during Vulkan command recording: {message}");
+        }
+    }
+
     private VulkanStreamlineImage TransitionStreamlineImageToGeneral(CommandBuffer commandBuffer, in VulkanStreamlineImage image)
     {
         if (image.Image.Handle == 0)

@@ -1077,6 +1077,7 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<int, int> swapchainWriterPassByPipeline = [];
             Dictionary<int, int> swapchainWriterOpIndexByPipeline = [];
             Dictionary<int, string> pipelineNameByIdentity = [];
+            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = new(ReferenceEqualityComparer.Instance);
 
             void RememberPipelineName(in FrameOpContext context)
             {
@@ -1087,6 +1088,13 @@ namespace XREngine.Rendering.Vulkan
                         name = "UnknownPipeline";
                     pipelineNameByIdentity[context.PipelineIdentity] = name;
                 }
+            }
+
+            int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
+            {
+                meshDrawSlotsByRenderer.TryGetValue(renderer, out int slot);
+                meshDrawSlotsByRenderer[renderer] = slot + 1;
+                return slot;
             }
 
             void MarkSwapchainWriter(string writerLabel, string writerDetail, int passIndex, int opIndex, int pipelineIdentity)
@@ -1210,6 +1218,7 @@ namespace XREngine.Rendering.Vulkan
                         break;
                     case ComputeDispatchOp: computeCount++; break;
                     case DlssUpscaleOp: computeCount++; break;
+                    case DlssFrameGenerationOp: computeCount++; break;
                 }
 
                 opScanIndex++;
@@ -1633,14 +1642,22 @@ namespace XREngine.Rendering.Vulkan
                         FormatFboAttachmentSignature(fboSignature));
                 }
 
+                Extent2D logicalFboExtent = ResolveFrameBufferDrawExtent(target);
+                uint fboRenderWidth = logicalFboExtent.Width;
+                uint fboRenderHeight = logicalFboExtent.Height;
+                if (vkFrameBuffer.FramebufferWidth > 0)
+                    fboRenderWidth = Math.Min(fboRenderWidth, vkFrameBuffer.FramebufferWidth);
+                if (vkFrameBuffer.FramebufferHeight > 0)
+                    fboRenderHeight = Math.Min(fboRenderHeight, vkFrameBuffer.FramebufferHeight);
+
                 Rect2D fboRenderArea = new()
                 {
                     Offset = new Offset2D(0, 0),
-                    // Use the actual target dimensions (may be smaller when
-                    // targeting a mip level > 0, e.g. bloom downsample FBOs).
-                    Extent = new Extent2D(
-                        vkFrameBuffer.FramebufferWidth > 0 ? vkFrameBuffer.FramebufferWidth : Math.Max(target.Width, 1u),
-                        vkFrameBuffer.FramebufferHeight > 0 ? vkFrameBuffer.FramebufferHeight : Math.Max(target.Height, 1u))
+                    // Use the attachment-compatible extent. Dynamic rendering
+                    // validates against image-view dimensions, which can be
+                    // smaller than the FBO's base texture dimensions for
+                    // reduced-resolution passes or mip-level targets.
+                    Extent = new Extent2D(Math.Max(fboRenderWidth, 1u), Math.Max(fboRenderHeight, 1u))
                 };
 
                 if (UseDynamicRenderingRenderTargets)
@@ -2162,7 +2179,8 @@ namespace XREngine.Rendering.Vulkan
                             opPassIndex,
                             drawOp.Context.PassMetadata,
                             activeDepthStencilReadOnly,
-                            drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>");
+                            drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
+                            GetMeshDrawUniformSlot(drawOp.Draw.Renderer));
                         break;
 
                     case IndirectDrawOp indirectOp:
@@ -2225,6 +2243,12 @@ namespace XREngine.Rendering.Vulkan
                         EndActiveRenderPass();
                         CmdBeginLabel(commandBuffer, "DLSS.SuperResolution");
                         RecordDlssUpscaleOp(commandBuffer, dlssOp);
+                        CmdEndLabel(commandBuffer);
+                        break;
+                    case DlssFrameGenerationOp frameGenerationOp:
+                        EndActiveRenderPass();
+                        CmdBeginLabel(commandBuffer, "DLSS.FrameGenerationInputs");
+                        RecordDlssFrameGenerationOp(commandBuffer, frameGenerationOp);
                         CmdEndLabel(commandBuffer);
                         break;
                         }
@@ -2733,7 +2757,7 @@ namespace XREngine.Rendering.Vulkan
                 // based on the image's aspect mask.
                 static ImageLayout DerivePostBlitLayout(in BlitImageInfo info, bool isDestination)
                 {
-                    if (isDestination && info.DescriptorSource is { } descriptorSource)
+                    if (info.DescriptorSource is { } descriptorSource)
                     {
                         ImageUsageFlags usage = descriptorSource.DescriptorUsage;
                         if ((usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0)
@@ -2742,6 +2766,7 @@ namespace XREngine.Rendering.Vulkan
                                 ? ImageLayout.DepthStencilReadOnlyOptimal
                                 : ImageLayout.ShaderReadOnlyOptimal;
                         }
+
                         if ((usage & ImageUsageFlags.StorageBit) != 0)
                             return ImageLayout.General;
                     }

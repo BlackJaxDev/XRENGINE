@@ -32,7 +32,7 @@ public unsafe partial class VulkanRenderer
 		/// Uses a schema fingerprint to detect layout changes and avoid redundant
 		/// reallocation when only resource bindings change.
 		/// </summary>
-		private bool EnsureDescriptorSets(XRMaterial material)
+		private bool EnsureDescriptorSets(XRMaterial material, int drawUniformSlot)
 		{
 			if (_program is null)
 				return false;
@@ -48,16 +48,20 @@ public unsafe partial class VulkanRenderer
 			if (Renderer.swapChainImages is null || Renderer.swapChainImages.Length == 0)
 				return false;
 
+			EnsureUniformDrawSlotCapacity(drawUniformSlot + 1);
+
 			int frameCount = Renderer.swapChainImages.Length;
+			int drawSlotCount = UniformBufferSlotCount;
+			int descriptorFrameSlotCount = frameCount * drawSlotCount;
 			int setCount = layouts.Count;
-			ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount, frameCount);
+			ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);
 			ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount);
 
 			bool canReuseDescriptorAllocation =
 				_descriptorSets is { Length: > 0 } &&
 				_descriptorPool.Handle != 0 &&
 				_descriptorSchemaFingerprint == schemaFingerprint &&
-				_descriptorSets.Length == frameCount &&
+				_descriptorSets.Length == descriptorFrameSlotCount &&
 				_descriptorSets.All(s => s.Length == setCount);
 
 			if (!_descriptorDirty && canReuseDescriptorAllocation && _descriptorResourceFingerprint == resourceFingerprint)
@@ -68,7 +72,7 @@ public unsafe partial class VulkanRenderer
 			else
 				DestroyDescriptors();
 
-			var poolSizes = BuildDescriptorPoolSizes(bindings, frameCount);
+			var poolSizes = BuildDescriptorPoolSizes(bindings, descriptorFrameSlotCount);
 			if (poolSizes.Length == 0)
 				return false;
 
@@ -82,7 +86,7 @@ public unsafe partial class VulkanRenderer
 						: 0,
 					PoolSizeCount = (uint)poolSizes.Length,
 					PPoolSizes = poolSizesPtr,
-					MaxSets = (uint)(setCount * frameCount),
+					MaxSets = (uint)(setCount * descriptorFrameSlotCount),
 				};
 
 				if (Api!.CreateDescriptorPool(Device, ref poolInfo, null, out _descriptorPool) != Result.Success)
@@ -98,47 +102,50 @@ public unsafe partial class VulkanRenderer
 			uint[] variableDescriptorCounts = _program.DescriptorSetsRequireVariableDescriptorCount
 				? VulkanBindlessMaterialDescriptors.BuildVariableDescriptorCounts(bindings, layoutArray.Length)
 				: [];
-			_descriptorSets = new DescriptorSet[frameCount][];
+			_descriptorSets = new DescriptorSet[descriptorFrameSlotCount][];
 
 			for (int frame = 0; frame < frameCount; frame++)
 			{
-				DescriptorSet[] frameSets = new DescriptorSet[layoutArray.Length];
-
-				fixed (DescriptorSetLayout* layoutPtr = layoutArray)
-				fixed (DescriptorSet* setPtr = frameSets)
-				fixed (uint* variableDescriptorCountPtr = variableDescriptorCounts)
+				for (int drawSlot = 0; drawSlot < drawSlotCount; drawSlot++)
 				{
-					DescriptorSetVariableDescriptorCountAllocateInfo variableDescriptorCountInfo = new()
-					{
-						SType = StructureType.DescriptorSetVariableDescriptorCountAllocateInfo,
-						DescriptorSetCount = (uint)layoutArray.Length,
-						PDescriptorCounts = variableDescriptorCountPtr,
-					};
+					DescriptorSet[] frameSets = new DescriptorSet[layoutArray.Length];
 
-					DescriptorSetAllocateInfo allocInfo = new()
+					fixed (DescriptorSetLayout* layoutPtr = layoutArray)
+					fixed (DescriptorSet* setPtr = frameSets)
+					fixed (uint* variableDescriptorCountPtr = variableDescriptorCounts)
 					{
-						SType = StructureType.DescriptorSetAllocateInfo,
-						PNext = _program.DescriptorSetsRequireVariableDescriptorCount ? &variableDescriptorCountInfo : null,
-						DescriptorPool = _descriptorPool,
-						DescriptorSetCount = (uint)layoutArray.Length,
-						PSetLayouts = layoutPtr,
-					};
+						DescriptorSetVariableDescriptorCountAllocateInfo variableDescriptorCountInfo = new()
+						{
+							SType = StructureType.DescriptorSetVariableDescriptorCountAllocateInfo,
+							DescriptorSetCount = (uint)layoutArray.Length,
+							PDescriptorCounts = variableDescriptorCountPtr,
+						};
 
-					if (Api!.AllocateDescriptorSets(Device, ref allocInfo, setPtr) != Result.Success)
-					{
-						Debug.VulkanWarning("Failed to allocate Vulkan descriptor sets for mesh renderer.");
-						return false;
+						DescriptorSetAllocateInfo allocInfo = new()
+						{
+							SType = StructureType.DescriptorSetAllocateInfo,
+							PNext = _program.DescriptorSetsRequireVariableDescriptorCount ? &variableDescriptorCountInfo : null,
+							DescriptorPool = _descriptorPool,
+							DescriptorSetCount = (uint)layoutArray.Length,
+							PSetLayouts = layoutPtr,
+						};
+
+						if (Api!.AllocateDescriptorSets(Device, ref allocInfo, setPtr) != Result.Success)
+						{
+							Debug.VulkanWarning("Failed to allocate Vulkan descriptor sets for mesh renderer.");
+							return false;
+						}
 					}
+
+					if (!WriteDescriptorSets(frameSets, bindings, material, frame, drawSlot))
+						return false;
+
+					_descriptorSets[ResolveUniformBufferIndex(frame, drawSlot, _descriptorSets.Length)] = frameSets;
 				}
-
-				if (!WriteDescriptorSets(frameSets, bindings, material, frame))
-					return false;
-
-				_descriptorSets[frame] = frameSets;
 			}
 
 			_descriptorSchemaFingerprint = schemaFingerprint;
-			_descriptorResourceFingerprint = resourceFingerprint;
+			_descriptorResourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount);
 			_descriptorDirty = false;
 			return true;
 		}
@@ -148,11 +155,10 @@ public unsafe partial class VulkanRenderer
 		/// types, stages). Used to detect when the schema changes and a full
 		/// reallocation of the descriptor pool is required.
 		/// </summary>
-		private static ulong ComputeDescriptorSchemaFingerprint(IReadOnlyList<DescriptorBindingInfo> bindings, int setCount, int frameCount)
+		private static ulong ComputeDescriptorSchemaFingerprint(IReadOnlyList<DescriptorBindingInfo> bindings, int setCount)
 		{
 			HashCode hash = new();
 			hash.Add(setCount);
-			hash.Add(frameCount);
 
 			foreach (DescriptorBindingInfo binding in bindings.OrderBy(b => b.Set).ThenBy(b => b.Binding))
 			{
@@ -257,10 +263,10 @@ public unsafe partial class VulkanRenderer
 		}
 
 		/// <summary>Resolves one or more buffer descriptors for a binding, duplicating for array bindings.</summary>
-		private bool TryResolveBuffers(DescriptorBindingInfo binding, int frameIndex, uint descriptorCount, List<DescriptorBufferInfo> bufferInfos, out int bufferStart)
+		private bool TryResolveBuffers(DescriptorBindingInfo binding, int frameIndex, int drawUniformSlot, uint descriptorCount, List<DescriptorBufferInfo> bufferInfos, out int bufferStart)
 		{
 			bufferStart = bufferInfos.Count;
-			if (!TryResolveBuffer(binding, frameIndex, out DescriptorBufferInfo bufferInfo))
+			if (!TryResolveBuffer(binding, frameIndex, drawUniformSlot, out DescriptorBufferInfo bufferInfo))
 				return false;
 
 			for (int i = 0; i < descriptorCount; i++)
@@ -358,7 +364,7 @@ public unsafe partial class VulkanRenderer
 		/// Resolves buffers, images, and texel buffers, then issues a batched
 		/// <c>vkUpdateDescriptorSets</c> call for all pending writes.
 		/// </summary>
-		private bool WriteDescriptorSets(DescriptorSet[] frameSets, IReadOnlyList<DescriptorBindingInfo> bindings, XRMaterial material, int frameIndex)
+		private bool WriteDescriptorSets(DescriptorSet[] frameSets, IReadOnlyList<DescriptorBindingInfo> bindings, XRMaterial material, int frameIndex, int drawUniformSlot)
 		{
 			List<WriteDescriptorSet> writes = [];
 			List<DescriptorBufferInfo> bufferInfos = [];
@@ -382,7 +388,7 @@ public unsafe partial class VulkanRenderer
 				{
 					case DescriptorType.UniformBuffer:
 					case DescriptorType.StorageBuffer:
-						if (!TryResolveBuffers(binding, frameIndex, descriptorCount, bufferInfos, out int bufferStart))
+						if (!TryResolveBuffers(binding, frameIndex, drawUniformSlot, descriptorCount, bufferInfos, out int bufferStart))
 						{
 							WarnOnce($"[WriteDesc] FAILED to resolve buffer binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}' program '{_program?.Data?.Name ?? "?"}'");
 							RecordDescriptorFailure(binding, "buffer resolution failed");
@@ -613,7 +619,7 @@ public unsafe partial class VulkanRenderer
 		/// Resolves a buffer descriptor for a single binding. Searches the buffer
 		/// cache by name, then falls back to auto uniform and engine uniform buffers.
 		/// </summary>
-		private bool TryResolveBuffer(DescriptorBindingInfo binding, int frameIndex, out DescriptorBufferInfo bufferInfo)
+		private bool TryResolveBuffer(DescriptorBindingInfo binding, int frameIndex, int drawUniformSlot, out DescriptorBufferInfo bufferInfo)
 		{
 			bufferInfo = default;
 
@@ -649,10 +655,10 @@ public unsafe partial class VulkanRenderer
 				// before resorting to the generic cache scan. This prevents an
 				// unrelated SSBO (e.g. LinesBuffer) from being returned for a UBO
 				// binding that should resolve to an auto-uniform block.
-				if (TryResolveAutoUniformBuffer(binding, frameIndex, out bufferInfo))
+				if (TryResolveAutoUniformBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo))
 					return true;
 
-				if (TryResolveEngineUniformBuffer(binding, frameIndex, out bufferInfo))
+				if (TryResolveEngineUniformBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo))
 					return true;
 
 				// Step 3: Generic fallback — only match buffers whose target type
@@ -664,7 +670,7 @@ public unsafe partial class VulkanRenderer
 			if (buffer is null)
 			{
 				if (binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.StorageBuffer)
-					return TryResolveFallbackDescriptorBuffer(binding, frameIndex, out bufferInfo);
+					return TryResolveFallbackDescriptorBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo);
 
 				WarnOnce($"[BufferResolve] Failed to resolve buffer for binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}). Cache keys: [{string.Join(", ", _bufferCache.Keys)}]");
 				return false;
@@ -673,11 +679,14 @@ public unsafe partial class VulkanRenderer
 		BufferResolved:
 
 			if (buffer is null)
-				return TryResolveFallbackDescriptorBuffer(binding, frameIndex, out bufferInfo);
+				return TryResolveFallbackDescriptorBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo);
 
 			buffer.EnsureReadyForRendering();
 			if (buffer.BufferHandle is not { } bufferHandle || bufferHandle.Handle == 0)
 			{
+				if (IsOptionalPipelineStorageBuffer(binding))
+					return TryResolveFallbackDescriptorBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo);
+
 				WarnOnce($"[BufferResolve] Buffer '{binding.Name}' resolved (set={binding.Set}, binding={binding.Binding}) but VkBuffer is not allocated (Length={buffer.Data.Length}, Resizable={buffer.Data.Resizable}, Target={buffer.Data.Target}).");
 				return false;
 			}
@@ -691,6 +700,9 @@ public unsafe partial class VulkanRenderer
 
 			if (bufferHandle.Handle == 0 || buffer.AllocatedByteSize < requestedRange)
 			{
+				if (IsOptionalPipelineStorageBuffer(binding))
+					return TryResolveFallbackDescriptorBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo);
+
 				WarnOnce($"[BufferResolve] Buffer '{binding.Name}' resolved (set={binding.Set}, binding={binding.Binding}) but allocation is too small (Requested={requestedRange}, Allocated={buffer.AllocatedByteSize}, Target={buffer.Data.Target}).");
 				return false;
 			}
@@ -849,7 +861,7 @@ public unsafe partial class VulkanRenderer
 				   "LightProbeGridCells" or
 				   "LightProbeGridIndices");
 
-		private bool TryResolveFallbackDescriptorBuffer(DescriptorBindingInfo binding, int frameIndex, out DescriptorBufferInfo bufferInfo)
+		private bool TryResolveFallbackDescriptorBuffer(DescriptorBindingInfo binding, int frameIndex, int drawUniformSlot, out DescriptorBufferInfo bufferInfo)
 		{
 			bufferInfo = default;
 			uint requiredSize = Math.Max(FallbackDescriptorUniformSize, Math.Max(binding.Count, 1u) * 16u);
@@ -859,7 +871,7 @@ public unsafe partial class VulkanRenderer
 			if (!_engineUniformBuffers.TryGetValue(FallbackDescriptorUniformName, out EngineUniformBuffer[]? buffers) || buffers.Length == 0)
 				return false;
 
-			int idx = Math.Clamp(frameIndex, 0, buffers.Length - 1);
+			int idx = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, buffers.Length);
 			EngineUniformBuffer target = buffers[idx];
 			if (target.Buffer.Handle == 0)
 				return false;
@@ -1159,7 +1171,7 @@ public unsafe partial class VulkanRenderer
 		/// Resolves a descriptor buffer binding for a built-in engine uniform
 		/// (e.g. ModelMatrix, ViewMatrix). Creates the per-frame UBO on demand.
 		/// </summary>
-			private bool TryResolveEngineUniformBuffer(DescriptorBindingInfo binding, int frameIndex, out DescriptorBufferInfo bufferInfo)
+			private bool TryResolveEngineUniformBuffer(DescriptorBindingInfo binding, int frameIndex, int drawUniformSlot, out DescriptorBufferInfo bufferInfo)
 			{
 				bufferInfo = default;
 				string name = binding.Name ?? string.Empty;
@@ -1180,7 +1192,7 @@ public unsafe partial class VulkanRenderer
 				if (!_engineUniformBuffers.TryGetValue(name, out EngineUniformBuffer[]? buffers) || buffers.Length == 0)
 					return false;
 
-				int idx = Math.Clamp(frameIndex, 0, buffers.Length - 1);
+				int idx = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, buffers.Length);
 				EngineUniformBuffer target = buffers[idx];
 				if (target.Buffer.Handle == 0)
 					return false;
@@ -1199,7 +1211,7 @@ public unsafe partial class VulkanRenderer
 			/// Resolves a descriptor buffer binding for a reflection-driven auto uniform
 			/// block. Creates the per-frame UBO on demand.
 			/// </summary>
-			private bool TryResolveAutoUniformBuffer(DescriptorBindingInfo binding, int frameIndex, out DescriptorBufferInfo bufferInfo)
+			private bool TryResolveAutoUniformBuffer(DescriptorBindingInfo binding, int frameIndex, int drawUniformSlot, out DescriptorBufferInfo bufferInfo)
 			{
 				bufferInfo = default;
 				if (_program is null)
@@ -1215,7 +1227,7 @@ public unsafe partial class VulkanRenderer
 				if (!_autoUniformBuffers.TryGetValue(block.InstanceName, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)
 					return false;
 
-				int idx = Math.Clamp(frameIndex, 0, buffers.Length - 1);
+				int idx = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, buffers.Length);
 				AutoUniformBuffer target = buffers[idx];
 				if (target.Buffer.Handle == 0)
 					return false;

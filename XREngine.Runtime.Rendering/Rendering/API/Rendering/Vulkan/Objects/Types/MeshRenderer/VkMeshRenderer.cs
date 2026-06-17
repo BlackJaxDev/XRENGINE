@@ -94,6 +94,15 @@ public unsafe partial class VulkanRenderer
         VulkanUpscaleBridgeDispatchParameters Parameters,
         FrameOpContext Context) : FrameOp(PassIndex, null, Context);
 
+    internal sealed record DlssFrameGenerationOp(
+        int PassIndex,
+        NvidiaDlssManager.Native.NativeFrameGenerationSession Session,
+        VulkanStreamlineImage Depth,
+        VulkanStreamlineImage Motion,
+        VulkanStreamlineImage HudlessColor,
+        VulkanUpscaleBridgeDispatchParameters Parameters,
+        FrameOpContext Context) : FrameOp(PassIndex, null, Context);
+
     internal sealed record TransformFeedbackOp(
         int PassIndex,
         XRFrameBuffer? Target,
@@ -157,6 +166,7 @@ public unsafe partial class VulkanRenderer
             MeshTaskDispatchIndirectCountOp meshTaskDispatch => meshTaskDispatch with { PassIndex = validatedPassIndex },
             MemoryBarrierOp memoryBarrier => memoryBarrier with { PassIndex = validatedPassIndex },
             DlssUpscaleOp dlssUpscale => dlssUpscale with { PassIndex = validatedPassIndex },
+            DlssFrameGenerationOp dlssFrameGeneration => dlssFrameGeneration with { PassIndex = validatedPassIndex },
             TransformFeedbackOp transformFeedback => transformFeedback with { PassIndex = validatedPassIndex },
             ComputeDispatchOp computeDispatch => computeDispatch with { PassIndex = validatedPassIndex },
             _ => op
@@ -337,6 +347,19 @@ public unsafe partial class VulkanRenderer
                     hash.Add(dlss.Parameters.ResetHistory);
                     hash.Add(dlss.Parameters.OutputHdr);
                     hash.Add(dlss.Parameters.DlssQuality);
+                    break;
+                case DlssFrameGenerationOp dlssFrameGeneration:
+                    hash.Add(dlssFrameGeneration.Session.GetHashCode());
+                    hash.Add(dlssFrameGeneration.Depth.Image.Handle);
+                    hash.Add(dlssFrameGeneration.Motion.Image.Handle);
+                    hash.Add(dlssFrameGeneration.HudlessColor.Image.Handle);
+                    hash.Add(dlssFrameGeneration.Parameters.InputWidth);
+                    hash.Add(dlssFrameGeneration.Parameters.InputHeight);
+                    hash.Add(dlssFrameGeneration.Parameters.OutputWidth);
+                    hash.Add(dlssFrameGeneration.Parameters.OutputHeight);
+                    hash.Add(dlssFrameGeneration.Parameters.FrameIndex);
+                    hash.Add(dlssFrameGeneration.Parameters.ResetHistory);
+                    hash.Add(dlssFrameGeneration.Parameters.OutputHdr);
                     break;
                 case TransformFeedbackOp transformFeedback:
                     hash.Add(transformFeedback.TransformFeedback.GetHashCode());
@@ -610,7 +633,7 @@ public unsafe partial class VulkanRenderer
         private bool _indexBuffersSkippedForShaderGeneratedVertices;
 
         private readonly Dictionary<PipelineKey, Pipeline> _pipelines = new();
-        private readonly record struct PipelineKey(
+        internal readonly record struct PipelineKey(
             PrimitiveTopology Topology,
             bool UseDynamicRendering,
             ulong RenderPassHandle,
@@ -643,8 +666,11 @@ public unsafe partial class VulkanRenderer
             uint ViewportScissorCount,
             bool NativeNegativeOneToOneDepth);
 
-        private readonly Dictionary<GraphicsPipelineLibraryKey, Pipeline> _graphicsPipelineLibraries = new();
-        private enum GraphicsPipelineLibrarySubset : byte
+        internal readonly record struct GraphicsPipelineCompileKey(
+            int OwnerIdentity,
+            PipelineKey Pipeline);
+
+        internal enum GraphicsPipelineLibrarySubset : byte
         {
             VertexInputInterface,
             PreRasterizationShaders,
@@ -652,7 +678,7 @@ public unsafe partial class VulkanRenderer
             FragmentOutputInterface,
         }
 
-        private readonly record struct GraphicsPipelineLibraryKey(
+        internal readonly record struct GraphicsPipelineLibraryKey(
             GraphicsPipelineLibrarySubset Subset,
             bool UseDynamicRendering,
             ulong RenderPassHandle,
@@ -684,6 +710,81 @@ public unsafe partial class VulkanRenderer
             uint ViewportScissorCount,
             bool NativeNegativeOneToOneDepth);
 
+        internal sealed class GraphicsPipelineBuildRequest
+        {
+            public GraphicsPipelineBuildRequest(
+                VkMeshRenderer owner,
+                VkRenderProgram program,
+                PipelineKey key,
+                string pipelineName,
+                uint colorAttachmentCount,
+                PipelineLayout pipelineLayout,
+                VertexInputBindingDescription[] vertexBindings,
+                VertexInputAttributeDescription[] vertexAttributes,
+                PipelineInputAssemblyStateCreateInfo inputAssembly,
+                uint viewportScissorCount,
+                bool nativeNegativeOneToOneDepth,
+                PipelineRasterizationStateCreateInfo rasterizer,
+                PipelineMultisampleStateCreateInfo multisampling,
+                PipelineDepthStencilStateCreateInfo depthStencil,
+                PipelineColorBlendAttachmentState[] blendAttachments,
+                DynamicState[] dynamicStates,
+                RenderPass renderPass,
+                DynamicRenderingFormatSignature dynamicRenderingFormats,
+                PipelineShaderStageCreateInfo[] graphicsStages,
+                PipelineShaderStageCreateInfo[] preRasterStages,
+                PipelineShaderStageCreateInfo[] fragmentStages)
+            {
+                Owner = owner;
+                Program = program;
+                Key = key;
+                CompileKey = new GraphicsPipelineCompileKey(
+                    global::System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(owner),
+                    key);
+                PipelineName = pipelineName;
+                ColorAttachmentCount = colorAttachmentCount;
+                PipelineLayout = pipelineLayout;
+                VertexBindings = vertexBindings;
+                VertexAttributes = vertexAttributes;
+                InputAssembly = inputAssembly;
+                ViewportScissorCount = viewportScissorCount;
+                NativeNegativeOneToOneDepth = nativeNegativeOneToOneDepth;
+                Rasterizer = rasterizer;
+                Multisampling = multisampling;
+                DepthStencil = depthStencil;
+                BlendAttachments = blendAttachments;
+                DynamicStates = dynamicStates;
+                RenderPass = renderPass;
+                DynamicRenderingFormats = dynamicRenderingFormats;
+                GraphicsStages = graphicsStages;
+                PreRasterStages = preRasterStages;
+                FragmentStages = fragmentStages;
+            }
+
+            public VkMeshRenderer Owner { get; }
+            public VkRenderProgram Program { get; }
+            public PipelineKey Key { get; }
+            public GraphicsPipelineCompileKey CompileKey { get; }
+            public string PipelineName { get; }
+            public uint ColorAttachmentCount { get; }
+            public PipelineLayout PipelineLayout { get; }
+            public VertexInputBindingDescription[] VertexBindings { get; }
+            public VertexInputAttributeDescription[] VertexAttributes { get; }
+            public PipelineInputAssemblyStateCreateInfo InputAssembly { get; }
+            public uint ViewportScissorCount { get; }
+            public bool NativeNegativeOneToOneDepth { get; }
+            public PipelineRasterizationStateCreateInfo Rasterizer { get; }
+            public PipelineMultisampleStateCreateInfo Multisampling { get; }
+            public PipelineDepthStencilStateCreateInfo DepthStencil { get; }
+            public PipelineColorBlendAttachmentState[] BlendAttachments { get; }
+            public DynamicState[] DynamicStates { get; }
+            public RenderPass RenderPass { get; }
+            public DynamicRenderingFormatSignature DynamicRenderingFormats { get; }
+            public PipelineShaderStageCreateInfo[] GraphicsStages { get; }
+            public PipelineShaderStageCreateInfo[] PreRasterStages { get; }
+            public PipelineShaderStageCreateInfo[] FragmentStages { get; }
+        }
+
         private VkRenderProgram? _program;
         private XRRenderProgram? _generatedProgram;
         private string? _activeProgramIdentity;
@@ -707,6 +808,7 @@ public unsafe partial class VulkanRenderer
         private bool _descriptorDirty = true;
         private ulong _descriptorSchemaFingerprint;
         private ulong _descriptorResourceFingerprint;
+        private int _uniformDrawSlotCapacity = 1;
         private readonly HashSet<string> _descriptorWarnings = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, EngineUniformBuffer[]> _engineUniformBuffers = new(StringComparer.Ordinal);
         private readonly HashSet<string> _engineUniformWarnings = new(StringComparer.Ordinal);
@@ -763,6 +865,7 @@ public unsafe partial class VulkanRenderer
 
         protected override void DeleteObjectInternal()
         {
+            Renderer.DrainVulkanPipelineCompileJobsForOwner(this);
             DestroyPipelines();
             DestroyGeneratedPrograms();
             RemoveCachedObject(BindingId);
@@ -793,6 +896,7 @@ public unsafe partial class VulkanRenderer
                 Mesh.DataChanged -= OnMeshChanged;
             SubscribeMeshBufferCollection(null);
 
+            Renderer.DrainVulkanPipelineCompileJobsForOwner(this);
             DestroyPipelines();
             DestroyGeneratedPrograms();
             _bufferCache.Clear();
@@ -1022,11 +1126,18 @@ public unsafe partial class VulkanRenderer
                 ? ToVulkanColorWriteMask(matOpts)
                 : Renderer.GetColorWriteMask();
 
-            // Snapshot camera matrices/vectors now, while the rendering camera is
-            // active. The command buffer is recorded later, after the camera stack is
-            // popped, so reading live camera state can resolve to stale values.
-            XRCamera? snapshotCamera = RuntimeEngine.Rendering.State.RenderingCamera;
-            XRCamera? snapshotRightEyeCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
+            // Snapshot camera matrices/vectors now. Fullscreen and UI paths may
+            // intentionally render while the transient rendering camera is null,
+            // but Vulkan records commands later and still needs the active pipeline
+            // camera for auto-uniforms such as inverse view/projection matrices.
+            XRRenderPipelineInstance? currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            XRCamera? snapshotCamera = RuntimeEngine.Rendering.State.RenderingCamera
+                ?? currentPipeline?.RenderState.RenderingCamera
+                ?? currentPipeline?.RenderState.SceneCamera
+                ?? currentPipeline?.LastRenderingCamera
+                ?? currentPipeline?.LastSceneCamera;
+            XRCamera? snapshotRightEyeCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera
+                ?? currentPipeline?.RenderState.StereoRightEyeCamera;
             bool useUnjitteredProjectionSnapshot = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
             Matrix4x4 viewMatrixSnapshot = snapshotCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
             Matrix4x4 inverseViewMatrixSnapshot = snapshotCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
