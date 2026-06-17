@@ -150,6 +150,9 @@ public static class RenderDiagnosticsFlags
     /// <summary>Skip UI-pipeline ops on the Vulkan command buffer to isolate UI from scene faults. Seed: <c>XRE_SKIP_UI_PIPELINE=1</c>.</summary>
     public static volatile bool VkSkipUiPipeline;
 
+    /// <summary>Skip Vulkan batched UI text draw ops to isolate dynamic editor/profiler text from scene command recording. Seed: <c>XRE_SKIP_UI_BATCH_TEXT=1</c>.</summary>
+    public static volatile bool VkSkipUiBatchText;
+
     /// <summary>Clear the Vulkan swapchain to magenta after main composition (sanity check). Seed: <c>XRE_FORCE_SWAPCHAIN_MAGENTA=1</c>.</summary>
     public static volatile bool VkForceSwapchainMagenta;
 
@@ -286,6 +289,7 @@ public static class RenderDiagnosticsFlags
         VkTraceSwapDraw = ReadBool("XRE_VK_TRACE_SWAPDRAW");
         VkTraceDraw = ReadBool("XRE_VK_TRACE_DRAW");
         VkSkipUiPipeline = ReadBool("XRE_SKIP_UI_PIPELINE");
+        VkSkipUiBatchText = ReadBool("XRE_SKIP_UI_BATCH_TEXT");
         VkForceSwapchainMagenta = ReadBool("XRE_FORCE_SWAPCHAIN_MAGENTA");
         VkSkipImGui = ReadBool("XRE_SKIP_IMGUI");
 

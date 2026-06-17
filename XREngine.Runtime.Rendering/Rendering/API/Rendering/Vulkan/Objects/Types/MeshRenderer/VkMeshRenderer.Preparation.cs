@@ -145,13 +145,11 @@ public unsafe partial class VulkanRenderer
 		private bool SetPrepareResult(bool ready, string result, string detail, out string reason)
 		{
 			string previousResult = _lastPrepareResult;
-			string previousDetail = _lastPrepareDetail;
 			_lastPrepareResult = result;
 			_lastPrepareDetail = detail;
 			reason = result;
 
-			if (!string.Equals(previousResult, result, StringComparison.Ordinal) ||
-			    !string.Equals(previousDetail, detail, StringComparison.Ordinal))
+			if (!string.Equals(previousResult, result, StringComparison.Ordinal))
 			{
 				Renderer.MarkCommandBuffersDirty();
 			}

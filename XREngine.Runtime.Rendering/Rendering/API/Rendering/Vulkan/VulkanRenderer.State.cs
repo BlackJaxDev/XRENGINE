@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -22,6 +24,7 @@ public unsafe partial class VulkanRenderer
     private VulkanCompiledRenderGraph _compiledRenderGraph = VulkanCompiledRenderGraph.Empty;
     private FrameOpContext? _lastActiveFrameOpContext;
     private ulong _resourcePlannerSignature = ulong.MaxValue;
+    private ResourcePlannerSignatureBreakdown _resourcePlannerSignatureBreakdown;
     private ulong _resourcePlannerRevision;
     private bool _isRecordingCommandBuffer;
     private readonly Dictionary<string, XRDataBuffer> _trackedBuffersByName = new(StringComparer.OrdinalIgnoreCase);
@@ -31,6 +34,9 @@ public unsafe partial class VulkanRenderer
     internal VulkanCompiledRenderGraph CompiledRenderGraph => _compiledRenderGraph;
     internal ulong ResourcePlannerRevision => _resourcePlannerRevision;
     private bool[]? _commandBufferDirtyFlags;
+    private readonly object _commandBufferDirtyReasonLock = new();
+    private readonly Dictionary<string, int> _commandBufferDirtyReasons = new(StringComparer.Ordinal);
+    private long _lastCommandBufferDirtyReasonLogTimestamp;
     private XRFrameBuffer? _boundDrawFrameBuffer;
     private XRFrameBuffer? _boundReadFrameBuffer;
     private EReadBufferMode _readBufferMode = EReadBufferMode.ColorAttachment0;
@@ -64,6 +70,25 @@ public unsafe partial class VulkanRenderer
         int QueueOwnershipTransfers,
         int BarrierStageFlushes,
         TimeSpan FrameDelta);
+
+    private readonly record struct ResourcePlannerSignatureBreakdown(
+        int Registry,
+        uint DisplayWidth,
+        uint DisplayHeight,
+        uint InternalWidth,
+        uint InternalHeight,
+        int PassMetadata,
+        int GraphBatches,
+        int GraphEdges,
+        uint GraphicsQueueFamily,
+        uint ComputeQueueFamily,
+        uint TransferQueueFamily)
+    {
+        public override string ToString()
+            => $"registry=0x{Registry:X8} dims={DisplayWidth}x{DisplayHeight}/{InternalWidth}x{InternalHeight} " +
+               $"passes=0x{PassMetadata:X8} batches=0x{GraphBatches:X8} edges=0x{GraphEdges:X8} " +
+               $"queues=g{GraphicsQueueFamily}/c{ComputeQueueFamily}/t{TransferQueueFamily}";
+    }
 
     internal Viewport GetCurrentViewport()
         => _state.GetViewport(ResolveCurrentDrawTargetExtent());
@@ -393,8 +418,17 @@ public unsafe partial class VulkanRenderer
                 _currentTargetExtent = extent;
         }
 
-        public void SetCurrentTargetExtent(Extent2D extent)
-            => _currentTargetExtent = extent;
+        public bool SetCurrentTargetExtent(Extent2D extent)
+        {
+            if (_currentTargetExtent.Width == extent.Width &&
+                _currentTargetExtent.Height == extent.Height)
+            {
+                return false;
+            }
+
+            _currentTargetExtent = extent;
+            return true;
+        }
 
         public Extent2D GetCurrentTargetExtent()
             => _currentTargetExtent;
@@ -410,12 +444,16 @@ public unsafe partial class VulkanRenderer
                 ? CreateVulkanViewport(_viewportRegion, targetExtent)
                 : CreateVulkanViewport(targetExtent);
 
-        public void SetViewport(BoundingRectangle region)
+        public bool SetViewport(BoundingRectangle region)
         {
+            if (_viewportExplicitlySet && SameRectangle(_viewportRegion, region))
+                return false;
+
             // Engine regions remain bottom-left rectangles. The clip-space policy chooses
             // whether Vulkan uses a negative-height GL-style viewport or native Y-down mapping.
             _viewportRegion = region;
             _viewportExplicitlySet = true;
+            return true;
         }
 
         public Rect2D GetScissor(Extent2D targetExtent)
@@ -423,8 +461,14 @@ public unsafe partial class VulkanRenderer
                 ? CreateVulkanScissor(_scissorRegion, targetExtent)
                 : DefaultScissor(targetExtent);
 
-        public void SetScissor(BoundingRectangle region)
-            => _scissorRegion = region;
+        public bool SetScissor(BoundingRectangle region)
+        {
+            if (SameRectangle(_scissorRegion, region))
+                return false;
+
+            _scissorRegion = region;
+            return true;
+        }
 
         public void SetIndexedViewportScissors(
             ReadOnlySpan<BoundingRectangle> viewports,
@@ -524,8 +568,14 @@ public unsafe partial class VulkanRenderer
             };
         }
 
-        public void SetCroppingEnabled(bool enabled)
-            => CroppingEnabled = enabled;
+        public bool SetCroppingEnabled(bool enabled)
+        {
+            if (CroppingEnabled == enabled)
+                return false;
+
+            CroppingEnabled = enabled;
+            return true;
+        }
 
         public bool GetDepthTestEnabled() => DepthTestEnabled;
         public bool GetDepthWriteEnabled() => DepthWriteEnabled;
@@ -557,63 +607,145 @@ public unsafe partial class VulkanRenderer
                 Extent = new Extent2D(extent.Width, extent.Height)
             };
 
-        public void SetClearColor(ColorF4 color)
-            => ClearColor = color;
-
-        public void SetClearDepth(float depth)
-            => ClearDepth = depth;
-
-        public void SetClearStencil(int stencil)
-            => ClearStencil = (uint)stencil;
-
-        public void SetClearState(bool color, bool depth, bool stencil)
+        public bool SetClearColor(ColorF4 color)
         {
+            if (SameColor(ClearColor, color))
+                return false;
+
+            ClearColor = color;
+            return true;
+        }
+
+        public bool SetClearDepth(float depth)
+        {
+            if (ClearDepth == depth)
+                return false;
+
+            ClearDepth = depth;
+            return true;
+        }
+
+        public bool SetClearStencil(int stencil)
+        {
+            uint value = (uint)stencil;
+            if (ClearStencil == value)
+                return false;
+
+            ClearStencil = value;
+            return true;
+        }
+
+        public bool SetClearState(bool color, bool depth, bool stencil)
+        {
+            if (ClearColorEnabled == color &&
+                ClearDepthEnabled == depth &&
+                ClearStencilEnabled == stencil)
+            {
+                return false;
+            }
+
             ClearColorEnabled = color;
             ClearDepthEnabled = depth;
             ClearStencilEnabled = stencil;
+            return true;
         }
 
-        public void SetDepthTestEnabled(bool enabled)
-            => DepthTestEnabled = enabled;
-
-        public void SetDepthWriteEnabled(bool enabled)
-            => DepthWriteEnabled = enabled;
-
-        public void SetDepthCompare(CompareOp op)
-            => DepthCompareOp = op;
-
-        public void SetStencilWriteMask(uint mask)
-            => StencilWriteMask = mask;
-
-        public void SetStencilEnabled(bool enabled)
-            => StencilTestEnabled = enabled;
-
-        public void SetStencilStates(StencilOpState front, StencilOpState back)
+        public bool SetDepthTestEnabled(bool enabled)
         {
+            if (DepthTestEnabled == enabled)
+                return false;
+
+            DepthTestEnabled = enabled;
+            return true;
+        }
+
+        public bool SetDepthWriteEnabled(bool enabled)
+        {
+            if (DepthWriteEnabled == enabled)
+                return false;
+
+            DepthWriteEnabled = enabled;
+            return true;
+        }
+
+        public bool SetDepthCompare(CompareOp op)
+        {
+            if (DepthCompareOp == op)
+                return false;
+
+            DepthCompareOp = op;
+            return true;
+        }
+
+        public bool SetStencilWriteMask(uint mask)
+        {
+            if (StencilWriteMask == mask)
+                return false;
+
+            StencilWriteMask = mask;
+            return true;
+        }
+
+        public bool SetStencilEnabled(bool enabled)
+        {
+            if (StencilTestEnabled == enabled)
+                return false;
+
+            StencilTestEnabled = enabled;
+            return true;
+        }
+
+        public bool SetStencilStates(StencilOpState front, StencilOpState back)
+        {
+            if (SameStencilState(FrontStencilState, front) &&
+                SameStencilState(BackStencilState, back))
+            {
+                return false;
+            }
+
             FrontStencilState = front;
             BackStencilState = back;
+            return true;
         }
 
-        public void SetColorMask(bool red, bool green, bool blue, bool alpha)
+        public bool SetColorMask(bool red, bool green, bool blue, bool alpha)
         {
-            ColorWriteMask = ColorComponentFlags.None;
+            ColorComponentFlags mask = ColorComponentFlags.None;
             if (red)
-                ColorWriteMask |= ColorComponentFlags.RBit;
+                mask |= ColorComponentFlags.RBit;
             if (green)
-                ColorWriteMask |= ColorComponentFlags.GBit;
+                mask |= ColorComponentFlags.GBit;
             if (blue)
-                ColorWriteMask |= ColorComponentFlags.BBit;
+                mask |= ColorComponentFlags.BBit;
             if (alpha)
-                ColorWriteMask |= ColorComponentFlags.ABit;
+                mask |= ColorComponentFlags.ABit;
+
+            if (ColorWriteMask == mask)
+                return false;
+
+            ColorWriteMask = mask;
+            return true;
         }
 
-        public void SetCullMode(CullModeFlags mode)
-            => CullMode = mode;
+        public bool SetCullMode(CullModeFlags mode)
+        {
+            if (CullMode == mode)
+                return false;
 
-        public void SetFrontFace(FrontFace frontFace)
-            => FrontFace = frontFace;
+            CullMode = mode;
+            return true;
+        }
 
-        public void SetBlendState(
+        public bool SetFrontFace(FrontFace frontFace)
+        {
+            if (FrontFace == frontFace)
+                return false;
+
+            FrontFace = frontFace;
+            return true;
+        }
+
+        public bool SetBlendState(
             bool enabled,
             BlendOp colorOp,
             BlendOp alphaOp,
@@ -622,6 +754,17 @@ public unsafe partial class VulkanRenderer
             BlendFactor srcAlpha,
             BlendFactor dstAlpha)
         {
+            if (BlendEnabled == enabled &&
+                ColorBlendOp == colorOp &&
+                AlphaBlendOp == alphaOp &&
+                SrcColorBlendFactor == srcColor &&
+                DstColorBlendFactor == dstColor &&
+                SrcAlphaBlendFactor == srcAlpha &&
+                DstAlphaBlendFactor == dstAlpha)
+            {
+                return false;
+            }
+
             BlendEnabled = enabled;
             ColorBlendOp = colorOp;
             AlphaBlendOp = alphaOp;
@@ -629,10 +772,39 @@ public unsafe partial class VulkanRenderer
             DstColorBlendFactor = dstColor;
             SrcAlphaBlendFactor = srcAlpha;
             DstAlphaBlendFactor = dstAlpha;
+            return true;
         }
 
-        public void SetAlphaToCoverageEnabled(bool enabled)
-            => AlphaToCoverageEnabled = enabled;
+        public bool SetAlphaToCoverageEnabled(bool enabled)
+        {
+            if (AlphaToCoverageEnabled == enabled)
+                return false;
+
+            AlphaToCoverageEnabled = enabled;
+            return true;
+        }
+
+        private static bool SameRectangle(BoundingRectangle left, BoundingRectangle right)
+            => left.X == right.X &&
+               left.Y == right.Y &&
+               left.Width == right.Width &&
+               left.Height == right.Height &&
+               left.LocalOriginPercentage == right.LocalOriginPercentage;
+
+        private static bool SameColor(ColorF4 left, ColorF4 right)
+            => left.R == right.R &&
+               left.G == right.G &&
+               left.B == right.B &&
+               left.A == right.A;
+
+        private static bool SameStencilState(StencilOpState left, StencilOpState right)
+            => left.FailOp == right.FailOp &&
+               left.PassOp == right.PassOp &&
+               left.DepthFailOp == right.DepthFailOp &&
+               left.CompareOp == right.CompareOp &&
+               left.CompareMask == right.CompareMask &&
+               left.WriteMask == right.WriteMask &&
+               left.Reference == right.Reference;
 
         public void WriteClearValues(ClearValue* destination, uint attachmentCount)
         {
@@ -1052,6 +1224,21 @@ public unsafe partial class VulkanRenderer
         if (plannerSignature == _resourcePlannerSignature)
             return;
 
+        ResourcePlannerSignatureBreakdown signatureBreakdown = ComputeResourcePlannerSignatureBreakdown(
+            context,
+            queueOwnership,
+            compiledGraph,
+            activePassMetadata);
+        Debug.VulkanEvery(
+            $"Vulkan.ResourcePlanner.SignatureChange.{context.PipelineIdentity}.{context.ViewportIdentity}",
+            TimeSpan.FromSeconds(1),
+            "[VulkanResourcePlanner] Signature changed. Revision={0} Old=0x{1:X16} New=0x{2:X16} OldComponents=[{3}] NewComponents=[{4}]",
+            _resourcePlannerRevision,
+            _resourcePlannerSignature,
+            plannerSignature,
+            _resourcePlannerSignatureBreakdown,
+            signatureBreakdown);
+
         VulkanResourcePlanner pendingPlanner = new();
         VulkanResourceAllocator pendingAllocator = new();
         try
@@ -1110,6 +1297,7 @@ public unsafe partial class VulkanRenderer
             queueOwnership);
 
         _resourcePlannerSignature = plannerSignature;
+        _resourcePlannerSignatureBreakdown = signatureBreakdown;
         _resourcePlannerRevision++;
     }
 
@@ -1352,6 +1540,64 @@ public unsafe partial class VulkanRenderer
         hash.Add(queueOwnership.TransferQueueFamilyIndex ?? queueOwnership.GraphicsQueueFamilyIndex);
 
         return unchecked((ulong)hash.ToHashCode());
+    }
+
+    private static ResourcePlannerSignatureBreakdown ComputeResourcePlannerSignatureBreakdown(
+        in FrameOpContext context,
+        in VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership,
+        VulkanCompiledRenderGraph compiledGraph,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+        => new(
+            ComputeResourceRegistrySignature(context.ResourceRegistry),
+            context.DisplayWidth,
+            context.DisplayHeight,
+            context.InternalWidth,
+            context.InternalHeight,
+            ComputePassMetadataSignature(passMetadata),
+            ComputeCompiledGraphBatchSignature(compiledGraph),
+            ComputeCompiledGraphEdgeSignature(compiledGraph),
+            queueOwnership.GraphicsQueueFamilyIndex,
+            queueOwnership.ComputeQueueFamilyIndex ?? queueOwnership.GraphicsQueueFamilyIndex,
+            queueOwnership.TransferQueueFamilyIndex ?? queueOwnership.GraphicsQueueFamilyIndex);
+
+    private static int ComputeCompiledGraphBatchSignature(VulkanCompiledRenderGraph compiledGraph)
+    {
+        HashCode hash = new();
+        hash.Add(compiledGraph.Batches.Count);
+        foreach (VulkanCompiledPassBatch batch in compiledGraph.Batches)
+        {
+            hash.Add(batch.BatchIndex);
+            hash.Add((int)batch.Stage);
+            hash.Add(batch.AttachmentSignature, StringComparer.Ordinal);
+            hash.Add(batch.PassIndices.Count);
+            for (int i = 0; i < batch.PassIndices.Count; i++)
+                hash.Add(batch.PassIndices[i]);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static int ComputeCompiledGraphEdgeSignature(VulkanCompiledRenderGraph compiledGraph)
+    {
+        HashCode hash = new();
+        hash.Add(compiledGraph.Synchronization.Edges.Count);
+        foreach (RenderGraphSynchronizationEdge edge in compiledGraph.Synchronization.Edges)
+        {
+            hash.Add(edge.ProducerPassIndex);
+            hash.Add(edge.ConsumerPassIndex);
+            hash.Add(edge.ResourceName, StringComparer.OrdinalIgnoreCase);
+            hash.Add((int)edge.ResourceType);
+            AddSubresourceRangeToHash(ref hash, edge.SubresourceRange);
+            hash.Add((int)edge.ProducerState.StageMask);
+            hash.Add((int)edge.ProducerState.AccessMask);
+            hash.Add((int)(edge.ProducerState.Layout ?? RenderGraphImageLayout.Undefined));
+            hash.Add((int)edge.ConsumerState.StageMask);
+            hash.Add((int)edge.ConsumerState.AccessMask);
+            hash.Add((int)(edge.ConsumerState.Layout ?? RenderGraphImageLayout.Undefined));
+            hash.Add(edge.DependencyOnly);
+        }
+
+        return hash.ToHashCode();
     }
 
     private static int ComputeResourceRegistrySignature(RenderResourceRegistry? registry)
@@ -2018,13 +2264,55 @@ public unsafe partial class VulkanRenderer
     public bool TryGetPhysicalBuffer(string resourceName, out Buffer buffer, out ulong size)
         => _resourceAllocator.TryGetBuffer(resourceName, out buffer, out size);
 
-    private void MarkCommandBuffersDirty()
+    private void MarkCommandBuffersDirty([CallerMemberName] string? reason = null)
     {
         if (_commandBufferDirtyFlags is null)
             return;
 
         for (int i = 0; i < _commandBufferDirtyFlags.Length; i++)
             _commandBufferDirtyFlags[i] = true;
+
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBuffersDirty(reason);
+        TrackCommandBufferDirtyReason(reason, _commandBufferDirtyFlags.Length);
+    }
+
+    private void TrackCommandBufferDirtyReason(string? reason, int swapchainImageCount)
+    {
+        string key = string.IsNullOrWhiteSpace(reason) ? "<unknown>" : reason;
+        string? summary = null;
+        lock (_commandBufferDirtyReasonLock)
+        {
+            _commandBufferDirtyReasons.TryGetValue(key, out int count);
+            _commandBufferDirtyReasons[key] = count + 1;
+
+            long now = Stopwatch.GetTimestamp();
+            if (_lastCommandBufferDirtyReasonLogTimestamp == 0)
+            {
+                _lastCommandBufferDirtyReasonLogTimestamp = now;
+                return;
+            }
+
+            if (Stopwatch.GetElapsedTime(_lastCommandBufferDirtyReasonLogTimestamp, now) < TimeSpan.FromSeconds(1))
+                return;
+
+            StringBuilder builder = new();
+            foreach (KeyValuePair<string, int> pair in _commandBufferDirtyReasons.OrderByDescending(static p => p.Value))
+            {
+                if (builder.Length > 0)
+                    builder.Append(", ");
+
+                builder.Append(pair.Key).Append('=').Append(pair.Value);
+            }
+
+            summary = builder.ToString();
+            _commandBufferDirtyReasons.Clear();
+            _lastCommandBufferDirtyReasonLogTimestamp = now;
+        }
+
+        Debug.Vulkan(
+            "[Vulkan] Command buffers marked dirty over the last second. SwapchainImages={0} Reasons={1}",
+            swapchainImageCount,
+            summary);
     }
 
     internal override void NotifyRenderResourcesChanged()

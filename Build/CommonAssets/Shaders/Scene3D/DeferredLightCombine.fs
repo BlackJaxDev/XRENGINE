@@ -119,6 +119,18 @@ float GTSpecularOcclusion(float NoV, float ao, float roughness)
     return clamp(pow(NoV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao, 0.0f, 1.0f);
 }
 
+float ResolveAmbientOcclusion(vec2 uv)
+{
+        if (!UseAmbientOcclusion)
+                return 1.0f;
+
+        float rawAO = texture(AmbientOcclusionTexture, uv).r;
+        if (isnan(rawAO) || isinf(rawAO))
+                return 1.0f;
+
+        return pow(clamp(rawAO, 0.0f, 1.0f), max(AmbientOcclusionPower, 0.001f));
+}
+
 mat3 QuaternionToMat3(vec4 q)
 {
         vec3 q2 = q.xyz + q.xyz;
@@ -351,7 +363,6 @@ void main()
         vec4 rmse = texture(RMSE, uv);
 #endif
         vec3 albedoColor = albedoOpacity.rgb;
-        float ao = UseAmbientOcclusion ? pow(texture(AmbientOcclusionTexture, uv).r, max(AmbientOcclusionPower, 0.001f)) : 1.0f;
 #ifdef XRENGINE_MSAA_DEFERRED
         float depth = texelFetch(DepthView, coord, gl_SampleID).r;
         vec3 InLo = max(texelFetch(LightingTextureMS, coord, gl_SampleID).rgb, vec3(0.0f));
@@ -367,6 +378,8 @@ void main()
                 OutLo = vec4(0.0f);
                 return;
         }
+
+        float ao = ResolveAmbientOcclusion(uv);
 
         // Debug visualization modes (set DeferredDebugMode via XRE_DEFERRED_DEBUG env var)
         if (DeferredDebugMode > 0)

@@ -20,30 +20,38 @@ namespace XREngine.Rendering.Vulkan
             if (mask == EMemoryBarrierMask.None)
                 return;
 
-            _state.RegisterMemoryBarrier(mask);
-            MarkCommandBuffersDirty();
+            FrameOpContext context = CaptureFrameOpContextOrLastActive();
+            int passIndex = EnsureValidPassIndex(
+                RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+                "MemoryBarrier",
+                context.PassMetadata);
+
+            if (passIndex == int.MinValue)
+            {
+                _state.RegisterMemoryBarrier(mask);
+                MarkCommandBuffersDirty();
+                return;
+            }
+
+            EnqueueFrameOp(new MemoryBarrierOp(passIndex, mask, context));
         }
         public override void ColorMask(bool red, bool green, bool blue, bool alpha)
         {
             _state.SetColorMask(red, green, blue, alpha);
-            MarkCommandBuffersDirty();
         }
 
         public override void ClearColor(ColorF4 color)
         {
             _state.SetClearColor(color);
-            MarkCommandBuffersDirty();
         }
 
         public override void CropRenderArea(BoundingRectangle region)
         {
             _state.SetScissor(region);
-            MarkCommandBuffersDirty();
         }
         public override void SetRenderArea(BoundingRectangle region)
         {
             _state.SetViewport(region);
-            MarkCommandBuffersDirty();
         }
 
         public override bool SetIndexedViewportScissors(
@@ -297,6 +305,11 @@ namespace XREngine.Rendering.Vulkan
             TimeSpan submitQueueTime = TimeSpan.Zero;
             TimeSpan trimStagingTime = TimeSpan.Zero;
             TimeSpan presentQueueTime = TimeSpan.Zero;
+            TimeSpan sampleTimingQueriesTime = TimeSpan.Zero;
+            TimeSpan drainRetiredResourcesTime = TimeSpan.Zero;
+            TimeSpan acquireBridgeSubmitTime = TimeSpan.Zero;
+            TimeSpan waitSwapchainImageTime = TimeSpan.Zero;
+            TimeSpan resetDynamicUniformRingTime = TimeSpan.Zero;
 
             try
             {
@@ -427,13 +440,10 @@ namespace XREngine.Rendering.Vulkan
                 WaitForTimelineValue(_graphicsTimelineSemaphore, slotWaitValue);
             }
             waitFenceTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.SampleTimingQueries"))
-            {
-                SampleFrameTimingQueries(currentFrame);
-            }
 
             // Now that the GPU has finished all work for this frame slot, destroy
             // resources that were retired during its previous recording.
+            stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DrainRetiredResources"))
             {
                 DrainRetiredDescriptorPools();
@@ -442,6 +452,7 @@ namespace XREngine.Rendering.Vulkan
                 DrainRetiredFramebuffers();
                 DrainRetiredImages();
             }
+            drainRetiredResourcesTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
             // Helpful when tracking down DPI / resize issues.
             Debug.VulkanEvery(
@@ -571,10 +582,12 @@ namespace XREngine.Rendering.Vulkan
             };
 
             Result bridgeResult;
+            stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.AcquireBridgeSubmit"))
             {
                 bridgeResult = SubmitToQueueTracked(graphicsQueue, ref acquireBridgeSubmit, default);
             }
+            acquireBridgeSubmitTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
             if (bridgeResult != Result.Success)
             {
                 if (bridgeResult == Result.ErrorDeviceLost)
@@ -583,17 +596,28 @@ namespace XREngine.Rendering.Vulkan
                 throw new Exception($"Failed to bridge swapchain acquire semaphore to timeline ({bridgeResult}).");
             }
 
+            stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.WaitSwapchainImage"))
             {
                 if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
                     WaitForTimelineValue(_graphicsTimelineSemaphore, _swapchainImageTimelineValues[imageIndex]);
             }
+            waitSwapchainImageTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+
+            stageStartTimestamp = Stopwatch.GetTimestamp();
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.SampleTimingQueries"))
+            {
+                SampleFrameTimingQueries(unchecked((int)Math.Min(imageIndex, int.MaxValue)));
+            }
+            sampleTimingQueriesTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
             // 4. Reset per-frame dynamic uniform ring buffer for this image.
+            stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.ResetDynamicUniformRing"))
             {
                 ResetDynamicUniformRingBuffer(imageIndex);
             }
+            resetDynamicUniformRingTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
             // 5. Record the command buffer
             // Note: This currently records a default pass (Clear + ImGui). 
@@ -691,7 +715,7 @@ namespace XREngine.Rendering.Vulkan
                 throw new Exception($"Failed to submit draw command buffer ({submitResult}).");
             }
             submitQueueTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
-            MarkFrameTimingSubmitted(currentFrame);
+            MarkFrameTimingSubmitted(unchecked((int)Math.Min(imageIndex, int.MaxValue)));
 
             _frameSlotTimelineValues[currentFrame] = graphicsSignalValue;
             if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
@@ -790,6 +814,12 @@ namespace XREngine.Rendering.Vulkan
                     trimStagingTime,
                     presentQueueTime,
                     totalFrameTime);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameLifecycleDetailTiming(
+                    sampleTimingQueriesTime,
+                    drainRetiredResourcesTime,
+                    acquireBridgeSubmitTime,
+                    waitSwapchainImageTime,
+                    resetDynamicUniformRingTime);
             }
         }
     }

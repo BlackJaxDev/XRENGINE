@@ -22,6 +22,7 @@ public sealed partial class RenderStatsPacket
 
     // Rendering profiler schema v2: nested to stay below MemoryPack's per-object member cap.
     public RenderProfilerV2Data RenderProfilerV2 { get; set; } = new();
+    public VulkanFrameLoopTelemetryData VulkanFrameLoop { get; set; } = new();
 
     public int GpuTransparencyOpaqueOrOtherVisible { get; set; }
     public int GpuTransparencyMaskedVisible { get; set; }
@@ -245,6 +246,47 @@ public sealed partial class RenderProfilerV2Data
     public RenderProfilerRendererStateData RendererState { get; set; } = new();
     public RenderProfilerSceneAssetData SceneAssets { get; set; } = new();
     public RenderProfilerGpuDrivenData GpuDriven { get; set; } = new();
+}
+
+[MemoryPackable]
+public sealed partial class VulkanFrameLoopTelemetryData
+{
+    public double FrameSampleTimingQueriesMs { get; set; }
+    public double FrameDrainRetiredResourcesMs { get; set; }
+    public double FrameAcquireBridgeSubmitMs { get; set; }
+    public double FrameWaitSwapchainImageMs { get; set; }
+    public double FrameResetDynamicUniformRingMs { get; set; }
+    public int FrameOpTotalCount { get; set; }
+    public int FrameOpClearCount { get; set; }
+    public int FrameOpMeshDrawCount { get; set; }
+    public int FrameOpIndirectDrawCount { get; set; }
+    public int FrameOpMeshTaskDispatchCount { get; set; }
+    public int FrameOpBlitCount { get; set; }
+    public int FrameOpComputeCount { get; set; }
+    public int FrameOpSwapchainWriteCount { get; set; }
+    public int FrameOpFboWriteCount { get; set; }
+    public int FrameOpUniquePassCount { get; set; }
+    public int FrameOpUniqueContextCount { get; set; }
+    public int FrameOpUniqueTargetCount { get; set; }
+
+    public int CommandBufferCleanReuseCount { get; set; }
+    public int CommandBufferRecordCount { get; set; }
+    public int CommandBufferForcedDirtyCount { get; set; }
+    public int CommandBufferFrameOpSignatureDirtyCount { get; set; }
+    public int CommandBufferPlannerDirtyCount { get; set; }
+    public int CommandBufferProfilerDirtyCount { get; set; }
+    public string CommandBufferDirtySummary { get; set; } = string.Empty;
+
+    public int RetiredDescriptorPoolCount { get; set; }
+    public int RetiredPipelineCount { get; set; }
+    public int RetiredFramebufferCount { get; set; }
+    public int RetiredBufferCount { get; set; }
+    public int RetiredBufferMemoryCount { get; set; }
+    public int RetiredImageCount { get; set; }
+    public int RetiredImageViewCount { get; set; }
+    public int RetiredSamplerCount { get; set; }
+    public int RetiredImageMemoryCount { get; set; }
+    public long RetiredImageBytes { get; set; }
 }
 
 [MemoryPackable]

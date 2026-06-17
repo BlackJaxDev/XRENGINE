@@ -370,6 +370,29 @@ public unsafe partial class VulkanRenderer
 			return true;
 		}
 
+		internal bool TryRefreshReusableCommandBufferFrameData(uint imageIndex, in PendingMeshDraw draw, int drawUniformSlot)
+		{
+			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+			if (_program?.Data is { } programData)
+				NotifyDrawUniforms(material, programData, draw);
+
+			if (!CanReuseRecordedDescriptorSets(material, drawUniformSlot))
+				return false;
+
+			int frameIndex = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+			UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
+			UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);
+			return true;
+		}
+
+		internal string DescribeReusableCommandBufferFrameDataBlocker(in PendingMeshDraw draw, int drawUniformSlot)
+		{
+			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+			return CanReuseRecordedDescriptorSets(material, drawUniformSlot, out string reason)
+				? "reusable descriptor sets; refresh likely failed after descriptor check"
+				: reason;
+		}
+
 		private readonly struct MeshDrawPushConstants
 		{
 			public readonly uint MaterialIdentity;

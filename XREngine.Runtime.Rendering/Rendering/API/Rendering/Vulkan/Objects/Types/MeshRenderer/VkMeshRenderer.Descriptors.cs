@@ -10,6 +10,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 
 using Silk.NET.Vulkan;
 
@@ -26,6 +27,10 @@ public unsafe partial class VulkanRenderer
 	public partial class VkMeshRenderer
 	{
 		#region Descriptor Set Management
+
+		private static readonly bool DescriptorResourceFingerprintDiagnosticsEnabled =
+			string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_FRAME_DATA_REUSE_DIAG"), "1", StringComparison.Ordinal) ||
+			string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_DESCRIPTOR_FINGERPRINT_DIAG"), "1", StringComparison.Ordinal);
 
 		/// <summary>
 		/// Ensures descriptor sets are allocated and written for all swapchain frames.
@@ -146,7 +151,106 @@ public unsafe partial class VulkanRenderer
 
 			_descriptorSchemaFingerprint = schemaFingerprint;
 			_descriptorResourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount);
+			_descriptorResourceFingerprintDetails = DescriptorResourceFingerprintDiagnosticsEnabled
+				? ComputeDescriptorResourceFingerprintDetails(material, frameCount)
+				: string.Empty;
 			_descriptorDirty = false;
+			return true;
+		}
+
+		internal bool CanReuseRecordedDescriptorSets(XRMaterial material, int drawUniformSlot)
+			=> CanReuseRecordedDescriptorSets(material, drawUniformSlot, out _);
+
+		internal bool CanReuseRecordedDescriptorSets(XRMaterial material, int drawUniformSlot, out string reason)
+		{
+			reason = "reusable";
+			if (_program is null)
+				return true;
+
+			var layouts = _program.DescriptorSetLayouts;
+			var bindings = _program.DescriptorBindings;
+			if (layouts is null || layouts.Count == 0 || bindings.Count == 0)
+				return true;
+
+			if (Renderer.swapChainImages is null || Renderer.swapChainImages.Length == 0)
+			{
+				reason = "swapchain images unavailable";
+				return false;
+			}
+
+			int requiredSlots = Math.Max(drawUniformSlot + 1, 1);
+			if (requiredSlots > _uniformDrawSlotCapacity)
+			{
+				reason = $"draw slot capacity {requiredSlots}>{_uniformDrawSlotCapacity}";
+				return false;
+			}
+
+			int frameCount = Renderer.swapChainImages.Length;
+			int descriptorFrameSlotCount = frameCount * UniformBufferSlotCount;
+			int setCount = layouts.Count;
+			ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);
+			ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount);
+
+			if (_descriptorDirty)
+			{
+				reason = "descriptor dirty";
+				return false;
+			}
+
+			if (_descriptorPool.Handle == 0)
+			{
+				reason = "descriptor pool missing";
+				return false;
+			}
+
+			if (_descriptorSets is not { Length: > 0 })
+			{
+				reason = "descriptor sets missing";
+				return false;
+			}
+
+			if (_descriptorSets.Length != descriptorFrameSlotCount)
+			{
+				reason = $"descriptor set slot count {_descriptorSets.Length}!={descriptorFrameSlotCount} (frames={frameCount}, slots={UniformBufferSlotCount})";
+				return false;
+			}
+
+			for (int i = 0; i < _descriptorSets.Length; i++)
+			{
+				DescriptorSet[]? sets = _descriptorSets[i];
+				if (sets is null)
+				{
+					reason = $"descriptor set slot {i} is null";
+					return false;
+				}
+
+				if (sets.Length != setCount)
+				{
+					reason = $"descriptor set slot {i} set count {sets.Length}!={setCount}";
+					return false;
+				}
+			}
+
+			if (_descriptorSchemaFingerprint != schemaFingerprint)
+			{
+				reason = $"schema fingerprint 0x{_descriptorSchemaFingerprint:X16}->0x{schemaFingerprint:X16}";
+				return false;
+			}
+
+			if (_descriptorResourceFingerprint != resourceFingerprint)
+			{
+				if (DescriptorResourceFingerprintDiagnosticsEnabled)
+				{
+					string currentDetails = ComputeDescriptorResourceFingerprintDetails(material, frameCount);
+					reason = $"resource fingerprint 0x{_descriptorResourceFingerprint:X16}->0x{resourceFingerprint:X16}; old=[{_descriptorResourceFingerprintDetails}] new=[{currentDetails}]";
+				}
+				else
+				{
+					reason = $"resource fingerprint 0x{_descriptorResourceFingerprint:X16}->0x{resourceFingerprint:X16}";
+				}
+				return false;
+			}
+
 			return true;
 		}
 
@@ -168,6 +272,94 @@ public unsafe partial class VulkanRenderer
 				hash.Add(binding.Count);
 				hash.Add((int)binding.StageFlags);
 				hash.Add(binding.Name);
+			}
+
+			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private string ComputeDescriptorResourceFingerprintDetails(XRMaterial material, int frameCount)
+		{
+			StringBuilder builder = new(256);
+			AppendComponent(builder, "frames", frameCount);
+			AppendComponent(builder, "skinned", MeshRenderer.SkinnedOutputVersion);
+			AppendComponent(builder, "buffers", ComputeCachedBufferResourceFingerprint());
+			AppendComponent(builder, "textures", ComputeMaterialTextureResourceFingerprint(material));
+			AppendComponent(builder, "engineUbo", ComputeEngineUniformResourceFingerprint());
+			AppendComponent(builder, "autoUbo", ComputeAutoUniformResourceFingerprint());
+			if (_program is not null)
+			{
+				AppendComponent(builder, "programSamplers", _program.ComputeSamplerResourceFingerprint());
+				AppendComponent(builder, "programBuffers", _program.ComputeBoundBufferResourceFingerprint());
+			}
+			else
+			{
+				AppendComponent(builder, "programSamplers", 0UL);
+				AppendComponent(builder, "programBuffers", 0UL);
+			}
+
+			return builder.ToString();
+		}
+
+		private static void AppendComponent(StringBuilder builder, string name, int value)
+			=> AppendComponent(builder, name, unchecked((ulong)value));
+
+		private static void AppendComponent(StringBuilder builder, string name, ulong value)
+		{
+			if (builder.Length > 0)
+				builder.Append(' ');
+			builder.Append(name);
+			builder.Append("=0x");
+			builder.Append(value.ToString("X16", System.Globalization.CultureInfo.InvariantCulture));
+		}
+
+		private ulong ComputeCachedBufferResourceFingerprint()
+		{
+			HashCode hash = new();
+			foreach (var pair in _bufferCache.OrderBy(p => p.Key, StringComparer.Ordinal))
+			{
+				VkDataBuffer buffer = pair.Value;
+				hash.Add(pair.Key);
+				hash.Add(buffer.BufferHandle?.Handle ?? 0UL);
+				hash.Add(buffer.Data.Length);
+				hash.Add((int)buffer.Data.Target);
+				hash.Add(buffer.Data.BindingIndexOverride ?? uint.MaxValue);
+			}
+
+			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private ulong ComputeMaterialTextureResourceFingerprint(XRMaterial material)
+		{
+			HashCode hash = new();
+			hash.Add(material.Textures.Count);
+			for (int i = 0; i < material.Textures.Count; i++)
+				AddTextureDescriptorResourceFingerprint(ref hash, material.Textures[i]);
+			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private ulong ComputeEngineUniformResourceFingerprint()
+		{
+			HashCode hash = new();
+			foreach (var pair in _engineUniformBuffers.OrderBy(p => p.Key, StringComparer.Ordinal))
+			{
+				hash.Add(pair.Key);
+				hash.Add(pair.Value.Length);
+				foreach (EngineUniformBuffer buffer in pair.Value)
+					hash.Add(buffer.Size);
+			}
+
+			return unchecked((ulong)hash.ToHashCode());
+		}
+
+		private ulong ComputeAutoUniformResourceFingerprint()
+		{
+			HashCode hash = new();
+			foreach (var pair in _autoUniformBuffers.OrderBy(p => p.Key, StringComparer.Ordinal))
+			{
+				hash.Add(pair.Key);
+				hash.Add(pair.Value.Length);
+				foreach (AutoUniformBuffer buffer in pair.Value)
+					hash.Add(buffer.Size);
 			}
 
 			return unchecked((ulong)hash.ToHashCode());
@@ -199,9 +391,9 @@ public unsafe partial class VulkanRenderer
 			foreach (var pair in _engineUniformBuffers.OrderBy(p => p.Key, StringComparer.Ordinal))
 			{
 				hash.Add(pair.Key);
+				hash.Add(pair.Value.Length);
 				foreach (EngineUniformBuffer buffer in pair.Value)
 				{
-					hash.Add(buffer.Buffer.Handle);
 					hash.Add(buffer.Size);
 				}
 			}
@@ -209,9 +401,9 @@ public unsafe partial class VulkanRenderer
 			foreach (var pair in _autoUniformBuffers.OrderBy(p => p.Key, StringComparer.Ordinal))
 			{
 				hash.Add(pair.Key);
+				hash.Add(pair.Value.Length);
 				foreach (AutoUniformBuffer buffer in pair.Value)
 				{
-					hash.Add(buffer.Buffer.Handle);
 					hash.Add(buffer.Size);
 				}
 			}
@@ -244,7 +436,6 @@ public unsafe partial class VulkanRenderer
 				hash.Add(imageSource.DescriptorFormat);
 				hash.Add(imageSource.DescriptorAspect);
 				hash.Add(imageSource.DescriptorUsage);
-				hash.Add(imageSource.TrackedImageLayout);
 			}
 			else
 			{

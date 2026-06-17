@@ -370,6 +370,29 @@ namespace XREngine.Rendering
                 "Shipping path must consume the GPU-written count buffer via glMultiDrawElementsIndirectCount.");
         }
 
+        private static bool TrySkipTransientZeroReadbackCountPathMiss(in IndirectParityChecklist parity, string callsite)
+        {
+            if (parity.UsesCountDrawPath)
+                return false;
+
+            string? reason = !parity.HasParameterBuffer ? "parameter buffer missing"
+                : !parity.ParameterBufferReady ? "parameter buffer not ready"
+                : !parity.IndexedVaoValid ? "indexed VAO/index buffer not ready"
+                : null;
+
+            if (reason is null)
+                return false;
+
+            XREngine.Debug.RenderingWarningEvery(
+                $"RenderDispatch.ZeroReadback.CountPathPending.{callsite}.{reason}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDispatch] {0} skipped zero-readback count draw while {1}; backend={2}. This is a transient startup/resource-readiness skip, not a CPU fallback.",
+                callsite,
+                reason,
+                parity.BackendName);
+            return true;
+        }
+
         [System.Diagnostics.Conditional("DEBUG")]
         private static void AssertZeroReadbackProductionInvariants(string callsite)
         {
@@ -5161,6 +5184,11 @@ namespace XREngine.Rendering
             // The bucket dispatcher is invoked exclusively from the zero-readback material-scatter
             // path, so the production invariant is non-negotiable here.
             AssertZeroReadbackProductionInvariants("DispatchRenderIndirectCountBucket");
+            if (TrySkipTransientZeroReadbackCountPathMiss(parity, "DispatchRenderIndirectCountBucket"))
+            {
+                renderer.BindVAOForRenderer(null);
+                return;
+            }
             AssertZeroReadbackUsesGpuCountPath(parity, "DispatchRenderIndirectCountBucket");
 
             // Use the GPU count buffer to cap draws whenever the backend supports it. OpenGL 4.6 / ARB_indirect_parameters

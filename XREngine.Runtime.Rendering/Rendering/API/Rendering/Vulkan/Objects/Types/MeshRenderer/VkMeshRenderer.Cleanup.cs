@@ -105,6 +105,7 @@ public unsafe partial class VulkanRenderer
 
 			_descriptorSchemaFingerprint = 0;
 			_descriptorResourceFingerprint = 0;
+			_descriptorResourceFingerprintDetails = string.Empty;
 
 			if (_descriptorPool.Handle != 0)
 			{

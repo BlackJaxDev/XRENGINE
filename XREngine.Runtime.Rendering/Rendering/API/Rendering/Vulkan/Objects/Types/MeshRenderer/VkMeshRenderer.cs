@@ -272,28 +272,11 @@ public unsafe partial class VulkanRenderer
                     hash.Add((int)meshDraw.Draw.DstColorBlendFactor);
                     hash.Add((int)meshDraw.Draw.SrcAlphaBlendFactor);
                     hash.Add((int)meshDraw.Draw.DstAlphaBlendFactor);
-                    hash.Add(meshDraw.Draw.ModelMatrix.GetHashCode());
-                    hash.Add(meshDraw.Draw.PreviousModelMatrix.GetHashCode());
                     hash.Add(meshDraw.Draw.MaterialOverride?.GetHashCode() ?? 0);
                     hash.Add(meshDraw.Draw.Instances);
                     hash.Add((int)meshDraw.Draw.BillboardMode);
                     hash.Add(meshDraw.Draw.IsStereoPass);
                     hash.Add(meshDraw.Draw.UseUnjitteredProjection);
-                    hash.Add(meshDraw.Draw.TransformId);
-                    hash.Add(meshDraw.Draw.ViewMatrix.GetHashCode());
-                    hash.Add(meshDraw.Draw.InverseViewMatrix.GetHashCode());
-                    hash.Add(meshDraw.Draw.ProjectionMatrix.GetHashCode());
-                    hash.Add(meshDraw.Draw.InverseProjectionMatrix.GetHashCode());
-                    hash.Add(meshDraw.Draw.RightEyeViewMatrix.GetHashCode());
-                    hash.Add(meshDraw.Draw.RightEyeInverseViewMatrix.GetHashCode());
-                    hash.Add(meshDraw.Draw.RightEyeProjectionMatrix.GetHashCode());
-                    hash.Add(meshDraw.Draw.RightEyeInverseProjectionMatrix.GetHashCode());
-                    hash.Add(meshDraw.Draw.CameraPosition);
-                    hash.Add(meshDraw.Draw.CameraForward);
-                    hash.Add(meshDraw.Draw.CameraUp);
-                    hash.Add(meshDraw.Draw.CameraRight);
-                    hash.Add(meshDraw.Draw.RenderAreaWidth);
-                    hash.Add(meshDraw.Draw.RenderAreaHeight);
                     HashProgramBindingSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot);
                     break;
                 case BlitOp blit:
@@ -395,11 +378,25 @@ public unsafe partial class VulkanRenderer
         }
 
         hash.Add(1);
-        hash.Add(HashUniformBindings(snapshot.Uniforms));
+        hash.Add(HashUniformBindingLayout(snapshot.Uniforms));
         hash.Add(HashSamplerUnitBindings(snapshot.Samplers));
         hash.Add(HashSamplerNameBindings(snapshot.SamplersByName));
         hash.Add(HashImageBindings(snapshot.Images));
         hash.Add(HashBufferBindings(snapshot.Buffers));
+    }
+
+    private static int HashUniformBindingLayout(Dictionary<string, ProgramUniformValue> uniforms)
+    {
+        HashCode hash = new();
+        hash.Add(uniforms.Count);
+        foreach (var pair in uniforms.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            hash.Add(pair.Key, StringComparer.Ordinal);
+            hash.Add((int)pair.Value.Type);
+            hash.Add(pair.Value.IsArray);
+        }
+
+        return hash.ToHashCode();
     }
 
     private static int HashUniformBindings(Dictionary<string, ProgramUniformValue> uniforms)
@@ -808,6 +805,7 @@ public unsafe partial class VulkanRenderer
         private bool _descriptorDirty = true;
         private ulong _descriptorSchemaFingerprint;
         private ulong _descriptorResourceFingerprint;
+        private string _descriptorResourceFingerprintDetails = string.Empty;
         private int _uniformDrawSlotCapacity = 1;
         private readonly HashSet<string> _descriptorWarnings = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, EngineUniformBuffer[]> _engineUniformBuffers = new(StringComparer.Ordinal);

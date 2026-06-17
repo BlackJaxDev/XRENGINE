@@ -974,7 +974,7 @@ public unsafe partial class VulkanRenderer
             lock (_bindingLock)
             {
                 hash.Add(_samplersByName.Count);
-                foreach (KeyValuePair<string, XRTexture> pair in _samplersByName)
+                foreach (KeyValuePair<string, XRTexture> pair in _samplersByName.OrderBy(static p => p.Key, StringComparer.Ordinal))
                 {
                     hash.Add(pair.Key);
                     XRTexture? texture = pair.Value;
@@ -988,7 +988,6 @@ public unsafe partial class VulkanRenderer
                         hash.Add(source.DescriptorFormat);
                         hash.Add(source.DescriptorAspect);
                         hash.Add(source.DescriptorUsage);
-                        hash.Add(source.TrackedImageLayout);
                     }
                     else
                     {
@@ -996,6 +995,13 @@ public unsafe partial class VulkanRenderer
                     }
                 }
             }
+        }
+
+        internal ulong ComputeSamplerResourceFingerprint()
+        {
+            HashCode hash = new();
+            AddSamplerResourceFingerprint(ref hash);
+            return unchecked((ulong)hash.ToHashCode());
         }
 
         internal void AddBoundBufferResourceFingerprint(ref HashCode hash)
@@ -1032,6 +1038,13 @@ public unsafe partial class VulkanRenderer
                     }
                 }
             }
+        }
+
+        internal ulong ComputeBoundBufferResourceFingerprint()
+        {
+            HashCode hash = new();
+            AddBoundBufferResourceFingerprint(ref hash);
+            return unchecked((ulong)hash.ToHashCode());
         }
 
         private void BuildDescriptorLayouts()
@@ -1980,6 +1993,108 @@ public unsafe partial class VulkanRenderer
             if (!TryGetOrCreateComputeUniformBuffer(key, size, out ComputeUniformBuffer resource, out _))
                 return false;
 
+            if (!TryWriteComputeAutoUniformBuffer(resource, size, snapshot, block))
+                return false;
+
+            bufferInfo = new DescriptorBufferInfo
+            {
+                Buffer = resource.Buffer,
+                Offset = 0,
+                Range = size
+            };
+
+            return true;
+        }
+
+        internal bool TryRefreshReusableComputeDispatchFrameData(uint imageIndex, ComputeDispatchSnapshot snapshot)
+        {
+            if (_descriptorSetLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
+                return true;
+
+            foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
+            {
+                if (binding.Set >= _descriptorSetLayouts.Length ||
+                    binding.DescriptorType != DescriptorType.UniformBuffer)
+                {
+                    continue;
+                }
+
+                if (snapshot.Buffers.ContainsKey(binding.Binding) || SnapshotContainsNamedBuffer(snapshot, binding.Name))
+                    continue;
+
+                if (TryGetAutoUniformBlockFuzzy(binding.Name, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
+                {
+                    if (!TryUpdateExistingComputeAutoUniformBuffer(imageIndex, binding, snapshot, block))
+                        return false;
+                    continue;
+                }
+
+                if (!HasExistingComputeFallbackUniformBuffer(imageIndex, binding))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool SnapshotContainsNamedBuffer(ComputeDispatchSnapshot snapshot, string? bindingName)
+        {
+            if (string.IsNullOrWhiteSpace(bindingName))
+                return false;
+
+            foreach (XRDataBuffer buffer in snapshot.Buffers.Values)
+            {
+                if (string.Equals(buffer.AttributeName, bindingName, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool TryUpdateExistingComputeAutoUniformBuffer(
+            uint imageIndex,
+            DescriptorBindingInfo binding,
+            ComputeDispatchSnapshot snapshot,
+            AutoUniformBlockInfo block)
+        {
+            uint size = Math.Max(block.Size, 1u);
+            ComputeUniformBufferKey key = new(
+                EComputeUniformBufferKind.Auto,
+                imageIndex,
+                binding.Set,
+                binding.Binding,
+                block.InstanceName);
+
+            if (!_computeUniformBuffers.TryGetValue(key, out ComputeUniformBuffer resource) ||
+                resource.Buffer.Handle == 0 ||
+                resource.Size < size)
+            {
+                return false;
+            }
+
+            return TryWriteComputeAutoUniformBuffer(resource, size, snapshot, block);
+        }
+
+        private bool HasExistingComputeFallbackUniformBuffer(uint imageIndex, DescriptorBindingInfo binding)
+        {
+            const uint fallbackSize = 4096u;
+            ComputeUniformBufferKey key = new(
+                EComputeUniformBufferKind.Fallback,
+                imageIndex,
+                binding.Set,
+                binding.Binding,
+                binding.Name ?? string.Empty);
+
+            return _computeUniformBuffers.TryGetValue(key, out ComputeUniformBuffer resource) &&
+                resource.Buffer.Handle != 0 &&
+                resource.Size >= fallbackSize;
+        }
+
+        private bool TryWriteComputeAutoUniformBuffer(
+            ComputeUniformBuffer resource,
+            uint size,
+            ComputeDispatchSnapshot snapshot,
+            AutoUniformBlockInfo block)
+        {
             void* mapped;
             if (!Renderer.TryMapBufferMemory(resource.Buffer, resource.Memory, 0, size, out mapped))
                 return false;
@@ -1991,20 +2106,13 @@ public unsafe partial class VulkanRenderer
 
                 foreach (AutoUniformMember member in block.Members)
                     TryWriteAutoUniformMember(data, member, snapshot);
+
+                return true;
             }
             finally
             {
                 Renderer.UnmapBufferMemory(resource.Buffer, resource.Memory);
             }
-
-            bufferInfo = new DescriptorBufferInfo
-            {
-                Buffer = resource.Buffer,
-                Offset = 0,
-                Range = size
-            };
-
-            return true;
         }
 
         private bool TryGetOrCreateComputeUniformBuffer(
