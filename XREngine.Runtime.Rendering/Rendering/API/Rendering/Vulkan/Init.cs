@@ -435,7 +435,6 @@ namespace XREngine.Rendering.Vulkan
         public override void StencilMask(uint mask)
         {
             _state.SetStencilWriteMask(mask);
-            MarkCommandBuffersDirty();
         }
 
         public override void EnableStencilTest(bool enable)
@@ -490,27 +489,22 @@ namespace XREngine.Rendering.Vulkan
         public override void AllowDepthWrite(bool v)
         {
             _state.SetDepthWriteEnabled(v);
-            MarkCommandBuffersDirty();
         }
         public override void ClearDepth(float v)
         {
             _state.SetClearDepth(v);
-            MarkCommandBuffersDirty();
         }
         public override void ClearStencil(int v)
         {
             _state.SetClearStencil(v);
-            MarkCommandBuffersDirty();
         }
         public override void EnableDepthTest(bool v)
         {
             _state.SetDepthTestEnabled(v);
-            MarkCommandBuffersDirty();
         }
         public override void DepthFunc(EComparison always)
         {
             _state.SetDepthCompare(ToVulkanCompareOp(always));
-            MarkCommandBuffersDirty();
         }
         public override void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ)
         {
@@ -611,8 +605,6 @@ namespace XREngine.Rendering.Vulkan
                 if (GetOrCreateAPIRenderObject(fbo, generateNow: true) is VkFrameBuffer vkFrameBuffer)
                     vkFrameBuffer.Generate();
             }
-
-            MarkCommandBuffersDirty();
         }
         public override void Clear(bool color, bool depth, bool stencil)
         {
@@ -691,7 +683,6 @@ namespace XREngine.Rendering.Vulkan
         public override void SetCroppingEnabled(bool enabled)
         {
             _state.SetCroppingEnabled(enabled);
-            MarkCommandBuffersDirty();
         }
 
         public void DeviceWaitIdle()

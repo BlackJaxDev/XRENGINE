@@ -838,6 +838,46 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RecordRenderVulkanFrameLifecycleDetailTiming(
+            TimeSpan sampleTimingQueries,
+            TimeSpan drainRetiredResources,
+            TimeSpan acquireBridgeSubmit,
+            TimeSpan waitSwapchainImage,
+            TimeSpan resetDynamicUniformRing)
+        {
+        }
+
+        public void RecordRenderVulkanFrameOpCensus(
+            int totalCount,
+            int clearCount,
+            int meshDrawCount,
+            int indirectDrawCount,
+            int meshTaskDispatchCount,
+            int blitCount,
+            int computeCount,
+            int swapchainWriteCount,
+            int fboWriteCount,
+            int uniquePassCount,
+            int uniqueContextCount,
+            int uniqueTargetCount)
+        {
+        }
+
+        public void RecordRenderVulkanCommandBufferCacheOutcome(
+            bool reusedClean,
+            bool recorded,
+            bool forcedDirty,
+            bool frameOpSignatureDirty,
+            bool plannerDirty,
+            bool profilerDirty,
+            string? dirtyReason)
+        {
+        }
+
+        public void RecordRenderVulkanCommandBuffersDirty(string? reason)
+        {
+        }
+
         public void RecordRenderVulkanGpuDrivenStageTiming(int stage, TimeSpan elapsed)
         {
         }
@@ -879,6 +919,20 @@ public static class RuntimeRenderingHostServices
         }
 
         public void RecordRenderVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
+        {
+        }
+
+        public void RecordRenderVulkanRetiredResourceDrain(
+            int descriptorPools,
+            int pipelines,
+            int framebuffers,
+            int buffers,
+            int bufferMemories,
+            int images,
+            int imageViews,
+            int samplers,
+            int imageMemories,
+            long imageBytes)
         {
         }
 

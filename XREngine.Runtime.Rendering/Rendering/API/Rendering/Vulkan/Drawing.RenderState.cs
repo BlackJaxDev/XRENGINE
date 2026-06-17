@@ -77,8 +77,6 @@ namespace XREngine.Rendering.Vulkan
             {
                 _state.SetBlendState(false, BlendOp.Add, BlendOp.Add, BlendFactor.One, BlendFactor.Zero, BlendFactor.One, BlendFactor.Zero);
             }
-
-            MarkCommandBuffersDirty();
         }
 
         // =========== Engine & Material Uniforms ===========

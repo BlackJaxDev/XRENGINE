@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
@@ -15,6 +16,7 @@ namespace XREngine.Rendering.Vulkan
         internal const uint CommonPushConstantSize = 16;
 
         private CommandBuffer[]? _commandBuffers;
+        private CommandBuffer[]? _dynamicUiBatchTextSecondaryCommandBuffers;
         private ulong[]? _commandBufferFrameOpSignatures;
         private ulong[]? _commandBufferPlannerRevisions;
         private ComputeTransientResources[]? _computeTransientResources;
@@ -28,6 +30,13 @@ namespace XREngine.Rendering.Vulkan
         private bool _enableSecondaryCommandBuffers = true;
         private bool _enableParallelSecondaryCommandBufferRecording = true;
         private int _parallelSecondaryIndirectRunThreshold = 4;
+        private static readonly int FrameOpSignatureDiffLogLimit = ReadFrameOpSignatureDiffLogLimit();
+        private static readonly bool FrameOpSignatureDiffDiagnosticsEnabled =
+            string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF"), "1", StringComparison.Ordinal);
+        private static readonly bool FrameDataReuseDiagnosticsEnabled =
+            string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_FRAME_DATA_REUSE_DIAG"), "1", StringComparison.Ordinal);
+        private FrameOpSignatureDebugPart[][]? _commandBufferFrameOpSignatureDebugParts;
+        private int _frameOpSignatureDiffLogCount;
         private string? _vulkanDiagnosticBaseWindowTitle;
         private string? _vulkanDiagnosticLastTitle;
         private int _vulkanLastFrameDroppedDrawOps;
@@ -45,9 +54,22 @@ namespace XREngine.Rendering.Vulkan
             string ShaderName,
             string Message);
 
+        private readonly record struct FrameOpSignatureDebugPart(
+            int OpIndex,
+            string OpType,
+            string Component,
+            ulong Signature,
+            string Detail);
+
         private static bool IsBloomDiagnosticName(string? name)
             => !string.IsNullOrWhiteSpace(name) &&
                name.Contains("Bloom", StringComparison.OrdinalIgnoreCase);
+
+        private static int ReadFrameOpSignatureDiffLogLimit()
+        {
+            string? raw = Environment.GetEnvironmentVariable("XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF_LIMIT");
+            return int.TryParse(raw, out int value) && value >= 0 ? value : 48;
+        }
 
         private readonly struct ComputeDispatchPushConstants
         {
@@ -150,6 +172,94 @@ namespace XREngine.Rendering.Vulkan
             };
         }
 
+        private static bool IsUiBatchTextDrawOp(FrameOp op)
+        {
+            if (op is not MeshDrawOp drawOp)
+                return false;
+
+            VkMeshRenderer? renderer = drawOp.Draw.Renderer;
+            if (renderer is null)
+                return false;
+
+            XRMeshRenderer meshRenderer = renderer.MeshRenderer;
+            XRMaterial? material = drawOp.Draw.MaterialOverride ?? meshRenderer.Material;
+            return
+                string.Equals(material?.Name, "UIBatchTextMaterial", StringComparison.Ordinal) ||
+                string.Equals(meshRenderer.Name, "UIBatchTextRenderer", StringComparison.Ordinal) ||
+                string.Equals(meshRenderer.Mesh?.Name, "UIBatchTextQuadMesh", StringComparison.Ordinal);
+        }
+
+        private static FrameOp[] FilterDiagnosticSkippedFrameOps(FrameOp[] ops)
+        {
+            if (ops.Length == 0 || !XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiBatchText)
+                return ops;
+
+            int keepCount = 0;
+            for (int i = 0; i < ops.Length; i++)
+            {
+                if (!IsUiBatchTextDrawOp(ops[i]))
+                    keepCount++;
+            }
+
+            if (keepCount == ops.Length)
+                return ops;
+
+            FrameOp[] filtered = new FrameOp[keepCount];
+            int writeIndex = 0;
+            for (int i = 0; i < ops.Length; i++)
+            {
+                if (!IsUiBatchTextDrawOp(ops[i]))
+                    filtered[writeIndex++] = ops[i];
+            }
+
+            Debug.VulkanEvery(
+                "Vulkan.SkipUiBatchText.FilterFrameOps",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Filtered {0} batched UI text frame ops before command-buffer signature due to XRE_SKIP_UI_BATCH_TEXT=1.",
+                ops.Length - filtered.Length);
+            return filtered;
+        }
+
+        private static void SplitDynamicUiBatchTextFrameOps(
+            FrameOp[] ops,
+            out FrameOp[] staticOps,
+            out FrameOp[] dynamicUiBatchTextOps)
+        {
+            if (ops.Length == 0)
+            {
+                staticOps = ops;
+                dynamicUiBatchTextOps = Array.Empty<FrameOp>();
+                return;
+            }
+
+            int dynamicCount = 0;
+            for (int i = 0; i < ops.Length; i++)
+            {
+                if (IsUiBatchTextDrawOp(ops[i]))
+                    dynamicCount++;
+            }
+
+            if (dynamicCount == 0)
+            {
+                staticOps = ops;
+                dynamicUiBatchTextOps = Array.Empty<FrameOp>();
+                return;
+            }
+
+            staticOps = new FrameOp[ops.Length - dynamicCount];
+            dynamicUiBatchTextOps = new FrameOp[dynamicCount];
+            int staticIndex = 0;
+            int dynamicIndex = 0;
+            for (int i = 0; i < ops.Length; i++)
+            {
+                FrameOp op = ops[i];
+                if (IsUiBatchTextDrawOp(op))
+                    dynamicUiBatchTextOps[dynamicIndex++] = op;
+                else
+                    staticOps[staticIndex++] = op;
+            }
+        }
+
         private string BuildVulkanFrameDiagnosticSummary(
             FrameOp[] ops,
             int clearCount,
@@ -190,6 +300,139 @@ namespace XREngine.Rendering.Vulkan
                 $"swapchain={swapchainWriterSummary}; descriptorSkips={RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorBindSkips} descriptorFallbacks={RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorFallbacksCurrentFrame} descriptorFailures={RuntimeEngine.Rendering.Stats.Vulkan.VulkanDescriptorBindingFailuresCurrentFrame} oomFallbacks={RuntimeEngine.Rendering.Stats.Vulkan.VulkanOomFallbackCount}; " +
                 $"validationCurrent={RuntimeEngine.Rendering.Stats.Vulkan.VulkanValidationMessageCountCurrentFrame}/{RuntimeEngine.Rendering.Stats.Vulkan.VulkanValidationErrorCountCurrentFrame}; " +
                 $"{failureSummary}; {passSummary}; {registrySummary}; {physicalSummary}; opList=[{opSummary}]";
+        }
+
+        private static void RecordVulkanFrameOpCensus(
+            FrameOp[] ops,
+            int clearCount,
+            int meshDrawCount,
+            int indirectDrawCount,
+            int meshTaskDispatchCount,
+            int blitCount,
+            int computeCount,
+            int swapchainWriteCount,
+            int fboWriteCount)
+        {
+            if (!RuntimeEngine.Rendering.Stats.EnableTracking)
+                return;
+
+            const int StackUniqueLimit = 256;
+            if (ops.Length <= StackUniqueLimit)
+            {
+                Span<int> passIds = stackalloc int[StackUniqueLimit];
+                Span<int> contextIds = stackalloc int[StackUniqueLimit];
+                Span<int> targetIds = stackalloc int[StackUniqueLimit];
+                RecordVulkanFrameOpCensusCore(
+                    ops,
+                    clearCount,
+                    meshDrawCount,
+                    indirectDrawCount,
+                    meshTaskDispatchCount,
+                    blitCount,
+                    computeCount,
+                    swapchainWriteCount,
+                    fboWriteCount,
+                    passIds,
+                    contextIds,
+                    targetIds);
+                return;
+            }
+
+            int[]? rentedPassIds = null;
+            int[]? rentedContextIds = null;
+            int[]? rentedTargetIds = null;
+            try
+            {
+                rentedPassIds = ArrayPool<int>.Shared.Rent(ops.Length);
+                rentedContextIds = ArrayPool<int>.Shared.Rent(ops.Length);
+                rentedTargetIds = ArrayPool<int>.Shared.Rent(ops.Length);
+                RecordVulkanFrameOpCensusCore(
+                    ops,
+                    clearCount,
+                    meshDrawCount,
+                    indirectDrawCount,
+                    meshTaskDispatchCount,
+                    blitCount,
+                    computeCount,
+                    swapchainWriteCount,
+                    fboWriteCount,
+                    rentedPassIds.AsSpan(0, ops.Length),
+                    rentedContextIds.AsSpan(0, ops.Length),
+                    rentedTargetIds.AsSpan(0, ops.Length));
+            }
+            finally
+            {
+                if (rentedPassIds is not null)
+                    ArrayPool<int>.Shared.Return(rentedPassIds, clearArray: true);
+                if (rentedContextIds is not null)
+                    ArrayPool<int>.Shared.Return(rentedContextIds, clearArray: true);
+                if (rentedTargetIds is not null)
+                    ArrayPool<int>.Shared.Return(rentedTargetIds, clearArray: true);
+            }
+        }
+
+        private static void RecordVulkanFrameOpCensusCore(
+            FrameOp[] ops,
+            int clearCount,
+            int meshDrawCount,
+            int indirectDrawCount,
+            int meshTaskDispatchCount,
+            int blitCount,
+            int computeCount,
+            int swapchainWriteCount,
+            int fboWriteCount,
+            Span<int> passIds,
+            Span<int> contextIds,
+            Span<int> targetIds)
+        {
+            int uniquePassCount = 0;
+            int uniqueContextCount = 0;
+            int uniqueTargetCount = 0;
+
+            for (int i = 0; i < ops.Length; i++)
+            {
+                FrameOp op = ops[i];
+                AddUnique(passIds, ref uniquePassCount, op.PassIndex);
+                AddUnique(contextIds, ref uniqueContextCount, op.Context.SchedulingIdentity);
+                AddUnique(targetIds, ref uniqueTargetCount, ResolveFrameOpTargetIdentity(op));
+            }
+
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameOpCensus(
+                ops.Length,
+                clearCount,
+                meshDrawCount,
+                indirectDrawCount,
+                meshTaskDispatchCount,
+                blitCount,
+                computeCount,
+                swapchainWriteCount,
+                fboWriteCount,
+                uniquePassCount,
+                uniqueContextCount,
+                uniqueTargetCount);
+        }
+
+        private static bool AddUnique(Span<int> values, ref int count, int value)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if (values[i] == value)
+                    return false;
+            }
+
+            values[count++] = value;
+            return true;
+        }
+
+        private static int ResolveFrameOpTargetIdentity(FrameOp op)
+        {
+            XRFrameBuffer? target = op switch
+            {
+                BlitOp blit => blit.OutFbo,
+                _ => op.Target,
+            };
+
+            return target?.GetHashCode() ?? int.MinValue;
         }
 
         private void UpdateVulkanOnScreenDiagnostic(string pipelineLabel, ColorF4 clearColor, int droppedDrawOps, int droppedOps, string swapchainWriter)
@@ -483,6 +726,7 @@ namespace XREngine.Rendering.Vulkan
 
             DestroyComputeTransientResources();
             DestroyDeferredSecondaryCommandBuffers();
+            DestroyDynamicUiBatchTextSecondaryCommandBuffers();
             DestroyComputeDescriptorCaches();
 
             if (_deviceLost)
@@ -491,8 +735,10 @@ namespace XREngine.Rendering.Vulkan
                     RemoveCommandBufferBindState(commandBuffer);
 
                 _commandBuffers = null;
+                _dynamicUiBatchTextSecondaryCommandBuffers = null;
                 _commandBufferDirtyFlags = null;
                 _commandBufferFrameOpSignatures = null;
+                _commandBufferFrameOpSignatureDebugParts = null;
                 _commandBufferPlannerRevisions = null;
                 return;
             }
@@ -504,8 +750,10 @@ namespace XREngine.Rendering.Vulkan
             }
 
             _commandBuffers = null;
+            _dynamicUiBatchTextSecondaryCommandBuffers = null;
             _commandBufferDirtyFlags = null;
             _commandBufferFrameOpSignatures = null;
+            _commandBufferFrameOpSignatureDebugParts = null;
             _commandBufferPlannerRevisions = null;
         }
 
@@ -518,6 +766,32 @@ namespace XREngine.Rendering.Vulkan
                 ReleaseDeferredSecondaryCommandBuffers((uint)i);
 
             _deferredSecondaryCommandBuffers = null;
+        }
+
+        private void DestroyDynamicUiBatchTextSecondaryCommandBuffers()
+        {
+            if (_dynamicUiBatchTextSecondaryCommandBuffers is null)
+                return;
+
+            if (_deviceLost)
+            {
+                foreach (CommandBuffer commandBuffer in _dynamicUiBatchTextSecondaryCommandBuffers)
+                    RemoveCommandBufferBindState(commandBuffer);
+
+                _dynamicUiBatchTextSecondaryCommandBuffers = null;
+                return;
+            }
+
+            fixed (CommandBuffer* commandBuffersPtr = _dynamicUiBatchTextSecondaryCommandBuffers)
+            {
+                if (_dynamicUiBatchTextSecondaryCommandBuffers.Length > 0)
+                    Api!.FreeCommandBuffers(device, commandPool, (uint)_dynamicUiBatchTextSecondaryCommandBuffers.Length, commandBuffersPtr);
+            }
+
+            foreach (CommandBuffer commandBuffer in _dynamicUiBatchTextSecondaryCommandBuffers)
+                RemoveCommandBufferBindState(commandBuffer);
+
+            _dynamicUiBatchTextSecondaryCommandBuffers = null;
         }
 
         private void ReleaseDeferredSecondaryCommandBuffers(uint imageIndex)
@@ -894,6 +1168,21 @@ namespace XREngine.Rendering.Vulkan
                     throw new Exception("Failed to allocate command buffers.");
             }
 
+            _dynamicUiBatchTextSecondaryCommandBuffers = new CommandBuffer[_commandBuffers.Length];
+            CommandBufferAllocateInfo dynamicUiTextAllocInfo = new()
+            {
+                SType = StructureType.CommandBufferAllocateInfo,
+                CommandPool = commandPool,
+                Level = CommandBufferLevel.Secondary,
+                CommandBufferCount = (uint)_dynamicUiBatchTextSecondaryCommandBuffers.Length,
+            };
+
+            fixed (CommandBuffer* commandBuffersPtr = _dynamicUiBatchTextSecondaryCommandBuffers)
+            {
+                if (Api!.AllocateCommandBuffers(device, ref dynamicUiTextAllocInfo, commandBuffersPtr) != Result.Success)
+                    throw new Exception("Failed to allocate dynamic UI text secondary command buffers.");
+            }
+
             AllocateCommandBufferDirtyFlags();
             _computeTransientResources = new ComputeTransientResources[_commandBuffers.Length];
             _deferredSecondaryCommandBuffers = new List<DeferredSecondaryCommandBuffer>[_commandBuffers.Length];
@@ -946,31 +1235,113 @@ namespace XREngine.Rendering.Vulkan
                 throw new InvalidOperationException("Command buffer planner revisions are not initialised correctly.");
 
             bool dirty = _commandBufferDirtyFlags[imageIndex];
+            bool forcedDirty = dirty;
+            bool frameOpSignatureDirty = false;
+            bool plannerDirty = false;
+            bool profilerDirty = false;
+            bool frameDataDirty = false;
             bool gpuPipelineProfilingActive = RenderPipelineGpuProfiler.Instance.IsProfilingActive;
-            var ops = DrainFrameOps(out ulong frameOpsSignature);
+            var ops = DrainFrameOps(out ulong rawFrameOpsSignature);
+            ops = FilterDiagnosticSkippedFrameOps(ops);
+            FrameOp[] dynamicUiBatchTextOps = Array.Empty<FrameOp>();
             bool hasFrameOps = ops.Length > 0;
+            ulong frameOpsSignature = rawFrameOpsSignature;
 
-            _ = hasFrameOps
+            if (hasFrameOps)
+            {
+                VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+                ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                SplitDynamicUiBatchTextFrameOps(ops, out FrameOp[] staticOps, out dynamicUiBatchTextOps);
+                ops = staticOps;
+                frameOpsSignature = ComputeFrameOpsSignature(ops);
+                if (FrameOpSignatureDiffDiagnosticsEnabled && rawFrameOpsSignature != frameOpsSignature)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.FrameOpSignature.Normalized.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Frame-op signature changed after recorder normalization: raw=0x{0:X16} normalized=0x{1:X16} ops={2}",
+                        rawFrameOpsSignature,
+                        frameOpsSignature,
+                        ops.Length);
+                }
+            }
+
+            bool hasStaticFrameOps = ops.Length > 0;
+
+            _ = hasStaticFrameOps
                 ? PrepareResourcePlannerForFrameOps(ops)
                 : PrepareResourcePlannerForFrameOps([]);
             ulong plannerRevision = ResourcePlannerRevision;
 
             if (!dirty && hasFrameOps && _commandBufferFrameOpSignatures[imageIndex] != frameOpsSignature)
+            {
+                LogFrameOpSignatureDiff(imageIndex, _commandBufferFrameOpSignatures[imageIndex], frameOpsSignature, ops);
                 dirty = true;
+                frameOpSignatureDirty = true;
+            }
 
             if (!dirty && _commandBufferPlannerRevisions[imageIndex] != plannerRevision)
+            {
                 dirty = true;
+                plannerDirty = true;
+            }
 
-            if (!dirty && IsVulkanGpuProfilerCommandBufferStateDirty(imageIndex, gpuPipelineProfilingActive, currentFrame))
+            int commandBufferImageSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+            if (!dirty && IsVulkanGpuProfilerCommandBufferStateDirty(imageIndex, gpuPipelineProfilingActive, commandBufferImageSlot))
+            {
                 dirty = true;
+                profilerDirty = true;
+            }
 
             if (!dirty)
-                return;
+            {
+                if (hasStaticFrameOps && !TryRefreshReusableCommandBufferFrameData(imageIndex, ops))
+                {
+                    dirty = true;
+                    frameDataDirty = true;
+                }
+                else
+                {
+                    RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, dynamicUiBatchTextOps);
+                    StoreFrameOpSignatureDebugParts(imageIndex, ops);
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
+                        reusedClean: true,
+                        recorded: false,
+                        forcedDirty: false,
+                        frameOpSignatureDirty: false,
+                        plannerDirty: false,
+                        profilerDirty: false,
+                        dirtyReason: null);
+                    return;
+                }
+            }
+
+            string dirtyReason = forcedDirty
+                ? "forced"
+                : frameOpSignatureDirty
+                    ? "frame-ops"
+                    : plannerDirty
+                        ? "planner"
+                        : profilerDirty
+                            ? "profiler"
+                            : frameDataDirty
+                                ? "frame-data"
+                                : "unknown";
+
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
+                reusedClean: false,
+                recorded: true,
+                forcedDirty,
+                frameOpSignatureDirty,
+                plannerDirty,
+                profilerDirty,
+                dirtyReason);
 
             _isRecordingCommandBuffer = true;
             try
             {
-                RecordCommandBuffer(imageIndex, ops);
+                RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, dynamicUiBatchTextOps);
+                RecordCommandBuffer(imageIndex, ops, dynamicUiBatchTextOps.Length);
             }
             finally
             {
@@ -979,10 +1350,743 @@ namespace XREngine.Rendering.Vulkan
             _commandBufferDirtyFlags[imageIndex] = false;
             _commandBufferFrameOpSignatures[imageIndex] = frameOpsSignature;
             _commandBufferPlannerRevisions[imageIndex] = plannerRevision;
-            UpdateVulkanGpuProfilerCommandBufferState(imageIndex, gpuPipelineProfilingActive, currentFrame);
+            StoreFrameOpSignatureDebugParts(imageIndex, ops);
+            UpdateVulkanGpuProfilerCommandBufferState(imageIndex, gpuPipelineProfilingActive, commandBufferImageSlot);
         }
 
-        private void RecordCommandBuffer(uint imageIndex, FrameOp[] ops)
+        private void StoreFrameOpSignatureDebugParts(uint imageIndex, FrameOp[] ops)
+        {
+            if (!FrameOpSignatureDiffDiagnosticsEnabled)
+                return;
+
+            if (_commandBufferFrameOpSignatureDebugParts is null || imageIndex >= _commandBufferFrameOpSignatureDebugParts.Length)
+                return;
+
+            _commandBufferFrameOpSignatureDebugParts[imageIndex] = CaptureFrameOpSignatureDebugParts(ops);
+        }
+
+        private void LogFrameOpSignatureDiff(uint imageIndex, ulong previousSignature, ulong currentSignature, FrameOp[] ops)
+        {
+            if (!FrameOpSignatureDiffDiagnosticsEnabled || previousSignature == ulong.MaxValue)
+                return;
+
+            int logIndex = Interlocked.Increment(ref _frameOpSignatureDiffLogCount);
+            if (logIndex > FrameOpSignatureDiffLogLimit)
+                return;
+
+            FrameOpSignatureDebugPart[]? previousParts =
+                _commandBufferFrameOpSignatureDebugParts is not null && imageIndex < _commandBufferFrameOpSignatureDebugParts.Length
+                    ? _commandBufferFrameOpSignatureDebugParts[imageIndex]
+                    : null;
+
+            FrameOpSignatureDebugPart[] currentParts = CaptureFrameOpSignatureDebugParts(ops);
+            string summary = previousParts is null
+                ? "no previous component snapshot for this swapchain image"
+                : BuildFrameOpSignatureDiffSummary(previousParts, currentParts);
+
+            Debug.Vulkan(
+                $"[Vulkan] Frame-op signature mismatch image={imageIndex} previous=0x{previousSignature:X16} current=0x{currentSignature:X16} ops={ops.Length}: {summary}");
+        }
+
+        private static string BuildFrameOpSignatureDiffSummary(FrameOpSignatureDebugPart[] previous, FrameOpSignatureDebugPart[] current)
+        {
+            int commonCount = Math.Min(previous.Length, current.Length);
+            for (int i = 0; i < commonCount; i++)
+            {
+                FrameOpSignatureDebugPart previousPart = previous[i];
+                FrameOpSignatureDebugPart currentPart = current[i];
+                if (previousPart.OpIndex == currentPart.OpIndex &&
+                    string.Equals(previousPart.OpType, currentPart.OpType, StringComparison.Ordinal) &&
+                    string.Equals(previousPart.Component, currentPart.Component, StringComparison.Ordinal) &&
+                    previousPart.Signature == currentPart.Signature)
+                {
+                    continue;
+                }
+
+                return $"firstDiffPart={i} previous={DescribeFrameOpSignaturePart(previousPart)} current={DescribeFrameOpSignaturePart(currentPart)}";
+            }
+
+            if (previous.Length != current.Length)
+                return $"partCount {previous.Length}->{current.Length}";
+
+            return "component signatures match; aggregate mismatch likely comes from a hashing-order bug";
+        }
+
+        private static string DescribeFrameOpSignaturePart(in FrameOpSignatureDebugPart part)
+            => $"op={part.OpIndex}:{part.OpType}.{part.Component} sig=0x{part.Signature:X16} {part.Detail}";
+
+        private static FrameOpSignatureDebugPart[] CaptureFrameOpSignatureDebugParts(FrameOp[] ops)
+        {
+            List<FrameOpSignatureDebugPart> parts = new(Math.Max(ops.Length * 5, 8));
+            for (int i = 0; i < ops.Length; i++)
+            {
+                FrameOp op = ops[i];
+                string opType = op.GetType().Name;
+                AddFrameOpBaseSignaturePart(parts, i, opType, op);
+
+                switch (op)
+                {
+                    case ClearOp clear:
+                        AddClearSignaturePart(parts, i, opType, clear);
+                        break;
+                    case MeshDrawOp draw:
+                        AddMeshDrawSignatureParts(parts, i, opType, draw);
+                        break;
+                    case BlitOp blit:
+                        AddBlitSignaturePart(parts, i, opType, blit);
+                        break;
+                    case IndirectDrawOp indirect:
+                        AddIndirectDrawSignaturePart(parts, i, opType, indirect);
+                        break;
+                    case MeshTaskDispatchIndirectCountOp meshTask:
+                        AddMeshTaskSignaturePart(parts, i, opType, meshTask);
+                        break;
+                    case MemoryBarrierOp barrier:
+                        AddMemoryBarrierSignaturePart(parts, i, opType, barrier);
+                        break;
+                    case DlssUpscaleOp dlss:
+                        AddDlssUpscaleSignaturePart(parts, i, opType, dlss);
+                        break;
+                    case DlssFrameGenerationOp dlssFrameGeneration:
+                        AddDlssFrameGenerationSignaturePart(parts, i, opType, dlssFrameGeneration);
+                        break;
+                    case TransformFeedbackOp transformFeedback:
+                        AddTransformFeedbackSignaturePart(parts, i, opType, transformFeedback);
+                        break;
+                    case ComputeDispatchOp compute:
+                        AddComputeDispatchSignatureParts(parts, i, opType, compute);
+                        break;
+                }
+            }
+
+            return [.. parts];
+        }
+
+        private static void AddFrameOpBaseSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, FrameOp op)
+        {
+            HashCode hash = new();
+            hash.Add(op.GetType().Name, StringComparer.Ordinal);
+            hash.Add(op.PassIndex);
+            hash.Add(op.Target?.GetHashCode() ?? 0);
+            hash.Add(op.Context.PipelineIdentity);
+            hash.Add(op.Context.ViewportIdentity);
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                "base",
+                hash,
+                $"pass={op.PassIndex} target='{op.Target?.Name ?? "<swapchain/null>"}' pipe={op.Context.PipelineIdentity} vp={op.Context.ViewportIdentity} sched={op.Context.SchedulingIdentity}");
+        }
+
+        private static void AddClearSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, ClearOp clear)
+        {
+            HashCode hash = new();
+            hash.Add(clear.ClearColor);
+            hash.Add(clear.ClearDepth);
+            hash.Add(clear.ClearStencil);
+            hash.Add(clear.Color.R);
+            hash.Add(clear.Color.G);
+            hash.Add(clear.Color.B);
+            hash.Add(clear.Color.A);
+            hash.Add(clear.Depth);
+            hash.Add(clear.Stencil);
+            hash.Add(clear.Rect.Offset.X);
+            hash.Add(clear.Rect.Offset.Y);
+            hash.Add(clear.Rect.Extent.Width);
+            hash.Add(clear.Rect.Extent.Height);
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                "clear",
+                hash,
+                $"flags={clear.ClearColor}/{clear.ClearDepth}/{clear.ClearStencil} color=({clear.Color.R},{clear.Color.G},{clear.Color.B},{clear.Color.A}) rect={clear.Rect.Offset.X},{clear.Rect.Offset.Y},{clear.Rect.Extent.Width}x{clear.Rect.Extent.Height}");
+        }
+
+        private static void AddMeshDrawSignatureParts(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, MeshDrawOp meshDraw)
+        {
+            PendingMeshDraw draw = meshDraw.Draw;
+            AddMeshDrawViewportSignaturePart(parts, opIndex, opType, draw);
+            AddMeshDrawPipelineStateSignaturePart(parts, opIndex, opType, draw);
+            AddMeshDrawMaterialSignaturePart(parts, opIndex, opType, draw);
+            AddProgramBindingSignatureParts(parts, opIndex, opType, "program", draw.ProgramBindingSnapshot);
+        }
+
+        private static void AddMeshDrawViewportSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, in PendingMeshDraw draw)
+        {
+            HashCode hash = new();
+            hash.Add(draw.Viewport.X);
+            hash.Add(draw.Viewport.Y);
+            hash.Add(draw.Viewport.Width);
+            hash.Add(draw.Viewport.Height);
+            hash.Add(draw.Scissor.Offset.X);
+            hash.Add(draw.Scissor.Offset.Y);
+            hash.Add(draw.Scissor.Extent.Width);
+            hash.Add(draw.Scissor.Extent.Height);
+            hash.Add(draw.ViewportScissorCount);
+
+            if (draw.ViewportScissorCount > 1 &&
+                draw.IndexedViewports is { } indexedViewports &&
+                draw.IndexedScissors is { } indexedScissors)
+            {
+                int indexedCount = (int)Math.Min(draw.ViewportScissorCount, (uint)Math.Min(indexedViewports.Length, indexedScissors.Length));
+                for (int indexedIndex = 0; indexedIndex < indexedCount; indexedIndex++)
+                {
+                    Viewport indexedViewport = indexedViewports[indexedIndex];
+                    Rect2D indexedScissor = indexedScissors[indexedIndex];
+                    hash.Add(indexedViewport.X);
+                    hash.Add(indexedViewport.Y);
+                    hash.Add(indexedViewport.Width);
+                    hash.Add(indexedViewport.Height);
+                    hash.Add(indexedViewport.MinDepth);
+                    hash.Add(indexedViewport.MaxDepth);
+                    hash.Add(indexedScissor.Offset.X);
+                    hash.Add(indexedScissor.Offset.Y);
+                    hash.Add(indexedScissor.Extent.Width);
+                    hash.Add(indexedScissor.Extent.Height);
+                }
+            }
+
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                "viewport",
+                hash,
+                $"vp=({draw.Viewport.X},{draw.Viewport.Y},{draw.Viewport.Width}x{draw.Viewport.Height}) scissor=({draw.Scissor.Offset.X},{draw.Scissor.Offset.Y},{draw.Scissor.Extent.Width}x{draw.Scissor.Extent.Height}) count={draw.ViewportScissorCount}");
+        }
+
+        private static void AddMeshDrawPipelineStateSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, in PendingMeshDraw draw)
+        {
+            HashCode hash = new();
+            hash.Add(draw.DepthTestEnabled);
+            hash.Add(draw.DepthWriteEnabled);
+            hash.Add((int)draw.DepthCompareOp);
+            hash.Add(draw.StencilTestEnabled);
+            hash.Add(draw.StencilWriteMask);
+            hash.Add((int)draw.ColorWriteMask);
+            hash.Add((int)draw.CullMode);
+            hash.Add((int)draw.FrontFace);
+            hash.Add(draw.BlendEnabled);
+            hash.Add((int)draw.ColorBlendOp);
+            hash.Add((int)draw.AlphaBlendOp);
+            hash.Add((int)draw.SrcColorBlendFactor);
+            hash.Add((int)draw.DstColorBlendFactor);
+            hash.Add((int)draw.SrcAlphaBlendFactor);
+            hash.Add((int)draw.DstAlphaBlendFactor);
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                "pipeline",
+                hash,
+                $"depth={draw.DepthTestEnabled}/{draw.DepthWriteEnabled}/{draw.DepthCompareOp} stencil={draw.StencilTestEnabled} colorMask={draw.ColorWriteMask} cull={draw.CullMode} front={draw.FrontFace} blend={draw.BlendEnabled}");
+        }
+
+        private static void AddMeshDrawMaterialSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, in PendingMeshDraw draw)
+        {
+            VkMeshRenderer? renderer = draw.Renderer;
+            HashCode hash = new();
+            hash.Add(renderer?.GetHashCode() ?? 0);
+            hash.Add(draw.MaterialOverride?.GetHashCode() ?? 0);
+            hash.Add(draw.Instances);
+            hash.Add((int)draw.BillboardMode);
+            hash.Add(draw.IsStereoPass);
+            hash.Add(draw.UseUnjitteredProjection);
+
+            XRMaterial? material = draw.MaterialOverride ?? renderer?.MeshRenderer.Material;
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                "material",
+                hash,
+                $"mesh='{renderer?.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{material?.Name ?? "<unnamed material>"}' renderer=0x{(renderer?.GetHashCode() ?? 0):X8} instances={draw.Instances} stereo={draw.IsStereoPass} unjittered={draw.UseUnjitteredProjection}");
+        }
+
+        private static void AddBlitSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, BlitOp blit)
+        {
+            HashCode hash = new();
+            hash.Add(blit.InFbo?.GetHashCode() ?? 0);
+            hash.Add(blit.OutFbo?.GetHashCode() ?? 0);
+            hash.Add(blit.InX);
+            hash.Add(blit.InY);
+            hash.Add(blit.InW);
+            hash.Add(blit.InH);
+            hash.Add(blit.OutX);
+            hash.Add(blit.OutY);
+            hash.Add(blit.OutW);
+            hash.Add(blit.OutH);
+            hash.Add((int)blit.ReadBufferMode);
+            hash.Add(blit.ColorBit);
+            hash.Add(blit.DepthBit);
+            hash.Add(blit.StencilBit);
+            hash.Add(blit.LinearFilter);
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                "blit",
+                hash,
+                $"in='{blit.InFbo?.Name ?? "<swapchain/null>"}' out='{blit.OutFbo?.Name ?? "<swapchain/null>"}' src={blit.InX},{blit.InY},{blit.InW}x{blit.InH} dst={blit.OutX},{blit.OutY},{blit.OutW}x{blit.OutH} bits={blit.ColorBit}/{blit.DepthBit}/{blit.StencilBit}");
+        }
+
+        private static void AddIndirectDrawSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, IndirectDrawOp indirect)
+        {
+            HashCode hash = new();
+            hash.Add(indirect.IndirectBuffer.GetHashCode());
+            hash.Add(indirect.ParameterBuffer?.GetHashCode() ?? 0);
+            hash.Add(indirect.DrawCount);
+            hash.Add(indirect.Stride);
+            hash.Add(indirect.ByteOffset);
+            hash.Add(indirect.UseCount);
+            AddSignaturePart(parts, opIndex, opType, "indirect", hash, $"draws={indirect.DrawCount} stride={indirect.Stride} useCount={indirect.UseCount}");
+        }
+
+        private static void AddMeshTaskSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, MeshTaskDispatchIndirectCountOp meshTask)
+        {
+            HashCode hash = new();
+            hash.Add(meshTask.IndirectBuffer.GetHashCode());
+            hash.Add(meshTask.CountBuffer.GetHashCode());
+            hash.Add(meshTask.MaxDrawCount);
+            hash.Add(meshTask.Stride);
+            hash.Add(meshTask.ByteOffset);
+            hash.Add(meshTask.CountByteOffset);
+            AddSignaturePart(parts, opIndex, opType, "meshTask", hash, $"maxDraws={meshTask.MaxDrawCount} stride={meshTask.Stride}");
+        }
+
+        private static void AddMemoryBarrierSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, MemoryBarrierOp barrier)
+        {
+            HashCode hash = new();
+            hash.Add((int)barrier.Mask);
+            AddSignaturePart(parts, opIndex, opType, "barrier", hash, $"mask={barrier.Mask}");
+        }
+
+        private static void AddDlssUpscaleSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, DlssUpscaleOp dlss)
+        {
+            HashCode hash = new();
+            hash.Add(dlss.Session.GetHashCode());
+            hash.Add(dlss.SourceColor.Image.Handle);
+            hash.Add(dlss.Depth.Image.Handle);
+            hash.Add(dlss.Motion.Image.Handle);
+            hash.Add(dlss.OutputColor.Image.Handle);
+            hash.Add(dlss.Exposure?.Image.Handle ?? 0UL);
+            hash.Add(dlss.Parameters.InputWidth);
+            hash.Add(dlss.Parameters.InputHeight);
+            hash.Add(dlss.Parameters.OutputWidth);
+            hash.Add(dlss.Parameters.OutputHeight);
+            hash.Add(dlss.Parameters.FrameIndex);
+            hash.Add(dlss.Parameters.ResetHistory);
+            hash.Add(dlss.Parameters.OutputHdr);
+            hash.Add(dlss.Parameters.DlssQuality);
+            AddSignaturePart(parts, opIndex, opType, "dlss", hash, $"frame={dlss.Parameters.FrameIndex} reset={dlss.Parameters.ResetHistory} input={dlss.Parameters.InputWidth}x{dlss.Parameters.InputHeight} output={dlss.Parameters.OutputWidth}x{dlss.Parameters.OutputHeight}");
+        }
+
+        private static void AddDlssFrameGenerationSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, DlssFrameGenerationOp dlssFrameGeneration)
+        {
+            HashCode hash = new();
+            hash.Add(dlssFrameGeneration.Session.GetHashCode());
+            hash.Add(dlssFrameGeneration.Depth.Image.Handle);
+            hash.Add(dlssFrameGeneration.Motion.Image.Handle);
+            hash.Add(dlssFrameGeneration.HudlessColor.Image.Handle);
+            hash.Add(dlssFrameGeneration.Parameters.InputWidth);
+            hash.Add(dlssFrameGeneration.Parameters.InputHeight);
+            hash.Add(dlssFrameGeneration.Parameters.OutputWidth);
+            hash.Add(dlssFrameGeneration.Parameters.OutputHeight);
+            hash.Add(dlssFrameGeneration.Parameters.FrameIndex);
+            hash.Add(dlssFrameGeneration.Parameters.ResetHistory);
+            hash.Add(dlssFrameGeneration.Parameters.OutputHdr);
+            AddSignaturePart(parts, opIndex, opType, "dlssFrameGen", hash, $"frame={dlssFrameGeneration.Parameters.FrameIndex} reset={dlssFrameGeneration.Parameters.ResetHistory}");
+        }
+
+        private static void AddTransformFeedbackSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, TransformFeedbackOp transformFeedback)
+        {
+            HashCode hash = new();
+            hash.Add(transformFeedback.TransformFeedback.GetHashCode());
+            hash.Add((int)transformFeedback.Operation);
+            hash.Add(transformFeedback.CounterBuffer?.GetHashCode() ?? 0);
+            hash.Add(transformFeedback.FeedbackBufferOffset);
+            hash.Add(transformFeedback.FeedbackBufferSize ?? 0ul);
+            hash.Add(transformFeedback.CounterBufferOffset);
+            hash.Add(transformFeedback.CounterOffset);
+            hash.Add(transformFeedback.VertexStride);
+            hash.Add(transformFeedback.InstanceCount);
+            hash.Add(transformFeedback.FirstInstance);
+            AddSignaturePart(parts, opIndex, opType, "transformFeedback", hash, $"op={transformFeedback.Operation} instances={transformFeedback.InstanceCount} stride={transformFeedback.VertexStride}");
+        }
+
+        private static void AddComputeDispatchSignatureParts(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, ComputeDispatchOp compute)
+        {
+            HashCode hash = new();
+            hash.Add(compute.Program.GetHashCode());
+            hash.Add(compute.GroupsX);
+            hash.Add(compute.GroupsY);
+            hash.Add(compute.GroupsZ);
+            AddSignaturePart(parts, opIndex, opType, "compute", hash, $"program='{compute.Program.Data.Name ?? "<unnamed program>"}' groups={compute.GroupsX},{compute.GroupsY},{compute.GroupsZ}");
+            AddProgramBindingSignatureParts(parts, opIndex, opType, "computeProgram", compute.Snapshot);
+        }
+
+        private static void AddProgramBindingSignatureParts(
+            List<FrameOpSignatureDebugPart> parts,
+            int opIndex,
+            string opType,
+            string prefix,
+            ComputeDispatchSnapshot? snapshot)
+        {
+            if (snapshot is null)
+            {
+                AddSignaturePart(parts, opIndex, opType, $"{prefix}.null", 0, "snapshot=<null>");
+                return;
+            }
+
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                $"{prefix}.uniforms",
+                HashUniformBindingLayout(snapshot.Uniforms),
+                $"count={snapshot.Uniforms.Count} valueHash=0x{unchecked((ulong)HashUniformBindings(snapshot.Uniforms)):X16} stableValueHash=0x{unchecked((ulong)HashUniformBindingsStable(snapshot.Uniforms)):X16} keys=[{SampleKeys(snapshot.Uniforms.Keys)}]");
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                $"{prefix}.samplerUnits",
+                HashSamplerUnitBindings(snapshot.Samplers),
+                $"count={snapshot.Samplers.Count} stable=0x{unchecked((ulong)HashSamplerUnitBindingsStable(snapshot.Samplers)):X16} keys=[{SampleKeys(snapshot.Samplers.Keys)}]");
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                $"{prefix}.samplerNames",
+                HashSamplerNameBindings(snapshot.SamplersByName),
+                $"count={snapshot.SamplersByName.Count} stable=0x{unchecked((ulong)HashSamplerNameBindingsStable(snapshot.SamplersByName)):X16} keys=[{SampleKeys(snapshot.SamplersByName.Keys)}]");
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                $"{prefix}.images",
+                HashImageBindings(snapshot.Images),
+                $"count={snapshot.Images.Count} stable=0x{unchecked((ulong)HashImageBindingsStable(snapshot.Images)):X16} keys=[{SampleKeys(snapshot.Images.Keys)}]");
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                $"{prefix}.buffers",
+                HashBufferBindings(snapshot.Buffers),
+                $"count={snapshot.Buffers.Count} stable=0x{unchecked((ulong)HashBufferBindingsStable(snapshot.Buffers)):X16} keys=[{SampleKeys(snapshot.Buffers.Keys)}]");
+        }
+
+        private static void AddSignaturePart(
+            List<FrameOpSignatureDebugPart> parts,
+            int opIndex,
+            string opType,
+            string component,
+            HashCode hash,
+            string detail)
+            => AddSignaturePart(parts, opIndex, opType, component, unchecked((ulong)hash.ToHashCode()), detail);
+
+        private static void AddSignaturePart(
+            List<FrameOpSignatureDebugPart> parts,
+            int opIndex,
+            string opType,
+            string component,
+            int signature,
+            string detail)
+            => AddSignaturePart(parts, opIndex, opType, component, unchecked((ulong)signature), detail);
+
+        private static void AddSignaturePart(
+            List<FrameOpSignatureDebugPart> parts,
+            int opIndex,
+            string opType,
+            string component,
+            ulong signature,
+            string detail)
+            => parts.Add(new FrameOpSignatureDebugPart(opIndex, opType, component, signature, detail));
+
+        private static int HashUniformBindingsStable(Dictionary<string, ProgramUniformValue> uniforms)
+        {
+            HashCode hash = new();
+            hash.Add(uniforms.Count);
+            foreach (var pair in uniforms.OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                HashCode item = new();
+                item.Add(pair.Key, StringComparer.Ordinal);
+                item.Add((int)pair.Value.Type);
+                item.Add(pair.Value.IsArray);
+                HashUniformValue(ref item, pair.Value.Value);
+                hash.Add(item.ToHashCode());
+            }
+
+            return hash.ToHashCode();
+        }
+
+        private static int HashSamplerUnitBindingsStable(Dictionary<uint, XRTexture> samplers)
+        {
+            HashCode hash = new();
+            hash.Add(samplers.Count);
+            foreach (var pair in samplers.OrderBy(p => p.Key))
+            {
+                hash.Add(pair.Key);
+                hash.Add(pair.Value.GetHashCode());
+            }
+
+            return hash.ToHashCode();
+        }
+
+        private static int HashSamplerNameBindingsStable(Dictionary<string, XRTexture> samplers)
+        {
+            HashCode hash = new();
+            hash.Add(samplers.Count);
+            foreach (var pair in samplers.OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                hash.Add(pair.Key, StringComparer.Ordinal);
+                hash.Add(pair.Value.GetHashCode());
+            }
+
+            return hash.ToHashCode();
+        }
+
+        private static int HashImageBindingsStable(Dictionary<uint, ProgramImageBinding> images)
+        {
+            HashCode hash = new();
+            hash.Add(images.Count);
+            foreach (var pair in images.OrderBy(p => p.Key))
+            {
+                ProgramImageBinding binding = pair.Value;
+                hash.Add(pair.Key);
+                hash.Add(binding.Texture.GetHashCode());
+                hash.Add(binding.Level);
+                hash.Add(binding.Layered);
+                hash.Add(binding.Layer);
+                hash.Add((int)binding.Access);
+                hash.Add((int)binding.Format);
+            }
+
+            return hash.ToHashCode();
+        }
+
+        private static int HashBufferBindingsStable(Dictionary<uint, XRDataBuffer> buffers)
+        {
+            HashCode hash = new();
+            hash.Add(buffers.Count);
+            foreach (var pair in buffers.OrderBy(p => p.Key))
+            {
+                hash.Add(pair.Key);
+                hash.Add(pair.Value.GetHashCode());
+            }
+
+            return hash.ToHashCode();
+        }
+
+        private static string SampleKeys(IEnumerable<string> keys)
+            => string.Join(",", keys.OrderBy(k => k, StringComparer.Ordinal).Take(6));
+
+        private static string SampleKeys(IEnumerable<uint> keys)
+            => string.Join(",", keys.OrderBy(k => k).Take(6));
+
+        private bool TryRefreshReusableCommandBufferFrameData(uint imageIndex, FrameOp[] ops)
+        {
+            if (ops.Length == 0)
+                return true;
+
+            VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+            ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+
+            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = new(ReferenceEqualityComparer.Instance);
+            int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
+            {
+                meshDrawSlotsByRenderer.TryGetValue(renderer, out int slot);
+                meshDrawSlotsByRenderer[renderer] = slot + 1;
+                return slot;
+            }
+
+            for (int i = 0; i < ops.Length; i++)
+            {
+                FrameOp op = ops[i];
+                switch (op)
+                {
+                    case MeshDrawOp drawOp:
+                    {
+                        int drawUniformSlot = GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
+                        if (!drawOp.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(imageIndex, drawOp.Draw, drawUniformSlot))
+                        {
+                            if (FrameDataReuseDiagnosticsEnabled)
+                            {
+                                Debug.VulkanEvery(
+                                    $"Vulkan.FrameDataReuse.Mesh.{GetHashCode()}",
+                                    TimeSpan.FromSeconds(1),
+                                    "[Vulkan] Reusable command-buffer frame-data refresh failed image={0} op={1}/{2} mesh='{3}' material='{4}' drawSlot={5}: {6}",
+                                    imageIndex,
+                                    i,
+                                    ops.Length,
+                                    drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
+                                    (drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>",
+                                    drawUniformSlot,
+                                    drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(drawOp.Draw, drawUniformSlot));
+                            }
+                            return false;
+                        }
+                        break;
+                    }
+                    case ComputeDispatchOp computeOp:
+                    {
+                        if (!computeOp.Program.TryRefreshReusableComputeDispatchFrameData(imageIndex, computeOp.Snapshot))
+                        {
+                            if (FrameDataReuseDiagnosticsEnabled)
+                            {
+                                Debug.VulkanEvery(
+                                    $"Vulkan.FrameDataReuse.Compute.{GetHashCode()}",
+                                    TimeSpan.FromSeconds(1),
+                                    "[Vulkan] Reusable command-buffer compute frame-data refresh failed image={0} op={1}/{2} program='{3}' groups={4}x{5}x{6}.",
+                                    imageIndex,
+                                    i,
+                                    ops.Length,
+                                    computeOp.Program.Data?.Name ?? "<unnamed program>",
+                                    computeOp.GroupsX,
+                                    computeOp.GroupsY,
+                                    computeOp.GroupsZ);
+                            }
+                            return false;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private void RecordDynamicUiBatchTextSecondaryCommandBuffer(uint imageIndex, FrameOp[] dynamicUiBatchTextOps)
+        {
+            if (_dynamicUiBatchTextSecondaryCommandBuffers is null ||
+                imageIndex >= _dynamicUiBatchTextSecondaryCommandBuffers.Length)
+            {
+                return;
+            }
+
+            CommandBuffer secondaryCommandBuffer = _dynamicUiBatchTextSecondaryCommandBuffers[imageIndex];
+            if (secondaryCommandBuffer.Handle == 0)
+                return;
+
+            bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
+                swapChainImageViews is not null &&
+                swapChainImages is not null &&
+                imageIndex < swapChainImageViews.Length &&
+                imageIndex < swapChainImages.Length;
+
+            RenderPass inheritedRenderPass = useDynamicRendering ? default : _renderPassLoad;
+            Framebuffer inheritedFramebuffer = default;
+            if (!useDynamicRendering && swapChainFramebuffers is not null && imageIndex < swapChainFramebuffers.Length)
+                inheritedFramebuffer = swapChainFramebuffers[imageIndex];
+
+            Api!.ResetCommandBuffer(secondaryCommandBuffer, 0);
+
+            CommandBufferInheritanceInfo inheritanceInfo = new()
+            {
+                SType = StructureType.CommandBufferInheritanceInfo,
+                RenderPass = inheritedRenderPass,
+                Subpass = 0,
+                Framebuffer = inheritedFramebuffer,
+                OcclusionQueryEnable = Vk.False,
+                QueryFlags = QueryControlFlags.None,
+                PipelineStatistics = QueryPipelineStatisticFlags.None
+            };
+
+            Format* colorAttachmentFormats = stackalloc Format[1];
+            colorAttachmentFormats[0] = swapChainImageFormat;
+
+            CommandBufferInheritanceRenderingInfo renderingInheritanceInfo = new()
+            {
+                SType = StructureType.CommandBufferInheritanceRenderingInfo,
+                Flags = 0,
+                ViewMask = 0,
+                ColorAttachmentCount = 1,
+                PColorAttachmentFormats = colorAttachmentFormats,
+                DepthAttachmentFormat = _swapchainDepthFormat,
+                StencilAttachmentFormat = HasStencilComponent(_swapchainDepthFormat) ? _swapchainDepthFormat : Format.Undefined,
+                RasterizationSamples = SampleCountFlags.Count1Bit
+            };
+
+            if (useDynamicRendering)
+                inheritanceInfo.PNext = &renderingInheritanceInfo;
+
+            CommandBufferBeginInfo beginInfo = new()
+            {
+                SType = StructureType.CommandBufferBeginInfo,
+                Flags = CommandBufferUsageFlags.OneTimeSubmitBit | CommandBufferUsageFlags.RenderPassContinueBit,
+                PInheritanceInfo = &inheritanceInfo,
+            };
+
+            if (Api!.BeginCommandBuffer(secondaryCommandBuffer, ref beginInfo) != Result.Success)
+                throw new Exception("Failed to begin dynamic UI text secondary command buffer.");
+
+            ResetCommandBufferBindState(secondaryCommandBuffer);
+
+            DynamicRenderingFormatSignature dynamicRenderingFormats = useDynamicRendering
+                ? CreateSwapchainDynamicRenderingFormatSignature(swapChainImageFormat, _swapchainDepthFormat)
+                : default;
+
+            Dictionary<VkMeshRenderer, int>? meshDrawSlotsByRenderer = null;
+            int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
+            {
+                meshDrawSlotsByRenderer ??= new Dictionary<VkMeshRenderer, int>(ReferenceEqualityComparer.Instance);
+                meshDrawSlotsByRenderer.TryGetValue(renderer, out int slot);
+                meshDrawSlotsByRenderer[renderer] = slot + 1;
+                return slot;
+            }
+
+            for (int i = 0; i < dynamicUiBatchTextOps.Length; i++)
+            {
+                if (dynamicUiBatchTextOps[i] is not MeshDrawOp drawOp)
+                    continue;
+
+                int opPassIndex = EnsureValidPassIndex(drawOp.PassIndex, drawOp.GetType().Name, drawOp.Context.PassMetadata);
+                if (opPassIndex == int.MinValue)
+                    continue;
+
+                using IDisposable? pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(drawOp.Context.PipelineInstance);
+
+                Viewport viewport = drawOp.Draw.Viewport;
+                Rect2D scissor = drawOp.Draw.Scissor;
+                uint viewportScissorCount = drawOp.Draw.ViewportScissorCount;
+                if (viewportScissorCount > 1 &&
+                    drawOp.Draw.IndexedViewports is { } indexedViewports &&
+                    drawOp.Draw.IndexedScissors is { } indexedScissors &&
+                    indexedViewports.Length >= (int)viewportScissorCount &&
+                    indexedScissors.Length >= (int)viewportScissorCount)
+                {
+                    fixed (Viewport* indexedViewportPtr = indexedViewports)
+                    fixed (Rect2D* indexedScissorPtr = indexedScissors)
+                    {
+                        Api!.CmdSetViewport(secondaryCommandBuffer, 0, viewportScissorCount, indexedViewportPtr);
+                        Api!.CmdSetScissor(secondaryCommandBuffer, 0, viewportScissorCount, indexedScissorPtr);
+                    }
+                }
+                else
+                {
+                    Api!.CmdSetViewport(secondaryCommandBuffer, 0, 1, &viewport);
+                    Api!.CmdSetScissor(secondaryCommandBuffer, 0, 1, &scissor);
+                }
+
+                drawOp.Draw.Renderer.RecordDraw(
+                    secondaryCommandBuffer,
+                    drawOp.Draw,
+                    inheritedRenderPass,
+                    useDynamicRendering,
+                    dynamicRenderingFormats,
+                    opPassIndex,
+                    drawOp.Context.PassMetadata,
+                    depthStencilReadOnly: false,
+                    drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
+                    GetMeshDrawUniformSlot(drawOp.Draw.Renderer));
+            }
+
+            if (Api!.EndCommandBuffer(secondaryCommandBuffer) != Result.Success)
+                throw new Exception("Failed to end dynamic UI text secondary command buffer.");
+        }
+
+        private void RecordCommandBuffer(uint imageIndex, FrameOp[] ops, int dynamicUiBatchTextOpCount)
         {
             var commandBuffer = _commandBuffers![imageIndex];
             int droppedDrawOps = 0;
@@ -1002,8 +2106,9 @@ namespace XREngine.Rendering.Vulkan
             if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
                 throw new Exception("Failed to begin recording command buffer.");
 
-            BeginFrameTimingQueries(commandBuffer, currentFrame);
-            BeginVulkanGpuProfilerQueries(commandBuffer, currentFrame);
+            int commandBufferImageSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+            BeginFrameTimingQueries(commandBuffer, commandBufferImageSlot);
+            BeginVulkanGpuProfilerQueries(commandBuffer, commandBufferImageSlot);
 
             ResetCommandBufferBindState(commandBuffer);
 
@@ -1034,7 +2139,7 @@ namespace XREngine.Rendering.Vulkan
             IReadOnlyList<VulkanRenderGraphCompiler.SecondaryRecordingBucket> secondaryBuckets =
                 _renderGraphCompiler.BuildSecondaryRecordingBuckets(ops);
             Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket>? secondaryBucketByStart = null;
-            if (secondaryBuckets.Count > 0)
+            if (secondaryBuckets.Count > 8)
             {
                 secondaryBucketByStart = new Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket>(secondaryBuckets.Count);
                 foreach (VulkanRenderGraphCompiler.SecondaryRecordingBucket bucket in secondaryBuckets)
@@ -1055,6 +2160,9 @@ namespace XREngine.Rendering.Vulkan
 
             int clearCount = 0;
             int drawCount = 0;
+            int meshDrawCount = 0;
+            int indirectDrawCount = 0;
+            int meshTaskDispatchCount = 0;
             int blitCount = 0;
             int computeCount = 0;
             int swapchainWriteCount = 0;
@@ -1184,6 +2292,7 @@ namespace XREngine.Rendering.Vulkan
                     case MeshDrawOp meshDraw:
                         RememberPipelineName(meshDraw.Context);
                         drawCount++;
+                        meshDrawCount++;
                         if (meshDraw.Target is null)
                         {
                             swapchainWriteCount++;
@@ -1195,9 +2304,18 @@ namespace XREngine.Rendering.Vulkan
                             fboOnlyDrawOps++;
                         }
                         break;
+                    case IndirectDrawOp indirectDraw:
+                        RememberPipelineName(indirectDraw.Context);
+                        drawCount++;
+                        indirectDrawCount++;
+                        swapchainWriteCount++;
+                        swapchainDrawWrites++;
+                        MarkSwapchainWriter(nameof(IndirectDrawOp), BuildSwapchainWriterDetail(indirectDraw), indirectDraw.PassIndex, opScanIndex, indirectDraw.Context.PipelineIdentity);
+                        break;
                     case MeshTaskDispatchIndirectCountOp meshTaskDispatch:
                         RememberPipelineName(meshTaskDispatch.Context);
                         drawCount++;
+                        meshTaskDispatchCount++;
                         swapchainWriteCount++;
                         swapchainDrawWrites++;
                         MarkSwapchainWriter(nameof(MeshTaskDispatchIndirectCountOp), BuildSwapchainWriterDetail(meshTaskDispatch), meshTaskDispatch.PassIndex, opScanIndex, meshTaskDispatch.Context.PipelineIdentity);
@@ -1224,6 +2342,16 @@ namespace XREngine.Rendering.Vulkan
                 opScanIndex++;
             }
             sceneSwapchainWriters = swapchainWriteCount;
+            RecordVulkanFrameOpCensus(
+                ops,
+                clearCount,
+                meshDrawCount,
+                indirectDrawCount,
+                meshTaskDispatchCount,
+                blitCount,
+                computeCount,
+                swapchainWriteCount,
+                fboOnlyDrawOps + fboOnlyBlitOps);
 
             Debug.VulkanEvery(
                 $"Vulkan.FrameOps.{GetHashCode()}",
@@ -1275,6 +2403,7 @@ namespace XREngine.Rendering.Vulkan
             bool swapchainClearedThisFrame = false;
 
             bool skipUiPipelineOps = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiPipeline;
+            bool skipUiBatchTextOps = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiBatchText;
 
             // Track swapchain writes that happen outside a swapchain render pass
             // (e.g. CmdBlitImage to swapchain). If true, the first swapchain render
@@ -1803,6 +2932,193 @@ namespace XREngine.Rendering.Vulkan
                 activeDepthStencilReadOnly = passDepthStencilReadOnly;
             }
 
+            void ExecuteDynamicUiBatchTextOverlay()
+            {
+                if (_dynamicUiBatchTextSecondaryCommandBuffers is null ||
+                    imageIndex >= _dynamicUiBatchTextSecondaryCommandBuffers.Length)
+                {
+                    return;
+                }
+
+                CommandBuffer secondaryCommandBuffer = _dynamicUiBatchTextSecondaryCommandBuffers[imageIndex];
+                if (secondaryCommandBuffer.Handle == 0)
+                    return;
+
+                EndActiveRenderPass();
+                CmdBeginLabel(commandBuffer, "DynamicUIBatchText");
+
+                try
+                {
+                    bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
+                        swapChainImageViews is not null &&
+                        swapChainImages is not null &&
+                        imageIndex < swapChainImageViews.Length &&
+                        imageIndex < swapChainImages.Length;
+
+                    if (useDynamicRendering)
+                    {
+                        bool imageEverPresented = _swapchainImageEverPresented is not null &&
+                            imageIndex < _swapchainImageEverPresented.Length &&
+                            _swapchainImageEverPresented[imageIndex];
+
+                        ImageLayout colorOldLayout = swapchainClearedThisFrame
+                            ? ImageLayout.ColorAttachmentOptimal
+                            : (swapchainWrittenOutsideRenderPass
+                                ? ImageLayout.ColorAttachmentOptimal
+                                : (imageEverPresented ? ImageLayout.PresentSrcKhr : ImageLayout.Undefined));
+
+                        AttachmentLoadOp colorLoadOp = (swapchainClearedThisFrame || swapchainWrittenOutsideRenderPass)
+                            ? AttachmentLoadOp.Load
+                            : AttachmentLoadOp.Clear;
+
+                        ImageMemoryBarrier colorBarrier = new()
+                        {
+                            SType = StructureType.ImageMemoryBarrier,
+                            SrcAccessMask = 0,
+                            DstAccessMask = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
+                            OldLayout = colorOldLayout,
+                            NewLayout = ImageLayout.ColorAttachmentOptimal,
+                            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            Image = swapChainImages![imageIndex],
+                            SubresourceRange = new ImageSubresourceRange
+                            {
+                                AspectMask = ImageAspectFlags.ColorBit,
+                                BaseMipLevel = 0,
+                                LevelCount = 1,
+                                BaseArrayLayer = 0,
+                                LayerCount = 1
+                            }
+                        };
+
+                        ImageMemoryBarrier depthBarrier = new()
+                        {
+                            SType = StructureType.ImageMemoryBarrier,
+                            SrcAccessMask = 0,
+                            DstAccessMask = AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit,
+                            OldLayout = ImageLayout.Undefined,
+                            NewLayout = ImageLayout.DepthStencilAttachmentOptimal,
+                            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            Image = _swapchainDepthImage,
+                            SubresourceRange = new ImageSubresourceRange
+                            {
+                                AspectMask = _swapchainDepthAspect,
+                                BaseMipLevel = 0,
+                                LevelCount = 1,
+                                BaseArrayLayer = 0,
+                                LayerCount = 1
+                            }
+                        };
+
+                        ImageMemoryBarrier* preRenderingBarriers = stackalloc ImageMemoryBarrier[2];
+                        preRenderingBarriers[0] = colorBarrier;
+                        preRenderingBarriers[1] = depthBarrier;
+
+                        CmdPipelineBarrierTracked(
+                            commandBuffer,
+                            PipelineStageFlags.TopOfPipeBit,
+                            PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit,
+                            0,
+                            0,
+                            null,
+                            0,
+                            null,
+                            2,
+                            preRenderingBarriers);
+
+                        ClearValue* dynamicClearValues = stackalloc ClearValue[2];
+                        _state.WriteClearValues(dynamicClearValues, 2);
+
+                        RenderingAttachmentInfo colorAttachment = new()
+                        {
+                            SType = StructureType.RenderingAttachmentInfo,
+                            ImageView = swapChainImageViews![imageIndex],
+                            ImageLayout = ImageLayout.ColorAttachmentOptimal,
+                            LoadOp = colorLoadOp,
+                            StoreOp = AttachmentStoreOp.Store,
+                            ClearValue = dynamicClearValues[0],
+                        };
+
+                        RenderingAttachmentInfo depthAttachment = new()
+                        {
+                            SType = StructureType.RenderingAttachmentInfo,
+                            ImageView = _swapchainDepthView,
+                            ImageLayout = ImageLayout.DepthStencilAttachmentOptimal,
+                            LoadOp = AttachmentLoadOp.Clear,
+                            StoreOp = AttachmentStoreOp.DontCare,
+                            ClearValue = dynamicClearValues[1],
+                        };
+
+                        RenderingInfo renderingInfo = new()
+                        {
+                            SType = StructureType.RenderingInfo,
+                            Flags = RenderingFlags.ContentsSecondaryCommandBuffersBit,
+                            RenderArea = new Rect2D
+                            {
+                                Offset = new Offset2D(0, 0),
+                                Extent = swapChainExtent
+                            },
+                            LayerCount = 1,
+                            ColorAttachmentCount = 1,
+                            PColorAttachments = &colorAttachment,
+                            PDepthAttachment = &depthAttachment,
+                        };
+
+                        Api!.CmdBeginRendering(commandBuffer, &renderingInfo);
+                        Api!.CmdExecuteCommands(commandBuffer, 1, &secondaryCommandBuffer);
+                        Api!.CmdEndRendering(commandBuffer);
+
+                        usedSwapchainDynamicRendering = true;
+                        swapchainInColorAttachmentLayout = true;
+                        swapchainClearedThisFrame = true;
+                    }
+                    else if (swapChainFramebuffers is not null && imageIndex < swapChainFramebuffers.Length)
+                    {
+                        RenderPassBeginInfo renderPassInfo = new()
+                        {
+                            SType = StructureType.RenderPassBeginInfo,
+                            RenderPass = _renderPassLoad,
+                            Framebuffer = swapChainFramebuffers[imageIndex],
+                            RenderArea = new Rect2D
+                            {
+                                Offset = new Offset2D(0, 0),
+                                Extent = swapChainExtent
+                            }
+                        };
+
+                        const uint attachmentCount = 2;
+                        ClearValue* clearValues = stackalloc ClearValue[(int)attachmentCount];
+                        _state.WriteClearValues(clearValues, attachmentCount);
+                        renderPassInfo.ClearValueCount = attachmentCount;
+                        renderPassInfo.PClearValues = clearValues;
+
+                        Api!.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.SecondaryCommandBuffers);
+                        Api!.CmdExecuteCommands(commandBuffer, 1, &secondaryCommandBuffer);
+                        Api!.CmdEndRenderPass(commandBuffer);
+
+                        swapchainClearedThisFrame = true;
+                    }
+
+                    if (dynamicUiBatchTextOpCount > 0)
+                    {
+                        swapchainWriteCount++;
+                        swapchainDrawWrites++;
+                        overlaySwapchainWriters++;
+                        MarkSwapchainWriter(
+                            "DynamicUIBatchText",
+                            $"secondary overlay draws={dynamicUiBatchTextOpCount}",
+                            activePassIndex != int.MinValue ? activePassIndex : VulkanBarrierPlanner.SwapchainPassIndex,
+                            ops.Length,
+                            hasActiveContext ? activeContext.PipelineIdentity : initialContext.PipelineIdentity);
+                    }
+                }
+                finally
+                {
+                    CmdEndLabel(commandBuffer);
+                }
+            }
+
             void EmitPassBarriers(int passIndex)
             {
                 // Emit any global pending memory barriers that accumulated before recording.
@@ -2019,6 +3335,20 @@ namespace XREngine.Rendering.Vulkan
                             continue;
                         }
 
+                        if (skipUiBatchTextOps && IsUiBatchTextDrawOp(op))
+                        {
+                            droppedFrameOps++;
+                            droppedDrawOps++;
+
+                            Debug.VulkanEvery(
+                                $"Vulkan.SkipUiBatchText.{GetHashCode()}",
+                                TimeSpan.FromSeconds(1),
+                                "[Vulkan] Skipping batched UI text op pass={0} pipe={1} due to XRE_SKIP_UI_BATCH_TEXT=1.",
+                                opPassIndex,
+                                op.Context.PipelineIdentity);
+                            continue;
+                        }
+
                         // Diagnostic: log the first few ops with invalid pass index per frame
                         if (op.PassIndex == int.MinValue)
                         {
@@ -2185,8 +3515,7 @@ namespace XREngine.Rendering.Vulkan
 
                     case IndirectDrawOp indirectOp:
                         EndActiveRenderPass();
-                        if (secondaryBucketByStart is not null &&
-                            secondaryBucketByStart.TryGetValue(opIndex, out VulkanRenderGraphCompiler.SecondaryRecordingBucket indirectBucket) &&
+                        if (TryGetSecondaryBucketForStart(secondaryBuckets, secondaryBucketByStart, opIndex, out VulkanRenderGraphCompiler.SecondaryRecordingBucket indirectBucket) &&
                             TryRecordSecondaryBucket(primaryCommandBuffer: commandBuffer, imageIndex, ops, opIndex, indirectBucket, "IndirectDrawBatch"))
                         {
                             bool usedParallel = _enableParallelSecondaryCommandBufferRecording &&
@@ -2225,8 +3554,7 @@ namespace XREngine.Rendering.Vulkan
 
                     case ComputeDispatchOp computeOp:
                         EndActiveRenderPass();
-                        if (secondaryBucketByStart is not null &&
-                            secondaryBucketByStart.TryGetValue(opIndex, out VulkanRenderGraphCompiler.SecondaryRecordingBucket computeBucket) &&
+                        if (TryGetSecondaryBucketForStart(secondaryBuckets, secondaryBucketByStart, opIndex, out VulkanRenderGraphCompiler.SecondaryRecordingBucket computeBucket) &&
                             TryRecordSecondaryBucket(primaryCommandBuffer: commandBuffer, imageIndex, ops, opIndex, computeBucket, "ComputeDispatch"))
                         {
                             opIndex = opIndex + computeBucket.Count - 1;
@@ -2237,6 +3565,13 @@ namespace XREngine.Rendering.Vulkan
                             RecordComputeDispatchOp(commandBuffer, imageIndex, computeOp);
                             CmdEndLabel(commandBuffer);
                         }
+                        break;
+
+                    case MemoryBarrierOp memoryBarrierOp:
+                        EndActiveRenderPass();
+                        CmdBeginLabel(commandBuffer, "MemoryBarrier");
+                        EmitMemoryBarrierMask(commandBuffer, memoryBarrierOp.Mask);
+                        CmdEndLabel(commandBuffer);
                         break;
 
                     case DlssUpscaleOp dlssOp:
@@ -2293,6 +3628,8 @@ namespace XREngine.Rendering.Vulkan
                     CmdEndLabel(commandBuffer);
                     passIndexLabelActive = false;
                 }
+
+                ExecuteDynamicUiBatchTextOverlay();
 
                 // Always finish with a swapchain render pass so ImGui/debug overlay can present.
                 if (!renderPassActive || activeTarget is not null)
@@ -2465,7 +3802,7 @@ namespace XREngine.Rendering.Vulkan
                         swapchainPresentTransitions);
                 }
 
-                EndFrameTimingQueries(commandBuffer, currentFrame);
+                EndFrameTimingQueries(commandBuffer, commandBufferImageSlot);
 
                 CmdEndLabel(commandBuffer);
 
@@ -2522,6 +3859,29 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
 
+        private static bool TryGetSecondaryBucketForStart(
+            IReadOnlyList<VulkanRenderGraphCompiler.SecondaryRecordingBucket> buckets,
+            Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket>? bucketByStart,
+            int startIndex,
+            out VulkanRenderGraphCompiler.SecondaryRecordingBucket bucket)
+        {
+            if (bucketByStart is not null)
+                return bucketByStart.TryGetValue(startIndex, out bucket);
+
+            for (int i = 0; i < buckets.Count; i++)
+            {
+                VulkanRenderGraphCompiler.SecondaryRecordingBucket candidate = buckets[i];
+                if (candidate.StartIndex == startIndex)
+                {
+                    bucket = candidate;
+                    return true;
+                }
+            }
+
+            bucket = default;
+            return false;
+        }
+
         private void RecordFrameOpInSecondary(CommandBuffer secondaryCommandBuffer, uint imageIndex, FrameOp runOp)
         {
             using IDisposable? _ = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(runOp.Context.PipelineInstance);
@@ -2538,6 +3898,9 @@ namespace XREngine.Rendering.Vulkan
                     break;
                 case ComputeDispatchOp computeDispatchOp:
                     RecordComputeDispatchOp(secondaryCommandBuffer, imageIndex, computeDispatchOp);
+                    break;
+                case MemoryBarrierOp memoryBarrierOp:
+                    EmitMemoryBarrierMask(secondaryCommandBuffer, memoryBarrierOp.Mask);
                     break;
             }
         }
@@ -4397,12 +5760,16 @@ namespace XREngine.Rendering.Vulkan
             {
                 _commandBufferDirtyFlags = null;
                 _commandBufferFrameOpSignatures = null;
+                _commandBufferFrameOpSignatureDebugParts = null;
                 _commandBufferPlannerRevisions = null;
                 return;
             }
 
             _commandBufferDirtyFlags = new bool[_commandBuffers.Length];
             _commandBufferFrameOpSignatures = new ulong[_commandBuffers.Length];
+            _commandBufferFrameOpSignatureDebugParts = FrameOpSignatureDiffDiagnosticsEnabled
+                ? new FrameOpSignatureDebugPart[_commandBuffers.Length][]
+                : null;
             _commandBufferPlannerRevisions = new ulong[_commandBuffers.Length];
             for (int i = 0; i < _commandBufferDirtyFlags.Length; i++)
             {

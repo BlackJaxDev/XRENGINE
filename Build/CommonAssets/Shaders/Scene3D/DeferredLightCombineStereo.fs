@@ -42,6 +42,18 @@ float GTSpecularOcclusion(float NoV, float ao, float roughness)
     return clamp(pow(NoV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao, 0.0f, 1.0f);
 }
 
+float ResolveAmbientOcclusion(vec3 uvi)
+{
+	if (!UseAmbientOcclusion)
+		return 1.0f;
+
+	float rawAO = texture(AmbientOcclusionTexture, uvi).r;
+	if (isnan(rawAO) || isinf(rawAO))
+		return 1.0f;
+
+	return pow(clamp(rawAO, 0.0f, 1.0f), max(AmbientOcclusionPower, 0.001f));
+}
+
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
 uniform mat4 LeftEyeInverseProjMatrix;
@@ -66,9 +78,15 @@ void main()
 	vec3 albedoColor = albedoOpacity.rgb;
 	vec3 normal = XRENGINE_ReadNormal(Normal, uvi);
 	vec3 rms = texture(RMSE, uvi).rgb;
-	float ao = UseAmbientOcclusion ? pow(texture(AmbientOcclusionTexture, uvi).r, max(AmbientOcclusionPower, 0.001f)) : 1.0f;
 	float depth = texture(DepthView, uvi).r;
 	vec3 InLo = texture(LightingAccumTexture, uvi).rgb;
+	if (XRENGINE_ResolveDepth(depth) >= 1.0f)
+	{
+		OutLo = vec4(0.0f);
+		return;
+	}
+
+	float ao = ResolveAmbientOcclusion(uvi);
 	vec3 irradianceColor = XRENGINE_SampleOcta(Irradiance, normal);
 	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
 	//float fogDensity = noise3(fragPosWS);

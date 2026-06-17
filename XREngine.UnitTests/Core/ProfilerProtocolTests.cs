@@ -350,6 +350,43 @@ public sealed class ProfilerProtocolTests
             VulkanRetiredResourcePlanReplacements = 2,
             VulkanRetiredResourcePlanImages = 13,
             VulkanRetiredResourcePlanBuffers = 14,
+            VulkanFrameLoop = new VulkanFrameLoopTelemetryData
+            {
+                FrameSampleTimingQueriesMs = 0.125,
+                FrameDrainRetiredResourcesMs = 4.5,
+                FrameAcquireBridgeSubmitMs = 0.25,
+                FrameWaitSwapchainImageMs = 0.375,
+                FrameResetDynamicUniformRingMs = 0.0625,
+                FrameOpTotalCount = 101,
+                FrameOpClearCount = 2,
+                FrameOpMeshDrawCount = 33,
+                FrameOpIndirectDrawCount = 7,
+                FrameOpMeshTaskDispatchCount = 5,
+                FrameOpBlitCount = 8,
+                FrameOpComputeCount = 9,
+                FrameOpSwapchainWriteCount = 4,
+                FrameOpFboWriteCount = 49,
+                FrameOpUniquePassCount = 6,
+                FrameOpUniqueContextCount = 3,
+                FrameOpUniqueTargetCount = 5,
+                CommandBufferCleanReuseCount = 10,
+                CommandBufferRecordCount = 11,
+                CommandBufferForcedDirtyCount = 12,
+                CommandBufferFrameOpSignatureDirtyCount = 13,
+                CommandBufferPlannerDirtyCount = 14,
+                CommandBufferProfilerDirtyCount = 15,
+                CommandBufferDirtySummary = "forced,frame-ops,dirty:RecreateSwapchain",
+                RetiredDescriptorPoolCount = 16,
+                RetiredPipelineCount = 17,
+                RetiredFramebufferCount = 18,
+                RetiredBufferCount = 19,
+                RetiredBufferMemoryCount = 20,
+                RetiredImageCount = 21,
+                RetiredImageViewCount = 22,
+                RetiredSamplerCount = 23,
+                RetiredImageMemoryCount = 24,
+                RetiredImageBytes = 25_165_824,
+            },
             AllocatedVRAMBytes = 512 * 1024 * 1024L,
             AllocatedBufferBytes = 128 * 1024 * 1024L,
             AllocatedTextureBytes = 256 * 1024 * 1024L,
@@ -678,6 +715,40 @@ public sealed class ProfilerProtocolTests
         clone.VulkanRetiredResourcePlanReplacements.ShouldBe(2);
         clone.VulkanRetiredResourcePlanImages.ShouldBe(13);
         clone.VulkanRetiredResourcePlanBuffers.ShouldBe(14);
+        clone.VulkanFrameLoop.FrameOpTotalCount.ShouldBe(101);
+        clone.VulkanFrameLoop.FrameSampleTimingQueriesMs.ShouldBe(0.125);
+        clone.VulkanFrameLoop.FrameDrainRetiredResourcesMs.ShouldBe(4.5);
+        clone.VulkanFrameLoop.FrameAcquireBridgeSubmitMs.ShouldBe(0.25);
+        clone.VulkanFrameLoop.FrameWaitSwapchainImageMs.ShouldBe(0.375);
+        clone.VulkanFrameLoop.FrameResetDynamicUniformRingMs.ShouldBe(0.0625);
+        clone.VulkanFrameLoop.FrameOpClearCount.ShouldBe(2);
+        clone.VulkanFrameLoop.FrameOpMeshDrawCount.ShouldBe(33);
+        clone.VulkanFrameLoop.FrameOpIndirectDrawCount.ShouldBe(7);
+        clone.VulkanFrameLoop.FrameOpMeshTaskDispatchCount.ShouldBe(5);
+        clone.VulkanFrameLoop.FrameOpBlitCount.ShouldBe(8);
+        clone.VulkanFrameLoop.FrameOpComputeCount.ShouldBe(9);
+        clone.VulkanFrameLoop.FrameOpSwapchainWriteCount.ShouldBe(4);
+        clone.VulkanFrameLoop.FrameOpFboWriteCount.ShouldBe(49);
+        clone.VulkanFrameLoop.FrameOpUniquePassCount.ShouldBe(6);
+        clone.VulkanFrameLoop.FrameOpUniqueContextCount.ShouldBe(3);
+        clone.VulkanFrameLoop.FrameOpUniqueTargetCount.ShouldBe(5);
+        clone.VulkanFrameLoop.CommandBufferCleanReuseCount.ShouldBe(10);
+        clone.VulkanFrameLoop.CommandBufferRecordCount.ShouldBe(11);
+        clone.VulkanFrameLoop.CommandBufferForcedDirtyCount.ShouldBe(12);
+        clone.VulkanFrameLoop.CommandBufferFrameOpSignatureDirtyCount.ShouldBe(13);
+        clone.VulkanFrameLoop.CommandBufferPlannerDirtyCount.ShouldBe(14);
+        clone.VulkanFrameLoop.CommandBufferProfilerDirtyCount.ShouldBe(15);
+        clone.VulkanFrameLoop.CommandBufferDirtySummary.ShouldBe("forced,frame-ops,dirty:RecreateSwapchain");
+        clone.VulkanFrameLoop.RetiredDescriptorPoolCount.ShouldBe(16);
+        clone.VulkanFrameLoop.RetiredPipelineCount.ShouldBe(17);
+        clone.VulkanFrameLoop.RetiredFramebufferCount.ShouldBe(18);
+        clone.VulkanFrameLoop.RetiredBufferCount.ShouldBe(19);
+        clone.VulkanFrameLoop.RetiredBufferMemoryCount.ShouldBe(20);
+        clone.VulkanFrameLoop.RetiredImageCount.ShouldBe(21);
+        clone.VulkanFrameLoop.RetiredImageViewCount.ShouldBe(22);
+        clone.VulkanFrameLoop.RetiredSamplerCount.ShouldBe(23);
+        clone.VulkanFrameLoop.RetiredImageMemoryCount.ShouldBe(24);
+        clone.VulkanFrameLoop.RetiredImageBytes.ShouldBe(25_165_824);
         clone.AllocatedVRAMBytes.ShouldBe(512 * 1024 * 1024L);
         clone.FBOBandwidthBytes.ShouldBe(100_000_000);
         clone.FBOBindCount.ShouldBe(42);

@@ -411,12 +411,13 @@ public sealed class VulkanDeferredProbeGiFixesTests
         string compilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderGraphCompiler.cs");
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
 
-        int passOrderSort = compilerSource.IndexOf(".OrderBy(x => x.PassOrder)", StringComparison.Ordinal);
-        int groupOrderTieBreak = compilerSource.IndexOf(".ThenBy(x => x.GroupOrder)", StringComparison.Ordinal);
+        int passOrderSort = compilerSource.IndexOf("x.PassOrder.CompareTo(y.PassOrder)", StringComparison.Ordinal);
+        int groupOrderTieBreak = compilerSource.IndexOf("x.GroupOrder.CompareTo(y.GroupOrder)", StringComparison.Ordinal);
 
         passOrderSort.ShouldBeGreaterThanOrEqualTo(0);
         groupOrderTieBreak.ShouldBeGreaterThan(passOrderSort);
         compilerSource.ShouldNotContain(".OrderBy(x => x.GroupOrder)");
+        compilerSource.ShouldContain("ArrayPool<FrameOpSortKey>.Shared.Rent(opCount)");
         commandBufferSource.ShouldContain("Always sort frame ops by (PassOrder, GroupOrder, OriginalIndex).");
     }
 

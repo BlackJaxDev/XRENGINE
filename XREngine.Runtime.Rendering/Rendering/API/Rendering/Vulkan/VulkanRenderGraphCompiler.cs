@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -28,6 +29,70 @@ public unsafe partial class VulkanRenderer
             int SchedulingIdentity,
             Type OpType,
             FrameOpContext Context);
+
+        private readonly struct FrameOpSortKey(
+            FrameOp operation,
+            int passOrder,
+            int groupOrder,
+            int originalIndex)
+        {
+            public FrameOp Operation { get; } = operation;
+            public int PassOrder { get; } = passOrder;
+            public int GroupOrder { get; } = groupOrder;
+            public int OriginalIndex { get; } = originalIndex;
+        }
+
+        private sealed class FrameOpSortKeyComparer : IComparer<FrameOpSortKey>
+        {
+            public static readonly FrameOpSortKeyComparer Instance = new();
+
+            public int Compare(FrameOpSortKey x, FrameOpSortKey y)
+            {
+                int passCompare = x.PassOrder.CompareTo(y.PassOrder);
+                if (passCompare != 0)
+                    return passCompare;
+
+                int groupCompare = x.GroupOrder.CompareTo(y.GroupOrder);
+                if (groupCompare != 0)
+                    return groupCompare;
+
+                if (x.Operation is MeshDrawOp xDraw &&
+                    y.Operation is MeshDrawOp yDraw &&
+                    CanCanonicalizeMeshDrawOrder(xDraw) &&
+                    CanCanonicalizeMeshDrawOrder(yDraw))
+                {
+                    int drawCompare = CompareCanonicalMeshDrawOrder(xDraw, yDraw);
+                    if (drawCompare != 0)
+                        return drawCompare;
+                }
+
+                return x.OriginalIndex.CompareTo(y.OriginalIndex);
+            }
+
+            private static bool CanCanonicalizeMeshDrawOrder(MeshDrawOp op)
+                => !op.Draw.BlendEnabled;
+
+            private static int CompareCanonicalMeshDrawOrder(MeshDrawOp x, MeshDrawOp y)
+            {
+                int targetCompare = (x.Target?.GetHashCode() ?? 0).CompareTo(y.Target?.GetHashCode() ?? 0);
+                if (targetCompare != 0)
+                    return targetCompare;
+
+                int materialCompare = (x.Draw.MaterialOverride?.GetHashCode() ?? 0).CompareTo(y.Draw.MaterialOverride?.GetHashCode() ?? 0);
+                if (materialCompare != 0)
+                    return materialCompare;
+
+                int rendererCompare = x.Draw.Renderer.GetHashCode().CompareTo(y.Draw.Renderer.GetHashCode());
+                if (rendererCompare != 0)
+                    return rendererCompare;
+
+                int instanceCompare = x.Draw.Instances.CompareTo(y.Draw.Instances);
+                if (instanceCompare != 0)
+                    return instanceCompare;
+
+                return ((int)x.Draw.BillboardMode).CompareTo((int)y.Draw.BillboardMode);
+            }
+        }
 
         private sealed class PassOrderCacheEntry
         {
@@ -116,39 +181,76 @@ public unsafe partial class VulkanRenderer
         /// </remarks>
         /// <param name="ops">Operations to sort.</param>
         /// <param name="graph">Compiled pass-order metadata.</param>
-        /// <returns>A new sorted array (or original array for length 0/1).</returns>
+        /// <returns>The input array, sorted in place (or unchanged for length 0/1).</returns>
         public static FrameOp[] SortFrameOps(FrameOp[] ops, VulkanCompiledRenderGraph graph)
         {
             // Fast path: trivial arrays are already sorted and preserving reference identity helps tests.
             if (ops.Length <= 1)
                 return ops;
 
-            // Build a first-occurrence map: for each unique SchedulingIdentity,
-            // record the original index of its first op.  Sorting by this value
-            // instead of the raw hash preserves the inter-pipeline enqueue order
-            // (e.g. DebugOpaque ops before UserInterface ops) while still grouping
-            // ops that share the same pipeline+viewport together.
-            Dictionary<int, int> firstOccurrence = [];
-            for (int i = 0; i < ops.Length; i++)
+            int opCount = ops.Length;
+            FrameOpSortKey[]? sortKeys = null;
+            int[]? schedulingIds = null;
+            int[]? schedulingFirstIndices = null;
+
+            try
             {
-                int sid = ops[i].Context.SchedulingIdentity;
-                if (!firstOccurrence.ContainsKey(sid))
-                    firstOccurrence[sid] = i;
+                sortKeys = ArrayPool<FrameOpSortKey>.Shared.Rent(opCount);
+                schedulingIds = ArrayPool<int>.Shared.Rent(opCount);
+                schedulingFirstIndices = ArrayPool<int>.Shared.Rent(opCount);
+
+                int schedulingIdentityCount = 0;
+                for (int i = 0; i < opCount; i++)
+                {
+                    FrameOp op = ops[i];
+                    int groupOrder = FindOrAddSchedulingFirstOccurrence(
+                        op.Context.SchedulingIdentity,
+                        i,
+                        schedulingIds,
+                        schedulingFirstIndices,
+                        ref schedulingIdentityCount);
+
+                    sortKeys[i] = new FrameOpSortKey(
+                        op,
+                        ResolvePassOrder(op, graph),
+                        groupOrder,
+                        i);
+                }
+
+                Array.Sort(sortKeys, 0, opCount, FrameOpSortKeyComparer.Instance);
+                for (int i = 0; i < opCount; i++)
+                    ops[i] = sortKeys[i].Operation;
+
+                return ops;
+            }
+            finally
+            {
+                if (sortKeys is not null)
+                    ArrayPool<FrameOpSortKey>.Shared.Return(sortKeys, clearArray: true);
+                if (schedulingIds is not null)
+                    ArrayPool<int>.Shared.Return(schedulingIds);
+                if (schedulingFirstIndices is not null)
+                    ArrayPool<int>.Shared.Return(schedulingFirstIndices);
+            }
+        }
+
+        private static int FindOrAddSchedulingFirstOccurrence(
+            int schedulingIdentity,
+            int originalIndex,
+            int[] schedulingIds,
+            int[] schedulingFirstIndices,
+            ref int schedulingIdentityCount)
+        {
+            for (int i = 0; i < schedulingIdentityCount; i++)
+            {
+                if (schedulingIds[i] == schedulingIdentity)
+                    return schedulingFirstIndices[i];
             }
 
-            // If pass order is unavailable, pass rank falls back to int.MaxValue.
-            return [.. ops
-                .Select((op, index) => new
-                {
-                    Operation = op,
-                    OriginalIndex = index,
-                    GroupOrder = firstOccurrence[op.Context.SchedulingIdentity],
-                    PassOrder = ResolvePassOrder(op, graph)
-                })
-                .OrderBy(x => x.PassOrder)
-                .ThenBy(x => x.GroupOrder)
-                .ThenBy(x => x.OriginalIndex)
-                .Select(x => x.Operation)];
+            schedulingIds[schedulingIdentityCount] = schedulingIdentity;
+            schedulingFirstIndices[schedulingIdentityCount] = originalIndex;
+            schedulingIdentityCount++;
+            return originalIndex;
         }
 
         private static int ResolvePassOrder(FrameOp op, VulkanCompiledRenderGraph graph)

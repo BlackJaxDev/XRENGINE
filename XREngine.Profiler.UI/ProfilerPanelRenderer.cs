@@ -729,6 +729,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"  CPU Trim: {stats.VulkanFrameTrimMs:F3} ms");
         ImGui.Text($"  CPU Present: {stats.VulkanFramePresentMs:F3} ms");
         ImGui.Text($"  GPU CmdBuf: {GetRingBufferStat(_vulkanFrameGpuCommandBufferMsHistory, _cpuTimingDisplayMode):F3} ms");
+        VulkanFrameLoopTelemetryData loop = stats.VulkanFrameLoop;
+        ImGui.Text($"  Detail: sample queries {loop.FrameSampleTimingQueriesMs:F3} ms | drain retired {loop.FrameDrainRetiredResourcesMs:F3} ms | acquire bridge {loop.FrameAcquireBridgeSubmitMs:F3} ms | wait image {loop.FrameWaitSwapchainImageMs:F3} ms | reset dyn UBO {loop.FrameResetDynamicUniformRingMs:F3} ms");
 
         if (_renderStatsHistoryCount > 1 && ImGui.CollapsingHeader("Vulkan Frame Timing History", ImGuiTreeNodeFlags.DefaultOpen))
         {
@@ -748,8 +750,17 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"  Descriptor Failures: {stats.VulkanDescriptorBindingFailures:N0} total | skipped draws {stats.VulkanDescriptorSkippedDraws:N0} | skipped dispatches {stats.VulkanDescriptorSkippedDispatches:N0}");
         ImGui.Text($"  Dynamic UBO Ring: {stats.VulkanDynamicUniformAllocations:N0} allocations / {stats.VulkanDynamicUniformAllocatedBytes / 1024.0:F1} KB / {stats.VulkanDynamicUniformExhaustions:N0} exhaustions");
         ImGui.Text($"  Retired Plan Resources: {stats.VulkanRetiredResourcePlanReplacements:N0} replacements | images {stats.VulkanRetiredResourcePlanImages:N0} | buffers {stats.VulkanRetiredResourcePlanBuffers:N0}");
+        ImGui.Text($"  Frame Ops: {loop.FrameOpTotalCount:N0} total | clear {loop.FrameOpClearCount:N0} | mesh {loop.FrameOpMeshDrawCount:N0} | indirect {loop.FrameOpIndirectDrawCount:N0} | mesh task {loop.FrameOpMeshTaskDispatchCount:N0} | blit {loop.FrameOpBlitCount:N0} | compute {loop.FrameOpComputeCount:N0}");
+        ImGui.Text($"  Frame Op Targets: swapchain writes {loop.FrameOpSwapchainWriteCount:N0} | FBO writes {loop.FrameOpFboWriteCount:N0} | passes {loop.FrameOpUniquePassCount:N0} | contexts {loop.FrameOpUniqueContextCount:N0} | targets {loop.FrameOpUniqueTargetCount:N0}");
+        ImGui.Text($"  Command Buffer Cache: clean reuse {loop.CommandBufferCleanReuseCount:N0} | records {loop.CommandBufferRecordCount:N0} | forced {loop.CommandBufferForcedDirtyCount:N0} | frame ops {loop.CommandBufferFrameOpSignatureDirtyCount:N0} | planner {loop.CommandBufferPlannerDirtyCount:N0} | profiler {loop.CommandBufferProfilerDirtyCount:N0}");
+        ImGui.Text($"  Retired Drains: pools {loop.RetiredDescriptorPoolCount:N0} | pipelines {loop.RetiredPipelineCount:N0} | framebuffers {loop.RetiredFramebufferCount:N0} | buffers {loop.RetiredBufferCount:N0}/{loop.RetiredBufferMemoryCount:N0} mem | images {loop.RetiredImageCount:N0}/{loop.RetiredImageMemoryCount:N0} mem | views {loop.RetiredImageViewCount:N0} | samplers {loop.RetiredSamplerCount:N0} | image MB {loop.RetiredImageBytes / (1024.0 * 1024.0):F2}");
         if (stats.VulkanMissingSceneSwapchainWriteFrames > 0)
             ImGui.TextColored(new Vector4(1.0f, 0.35f, 0.25f, 1.0f), $"  Missing scene swapchain writers: {stats.VulkanMissingSceneSwapchainWriteFrames:N0}");
+        if (!string.IsNullOrWhiteSpace(loop.CommandBufferDirtySummary) &&
+            ImGui.CollapsingHeader("Vulkan Command Buffer Dirty Reasons"))
+        {
+            ImGui.TextWrapped(loop.CommandBufferDirtySummary);
+        }
         if (!string.IsNullOrWhiteSpace(stats.VulkanDescriptorFallbackSummary) &&
             ImGui.CollapsingHeader("Vulkan Descriptor Fallbacks"))
         {

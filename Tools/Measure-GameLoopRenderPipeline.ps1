@@ -20,6 +20,7 @@ param(
     [switch]$GpuTimestampDense,
     [switch]$NoClearCachesBetweenVariants,
     [switch]$NoP3Logging,
+    [switch]$FailOnSteadyStateResourceChurn,
     [int]$ShutdownGraceSec = 20,
     [int]$NoSampleHangSec = 15,
     [int]$RetainedRunCount = 3,
@@ -667,6 +668,22 @@ function Measure-Variant {
     $allMappedTotal = Sum-NumericProperty -Samples $allSamples -Property 'gpu_mapped_buffers'
     $allFallbackTotal = Sum-NumericProperty -Samples $allSamples -Property 'gpu_cpu_fallback_events'
     $allForbiddenFallbackTotal = Sum-NumericProperty -Samples $allSamples -Property 'forbidden_gpu_fallback_events'
+    $vkFrame = Get-NumericStats -Samples $samples -Property 'vulkan_frame_total_ms' -PositiveOnly
+    $vkWaitFrameSlot = Get-NumericStats -Samples $samples -Property 'vulkan_frame_wait_fence_ms' -PositiveOnly
+    $vkSampleTimingQueries = Get-NumericStats -Samples $samples -Property 'vulkan_frame_sample_timing_queries_ms' -PositiveOnly
+    $vkDrainRetiredResources = Get-NumericStats -Samples $samples -Property 'vulkan_frame_drain_retired_resources_ms' -PositiveOnly
+    $vkAcquireNextImage = Get-NumericStats -Samples $samples -Property 'vulkan_frame_acquire_image_ms' -PositiveOnly
+    $vkAcquireBridgeSubmit = Get-NumericStats -Samples $samples -Property 'vulkan_frame_acquire_bridge_submit_ms' -PositiveOnly
+    $vkWaitSwapchainImage = Get-NumericStats -Samples $samples -Property 'vulkan_frame_wait_swapchain_image_ms' -PositiveOnly
+    $vkResetDynamicUniformRing = Get-NumericStats -Samples $samples -Property 'vulkan_frame_reset_dynamic_uniform_ring_ms' -PositiveOnly
+    $vkRecordCommandBuffer = Get-NumericStats -Samples $samples -Property 'vulkan_frame_record_command_buffer_ms' -PositiveOnly
+    $vkSubmit = Get-NumericStats -Samples $samples -Property 'vulkan_frame_submit_ms' -PositiveOnly
+    $vkTrimStaging = Get-NumericStats -Samples $samples -Property 'vulkan_frame_trim_ms' -PositiveOnly
+    $vkQueuePresent = Get-NumericStats -Samples $samples -Property 'vulkan_frame_present_ms' -PositiveOnly
+    $vkFrameOps = Get-NumericStats -Samples $samples -Property 'vulkan_frame_op_total_count'
+    $vkResourcePlanReplacementsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_resource_plan_replacements'
+    $vkResourcePlanImagesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_resource_plan_images'
+    $vkResourcePlanBuffersTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_resource_plan_buffers'
     $gpuDumpCount = if ($logDir -and (Test-Path -LiteralPath $logDir)) {
         @(Get-ChildItem -LiteralPath $logDir -Filter 'profiler-gpu-pipeline-*.log' -File -ErrorAction SilentlyContinue).Count
     } else {
@@ -688,6 +705,9 @@ function Measure-Variant {
         if ($captureReadbackTotal -ne 0 -or $captureMappedTotal -ne 0 -or $allReadbackTotal -ne 0 -or $allMappedTotal -ne 0) {
             $noteParts.Add("zero-readback violation capture(readbackBytes=$captureReadbackTotal mappedBuffers=$captureMappedTotal) all(readbackBytes=$allReadbackTotal mappedBuffers=$allMappedTotal)") | Out-Null
         }
+    }
+    if ($FailOnSteadyStateResourceChurn -and $vkResourcePlanReplacementsTotal -gt 0) {
+        $noteParts.Add("steady-state resource churn failure resourcePlanReplacements=$vkResourcePlanReplacementsTotal images=$vkResourcePlanImagesTotal buffers=$vkResourcePlanBuffersTotal") | Out-Null
     }
 
     return [pscustomobject]@{
@@ -723,6 +743,56 @@ function Measure-Variant {
         GpuP50Ms = $gpu.P50
         GpuP95Ms = $gpu.P95
         RenderMinusGpuP95Ms = $gap.P95
+        VulkanFrameP50Ms = $vkFrame.P50
+        VulkanFrameP95Ms = $vkFrame.P95
+        VulkanFrameMaxMs = $vkFrame.Max
+        VulkanWaitFrameSlotP50Ms = $vkWaitFrameSlot.P50
+        VulkanWaitFrameSlotP95Ms = $vkWaitFrameSlot.P95
+        VulkanWaitFrameSlotMaxMs = $vkWaitFrameSlot.Max
+        VulkanSampleTimingQueriesP50Ms = $vkSampleTimingQueries.P50
+        VulkanSampleTimingQueriesP95Ms = $vkSampleTimingQueries.P95
+        VulkanSampleTimingQueriesMaxMs = $vkSampleTimingQueries.Max
+        VulkanDrainRetiredResourcesP50Ms = $vkDrainRetiredResources.P50
+        VulkanDrainRetiredResourcesP95Ms = $vkDrainRetiredResources.P95
+        VulkanDrainRetiredResourcesMaxMs = $vkDrainRetiredResources.Max
+        VulkanAcquireNextImageP50Ms = $vkAcquireNextImage.P50
+        VulkanAcquireNextImageP95Ms = $vkAcquireNextImage.P95
+        VulkanAcquireNextImageMaxMs = $vkAcquireNextImage.Max
+        VulkanAcquireBridgeSubmitP50Ms = $vkAcquireBridgeSubmit.P50
+        VulkanAcquireBridgeSubmitP95Ms = $vkAcquireBridgeSubmit.P95
+        VulkanAcquireBridgeSubmitMaxMs = $vkAcquireBridgeSubmit.Max
+        VulkanWaitSwapchainImageP50Ms = $vkWaitSwapchainImage.P50
+        VulkanWaitSwapchainImageP95Ms = $vkWaitSwapchainImage.P95
+        VulkanWaitSwapchainImageMaxMs = $vkWaitSwapchainImage.Max
+        VulkanResetDynamicUniformRingP50Ms = $vkResetDynamicUniformRing.P50
+        VulkanResetDynamicUniformRingP95Ms = $vkResetDynamicUniformRing.P95
+        VulkanResetDynamicUniformRingMaxMs = $vkResetDynamicUniformRing.Max
+        VulkanRecordCommandBufferP50Ms = $vkRecordCommandBuffer.P50
+        VulkanRecordCommandBufferP95Ms = $vkRecordCommandBuffer.P95
+        VulkanRecordCommandBufferMaxMs = $vkRecordCommandBuffer.Max
+        VulkanSubmitP50Ms = $vkSubmit.P50
+        VulkanSubmitP95Ms = $vkSubmit.P95
+        VulkanSubmitMaxMs = $vkSubmit.Max
+        VulkanTrimStagingP50Ms = $vkTrimStaging.P50
+        VulkanTrimStagingP95Ms = $vkTrimStaging.P95
+        VulkanTrimStagingMaxMs = $vkTrimStaging.Max
+        VulkanQueuePresentP50Ms = $vkQueuePresent.P50
+        VulkanQueuePresentP95Ms = $vkQueuePresent.P95
+        VulkanQueuePresentMaxMs = $vkQueuePresent.Max
+        VulkanFrameOpsP50 = $vkFrameOps.P50
+        VulkanFrameOpsMax = $vkFrameOps.Max
+        VulkanCommandBufferRecordsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_command_buffer_record_count'
+        VulkanCommandBufferCleanReuseTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_command_buffer_clean_reuse_count'
+        VulkanCommandBufferForcedDirtyTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_command_buffer_forced_dirty_count'
+        VulkanResourcePlanReplacementsTotal = $vkResourcePlanReplacementsTotal
+        VulkanResourcePlanImagesTotal = $vkResourcePlanImagesTotal
+        VulkanResourcePlanBuffersTotal = $vkResourcePlanBuffersTotal
+        VulkanRetiredDescriptorPoolsTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_descriptor_pool_count'
+        VulkanRetiredPipelinesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_pipeline_count'
+        VulkanRetiredFramebuffersTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_framebuffer_count'
+        VulkanRetiredBuffersTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_buffer_count'
+        VulkanRetiredImagesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_image_count'
+        VulkanRetiredImageBytesTotal = Sum-NumericProperty -Samples $samples -Property 'vulkan_retired_image_bytes'
         DrawCallsP50 = (Get-NumericStats -Samples $samples -Property 'draw_calls').P50
         MultiDrawCallsP50 = (Get-NumericStats -Samples $samples -Property 'multi_draw_calls').P50
         TrianglesP50 = (Get-NumericStats -Samples $samples -Property 'triangles_rendered').P50
@@ -791,7 +861,7 @@ foreach ($strategy in $Strategies) {
 }
 
 Write-Host '=== GAME LOOP / DEFAULT RENDER PIPELINE SUMMARY ===' -ForegroundColor Green
-$results | Format-Table -AutoSize Strategy, Repetition, CacheMode, Samples, AllSamples, RenderP50Ms, RenderP95Ms, RenderP99Ms, GpuP50Ms, GpuP95Ms, DrawCallsP50, VisibleRenderersP50, SkinnedRenderersP50, TextureBindsTotal, GpuReadbackBytesTotal, AllGpuReadbackBytesTotal, GpuDrivenFullBucketScansTotal, FallbackEventsTotal, AllFallbackEventsTotal, LastRenderMs, GpuTimingDumpFiles, Note
+$results | Format-Table -AutoSize Strategy, Repetition, CacheMode, Samples, AllSamples, RenderP50Ms, RenderP95Ms, RenderP99Ms, GpuP50Ms, GpuP95Ms, VulkanFrameP50Ms, VulkanFrameP95Ms, VulkanRecordCommandBufferP95Ms, VulkanDrainRetiredResourcesP95Ms, VulkanSubmitP95Ms, VulkanQueuePresentP95Ms, VulkanCommandBufferRecordsTotal, VulkanResourcePlanReplacementsTotal, VulkanRetiredImagesTotal, DrawCallsP50, VisibleRenderersP50, SkinnedRenderersP50, TextureBindsTotal, GpuReadbackBytesTotal, AllGpuReadbackBytesTotal, GpuDrivenFullBucketScansTotal, FallbackEventsTotal, AllFallbackEventsTotal, LastRenderMs, GpuTimingDumpFiles, Note
 
 $stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
 $profileRunDir = New-SpeedProfileRunDirectory -Stamp $stamp
@@ -833,3 +903,17 @@ Enforce-SpeedProfileRetention -ProfileRoot (Get-SpeedProfileRoot) -RetainedRunCo
 Write-Host "Wrote $summaryJson"
 Write-Host "Wrote $summaryText"
 Write-Host "Wrote $runLogDirs"
+
+if ($FailOnSteadyStateResourceChurn) {
+    $churnFailures = @($results | Where-Object {
+        $value = $_.VulkanResourcePlanReplacementsTotal
+        $null -ne $value -and [double]$value -gt 0.0
+    })
+
+    if ($churnFailures.Count -gt 0) {
+        $details = $churnFailures | ForEach-Object {
+            "$($_.Strategy) r$($_.Repetition): replacements=$($_.VulkanResourcePlanReplacementsTotal) images=$($_.VulkanResourcePlanImagesTotal) buffers=$($_.VulkanResourcePlanBuffersTotal)"
+        }
+        throw "Steady-state Vulkan resource churn detected: $($details -join '; ')"
+    }
+}

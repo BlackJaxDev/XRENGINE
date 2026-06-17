@@ -77,8 +77,9 @@ public unsafe partial class VulkanRenderer
         Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
         _frameTimingTimestampPeriodNanoseconds = Math.Max(properties.Limits.TimestampPeriod, 0.0001f);
 
-        _frameTimingQueryPools = new QueryPool[MAX_FRAMES_IN_FLIGHT];
-        _frameTimingQueryReady = new bool[MAX_FRAMES_IN_FLIGHT];
+        int timingSlotCount = Math.Max(swapChainImages?.Length ?? 0, MAX_FRAMES_IN_FLIGHT);
+        _frameTimingQueryPools = new QueryPool[timingSlotCount];
+        _frameTimingQueryReady = new bool[timingSlotCount];
 
         QueryPoolCreateInfo createInfo = new()
         {
@@ -211,11 +212,12 @@ public unsafe partial class VulkanRenderer
         if (device.Handle == 0)
             return;
 
-        _vulkanGpuProfilerQueryPools = new QueryPool[MAX_FRAMES_IN_FLIGHT];
-        _vulkanGpuProfilerQueryReady = new bool[MAX_FRAMES_IN_FLIGHT];
-        _vulkanGpuProfilerPendingScopes = new List<VulkanGpuProfilerPendingScope>[MAX_FRAMES_IN_FLIGHT];
-        _vulkanGpuProfilerPendingQueryCounts = new int[MAX_FRAMES_IN_FLIGHT];
-        _vulkanGpuProfilerSubmittedFrameIds = new ulong[MAX_FRAMES_IN_FLIGHT];
+        int profilerSlotCount = Math.Max(swapChainImages?.Length ?? 0, MAX_FRAMES_IN_FLIGHT);
+        _vulkanGpuProfilerQueryPools = new QueryPool[profilerSlotCount];
+        _vulkanGpuProfilerQueryReady = new bool[profilerSlotCount];
+        _vulkanGpuProfilerPendingScopes = new List<VulkanGpuProfilerPendingScope>[profilerSlotCount];
+        _vulkanGpuProfilerPendingQueryCounts = new int[profilerSlotCount];
+        _vulkanGpuProfilerSubmittedFrameIds = new ulong[profilerSlotCount];
 
         QueryPoolCreateInfo createInfo = new()
         {

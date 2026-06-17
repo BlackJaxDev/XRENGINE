@@ -1411,6 +1411,84 @@ internal static partial class RuntimeEngine
                     RuntimeRenderingHostServices.Current.RecordRenderVulkanFrameLifecycleTiming(waitFence, acquireImage, recordCommandBuffer, submit, trim, present, total);
             }
 
+            public static void RecordVulkanFrameLifecycleDetailTiming(
+                TimeSpan sampleTimingQueries,
+                TimeSpan drainRetiredResources,
+                TimeSpan acquireBridgeSubmit,
+                TimeSpan waitSwapchainImage,
+                TimeSpan resetDynamicUniformRing)
+            {
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanFrameLifecycleDetailTiming(
+                        sampleTimingQueries,
+                        drainRetiredResources,
+                        acquireBridgeSubmit,
+                        waitSwapchainImage,
+                        resetDynamicUniformRing);
+                }
+            }
+
+            public static void RecordVulkanFrameOpCensus(
+                int totalCount,
+                int clearCount,
+                int meshDrawCount,
+                int indirectDrawCount,
+                int meshTaskDispatchCount,
+                int blitCount,
+                int computeCount,
+                int swapchainWriteCount,
+                int fboWriteCount,
+                int uniquePassCount,
+                int uniqueContextCount,
+                int uniqueTargetCount)
+            {
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanFrameOpCensus(
+                        totalCount,
+                        clearCount,
+                        meshDrawCount,
+                        indirectDrawCount,
+                        meshTaskDispatchCount,
+                        blitCount,
+                        computeCount,
+                        swapchainWriteCount,
+                        fboWriteCount,
+                        uniquePassCount,
+                        uniqueContextCount,
+                        uniqueTargetCount);
+                }
+            }
+
+            public static void RecordVulkanCommandBufferCacheOutcome(
+                bool reusedClean,
+                bool recorded,
+                bool forcedDirty,
+                bool frameOpSignatureDirty,
+                bool plannerDirty,
+                bool profilerDirty,
+                string? dirtyReason)
+            {
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanCommandBufferCacheOutcome(
+                        reusedClean,
+                        recorded,
+                        forcedDirty,
+                        frameOpSignatureDirty,
+                        plannerDirty,
+                        profilerDirty,
+                        dirtyReason);
+                }
+            }
+
+            public static void RecordVulkanCommandBuffersDirty(string? reason)
+            {
+                if (HasHostStats)
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanCommandBuffersDirty(reason);
+            }
+
             public static void RecordVulkanGpuDrivenStageTiming(EVulkanGpuDrivenStageTiming stage, TimeSpan elapsed)
             {
                 if (HasHostStats)
@@ -1485,6 +1563,34 @@ internal static partial class RuntimeEngine
             {
                 if (HasHostStats)
                     RuntimeRenderingHostServices.Current.RecordRenderVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
+            }
+
+            public static void RecordVulkanRetiredResourceDrain(
+                int descriptorPools = 0,
+                int pipelines = 0,
+                int framebuffers = 0,
+                int buffers = 0,
+                int bufferMemories = 0,
+                int images = 0,
+                int imageViews = 0,
+                int samplers = 0,
+                int imageMemories = 0,
+                long imageBytes = 0)
+            {
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanRetiredResourceDrain(
+                        descriptorPools,
+                        pipelines,
+                        framebuffers,
+                        buffers,
+                        bufferMemories,
+                        images,
+                        imageViews,
+                        samplers,
+                        imageMemories,
+                        imageBytes);
+                }
             }
 
             public static void RecordVulkanValidationMessage(bool isError, string message)
@@ -1778,6 +1884,62 @@ internal static partial class RuntimeEngine
                     TimeSpan present,
                     TimeSpan total)
                     => Stats.RecordVulkanFrameLifecycleTiming(waitFence, acquireImage, recordCommandBuffer, submit, trim, present, total);
+                public static void RecordVulkanFrameLifecycleDetailTiming(
+                    TimeSpan sampleTimingQueries,
+                    TimeSpan drainRetiredResources,
+                    TimeSpan acquireBridgeSubmit,
+                    TimeSpan waitSwapchainImage,
+                    TimeSpan resetDynamicUniformRing)
+                    => Stats.RecordVulkanFrameLifecycleDetailTiming(
+                        sampleTimingQueries,
+                        drainRetiredResources,
+                        acquireBridgeSubmit,
+                        waitSwapchainImage,
+                        resetDynamicUniformRing);
+                public static void RecordVulkanFrameOpCensus(
+                    int totalCount,
+                    int clearCount,
+                    int meshDrawCount,
+                    int indirectDrawCount,
+                    int meshTaskDispatchCount,
+                    int blitCount,
+                    int computeCount,
+                    int swapchainWriteCount,
+                    int fboWriteCount,
+                    int uniquePassCount,
+                    int uniqueContextCount,
+                    int uniqueTargetCount)
+                    => Stats.RecordVulkanFrameOpCensus(
+                        totalCount,
+                        clearCount,
+                        meshDrawCount,
+                        indirectDrawCount,
+                        meshTaskDispatchCount,
+                        blitCount,
+                        computeCount,
+                        swapchainWriteCount,
+                        fboWriteCount,
+                        uniquePassCount,
+                        uniqueContextCount,
+                        uniqueTargetCount);
+                public static void RecordVulkanCommandBufferCacheOutcome(
+                    bool reusedClean,
+                    bool recorded,
+                    bool forcedDirty,
+                    bool frameOpSignatureDirty,
+                    bool plannerDirty,
+                    bool profilerDirty,
+                    string? dirtyReason)
+                    => Stats.RecordVulkanCommandBufferCacheOutcome(
+                        reusedClean,
+                        recorded,
+                        forcedDirty,
+                        frameOpSignatureDirty,
+                        plannerDirty,
+                        profilerDirty,
+                        dirtyReason);
+                public static void RecordVulkanCommandBuffersDirty(string? reason)
+                    => Stats.RecordVulkanCommandBuffersDirty(reason);
                 public static void RecordVulkanGpuDrivenStageTiming(EVulkanGpuDrivenStageTiming stage, TimeSpan elapsed)
                     => Stats.RecordVulkanGpuDrivenStageTiming((Stats.EVulkanGpuDrivenStageTiming)stage, elapsed);
                 public static void RecordVulkanIndirectBatchMerge(int requestedBatches, int mergedBatches)
@@ -1796,6 +1958,28 @@ internal static partial class RuntimeEngine
                 public static void RecordVulkanQueueSubmit() => Stats.RecordVulkanQueueSubmit();
                 public static void RecordVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
                     => Stats.RecordVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
+                public static void RecordVulkanRetiredResourceDrain(
+                    int descriptorPools = 0,
+                    int pipelines = 0,
+                    int framebuffers = 0,
+                    int buffers = 0,
+                    int bufferMemories = 0,
+                    int images = 0,
+                    int imageViews = 0,
+                    int samplers = 0,
+                    int imageMemories = 0,
+                    long imageBytes = 0)
+                    => Stats.RecordVulkanRetiredResourceDrain(
+                        descriptorPools,
+                        pipelines,
+                        framebuffers,
+                        buffers,
+                        bufferMemories,
+                        images,
+                        imageViews,
+                        samplers,
+                        imageMemories,
+                        imageBytes);
                 public static void RecordVulkanValidationMessage(bool isError, string message)
                     => Stats.RecordVulkanValidationMessage(isError, message);
             }

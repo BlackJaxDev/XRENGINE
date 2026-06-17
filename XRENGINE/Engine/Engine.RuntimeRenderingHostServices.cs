@@ -860,6 +860,66 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             present,
             total);
 
+    public void RecordRenderVulkanFrameLifecycleDetailTiming(
+        TimeSpan sampleTimingQueries,
+        TimeSpan drainRetiredResources,
+        TimeSpan acquireBridgeSubmit,
+        TimeSpan waitSwapchainImage,
+        TimeSpan resetDynamicUniformRing)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanFrameLifecycleDetailTiming(
+            sampleTimingQueries,
+            drainRetiredResources,
+            acquireBridgeSubmit,
+            waitSwapchainImage,
+            resetDynamicUniformRing);
+
+    public void RecordRenderVulkanFrameOpCensus(
+        int totalCount,
+        int clearCount,
+        int meshDrawCount,
+        int indirectDrawCount,
+        int meshTaskDispatchCount,
+        int blitCount,
+        int computeCount,
+        int swapchainWriteCount,
+        int fboWriteCount,
+        int uniquePassCount,
+        int uniqueContextCount,
+        int uniqueTargetCount)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanFrameOpCensus(
+            totalCount,
+            clearCount,
+            meshDrawCount,
+            indirectDrawCount,
+            meshTaskDispatchCount,
+            blitCount,
+            computeCount,
+            swapchainWriteCount,
+            fboWriteCount,
+            uniquePassCount,
+            uniqueContextCount,
+            uniqueTargetCount);
+
+    public void RecordRenderVulkanCommandBufferCacheOutcome(
+        bool reusedClean,
+        bool recorded,
+        bool forcedDirty,
+        bool frameOpSignatureDirty,
+        bool plannerDirty,
+        bool profilerDirty,
+        string? dirtyReason)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
+            reusedClean,
+            recorded,
+            forcedDirty,
+            frameOpSignatureDirty,
+            plannerDirty,
+            profilerDirty,
+            dirtyReason);
+
+    public void RecordRenderVulkanCommandBuffersDirty(string? reason)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanCommandBuffersDirty(reason);
+
     public void RecordRenderVulkanGpuDrivenStageTiming(int stage, TimeSpan elapsed)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming((Engine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming)stage, elapsed);
 
@@ -892,6 +952,29 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void RecordRenderVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(imageCount, bufferCount);
+
+    public void RecordRenderVulkanRetiredResourceDrain(
+        int descriptorPools,
+        int pipelines,
+        int framebuffers,
+        int buffers,
+        int bufferMemories,
+        int images,
+        int imageViews,
+        int samplers,
+        int imageMemories,
+        long imageBytes)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
+            descriptorPools,
+            pipelines,
+            framebuffers,
+            buffers,
+            bufferMemories,
+            images,
+            imageViews,
+            samplers,
+            imageMemories,
+            imageBytes);
 
     public void RecordRenderVulkanValidationMessage(bool isError, string? message)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanValidationMessage(isError, message);

@@ -585,6 +585,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         if (PendingGeneration is not null)
         {
+            Debug.Rendering(
+                "[RenderResources] Pending generation superseded. Pipeline={0} Reason={1} OldPending={2} Target={3} Delta={4}",
+                ProfilerKey,
+                reason,
+                PendingGeneration.Key,
+                key,
+                DescribeResourceGenerationKeyDelta(PendingGeneration.Key, key));
             PendingGeneration.MarkSuperseded(reason);
             PendingGeneration.Dispose();
         }
@@ -592,10 +599,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         PendingGeneration = new RenderResourceGeneration(key, layout);
         ConfigurePendingGenerationDebounce(key, reason);
         Debug.Rendering(
-            "[RenderResources] Pending generation requested. Pipeline={0} Reason={1} Target={2} Resources={3} DebounceMs={4:F0}",
+            "[RenderResources] Pending generation requested. Pipeline={0} Reason={1} Active={2} Target={3} Delta={4} Resources={5} DebounceMs={6:F0}",
             ProfilerKey,
             reason,
+            ActiveGeneration?.Key.ToString() ?? "<none>",
             key,
+            DescribeResourceGenerationKeyDelta(ActiveGeneration?.Key, key),
             layout.OrderedSpecs.Count,
             PendingGenerationDebounceRemainingMilliseconds());
         return true;
@@ -634,6 +643,40 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             || activeKey.DisplayHeight != key.DisplayHeight
             || activeKey.InternalWidth != key.InternalWidth
             || activeKey.InternalHeight != key.InternalHeight;
+    }
+
+    private static string DescribeResourceGenerationKeyDelta(ResourceGenerationKey? oldKey, ResourceGenerationKey newKey)
+    {
+        if (!oldKey.HasValue)
+            return "initial";
+
+        ResourceGenerationKey old = oldKey.Value;
+        List<string> deltas = [];
+
+        if (!string.Equals(old.PipelineName, newKey.PipelineName, StringComparison.Ordinal))
+            deltas.Add($"pipeline:{old.PipelineName}->{newKey.PipelineName}");
+        if (old.DisplayWidth != newKey.DisplayWidth || old.DisplayHeight != newKey.DisplayHeight)
+            deltas.Add($"display:{old.DisplayWidth}x{old.DisplayHeight}->{newKey.DisplayWidth}x{newKey.DisplayHeight}");
+        if (old.InternalWidth != newKey.InternalWidth || old.InternalHeight != newKey.InternalHeight)
+            deltas.Add($"internal:{old.InternalWidth}x{old.InternalHeight}->{newKey.InternalWidth}x{newKey.InternalHeight}");
+        if (old.OutputHDR != newKey.OutputHDR)
+            deltas.Add($"hdr:{old.OutputHDR}->{newKey.OutputHDR}");
+        if (old.AntiAliasingMode != newKey.AntiAliasingMode)
+            deltas.Add($"aa:{old.AntiAliasingMode}->{newKey.AntiAliasingMode}");
+        if (old.MsaaSampleCount != newKey.MsaaSampleCount)
+            deltas.Add($"msaa:{old.MsaaSampleCount}->{newKey.MsaaSampleCount}");
+        if (old.Stereo != newKey.Stereo)
+            deltas.Add($"stereo:{old.Stereo}->{newKey.Stereo}");
+        if (old.UseVulkanSafeFeatureProfile != newKey.UseVulkanSafeFeatureProfile)
+            deltas.Add($"vulkanSafe:{old.UseVulkanSafeFeatureProfile}->{newKey.UseVulkanSafeFeatureProfile}");
+        if (old.FeatureMask != newKey.FeatureMask)
+            deltas.Add($"features:0x{old.FeatureMask:X}->0x{newKey.FeatureMask:X}");
+        if (old.ReservedViewCount != newKey.ReservedViewCount)
+            deltas.Add($"views:{old.ReservedViewCount}->{newKey.ReservedViewCount}");
+        if (old.ReservedEyeIndex != newKey.ReservedEyeIndex)
+            deltas.Add($"eye:{old.ReservedEyeIndex}->{newKey.ReservedEyeIndex}");
+
+        return deltas.Count == 0 ? "none" : string.Join(", ", deltas);
     }
 
     private double PendingGenerationDebounceRemainingMilliseconds()
@@ -791,10 +834,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         NotifyRenderResourcesChanged();
 
         Debug.Rendering(
-            "[RenderResources] Pending generation committed. Pipeline={0} Reason={1} Active={2} Textures={3} FBOs={4} Buffers={5} RenderBuffers={6} BuildMs={7:F2}",
+            "[RenderResources] Pending generation committed. Pipeline={0} Reason={1} Previous={2} Active={3} Delta={4} Textures={5} FBOs={6} Buffers={7} RenderBuffers={8} BuildMs={9:F2}",
             ProfilerKey,
             reason,
+            old?.Key.ToString() ?? "<none>",
             ActiveGeneration.Key,
+            DescribeResourceGenerationKeyDelta(old?.Key, ActiveGeneration.Key),
             ActiveGeneration.TextureCount,
             ActiveGeneration.FrameBufferCount,
             ActiveGeneration.BufferCount,
@@ -806,11 +851,26 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         generation.MarkRetired(reason);
         _retiredGenerations.Enqueue(generation);
+        Debug.Rendering(
+            "[RenderResources] Generation retired. Pipeline={0} Reason={1} Key={2} Textures={3} FBOs={4} Buffers={5} RenderBuffers={6} RetiredQueue={7}",
+            ProfilerKey,
+            reason,
+            generation.Key,
+            generation.TextureCount,
+            generation.FrameBufferCount,
+            generation.BufferCount,
+            generation.RenderBufferCount,
+            _retiredGenerations.Count);
 
         while (_retiredGenerations.Count > MaxRetiredResourceGenerations)
         {
             WaitForGpuBeforePhysicalResourceDestruction("RetiredRenderResourceGenerationCap");
             RenderResourceGeneration retired = _retiredGenerations.Dequeue();
+            Debug.Rendering(
+                "[RenderResources] Disposing retired generation after queue cap. Pipeline={0} Reason=RetiredRenderResourceGenerationCap Key={1} RemainingQueue={2}",
+                ProfilerKey,
+                retired.Key,
+                _retiredGenerations.Count);
             retired.Dispose();
         }
     }

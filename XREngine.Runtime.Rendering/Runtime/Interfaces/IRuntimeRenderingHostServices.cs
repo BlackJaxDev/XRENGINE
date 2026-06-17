@@ -1115,6 +1115,34 @@ public interface IRuntimeRenderingHostServices
         TimeSpan trim,
         TimeSpan present,
         TimeSpan total);
+    void RecordRenderVulkanFrameLifecycleDetailTiming(
+        TimeSpan sampleTimingQueries,
+        TimeSpan drainRetiredResources,
+        TimeSpan acquireBridgeSubmit,
+        TimeSpan waitSwapchainImage,
+        TimeSpan resetDynamicUniformRing);
+    void RecordRenderVulkanFrameOpCensus(
+        int totalCount,
+        int clearCount,
+        int meshDrawCount,
+        int indirectDrawCount,
+        int meshTaskDispatchCount,
+        int blitCount,
+        int computeCount,
+        int swapchainWriteCount,
+        int fboWriteCount,
+        int uniquePassCount,
+        int uniqueContextCount,
+        int uniqueTargetCount);
+    void RecordRenderVulkanCommandBufferCacheOutcome(
+        bool reusedClean,
+        bool recorded,
+        bool forcedDirty,
+        bool frameOpSignatureDirty,
+        bool plannerDirty,
+        bool profilerDirty,
+        string? dirtyReason);
+    void RecordRenderVulkanCommandBuffersDirty(string? reason);
     void RecordRenderVulkanGpuDrivenStageTiming(int stage, TimeSpan elapsed);
     void RecordRenderVulkanIndirectBatchMerge(int requestedBatchCount, int mergedBatchCount);
     void RecordRenderVulkanIndirectEffectiveness(uint requestedDraws, uint culledDraws, uint emittedIndirectDraws, uint consumedDraws, uint overflowCount = 0u);
@@ -1126,6 +1154,17 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode);
     void RecordRenderVulkanQueueSubmit();
     void RecordRenderVulkanRetiredResourcePlanReplacement(int imageCount, int bufferCount);
+    void RecordRenderVulkanRetiredResourceDrain(
+        int descriptorPools,
+        int pipelines,
+        int framebuffers,
+        int buffers,
+        int bufferMemories,
+        int images,
+        int imageViews,
+        int samplers,
+        int imageMemories,
+        long imageBytes);
     void RecordRenderVulkanValidationMessage(bool isError, string? message);
 
     /// <summary>

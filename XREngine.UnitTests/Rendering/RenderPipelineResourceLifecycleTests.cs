@@ -398,6 +398,55 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void ResourceGenerationKey_ContainsOnlyStructuralRenderProfileInputs()
+    {
+        string[] propertyNames = typeof(ResourceGenerationKey)
+            .GetProperties()
+            .Select(static p => p.Name)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+
+        string[] expectedProperties =
+        [
+            nameof(ResourceGenerationKey.PipelineName),
+            nameof(ResourceGenerationKey.DisplayWidth),
+            nameof(ResourceGenerationKey.DisplayHeight),
+            nameof(ResourceGenerationKey.InternalWidth),
+            nameof(ResourceGenerationKey.InternalHeight),
+            nameof(ResourceGenerationKey.OutputHDR),
+            nameof(ResourceGenerationKey.AntiAliasingMode),
+            nameof(ResourceGenerationKey.MsaaSampleCount),
+            nameof(ResourceGenerationKey.Stereo),
+            nameof(ResourceGenerationKey.UseVulkanSafeFeatureProfile),
+            nameof(ResourceGenerationKey.FeatureMask),
+            nameof(ResourceGenerationKey.ReservedViewCount),
+            nameof(ResourceGenerationKey.ReservedEyeIndex),
+        ];
+
+        propertyNames.ShouldBe(expectedProperties.OrderBy(static name => name, StringComparer.Ordinal).ToArray());
+
+        propertyNames.ShouldNotContain("Camera");
+        propertyNames.ShouldNotContain("CameraTransform");
+        propertyNames.ShouldNotContain("ViewMatrix");
+        propertyNames.ShouldNotContain("ProjectionMatrix");
+    }
+
+    [Test]
+    public void DefaultRenderPipeline_ResourceFeatureMaskIsStableUntilStructuralFeatureChanges()
+    {
+        DefaultRenderPipeline pipeline = new();
+
+        ulong first = pipeline.BuildResourceFeatureMaskForGenerationKey();
+        ulong second = pipeline.BuildResourceFeatureMaskForGenerationKey();
+
+        second.ShouldBe(first);
+
+        pipeline.EnableDeferredMsaa = !pipeline.EnableDeferredMsaa;
+
+        pipeline.BuildResourceFeatureMaskForGenerationKey().ShouldNotBe(first);
+    }
+
+    [Test]
     public void ResourceManager_RejectsFrameBufferFormatMismatch()
     {
         XRRenderPipelineInstance instance = new();

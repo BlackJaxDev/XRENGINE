@@ -691,7 +691,6 @@ namespace XREngine.Rendering.Vulkan
                     hash.Add(imageSource.DescriptorFormat);
                     hash.Add(imageSource.DescriptorAspect);
                     hash.Add(imageSource.DescriptorUsage);
-                    hash.Add(imageSource.TrackedImageLayout);
                 }
                 else
                 {

@@ -100,11 +100,17 @@ namespace XREngine.Rendering.Vulkan
             if (Api is null || device.Handle == 0)
                 return;
 
+            int destroyedPipelines = 0;
             foreach (Pipeline pipeline in retired)
             {
                 if (pipeline.Handle != 0)
+                {
                     Api!.DestroyPipeline(device, pipeline, null);
+                    destroyedPipelines++;
+                }
             }
+
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(pipelines: destroyedPipelines);
         }
 
         internal void RetireDescriptorPool(DescriptorPool descriptorPool)
@@ -144,6 +150,7 @@ namespace XREngine.Rendering.Vulkan
             if (Api is null || device.Handle == 0)
                 return;
 
+            int destroyedPools = 0;
             foreach (DescriptorPool pool in retired)
             {
                 if (pool.Handle == 0)
@@ -151,7 +158,10 @@ namespace XREngine.Rendering.Vulkan
 
                 Api!.DestroyDescriptorPool(device, pool, null);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+                destroyedPools++;
             }
+
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(descriptorPools: destroyedPools);
         }
 
         internal void DrainAllRetiredDescriptorPools()
@@ -243,11 +253,17 @@ namespace XREngine.Rendering.Vulkan
             if (Api is null || device.Handle == 0)
                 return;
 
+            int destroyedFramebuffers = 0;
             foreach (Framebuffer fb in retired)
             {
                 if (fb.Handle != 0)
+                {
                     Api!.DestroyFramebuffer(device, fb, null);
+                    destroyedFramebuffers++;
+                }
             }
+
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(framebuffers: destroyedFramebuffers);
         }
 
         /// <summary>
@@ -301,20 +317,21 @@ namespace XREngine.Rendering.Vulkan
             if (Api is null || device.Handle == 0)
                 return;
 
-            var destroyedBuffers = new HashSet<ulong>();
-            var freedMemories = new HashSet<ulong>();
-
+            int destroyedBuffers = 0;
+            int freedMemories = 0;
             foreach (var (buf, mem) in retired)
             {
                 DeviceMemory memory = mem;
 
                 // Free through allocator if tracked, otherwise direct FreeMemory.
-                if (buf.Handle != 0 && destroyedBuffers.Add(buf.Handle))
+                if (buf.Handle != 0)
                 {
                     if (_bufferAllocations.TryRemove(buf.Handle, out VulkanMemoryAllocation allocation))
                     {
                         Api!.DestroyBuffer(device, buf, null);
                         FreeMemoryAllocation(allocation);
+                        destroyedBuffers++;
+                        freedMemories++;
                         continue;
                     }
 
@@ -322,11 +339,19 @@ namespace XREngine.Rendering.Vulkan
                         memory = legacyAllocation.Memory;
 
                     Api!.DestroyBuffer(device, buf, null);
+                    destroyedBuffers++;
                 }
 
-                if (memory.Handle != 0 && freedMemories.Add(memory.Handle))
+                if (memory.Handle != 0)
+                {
                     Api!.FreeMemory(device, memory, null);
+                    freedMemories++;
+                }
             }
+
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
+                buffers: destroyedBuffers,
+                bufferMemories: freedMemories);
         }
 
         /// <summary>
@@ -467,11 +492,11 @@ namespace XREngine.Rendering.Vulkan
                 _retiredSamplerHandles[frameSlot].Clear();
             }
 
-            HashSet<ulong> destroyedImages = new();
-            HashSet<ulong> freedMemories = new();
-            HashSet<ulong> destroyedViews = new();
-            HashSet<ulong> destroyedSamplers = new();
-
+            int destroyedImages = 0;
+            int freedMemories = 0;
+            int destroyedViews = 0;
+            int destroyedSamplers = 0;
+            long destroyedImageBytes = 0;
             foreach (var r in retired)
             {
                 bool hasTrackedImageAllocation = false;
@@ -479,29 +504,53 @@ namespace XREngine.Rendering.Vulkan
                 if (r.Image.Handle != 0)
                     hasTrackedImageAllocation = _imageAllocations.TryRemove(r.Image.Handle, out trackedImageAllocation);
 
-                if (r.Sampler.Handle != 0 && destroyedSamplers.Add(r.Sampler.Handle))
+                if (r.Sampler.Handle != 0)
+                {
                     Api!.DestroySampler(device, r.Sampler, null);
-                if (r.PrimaryView.Handle != 0 && destroyedViews.Add(r.PrimaryView.Handle))
+                    destroyedSamplers++;
+                }
+                if (r.PrimaryView.Handle != 0)
+                {
                     Api!.DestroyImageView(device, r.PrimaryView, null);
+                    destroyedViews++;
+                }
                 if (r.AttachmentViews is not null)
                 {
                     foreach (ImageView v in r.AttachmentViews)
-                        if (v.Handle != 0 && destroyedViews.Add(v.Handle))
+                    {
+                        if (v.Handle != 0)
+                        {
                             Api!.DestroyImageView(device, v, null);
+                            destroyedViews++;
+                        }
+                    }
                 }
-                if (r.Image.Handle != 0 && destroyedImages.Add(r.Image.Handle))
+                if (r.Image.Handle != 0)
+                {
                     Api!.DestroyImage(device, r.Image, null);
+                    destroyedImages++;
+                    if (r.AllocatedVRAMBytes > 0)
+                        destroyedImageBytes += r.AllocatedVRAMBytes;
+                }
 
                 // Free through allocator if tracked, otherwise direct FreeMemory.
                 DeviceMemory memory = hasTrackedImageAllocation ? trackedImageAllocation.Memory : r.Memory;
-                if (memory.Handle != 0 && freedMemories.Add(memory.Handle))
+                if (memory.Handle != 0)
                 {
                     if (hasTrackedImageAllocation)
                         FreeMemoryAllocation(trackedImageAllocation);
                     else
                         Api!.FreeMemory(device, memory, null);
+                    freedMemories++;
                 }
             }
+
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
+                images: destroyedImages,
+                imageViews: destroyedViews,
+                samplers: destroyedSamplers,
+                imageMemories: freedMemories,
+                imageBytes: destroyedImageBytes);
         }
 
         /// <summary>
