@@ -3075,7 +3075,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             AmbientOcclusionFBOName,
             AmbientOcclusionBlurFBOName,
             GBufferFBOName);
-        pass.DependentFboNames = new[] { LightCombineFBOName };
     }
 
     private void ConfigureMVAOPass(VPRC_MVAOPass pass)
@@ -3101,7 +3100,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             AmbientOcclusionFBOName,
             AmbientOcclusionBlurFBOName,
             GBufferFBOName);
-        pass.DependentFboNames = new[] { LightCombineFBOName };
     }
 
     private void ConfigureMSVOPass(VPRC_MSVO pass)
@@ -3121,7 +3119,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             AmbientOcclusionFBOName,
             AmbientOcclusionBlurFBOName,
             GBufferFBOName);
-        pass.DependentFboNames = new[] { LightCombineFBOName };
     }
 
     private void ConfigureAmbientOcclusionDisabledPass(VPRC_AODisabledPass pass)
@@ -3142,7 +3139,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             AmbientOcclusionFBOName,
             AmbientOcclusionBlurFBOName,
             GBufferFBOName);
-        pass.DependentFboNames = new[] { LightCombineFBOName };
     }
 
     private void ConfigureHBAOPass(VPRC_AODisabledPass pass)
@@ -3173,7 +3169,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             GBufferFBOName,
             HBAOPlusRawTextureName,
             HBAOPlusBlurIntermediateTextureName);
-        pass.DependentFboNames = new[] { LightCombineFBOName };
     }
 
     private void ConfigureGTAOPass(VPRC_GTAOPass pass)
@@ -3196,7 +3191,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             GBufferFBOName,
             GTAORawTextureName,
             GTAOBlurIntermediateTextureName);
-        pass.DependentFboNames = new[] { LightCombineFBOName };
     }
 
     private void ConfigureVXAOPass(VPRC_AODisabledPass pass)
@@ -3229,7 +3223,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             AmbientOcclusionFBOName,
             AmbientOcclusionBlurFBOName,
             GBufferFBOName);
-        pass.DependentFboNames = new[] { LightCombineFBOName };
     }
 
     private int EvaluateAmbientOcclusionMode()

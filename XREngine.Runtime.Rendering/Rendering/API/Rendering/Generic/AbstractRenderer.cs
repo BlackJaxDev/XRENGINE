@@ -504,6 +504,7 @@ namespace XREngine.Rendering
         public abstract void ClearColor(ColorF4 color);
         public abstract void SetReadBuffer(EReadBufferMode mode);
         public abstract void SetReadBuffer(XRFrameBuffer? fbo, EReadBufferMode mode);
+        public virtual void TrackWindowPresentSource(XRTexture? colorTexture, XRFrameBuffer? sourceFrameBuffer) { }
         public abstract float GetDepth(int x, int y);
         public abstract void GetPixelAsync(int x, int y, bool withTransparency, Action<ColorF4> colorCallback);
         public abstract void GetDepthAsync(XRFrameBuffer fbo, int x, int y, Action<float> depthCallback);

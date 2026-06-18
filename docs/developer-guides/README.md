@@ -25,6 +25,14 @@ These docs are intentionally closer to the code than the user guide. They should
 - [UI](ui/native-hierarchy-panel.md)
 - [VR](vr/openxr-runtime.md)
 
+## Rendering Features
+
+- [Skinning](rendering/skinning.md)
+- [Blendshaping](rendering/blendshaping.md)
+- [Vulkan OBS Hook Compatibility](rendering/vulkan-obs-hook-compatibility.md)
+- [Vulkan Upscale Bridge](rendering/vulkan-upscale-bridge.md)
+- [OpenGL Program Linking](rendering/opengl-program-linking.md)
+
 ## Related Sections
 
 - [Architecture](../architecture/README.md) explains why systems are structured the way they are.

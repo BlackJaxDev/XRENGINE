@@ -42,6 +42,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Job System](developer-guides/runtime/job-system.md)
 - [Skinning](developer-guides/rendering/skinning.md)
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
+- [Vulkan OBS Hook Compatibility](developer-guides/rendering/vulkan-obs-hook-compatibility.md)
 - [Surface Detail And Forward Shadows](developer-guides/rendering/shadows/surface-detail-forward-shadows.md)
 - [OpenXR Runtime](developer-guides/vr/openxr-runtime.md)
 - [VR Developer Guide](developer-guides/vr/vr-development.md)

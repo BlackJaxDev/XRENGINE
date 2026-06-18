@@ -53,13 +53,18 @@ These are the follow-up todos from the 2026-06-17 slow Vulkan default pipeline
 capture and bindless/deferred-texturing audit. Keep these unchecked until there
 is source change plus live evidence in this document.
 
-- [ ] Debug the new Vulkan black-frame regression introduced after the Vulkan
+- [x] Debug the new Vulkan black-frame regression introduced after the Vulkan
   bindless updates. The current observed repro is that deferred Sponza/3D
   geometry renders black, while zooming out shows the skybox still renders. This
   is not currently a full-frame black-until-window-resize repro. Treat it as a
   geometry, deferred material, GBuffer, lighting, or descriptor correctness
   blocker for the traditional Vulkan CPU-driven path; do not defer it behind
-  GPU-indirect zero-readback, instrumented, or meshlet path work.
+  GPU-indirect zero-readback, instrumented, or meshlet path work. Local fix
+  landed on 2026-06-17: the final presented target was the FXAA output, and the
+  Vulkan FXAA material was sampling a shader uniform name that did not match the
+  material texture slot descriptor. Switching FXAA to sample `Texture0` and
+  avoiding per-frame material texture-list churn made `FxaaOutputTexture` and
+  the viewport nonblack in MCP captures.
 - [ ] Keep the prior startup-size/1x1 render-resource hypothesis as a secondary
   resize-stability check only, not the active Sponza-black root-cause theory.
   The 2026-06-17 run logged skipped 0x0 viewport resizes followed by 1x1
@@ -117,6 +122,19 @@ is source change plus live evidence in this document.
 - [ ] Investigate Vulkan BVH picking fallback spam. Confirm whether editor
   selection/picking is forcing OpenGL-only fallback work during the default
   Vulkan profile.
+- [ ] Investigate user-observed Vulkan camera-motion black frames. The settled
+  frame can now be nonblack after the FXAA binding fix, but moving the camera can
+  produce black frames until the camera settles again. Static MCP screenshots are
+  not enough to validate this; capture during a camera transition or use a
+  streamed/manual observation path. Local 2026-06-17 evidence found and fixed a
+  camera-motion resource-plan replacement path; user confirmation is still
+  needed because MCP captures do not include the full ImGui/frontbuffer view.
+- [ ] Fix Vulkan instanced debug primitive orientation. User observation on
+  2026-06-17: instanced debug shapes look Y-flipped under Vulkan. A Vulkan-only
+  debug-shader Y mirror was removed locally; user confirmation is still pending.
+- [ ] Add a full editor/window capture path for presentation/UI flicker
+  debugging. `capture_viewport_screenshot` reads the renderer viewport/present
+  source and can omit ImGui editor chrome/frontbuffer timing.
 - [ ] Narrow broad `AllCommandsBit` Vulkan barriers in stable default-pipeline
   passes. Record before/after barrier counts, affected resources, and GPU timing
   deltas.
@@ -208,6 +226,178 @@ Next implementation work to resume:
 - [ ] Consider enhancing `dump_cpu_frame_profile` to optionally wait for a
   minimum number of profiler snapshots or dump the worst retained frame; the
   first dump after self-enabling frame logging can be too shallow.
+
+## Live Investigation Progress - 2026-06-17 Evening
+
+Problem statement:
+
+- Deferred Sponza geometry is still rendering black under Vulkan in the Unit
+  Testing World while debugging the default pipeline with `CpuDirect`.
+- Vulkan frame-loop CPU performance was previously poor, with large render
+  thread spikes and shadow-atlas work dominating sampled CPU dumps.
+- GPU pipeline timing is currently unavailable in the newest live editor run:
+  `dump_gpu_render_pipeline_profile` reports no captured GPU timing history.
+
+Issues found so far:
+
+- Stable dynamic lights were treated as unable to reuse previous shadow atlas
+  tiles. `SubmitShadowAtlasRequest` forced dynamic light shadow work every frame
+  even when the published allocation was resident and the content hash matched.
+- Default AO pass setup was invalidating `LightCombineFBO` through
+  `DependentFboNames`, deleting a resource that the resource-generation path
+  expected to remain declared. This produced repeated `LightCombineFBO` missing
+  warnings and skipped the deferred light-combine path.
+- Vulkan readback tried to transition post-present swapchain images for startup
+  luminance and MCP screenshots. Validation reported presentable images being
+  used after `vkQueuePresentKHR` without a fresh acquire.
+- The first post-readback-fix MCP captures were all black and the MCP camera
+  call used the wrong argument shape. The tool requires scalar
+  `position_x/y/z` and `look_at_x/y/z`, so those captures are not yet reliable
+  multi-camera evidence.
+- The final postprocess target was not black, but the final presented Vulkan
+  target was `FxaaOutputTexture`, which was solid black. The FXAA shader sampled
+  `PostProcessOutputTexture` while the command populated material texture slot 0
+  with `FinalPostProcessOutputTexture`; Vulkan descriptor resolution could not
+  use the late OpenGL-style `program.Sampler(...)` callback to fix that mismatch.
+- `VPRC_FXAA` cleared and re-added the same material texture every execution.
+  That increments `XRMaterialBase.BindingLayoutVersion`, which is part of the
+  Vulkan pipeline hash and can contribute to repeated pipeline-cache misses.
+- After the FXAA fix, the live log still shows repeated
+  `Rebuilding framebuffer 'FxaaFBO' before render pass because attachment views
+  or dimensions changed` warnings during a very low frame cadence run. This is
+  now the active performance trail.
+- User observed that moving the camera causes black frames until the camera
+  settles again, despite settled captures showing nonblack output. This suggests
+  a motion-dependent path such as motion vectors, temporal/history invalidation,
+  command-buffer dirty/re-record cadence, or transient render-target rebuild
+  state.
+- User observed instanced debug shapes rendering Y-flipped under Vulkan. Treat
+  debug primitive clip-space policy as a separate visual correctness bug from
+  the Sponza/FXAA black-output bug.
+- MCP viewport screenshots were vertically inverted relative to the user's live
+  Vulkan viewport. The capture path used the renderer readback image row order
+  and hard-coded `VulkanRenderer.ScreenshotRequiresVerticalFlip` to `false`,
+  even though the default Vulkan/Y-up path needs PNG export correction.
+- MCP viewport screenshots are not full editor-window screenshots. They capture
+  the renderer viewport/present-source image and can omit ImGui editor chrome
+  and frontbuffer/presentation timing. Use them for render-target evidence, not
+  as sole proof for interactive-window black flashes.
+- Camera movement after warmup caused a mid-run Vulkan physical resource-plan
+  replacement: the planner saw only `resource-registry` changes at the same
+  viewport size and pass graph, then waited for device idle and rebuilt about 20
+  FBOs. The trigger was `TrackBufferBinding` registering ordinary mesh/debug
+  instance buffers into the current render resource registry; instanced debug
+  line buffers could therefore mutate allocation descriptors during motion.
+- The physical allocation signature included the whole render-resource registry,
+  including framebuffer descriptors. This made FBO metadata changes eligible to
+  replace all physical images even when the image/buffer allocation shape did
+  not need to change.
+
+Solutions attempted:
+
+- Allowed stable dynamic lights to reuse previous-frame shadow atlas tiles when
+  the previous allocation is resident and its content hash matches. Local build
+  validation passed for runtime rendering and the editor. Live evidence: the
+  next CPU dump dropped the previous `Lights3DCollection.UpdateShadowAtlasRequests`
+  dominance; later dumps can still be too shallow if captured immediately after
+  profiler activation.
+- Removed AO `DependentFboNames = new[] { LightCombineFBOName }` assignments from
+  `DefaultRenderPipeline` AO configuration. Local editor build passed. Live
+  evidence: the next run stopped reporting `LightCombineFBO` declared-resource
+  missing warnings, but Sponza remained black.
+- Added a renderer hook for the final window-present source and taught Vulkan
+  readback to capture from the tracked final render target instead of a
+  post-present swapchain image. Local editor build passed. Live evidence: MCP
+  screenshots still write PNGs from the tracked source, but the captured final
+  target is currently black. Validation-error scan is still in progress for the
+  latest PID `29788` run.
+- Changed `Build/CommonAssets/Shaders/Scene3D/FXAA.fs` to sample material slot
+  `Texture0` and changed `VPRC_FXAA` to bind `Texture0`. Also guarded the FXAA
+  material texture update so it does not clear/re-add the same source texture
+  every frame. Local editor build passed with 0 warnings and 0 errors. Live
+  evidence from PID `31076`: `FinalPostProcessOutputTexture` average RGB
+  `0.55130714`, `FxaaOutputTexture` average RGB `0.5498744`, and
+  `Build\McpCaptures\vulkan-frame-loop-after-fxaa-texture0\Screenshot_20260617_183359.png`
+  is visibly nonblack. `log_vulkan.log` had 0 `VUID` matches and 0 `ERROR`
+  matches; the FXAA descriptor now resolves `Texture0` to
+  `FinalPostProcessOutputTexture`.
+- Removed the Vulkan-only Y mirror from
+  `Build/CommonAssets/Shaders/Common/Debug/helper/DebugPerVertex.glsl`. Local
+  editor build passed with 0 warnings and 0 errors. Live screenshots remain
+  useful only after the MCP capture-orientation fix below; user confirmation is
+  still needed for the real viewport.
+- Changed Vulkan screenshot export to respect
+  `RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan)`
+  instead of hard-coding no vertical flip. This makes default Vulkan/Y-up MCP
+  PNGs use the same visual orientation as the presented viewport path, assuming
+  the user's observed viewport is authoritative.
+- Preserved existing pipeline framebuffer descriptors when Vulkan re-registers
+  live framebuffers, avoiding descriptor churn from declarative
+  `InternalResolution` FBOs becoming absolute-pixel descriptors.
+- Split Vulkan physical-allocation signatures from full registry signatures:
+  allocator replacement now hashes texture/view/buffer descriptors plus physical
+  usage, not framebuffer descriptors. Planner/barrier signatures can still react
+  to FBO metadata changes without forcing image replacement.
+- Restricted `TrackBufferBinding` so arbitrary mesh, vertex, index, and
+  instanced debug buffers are kept in the side map but are only rebound into the
+  render-resource registry when a matching pipeline buffer descriptor already
+  exists. This prevents camera-motion debug buffers from mutating the pipeline
+  resource plan.
+- Live validation after the buffer-registry fix, PID `1992`, log directory
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-17_19-21-49_pid1992`:
+  a post-warm 2.5-second MCP camera move produced 0 planner signature changes,
+  0 physical resource-plan changes, 0 device-idle waits, 0 physical image handle
+  changes, and 0 FBO rebuilds. A second post-warm move also had 0 resource-plan
+  churn and all sampled captures had average brightness around `0.55` with
+  `0.0%` near-black pixels. Remaining motion-time noise was pipeline cache
+  misses/async compiles for cold material/debug variants.
+- Tried to regenerate MCP docs after adding the render-pipeline capture tools.
+  `pwsh` is not installed locally, and the Windows PowerShell fallback script
+  failed because `docs\features\mcp-server.md` is absent in this checkout.
+
+Suggested but not yet attempted:
+
+- Ask the user to verify whether the latest Vulkan viewport still flashes black
+  during manual camera movement after the buffer-registry fix. MCP evidence no
+  longer shows resource-plan/FBO churn during camera motion, but MCP does not
+  capture the full ImGui/frontbuffer path.
+- Ask the user to verify whether instanced debug shapes are still Y-flipped in
+  the actual viewport after removing the debug shader mirror. MCP captures were
+  corrected separately and are not a substitute for this human-observed issue.
+- Add a true editor-window/presentation capture path if black frames are still
+  visible only in the interactive ImGui viewport. Options: RenderDoc frame
+  capture during motion, or a dedicated Windows/client-area screenshot tool.
+- Investigate repeated Vulkan pipeline cache misses during movement. Local
+  evidence suggests these are per-owner cold variants for debug lines, motion
+  vectors, and material variants; they are sub-millisecond async compiles, but
+  should be verified after longer warmup.
+- Capture CPU profiler dumps from the fixed-black run and compare the render
+  thread buckets with the earlier shadow-atlas-dominated dump.
+- Capture two materially different camera positions now that the final viewport
+  is nonblack, to verify the result changes with camera movement and is not a
+  stale target.
+- If performance logs remain ambiguous, add narrower instrumentation around FBO
+  rebuild decisions and resource-plan replacement reasons.
+- If final output regresses to black, capture intermediate resources in this
+  order: GBuffer albedo/base color, depth, `LightingAccumTexture`,
+  `FinalPostProcessOutputTexture`, and FXAA/SMAA output.
+- If logs and MCP captures do not isolate the bad pass/resource, take a RenderDoc
+  capture and export GBuffer, lighting accumulation, and final postprocess
+  textures.
+
+User feedback on attempted solutions:
+
+- No explicit user report yet that any attempted fix worked or failed. Current
+  local evidence says the shadow-atlas spike and `LightCombineFBO` warning were
+  improved, and the Vulkan all-black presented Sponza output is fixed locally.
+  Low Vulkan frame cadence and repeated `FxaaFBO` rebuild warnings remain open.
+- 2026-06-17 user feedback: settled output can be nonblack, but camera motion
+  still causes black frames until motion stops; instanced debug shapes appear
+  Y-flipped under Vulkan. Continue validating with motion captures.
+- 2026-06-17 user feedback: MCP captures were upside down compared with the live
+  viewport, and the user questioned whether capturing without ImGui editor chrome
+  was intentional. Treat MCP viewport captures as render-target captures, not
+  full editor-window captures, until a dedicated full-window path exists.
 
 ## Source Validation
 
@@ -537,6 +727,20 @@ Latest source-backed result:
   `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /nodeReuse:false /p:UseSharedCompilation=false`
   passed with 0 warnings and 0 errors after the Vulkan descriptor/signature
   hot-path cleanup and MCP CPU-dump self-start behavior.
+- 2026-06-17:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 0 warnings and 0 errors after the FXAA Vulkan descriptor binding
+  fix and material texture-list churn guard.
+- 2026-06-17:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 0 warnings and 0 errors after the debug-shape Y fix, Vulkan MCP
+  screenshot-orientation fix, framebuffer descriptor preservation, allocation
+  signature split, and `TrackBufferBinding` registry restriction.
+- 2026-06-17:
+  MCP docs regeneration is blocked locally. `pwsh` is unavailable, and
+  `powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Reports\generate_mcp_docs.ps1`
+  fell back to the source parser but failed because
+  `docs\features\mcp-server.md` is absent.
 
 Latest live GPU result:
 
@@ -545,6 +749,28 @@ Latest live GPU result:
   `Build\McpCaptures\vulkan-frame-loop-cpu-dump-enabled\Screenshot_20260617_162115.png`
   confirms sky/procedural output renders while deferred Sponza geometry remains
   black in raw albedo/debug output.
+- Manual MCP screenshots after the FXAA binding fix:
+  `Build\McpCaptures\vulkan-frame-loop-after-fxaa-texture0\Screenshot_20260617_183359.png`
+  is visibly nonblack. Pipeline texture captures in the same directory show
+  `FinalPostProcessOutputTexture` average RGB `0.55130714` and
+  `FxaaOutputTexture` average RGB `0.5498744`, confirming the final presented
+  FXAA target is no longer black.
+- Manual MCP screenshots after the Vulkan screenshot-orientation fix:
+  `Build\McpCaptures\vulkan-frame-loop-capture-yfix\Screenshot_20260617_190305.png`
+  and motion captures in the same directory are nonblack, but MCP viewport
+  captures still omit full ImGui/frontbuffer UI.
+- Manual post-warm motion validation after the buffer-registry fix:
+  `Build\McpCaptures\vulkan-frame-loop-buffer-registry-fix\` and
+  `Build\McpCaptures\vulkan-frame-loop-second-postwarm-motion\`. Latest log
+  directory:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-17_19-21-49_pid1992`.
+  Post-warm camera moves produced 0 resource-plan replacements, 0 device-idle
+  waits, 0 physical image handle changes, and 0 FBO rebuilds. Sampled captures
+  stayed nonblack with average brightness around `0.55`.
+- Manual MCP CPU dump after the buffer-registry fix:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-17_19-21-49_pid1992\profiler-cpu-frame-2026-06-17-19-24-49-241-5d7eab0d.log`.
+  Worst render-thread sample was about 3.35 ms; `Vulkan.RecordCommandBuffer.ResourcePlan`
+  was about 0.58 ms. `get_time_state` reported `delta` near `0.0166668`.
 - Manual MCP GPU dump:
   `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-17_16-20-44_pid27836\profiler-gpu-pipeline-defaultrenderpipeline-28-2026-06-17-16-22-01-834-a0d7e0d3.log`.
   Default pipeline GPU cost was about p50 2.95 ms, p95 3.37 ms, avg 2.90 ms;

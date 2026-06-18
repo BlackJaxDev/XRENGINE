@@ -75,7 +75,8 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
                 return;
         }
 
-        if (_material is not null)
+        if (_material is not null &&
+            (_material.Textures.Count != 1 || !ReferenceEquals(_material.Textures[0], sourceTexture)))
         {
             _material.Textures.Clear();
             _material.Textures.Add(sourceTexture);
@@ -165,7 +166,7 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             || sourceTexture is null)
             return;
 
-        program.Sampler("PostProcessOutputTexture", sourceTexture, 0);
+        program.Sampler("Texture0", sourceTexture, 0);
 
         Vector2 texelStep = ResolveTexelStep(instance, sourceTexture);
         program.Uniform("FxaaTexelStep", texelStep);

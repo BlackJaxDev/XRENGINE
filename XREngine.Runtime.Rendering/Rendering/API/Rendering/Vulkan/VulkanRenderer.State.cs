@@ -46,6 +46,8 @@ public unsafe partial class VulkanRenderer
     private long _lastCommandBufferDirtyReasonLogTimestamp;
     private XRFrameBuffer? _boundDrawFrameBuffer;
     private XRFrameBuffer? _boundReadFrameBuffer;
+    private XRTexture? _lastWindowPresentColorTexture;
+    private XRFrameBuffer? _lastWindowPresentFrameBuffer;
     private EReadBufferMode _readBufferMode = EReadBufferMode.ColorAttachment0;
     private EVulkanQueueOverlapMode _autoQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
     private EVulkanQueueOverlapMode _lastResolvedQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
@@ -164,7 +166,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private readonly record struct ResourceAllocationSignatureBreakdown(
-        int Registry,
+        int AllocationDescriptors,
         uint DisplayWidth,
         uint DisplayHeight,
         uint InternalWidth,
@@ -173,7 +175,7 @@ public unsafe partial class VulkanRenderer
         bool SupportsTransformFeedback)
     {
         public override string ToString()
-            => $"registry=0x{Registry:X8} dims={DisplayWidth}x{DisplayHeight}/{InternalWidth}x{InternalHeight} " +
+            => $"allocDescriptors=0x{AllocationDescriptors:X8} dims={DisplayWidth}x{DisplayHeight}/{InternalWidth}x{InternalHeight} " +
                $"physicalUsage=0x{PhysicalUsage:X8} xfb={SupportsTransformFeedback}";
     }
 
@@ -1252,14 +1254,33 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
-            if (score <= bestScore)
-                continue;
-
-            bestScore = score;
-            best = context;
+            if (score > bestScore ||
+                (score == bestScore && ComparePlannerContextTieBreak(context, best) < 0))
+            {
+                bestScore = score;
+                best = context;
+            }
         }
 
         return best;
+    }
+
+    private static int ComparePlannerContextTieBreak(in FrameOpContext left, in FrameOpContext right)
+    {
+        int compare = left.PipelineIdentity.CompareTo(right.PipelineIdentity);
+        if (compare != 0)
+            return compare;
+
+        compare = left.ViewportIdentity.CompareTo(right.ViewportIdentity);
+        if (compare != 0)
+            return compare;
+
+        compare = (left.ResourceRegistry?.DescriptorSignature ?? 0)
+            .CompareTo(right.ResourceRegistry?.DescriptorSignature ?? 0);
+        if (compare != 0)
+            return compare;
+
+        return (left.PassMetadata?.Count ?? 0).CompareTo(right.PassMetadata?.Count ?? 0);
     }
 
     private static uint ResolvePositiveDimension(uint? primary, int? secondary, uint tertiary, uint fallback)
@@ -2235,7 +2256,7 @@ public unsafe partial class VulkanRenderer
             extentContext,
             supportsTransformFeedback);
         HashCode hash = new();
-        hash.Add(breakdown.Registry);
+        hash.Add(breakdown.AllocationDescriptors);
         hash.Add(breakdown.DisplayWidth);
         hash.Add(breakdown.DisplayHeight);
         hash.Add(breakdown.InternalWidth);
@@ -2252,7 +2273,7 @@ public unsafe partial class VulkanRenderer
         VulkanResourceExtentContext extentContext,
         bool supportsTransformFeedback)
         => new(
-            ComputeResourceRegistrySignature(context.ResourceRegistry),
+            ComputePhysicalResourceDescriptorSignature(context.ResourceRegistry),
             extentContext.WindowWidth,
             extentContext.WindowHeight,
             extentContext.InternalWidth,
@@ -2371,6 +2392,66 @@ public unsafe partial class VulkanRenderer
 
     private static int ComputeResourceRegistrySignature(RenderResourceRegistry? registry)
         => registry?.DescriptorSignature ?? 0;
+
+    private static int ComputePhysicalResourceDescriptorSignature(RenderResourceRegistry? registry)
+    {
+        if (registry is null)
+            return 0;
+
+        HashCode hash = new();
+
+        foreach (KeyValuePair<string, RenderTextureResource> pair in registry.TextureRecords.OrderBy(static p => p.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            TextureResourceDescriptor descriptor = pair.Value.Descriptor;
+            hash.Add(pair.Key, StringComparer.OrdinalIgnoreCase);
+            hash.Add((int)descriptor.Lifetime);
+            hash.Add((int)descriptor.SizePolicy.SizeClass);
+            hash.Add(descriptor.SizePolicy.ScaleX);
+            hash.Add(descriptor.SizePolicy.ScaleY);
+            hash.Add(descriptor.SizePolicy.Width);
+            hash.Add(descriptor.SizePolicy.Height);
+            hash.Add(descriptor.FormatLabel, StringComparer.OrdinalIgnoreCase);
+            hash.Add(descriptor.ArrayLayers);
+            hash.Add(descriptor.StereoCompatible);
+            hash.Add(descriptor.SupportsAliasing);
+            hash.Add(descriptor.RequiresStorageUsage);
+            hash.Add((int)descriptor.Kind);
+            hash.Add((int)descriptor.Usage);
+            hash.Add(descriptor.InternalFormat.HasValue ? (int)descriptor.InternalFormat.Value : -1);
+            hash.Add(descriptor.PixelFormat.HasValue ? (int)descriptor.PixelFormat.Value : -1);
+            hash.Add(descriptor.PixelType.HasValue ? (int)descriptor.PixelType.Value : -1);
+            hash.Add(descriptor.SizedInternalFormat.HasValue ? (int)descriptor.SizedInternalFormat.Value : -1);
+            hash.Add(descriptor.Samples);
+            hash.Add(descriptor.MipPolicy.BaseMipLevel);
+            hash.Add(descriptor.MipPolicy.MipLevelCount);
+            hash.Add(descriptor.MipPolicy.AutoGenerateMipmaps);
+            hash.Add(descriptor.MipPolicy.RequireImmutableStorage);
+            hash.Add(descriptor.SourceTextureName, StringComparer.OrdinalIgnoreCase);
+            hash.Add(descriptor.BaseMipLevel);
+            hash.Add(descriptor.MipLevelCount);
+            hash.Add(descriptor.BaseLayer);
+            hash.Add(descriptor.LayerCount);
+            hash.Add((int)descriptor.DepthStencilAspect);
+            hash.Add(descriptor.ArrayTarget);
+            hash.Add(descriptor.Multisample);
+        }
+
+        foreach (KeyValuePair<string, RenderBufferResource> pair in registry.BufferRecords.OrderBy(static p => p.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            BufferResourceDescriptor descriptor = pair.Value.Descriptor;
+            hash.Add(pair.Key, StringComparer.OrdinalIgnoreCase);
+            hash.Add((int)descriptor.Lifetime);
+            hash.Add(descriptor.SizeInBytes);
+            hash.Add((int)descriptor.Target);
+            hash.Add((int)descriptor.Usage);
+            hash.Add(descriptor.SupportsAliasing);
+            hash.Add(descriptor.ElementStride);
+            hash.Add(descriptor.ElementCount);
+            hash.Add((int)descriptor.AccessPattern);
+        }
+
+        return hash.ToHashCode();
+    }
 
     private static int ComputePassMetadataSignature(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
@@ -3126,7 +3207,10 @@ public unsafe partial class VulkanRenderer
         if (string.IsNullOrWhiteSpace(name))
             return;
 
-        registry.BindFrameBuffer(frameBuffer);
+        FrameBufferResourceDescriptor? descriptor = registry.FrameBufferRecords.TryGetValue(name, out RenderFrameBufferResource? record)
+            ? record.Descriptor
+            : null;
+        registry.BindFrameBuffer(frameBuffer, descriptor);
     }
 
     private void EnsureFrameBufferAttachmentsRegistered(XRFrameBuffer frameBuffer)
@@ -3245,18 +3329,19 @@ public unsafe partial class VulkanRenderer
         if (string.IsNullOrWhiteSpace(name))
             return;
 
-        RenderResourceLifetime lifetime = buffer.Usage is EBufferUsage.StreamDraw or EBufferUsage.StreamCopy
-            ? RenderResourceLifetime.Transient
-            : RenderResourceLifetime.Persistent;
-
         _trackedBuffersByName[name] = buffer;
 
         RenderResourceRegistry? registry = RuntimeEngine.Rendering.State.CurrentResourceRegistry;
-        if (registry is not null)
-        {
-            BufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromBuffer(buffer, lifetime) with { Name = name };
-            registry.BindBuffer(buffer, descriptor);
-        }
+        if (registry is null)
+            return;
+
+        if (!registry.BufferRecords.TryGetValue(name, out RenderBufferResource? record))
+            return;
+
+        if (ReferenceEquals(record.Instance, buffer))
+            return;
+
+        registry.BindBuffer(buffer, record.Descriptor);
     }
 
     internal bool TryResolveTrackedBuffer(string resourceName, out Buffer buffer, out ulong size)

@@ -574,6 +574,11 @@ namespace XREngine.Rendering.Vulkan
                     vkFrameBuffer.Generate();
             }
         }
+        public override void TrackWindowPresentSource(XRTexture? colorTexture, XRFrameBuffer? sourceFrameBuffer)
+        {
+            _lastWindowPresentColorTexture = colorTexture;
+            _lastWindowPresentFrameBuffer = sourceFrameBuffer;
+        }
         public override void BindFrameBuffer(EFramebufferTarget fboTarget, XRFrameBuffer? fbo)
         {
             switch (fboTarget)

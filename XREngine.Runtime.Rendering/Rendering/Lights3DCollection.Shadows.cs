@@ -603,9 +603,9 @@ namespace XREngine.Scene
             float projFar = MathF.Max(camera.FarZ, camera.NearZ + 0.001f);
             uint desiredResolution = desiredResolutionOverride ?? GetDesiredShadowAtlasResolution(light);
             uint minimumResolution = GetMinimumShadowAtlasResolution(desiredResolution);
-            ulong contentHash = BuildShadowContentHash(light, projectionType, faceOrCascadeIndex, encoding, view, projection, projNear, projFar);
-            bool canReusePreviousFrame = light.Type != ELightType.Dynamic;
             bool hasPrevious = ShadowAtlas.PublishedFrameData.TryGetAllocation(key, out ShadowAtlasAllocation previous);
+            ulong contentHash = BuildShadowContentHash(light, projectionType, faceOrCascadeIndex, encoding, view, projection, projNear, projFar);
+            bool canReusePreviousFrame = CanReuseShadowAtlasPreviousFrame(light, hasPrevious, previous, contentHash);
             ShadowDirtyReason dirtyReason = ResolveShadowDirtyReason(
                 light,
                 projectionType,
@@ -642,6 +642,21 @@ namespace XREngine.Scene
 
             LogDirectionalAtlasSubmit(light, request, hasPrevious, previous);
             ShadowAtlas.Submit(request);
+        }
+
+        private static bool CanReuseShadowAtlasPreviousFrame(
+            LightComponent light,
+            bool hasPrevious,
+            in ShadowAtlasAllocation previous,
+            ulong contentHash)
+        {
+            if (light.Type != ELightType.Dynamic)
+                return true;
+
+            return hasPrevious &&
+                previous.IsResident &&
+                previous.LastRenderedFrame != 0u &&
+                previous.ContentVersion == contentHash;
         }
 
         private static ShadowDirtyReason ResolveShadowDirtyReason(

@@ -4,6 +4,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine;
 using XREngine.Components;
+using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data.Rendering;
@@ -35,6 +36,10 @@ public sealed class ShadowAtlasManagerPhaseTests
         "ResolveShadowDirtyReason",
         BindingFlags.Static | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("Lights3DCollection.ResolveShadowDirtyReason method was not found.");
+    private static readonly MethodInfo CanReuseShadowAtlasPreviousFrameMethod = typeof(Lights3DCollection).GetMethod(
+        "CanReuseShadowAtlasPreviousFrame",
+        BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("Lights3DCollection.CanReuseShadowAtlasPreviousFrame method was not found.");
     private static readonly FieldInfo LightLastMovedTicksField = typeof(LightComponent).GetField(
         "_lastMovedTicks",
         BindingFlags.Instance | BindingFlags.NonPublic)
@@ -507,6 +512,22 @@ public sealed class ShadowAtlasManagerPhaseTests
 
         (steadySpotReason & ShadowDirtyReason.ProjectionOrCameraFitChanged).ShouldBe(ShadowDirtyReason.None);
         (steadySpotReason & ShadowDirtyReason.LightOrSettingsChanged).ShouldBe(ShadowDirtyReason.LightOrSettingsChanged);
+    }
+
+    [Test]
+    public void CanReuseShadowAtlasPreviousFrame_AllowsStableDynamicLightWhenHashMatches()
+    {
+        DirectionalLightComponent light = CreateDirectionalLight(512u);
+        light.Type.ShouldBe(ELightType.Dynamic);
+        ShadowAtlasAllocation previous = CreatePreviousRenderedAllocation(
+            light,
+            EShadowProjectionType.DirectionalCascade,
+            EShadowMapEncoding.Depth);
+
+        CanReusePreviousFrame(light, hasPrevious: true, previous, previous.ContentVersion).ShouldBeTrue();
+        CanReusePreviousFrame(light, hasPrevious: true, previous, previous.ContentVersion + 1UL).ShouldBeFalse();
+        CanReusePreviousFrame(light, hasPrevious: false, previous, previous.ContentVersion).ShouldBeFalse();
+        CanReusePreviousFrame(light, hasPrevious: true, previous with { LastRenderedFrame = 0u }, previous.ContentVersion).ShouldBeFalse();
     }
 
     [Test]
@@ -1183,6 +1204,24 @@ public sealed class ShadowAtlasManagerPhaseTests
             ]);
 
         return (ShadowDirtyReason)result!;
+    }
+
+    private static bool CanReusePreviousFrame(
+        LightComponent light,
+        bool hasPrevious,
+        ShadowAtlasAllocation previous,
+        ulong contentHash)
+    {
+        object? result = CanReuseShadowAtlasPreviousFrameMethod.Invoke(
+            null,
+            [
+                light,
+                hasPrevious,
+                previous,
+                contentHash,
+            ]);
+
+        return (bool)result!;
     }
 
     private static ShadowAtlasAllocation CreatePreviousRenderedAllocation(

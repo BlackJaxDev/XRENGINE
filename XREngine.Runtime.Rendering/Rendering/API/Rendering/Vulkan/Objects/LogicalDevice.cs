@@ -706,6 +706,8 @@ public unsafe partial class VulkanRenderer
             .Distinct(StringComparer.Ordinal)
             .OrderBy(static name => name, StringComparer.Ordinal)];
 
+        ValidateObsHookDeviceCompatibility(availableExtensionSet, extensionsArray);
+
         bool drawIndirectCountExtensionEnabled = extensionsArray.Contains("VK_KHR_draw_indirect_count");
         bool descriptorIndexingExtensionEnabled = extensionsArray.Contains("VK_EXT_descriptor_indexing");
         bool descriptorIndexingRequestedByProfile = VulkanFeatureProfile.EnableDescriptorIndexing;

@@ -117,116 +117,33 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
         {
-            // Read back the last presented swapchain image region on the GPU, then compute dot-luminance on CPU.
-            // This is synchronous on a one-time command buffer but runs off the render thread.
-            if (swapChainImages is null || swapChainImages.Length == 0)
+            _ = withTransparency; // Vulkan path reads the opaque presented color source.
+
+            if (!TryReadLastWindowPresentColorRegionRgba8(region, out byte[] rgba, out int width, out int height))
+            {
+                WarnUnsupportedPostPresentSwapchainReadback(nameof(CalcDotLuminanceFrontAsync));
+                callback?.Invoke(false, 0f);
+                return;
+            }
+
+            int pixelCount = width * height;
+            if (pixelCount <= 0)
             {
                 callback?.Invoke(false, 0f);
                 return;
             }
 
-            _ = withTransparency; // Vulkan path always reads opaque swapchain output today.
-
-            var extent = swapChainExtent;
-            int x = Math.Max(0, region.X);
-            int y = Math.Max(0, region.Y);
-            int w = Math.Clamp(region.Width, 1, Math.Max(1, (int)extent.Width - x));
-            int h = Math.Clamp(region.Height, 1, Math.Max(1, (int)extent.Height - y));
-
-            uint pixelStride = GetColorFormatPixelSize(swapChainImageFormat);
-            if (pixelStride == 0)
+            float accum = 0f;
+            for (int i = 0; i < pixelCount; i++)
             {
-                Debug.VulkanWarning($"[Vulkan] CalcDotLuminanceFrontAsync cannot read unsupported swapchain format {swapChainImageFormat}.");
-                callback?.Invoke(false, 0f);
-                return;
+                int index = i * 4;
+                byte r = rgba[index + 0];
+                byte g = rgba[index + 1];
+                byte b = rgba[index + 2];
+                accum += (r * luminance.X + g * luminance.Y + b * luminance.Z) / 255f;
             }
 
-            int pixelCount = w * h;
-            ulong bufferSize = (ulong)pixelCount * pixelStride;
-
-            // Create a host-visible staging buffer to receive the image copy.
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
-
-            try
-            {
-                using var scope = NewCommandScope();
-
-                uint readIndex = _lastPresentedImageIndex % (uint)swapChainImages.Length;
-                var image = swapChainImages[readIndex];
-
-                // After swapchain recreation, new images start in UNDEFINED layout.
-                // Only assume PresentSrcKhr if the image was actually presented.
-                // Transition to transfer src, copy, then transition back to present.
-                TransitionSwapchainImage(scope.CommandBuffer, image, GetSwapchainReadbackLayout(readIndex), ImageLayout.TransferSrcOptimal);
-
-                BufferImageCopy copy = new()
-                {
-                    BufferOffset = 0,
-                    BufferRowLength = 0,
-                    BufferImageHeight = 0,
-                    ImageSubresource = new ImageSubresourceLayers
-                    {
-                        AspectMask = ImageAspectFlags.ColorBit,
-                        MipLevel = 0,
-                        BaseArrayLayer = 0,
-                        LayerCount = 1,
-                    },
-                    ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
-                    ImageExtent = new Extent3D { Width = (uint)w, Height = (uint)h, Depth = 1 }
-                };
-
-                Api!.CmdCopyImageToBuffer(
-                    scope.CommandBuffer,
-                    image,
-                    ImageLayout.TransferSrcOptimal,
-                    stagingBuffer,
-                    1,
-                    &copy);
-
-                TransitionSwapchainImage(scope.CommandBuffer, image, ImageLayout.TransferSrcOptimal, ImageLayout.PresentSrcKhr);
-            }
-            catch
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                callback?.Invoke(false, 0f);
-                return;
-            }
-
-            // Map and compute luminance on CPU.
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                callback?.Invoke(false, 0f);
-                return;
-            }
-
-            try
-            {
-                float accum = 0f;
-                byte[] rgba = new byte[pixelCount * 4];
-                if (!TryConvertColorPixelsToRgba8(mappedPtr, swapChainImageFormat, pixelCount, rgba))
-                {
-                    callback?.Invoke(false, 0f);
-                    return;
-                }
-
-                for (int i = 0; i < pixelCount; i++)
-                {
-                    int index = i * 4;
-                    byte r = rgba[index + 0];
-                    byte g = rgba[index + 1];
-                    byte b = rgba[index + 2];
-                    accum += (r * luminance.X + g * luminance.Y + b * luminance.Z) / 255f;
-                }
-
-                float average = pixelCount > 0 ? accum / pixelCount : 0f;
-                callback?.Invoke(true, average);
-            }
-            finally
-            {
-                UnmapBufferMemory(stagingBuffer, stagingMemory);
-                DestroyBuffer(stagingBuffer, stagingMemory);
-            }
+            callback?.Invoke(true, accum / pixelCount);
         }
 
         // =========== Depth Readback ===========
@@ -621,98 +538,23 @@ namespace XREngine.Rendering.Vulkan
                     _boundReadFrameBuffer.Name ?? "<unnamed>");
             }
 
-            // Read a single pixel from the last presented swapchain image.
-            if (swapChainImages is null || swapChainImages.Length == 0)
+            if (!TryReadLastWindowPresentColorPixel(x, y, out ColorF4 fallbackColor))
             {
+                WarnUnsupportedPostPresentSwapchainReadback(nameof(GetPixelAsync));
                 colorCallback?.Invoke(ColorF4.Transparent);
                 return;
             }
 
-            _ = withTransparency; // Vulkan swapchain is always opaque
+            if (!withTransparency)
+                fallbackColor.A = 1.0f;
 
-            // Clamp coordinates
-            x = Math.Clamp(x, 0, (int)swapChainExtent.Width - 1);
-            y = Math.Clamp(y, 0, (int)swapChainExtent.Height - 1);
-
-            uint pixelStride = GetColorFormatPixelSize(swapChainImageFormat);
-            if (pixelStride == 0)
-            {
-                Debug.VulkanWarning($"[Vulkan] GetPixelAsync cannot read unsupported swapchain format {swapChainImageFormat}.");
-                colorCallback?.Invoke(ColorF4.Transparent);
-                return;
-            }
-
-            ulong bufferSize = pixelStride;
-
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
-
-            try
-            {
-                using var scope = NewCommandScope();
-
-                var image = swapChainImages[_lastPresentedImageIndex % (uint)swapChainImages.Length];
-
-                uint readIndex = _lastPresentedImageIndex % (uint)swapChainImages.Length;
-                ImageLayout srcLayout = GetSwapchainReadbackLayout(readIndex);
-                TransitionSwapchainImage(scope.CommandBuffer, image, srcLayout, ImageLayout.TransferSrcOptimal);
-
-                BufferImageCopy copy = new()
-                {
-                    BufferOffset = 0,
-                    BufferRowLength = 0,
-                    BufferImageHeight = 0,
-                    ImageSubresource = new ImageSubresourceLayers
-                    {
-                        AspectMask = ImageAspectFlags.ColorBit,
-                        MipLevel = 0,
-                        BaseArrayLayer = 0,
-                        LayerCount = 1,
-                    },
-                    ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
-                    ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
-                };
-
-                Api!.CmdCopyImageToBuffer(
-                    scope.CommandBuffer,
-                    image,
-                    ImageLayout.TransferSrcOptimal,
-                    stagingBuffer,
-                    1,
-                    &copy);
-
-                TransitionSwapchainImage(scope.CommandBuffer, image, ImageLayout.TransferSrcOptimal, ImageLayout.PresentSrcKhr);
-            }
-            catch
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                colorCallback?.Invoke(ColorF4.Transparent);
-                return;
-            }
-
-            // Map and read pixel
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                colorCallback?.Invoke(ColorF4.Transparent);
-                return;
-            }
-
-            byte[] rgba = new byte[4];
-            bool converted = TryConvertColorPixelsToRgba8(mappedPtr, swapChainImageFormat, 1, rgba);
-            if (converted && !withTransparency)
-                ForceOpaqueAlpha(rgba);
-
-            UnmapBufferMemory(stagingBuffer, stagingMemory);
-            DestroyBuffer(stagingBuffer, stagingMemory);
-
-            colorCallback?.Invoke(converted
-                ? new ColorF4(rgba[0] / 255f, rgba[1] / 255f, rgba[2] / 255f, rgba[3] / 255f)
-                : ColorF4.Transparent);
+            colorCallback?.Invoke(fallbackColor);
         }
 
         // =========== Screenshot Readback ===========
 
-        public override bool ScreenshotRequiresVerticalFlip => false;
+        public override bool ScreenshotRequiresVerticalFlip
+            => RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan) == ERenderClipSpaceYDirection.YDown;
 
         public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {
@@ -762,87 +604,15 @@ namespace XREngine.Rendering.Vulkan
                     _boundReadFrameBuffer.Name ?? "<unnamed>");
             }
 
-            // Fallback: capture from the last presented swapchain image.
-            if (swapChainImages is null || swapChainImages.Length == 0)
+            if (!TryReadLastWindowPresentColorRegionRgba8(region, out byte[] pixels, out int w, out int h))
             {
-                imageCallback?.Invoke(null!, 0);
-                return;
-            }
-
-            ClampReadbackRegion(region, swapChainExtent.Width, swapChainExtent.Height, out int x, out int y, out int w, out int h);
-
-            uint pixelStride = GetColorFormatPixelSize(swapChainImageFormat);
-            if (pixelStride == 0)
-            {
-                Debug.VulkanWarning($"[Vulkan] GetScreenshotAsync cannot read unsupported swapchain format {swapChainImageFormat}.");
-                imageCallback?.Invoke(null!, 0);
-                return;
-            }
-
-            int pixelCount = w * h;
-            ulong bufferSize = (ulong)pixelCount * pixelStride;
-
-            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
-
-            try
-            {
-                using var scope = NewCommandScope();
-
-                var image = swapChainImages[_lastPresentedImageIndex % (uint)swapChainImages.Length];
-
-                uint readIndex = _lastPresentedImageIndex % (uint)swapChainImages.Length;
-                ImageLayout srcLayout = GetSwapchainReadbackLayout(readIndex);
-                TransitionSwapchainImage(scope.CommandBuffer, image, srcLayout, ImageLayout.TransferSrcOptimal);
-
-                BufferImageCopy copy = new()
-                {
-                    BufferOffset = 0,
-                    BufferRowLength = 0,
-                    BufferImageHeight = 0,
-                    ImageSubresource = new ImageSubresourceLayers
-                    {
-                        AspectMask = ImageAspectFlags.ColorBit,
-                        MipLevel = 0,
-                        BaseArrayLayer = 0,
-                        LayerCount = 1,
-                    },
-                    ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
-                    ImageExtent = new Extent3D { Width = (uint)w, Height = (uint)h, Depth = 1 }
-                };
-
-                Api!.CmdCopyImageToBuffer(
-                    scope.CommandBuffer,
-                    image,
-                    ImageLayout.TransferSrcOptimal,
-                    stagingBuffer,
-                    1,
-                    &copy);
-
-                TransitionSwapchainImage(scope.CommandBuffer, image, ImageLayout.TransferSrcOptimal, ImageLayout.PresentSrcKhr);
-            }
-            catch
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
-                imageCallback?.Invoke(null!, 0);
-                return;
-            }
-
-            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
-            {
-                DestroyBuffer(stagingBuffer, stagingMemory);
+                WarnUnsupportedPostPresentSwapchainReadback(nameof(GetScreenshotAsync));
                 imageCallback?.Invoke(null!, 0);
                 return;
             }
 
             try
             {
-                byte[] pixels = new byte[pixelCount * 4];
-                if (!TryConvertColorPixelsToRgba8(mappedPtr, swapChainImageFormat, pixelCount, pixels))
-                {
-                    imageCallback?.Invoke(null!, 0);
-                    return;
-                }
-
                 if (!withTransparency)
                     ForceOpaqueAlpha(pixels);
 
@@ -861,12 +631,103 @@ namespace XREngine.Rendering.Vulkan
                 Debug.VulkanWarning($"GetScreenshotAsync failed to create image: {ex.Message}");
                 imageCallback?.Invoke(null!, 0);
             }
-            finally
-            {
-                UnmapBufferMemory(stagingBuffer, stagingMemory);
-                DestroyBuffer(stagingBuffer, stagingMemory);
-            }
         }
+
+        private bool TryReadLastWindowPresentColorRegionRgba8(BoundingRectangle region, out byte[] rgbaPixels, out int width, out int height)
+        {
+            rgbaPixels = [];
+            width = 0;
+            height = 0;
+
+            if (_lastWindowPresentFrameBuffer is not null)
+            {
+                ClampReadbackRegion(region, _lastWindowPresentFrameBuffer.Width, _lastWindowPresentFrameBuffer.Height, out int fboX, out int fboY, out int fboW, out int fboH);
+                if (TryResolveBlitImage(
+                        _lastWindowPresentFrameBuffer,
+                        _lastPresentedImageIndex,
+                        EReadBufferMode.ColorAttachment0,
+                        wantColor: true,
+                        wantDepth: false,
+                        wantStencil: false,
+                        out BlitImageInfo colorSource,
+                        isSource: true) &&
+                    TryReadColorRegionRgba8(colorSource, fboX, fboY, fboW, fboH, out rgbaPixels))
+                {
+                    width = fboW;
+                    height = fboH;
+                    return true;
+                }
+            }
+
+            if (_lastWindowPresentColorTexture is not IFrameBufferAttachement textureAttachment)
+                return false;
+
+            ClampReadbackRegion(region, textureAttachment.Width, textureAttachment.Height, out int texX, out int texY, out int texW, out int texH);
+            if (!TryResolveTextureBlitImage(
+                    _lastWindowPresentColorTexture,
+                    mipLevel: 0,
+                    layerIndex: 0,
+                    ImageAspectFlags.ColorBit,
+                    ImageLayout.ShaderReadOnlyOptimal,
+                    PipelineStageFlags.FragmentShaderBit,
+                    AccessFlags.ShaderReadBit,
+                    out BlitImageInfo textureSource) ||
+                !TryReadColorRegionRgba8(textureSource, texX, texY, texW, texH, out rgbaPixels))
+            {
+                return false;
+            }
+
+            width = texW;
+            height = texH;
+            return true;
+        }
+
+        private bool TryReadLastWindowPresentColorPixel(int x, int y, out ColorF4 color)
+        {
+            color = ColorF4.Transparent;
+
+            if (_lastWindowPresentFrameBuffer is not null)
+            {
+                x = Math.Clamp(x, 0, Math.Max((int)_lastWindowPresentFrameBuffer.Width - 1, 0));
+                y = Math.Clamp(y, 0, Math.Max((int)_lastWindowPresentFrameBuffer.Height - 1, 0));
+                if (TryResolveBlitImage(
+                        _lastWindowPresentFrameBuffer,
+                        _lastPresentedImageIndex,
+                        EReadBufferMode.ColorAttachment0,
+                        wantColor: true,
+                        wantDepth: false,
+                        wantStencil: false,
+                        out BlitImageInfo colorSource,
+                        isSource: true) &&
+                    TryReadColorPixel(colorSource, x, y, out color))
+                {
+                    return true;
+                }
+            }
+
+            if (_lastWindowPresentColorTexture is not IFrameBufferAttachement textureAttachment)
+                return false;
+
+            x = Math.Clamp(x, 0, Math.Max((int)textureAttachment.Width - 1, 0));
+            y = Math.Clamp(y, 0, Math.Max((int)textureAttachment.Height - 1, 0));
+            return TryResolveTextureBlitImage(
+                    _lastWindowPresentColorTexture,
+                    mipLevel: 0,
+                    layerIndex: 0,
+                    ImageAspectFlags.ColorBit,
+                    ImageLayout.ShaderReadOnlyOptimal,
+                    PipelineStageFlags.FragmentShaderBit,
+                    AccessFlags.ShaderReadBit,
+                    out BlitImageInfo textureSource) &&
+                TryReadColorPixel(textureSource, x, y, out color);
+        }
+
+        private static void WarnUnsupportedPostPresentSwapchainReadback(string operation)
+            => Debug.VulkanWarningEvery(
+                $"Vulkan.Readback.{operation}.PostPresentSwapchainUnsupported",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] {0} skipped post-present swapchain readback: presentable images cannot be used after vkQueuePresentKHR without a fresh acquire. Capture from a tracked render target instead.",
+                operation);
 
         private static void ForceOpaqueAlpha(byte[] rgbaPixels)
         {
