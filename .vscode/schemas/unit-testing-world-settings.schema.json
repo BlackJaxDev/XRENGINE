@@ -509,7 +509,7 @@
         }
       ],
       "description": "When set, forces this anti-aliasing mode on the constructed unit-testing main camera via the per-camera AntiAliasingModeOverride, bypassing the global/game-settings AA. Null leaves the camera on the global setting.",
-      "markdownDescription": "Supported values: `None`, `Msaa`, `Fxaa`, `Smaa`, `Taa`, `Tsr`."
+      "markdownDescription": "Supported values: `None`, `Msaa`, `Fxaa`, `Smaa`, `Taa`, `Tsr`, `Dlaa`."
     },
     "PhysicsAPI": {
       "$ref": "#/definitions/EPhysicsLibrary",
@@ -564,6 +564,18 @@
     "CreateUnitBox": {
       "type": "boolean",
       "description": "If true, creates a 1x1x1 box at the origin."
+    },
+    "VSyncOverride": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/EVSyncMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "When set, overrides loaded user VSync for unit-test runs. Null preserves saved user settings.",
+      "markdownDescription": "Supported values: `Off`, `On`, `Adaptive`."
     },
     "RenderFPS": {
       "type": "number",
@@ -875,9 +887,10 @@
         "Fxaa",
         "Smaa",
         "Taa",
-        "Tsr"
+        "Tsr",
+        "Dlaa"
       ],
-      "markdownDescription": "Supported values: `None`, `Msaa`, `Fxaa`, `Smaa`, `Taa`, `Tsr`."
+      "markdownDescription": "Supported values: `None`, `Msaa`, `Fxaa`, `Smaa`, `Taa`, `Tsr`, `Dlaa`."
     },
     "EPhysicsLibrary": {
       "type": "string",
@@ -896,6 +909,15 @@
         "Parallel"
       ],
       "markdownDescription": "Supported values: `Sequential`, `Asynchronous`, `Parallel`."
+    },
+    "EVSyncMode": {
+      "type": "string",
+      "enum": [
+        "Off",
+        "On",
+        "Adaptive"
+      ],
+      "markdownDescription": "Supported values: `Off`, `On`, `Adaptive`."
     },
     "VolumetricFogVolumeInitSettings": {
       "type": "object",

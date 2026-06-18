@@ -307,7 +307,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (instance is null)
                 return;
 
-            EnsureResourcesAllocated(instance);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("ViewportRenderCommandContainer.EnsureResourcesAllocated"))
+                EnsureResourcesAllocated(instance);
 
             for (int i = 0; i < _commands.Count; i++)
             {

@@ -28,9 +28,10 @@ Primary outcomes:
 - Use Fossilize's Vulkan layer to capture `.foz` repro archives when pipeline
   creation, shader module creation, descriptor layout creation, render pass
   creation, or driver behavior fails before a RenderDoc capture is practical.
-- Add an engine-owned Fossilize capture/export path for persistent Vulkan
-  objects so the renderer can treat Fossilize as a richer companion to
-  `VkPipelineCache`, not merely an external debugging layer.
+- Keep XREngine's Vulkan cache stack as the runtime source of truth and use
+  Fossilize as an additive capture, replay, inspection, and warmup tool.
+- Add an optional engine-owned Fossilize capture/export path for persistent
+  Vulkan objects only after the external layer workflow proves useful.
 - Replay captured archives on one or more devices to warm device-specific
   `VkPipelineCache` blobs without launching the full editor or world.
 - Build maintenance tools around `.foz` archives: list, merge, prune, rehash,
@@ -119,6 +120,9 @@ Layer capture facts to preserve in XREngine docs and scripts:
 
 - Do not replace XREngine's shader source resolution, SPIR-V artifact cache, or
   `VkPipelineCache` persistence with Fossilize.
+- Do not expose Fossilize as a competing replacement backend through a setting
+  such as `VulkanCacheBackend = XREngine | Fossilize`. The cache boundary is
+  layered, not either/or.
 - Do not enable the Fossilize layer silently in ordinary editor, server, or VR
   client runs.
 - Do not make OpenGL, DirectX, or non-Vulkan tests depend on Fossilize.
@@ -134,7 +138,28 @@ Layer capture facts to preserve in XREngine docs and scripts:
 
 ## Integration Shape
 
-Use three lanes, in this order:
+Use XREngine caches as the runtime authority:
+
+- `VulkanShaderArtifactCache` owns shader source rewrite, reflection metadata,
+  SPIR-V bytes, and shader invalidation.
+- `VulkanPipelinePrewarmDatabase` owns engine-readable pipeline identity:
+  render pass, material, mesh, program, dynamic rendering signature, feature
+  profile, and cache-miss diagnostics.
+- `VulkanPipelineCache` owns runtime `VkPipelineCache` creation, loading,
+  saving, device/driver keying, and startup diagnostics.
+
+Use Fossilize as an additive workflow beside that authority:
+
+- Fossilize layer/native capture records persistent Vulkan object `CreateInfo`
+  state into `.foz` archives.
+- Fossilize replay compiles those archived objects offline and can produce
+  device-specific `VkPipelineCache` bytes.
+- XREngine consumes replay-generated cache bytes through the existing
+  `VulkanPipelineCache` load path after validation and installation.
+- XREngine metadata provides the map from Fossilize objects back to engine
+  passes, materials, shaders, feature profiles, and profiler counters.
+
+Use three implementation lanes, in this order:
 
 - External tool lane: build or install Fossilize CLI/layer, add scripts and VS
   Code tasks, capture `.foz` archives with `VK_LAYER_fossilize`, and replay
@@ -146,6 +171,51 @@ Use three lanes, in this order:
   `StateRecorder` only after the layer/tool workflow proves value. This bridge
   should export the renderer's persistent Vulkan object graph directly instead
   of relying on implicit layer interception.
+
+## Settings Contract
+
+Do not add a single "choose Valve or custom cache" setting. Add independent
+settings for the runtime driver cache and for Fossilize participation:
+
+- `VulkanPipelineCacheMode` / `XRE_VK_PIPELINE_CACHE_MODE`:
+  `Auto`, `Disabled`, `Required`.
+- `VulkanFossilizeMode` / `XRE_VK_FOSSILIZE_MODE`:
+  `Disabled`,
+  `LayerCapture`,
+  `LayerCaptureSync`,
+  `CrashCapture`,
+  `NativeRecord`.
+- `VulkanFossilizeReplayCacheMode` /
+  `XRE_VK_FOSSILIZE_REPLAY_CACHE_MODE`:
+  `Disabled`,
+  `UseIfPresent`,
+  `Required`.
+
+Defaults:
+
+- `VulkanPipelineCacheMode = Auto`; current behavior stays on when supported.
+- `VulkanFossilizeMode = Disabled`; no layer or native recorder is active in
+  normal editor, server, client, or test runs.
+- `VulkanFossilizeReplayCacheMode = UseIfPresent`; curated replay-generated
+  cache bytes may be loaded only after they pass the same device/driver/API
+  identity checks as ordinary runtime cache files.
+
+Mode semantics:
+
+- `Auto` pipeline cache creates and persists the ordinary runtime
+  `VkPipelineCache`, with visible warnings if creation or save fails.
+- `Required` pipeline cache fails the requested Vulkan diagnostic/profile run
+  when `VkPipelineCache` creation, loading, or required replay-cache use fails.
+- Fossilize `LayerCapture` sets process-local Vulkan loader/layer environment
+  through launch tooling only.
+- Fossilize `LayerCaptureSync` also enables synchronous recording for robust
+  repros and must warn about expected performance cost.
+- Fossilize `CrashCapture` enables the crash-dump mode only for explicitly
+  requested repro runs.
+- Fossilize `NativeRecord` uses the future engine bridge and must remain
+  diagnostic until layer and replay parity are proven.
+- Replay cache `Required` is for QA/release-warmup validation only; it should
+  fail visibly if no validated replay cache matches the active device profile.
 
 ## Artifact Layout
 
@@ -183,6 +253,12 @@ policy explicitly defines a small, sanitized fixture format for tests.
       client later.
 - [ ] Define artifact privacy policy for `.foz`, replay logs, disassembled
       SPIR-V, and generated device cache blobs.
+- [ ] Define cache ownership in code/docs:
+      XREngine owns shader artifacts, prewarm identities, runtime
+      `VkPipelineCache` loading/saving, and diagnostics; Fossilize owns
+      optional `.foz` object-state capture/replay tooling.
+- [ ] Reject a binary cache-backend selector design. Do not implement
+      `XREngine` versus `Fossilize` as mutually exclusive cache choices.
 
 Acceptance criteria:
 
@@ -190,6 +266,7 @@ Acceptance criteria:
       vendored dependency before implementation starts.
 - [ ] License and dependency documentation requirements are clear.
 - [ ] No dependency or submodule change lands without explicit approval.
+- [ ] The cache boundary is documented before any settings or scripts are added.
 
 ## Phase 1 - Build And Locate Fossilize Tools
 
@@ -223,6 +300,15 @@ Acceptance criteria:
 
 ## Phase 2 - Layer Capture Workflow
 
+- [ ] Add `VulkanFossilizeMode` and `XRE_VK_FOSSILIZE_MODE` with modes:
+      `Disabled`,
+      `LayerCapture`,
+      `LayerCaptureSync`,
+      `CrashCapture`,
+      and reserved `NativeRecord`.
+- [ ] Ensure the default is `Disabled`.
+- [ ] Ensure ordinary editor/server/client launches do not activate Fossilize
+      unless an explicit mode or capture script requests it.
 - [ ] Add `Tools/Capture-FossilizeEditor.ps1` for editor captures.
 - [ ] Add `Tools/Capture-FossilizeVRClient.ps1` after the editor path works.
 - [ ] Launch the editor from the repo root so assets, settings, logs, and
@@ -268,9 +354,21 @@ Acceptance criteria:
       renderer settings.
 - [ ] Capture scripts leave global Vulkan loader and user environment state
       unchanged.
+- [ ] Runtime defaults remain unchanged when Fossilize mode is `Disabled`.
 
 ## Phase 3 - Replay And Device Cache Warmup
 
+- [ ] Add `VulkanPipelineCacheMode` and `XRE_VK_PIPELINE_CACHE_MODE` with modes:
+      `Auto`,
+      `Disabled`,
+      and `Required`.
+- [ ] Keep `Auto` behavior equivalent to the current runtime `VkPipelineCache`
+      path unless a validated replay cache is available.
+- [ ] Add `VulkanFossilizeReplayCacheMode` and
+      `XRE_VK_FOSSILIZE_REPLAY_CACHE_MODE` with modes:
+      `Disabled`,
+      `UseIfPresent`,
+      and `Required`.
 - [ ] Add `Tools/Replay-FossilizeArchive.ps1`.
 - [ ] Support replaying one archive, a directory of archives, or a merged
       archive.
@@ -288,10 +386,14 @@ Acceptance criteria:
       and replayer cache.
 - [ ] Generate XREngine-compatible cache names from the same device profile
       fields used by `VulkanPipelineCache.cs`.
-- [ ] Decide whether replay writes directly into the XREngine
-      `%LOCALAPPDATA%` pipeline cache path or into a staging path that an
-      explicit install command copies later.
-- [ ] Prefer a staging path until the validation story is solid.
+- [ ] Write replay-generated `VkPipelineCache` blobs to a staging path by
+      default, not directly into `%LOCALAPPDATA%`.
+- [ ] Add an explicit install command that copies a validated staged replay
+      cache into the XREngine `VulkanPipelineCache` path.
+- [ ] Make installed replay caches pass the same vendor/device/driver/API and
+      pipeline-cache-UUID checks as ordinary runtime cache files.
+- [ ] Make replay-generated cache bytes an input to `VulkanPipelineCache.cs`;
+      do not add a parallel runtime Fossilize cache loader.
 - [ ] Add replay summaries:
       parsed pipelines,
       compiled pipelines,
@@ -315,6 +417,8 @@ Acceptance criteria:
       directory.
 - [ ] Installing the replayed cache reduces runtime Vulkan pipeline cache misses
       or pipeline compile stalls in a measured editor run.
+- [ ] `XRE_VK_FOSSILIZE_REPLAY_CACHE_MODE=Required` fails visibly when no
+      validated replay cache matches the active device profile.
 
 ## Phase 4 - Engine Metadata And Capture Correlation
 
@@ -355,6 +459,8 @@ Acceptance criteria:
 - [ ] Replay summaries name XREngine passes/materials/programs when metadata is
       available.
 - [ ] Capture metadata does not add per-frame render submission allocations.
+- [ ] Engine metadata remains authoritative even when a `.foz` archive can
+      replay the Vulkan objects successfully.
 
 ## Phase 5 - Native Fossilize Recorder Bridge
 
@@ -381,6 +487,10 @@ Acceptance criteria:
 - [ ] Verify support for graphics pipeline libraries and linked library
       pipelines.
 - [ ] Keep native recording optional and diagnostic until replay proves parity.
+- [ ] Ensure native recording does not bypass `VulkanShaderArtifactCache`,
+      `VulkanPipelinePrewarmDatabase`, or `VulkanPipelineCache`; it should feed
+      Fossilize archives while XREngine caches continue to drive runtime
+      behavior.
 - [ ] Add source-contract tests that every Vulkan persistent object creation
       path either records to Fossilize or intentionally opts out with a reason.
 
@@ -391,6 +501,8 @@ Acceptance criteria:
       replay the same required object set.
 - [ ] Native recording failures report missing dependency hashes or unsupported
       `pNext` structures instead of silently dropping pipelines.
+- [ ] Turning native recording off leaves ordinary Vulkan cache behavior
+      unchanged.
 
 ## Phase 6 - Archive Maintenance And Packaging
 
@@ -457,7 +569,10 @@ Acceptance criteria:
 ## Phase 8 - Editor And Developer UX
 
 - [ ] Add ImGui diagnostic controls for:
+      pipeline cache mode,
       Fossilize tool discovery,
+      Fossilize mode,
+      replay cache mode,
       capture enabled state,
       current dump path,
       latest `.foz` files,
@@ -483,6 +598,8 @@ Acceptance criteria:
       memorizing Fossilize environment variables.
 - [ ] The editor reports whether Fossilize is active, where captures are being
       written, and why capture is unavailable.
+- [ ] The editor distinguishes ordinary runtime cache status from Fossilize
+      capture/replay status.
 - [ ] MCP automation can include Fossilize captures in evidence-based rendering
       investigations.
 
@@ -504,6 +621,9 @@ Acceptance criteria:
       raw `VkPipelineCache` blobs for unknown hardware.
 - [ ] Add user-visible controls for expensive background replay if this reaches
       shipped builds.
+- [ ] Keep the shipped runtime loader pointed at `VulkanPipelineCache`; release
+      Fossilize warmup artifacts can pre-populate that cache but should not
+      introduce a second cache authority.
 - [ ] Add telemetry/logging for warmup duration and skipped pipeline counts.
 - [ ] Make cache invalidation respect:
       engine version,
@@ -524,12 +644,24 @@ Acceptance criteria:
       startup.
 - [ ] First-run warmup improves user experience without hiding failures or
       blocking ordinary launches indefinitely.
+- [ ] A release build can run with all Fossilize modes disabled and still use
+      the normal XREngine Vulkan cache path.
 
 ## Phase 10 - Validation
 
 - [ ] Validate the layer capture path in Unit Testing World.
 - [ ] Validate replay on the same machine and compare runtime cache misses
       before/after installing replay output.
+- [ ] Validate runtime behavior with:
+      `XRE_VK_PIPELINE_CACHE_MODE=Auto`,
+      `XRE_VK_PIPELINE_CACHE_MODE=Disabled`,
+      and `XRE_VK_PIPELINE_CACHE_MODE=Required`.
+- [ ] Validate Fossilize remains inactive with
+      `XRE_VK_FOSSILIZE_MODE=Disabled`.
+- [ ] Validate replay-cache policy with:
+      `XRE_VK_FOSSILIZE_REPLAY_CACHE_MODE=Disabled`,
+      `UseIfPresent`,
+      and `Required`.
 - [ ] Validate replay on at least one different Vulkan-capable machine.
 - [ ] Validate dynamic rendering captures and legacy render-pass captures.
 - [ ] Validate traditional CPU-driven draws and GPU-driven/material-table draws.
@@ -553,6 +685,8 @@ Acceptance criteria:
 - [ ] Captures replay cleanly or fail with actionable logs.
 - [ ] Runtime cache miss counts decrease after a successful replay/cache-install
       pass.
+- [ ] No validation run requires choosing between "Valve cache" and "XREngine
+      cache"; tests exercise layered participation modes instead.
 - [ ] Validation results are recorded in this TODO or a linked test report.
 
 ## Suggested Additional Uses
@@ -589,9 +723,9 @@ Acceptance criteria:
   graphics pipeline library paths without patches?
 - Should native recording live in a new native bridge, in a tooling executable,
   or remain layer-only until v1?
-- Where should replay-generated pipeline cache blobs be installed: directly in
-  `%LOCALAPPDATA%`, a staging cache selected by an env var, or a build artifact
-  consumed by launch scripts?
+- Should replay-generated pipeline cache blobs ever install directly into
+  `%LOCALAPPDATA%`, or should every install flow pass through a staged
+  validation/backup command first?
 - How should archives be sanitized before sharing outside the project?
 - Should release builds ever run `fossilize-replay` in the background, or should
   this remain a developer/QA/build-farm workflow?

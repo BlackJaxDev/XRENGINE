@@ -78,6 +78,13 @@ public static class UnitTestingWorldSettingsStore
             applied = true;
         }
 
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VSyncOverride))
+            && settings.VSyncOverride is EVSyncMode vSyncOverride)
+        {
+            userSettings.VSync = vSyncOverride;
+            applied = true;
+        }
+
         return applied;
     }
 
@@ -93,6 +100,10 @@ public static class UnitTestingWorldSettingsStore
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderFPS)))
             startupSettings.TargetFramesPerSecond = settings.RenderFPS;
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VSyncOverride))
+            && settings.VSyncOverride is EVSyncMode vSyncOverride)
+            startupSettings.VSyncOverride = new(vSyncOverride, true);
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.FixedFPS)))
             startupSettings.FixedFramesPerSecond = settings.FixedFPS;

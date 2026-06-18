@@ -369,6 +369,8 @@ public static partial class Engine
                 StereoMode: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveStereoMode),
                 ValidationLayersEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.ValidationLayersEnabled ? "true" : "false"),
                 DebugOutputEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.DebugOutputEnabled ? "true" : "false"),
+                DeferredDebugView: CaptureString(() => global::XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView.ToString(CultureInfo.InvariantCulture)),
+                DeferredDebugEnv: Environment.GetEnvironmentVariable("XRE_DEFERRED_DEBUG") ?? string.Empty,
                 ShaderCacheState: Environment.GetEnvironmentVariable("XRE_SHADER_CACHE_MODE") ?? string.Empty,
                 TextureCacheState: Environment.GetEnvironmentVariable("XRE_TEXTURE_CACHE_MODE") ?? string.Empty,
                 CacheMode: Environment.GetEnvironmentVariable("XRE_PROFILE_CACHE_MODE") ?? string.Empty,
@@ -446,6 +448,8 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "active_render_backend", Engine.Rendering.Stats.RendererState.ActiveRenderBackend, ref first);
             AppendBoolField(s_lineBuilder, "validation_layers_enabled", Engine.Rendering.Stats.RendererState.ValidationLayersEnabled, ref first);
             AppendBoolField(s_lineBuilder, "debug_output_enabled", Engine.Rendering.Stats.RendererState.DebugOutputEnabled, ref first);
+            AppendNumberField(s_lineBuilder, "deferred_debug_view", global::XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView, ref first);
+            AppendStringField(s_lineBuilder, "deferred_debug_env", metadata.DeferredDebugEnv, ref first);
             AppendBoolField(s_lineBuilder, "gpu_timestamps_dense_mode", Engine.Rendering.Stats.RendererState.GpuTimestampsDenseMode, ref first);
 
             AppendNumberField(s_lineBuilder, "render_dispatch_ms", renderMs, ref first);
@@ -1022,6 +1026,8 @@ public static partial class Engine
             string StereoMode,
             string ValidationLayersEnabled,
             string DebugOutputEnabled,
+            string DeferredDebugView,
+            string DeferredDebugEnv,
             string ShaderCacheState,
             string TextureCacheState,
             string CacheMode,

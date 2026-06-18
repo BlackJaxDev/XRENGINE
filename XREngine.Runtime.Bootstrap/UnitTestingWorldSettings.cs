@@ -375,6 +375,7 @@ public class UnitTestingWorldSettings
 
     public AtmosphericScatteringInitSettings AtmosphericScattering { get; set; } = new();
 
+    public EVSyncMode? VSyncOverride = EVSyncMode.Off;
     public float RenderFPS = 0.0f;
     public float UpdateFPS = 60.0f;
     public float FixedFPS = 30.0f;

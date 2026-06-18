@@ -50,8 +50,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         public virtual string CpuProfilingName => BaseCpuProfilingName;
         private string? _cpuProfilingNameSuffix;
         private string? _cpuProfilingNameWithSuffix;
+        private string? _cpuShouldExecuteProfilingName;
         private string? _gpuProfilingNameSuffix;
         private string? _gpuProfilingNameWithSuffix;
+        private string CpuShouldExecuteProfilingName => _cpuShouldExecuteProfilingName ??= $"{CpuProfilingName}.ShouldExecute";
 
         protected string GetCpuProfilingNameWithSuffix(string? suffix)
         {
@@ -136,7 +138,14 @@ namespace XREngine.Rendering.Pipelines.Commands
     }
         public void ExecuteIfShould()
         {
-            if (ShouldExecute && ShouldExecuteThisFrame())
+            bool shouldExecute = ShouldExecute;
+            if (shouldExecute)
+            {
+                using var shouldExecuteScope = RuntimeRenderingHostServices.Current.StartProfileScope(CpuShouldExecuteProfilingName);
+                shouldExecute = ShouldExecuteThisFrame();
+            }
+
+            if (shouldExecute)
             {
                 using var cpuScope = RuntimeRenderingHostServices.Current.StartProfileScope(CpuProfilingName);
                 using var gpuScope = RenderPipelineGpuProfiler.Instance.StartScope(this);

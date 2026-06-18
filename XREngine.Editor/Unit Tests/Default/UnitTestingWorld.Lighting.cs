@@ -214,7 +214,8 @@ public static partial class EditorUnitTests
             dirLightComp.DiffuseIntensity = 1.0f;
             dirLightComp.Scale = new Vector3(100.0f, 100.0f, 900.0f);
             dirLightComp.CastsShadows = true;
-            dirLightComp.SetShadowMapResolution(4096, 4096);
+            uint shadowResolution = Toggles.RenderAPI == ERenderLibrary.Vulkan ? 1024u : 4096u;
+            dirLightComp.SetShadowMapResolution(shadowResolution, shadowResolution);
             return dirLightComp;
         }
 

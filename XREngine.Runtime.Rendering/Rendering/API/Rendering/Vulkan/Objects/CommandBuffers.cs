@@ -14,9 +14,14 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         internal const uint CommonPushConstantSize = 16;
+        private const int PrimaryCommandBufferVariantCapacity = 4;
 
         private CommandBuffer[]? _commandBuffers;
+        private CommandBuffer[]? _activeCommandBuffers;
+        private List<CommandBufferCacheVariant>[]? _commandBufferVariants;
         private CommandBuffer[]? _dynamicUiBatchTextSecondaryCommandBuffers;
+        private int[]? _dynamicUiBatchTextSecondaryOpCounts;
+        private ulong[]? _dynamicUiBatchTextSecondarySignatures;
         private ulong[]? _commandBufferFrameOpSignatures;
         private ulong[]? _commandBufferPlannerRevisions;
         private ComputeTransientResources[]? _computeTransientResources;
@@ -27,6 +32,7 @@ namespace XREngine.Rendering.Vulkan
         private int _oneTimeGraphicsSubmitCounter;
         private readonly object _commandBindStateLock = new();
         private readonly Dictionary<ulong, CommandBufferBindState> _commandBindStates = new();
+        private readonly Dictionary<ulong, int> _commandBufferImageIndices = new();
         private bool _enableSecondaryCommandBuffers = true;
         private bool _enableParallelSecondaryCommandBufferRecording = !IsParallelSecondaryCommandBufferRecordingDisabled();
         private int _parallelSecondaryIndirectRunThreshold = 4;
@@ -82,6 +88,35 @@ namespace XREngine.Rendering.Vulkan
             string Component,
             ulong Signature,
             string Detail);
+
+        private sealed class CommandBufferCacheVariant
+        {
+            public CommandBufferCacheVariant(
+                CommandBuffer primaryCommandBuffer,
+                CommandBuffer dynamicUiSecondaryCommandBuffer,
+                bool ownsPrimaryCommandBuffer,
+                bool ownsDynamicUiSecondaryCommandBuffer)
+            {
+                PrimaryCommandBuffer = primaryCommandBuffer;
+                DynamicUiSecondaryCommandBuffer = dynamicUiSecondaryCommandBuffer;
+                OwnsPrimaryCommandBuffer = ownsPrimaryCommandBuffer;
+                OwnsDynamicUiSecondaryCommandBuffer = ownsDynamicUiSecondaryCommandBuffer;
+            }
+
+            public CommandBuffer PrimaryCommandBuffer { get; }
+            public CommandBuffer DynamicUiSecondaryCommandBuffer { get; }
+            public bool OwnsPrimaryCommandBuffer { get; }
+            public bool OwnsDynamicUiSecondaryCommandBuffer { get; }
+            public bool Dirty { get; set; } = true;
+            public ulong FrameOpsSignature { get; set; } = ulong.MaxValue;
+            public ulong DynamicUiSignature { get; set; } = ulong.MaxValue;
+            public int DynamicUiOpCount { get; set; } = -1;
+            public ulong PlannerRevision { get; set; } = ulong.MaxValue;
+            public bool GpuProfilerActive { get; set; }
+            public int GpuProfilerFrameSlot { get; set; } = -1;
+            public ulong LastUsedFrameId { get; set; }
+            public FrameOpSignatureDebugPart[]? SignatureDebugParts { get; set; }
+        }
 
         private static bool IsBloomDiagnosticName(string? name)
             => !string.IsNullOrWhiteSpace(name) &&
@@ -597,28 +632,16 @@ namespace XREngine.Rendering.Vulkan
             public bool DescriptorPoolsInitialized;
         }
 
-        private readonly struct DeferredSecondaryCommandBuffer
+        private readonly struct DeferredSecondaryCommandBuffer(CommandPool pool, CommandBuffer commandBuffer)
         {
-            public DeferredSecondaryCommandBuffer(CommandPool pool, CommandBuffer commandBuffer)
-            {
-                Pool = pool;
-                CommandBuffer = commandBuffer;
-            }
-
-            public CommandPool Pool { get; }
-            public CommandBuffer CommandBuffer { get; }
+            public CommandPool Pool { get; } = pool;
+            public CommandBuffer CommandBuffer { get; } = commandBuffer;
         }
 
-        private readonly struct OneTimeCommandOwner
+        private readonly struct OneTimeCommandOwner(CommandPool pool, bool useTransferQueue)
         {
-            public OneTimeCommandOwner(CommandPool pool, bool useTransferQueue)
-            {
-                Pool = pool;
-                UseTransferQueue = useTransferQueue;
-            }
-
-            public CommandPool Pool { get; }
-            public bool UseTransferQueue { get; }
+            public CommandPool Pool { get; } = pool;
+            public bool UseTransferQueue { get; } = useTransferQueue;
         }
 
         private struct CommandBufferBindState
@@ -640,11 +663,37 @@ namespace XREngine.Rendering.Vulkan
                 _commandBindStates[key] = default;
         }
 
+        private void RegisterCommandBufferImageIndex(CommandBuffer commandBuffer, uint imageIndex)
+        {
+            if (commandBuffer.Handle == 0)
+                return;
+
+            int resolvedImageIndex = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+            ulong key = (ulong)commandBuffer.Handle;
+            lock (_commandBindStateLock)
+                _commandBufferImageIndices[key] = resolvedImageIndex;
+        }
+
+        internal int ResolveCommandBufferImageIndex(CommandBuffer commandBuffer)
+        {
+            if (commandBuffer.Handle == 0)
+                return -1;
+
+            ulong key = (ulong)commandBuffer.Handle;
+            lock (_commandBindStateLock)
+                return _commandBufferImageIndices.TryGetValue(key, out int imageIndex)
+                    ? imageIndex
+                    : -1;
+        }
+
         internal void RemoveCommandBufferBindState(CommandBuffer commandBuffer)
         {
             ulong key = (ulong)commandBuffer.Handle;
             lock (_commandBindStateLock)
+            {
                 _commandBindStates.Remove(key);
+                _commandBufferImageIndices.Remove(key);
+            }
         }
 
         internal void BindPipelineTracked(CommandBuffer commandBuffer, PipelineBindPoint bindPoint, Pipeline pipeline)
@@ -853,6 +902,7 @@ namespace XREngine.Rendering.Vulkan
 
             DestroyComputeTransientResources();
             DestroyDeferredSecondaryCommandBuffers();
+            DestroyCommandBufferVariants();
             DestroyDynamicUiBatchTextSecondaryCommandBuffers();
             DestroyComputeDescriptorCaches();
 
@@ -862,7 +912,10 @@ namespace XREngine.Rendering.Vulkan
                     RemoveCommandBufferBindState(commandBuffer);
 
                 _commandBuffers = null;
+                _activeCommandBuffers = null;
                 _dynamicUiBatchTextSecondaryCommandBuffers = null;
+                _dynamicUiBatchTextSecondaryOpCounts = null;
+                _dynamicUiBatchTextSecondarySignatures = null;
                 _commandBufferDirtyFlags = null;
                 _commandBufferFrameOpSignatures = null;
                 _commandBufferFrameOpSignatureDebugParts = null;
@@ -877,11 +930,50 @@ namespace XREngine.Rendering.Vulkan
             }
 
             _commandBuffers = null;
+            _activeCommandBuffers = null;
             _dynamicUiBatchTextSecondaryCommandBuffers = null;
+            _dynamicUiBatchTextSecondaryOpCounts = null;
+            _dynamicUiBatchTextSecondarySignatures = null;
             _commandBufferDirtyFlags = null;
             _commandBufferFrameOpSignatures = null;
             _commandBufferFrameOpSignatureDebugParts = null;
             _commandBufferPlannerRevisions = null;
+        }
+
+        private void DestroyCommandBufferVariants()
+        {
+            if (_commandBufferVariants is null)
+                return;
+
+            foreach (List<CommandBufferCacheVariant>? variants in _commandBufferVariants)
+            {
+                if (variants is null)
+                    continue;
+
+                foreach (CommandBufferCacheVariant variant in variants)
+                {
+                    CommandBuffer primary = variant.PrimaryCommandBuffer;
+                    if (primary.Handle != 0)
+                    {
+                        if (variant.OwnsPrimaryCommandBuffer && !_deviceLost)
+                            Api!.FreeCommandBuffers(device, commandPool, 1, ref primary);
+                        RemoveCommandBufferBindState(primary);
+                    }
+
+                    CommandBuffer secondary = variant.DynamicUiSecondaryCommandBuffer;
+                    if (secondary.Handle != 0)
+                    {
+                        if (variant.OwnsDynamicUiSecondaryCommandBuffer && !_deviceLost)
+                            Api!.FreeCommandBuffers(device, commandPool, 1, ref secondary);
+                        RemoveCommandBufferBindState(secondary);
+                    }
+                }
+
+                variants.Clear();
+            }
+
+            _commandBufferVariants = null;
+            _activeCommandBuffers = null;
         }
 
         private void DestroyDeferredSecondaryCommandBuffers()
@@ -906,6 +998,8 @@ namespace XREngine.Rendering.Vulkan
                     RemoveCommandBufferBindState(commandBuffer);
 
                 _dynamicUiBatchTextSecondaryCommandBuffers = null;
+                _dynamicUiBatchTextSecondaryOpCounts = null;
+                _dynamicUiBatchTextSecondarySignatures = null;
                 return;
             }
 
@@ -919,6 +1013,8 @@ namespace XREngine.Rendering.Vulkan
                 RemoveCommandBufferBindState(commandBuffer);
 
             _dynamicUiBatchTextSecondaryCommandBuffers = null;
+            _dynamicUiBatchTextSecondaryOpCounts = null;
+            _dynamicUiBatchTextSecondarySignatures = null;
         }
 
         private void ReleaseDeferredSecondaryCommandBuffers(uint imageIndex)
@@ -957,6 +1053,7 @@ namespace XREngine.Rendering.Vulkan
             if (_deferredSecondaryCommandBuffers is null || imageIndex >= _deferredSecondaryCommandBuffers.Length)
             {
                 Api!.FreeCommandBuffers(device, pool, 1, ref commandBuffer);
+                RemoveCommandBufferBindState(commandBuffer);
                 return;
             }
 
@@ -1296,6 +1393,10 @@ namespace XREngine.Rendering.Vulkan
             }
 
             _dynamicUiBatchTextSecondaryCommandBuffers = new CommandBuffer[_commandBuffers.Length];
+            _dynamicUiBatchTextSecondaryOpCounts = new int[_commandBuffers.Length];
+            _dynamicUiBatchTextSecondarySignatures = new ulong[_commandBuffers.Length];
+            Array.Fill(_dynamicUiBatchTextSecondaryOpCounts, -1);
+            Array.Fill(_dynamicUiBatchTextSecondarySignatures, ulong.MaxValue);
             CommandBufferAllocateInfo dynamicUiTextAllocInfo = new()
             {
                 SType = StructureType.CommandBufferAllocateInfo,
@@ -1310,10 +1411,41 @@ namespace XREngine.Rendering.Vulkan
                     throw new Exception("Failed to allocate dynamic UI text secondary command buffers.");
             }
 
+            InitializeCommandBufferVariants();
             AllocateCommandBufferDirtyFlags();
             _computeTransientResources = new ComputeTransientResources[_commandBuffers.Length];
             _deferredSecondaryCommandBuffers = new List<DeferredSecondaryCommandBuffer>[_commandBuffers.Length];
             InitializeComputeDescriptorCaches(_commandBuffers.Length);
+        }
+
+        private void InitializeCommandBufferVariants()
+        {
+            if (_commandBuffers is null ||
+                _dynamicUiBatchTextSecondaryCommandBuffers is null ||
+                _commandBuffers.Length != _dynamicUiBatchTextSecondaryCommandBuffers.Length)
+            {
+                _commandBufferVariants = null;
+                _activeCommandBuffers = null;
+                return;
+            }
+
+            _activeCommandBuffers = new CommandBuffer[_commandBuffers.Length];
+            _commandBufferVariants = new List<CommandBufferCacheVariant>[_commandBuffers.Length];
+            for (int i = 0; i < _commandBuffers.Length; i++)
+            {
+                uint imageIndex = unchecked((uint)i);
+                RegisterCommandBufferImageIndex(_commandBuffers[i], imageIndex);
+                RegisterCommandBufferImageIndex(_dynamicUiBatchTextSecondaryCommandBuffers[i], imageIndex);
+                _activeCommandBuffers[i] = _commandBuffers[i];
+                _commandBufferVariants[i] =
+                [
+                    new CommandBufferCacheVariant(
+                        _commandBuffers[i],
+                        _dynamicUiBatchTextSecondaryCommandBuffers[i],
+                        ownsPrimaryCommandBuffer: false,
+                        ownsDynamicUiSecondaryCommandBuffer: false)
+                ];
+            }
         }
 
         private bool TryEnsureCommandBuffersForSwapchain()
@@ -1341,7 +1473,135 @@ namespace XREngine.Rendering.Vulkan
                 _commandBufferDirtyFlags.Length == swapChainFramebuffers.Length;
         }
 
-        private void EnsureCommandBufferRecorded(uint imageIndex)
+        private CommandBufferCacheVariant GetOrCreateCommandBufferVariant(
+            uint imageIndex,
+            ulong frameOpsSignature,
+            ulong dynamicUiBatchTextSignature)
+        {
+            if (_commandBufferVariants is null || imageIndex >= _commandBufferVariants.Length)
+                throw new InvalidOperationException("Command buffer variants are not initialised correctly.");
+
+            int variantImageIndex = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+            List<CommandBufferCacheVariant> variants = _commandBufferVariants[variantImageIndex];
+
+            CommandBufferCacheVariant? reusableDirtyMatch = null;
+            for (int i = 0; i < variants.Count; i++)
+            {
+                CommandBufferCacheVariant variant = variants[i];
+                if (variant.FrameOpsSignature == frameOpsSignature &&
+                    variant.DynamicUiSignature == dynamicUiBatchTextSignature)
+                {
+                    return variant;
+                }
+
+                if (reusableDirtyMatch is null &&
+                    variant.Dirty &&
+                    variant.FrameOpsSignature == ulong.MaxValue)
+                {
+                    reusableDirtyMatch = variant;
+                }
+            }
+
+            if (reusableDirtyMatch is not null)
+                return reusableDirtyMatch;
+
+            if (variants.Count < PrimaryCommandBufferVariantCapacity)
+            {
+                CommandBuffer primary = AllocateCommandBuffer(CommandBufferLevel.Primary, "primary command buffer variant");
+                CommandBuffer dynamicUiSecondary = AllocateCommandBuffer(CommandBufferLevel.Secondary, "dynamic UI text secondary command buffer variant");
+                RegisterCommandBufferImageIndex(primary, imageIndex);
+                RegisterCommandBufferImageIndex(dynamicUiSecondary, imageIndex);
+
+                CommandBufferCacheVariant variant = new(
+                    primary,
+                    dynamicUiSecondary,
+                    ownsPrimaryCommandBuffer: true,
+                    ownsDynamicUiSecondaryCommandBuffer: true);
+                variants.Add(variant);
+                return variant;
+            }
+
+            CommandBufferCacheVariant evicted = variants[0];
+            for (int i = 1; i < variants.Count; i++)
+            {
+                if (variants[i].LastUsedFrameId < evicted.LastUsedFrameId)
+                    evicted = variants[i];
+            }
+
+            evicted.Dirty = true;
+            evicted.FrameOpsSignature = ulong.MaxValue;
+            evicted.DynamicUiSignature = ulong.MaxValue;
+            evicted.DynamicUiOpCount = -1;
+            evicted.PlannerRevision = ulong.MaxValue;
+            evicted.GpuProfilerActive = false;
+            evicted.GpuProfilerFrameSlot = -1;
+            evicted.SignatureDebugParts = null;
+            RegisterCommandBufferImageIndex(evicted.PrimaryCommandBuffer, imageIndex);
+            RegisterCommandBufferImageIndex(evicted.DynamicUiSecondaryCommandBuffer, imageIndex);
+            return evicted;
+        }
+
+        private CommandBuffer AllocateCommandBuffer(CommandBufferLevel level, string label)
+        {
+            CommandBufferAllocateInfo allocInfo = new()
+            {
+                SType = StructureType.CommandBufferAllocateInfo,
+                CommandPool = commandPool,
+                Level = level,
+                CommandBufferCount = 1,
+            };
+
+            if (Api!.AllocateCommandBuffers(device, ref allocInfo, out CommandBuffer commandBuffer) != Result.Success ||
+                commandBuffer.Handle == 0)
+            {
+                throw new Exception($"Failed to allocate Vulkan {label}.");
+            }
+
+            return commandBuffer;
+        }
+
+        private void SetActiveCommandBufferVariant(uint imageIndex, CommandBufferCacheVariant variant)
+        {
+            if (_activeCommandBuffers is null || imageIndex >= _activeCommandBuffers.Length)
+                return;
+
+            _activeCommandBuffers[imageIndex] = variant.PrimaryCommandBuffer;
+        }
+
+        private bool IsCommandBufferVariantGpuProfilerStateDirty(
+            CommandBufferCacheVariant variant,
+            bool profilingActive,
+            int frameSlot)
+        {
+            if (variant.GpuProfilerActive != profilingActive)
+                return true;
+
+            return profilingActive && variant.GpuProfilerFrameSlot != frameSlot;
+        }
+
+        private void MarkCommandBufferVariantsDirty()
+        {
+            if (_commandBufferVariants is null)
+                return;
+
+            for (int i = 0; i < _commandBufferVariants.Length; i++)
+                MarkCommandBufferVariantsDirty(unchecked((uint)i));
+        }
+
+        private void MarkCommandBufferVariantsDirty(uint imageIndex)
+        {
+            if (_commandBufferVariants is null || imageIndex >= _commandBufferVariants.Length)
+                return;
+
+            List<CommandBufferCacheVariant>? variants = _commandBufferVariants[imageIndex];
+            if (variants is null)
+                return;
+
+            foreach (CommandBufferCacheVariant variant in variants)
+                variant.Dirty = true;
+        }
+
+        private CommandBuffer EnsureCommandBufferRecorded(uint imageIndex)
         {
             if (!TryEnsureCommandBuffersForSwapchain())
                 throw new InvalidOperationException("Command buffers are unavailable because swapchain framebuffers are not initialised.");
@@ -1361,12 +1621,12 @@ namespace XREngine.Rendering.Vulkan
             if (_commandBufferPlannerRevisions is null || imageIndex >= _commandBufferPlannerRevisions.Length)
                 throw new InvalidOperationException("Command buffer planner revisions are not initialised correctly.");
 
-            bool dirty = _commandBufferDirtyFlags[imageIndex];
-            bool forcedDirty = dirty;
+            bool imageForcedDirty = _commandBufferDirtyFlags[imageIndex];
             bool frameOpSignatureDirty = false;
             bool plannerDirty = false;
             bool profilerDirty = false;
             bool frameDataDirty = false;
+            bool dynamicUiDirty = false;
             bool gpuPipelineProfilingActive = RenderPipelineGpuProfiler.Instance.IsProfilingActive;
             FrameOp[] ops;
             ulong rawFrameOpsSignature;
@@ -1379,6 +1639,7 @@ namespace XREngine.Rendering.Vulkan
             FrameOp[] dynamicUiBatchTextOps = Array.Empty<FrameOp>();
             bool hasFrameOps = ops.Length > 0;
             ulong frameOpsSignature = rawFrameOpsSignature;
+            ulong dynamicUiBatchTextSignature = 0;
 
             if (hasFrameOps)
             {
@@ -1389,6 +1650,9 @@ namespace XREngine.Rendering.Vulkan
                     SplitDynamicUiBatchTextFrameOps(ops, out FrameOp[] staticOps, out dynamicUiBatchTextOps);
                     ops = staticOps;
                     frameOpsSignature = ComputeFrameOpsSignature(ops);
+                    dynamicUiBatchTextSignature = dynamicUiBatchTextOps.Length == 0
+                        ? 0
+                        : ComputeFrameOpsSignature(dynamicUiBatchTextOps);
                 }
 
                 if (FrameOpSignatureDiffDiagnosticsEnabled && rawFrameOpsSignature != frameOpsSignature)
@@ -1415,25 +1679,41 @@ namespace XREngine.Rendering.Vulkan
                 plannerRevision = ResourcePlannerRevision;
             }
 
+            CommandBufferCacheVariant variant = GetOrCreateCommandBufferVariant(
+                imageIndex,
+                frameOpsSignature,
+                dynamicUiBatchTextSignature);
+            if (imageForcedDirty)
+                MarkCommandBufferVariantsDirty(imageIndex);
+
+            bool dirty = imageForcedDirty || variant.Dirty;
+            bool forcedDirty = dirty;
+
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DirtyEvaluation"))
             {
-                if (!dirty && hasFrameOps && _commandBufferFrameOpSignatures[imageIndex] != frameOpsSignature)
+                if (!dirty && hasFrameOps && variant.FrameOpsSignature != frameOpsSignature)
                 {
-                    LogFrameOpSignatureDiff(imageIndex, _commandBufferFrameOpSignatures[imageIndex], frameOpsSignature, ops);
+                    LogFrameOpSignatureDiff(imageIndex, variant, frameOpsSignature, ops);
                     dirty = true;
                     frameOpSignatureDirty = true;
                 }
 
-                if (!dirty && _commandBufferPlannerRevisions[imageIndex] != plannerRevision)
+                if (!dirty && variant.PlannerRevision != plannerRevision)
                 {
                     dirty = true;
                     plannerDirty = true;
                 }
 
-                if (!dirty && IsVulkanGpuProfilerCommandBufferStateDirty(imageIndex, gpuPipelineProfilingActive, commandBufferImageSlot))
+                if (!dirty && IsCommandBufferVariantGpuProfilerStateDirty(variant, gpuPipelineProfilingActive, commandBufferImageSlot))
                 {
                     dirty = true;
                     profilerDirty = true;
+                }
+
+                if (!dirty && IsDynamicUiBatchTextSecondaryDirty(variant, dynamicUiBatchTextSignature))
+                {
+                    dirty = true;
+                    dynamicUiDirty = true;
                 }
             }
 
@@ -1454,9 +1734,11 @@ namespace XREngine.Rendering.Vulkan
                 else
                 {
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
-                        RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, dynamicUiBatchTextOps);
+                        RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, variant, dynamicUiBatchTextOps, dynamicUiBatchTextSignature);
 
-                    StoreFrameOpSignatureDebugParts(imageIndex, ops);
+                    StoreFrameOpSignatureDebugParts(variant, ops);
+                    variant.LastUsedFrameId = VulkanFrameCounter;
+                    SetActiveCommandBufferVariant(imageIndex, variant);
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
                         reusedClean: true,
                         recorded: false,
@@ -1465,7 +1747,7 @@ namespace XREngine.Rendering.Vulkan
                         plannerDirty: false,
                         profilerDirty: false,
                         dirtyReason: null);
-                    return;
+                    return variant.PrimaryCommandBuffer;
                 }
             }
 
@@ -1479,7 +1761,9 @@ namespace XREngine.Rendering.Vulkan
                             ? "profiler"
                             : frameDataDirty
                                 ? "frame-data"
-                                : "unknown";
+                                : dynamicUiDirty
+                                    ? "dynamic-ui"
+                                    : "unknown";
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
                 reusedClean: false,
@@ -1494,54 +1778,62 @@ namespace XREngine.Rendering.Vulkan
             try
             {
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
-                    RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, dynamicUiBatchTextOps);
+                    RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, variant, dynamicUiBatchTextOps, dynamicUiBatchTextSignature);
 
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordPrimary"))
-                    RecordCommandBuffer(imageIndex, ops, dynamicUiBatchTextOps.Length);
+                    RecordCommandBuffer(
+                        imageIndex,
+                        variant.PrimaryCommandBuffer,
+                        variant.DynamicUiSecondaryCommandBuffer,
+                        ops,
+                        dynamicUiBatchTextOps.Length);
             }
             finally
             {
                 _isRecordingCommandBuffer = false;
             }
             _commandBufferDirtyFlags[imageIndex] = false;
-            _commandBufferFrameOpSignatures[imageIndex] = frameOpsSignature;
-            _commandBufferPlannerRevisions[imageIndex] = plannerRevision;
-            StoreFrameOpSignatureDebugParts(imageIndex, ops);
-            UpdateVulkanGpuProfilerCommandBufferState(imageIndex, gpuPipelineProfilingActive, commandBufferImageSlot);
+            variant.Dirty = false;
+            variant.FrameOpsSignature = frameOpsSignature;
+            variant.DynamicUiSignature = dynamicUiBatchTextSignature;
+            variant.DynamicUiOpCount = dynamicUiBatchTextOps.Length;
+            variant.PlannerRevision = plannerRevision;
+            variant.GpuProfilerActive = gpuPipelineProfilingActive;
+            variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
+            variant.LastUsedFrameId = VulkanFrameCounter;
+            StoreFrameOpSignatureDebugParts(variant, ops);
+            SetActiveCommandBufferVariant(imageIndex, variant);
+            return variant.PrimaryCommandBuffer;
         }
 
-        private void StoreFrameOpSignatureDebugParts(uint imageIndex, FrameOp[] ops)
+        private void StoreFrameOpSignatureDebugParts(CommandBufferCacheVariant variant, FrameOp[] ops)
         {
             if (!FrameOpSignatureDiffDiagnosticsEnabled)
                 return;
 
-            if (_commandBufferFrameOpSignatureDebugParts is null || imageIndex >= _commandBufferFrameOpSignatureDebugParts.Length)
-                return;
-
-            _commandBufferFrameOpSignatureDebugParts[imageIndex] = CaptureFrameOpSignatureDebugParts(ops);
+            variant.SignatureDebugParts = CaptureFrameOpSignatureDebugParts(ops);
         }
 
-        private void LogFrameOpSignatureDiff(uint imageIndex, ulong previousSignature, ulong currentSignature, FrameOp[] ops)
+        private void LogFrameOpSignatureDiff(
+            uint imageIndex,
+            CommandBufferCacheVariant variant,
+            ulong currentSignature,
+            FrameOp[] ops)
         {
-            if (!FrameOpSignatureDiffDiagnosticsEnabled || previousSignature == ulong.MaxValue)
+            if (!FrameOpSignatureDiffDiagnosticsEnabled || variant.FrameOpsSignature == ulong.MaxValue)
                 return;
 
             int logIndex = Interlocked.Increment(ref _frameOpSignatureDiffLogCount);
             if (logIndex > FrameOpSignatureDiffLogLimit)
                 return;
 
-            FrameOpSignatureDebugPart[]? previousParts =
-                _commandBufferFrameOpSignatureDebugParts is not null && imageIndex < _commandBufferFrameOpSignatureDebugParts.Length
-                    ? _commandBufferFrameOpSignatureDebugParts[imageIndex]
-                    : null;
-
             FrameOpSignatureDebugPart[] currentParts = CaptureFrameOpSignatureDebugParts(ops);
-            string summary = previousParts is null
+            string summary = variant.SignatureDebugParts is null
                 ? "no previous component snapshot for this swapchain image"
-                : BuildFrameOpSignatureDiffSummary(previousParts, currentParts);
+                : BuildFrameOpSignatureDiffSummary(variant.SignatureDebugParts, currentParts);
 
             Debug.Vulkan(
-                $"[Vulkan] Frame-op signature mismatch image={imageIndex} previous=0x{previousSignature:X16} current=0x{currentSignature:X16} ops={ops.Length}: {summary}");
+                $"[Vulkan] Frame-op signature mismatch image={imageIndex} previous=0x{variant.FrameOpsSignature:X16} current=0x{currentSignature:X16} ops={ops.Length}: {summary}");
         }
 
         private static string BuildFrameOpSignatureDiffSummary(FrameOpSignatureDebugPart[] previous, FrameOpSignatureDebugPart[] current)
@@ -2120,15 +2412,30 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
 
-        private void RecordDynamicUiBatchTextSecondaryCommandBuffer(uint imageIndex, FrameOp[] dynamicUiBatchTextOps)
+        private static bool IsDynamicUiBatchTextSecondaryDirty(
+            CommandBufferCacheVariant variant,
+            ulong dynamicUiBatchTextSignature)
+            => variant.DynamicUiSignature != dynamicUiBatchTextSignature;
+
+        private void RecordDynamicUiBatchTextSecondaryCommandBuffer(
+            uint imageIndex,
+            CommandBufferCacheVariant variant,
+            FrameOp[] dynamicUiBatchTextOps,
+            ulong dynamicUiBatchTextSignature)
         {
-            if (_dynamicUiBatchTextSecondaryCommandBuffers is null ||
-                imageIndex >= _dynamicUiBatchTextSecondaryCommandBuffers.Length)
+            if (dynamicUiBatchTextOps.Length == 0)
+            {
+                variant.DynamicUiOpCount = 0;
+                variant.DynamicUiSignature = 0;
+                return;
+            }
+
+            if (variant.DynamicUiSignature == dynamicUiBatchTextSignature)
             {
                 return;
             }
 
-            CommandBuffer secondaryCommandBuffer = _dynamicUiBatchTextSecondaryCommandBuffers[imageIndex];
+            CommandBuffer secondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
             if (secondaryCommandBuffer.Handle == 0)
                 return;
 
@@ -2177,7 +2484,7 @@ namespace XREngine.Rendering.Vulkan
             CommandBufferBeginInfo beginInfo = new()
             {
                 SType = StructureType.CommandBufferBeginInfo,
-                Flags = CommandBufferUsageFlags.OneTimeSubmitBit | CommandBufferUsageFlags.RenderPassContinueBit,
+                Flags = CommandBufferUsageFlags.RenderPassContinueBit,
                 PInheritanceInfo = &inheritanceInfo,
             };
 
@@ -2249,12 +2556,19 @@ namespace XREngine.Rendering.Vulkan
             if (Api!.EndCommandBuffer(secondaryCommandBuffer) != Result.Success)
                 throw new Exception("Failed to end dynamic UI text secondary command buffer.");
 
+            variant.DynamicUiOpCount = dynamicUiBatchTextOps.Length;
+            variant.DynamicUiSignature = dynamicUiBatchTextSignature;
+
             _dynamicUiMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
         }
 
-        private void RecordCommandBuffer(uint imageIndex, FrameOp[] ops, int dynamicUiBatchTextOpCount)
+        private void RecordCommandBuffer(
+            uint imageIndex,
+            CommandBuffer commandBuffer,
+            CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer,
+            FrameOp[] ops,
+            int dynamicUiBatchTextOpCount)
         {
-            var commandBuffer = _commandBuffers![imageIndex];
             int droppedDrawOps = 0;
             int droppedComputeOps = 0;
             int droppedFrameOps = 0;
@@ -3150,13 +3464,7 @@ namespace XREngine.Rendering.Vulkan
 
             void ExecuteDynamicUiBatchTextOverlay()
             {
-                if (_dynamicUiBatchTextSecondaryCommandBuffers is null ||
-                    imageIndex >= _dynamicUiBatchTextSecondaryCommandBuffers.Length)
-                {
-                    return;
-                }
-
-                CommandBuffer secondaryCommandBuffer = _dynamicUiBatchTextSecondaryCommandBuffers[imageIndex];
+                CommandBuffer secondaryCommandBuffer = dynamicUiBatchTextSecondaryCommandBuffer;
                 if (secondaryCommandBuffer.Handle == 0)
                     return;
 
@@ -5646,6 +5954,8 @@ namespace XREngine.Rendering.Vulkan
 
                 Api!.AllocateCommandBuffers(device, ref allocInfo, out secondary);
                 allocated = secondary.Handle != 0;
+                if (allocated)
+                    RegisterCommandBufferImageIndex(secondary, imageIndex);
 
                 CommandBufferBeginInfo beginInfo = new()
                 {
@@ -5748,6 +6058,8 @@ namespace XREngine.Rendering.Vulkan
 
                             Api!.AllocateCommandBuffers(device, ref allocInfo, out secondary);
                             localAllocated = secondary.Handle != 0;
+                            if (localAllocated)
+                                RegisterCommandBufferImageIndex(secondary, imageIndex);
 
                             CommandBufferBeginInfo beginInfo = new()
                             {
