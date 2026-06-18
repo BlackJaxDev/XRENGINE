@@ -31,7 +31,7 @@ public unsafe partial class VulkanRenderer
 					{
 						foreach (EngineUniformBuffer buf in toDestroy)
 						{
-							Renderer.DestroyTrackedMeshUniformBuffer(buf.Buffer, buf.Memory);
+							DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
 						}
 					}
 
@@ -43,7 +43,7 @@ public unsafe partial class VulkanRenderer
 				{
 					foreach (EngineUniformBuffer buf in buffers)
 					{
-						Renderer.DestroyTrackedMeshUniformBuffer(buf.Buffer, buf.Memory);
+						DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
 					}
 				}
 
@@ -62,7 +62,7 @@ public unsafe partial class VulkanRenderer
 					{
 						foreach (AutoUniformBuffer buf in toDestroy)
 						{
-							Renderer.DestroyTrackedMeshUniformBuffer(buf.Buffer, buf.Memory);
+							DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
 						}
 					}
 
@@ -74,11 +74,19 @@ public unsafe partial class VulkanRenderer
 			{
 				foreach (AutoUniformBuffer buf in buffers)
 				{
-					Renderer.DestroyTrackedMeshUniformBuffer(buf.Buffer, buf.Memory);
+					DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
 				}
 			}
 
 			_autoUniformBuffers.Clear();
+		}
+
+		private void DestroyMappedUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, void* mappedPtr)
+		{
+			if (mappedPtr != null)
+				Renderer.UnmapBufferMemory(buffer, memory);
+
+			Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
 		}
 
 		/// <summary>
@@ -100,27 +108,43 @@ public unsafe partial class VulkanRenderer
 
 		private void ReleaseDescriptorAllocation(bool destroyPoolImmediately = false)
 		{
-			if (_descriptorSets is not null)
-				_descriptorSets = null;
+			ulong activePoolHandle = _descriptorPool.Handle;
+			bool activePoolReleased = activePoolHandle == 0;
+
+			foreach (DescriptorAllocation allocation in _descriptorAllocations.Values)
+			{
+				if (allocation.Pool.Handle == activePoolHandle)
+					activePoolReleased = true;
+
+				ReleaseDescriptorPool(allocation.Pool, destroyPoolImmediately);
+			}
+
+			_descriptorAllocations.Clear();
+
+			if (!activePoolReleased && _descriptorPool.Handle != 0)
+				ReleaseDescriptorPool(_descriptorPool, destroyPoolImmediately);
+
+			_descriptorSets = null;
 
 			_descriptorSchemaFingerprint = 0;
 			_descriptorResourceFingerprint = 0;
 			_descriptorResourceFingerprintDetails = string.Empty;
+			_descriptorPool = default;
+		}
 
-			if (_descriptorPool.Handle != 0)
+		private void ReleaseDescriptorPool(DescriptorPool descriptorPool, bool destroyImmediately = false)
+		{
+			if (descriptorPool.Handle == 0)
+				return;
+
+			if (destroyImmediately)
 			{
-				if (destroyPoolImmediately)
-				{
-					Api!.DestroyDescriptorPool(Device, _descriptorPool, null);
-					RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
-				}
-				else
-				{
-					Renderer.RetireDescriptorPool(_descriptorPool);
-				}
-
-				_descriptorPool = default;
+				Api!.DestroyDescriptorPool(Device, descriptorPool, null);
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
+				return;
 			}
+
+			Renderer.RetireDescriptorPool(descriptorPool);
 		}
 
 		/// <summary>Emits a Vulkan warning message only on the first occurrence of a given message.</summary>

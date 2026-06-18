@@ -843,6 +843,8 @@ namespace XREngine.Rendering.Vulkan
 
                 if (Api!.CreateSampler(Device, ref samplerInfo, null, out _sampler) != Result.Success)
                     throw new Exception("Failed to create Vulkan texture-view sampler.");
+
+                Renderer.RegisterLiveSampler(_sampler);
             }
 
             private void DestroySampler()

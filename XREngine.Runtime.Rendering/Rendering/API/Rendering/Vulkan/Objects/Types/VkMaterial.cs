@@ -1197,11 +1197,17 @@ namespace XREngine.Rendering.Vulkan
                     return true;
 
                 sampler = source.DescriptorSampler;
-                if (sampler.Handle != 0)
+                if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
                     return true;
 
-                sampler = Renderer.GetPlaceholderSampler();
                 if (sampler.Handle != 0)
+                {
+                    WarnOnce($"Material texture for binding '{binding.Name}' references a retired Vulkan sampler. Using placeholder sampler.");
+                    RecordDescriptorFallback(binding);
+                }
+
+                sampler = Renderer.GetPlaceholderSampler();
+                if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
                 {
                     WarnOnce($"Material texture for binding '{binding.Name}' has no Vulkan sampler. Using placeholder sampler.");
                     RecordDescriptorFallback(binding);

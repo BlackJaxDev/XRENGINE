@@ -423,6 +423,9 @@ public sealed class VulkanP0ValidationTests
         source.ShouldContain("Vulkan.AutoExposure.PlannerMip0Fallback2DArray");
         source.ShouldContain("program.Uniform(\"SmallestMip\", sampledSmallestMip);");
         source.ShouldContain("meteringMip = Math.Clamp(sampledSmallestMip - offset, 0, sampledSmallestMip);");
+        source.ShouldContain("exposureLayoutManagedByRenderGraph = vkExposure.UsesAllocatorImage;");
+        source.ShouldContain("Vulkan.AutoExposure.PlannerExposureGraphBarriers");
+        source.ShouldContain("if (!exposureLayoutManagedByRenderGraph && GetOrCreateAPIRenderObject(exposureTex");
 
         readbackSource.ShouldContain("LogPlannerMipReadbackFallback");
         readbackSource.ShouldContain("Vulkan.LuminanceReadback.PlannerMip0Fallback2D");
@@ -470,6 +473,36 @@ public sealed class VulkanP0ValidationTests
         source.ShouldContain("CmdBindIndexBuffer(commandBuffer, buffers.IndexBuffer, 0, IndexType.Uint16);");
         source.ShouldContain("io.BackendFlags |= ImGuiBackendFlags.RendererHasVtxOffset;");
         source.ShouldNotContain("_ = imageIndex;");
+    }
+
+    [Test]
+    public void VulkanImGuiOverlay_RecordsOutsideReusableScenePrimary()
+    {
+        string imguiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.ImGui.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Core.cs");
+        string profileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanFeatureProfile.cs");
+
+        imguiSource.ShouldContain("private CommandBuffer[]? _imguiOverlayCommandBuffers;");
+        imguiSource.ShouldContain("private bool TryRecordImGuiOverlayCommandBuffer(uint imageIndex, out CommandBuffer overlayCommandBuffer)");
+        imguiSource.ShouldContain("private void TransitionSwapchainImageForImGuiOverlay(");
+        imguiSource.ShouldContain("private void RenderImGuiSnapshot(CommandBuffer commandBuffer, uint imageIndex, ImGuiFrameSnapshot drawData)");
+
+        commandBufferSource.ShouldContain("_imguiOverlayCommandBuffers = new CommandBuffer[_commandBuffers.Length];");
+        commandBufferSource.ShouldContain("Level = CommandBufferLevel.Primary");
+        commandBufferSource.ShouldContain("RegisterCommandBufferImageIndex(_imguiOverlayCommandBuffers[i], imageIndex);");
+        commandBufferSource.ShouldContain("private void DestroyImGuiOverlayCommandBuffers()");
+        commandBufferSource.ShouldNotContain("RenderImGui(commandBuffer, imageIndex);");
+
+        drawingSource.ShouldContain("Vulkan.FrameLifecycle.RecordImGuiOverlay");
+        drawingSource.ShouldContain("TryRecordImGuiOverlayCommandBuffer(imageIndex, out imguiOverlayCommandBuffer)");
+        drawingSource.ShouldContain("submitCommandBuffers[submitCommandBufferCount++] = imguiOverlayCommandBuffer;");
+        drawingSource.ShouldContain("CommandBufferCount = submitCommandBufferCount");
+
+        profileSource.ShouldContain("EVulkanGpuDrivenProfile.ShippingFast => true");
+        profileSource.ShouldContain("EVulkanGpuDrivenProfile.DevParity => true");
+        profileSource.ShouldContain("EVulkanGpuDrivenProfile.Diagnostics => true");
+        profileSource.ShouldContain("ImGui rendering through the Vulkan pipeline.");
     }
 
     [Test]

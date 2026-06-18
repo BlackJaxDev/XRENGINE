@@ -15,6 +15,18 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     internal sealed class VkTexture2D(VulkanRenderer api, XRTexture2D data) : VkImageBackedTexture<XRTexture2D>(api, data)
     {
+        protected override void LinkTextureData()
+        {
+            base.LinkTextureData();
+            Data.PushMipLevelRequested += PushMipLevel;
+        }
+
+        protected override void UnlinkTextureData()
+        {
+            Data.PushMipLevelRequested -= PushMipLevel;
+            base.UnlinkTextureData();
+        }
+
         protected override TextureLayout DescribeTexture()
         {
             uint width = Math.Max(Data.Width, 1u);
@@ -23,9 +35,12 @@ public unsafe partial class VulkanRenderer
             // the texture needs a specific mip chain (e.g. bloom). Use SmallestMipmapLevel + 1.
             // Otherwise, use the CPU mipmap data count (1 if none — typical for framebuffer textures).
             bool hasExplicitMipRange = Data.SmallestAllowedMipmapLevel < 1000;
-            uint mipLevels = Data.AutoGenerateMipmaps || hasExplicitMipRange
+            uint sourceMipCount = (uint)Math.Max(Data.Mipmaps?.Length ?? 1, 1);
+            uint mipLevels = Data.RuntimeManagedProgressiveUploadActive && sourceMipCount > 1
+                ? sourceMipCount
+                : Data.AutoGenerateMipmaps || hasExplicitMipRange
                 ? (uint)Math.Max(1, Data.SmallestMipmapLevel + 1)
-                : (uint)Math.Max(Data.Mipmaps?.Length ?? 1, 1);
+                : sourceMipCount;
             return new TextureLayout(new Extent3D(width, height, 1), 1, mipLevels);
         }
 
@@ -79,6 +94,83 @@ public unsafe partial class VulkanRenderer
                 GenerateMipmapsGPU();
             else
                 TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+        }
+
+        private bool PushMipLevel(int mipIndex)
+        {
+            if (RuntimeEngine.InvokeOnMainThread(() => PushMipLevel(mipIndex), "VkTexture2D.PushMipLevel"))
+                return false;
+
+            if (Renderer.IsDeviceLost)
+                return false;
+
+            Mipmap2D[]? mipmaps = Data.Mipmaps;
+            if (mipmaps is null || mipIndex < 0 || mipIndex >= mipmaps.Length)
+                return true;
+
+            Mipmap2D? mip = mipmaps[mipIndex];
+            if (mip is null)
+                return true;
+
+            EnsureProgressiveUploadMipCapacity(mipmaps.Length);
+
+            Generate();
+            if (Image.Handle == 0)
+                return false;
+
+            if ((uint)mipIndex >= ResolvedMipLevels)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.ProgressiveMipOutOfRange.{Data.GetHashCode()}.{mipIndex}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping progressive upload mip {0} for '{1}' because the image has only {2} mip levels.",
+                    mipIndex,
+                    Data.Name ?? GetDescribingName(),
+                    ResolvedMipLevels);
+                return true;
+            }
+
+            DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, ResolvedFormat, out bool ownsUploadData);
+            Buffer stagingBuffer;
+            DeviceMemory stagingMemory;
+            ulong uploadDataSize = uploadData?.Length ?? 0u;
+            try
+            {
+                if (!TryCreateStagingBuffer(uploadData, out stagingBuffer, out stagingMemory))
+                    return true;
+            }
+            finally
+            {
+                if (ownsUploadData)
+                    uploadData?.Dispose();
+            }
+
+            try
+            {
+                Extent3D extent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1);
+                CopyBufferToImage(stagingBuffer, (uint)mipIndex, 0, 1, extent, uploadDataSize);
+                if (!Renderer.IsDeviceLost)
+                    TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+            }
+            finally
+            {
+                DestroyStagingBuffer(stagingBuffer, stagingMemory);
+            }
+
+            MarkUploaded();
+            return true;
+        }
+
+        private void EnsureProgressiveUploadMipCapacity(int sourceMipCount)
+        {
+            if (!Data.RuntimeManagedProgressiveUploadActive || sourceMipCount <= 1 || !IsActive)
+                return;
+
+            if (ResolvedMipLevels >= (uint)sourceMipCount)
+                return;
+
+            Destroy();
+            Generate();
         }
 
         /// <summary>

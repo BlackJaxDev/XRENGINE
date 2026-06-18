@@ -865,8 +865,12 @@ public unsafe partial class VulkanRenderer
             FrameBufferAttachmentSignature signature)
             => layout switch
             {
-                RenderGraphImageLayout.ColorAttachment => ImageLayout.ColorAttachmentOptimal,
-                RenderGraphImageLayout.DepthStencilAttachment => ImageLayout.DepthStencilAttachmentOptimal,
+                RenderGraphImageLayout.ColorAttachment => signature.Role == AttachmentRole.Color
+                    ? ImageLayout.ColorAttachmentOptimal
+                    : ImageLayout.DepthStencilAttachmentOptimal,
+                RenderGraphImageLayout.DepthStencilAttachment => signature.Role == AttachmentRole.Color
+                    ? ImageLayout.ColorAttachmentOptimal
+                    : ImageLayout.DepthStencilAttachmentOptimal,
                 RenderGraphImageLayout.ShaderReadOnly => signature.Role == AttachmentRole.Color
                     ? ImageLayout.ShaderReadOnlyOptimal
                     : ImageLayout.DepthStencilReadOnlyOptimal,
@@ -949,7 +953,7 @@ public unsafe partial class VulkanRenderer
                 ValidateAttachmentDimensions(target);
 
                 AttachmentSource source = ResolveAttachmentSource(target, attachment, mip, layer);
-                AttachmentRole role = ResolveAttachmentRole(attachment, source.AspectMask);
+                AttachmentRole role = ResolveAttachmentRole(attachment, source.AspectMask, source.Format);
 
                 if (role == AttachmentRole.Color)
                 {
@@ -1013,12 +1017,13 @@ public unsafe partial class VulkanRenderer
 
             vkRenderBuffer.Generate();
             vkRenderBuffer.RefreshIfStale();
+            ImageAspectFlags aspect = NormalizeAttachmentAspectMask(vkRenderBuffer.Format, vkRenderBuffer.Aspect);
             return new AttachmentSource(
                 vkRenderBuffer.View,
                 vkRenderBuffer.Format,
                 vkRenderBuffer.Samples,
-                vkRenderBuffer.Aspect,
-                (vkRenderBuffer.Aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0
+                aspect,
+                (aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0
                     ? ImageUsageFlags.DepthStencilAttachmentBit
                     : ImageUsageFlags.ColorAttachmentBit);
         }
@@ -1040,20 +1045,35 @@ public unsafe partial class VulkanRenderer
                     $"Texture '{texture.Name ?? texture.GetDescribingName()}' could not provide a Vulkan image view for framebuffer attachment '{attachment}'.");
             }
 
-            return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, source.DescriptorAspect, source.DescriptorUsage);
+            ImageAspectFlags aspect = NormalizeAttachmentAspectMask(source.DescriptorFormat, source.DescriptorAspect);
+            ImageUsageFlags usage = source.DescriptorUsage;
+            if (VkFormatConversions.IsDepthStencilFormat(source.DescriptorFormat))
+            {
+                usage &= ~ImageUsageFlags.ColorAttachmentBit;
+                usage |= ImageUsageFlags.DepthStencilAttachmentBit;
+            }
+
+            return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, aspect, usage);
         }
 
-        private static AttachmentRole ResolveAttachmentRole(EFrameBufferAttachment attachment, ImageAspectFlags aspect)
-            => attachment switch
+        private static AttachmentRole ResolveAttachmentRole(EFrameBufferAttachment attachment, ImageAspectFlags aspect, Format format)
+        {
+            if (attachment == EFrameBufferAttachment.DepthAttachment)
+                return AttachmentRole.Depth;
+            if (attachment == EFrameBufferAttachment.DepthStencilAttachment)
+                return AttachmentRole.DepthStencil;
+            if (attachment == EFrameBufferAttachment.StencilAttachment)
+                return AttachmentRole.Stencil;
+
+            ImageAspectFlags normalizedAspect = NormalizeAttachmentAspectMask(format, aspect);
+            return normalizedAspect switch
             {
-                EFrameBufferAttachment.DepthAttachment => AttachmentRole.Depth,
-                EFrameBufferAttachment.DepthStencilAttachment => AttachmentRole.DepthStencil,
-                EFrameBufferAttachment.StencilAttachment => AttachmentRole.Stencil,
-                _ when (aspect & ImageAspectFlags.DepthBit) != 0 && (aspect & ImageAspectFlags.StencilBit) != 0 => AttachmentRole.DepthStencil,
-                _ when (aspect & ImageAspectFlags.DepthBit) != 0 => AttachmentRole.Depth,
-                _ when (aspect & ImageAspectFlags.StencilBit) != 0 => AttachmentRole.Stencil,
+                _ when (normalizedAspect & ImageAspectFlags.DepthBit) != 0 && (normalizedAspect & ImageAspectFlags.StencilBit) != 0 => AttachmentRole.DepthStencil,
+                _ when (normalizedAspect & ImageAspectFlags.DepthBit) != 0 => AttachmentRole.Depth,
+                _ when (normalizedAspect & ImageAspectFlags.StencilBit) != 0 => AttachmentRole.Stencil,
                 _ => AttachmentRole.Color
             };
+        }
 
         private static uint ResolveColorSlot(EFrameBufferAttachment attachment, ref uint nextImplicitSlot, HashSet<uint> usedSlots)
         {
@@ -1087,7 +1107,8 @@ public unsafe partial class VulkanRenderer
 
         private static FrameBufferAttachmentSignature BuildAttachmentSignature(AttachmentSource source, AttachmentRole role, uint colorIndex)
         {
-            bool hasStencil = (source.AspectMask & ImageAspectFlags.StencilBit) != 0;
+            ImageAspectFlags aspectMask = NormalizeAttachmentAspectMask(source.Format, source.AspectMask);
+            bool hasStencil = (aspectMask & ImageAspectFlags.StencilBit) != 0;
             AttachmentLoadOp stencilLoad = AttachmentLoadOp.DontCare;
             AttachmentStoreOp stencilStore = hasStencil ? AttachmentStoreOp.Store : AttachmentStoreOp.DontCare;
 
@@ -1121,7 +1142,7 @@ public unsafe partial class VulkanRenderer
             return new FrameBufferAttachmentSignature(
                 source.Format,
                 source.Samples,
-                source.AspectMask,
+                aspectMask,
                 role,
                 colorIndex,
                 AttachmentLoadOp.DontCare,
@@ -1131,6 +1152,26 @@ public unsafe partial class VulkanRenderer
                 ImageLayout.Undefined,
                 finalLayout,
                 referenceLayout);
+        }
+
+        private static ImageAspectFlags NormalizeAttachmentAspectMask(Format format, ImageAspectFlags requested)
+        {
+            if (!VkFormatConversions.IsDepthStencilFormat(format))
+            {
+                ImageAspectFlags colorMask = requested & ImageAspectFlags.ColorBit;
+                return colorMask != ImageAspectFlags.None ? colorMask : ImageAspectFlags.ColorBit;
+            }
+
+            ImageAspectFlags supported = format switch
+            {
+                Format.S8Uint => ImageAspectFlags.StencilBit,
+                Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint =>
+                    ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit,
+                _ => ImageAspectFlags.DepthBit
+            };
+
+            ImageAspectFlags normalized = requested & supported;
+            return normalized != ImageAspectFlags.None ? normalized : supported;
         }
 
         private readonly record struct AttachmentSource(ImageView View, Format Format, SampleCountFlags Samples, ImageAspectFlags AspectMask, ImageUsageFlags Usage);

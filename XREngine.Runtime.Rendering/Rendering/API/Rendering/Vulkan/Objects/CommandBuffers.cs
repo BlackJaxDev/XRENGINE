@@ -41,6 +41,10 @@ namespace XREngine.Rendering.Vulkan
             string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF"), "1", StringComparison.Ordinal);
         private static readonly bool FrameDataReuseDiagnosticsEnabled =
             string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_FRAME_DATA_REUSE_DIAG"), "1", StringComparison.Ordinal);
+        private static readonly bool CommandRecordingDiagnosticsEnabled =
+            string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_RECORDING_DIAG"), "1", StringComparison.Ordinal);
+        private static readonly bool CommandRecordingDetailProfilingEnabled =
+            string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_RECORDING_PROFILE_DETAIL"), "1", StringComparison.Ordinal);
         private FrameOpSignatureDebugPart[][]? _commandBufferFrameOpSignatureDebugParts;
         private int _frameOpSignatureDiffLogCount;
         private string? _vulkanDiagnosticBaseWindowTitle;
@@ -111,6 +115,7 @@ namespace XREngine.Rendering.Vulkan
             public ulong FrameOpsSignature { get; set; } = ulong.MaxValue;
             public ulong DynamicUiSignature { get; set; } = ulong.MaxValue;
             public int DynamicUiOpCount { get; set; } = -1;
+            public bool DynamicUiSecondaryRecorded { get; set; }
             public ulong PlannerRevision { get; set; } = ulong.MaxValue;
             public bool GpuProfilerActive { get; set; }
             public int GpuProfilerFrameSlot { get; set; } = -1;
@@ -905,6 +910,7 @@ namespace XREngine.Rendering.Vulkan
             DestroyCommandBufferVariants();
             DestroyDynamicUiBatchTextSecondaryCommandBuffers();
             DestroyComputeDescriptorCaches();
+            DestroyImGuiOverlayCommandBuffers();
 
             if (_deviceLost)
             {
@@ -914,6 +920,7 @@ namespace XREngine.Rendering.Vulkan
                 _commandBuffers = null;
                 _activeCommandBuffers = null;
                 _dynamicUiBatchTextSecondaryCommandBuffers = null;
+                _imguiOverlayCommandBuffers = null;
                 _dynamicUiBatchTextSecondaryOpCounts = null;
                 _dynamicUiBatchTextSecondarySignatures = null;
                 _commandBufferDirtyFlags = null;
@@ -932,6 +939,7 @@ namespace XREngine.Rendering.Vulkan
             _commandBuffers = null;
             _activeCommandBuffers = null;
             _dynamicUiBatchTextSecondaryCommandBuffers = null;
+            _imguiOverlayCommandBuffers = null;
             _dynamicUiBatchTextSecondaryOpCounts = null;
             _dynamicUiBatchTextSecondarySignatures = null;
             _commandBufferDirtyFlags = null;
@@ -1015,6 +1023,32 @@ namespace XREngine.Rendering.Vulkan
             _dynamicUiBatchTextSecondaryCommandBuffers = null;
             _dynamicUiBatchTextSecondaryOpCounts = null;
             _dynamicUiBatchTextSecondarySignatures = null;
+        }
+
+        private void DestroyImGuiOverlayCommandBuffers()
+        {
+            if (_imguiOverlayCommandBuffers is null)
+                return;
+
+            if (_deviceLost)
+            {
+                foreach (CommandBuffer commandBuffer in _imguiOverlayCommandBuffers)
+                    RemoveCommandBufferBindState(commandBuffer);
+
+                _imguiOverlayCommandBuffers = null;
+                return;
+            }
+
+            fixed (CommandBuffer* commandBuffersPtr = _imguiOverlayCommandBuffers)
+            {
+                if (_imguiOverlayCommandBuffers.Length > 0)
+                    Api!.FreeCommandBuffers(device, commandPool, (uint)_imguiOverlayCommandBuffers.Length, commandBuffersPtr);
+            }
+
+            foreach (CommandBuffer commandBuffer in _imguiOverlayCommandBuffers)
+                RemoveCommandBufferBindState(commandBuffer);
+
+            _imguiOverlayCommandBuffers = null;
         }
 
         private void ReleaseDeferredSecondaryCommandBuffers(uint imageIndex)
@@ -1118,21 +1152,42 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < _computeTransientResources.Length; i++)
             {
                 ComputeTransientResources? resources = _computeTransientResources[i];
-                if (resources is not null)
-                {
-                    lock (resources.SyncRoot)
-                    {
-                        for (int poolIndex = 0; poolIndex < resources.DescriptorPools.Count; poolIndex++)
-                        {
-                            if (resources.DescriptorPools[poolIndex].Handle != 0)
-                                poolCount++;
-                        }
-                    }
-                }
+                if (resources is null)
+                    continue;
 
-                CleanupComputeTransientResources((uint)i);
+                lock (resources.SyncRoot)
+                    poolCount += ReleaseComputeTransientDescriptorReferencesForPhysicalResourceDestruction(resources);
             }
 
+            return poolCount;
+        }
+
+        private int ReleaseComputeTransientDescriptorReferencesForPhysicalResourceDestruction(ComputeTransientResources resources)
+        {
+            int poolCount = 0;
+            for (int poolIndex = 0; poolIndex < resources.DescriptorPools.Count; poolIndex++)
+            {
+                DescriptorPool descriptorPool = resources.DescriptorPools[poolIndex];
+                if (descriptorPool.Handle == 0)
+                    continue;
+
+                RetireDescriptorPool(descriptorPool);
+                resources.DescriptorPools[poolIndex] = default;
+                if (poolIndex < resources.DescriptorPoolSignatures.Count)
+                    resources.DescriptorPoolSignatures[poolIndex] = 0;
+                poolCount++;
+            }
+
+            resources.ActiveDescriptorPool = default;
+            resources.ActiveDescriptorPoolSignature = 0;
+            resources.DescriptorPoolsInitialized = false;
+            resources.DescriptorPools.Clear();
+            resources.DescriptorPoolSignatures.Clear();
+
+            foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in resources.UniformBuffers)
+                DestroyBuffer(buffer, memory);
+
+            resources.UniformBuffers.Clear();
             return poolCount;
         }
 
@@ -1411,6 +1466,21 @@ namespace XREngine.Rendering.Vulkan
                     throw new Exception("Failed to allocate dynamic UI text secondary command buffers.");
             }
 
+            _imguiOverlayCommandBuffers = new CommandBuffer[_commandBuffers.Length];
+            CommandBufferAllocateInfo imguiOverlayAllocInfo = new()
+            {
+                SType = StructureType.CommandBufferAllocateInfo,
+                CommandPool = commandPool,
+                Level = CommandBufferLevel.Primary,
+                CommandBufferCount = (uint)_imguiOverlayCommandBuffers.Length,
+            };
+
+            fixed (CommandBuffer* commandBuffersPtr = _imguiOverlayCommandBuffers)
+            {
+                if (Api!.AllocateCommandBuffers(device, ref imguiOverlayAllocInfo, commandBuffersPtr) != Result.Success)
+                    throw new Exception("Failed to allocate ImGui overlay command buffers.");
+            }
+
             InitializeCommandBufferVariants();
             AllocateCommandBufferDirtyFlags();
             _computeTransientResources = new ComputeTransientResources[_commandBuffers.Length];
@@ -1422,7 +1492,9 @@ namespace XREngine.Rendering.Vulkan
         {
             if (_commandBuffers is null ||
                 _dynamicUiBatchTextSecondaryCommandBuffers is null ||
-                _commandBuffers.Length != _dynamicUiBatchTextSecondaryCommandBuffers.Length)
+                _imguiOverlayCommandBuffers is null ||
+                _commandBuffers.Length != _dynamicUiBatchTextSecondaryCommandBuffers.Length ||
+                _commandBuffers.Length != _imguiOverlayCommandBuffers.Length)
             {
                 _commandBufferVariants = null;
                 _activeCommandBuffers = null;
@@ -1436,6 +1508,7 @@ namespace XREngine.Rendering.Vulkan
                 uint imageIndex = unchecked((uint)i);
                 RegisterCommandBufferImageIndex(_commandBuffers[i], imageIndex);
                 RegisterCommandBufferImageIndex(_dynamicUiBatchTextSecondaryCommandBuffers[i], imageIndex);
+                RegisterCommandBufferImageIndex(_imguiOverlayCommandBuffers[i], imageIndex);
                 _activeCommandBuffers[i] = _commandBuffers[i];
                 _commandBufferVariants[i] =
                 [
@@ -1456,7 +1529,9 @@ namespace XREngine.Rendering.Vulkan
             bool needsAllocation =
                 _commandBuffers is null ||
                 _commandBufferDirtyFlags is null ||
+                _imguiOverlayCommandBuffers is null ||
                 _commandBuffers.Length != swapChainFramebuffers.Length ||
+                _imguiOverlayCommandBuffers.Length != swapChainFramebuffers.Length ||
                 _commandBufferDirtyFlags.Length != swapChainFramebuffers.Length;
 
             if (!needsAllocation)
@@ -1532,6 +1607,7 @@ namespace XREngine.Rendering.Vulkan
             evicted.FrameOpsSignature = ulong.MaxValue;
             evicted.DynamicUiSignature = ulong.MaxValue;
             evicted.DynamicUiOpCount = -1;
+            evicted.DynamicUiSecondaryRecorded = false;
             evicted.PlannerRevision = ulong.MaxValue;
             evicted.GpuProfilerActive = false;
             evicted.GpuProfilerFrameSlot = -1;
@@ -1733,21 +1809,34 @@ namespace XREngine.Rendering.Vulkan
                 }
                 else
                 {
+                    bool dynamicUiSecondaryReady;
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
-                        RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, variant, dynamicUiBatchTextOps, dynamicUiBatchTextSignature);
+                        dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
+                            imageIndex,
+                            variant,
+                            dynamicUiBatchTextOps,
+                            dynamicUiBatchTextSignature);
 
-                    StoreFrameOpSignatureDebugParts(variant, ops);
-                    variant.LastUsedFrameId = VulkanFrameCounter;
-                    SetActiveCommandBufferVariant(imageIndex, variant);
-                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
-                        reusedClean: true,
-                        recorded: false,
-                        forcedDirty: false,
-                        frameOpSignatureDirty: false,
-                        plannerDirty: false,
-                        profilerDirty: false,
-                        dirtyReason: null);
-                    return variant.PrimaryCommandBuffer;
+                    if (dynamicUiBatchTextOps.Length > 0 && !dynamicUiSecondaryReady)
+                    {
+                        dirty = true;
+                        dynamicUiDirty = true;
+                    }
+                    else
+                    {
+                        StoreFrameOpSignatureDebugParts(variant, ops);
+                        variant.LastUsedFrameId = VulkanFrameCounter;
+                        SetActiveCommandBufferVariant(imageIndex, variant);
+                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
+                            reusedClean: true,
+                            recorded: false,
+                            forcedDirty: false,
+                            frameOpSignatureDirty: false,
+                            plannerDirty: false,
+                            profilerDirty: false,
+                            dirtyReason: null);
+                        return variant.PrimaryCommandBuffer;
+                    }
                 }
             }
 
@@ -1777,8 +1866,13 @@ namespace XREngine.Rendering.Vulkan
             _isRecordingCommandBuffer = true;
             try
             {
+                bool dynamicUiSecondaryReady;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
-                    RecordDynamicUiBatchTextSecondaryCommandBuffer(imageIndex, variant, dynamicUiBatchTextOps, dynamicUiBatchTextSignature);
+                    dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
+                        imageIndex,
+                        variant,
+                        dynamicUiBatchTextOps,
+                        dynamicUiBatchTextSignature);
 
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordPrimary"))
                     RecordCommandBuffer(
@@ -1786,7 +1880,7 @@ namespace XREngine.Rendering.Vulkan
                         variant.PrimaryCommandBuffer,
                         variant.DynamicUiSecondaryCommandBuffer,
                         ops,
-                        dynamicUiBatchTextOps.Length);
+                        dynamicUiSecondaryReady ? dynamicUiBatchTextOps.Length : 0);
             }
             finally
             {
@@ -2415,9 +2509,46 @@ namespace XREngine.Rendering.Vulkan
         private static bool IsDynamicUiBatchTextSecondaryDirty(
             CommandBufferCacheVariant variant,
             ulong dynamicUiBatchTextSignature)
-            => variant.DynamicUiSignature != dynamicUiBatchTextSignature;
+            => variant.DynamicUiSignature != dynamicUiBatchTextSignature ||
+               (dynamicUiBatchTextSignature != 0 && !variant.DynamicUiSecondaryRecorded);
 
-        private void RecordDynamicUiBatchTextSecondaryCommandBuffer(
+        private static string GetRecordPrimaryFrameOpProfileScopeName(FrameOp op)
+            => op switch
+            {
+                BlitOp => "Vulkan.RecordPrimary.Op.Blit",
+                ClearOp => "Vulkan.RecordPrimary.Op.Clear",
+                TransformFeedbackOp => "Vulkan.RecordPrimary.Op.TransformFeedback",
+                MeshDrawOp => "Vulkan.RecordPrimary.Op.MeshDraw",
+                IndirectDrawOp => "Vulkan.RecordPrimary.Op.IndirectDraw",
+                MeshTaskDispatchIndirectCountOp => "Vulkan.RecordPrimary.Op.MeshTaskDispatch",
+                ComputeDispatchOp => "Vulkan.RecordPrimary.Op.ComputeDispatch",
+                MemoryBarrierOp => "Vulkan.RecordPrimary.Op.MemoryBarrier",
+                DlssUpscaleOp => "Vulkan.RecordPrimary.Op.DlssUpscale",
+                DlssFrameGenerationOp => "Vulkan.RecordPrimary.Op.DlssFrameGeneration",
+                _ => "Vulkan.RecordPrimary.Op.Unknown"
+            };
+
+        private static void EnsureMeshDrawUniformSlotCapacityForRecording(
+            FrameOp[] ops,
+            Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer)
+        {
+            meshDrawSlotsByRenderer.Clear();
+
+            for (int i = 0; i < ops.Length; i++)
+            {
+                if (ops[i] is not MeshDrawOp drawOp)
+                    continue;
+
+                VkMeshRenderer renderer = drawOp.Draw.Renderer;
+                meshDrawSlotsByRenderer.TryGetValue(renderer, out int count);
+                meshDrawSlotsByRenderer[renderer] = count + 1;
+            }
+
+            foreach (KeyValuePair<VkMeshRenderer, int> pair in meshDrawSlotsByRenderer)
+                pair.Key.EnsureUniformDrawSlotCapacity(pair.Value);
+        }
+
+        private bool RecordDynamicUiBatchTextSecondaryCommandBuffer(
             uint imageIndex,
             CommandBufferCacheVariant variant,
             FrameOp[] dynamicUiBatchTextOps,
@@ -2427,17 +2558,20 @@ namespace XREngine.Rendering.Vulkan
             {
                 variant.DynamicUiOpCount = 0;
                 variant.DynamicUiSignature = 0;
-                return;
+                variant.DynamicUiSecondaryRecorded = false;
+                return true;
             }
 
-            if (variant.DynamicUiSignature == dynamicUiBatchTextSignature)
-            {
-                return;
-            }
+            if (variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
+                variant.DynamicUiSecondaryRecorded)
+                return true;
 
             CommandBuffer secondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
             if (secondaryCommandBuffer.Handle == 0)
-                return;
+            {
+                variant.DynamicUiSecondaryRecorded = false;
+                return false;
+            }
 
             bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
                 swapChainImageViews is not null &&
@@ -2500,6 +2634,8 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _dynamicUiMeshDrawSlotsByRendererScratch;
             meshDrawSlotsByRenderer.Clear();
             meshDrawSlotsByRenderer.EnsureCapacity(_dynamicUiMeshDrawSlotCapacityHint);
+            EnsureMeshDrawUniformSlotCapacityForRecording(dynamicUiBatchTextOps, meshDrawSlotsByRenderer);
+            meshDrawSlotsByRenderer.Clear();
             int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
             {
                 meshDrawSlotsByRenderer.TryGetValue(renderer, out int slot);
@@ -2558,8 +2694,10 @@ namespace XREngine.Rendering.Vulkan
 
             variant.DynamicUiOpCount = dynamicUiBatchTextOps.Length;
             variant.DynamicUiSignature = dynamicUiBatchTextSignature;
+            variant.DynamicUiSecondaryRecorded = true;
 
             _dynamicUiMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
+            return true;
         }
 
         private void RecordCommandBuffer(
@@ -2573,26 +2711,29 @@ namespace XREngine.Rendering.Vulkan
             int droppedComputeOps = 0;
             int droppedFrameOps = 0;
             FrameOpFailureSnapshot? firstFailure = null;
-
-            ReleaseDeferredSecondaryCommandBuffers(imageIndex);
-            Api!.ResetCommandBuffer(commandBuffer, 0);
-            CleanupComputeTransientResources(imageIndex);
-
-            CommandBufferBeginInfo beginInfo = new()
-            {
-                SType = StructureType.CommandBufferBeginInfo,
-            };
-
-            if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
-                throw new Exception("Failed to begin recording command buffer.");
-
             int commandBufferImageSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
-            BeginFrameTimingQueries(commandBuffer, commandBufferImageSlot);
-            BeginVulkanGpuProfilerQueries(commandBuffer, commandBufferImageSlot);
 
-            ResetCommandBufferBindState(commandBuffer);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.ResetAndBegin"))
+            {
+                ReleaseDeferredSecondaryCommandBuffers(imageIndex);
+                Api!.ResetCommandBuffer(commandBuffer, 0);
+                CleanupComputeTransientResources(imageIndex);
 
-            CmdBeginLabel(commandBuffer, $"FrameCmd[{imageIndex}]");
+                CommandBufferBeginInfo beginInfo = new()
+                {
+                    SType = StructureType.CommandBufferBeginInfo,
+                };
+
+                if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
+                    throw new Exception("Failed to begin recording command buffer.");
+
+                BeginFrameTimingQueries(commandBuffer, commandBufferImageSlot);
+                BeginVulkanGpuProfilerQueries(commandBuffer, commandBufferImageSlot);
+
+                ResetCommandBufferBindState(commandBuffer);
+
+                CmdBeginLabel(commandBuffer, $"FrameCmd[{imageIndex}]");
+            }
 
             // Global pending barriers are deferred until the first pass boundary to
             // maintain pass-scoped ordering.  Any remaining global mask is emitted
@@ -2608,38 +2749,44 @@ namespace XREngine.Rendering.Vulkan
             // EndActiveRenderPass + BeginRenderPassForTarget cycles that can lose
             // composited content (e.g. the skybox turns black).  FBO-targeting ops
             // keep their original context for correct barrier/resource planning.
-            VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
-
-            // Always sort frame ops by (PassOrder, GroupOrder, OriginalIndex).
-            // Render graph pass order preserves producer/consumer dependencies
-            // across pipeline/viewport contexts, while GroupOrder keeps same-pass
-            // operations grouped by their original context order.
-            ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
-
-            IReadOnlyList<VulkanRenderGraphCompiler.SecondaryRecordingBucket> secondaryBuckets =
-                _renderGraphCompiler.BuildSecondaryRecordingBuckets(ops);
+            IReadOnlyList<VulkanRenderGraphCompiler.SecondaryRecordingBucket> secondaryBuckets;
             Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket>? secondaryBucketByStart = null;
-            if (secondaryBuckets.Count > 8)
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.SortAndSecondaryBuckets"))
             {
-                secondaryBucketByStart = _secondaryBucketByStartScratch;
-                secondaryBucketByStart.Clear();
-                secondaryBucketByStart.EnsureCapacity(Math.Max(_secondaryBucketByStartCapacityHint, secondaryBuckets.Count));
-                foreach (VulkanRenderGraphCompiler.SecondaryRecordingBucket bucket in secondaryBuckets)
-                    secondaryBucketByStart[bucket.StartIndex] = bucket;
-                _secondaryBucketByStartCapacityHint = Math.Max(1, secondaryBucketByStart.Count);
+                VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
+
+                // Always sort frame ops by (PassOrder, GroupOrder, OriginalIndex).
+                // Render graph pass order preserves producer/consumer dependencies
+                // across pipeline/viewport contexts, while GroupOrder keeps same-pass
+                // operations grouped by their original context order.
+                ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+
+                secondaryBuckets = _renderGraphCompiler.BuildSecondaryRecordingBuckets(ops);
+                if (secondaryBuckets.Count > 8)
+                {
+                    secondaryBucketByStart = _secondaryBucketByStartScratch;
+                    secondaryBucketByStart.Clear();
+                    secondaryBucketByStart.EnsureCapacity(Math.Max(_secondaryBucketByStartCapacityHint, secondaryBuckets.Count));
+                    foreach (VulkanRenderGraphCompiler.SecondaryRecordingBucket bucket in secondaryBuckets)
+                        secondaryBucketByStart[bucket.StartIndex] = bucket;
+                    _secondaryBucketByStartCapacityHint = Math.Max(1, secondaryBucketByStart.Count);
+                }
             }
 
             // Ensure swapchain resources are transitioned appropriately before any rendering.
-            CmdBeginLabel(commandBuffer, "SwapchainBarriers");
-            var swapchainImageBarriers = _barrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
-            var swapchainBufferBarriers = _barrierPlanner.GetBufferBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
-            EmitPlannedImageBarriers(commandBuffer, swapchainImageBarriers);
-            EmitPlannedBufferBarriers(commandBuffer, swapchainBufferBarriers);
-            CmdEndLabel(commandBuffer);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.FrameStartBarriers"))
+            {
+                CmdBeginLabel(commandBuffer, "SwapchainBarriers");
+                var swapchainImageBarriers = _barrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                var swapchainBufferBarriers = _barrierPlanner.GetBufferBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                EmitPlannedImageBarriers(commandBuffer, swapchainImageBarriers);
+                EmitPlannedBufferBarriers(commandBuffer, swapchainBufferBarriers);
+                CmdEndLabel(commandBuffer);
 
-            // Transition any freshly-allocated physical images from UNDEFINED to
-            // a safe initial layout so that render passes never see UNDEFINED.
-            EmitInitialImageBarriersForUnknownPass(commandBuffer);
+                // Transition any freshly-allocated physical images from UNDEFINED to
+                // a safe initial layout so that render passes never see UNDEFINED.
+                EmitInitialImageBarriersForUnknownPass(commandBuffer);
+            }
 
             int clearCount = 0;
             int drawCount = 0;
@@ -2671,25 +2818,30 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<int, int> swapchainWriterOpIndexByPipeline = _swapchainWriterOpIndexByPipelineScratch;
             Dictionary<int, string> pipelineNameByIdentity = _pipelineNameByIdentityScratch;
             Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _recordMeshDrawSlotsByRendererScratch;
-            swapchainWritesByPipeline.Clear();
-            swapchainWriterLabelByPipeline.Clear();
-            swapchainWriterDetailByPipeline.Clear();
-            swapchainWriterOpByPipeline.Clear();
-            swapchainWriterDynamicUiDrawCountByPipeline.Clear();
-            swapchainWriterPassByPipeline.Clear();
-            swapchainWriterOpIndexByPipeline.Clear();
-            pipelineNameByIdentity.Clear();
-            meshDrawSlotsByRenderer.Clear();
-            int writerCapacityHint = Math.Max(1, _recordSwapchainWriterCapacityHint);
-            swapchainWritesByPipeline.EnsureCapacity(writerCapacityHint);
-            swapchainWriterLabelByPipeline.EnsureCapacity(writerCapacityHint);
-            swapchainWriterDetailByPipeline.EnsureCapacity(writerCapacityHint);
-            swapchainWriterOpByPipeline.EnsureCapacity(writerCapacityHint);
-            swapchainWriterDynamicUiDrawCountByPipeline.EnsureCapacity(writerCapacityHint);
-            swapchainWriterPassByPipeline.EnsureCapacity(writerCapacityHint);
-            swapchainWriterOpIndexByPipeline.EnsureCapacity(writerCapacityHint);
-            pipelineNameByIdentity.EnsureCapacity(Math.Max(1, _recordPipelineNameCapacityHint));
-            meshDrawSlotsByRenderer.EnsureCapacity(Math.Max(1, _recordMeshDrawSlotCapacityHint));
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.ScratchAndUniformSlots"))
+            {
+                swapchainWritesByPipeline.Clear();
+                swapchainWriterLabelByPipeline.Clear();
+                swapchainWriterDetailByPipeline.Clear();
+                swapchainWriterOpByPipeline.Clear();
+                swapchainWriterDynamicUiDrawCountByPipeline.Clear();
+                swapchainWriterPassByPipeline.Clear();
+                swapchainWriterOpIndexByPipeline.Clear();
+                pipelineNameByIdentity.Clear();
+                meshDrawSlotsByRenderer.Clear();
+                int writerCapacityHint = Math.Max(1, _recordSwapchainWriterCapacityHint);
+                swapchainWritesByPipeline.EnsureCapacity(writerCapacityHint);
+                swapchainWriterLabelByPipeline.EnsureCapacity(writerCapacityHint);
+                swapchainWriterDetailByPipeline.EnsureCapacity(writerCapacityHint);
+                swapchainWriterOpByPipeline.EnsureCapacity(writerCapacityHint);
+                swapchainWriterDynamicUiDrawCountByPipeline.EnsureCapacity(writerCapacityHint);
+                swapchainWriterPassByPipeline.EnsureCapacity(writerCapacityHint);
+                swapchainWriterOpIndexByPipeline.EnsureCapacity(writerCapacityHint);
+                pipelineNameByIdentity.EnsureCapacity(Math.Max(1, _recordPipelineNameCapacityHint));
+                meshDrawSlotsByRenderer.EnsureCapacity(Math.Max(1, _recordMeshDrawSlotCapacityHint));
+                EnsureMeshDrawUniformSlotCapacityForRecording(ops, meshDrawSlotsByRenderer);
+                meshDrawSlotsByRenderer.Clear();
+            }
 
             void RememberPipelineName(in FrameOpContext context)
             {
@@ -2802,108 +2954,112 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            int opScanIndex = 0;
-            foreach (var op in ops)
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.OpCensus"))
             {
-                switch (op)
+                int opScanIndex = 0;
+                foreach (var op in ops)
                 {
-                    case ClearOp clear:
-                        RememberPipelineName(clear.Context);
-                        clearCount++;
-                        if (clear.Target is null && (clear.ClearColor || clear.ClearDepth || clear.ClearStencil))
-                        {
-                            swapchainWriteCount++;
-                            swapchainClearWrites++;
-                            MarkSwapchainFrameOpWriter(nameof(ClearOp), clear, clear.PassIndex, opScanIndex, clear.Context.PipelineIdentity);
-                        }
-                        break;
-                    case MeshDrawOp meshDraw:
-                        RememberPipelineName(meshDraw.Context);
-                        drawCount++;
-                        meshDrawCount++;
-                        if (meshDraw.Target is null)
-                        {
+                    switch (op)
+                    {
+                        case ClearOp clear:
+                            RememberPipelineName(clear.Context);
+                            clearCount++;
+                            if (clear.Target is null && (clear.ClearColor || clear.ClearDepth || clear.ClearStencil))
+                            {
+                                swapchainWriteCount++;
+                                swapchainClearWrites++;
+                                MarkSwapchainFrameOpWriter(nameof(ClearOp), clear, clear.PassIndex, opScanIndex, clear.Context.PipelineIdentity);
+                            }
+                            break;
+                        case MeshDrawOp meshDraw:
+                            RememberPipelineName(meshDraw.Context);
+                            drawCount++;
+                            meshDrawCount++;
+                            if (meshDraw.Target is null)
+                            {
+                                swapchainWriteCount++;
+                                swapchainDrawWrites++;
+                                MarkSwapchainFrameOpWriter(nameof(MeshDrawOp), meshDraw, meshDraw.PassIndex, opScanIndex, meshDraw.Context.PipelineIdentity);
+                            }
+                            else
+                            {
+                                fboOnlyDrawOps++;
+                            }
+                            break;
+                        case IndirectDrawOp indirectDraw:
+                            RememberPipelineName(indirectDraw.Context);
+                            drawCount++;
+                            indirectDrawCount++;
                             swapchainWriteCount++;
                             swapchainDrawWrites++;
-                            MarkSwapchainFrameOpWriter(nameof(MeshDrawOp), meshDraw, meshDraw.PassIndex, opScanIndex, meshDraw.Context.PipelineIdentity);
-                        }
-                        else
-                        {
-                            fboOnlyDrawOps++;
-                        }
-                        break;
-                    case IndirectDrawOp indirectDraw:
-                        RememberPipelineName(indirectDraw.Context);
-                        drawCount++;
-                        indirectDrawCount++;
-                        swapchainWriteCount++;
-                        swapchainDrawWrites++;
-                        MarkSwapchainFrameOpWriter(nameof(IndirectDrawOp), indirectDraw, indirectDraw.PassIndex, opScanIndex, indirectDraw.Context.PipelineIdentity);
-                        break;
-                    case MeshTaskDispatchIndirectCountOp meshTaskDispatch:
-                        RememberPipelineName(meshTaskDispatch.Context);
-                        drawCount++;
-                        meshTaskDispatchCount++;
-                        swapchainWriteCount++;
-                        swapchainDrawWrites++;
-                        MarkSwapchainFrameOpWriter(nameof(MeshTaskDispatchIndirectCountOp), meshTaskDispatch, meshTaskDispatch.PassIndex, opScanIndex, meshTaskDispatch.Context.PipelineIdentity);
-                        break;
-                    case BlitOp blit:
-                        RememberPipelineName(blit.Context);
-                        blitCount++;
-                        if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
-                        {
+                            MarkSwapchainFrameOpWriter(nameof(IndirectDrawOp), indirectDraw, indirectDraw.PassIndex, opScanIndex, indirectDraw.Context.PipelineIdentity);
+                            break;
+                        case MeshTaskDispatchIndirectCountOp meshTaskDispatch:
+                            RememberPipelineName(meshTaskDispatch.Context);
+                            drawCount++;
+                            meshTaskDispatchCount++;
                             swapchainWriteCount++;
-                            swapchainBlitWrites++;
-                            MarkSwapchainFrameOpWriter(nameof(BlitOp), blit, blit.PassIndex, opScanIndex, blit.Context.PipelineIdentity);
-                        }
-                        else
-                        {
-                            fboOnlyBlitOps++;
-                        }
-                        break;
-                    case ComputeDispatchOp: computeCount++; break;
-                    case DlssUpscaleOp: computeCount++; break;
-                    case DlssFrameGenerationOp: computeCount++; break;
+                            swapchainDrawWrites++;
+                            MarkSwapchainFrameOpWriter(nameof(MeshTaskDispatchIndirectCountOp), meshTaskDispatch, meshTaskDispatch.PassIndex, opScanIndex, meshTaskDispatch.Context.PipelineIdentity);
+                            break;
+                        case BlitOp blit:
+                            RememberPipelineName(blit.Context);
+                            blitCount++;
+                            if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
+                            {
+                                swapchainWriteCount++;
+                                swapchainBlitWrites++;
+                                MarkSwapchainFrameOpWriter(nameof(BlitOp), blit, blit.PassIndex, opScanIndex, blit.Context.PipelineIdentity);
+                            }
+                            else
+                            {
+                                fboOnlyBlitOps++;
+                            }
+                            break;
+                        case ComputeDispatchOp: computeCount++; break;
+                        case DlssUpscaleOp: computeCount++; break;
+                        case DlssFrameGenerationOp: computeCount++; break;
+                    }
+
+                    opScanIndex++;
                 }
 
-                opScanIndex++;
+                sceneSwapchainWriters = swapchainWriteCount;
+                RecordVulkanFrameOpCensus(
+                    ops,
+                    clearCount,
+                    meshDrawCount,
+                    indirectDrawCount,
+                    meshTaskDispatchCount,
+                    blitCount,
+                    computeCount,
+                    swapchainWriteCount,
+                    fboOnlyDrawOps + fboOnlyBlitOps);
+
+                Debug.VulkanEvery(
+                    $"Vulkan.FrameOps.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3} computes={4} swapchainWrites={5} (C{6}/D{7}/B{8}) VkReq={9} VkCull={10} VkEmit={11} VkConsume={12} GpuVisible(O/M/A/E)={13}/{14}/{15}/{16}",
+                    ops.Length,
+                    clearCount,
+                    drawCount,
+                    blitCount,
+                    computeCount,
+                    swapchainWriteCount,
+                    swapchainClearWrites,
+                    swapchainDrawWrites,
+                    swapchainBlitWrites,
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRequestedDraws,
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanCulledDraws,
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanEmittedIndirectDraws,
+                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanConsumedDraws,
+                    RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyOpaqueOrOtherVisible,
+                    RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyMaskedVisible,
+                    RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyApproximateVisible,
+                    RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyExactVisible);
+
+                LogSwapchainWritersByPipeline("PreOverlay");
             }
-            sceneSwapchainWriters = swapchainWriteCount;
-            RecordVulkanFrameOpCensus(
-                ops,
-                clearCount,
-                meshDrawCount,
-                indirectDrawCount,
-                meshTaskDispatchCount,
-                blitCount,
-                computeCount,
-                swapchainWriteCount,
-                fboOnlyDrawOps + fboOnlyBlitOps);
-
-            Debug.VulkanEvery(
-                $"Vulkan.FrameOps.{GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3} computes={4} swapchainWrites={5} (C{6}/D{7}/B{8}) VkReq={9} VkCull={10} VkEmit={11} VkConsume={12} GpuVisible(O/M/A/E)={13}/{14}/{15}/{16}",
-                ops.Length,
-                clearCount,
-                drawCount,
-                blitCount,
-                computeCount,
-                swapchainWriteCount,
-                swapchainClearWrites,
-                swapchainDrawWrites,
-                swapchainBlitWrites,
-                RuntimeEngine.Rendering.Stats.Vulkan.VulkanRequestedDraws,
-                RuntimeEngine.Rendering.Stats.Vulkan.VulkanCulledDraws,
-                RuntimeEngine.Rendering.Stats.Vulkan.VulkanEmittedIndirectDraws,
-                RuntimeEngine.Rendering.Stats.Vulkan.VulkanConsumedDraws,
-                RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyOpaqueOrOtherVisible,
-                RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyMaskedVisible,
-                RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyApproximateVisible,
-                RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyExactVisible);
-
-            LogSwapchainWritersByPipeline("PreOverlay");
 
             bool renderPassActive = false;
             bool activeDynamicRendering = false;
@@ -3321,16 +3477,19 @@ namespace XREngine.Rendering.Vulkan
 
                 if (UseDynamicRenderingRenderTargets)
                 {
-                    Debug.VulkanEvery(
-                        $"Vulkan.BeginRendering.FBO.{fboName}.{fboSignature.Length}",
-                        TimeSpan.FromSeconds(2),
-                        "[Vulkan] BeginRendering FBO='{0}' pass={1} attachments={2} fbDims={3}x{4} trackedLayouts={5}",
-                        fboName,
-                        passIndex,
-                        fboSignature.Length,
-                        vkFrameBuffer.FramebufferWidth,
-                        vkFrameBuffer.FramebufferHeight,
-                        trackedLayouts is not null ? string.Join(",", trackedLayouts) : "null");
+                    if (CommandRecordingDiagnosticsEnabled)
+                    {
+                        Debug.VulkanEvery(
+                            $"Vulkan.BeginRendering.FBO.{fboName}.{fboSignature.Length}",
+                            TimeSpan.FromSeconds(2),
+                            "[Vulkan] BeginRendering FBO='{0}' pass={1} attachments={2} fbDims={3}x{4} trackedLayouts={5}",
+                            fboName,
+                            passIndex,
+                            fboSignature.Length,
+                            vkFrameBuffer.FramebufferWidth,
+                            vkFrameBuffer.FramebufferHeight,
+                            trackedLayouts is not null ? string.Join(",", trackedLayouts) : "null");
+                    }
 
                     TransitionFboAttachmentsForDynamicRendering(
                         commandBuffer,
@@ -3464,6 +3623,9 @@ namespace XREngine.Rendering.Vulkan
 
             void ExecuteDynamicUiBatchTextOverlay()
             {
+                if (dynamicUiBatchTextOpCount <= 0)
+                    return;
+
                 CommandBuffer secondaryCommandBuffer = dynamicUiBatchTextSecondaryCommandBuffer;
                 if (secondaryCommandBuffer.Handle == 0)
                     return;
@@ -3624,18 +3786,15 @@ namespace XREngine.Rendering.Vulkan
                         swapchainClearedThisFrame = true;
                     }
 
-                    if (dynamicUiBatchTextOpCount > 0)
-                    {
-                        swapchainWriteCount++;
-                        swapchainDrawWrites++;
-                        overlaySwapchainWriters++;
-                        MarkSwapchainDynamicUiWriter(
-                            "DynamicUIBatchText",
-                            dynamicUiBatchTextOpCount,
-                            activePassIndex != int.MinValue ? activePassIndex : VulkanBarrierPlanner.SwapchainPassIndex,
-                            ops.Length,
-                            hasActiveContext ? activeContext.PipelineIdentity : initialContext.PipelineIdentity);
-                    }
+                    swapchainWriteCount++;
+                    swapchainDrawWrites++;
+                    overlaySwapchainWriters++;
+                    MarkSwapchainDynamicUiWriter(
+                        "DynamicUIBatchText",
+                        dynamicUiBatchTextOpCount,
+                        activePassIndex != int.MinValue ? activePassIndex : VulkanBarrierPlanner.SwapchainPassIndex,
+                        ops.Length,
+                        hasActiveContext ? activeContext.PipelineIdentity : initialContext.PipelineIdentity);
                 }
                 finally
                 {
@@ -3749,20 +3908,25 @@ namespace XREngine.Rendering.Vulkan
                         queueOwnershipTransfers: queueOwnershipTransfers,
                         stageFlushes: stageFlushes);
 
-                    Debug.VulkanEvery(
-                        $"Vulkan.PassBarrierSummary.{passIndex}",
-                        TimeSpan.FromSeconds(2),
-                        "Pass barrier summary: pass={0} image={1} buffer={2} queueTransfers={3} stageFlushes={4}",
-                        passIndex,
-                        imageBarriers.Count,
-                        bufferBarriers.Count,
-                        queueOwnershipTransfers,
-                        stageFlushes);
+                    if (CommandRecordingDiagnosticsEnabled)
+                    {
+                        Debug.VulkanEvery(
+                            $"Vulkan.PassBarrierSummary.{passIndex}",
+                            TimeSpan.FromSeconds(2),
+                            "Pass barrier summary: pass={0} image={1} buffer={2} queueTransfers={3} stageFlushes={4}",
+                            passIndex,
+                            imageBarriers.Count,
+                            bufferBarriers.Count,
+                            queueOwnershipTransfers,
+                            stageFlushes);
+                    }
                 }
             }
 
             try
             {
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.MainOpLoop"))
+                {
                 for (int opIndex = 0; opIndex < ops.Length; opIndex++)
                 {
                     var op = ops[opIndex];
@@ -3770,6 +3934,11 @@ namespace XREngine.Rendering.Vulkan
                     {
                         if (!hasActiveContext || !Equals(activeContext, op.Context))
                         {
+                            IDisposable? contextChangeProfileScope = null;
+                            if (CommandRecordingDetailProfilingEnabled)
+                                contextChangeProfileScope = RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.ContextChange");
+                            try
+                            {
                             // When the context changes but both the active render pass and the
                             // incoming op target the swapchain (target == null), keep the render
                             // pass alive.  Ending and re-beginning the swapchain render pass
@@ -3818,6 +3987,11 @@ namespace XREngine.Rendering.Vulkan
 
                             activePassIndex = int.MinValue;
                             activeSchedulingIdentity = int.MinValue;
+                            }
+                            finally
+                            {
+                                contextChangeProfileScope?.Dispose();
+                            }
                         }
 
                         int opPassIndex = op.PassIndex == int.MinValue && activePassIndex != int.MinValue
@@ -3892,6 +4066,11 @@ namespace XREngine.Rendering.Vulkan
                         int opSchedulingIdentity = op.Context.SchedulingIdentity;
                         if (opPassIndex != activePassIndex || opSchedulingIdentity != activeSchedulingIdentity)
                         {
+                            IDisposable? passTransitionProfileScope = null;
+                            if (CommandRecordingDetailProfilingEnabled)
+                                passTransitionProfileScope = RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.PassTransition");
+                            try
+                            {
                             // Barriers are safest outside render passes.
                             EndActiveRenderPass();
 
@@ -3909,10 +4088,20 @@ namespace XREngine.Rendering.Vulkan
                             EmitPassBarriers(opPassIndex);
                             activePassIndex = opPassIndex;
                             activeSchedulingIdentity = opSchedulingIdentity;
+                            }
+                            finally
+                            {
+                                passTransitionProfileScope?.Dispose();
+                            }
                         }
 
                         using var vulkanGpuScope = TryBeginVulkanGpuProfilerScope(commandBuffer, op, opPassIndex);
 
+                        IDisposable? frameOpProfileScope = null;
+                        if (CommandRecordingDetailProfilingEnabled)
+                            frameOpProfileScope = RuntimeRenderingHostServices.Current.StartProfileScope(GetRecordPrimaryFrameOpProfileScopeName(op));
+                        try
+                        {
                         switch (op)
                         {
                     case BlitOp blit:
@@ -3925,7 +4114,7 @@ namespace XREngine.Rendering.Vulkan
                         break;
 
                     case ClearOp clear:
-                        if (clear.Target?.Name == "ForwardPassFBO")
+                        if (CommandRecordingDiagnosticsEnabled && clear.Target?.Name == "ForwardPassFBO")
                         {
                             Debug.VulkanEvery(
                                 "Vulkan.FwdClear",
@@ -4013,7 +4202,7 @@ namespace XREngine.Rendering.Vulkan
                             Api!.CmdSetScissor(commandBuffer, 0, 1, &scissor);
                         }
 
-                        if (drawOp.Target?.Name == "ForwardPassFBO")
+                        if (CommandRecordingDiagnosticsEnabled && drawOp.Target?.Name == "ForwardPassFBO")
                         {
                             Debug.VulkanEvery(
                                 "Vulkan.FwdDraw." + opPassIndex,
@@ -4111,6 +4300,11 @@ namespace XREngine.Rendering.Vulkan
                         CmdEndLabel(commandBuffer);
                         break;
                         }
+                        }
+                        finally
+                        {
+                            frameOpProfileScope?.Dispose();
+                        }
                     }
                     catch (Exception opEx)
                     {
@@ -4147,6 +4341,10 @@ namespace XREngine.Rendering.Vulkan
                     }
                 }
 
+                }
+
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.FinalOverlayAndDiagnostics"))
+                {
                 if (passIndexLabelActive)
                 {
                     CmdEndLabel(commandBuffer);
@@ -4241,31 +4439,6 @@ namespace XREngine.Rendering.Vulkan
                         "[Vulkan] Forced magenta swapchain clear due to XRE_FORCE_SWAPCHAIN_MAGENTA=1.");
                 }
 
-                bool skipImGui = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipImGui;
-
-                if (SupportsImGui && !skipImGui)
-                {
-                    using var imguiGpuScope = TryBeginVulkanGpuProfilerScope(
-                        commandBuffer,
-                        hasActiveContext ? activeContext : initialContext,
-                        activePassIndex != int.MinValue ? activePassIndex : VulkanBarrierPlanner.SwapchainPassIndex,
-                        "ImGui");
-                    CmdBeginLabel(commandBuffer, "ImGui");
-                    RenderImGui(commandBuffer, imageIndex);
-                    CmdEndLabel(commandBuffer);
-                    swapchainWriteCount++;
-                    overlaySwapchainWriters++;
-                    MarkSwapchainStaticWriter("ImGui", "overlay draw", activePassIndex, ops.Length, hasActiveContext ? activeContext.PipelineIdentity : 0);
-                    LogSwapchainWritersByPipeline("PostOverlay");
-                }
-                else if (SupportsImGui && skipImGui)
-                {
-                    Debug.VulkanEvery(
-                        $"Vulkan.SkipImGui.{GetHashCode()}",
-                        TimeSpan.FromSeconds(1),
-                        "[Vulkan] Skipping ImGui overlay due to XRE_SKIP_IMGUI=1.");
-                }
-
                 bool needsFrameDiagnosticSummary = droppedFrameOps > 0 || missingSceneSwapchainWriters;
                 bool shouldUpdateOnScreenDiagnostic =
                     needsFrameDiagnosticSummary ||
@@ -4347,9 +4520,13 @@ namespace XREngine.Rendering.Vulkan
                 EndFrameTimingQueries(commandBuffer, commandBufferImageSlot);
 
                 CmdEndLabel(commandBuffer);
+                }
 
-                if (Api!.EndCommandBuffer(commandBuffer) != Result.Success)
-                    throw new Exception("Failed to record command buffer.");
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.EndCommandBuffer"))
+                {
+                    if (Api!.EndCommandBuffer(commandBuffer) != Result.Success)
+                        throw new Exception("Failed to record command buffer.");
+                }
             }
             finally
             {
@@ -5366,8 +5543,12 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < barrierCapacity; i++)
             {
                 FrameBufferAttachmentSignature signature = signatures[i];
-                ImageLayout requestedOldLayout = beginRendering ? signature.InitialLayout : signature.ReferenceLayout;
-                ImageLayout newLayout = beginRendering ? signature.ReferenceLayout : signature.FinalLayout;
+                ImageLayout requestedOldLayout = NormalizeFboAttachmentLayout(
+                    signature,
+                    beginRendering ? signature.InitialLayout : signature.ReferenceLayout);
+                ImageLayout newLayout = NormalizeFboAttachmentLayout(
+                    signature,
+                    beginRendering ? signature.ReferenceLayout : signature.FinalLayout);
                 if (newLayout == ImageLayout.Undefined)
                     continue;
 
@@ -5388,7 +5569,9 @@ namespace XREngine.Rendering.Vulkan
                     continue;
                 }
 
-                ImageLayout oldLayout = ResolveLiveBlitOldLayout(info, requestedOldLayout);
+                ImageLayout oldLayout = NormalizeFboAttachmentLayout(
+                    signature,
+                    ResolveLiveBlitOldLayout(info, requestedOldLayout));
                 if (oldLayout == newLayout)
                     continue;
 
@@ -5470,6 +5653,37 @@ namespace XREngine.Rendering.Vulkan
                 null,
                 barrierCount,
                 barriers);
+        }
+
+        private static ImageLayout NormalizeFboAttachmentLayout(FrameBufferAttachmentSignature signature, ImageLayout layout)
+        {
+            if (layout == ImageLayout.Undefined || layout == ImageLayout.General ||
+                layout == ImageLayout.TransferSrcOptimal || layout == ImageLayout.TransferDstOptimal ||
+                layout == ImageLayout.PresentSrcKhr)
+            {
+                return layout;
+            }
+
+            bool isDepthStencil = signature.Role is AttachmentRole.Depth or AttachmentRole.Stencil or AttachmentRole.DepthStencil ||
+                IsDepthOrStencilFormat(signature.Format) ||
+                (signature.AspectMask & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0;
+            if (!isDepthStencil)
+            {
+                return layout switch
+                {
+                    ImageLayout.DepthStencilAttachmentOptimal => ImageLayout.ColorAttachmentOptimal,
+                    ImageLayout.DepthStencilReadOnlyOptimal or ImageLayout.DepthReadOnlyOptimal or ImageLayout.StencilReadOnlyOptimal =>
+                        ImageLayout.ShaderReadOnlyOptimal,
+                    _ => layout
+                };
+            }
+
+            return layout switch
+            {
+                ImageLayout.ColorAttachmentOptimal => ImageLayout.DepthStencilAttachmentOptimal,
+                ImageLayout.ShaderReadOnlyOptimal => ImageLayout.DepthStencilReadOnlyOptimal,
+                _ => layout
+            };
         }
 
         private static PipelineStageFlags ResolveFboAttachmentStage(
@@ -5760,15 +5974,18 @@ namespace XREngine.Rendering.Vulkan
                 if (groupLayout != ImageLayout.Undefined &&
                     groupLayout != effectiveOldLayout)
                 {
-                    Debug.VulkanEvery(
-                        $"Vulkan.Barrier.OldLayout.Reconciled.{planned.ResourceName}.{planned.PassIndex}",
-                        TimeSpan.FromSeconds(2),
-                        "[Vulkan] Reconciled planned oldLayout for '{0}' pass={1}: planned={2} tracked={3} next={4}.",
-                        planned.ResourceName,
-                        planned.PassIndex,
-                        effectiveOldLayout,
-                        groupLayout,
-                        planned.Next.Layout);
+                    if (CommandRecordingDiagnosticsEnabled)
+                    {
+                        Debug.VulkanEvery(
+                            $"Vulkan.Barrier.OldLayout.Reconciled.{planned.ResourceName}.{planned.PassIndex}",
+                            TimeSpan.FromSeconds(2),
+                            "[Vulkan] Reconciled planned oldLayout for '{0}' pass={1}: planned={2} tracked={3} next={4}.",
+                            planned.ResourceName,
+                            planned.PassIndex,
+                            effectiveOldLayout,
+                            groupLayout,
+                            planned.Next.Layout);
+                    }
                     effectiveOldLayout = groupLayout;
                 }
 

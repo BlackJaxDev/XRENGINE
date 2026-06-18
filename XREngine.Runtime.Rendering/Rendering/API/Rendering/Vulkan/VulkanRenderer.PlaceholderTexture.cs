@@ -216,6 +216,7 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
+        RegisterLiveSampler(_placeholderSampler);
         _placeholderTextureReady = true;
     }
 
@@ -345,6 +346,7 @@ public unsafe partial class VulkanRenderer
 
         if (_placeholderSampler.Handle != 0)
         {
+            UnregisterLiveSampler(_placeholderSampler);
             Api!.DestroySampler(device, _placeholderSampler, null);
             _placeholderSampler = default;
         }

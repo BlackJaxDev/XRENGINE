@@ -116,9 +116,9 @@ public static class VulkanFeatureProfile
     private static bool ProfileAllowsImGui
         => ActiveProfile switch
         {
-            EVulkanGpuDrivenProfile.ShippingFast => false,
-            EVulkanGpuDrivenProfile.DevParity => false,
-            EVulkanGpuDrivenProfile.Diagnostics => false,
+            EVulkanGpuDrivenProfile.ShippingFast => true,
+            EVulkanGpuDrivenProfile.DevParity => true,
+            EVulkanGpuDrivenProfile.Diagnostics => true,
             _ => false,
         };
 
@@ -307,8 +307,7 @@ public static class VulkanFeatureProfile
         => ResolveGpuBvhPreference(true);
 
     /// <summary>
-    /// ImGui rendering through the Vulkan pipeline.  Currently disabled on Vulkan
-    /// (<c>SupportsImGui == false</c>).
+    /// ImGui rendering through the Vulkan pipeline.
     /// </summary>
     public static bool EnableImGui
         => ResolveImGuiPreference(true);

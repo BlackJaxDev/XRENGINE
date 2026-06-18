@@ -1668,6 +1668,8 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.CreateSampler(Device, ref samplerInfo, null, out _sampler) != Result.Success)
                 throw new Exception("Failed to create sampler.");
+
+            Renderer.RegisterLiveSampler(_sampler);
         }
 
         private (float minLod, float maxLod) ResolveSamplerLodRange()
@@ -2185,6 +2187,9 @@ public unsafe partial class VulkanRenderer
             if (Renderer.IsDeviceLost)
                 return;
 
+            if (Data is XRTexture2D { RuntimeManagedProgressiveUploadActive: true })
+                return;
+
             PushTextureData();
             if (IsGenerated)
                 MarkUploaded();
@@ -2523,7 +2528,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            bool preferIndirectCopy = Renderer.SupportsNvCopyMemoryIndirect && Renderer.SupportsBufferDeviceAddress;
+            bool preferIndirectCopy = Renderer.CanUseNvIndirectBufferCopyUploads;
             BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit;
             if (preferIndirectCopy)
                 usage |= BufferUsageFlags.ShaderDeviceAddressBit;
@@ -2566,7 +2571,7 @@ public unsafe partial class VulkanRenderer
             if (string.IsNullOrWhiteSpace(filePath) || length <= 0)
                 return false;
 
-            bool preferIndirectCopy = Renderer.SupportsNvCopyMemoryIndirect && Renderer.SupportsBufferDeviceAddress;
+            bool preferIndirectCopy = Renderer.CanUseNvIndirectBufferCopyUploads;
             BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit;
             if (preferIndirectCopy)
                 usage |= BufferUsageFlags.ShaderDeviceAddressBit;

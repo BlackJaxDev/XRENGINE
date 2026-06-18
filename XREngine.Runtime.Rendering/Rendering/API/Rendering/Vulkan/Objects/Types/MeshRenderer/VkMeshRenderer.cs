@@ -912,6 +912,7 @@ public unsafe partial class VulkanRenderer
         private bool _pipelineUsesNativeDepthClipControl;
         private DescriptorPool _descriptorPool;
         private DescriptorSet[][]? _descriptorSets;
+        private readonly Dictionary<DescriptorAllocationKey, DescriptorAllocation> _descriptorAllocations = new();
         private bool _descriptorDirty = true;
         private ulong _descriptorSchemaFingerprint;
         private ulong _descriptorResourceFingerprint;
@@ -947,21 +948,38 @@ public unsafe partial class VulkanRenderer
             public required VkRenderProgram Program { get; init; }
         }
 
+        private readonly record struct DescriptorAllocationKey(
+            ulong SchemaFingerprint,
+            ulong ResourceFingerprint,
+            int DescriptorFrameSlotCount,
+            int SetCount);
+
+        private sealed class DescriptorAllocation
+        {
+            public DescriptorPool Pool;
+            public DescriptorSet[][] Sets = [];
+            public ulong SchemaFingerprint;
+            public ulong ResourceFingerprint;
+            public string ResourceFingerprintDetails = string.Empty;
+        }
+
         private static bool IsStencilCapableFormat(Format format)
             => format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
 
-        private readonly struct EngineUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size)
+        private readonly struct EngineUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size, void* mappedPtr)
         {
             public Silk.NET.Vulkan.Buffer Buffer { get; } = buffer;
             public DeviceMemory Memory { get; } = memory;
             public uint Size { get; } = size;
+            public void* MappedPtr { get; } = mappedPtr;
         }
 
-        private readonly struct AutoUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size)
+        private readonly struct AutoUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size, void* mappedPtr)
         {
             public Silk.NET.Vulkan.Buffer Buffer { get; } = buffer;
             public DeviceMemory Memory { get; } = memory;
             public uint Size { get; } = size;
+            public void* MappedPtr { get; } = mappedPtr;
         }
 
         public XRMeshRenderer MeshRenderer => Data.Parent;

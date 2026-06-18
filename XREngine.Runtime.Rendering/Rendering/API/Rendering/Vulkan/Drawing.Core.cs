@@ -159,8 +159,6 @@ namespace XREngine.Rendering.Vulkan
         private void DrainSkippedResizeFrameOps(string reason)
         {
             FrameOp[] droppedOps = DrainFrameOps(out _);
-            if (droppedOps.Length > 0)
-                MarkCommandBuffersDirty();
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.ResizeSkip",
@@ -168,6 +166,11 @@ namespace XREngine.Rendering.Vulkan
                 "[Vulkan] Skipping frame while resize resources settle. Reason={0} DroppedFrameOps={1}",
                 reason,
                 droppedOps.Length);
+        }
+
+        private void MarkSkippedResizeFrameObserved(long frameStartTimestamp)
+        {
+            _lastFrameCompletedTimestamp = frameStartTimestamp;
         }
 
         private void WaitCurrentFrameSlotAndDrainRetiredResources()
@@ -403,6 +406,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 WaitCurrentFrameSlotAndDrainRetiredResources();
                 DrainSkippedResizeFrameOps("Live surface size is zero");
+                MarkSkippedResizeFrameObserved(frameStartTimestamp);
                 return;
             }
 
@@ -412,6 +416,7 @@ namespace XREngine.Rendering.Vulkan
                 DrainSkippedResizeFrameOps(
                     $"Swapchain resize/recreate pending. Pending={_pendingSurfaceWidth}x{_pendingSurfaceHeight} " +
                     $"Live={liveSurfaceWidth}x{liveSurfaceHeight} Swapchain={swapChainExtent.Width}x{swapChainExtent.Height}");
+                MarkSkippedResizeFrameObserved(frameStartTimestamp);
                 return;
             }
 
@@ -419,6 +424,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 WaitCurrentFrameSlotAndDrainRetiredResources();
                 DrainSkippedResizeFrameOps(resourceMismatchReason);
+                MarkSkippedResizeFrameObserved(frameStartTimestamp);
                 return;
             }
 
@@ -619,9 +625,8 @@ namespace XREngine.Rendering.Vulkan
             }
             resetDynamicUniformRingTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
-            // 5. Record the command buffer
-            // Note: This currently records a default pass (Clear + ImGui). 
-            // Full integration with the engine's render queue happens via frame operations enqueued during the frame.
+            // 5. Record the scene command buffer. ImGui is recorded into a separate
+            // per-frame overlay buffer below so cached scene primaries do not freeze UI.
             CommandBuffer submitCommandBuffer;
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordCommandBuffer"))
@@ -660,6 +665,32 @@ namespace XREngine.Rendering.Vulkan
             }
             recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
+            CommandBuffer imguiOverlayCommandBuffer = default;
+            bool hasImGuiOverlayCommandBuffer = false;
+            stageStartTimestamp = Stopwatch.GetTimestamp();
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordImGuiOverlay"))
+            {
+                try
+                {
+                    hasImGuiOverlayCommandBuffer = TryRecordImGuiOverlayCommandBuffer(imageIndex, out imguiOverlayCommandBuffer);
+                }
+                catch (Exception overlayEx)
+                {
+                    recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+                    currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Frame.{GetHashCode()}.RecordImGuiOverlayFailed",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] ImGui overlay command buffer recording failed. Scheduling swapchain recreate to recover. {0}",
+                        overlayEx.Message);
+
+                    RecreateSwapchainImmediately("ImGui overlay command buffer recording failed - recovering timeline/present state");
+                    throw;
+                }
+            }
+            recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+
             // 5. Submit the command buffer with timeline sync.
             _graphicsTimelineValue = Math.Max(_graphicsTimelineValue + 1, _acquireTimelineValue + 1);
             ulong graphicsSignalValue = _graphicsTimelineValue;
@@ -668,7 +699,11 @@ namespace XREngine.Rendering.Vulkan
             ulong* signalTimelineValues = stackalloc ulong[2] { graphicsSignalValue, 0UL };
             Semaphore* waitSemaphores = stackalloc Semaphore[1] { _graphicsTimelineSemaphore };
             var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
-            var buffer = submitCommandBuffer;
+            CommandBuffer* submitCommandBuffers = stackalloc CommandBuffer[2];
+            submitCommandBuffers[0] = submitCommandBuffer;
+            uint submitCommandBufferCount = 1;
+            if (hasImGuiOverlayCommandBuffer && imguiOverlayCommandBuffer.Handle != 0)
+                submitCommandBuffers[submitCommandBufferCount++] = imguiOverlayCommandBuffer;
             Semaphore presentSemaphore = presentBridgeSemaphores![imageIndex];
             Semaphore* signalSemaphores = stackalloc Semaphore[2] { _graphicsTimelineSemaphore, presentSemaphore };
 
@@ -692,8 +727,8 @@ namespace XREngine.Rendering.Vulkan
                 WaitSemaphoreCount = 1,
                 PWaitSemaphores = waitSemaphores,
                 PWaitDstStageMask = waitStages,
-                CommandBufferCount = 1,
-                PCommandBuffers = &buffer
+                CommandBufferCount = submitCommandBufferCount,
+                PCommandBuffers = submitCommandBuffers
             };
 
             submitInfo = submitInfo with

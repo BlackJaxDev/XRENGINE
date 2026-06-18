@@ -88,7 +88,7 @@ public unsafe partial class VulkanRenderer
 
 		private int UniformBufferArrayLength => UniformBufferFrameCount * UniformBufferSlotCount;
 
-		private void EnsureUniformDrawSlotCapacity(int requiredSlots)
+		internal void EnsureUniformDrawSlotCapacity(int requiredSlots)
 		{
 			requiredSlots = Math.Max(requiredSlots, 1);
 			if (requiredSlots <= _uniformDrawSlotCapacity)
@@ -101,6 +101,7 @@ public unsafe partial class VulkanRenderer
 			_uniformDrawSlotCapacity = newCapacity;
 			DestroyDescriptors();
 			_descriptorDirty = true;
+			Renderer.MarkCommandBuffersDirty();
 		}
 
 		private int ResolveUniformBufferIndex(int frameIndex, int drawUniformSlot, int bufferCount)
@@ -120,6 +121,7 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private bool EnsureEngineUniformBuffer(string name, uint size)
 		{
+			size = Math.Max(size, 1u);
 			int bufferCount = UniformBufferArrayLength;
 			if (_engineUniformBuffers.TryGetValue(name, out EngineUniformBuffer[]? existing))
 			{
@@ -137,9 +139,23 @@ public unsafe partial class VulkanRenderer
 			for (int i = 0; i < bufferCount; i++)
 			{
 				if (!CreateHostVisibleBuffer(size, usage, out var buffer, out var memory))
-					return false;
+				{
+					for (int j = 0; j < i; j++)
+						DestroyMappedUniformBuffer(buffers[j].Buffer, buffers[j].Memory, buffers[j].MappedPtr);
 
-				buffers[i] = new EngineUniformBuffer(buffer, memory, size);
+					return false;
+				}
+
+				if (!Renderer.TryMapBufferMemory(buffer, memory, 0, size, out void* mappedPtr))
+				{
+					Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
+					for (int j = 0; j < i; j++)
+						DestroyMappedUniformBuffer(buffers[j].Buffer, buffers[j].Memory, buffers[j].MappedPtr);
+
+					return false;
+				}
+
+				buffers[i] = new EngineUniformBuffer(buffer, memory, size, mappedPtr);
 			}
 
 			_engineUniformBuffers[name] = buffers;
@@ -152,6 +168,7 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private bool EnsureAutoUniformBuffer(string name, uint size)
 		{
+			size = Math.Max(size, 1u);
 			int bufferCount = UniformBufferArrayLength;
 			if (_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? existing))
 			{
@@ -166,9 +183,23 @@ public unsafe partial class VulkanRenderer
 			for (int i = 0; i < bufferCount; i++)
 			{
 				if (!CreateHostVisibleBuffer(size, BufferUsageFlags.UniformBufferBit, out var buffer, out var memory))
-					return false;
+				{
+					for (int j = 0; j < i; j++)
+						DestroyMappedUniformBuffer(buffers[j].Buffer, buffers[j].Memory, buffers[j].MappedPtr);
 
-				buffers[i] = new AutoUniformBuffer(buffer, memory, size);
+					return false;
+				}
+
+				if (!Renderer.TryMapBufferMemory(buffer, memory, 0, size, out void* mappedPtr))
+				{
+					Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
+					for (int j = 0; j < i; j++)
+						DestroyMappedUniformBuffer(buffers[j].Buffer, buffers[j].Memory, buffers[j].MappedPtr);
+
+					return false;
+				}
+
+				buffers[i] = new AutoUniformBuffer(buffer, memory, size, mappedPtr);
 			}
 
 			_autoUniformBuffers[name] = buffers;
@@ -182,7 +213,7 @@ public unsafe partial class VulkanRenderer
 
 			for (int i = 0; i < buffers.Length; i++)
 			{
-				if (buffers[i].Buffer.Handle == 0 || buffers[i].Size < requiredSize)
+				if (buffers[i].Buffer.Handle == 0 || buffers[i].MappedPtr == null || buffers[i].Size < requiredSize)
 					return false;
 			}
 
@@ -196,7 +227,7 @@ public unsafe partial class VulkanRenderer
 
 			for (int i = 0; i < buffers.Length; i++)
 			{
-				if (buffers[i].Buffer.Handle == 0 || buffers[i].Size < requiredSize)
+				if (buffers[i].Buffer.Handle == 0 || buffers[i].MappedPtr == null || buffers[i].Size < requiredSize)
 					return false;
 			}
 
@@ -298,31 +329,23 @@ public unsafe partial class VulkanRenderer
 		}
 
 		/// <summary>
-		/// Maps an auto uniform buffer, clears it, and writes each member
-		/// from engine state, program overrides, and material parameters.
+		/// Clears an auto uniform buffer and writes each member from engine state,
+		/// program overrides, and material parameters.
 		/// </summary>
 		private bool TryWriteAutoUniformBlock(AutoUniformBlockInfo block, AutoUniformBuffer buffer, XRMaterial material, in PendingMeshDraw draw)
 		{
-			void* mapped;
-			if (!Renderer.TryMapBufferMemory(buffer.Buffer, buffer.Memory, 0, buffer.Size, out mapped))
+			if (buffer.MappedPtr == null)
 				return false;
 
-			try
-			{
-				Span<byte> data = new(mapped, (int)buffer.Size);
-				data.Clear();
+			Span<byte> data = new(buffer.MappedPtr, (int)buffer.Size);
+			data.Clear();
 
-				foreach (AutoUniformMember member in block.Members)
-				{
-					if (member.Offset + member.Size > buffer.Size)
-						continue;
-
-					TryWriteAutoUniformMember(data, member, material, draw);
-				}
-			}
-			finally
+			foreach (AutoUniformMember member in block.Members)
 			{
-				Renderer.UnmapBufferMemory(buffer.Buffer, buffer.Memory);
+				if (member.Offset + member.Size > buffer.Size)
+					continue;
+
+				TryWriteAutoUniformMember(data, member, material, draw);
 			}
 
 			return true;
@@ -1358,34 +1381,24 @@ public unsafe partial class VulkanRenderer
 		/// <summary>Maps and uploads a single unmanaged value to a host-visible UBO.</summary>
 		private bool UploadUniform<T>(EngineUniformBuffer buffer, in T value) where T : unmanaged
 		{
+			if (buffer.MappedPtr == null)
+				return false;
+
 			uint size = (uint)Unsafe.SizeOf<T>();
 			uint copySize = Math.Min(buffer.Size, size);
 
-			void* mapped;
-			if (!Renderer.TryMapBufferMemory(buffer.Buffer, buffer.Memory, 0, buffer.Size, out mapped))
-				return false;
-
 			T localValue = value;
-			Unsafe.CopyBlock(mapped, Unsafe.AsPointer(ref localValue), copySize);
-			Renderer.UnmapBufferMemory(buffer.Buffer, buffer.Memory);
+			Unsafe.CopyBlock(buffer.MappedPtr, Unsafe.AsPointer(ref localValue), copySize);
 			return true;
 		}
 
 		private bool ClearEngineUniformBuffer(EngineUniformBuffer buffer)
 		{
-			void* mapped;
-			if (!Renderer.TryMapBufferMemory(buffer.Buffer, buffer.Memory, 0, buffer.Size, out mapped))
+			if (buffer.MappedPtr == null)
 				return false;
 
-			try
-			{
-				new Span<byte>(mapped, (int)buffer.Size).Clear();
-				return true;
-			}
-			finally
-			{
-				Renderer.UnmapBufferMemory(buffer.Buffer, buffer.Memory);
-			}
+			new Span<byte>(buffer.MappedPtr, (int)buffer.Size).Clear();
+			return true;
 		}
 
 		/// <summary>Uploads a boxed program uniform value to a host-visible UBO, dispatching by type.</summary>

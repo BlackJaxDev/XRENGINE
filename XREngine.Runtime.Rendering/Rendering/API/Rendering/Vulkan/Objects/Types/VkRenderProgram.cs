@@ -2363,11 +2363,17 @@ public unsafe partial class VulkanRenderer
                 return true;
 
             sampler = source.DescriptorSampler;
-            if (sampler.Handle != 0)
+            if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
                 return true;
 
-            sampler = Renderer.GetPlaceholderSampler();
             if (sampler.Handle != 0)
+            {
+                WarnComputeOnce($"Compute texture for binding '{binding.Name}' references a retired Vulkan sampler. Using placeholder sampler.");
+                RecordComputeDescriptorFallback(binding);
+            }
+
+            sampler = Renderer.GetPlaceholderSampler();
+            if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
             {
                 WarnComputeOnce($"Compute texture for binding '{binding.Name}' has no Vulkan sampler. Using placeholder sampler.");
                 RecordComputeDescriptorFallback(binding);

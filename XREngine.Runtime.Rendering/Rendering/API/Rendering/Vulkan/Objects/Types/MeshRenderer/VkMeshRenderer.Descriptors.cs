@@ -64,25 +64,27 @@ public unsafe partial class VulkanRenderer
 			int setCount = layouts.Count;
 			ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);
 			ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount);
+			DescriptorAllocationKey allocationKey = new(schemaFingerprint, resourceFingerprint, descriptorFrameSlotCount, setCount);
 
-			bool canReuseDescriptorAllocation =
-				_descriptorSets is { Length: > 0 } &&
-				_descriptorPool.Handle != 0 &&
-				_descriptorSchemaFingerprint == schemaFingerprint &&
-				_descriptorSets.Length == descriptorFrameSlotCount &&
-				DescriptorSetsHaveSetCount(_descriptorSets, setCount);
-
-			if (!_descriptorDirty && canReuseDescriptorAllocation && _descriptorResourceFingerprint == resourceFingerprint)
+			if (_descriptorAllocations.TryGetValue(allocationKey, out DescriptorAllocation? cachedAllocation) &&
+				IsDescriptorAllocationValid(cachedAllocation, descriptorFrameSlotCount, setCount))
+			{
+				ActivateDescriptorAllocation(cachedAllocation);
+				_descriptorDirty = false;
 				return true;
+			}
 
-			if (canReuseDescriptorAllocation)
-				ReleaseDescriptorAllocation();
-			else
-				DestroyDescriptors();
+			if (cachedAllocation is not null)
+			{
+				ReleaseDescriptorPool(cachedAllocation.Pool);
+				_descriptorAllocations.Remove(allocationKey);
+			}
 
 			var poolSizes = BuildDescriptorPoolSizes(bindings, descriptorFrameSlotCount);
 			if (poolSizes.Length == 0)
 				return false;
+
+			DescriptorPool descriptorPool = default;
 
 			fixed (DescriptorPoolSize* poolSizesPtr = poolSizes)
 			{
@@ -97,7 +99,7 @@ public unsafe partial class VulkanRenderer
 					MaxSets = (uint)(setCount * descriptorFrameSlotCount),
 				};
 
-				if (Api!.CreateDescriptorPool(Device, ref poolInfo, null, out _descriptorPool) != Result.Success)
+				if (Api!.CreateDescriptorPool(Device, ref poolInfo, null, out descriptorPool) != Result.Success)
 				{
 					Debug.VulkanWarning("Failed to create Vulkan descriptor pool for mesh renderer.");
 					return false;
@@ -110,7 +112,7 @@ public unsafe partial class VulkanRenderer
 			uint[] variableDescriptorCounts = _program.DescriptorSetsRequireVariableDescriptorCount
 				? VulkanBindlessMaterialDescriptors.BuildVariableDescriptorCounts(bindings, layoutArray.Length)
 				: [];
-			_descriptorSets = new DescriptorSet[descriptorFrameSlotCount][];
+			DescriptorSet[][] descriptorSets = new DescriptorSet[descriptorFrameSlotCount][];
 
 			for (int frame = 0; frame < frameCount; frame++)
 			{
@@ -133,7 +135,7 @@ public unsafe partial class VulkanRenderer
 						{
 							SType = StructureType.DescriptorSetAllocateInfo,
 							PNext = _program.DescriptorSetsRequireVariableDescriptorCount ? &variableDescriptorCountInfo : null,
-							DescriptorPool = _descriptorPool,
+							DescriptorPool = descriptorPool,
 							DescriptorSetCount = (uint)layoutArray.Length,
 							PSetLayouts = layoutPtr,
 						};
@@ -141,22 +143,34 @@ public unsafe partial class VulkanRenderer
 						if (Api!.AllocateDescriptorSets(Device, ref allocInfo, setPtr) != Result.Success)
 						{
 							Debug.VulkanWarning("Failed to allocate Vulkan descriptor sets for mesh renderer.");
+							ReleaseDescriptorPool(descriptorPool, destroyImmediately: true);
 							return false;
 						}
 					}
 
 					if (!WriteDescriptorSets(frameSets, bindings, material, frame, drawSlot))
+					{
+						ReleaseDescriptorPool(descriptorPool, destroyImmediately: true);
 						return false;
+					}
 
-					_descriptorSets[ResolveUniformBufferIndex(frame, drawSlot, _descriptorSets.Length)] = frameSets;
+					descriptorSets[ResolveUniformBufferIndex(frame, drawSlot, descriptorSets.Length)] = frameSets;
 				}
 			}
 
-			_descriptorSchemaFingerprint = schemaFingerprint;
-			_descriptorResourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount);
-			_descriptorResourceFingerprintDetails = DescriptorResourceFingerprintDiagnosticsEnabled
-				? ComputeDescriptorResourceFingerprintDetails(material, frameCount)
-				: string.Empty;
+			DescriptorAllocation allocation = new()
+			{
+				Pool = descriptorPool,
+				Sets = descriptorSets,
+				SchemaFingerprint = schemaFingerprint,
+				ResourceFingerprint = resourceFingerprint,
+				ResourceFingerprintDetails = DescriptorResourceFingerprintDiagnosticsEnabled
+					? ComputeDescriptorResourceFingerprintDetails(material, frameCount)
+					: string.Empty
+			};
+
+			_descriptorAllocations[allocationKey] = allocation;
+			ActivateDescriptorAllocation(allocation);
 			_descriptorDirty = false;
 			return true;
 		}
@@ -193,68 +207,59 @@ public unsafe partial class VulkanRenderer
 			int setCount = layouts.Count;
 			ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);
 			ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount);
+			DescriptorAllocationKey allocationKey = new(schemaFingerprint, resourceFingerprint, descriptorFrameSlotCount, setCount);
 
-			if (_descriptorDirty)
-			{
-				reason = "descriptor dirty";
-				return false;
-			}
-
-			if (_descriptorPool.Handle == 0)
+			if (!_descriptorAllocations.TryGetValue(allocationKey, out DescriptorAllocation? allocation))
 			{
 				reason = "descriptor pool missing";
 				return false;
 			}
 
-			if (_descriptorSets is not { Length: > 0 })
+			if (!IsDescriptorAllocationValid(allocation, descriptorFrameSlotCount, setCount))
 			{
-				reason = "descriptor sets missing";
+				reason = "descriptor allocation invalid";
 				return false;
 			}
 
-			if (_descriptorSets.Length != descriptorFrameSlotCount)
+			if (allocation.SchemaFingerprint != schemaFingerprint)
 			{
-				reason = $"descriptor set slot count {_descriptorSets.Length}!={descriptorFrameSlotCount} (frames={frameCount}, slots={UniformBufferSlotCount})";
+				reason = $"schema fingerprint 0x{allocation.SchemaFingerprint:X16}->0x{schemaFingerprint:X16}";
 				return false;
 			}
 
-			for (int i = 0; i < _descriptorSets.Length; i++)
-			{
-				DescriptorSet[]? sets = _descriptorSets[i];
-				if (sets is null)
-				{
-					reason = $"descriptor set slot {i} is null";
-					return false;
-				}
-
-				if (sets.Length != setCount)
-				{
-					reason = $"descriptor set slot {i} set count {sets.Length}!={setCount}";
-					return false;
-				}
-			}
-
-			if (_descriptorSchemaFingerprint != schemaFingerprint)
-			{
-				reason = $"schema fingerprint 0x{_descriptorSchemaFingerprint:X16}->0x{schemaFingerprint:X16}";
-				return false;
-			}
-
-			if (_descriptorResourceFingerprint != resourceFingerprint)
+			if (allocation.ResourceFingerprint != resourceFingerprint)
 			{
 				if (DescriptorResourceFingerprintDiagnosticsEnabled)
 				{
 					string currentDetails = ComputeDescriptorResourceFingerprintDetails(material, frameCount);
-					reason = $"resource fingerprint 0x{_descriptorResourceFingerprint:X16}->0x{resourceFingerprint:X16}; old=[{_descriptorResourceFingerprintDetails}] new=[{currentDetails}]";
+					reason = $"resource fingerprint 0x{allocation.ResourceFingerprint:X16}->0x{resourceFingerprint:X16}; old=[{allocation.ResourceFingerprintDetails}] new=[{currentDetails}]";
 				}
 				else
 				{
-					reason = $"resource fingerprint 0x{_descriptorResourceFingerprint:X16}->0x{resourceFingerprint:X16}";
+					reason = $"resource fingerprint 0x{allocation.ResourceFingerprint:X16}->0x{resourceFingerprint:X16}";
 				}
 				return false;
 			}
 
+			ActivateDescriptorAllocation(allocation);
 			return true;
+		}
+
+		private void ActivateDescriptorAllocation(DescriptorAllocation allocation)
+		{
+			_descriptorPool = allocation.Pool;
+			_descriptorSets = allocation.Sets;
+			_descriptorSchemaFingerprint = allocation.SchemaFingerprint;
+			_descriptorResourceFingerprint = allocation.ResourceFingerprint;
+			_descriptorResourceFingerprintDetails = allocation.ResourceFingerprintDetails;
+		}
+
+		private static bool IsDescriptorAllocationValid(DescriptorAllocation allocation, int descriptorFrameSlotCount, int setCount)
+		{
+			return allocation.Pool.Handle != 0 &&
+				allocation.Sets is { Length: > 0 } &&
+				allocation.Sets.Length == descriptorFrameSlotCount &&
+				DescriptorSetsHaveSetCount(allocation.Sets, setCount);
 		}
 
 		/// <summary>
@@ -786,6 +791,12 @@ public unsafe partial class VulkanRenderer
 					WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] has no sampler.");
 					return false;
 				}
+
+				if (requireSampler && !Renderer.IsLiveSampler(info.Sampler))
+				{
+					WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] references a retired sampler.");
+					return false;
+				}
 			}
 
 			return true;
@@ -1275,11 +1286,17 @@ public unsafe partial class VulkanRenderer
 				return true;
 
 			sampler = source.DescriptorSampler;
-			if (sampler.Handle != 0)
+			if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
 				return true;
 
-			sampler = Renderer.GetPlaceholderSampler();
 			if (sampler.Handle != 0)
+			{
+				WarnOnce($"Texture for descriptor binding '{binding.Name}' references a retired Vulkan sampler. Using placeholder sampler.");
+				RecordDescriptorFallback(binding);
+			}
+
+			sampler = Renderer.GetPlaceholderSampler();
+			if (sampler.Handle != 0 && Renderer.IsLiveSampler(sampler))
 			{
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' has no Vulkan sampler. Using placeholder sampler.");
 				RecordDescriptorFallback(binding);

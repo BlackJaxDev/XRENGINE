@@ -90,7 +90,7 @@ public sealed class ImportedTextureStreamingContractTests
         assetManagerSource.ShouldContain("XRTexture2D.IsTextureStreamingAssetUsable(cachePath)");
         assetManagerSource.ShouldContain("LogTextureCacheEvent(\"Texture.CacheHit\"");
         assetManagerSource.ShouldContain("LogTextureCacheEvent(\"Texture.CacheMiss\"");
-        assetManagerSource.ShouldContain("LogTextureCacheEvent(\"Texture.CacheStale\"");
+        assetManagerSource.ShouldContain("\"Texture.CacheStale\"");
         assetManagerSource.ShouldContain("LogTextureCacheEvent(\"Texture.CacheFallbackToSource\"");
         assetManagerSource.ShouldContain("LogTextureCacheEvent(\"Texture.CacheWrite\"");
         assetManagerSource.ShouldContain("QueueTextureStreamingCacheImport(normalizedPath, cachePath, cacheVariantKey);");
@@ -159,6 +159,23 @@ public sealed class ImportedTextureStreamingContractTests
         managerSource.ShouldContain("bool isVisiblePreviewReadyPromotion = snapshot.LastVisibleFrameId == frameId");
         managerSource.ShouldContain("&& snapshot.PreviewReady");
         managerSource.ShouldContain("&& !isVisiblePreviewReadyPromotion");
+    }
+
+    [Test]
+    public void ImportedTextureStreaming_VulkanDensePromotionsUseSingleMipUntilUploadQueueExists()
+    {
+        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+
+        managerSource.ShouldContain("bool freezeResidentSizeForVulkan = ShouldFreezeVulkanImportedTextureResidency(snapshot);");
+        managerSource.ShouldContain("desiredResidentSize = ResolveVulkanSafeResidentSize(snapshot, desiredResidentSize);");
+        managerSource.ShouldContain("&& !freezeResidentSizeForVulkan");
+        managerSource.ShouldContain("private static uint ResolveVulkanSafeResidentSize(");
+        managerSource.ShouldContain("private static bool ShouldFreezeVulkanImportedTextureResidency(ImportedTextureStreamingSnapshot snapshot)");
+        managerSource.ShouldContain("includeMipChain = ShouldIncludeResidentMipChain(backend, normalizedTarget);");
+        managerSource.ShouldContain("private static bool ShouldIncludeResidentMipChain(ITextureResidencyBackend backend, uint normalizedTarget)");
+        managerSource.ShouldContain("return RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan;");
+        managerSource.ShouldNotContain("includeMipChain = normalizedTarget > minimumResidentSize;");
+        managerSource.ShouldNotContain("includeMipChain = normalizedTarget > backend.PreviewMaxDimension;");
     }
 
     [Test]

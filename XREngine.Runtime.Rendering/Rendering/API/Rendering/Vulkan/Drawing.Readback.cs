@@ -553,8 +553,9 @@ namespace XREngine.Rendering.Vulkan
 
         // =========== Screenshot Readback ===========
 
-        public override bool ScreenshotRequiresVerticalFlip
-            => RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan) == ERenderClipSpaceYDirection.YDown;
+        // Vulkan readback copies image rows into the order expected by Magick/PNG export.
+        // Do not reuse FramebufferTextureYDirection here; that is shader sampling policy.
+        public override bool ScreenshotRequiresVerticalFlip => false;
 
         public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {

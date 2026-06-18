@@ -857,7 +857,11 @@ internal sealed class ImportedTextureStreamingManager
                 frameId,
                 allowPromotions,
                 snapshot.Backend.PreviewMaxDimension);
-            if (visibleThisFrame || useBoundFallbackMetrics)
+            bool freezeResidentSizeForVulkan = ShouldFreezeVulkanImportedTextureResidency(snapshot);
+            desiredResidentSize = ResolveVulkanSafeResidentSize(snapshot, desiredResidentSize);
+            if (allowPromotions
+                && !freezeResidentSizeForVulkan
+                && (visibleThisFrame || useBoundFallbackMetrics))
             {
                 uint sourceMaxDimension = Math.Max(snapshot.SourceWidth, snapshot.SourceHeight);
                 if (sourceMaxDimension > snapshot.Backend.PreviewMaxDimension
@@ -1128,7 +1132,7 @@ internal sealed class ImportedTextureStreamingManager
             filePath = record.FilePath;
             source = record.Source;
             backend = record.Backend ?? ResolveBackendForTexture(record.SourceWidth, record.SourceHeight, record.Format);
-            includeMipChain = normalizedTarget > minimumResidentSize;
+            includeMipChain = ShouldIncludeResidentMipChain(backend, normalizedTarget);
             previousResidentSize = record.PendingMaxDimension != 0
                 ? record.PendingMaxDimension
                 : record.ResidentMaxDimension;
@@ -1260,6 +1264,47 @@ internal sealed class ImportedTextureStreamingManager
             priority: transitionPriority);
 
         return true;
+    }
+
+    private static uint ResolveVulkanSafeResidentSize(
+        ImportedTextureStreamingSnapshot snapshot,
+        uint desiredResidentSize)
+    {
+        if (RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
+            return desiredResidentSize;
+
+        // The current Vulkan dense texture streaming path recreates the image and
+        // uploads through one-shot layout/copy submissions. Freeze a preview-ready
+        // imported texture at its current residency until a synchronized Vulkan
+        // upload queue owns those transitions.
+        if (!ShouldFreezeVulkanImportedTextureResidency(snapshot))
+            return Math.Min(desiredResidentSize, snapshot.Backend.PreviewMaxDimension);
+
+        uint currentResidentSize = snapshot.PendingMaxDimension != 0
+            ? snapshot.PendingMaxDimension
+            : snapshot.ResidentMaxDimension;
+        if (currentResidentSize != 0)
+            return currentResidentSize;
+
+        uint sourceMaxDimension = Math.Max(snapshot.SourceWidth, snapshot.SourceHeight);
+        return sourceMaxDimension == 0
+            ? snapshot.Backend.PreviewMaxDimension
+            : Math.Min(sourceMaxDimension, snapshot.Backend.PreviewMaxDimension);
+    }
+
+    private static bool ShouldFreezeVulkanImportedTextureResidency(ImportedTextureStreamingSnapshot snapshot)
+        => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan
+            && snapshot.PreviewReady;
+
+    private static bool ShouldIncludeResidentMipChain(ITextureResidencyBackend backend, uint normalizedTarget)
+    {
+        if (normalizedTarget <= backend.PreviewMaxDimension)
+            return false;
+
+        // Vulkan dense imported-texture uploads still use one-shot layout/copy
+        // submissions. Keep them to one resident mip until a synchronized Vulkan
+        // upload queue replaces that path.
+        return RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan;
     }
 
     private static void ClearPendingTransition(
