@@ -622,13 +622,14 @@ namespace XREngine.Rendering.Vulkan
             // 5. Record the command buffer
             // Note: This currently records a default pass (Clear + ImGui). 
             // Full integration with the engine's render queue happens via frame operations enqueued during the frame.
+            CommandBuffer submitCommandBuffer;
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordCommandBuffer"))
             {
                 long recordAllocationStart = GC.GetAllocatedBytesForCurrentThread();
                 try
                 {
-                    EnsureCommandBufferRecorded(imageIndex);
+                    submitCommandBuffer = EnsureCommandBufferRecorded(imageIndex);
                 }
                 catch (Exception recordEx)
                 {
@@ -667,7 +668,7 @@ namespace XREngine.Rendering.Vulkan
             ulong* signalTimelineValues = stackalloc ulong[2] { graphicsSignalValue, 0UL };
             Semaphore* waitSemaphores = stackalloc Semaphore[1] { _graphicsTimelineSemaphore };
             var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
-            var buffer = _commandBuffers![imageIndex];
+            var buffer = submitCommandBuffer;
             Semaphore presentSemaphore = presentBridgeSemaphores![imageIndex];
             Semaphore* signalSemaphores = stackalloc Semaphore[2] { _graphicsTimelineSemaphore, presentSemaphore };
 

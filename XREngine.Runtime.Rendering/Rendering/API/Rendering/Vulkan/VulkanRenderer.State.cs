@@ -244,6 +244,26 @@ public unsafe partial class VulkanRenderer
         Rect2D[]? Scissors,
         uint Count);
 
+    internal readonly record struct VulkanFixedFunctionStateSnapshot(
+        bool DepthTestEnabled,
+        bool DepthWriteEnabled,
+        CompareOp DepthCompareOp,
+        bool StencilTestEnabled,
+        StencilOpState FrontStencilState,
+        StencilOpState BackStencilState,
+        uint StencilWriteMask,
+        ColorComponentFlags ColorWriteMask,
+        CullModeFlags CullMode,
+        FrontFace FrontFace,
+        bool BlendEnabled,
+        bool AlphaToCoverageEnabled,
+        BlendOp ColorBlendOp,
+        BlendOp AlphaBlendOp,
+        BlendFactor SrcColorBlendFactor,
+        BlendFactor DstColorBlendFactor,
+        BlendFactor SrcAlphaBlendFactor,
+        BlendFactor DstAlphaBlendFactor);
+
     /// <summary>
     /// Extent of the draw target that is actually bound right now. Quad-blit style
     /// passes bind FBOs through <see cref="XRFrameBuffer.BindForWriting"/> (engine-side
@@ -355,6 +375,12 @@ public unsafe partial class VulkanRenderer
 
     internal StencilOpState GetBackStencilState()
         => _state.GetBackStencilState();
+
+    internal VulkanFixedFunctionStateSnapshot CaptureFixedFunctionState()
+        => _state.CaptureFixedFunctionState();
+
+    internal void RestoreFixedFunctionState(in VulkanFixedFunctionStateSnapshot snapshot)
+        => _state.RestoreFixedFunctionState(snapshot);
 
     internal bool GetCroppingEnabled()
         => _state.GetCroppingEnabled();
@@ -739,6 +765,49 @@ public unsafe partial class VulkanRenderer
         public bool GetStencilTestEnabled() => StencilTestEnabled;
         public StencilOpState GetFrontStencilState() => FrontStencilState;
         public StencilOpState GetBackStencilState() => BackStencilState;
+
+        public VulkanFixedFunctionStateSnapshot CaptureFixedFunctionState()
+            => new(
+                DepthTestEnabled,
+                DepthWriteEnabled,
+                DepthCompareOp,
+                StencilTestEnabled,
+                FrontStencilState,
+                BackStencilState,
+                StencilWriteMask,
+                ColorWriteMask,
+                CullMode,
+                FrontFace,
+                BlendEnabled,
+                AlphaToCoverageEnabled,
+                ColorBlendOp,
+                AlphaBlendOp,
+                SrcColorBlendFactor,
+                DstColorBlendFactor,
+                SrcAlphaBlendFactor,
+                DstAlphaBlendFactor);
+
+        public void RestoreFixedFunctionState(in VulkanFixedFunctionStateSnapshot snapshot)
+        {
+            DepthTestEnabled = snapshot.DepthTestEnabled;
+            DepthWriteEnabled = snapshot.DepthWriteEnabled;
+            DepthCompareOp = snapshot.DepthCompareOp;
+            StencilTestEnabled = snapshot.StencilTestEnabled;
+            FrontStencilState = snapshot.FrontStencilState;
+            BackStencilState = snapshot.BackStencilState;
+            StencilWriteMask = snapshot.StencilWriteMask;
+            ColorWriteMask = snapshot.ColorWriteMask;
+            CullMode = snapshot.CullMode;
+            FrontFace = snapshot.FrontFace;
+            BlendEnabled = snapshot.BlendEnabled;
+            AlphaToCoverageEnabled = snapshot.AlphaToCoverageEnabled;
+            ColorBlendOp = snapshot.ColorBlendOp;
+            AlphaBlendOp = snapshot.AlphaBlendOp;
+            SrcColorBlendFactor = snapshot.SrcColorBlendFactor;
+            DstColorBlendFactor = snapshot.DstColorBlendFactor;
+            SrcAlphaBlendFactor = snapshot.SrcAlphaBlendFactor;
+            DstAlphaBlendFactor = snapshot.DstAlphaBlendFactor;
+        }
 
         private static Rect2D DefaultScissor(Extent2D extent)
             => new()
@@ -3054,6 +3123,7 @@ public unsafe partial class VulkanRenderer
 
         for (int i = 0; i < _commandBufferDirtyFlags.Length; i++)
             _commandBufferDirtyFlags[i] = true;
+        MarkCommandBufferVariantsDirty();
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBuffersDirty(reason);
         TrackCommandBufferDirtyReason(reason, _commandBufferDirtyFlags.Length);

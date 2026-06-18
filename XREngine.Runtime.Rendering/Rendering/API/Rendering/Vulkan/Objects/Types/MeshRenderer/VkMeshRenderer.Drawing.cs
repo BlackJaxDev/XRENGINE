@@ -470,18 +470,7 @@ public unsafe partial class VulkanRenderer
 		/// Returns -1 if the buffer is not in the current set (e.g. transient buffer).
 		/// </summary>
 		private int ResolveCommandBufferIndex(CommandBuffer commandBuffer)
-		{
-			if (Renderer._commandBuffers is null)
-				return -1;
-
-			for (int i = 0; i < Renderer._commandBuffers.Length; i++)
-			{
-				if (Renderer._commandBuffers[i].Handle == commandBuffer.Handle)
-					return i;
-			}
-
-			return -1;
-		}
+			=> Renderer.ResolveCommandBufferImageIndex(commandBuffer);
 
 		#endregion // Draw Command Recording
 	}

@@ -79,6 +79,7 @@ public sealed class UnitTestingWorldModelImportSettingsTests
             {
                 RenderLibrary = ERenderLibrary.Vulkan,
                 PhysicsLibrary = EPhysicsLibrary.Jolt,
+                VSync = EVSyncMode.Adaptive,
             },
         };
 
@@ -86,6 +87,8 @@ public sealed class UnitTestingWorldModelImportSettingsTests
 
         startupSettings.DefaultUserSettings.RenderLibrary.ShouldBe(ERenderLibrary.OpenGL);
         startupSettings.DefaultUserSettings.PhysicsLibrary.ShouldBe(EPhysicsLibrary.Jolt);
+        startupSettings.DefaultUserSettings.VSync.ShouldBe(EVSyncMode.Adaptive);
+        startupSettings.VSyncOverride.HasOverride.ShouldBeFalse();
         startupSettings.GPURenderDispatch.ShouldBeTrue();
         startupSettings.TargetUpdatesPerSecond.ShouldBe(72.0f);
         startupSettings.TargetFramesPerSecond.ShouldBe(144.0f);
@@ -95,6 +98,31 @@ public sealed class UnitTestingWorldModelImportSettingsTests
         startupSettings.AudioEffectsOverride.HasOverride.ShouldBeTrue();
         startupSettings.AudioEffectsOverride.Value.ShouldBe(EAudioEffects.SteamAudio);
         startupSettings.AudioArchitectureV2Override.HasOverride.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ApplyStartupOverrides_AppliesExplicitVSyncOverride()
+    {
+        const string json = """
+        {
+          "VSyncOverride": "Off"
+        }
+        """;
+
+        UnitTestingWorldSettings unitTestSettings = UnitTestingWorldSettingsStore.ParseJsonc(json);
+        var startupSettings = new GameStartupSettings
+        {
+            DefaultUserSettings = new UserSettings
+            {
+                VSync = EVSyncMode.Adaptive,
+            },
+        };
+
+        UnitTestingWorldSettingsStore.ApplyStartupOverrides(startupSettings, unitTestSettings);
+
+        startupSettings.DefaultUserSettings.VSync.ShouldBe(EVSyncMode.Off);
+        startupSettings.VSyncOverride.HasOverride.ShouldBeTrue();
+        startupSettings.VSyncOverride.Value.ShouldBe(EVSyncMode.Off);
     }
 
     [Test]

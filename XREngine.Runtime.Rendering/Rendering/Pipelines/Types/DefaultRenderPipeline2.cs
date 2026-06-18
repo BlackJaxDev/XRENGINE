@@ -374,6 +374,12 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     private static bool RuntimeNeedsTsrUpscale
         => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;
 
+    private static bool ShouldGenerateVelocityBuffer()
+        => RuntimeEnableVendorUpscale
+        || RuntimeNeedsTsrUpscale
+        || ResolveAntiAliasingMode() is EAntiAliasingMode.Taa or EAntiAliasingMode.Dlaa
+        || ShouldUseMotionBlur();
+
     // Build-time checks: used only during command chain generation to decide
     // whether to include FBOs/textures. True if the global setting requests
     // the mode, ensuring resources are available even when no camera is active.

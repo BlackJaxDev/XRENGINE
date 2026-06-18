@@ -1178,9 +1178,9 @@ public unsafe partial class VulkanRenderer
             BlendFactor srcColor, dstColor, srcAlpha, dstAlpha;
             BlendMode? matBlend = matOpts is not null ? ResolveBlendMode(matOpts) : null;
             bool requestedAlphaToCoverage = matOpts?.AlphaToCoverage == ERenderParamUsage.Enabled;
-            if (matBlend is not null && matBlend.Enabled != ERenderParamUsage.Unchanged)
+            if (matBlend is not null && matBlend.Enabled == ERenderParamUsage.Enabled)
             {
-                blendEnabled = matBlend.Enabled == ERenderParamUsage.Enabled;
+                blendEnabled = true;
                 alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;
                 colorBlendOp = ToVulkanBlendOp(matBlend.RgbEquation);
                 alphaBlendOp = ToVulkanBlendOp(matBlend.AlphaEquation);
@@ -1188,6 +1188,28 @@ public unsafe partial class VulkanRenderer
                 dstColor = ToVulkanBlendFactor(matBlend.RgbDstFactor);
                 srcAlpha = ToVulkanBlendFactor(matBlend.AlphaSrcFactor);
                 dstAlpha = ToVulkanBlendFactor(matBlend.AlphaDstFactor);
+            }
+            else if (matBlend is not null && matBlend.Enabled == ERenderParamUsage.Disabled)
+            {
+                blendEnabled = false;
+                alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;
+                colorBlendOp = BlendOp.Add;
+                alphaBlendOp = BlendOp.Add;
+                srcColor = BlendFactor.One;
+                dstColor = BlendFactor.Zero;
+                srcAlpha = BlendFactor.One;
+                dstAlpha = BlendFactor.Zero;
+            }
+            else if (matBlend is null && matOpts is not null)
+            {
+                blendEnabled = false;
+                alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;
+                colorBlendOp = BlendOp.Add;
+                alphaBlendOp = BlendOp.Add;
+                srcColor = BlendFactor.One;
+                dstColor = BlendFactor.Zero;
+                srcAlpha = BlendFactor.One;
+                dstAlpha = BlendFactor.Zero;
             }
             else
             {
@@ -1362,10 +1384,18 @@ public unsafe partial class VulkanRenderer
             if (_program is not { Data: { } programData } program)
                 return null;
 
-            Renderer.SetMaterialUniforms(material, programData);
-            MeshRenderer.OnSettingUniforms(programData, programData);
-            MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material);
-            return program.CaptureComputeSnapshot();
+            VulkanFixedFunctionStateSnapshot stateSnapshot = Renderer.CaptureFixedFunctionState();
+            try
+            {
+                Renderer.SetMaterialUniforms(material, programData);
+                MeshRenderer.OnSettingUniforms(programData, programData);
+                MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material);
+                return program.CaptureComputeSnapshot();
+            }
+            finally
+            {
+                Renderer.RestoreFixedFunctionState(stateSnapshot);
+            }
         }
 
         private static SampleCountFlags ResolveRasterizationSamples(XRFrameBuffer? target)

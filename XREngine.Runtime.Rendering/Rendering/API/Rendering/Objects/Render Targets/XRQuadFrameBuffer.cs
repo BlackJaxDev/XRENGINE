@@ -1,6 +1,7 @@
 using System.IO;
 using System.Numerics;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering
 {
@@ -60,6 +61,9 @@ namespace XREngine.Rendering
             : base(mat, deriveRenderTargetsFromMaterial)
         {
             mat.RenderOptions.CullMode = ECullMode.None;
+            if (mat.RenderOptions.StencilTest.Enabled == ERenderParamUsage.Unchanged)
+                mat.RenderOptions.StencilTest.Enabled = ERenderParamUsage.Disabled;
+
             if (mat.VertexShaders.Count == 0)
                 mat.SetShader(
                     EShaderType.Vertex,

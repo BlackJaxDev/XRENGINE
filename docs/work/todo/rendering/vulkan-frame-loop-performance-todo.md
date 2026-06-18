@@ -1,6 +1,6 @@
 # Vulkan Frame Loop Performance Testing
 
-Last Updated: 2026-06-17
+Last Updated: 2026-06-18
 Owner: Rendering
 Status: Testing Guide
 Target Branch: `vulkan-frame-loop-performance`
@@ -175,6 +175,11 @@ Fresh MCP/debug evidence:
 - Scene mode: Unit Testing World, Vulkan, default render pipeline, forced
   `CpuDirect`, `XRE_DEFERRED_DEBUG=1`, `XRE_VK_ENABLE_AUTO_UNIFORM_REWRITE=1`,
   `XRE_VULKAN_MATERIAL_BINDING_DIAG=1`.
+- Correction for later runs: `XRE_DEFERRED_DEBUG=1` deliberately forced raw
+  G-buffer albedo while debugging the black deferred path. That mode makes
+  Sponza look albedo-only by design. Framerate runs must clear it with
+  `XRE_DEFERRED_DEBUG=0` or no env var and should verify
+  `DeferredDebugView == 0` before treating the viewport as normally lit.
 - Screenshot:
   `Build\McpCaptures\vulkan-frame-loop-cpu-dump-enabled\Screenshot_20260617_162115.png`.
   Result is still incorrect: sky/procedural background renders, but deferred
@@ -398,6 +403,172 @@ User feedback on attempted solutions:
   viewport, and the user questioned whether capturing without ImGui editor chrome
   was intentional. Treat MCP viewport captures as render-target captures, not
   full editor-window captures, until a dedicated full-window path exists.
+
+Profiler capture rule for remaining Vulkan CPU-direct performance iterations:
+
+- Before measuring framerate, verify deferred debug view is disabled. Mode `1`
+  is raw G-buffer albedo in `DeferredLightCombine.fs`; leaving it enabled makes
+  the scene look like unlit/albedo-only Sponza and invalidates visual lighting
+  conclusions. Use `XRE_DEFERRED_DEBUG=0` for launched processes and set
+  `DeferredDebugView` to `0` through preferences/MCP if a live editor reports a
+  nonzero value.
+- Every live perf iteration must record a CPU profiler dump. If CPU frame
+  logging was disabled, the first MCP dump may only arm the logger; take a
+  second post-warm dump and use that second file as the timing evidence.
+- Every live perf iteration must also attempt a GPU render-pipeline profiler
+  dump. If no GPU history is captured, record the exact MCP/tool error plus the
+  profile-stat fields that explain it, especially
+  `gpu_pipeline_profiling_enabled` and `gpu_pipeline_status`.
+- Do not treat a run as fully measured when CPU evidence exists but GPU timing
+  silently failed. Record it as "CPU-only; GPU profiler unavailable" and keep a
+  follow-up to repair profiler enablement.
+
+Latest Vulkan CPU-direct framerate pass:
+
+- Added CPU attribution scopes around command `ShouldExecuteThisFrame` checks
+  and container `EnsureResourcesAllocated` calls. Local editor Debug build
+  passed with 0 warnings and 0 errors. Evidence from PID `10276`, log directory
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-17_20-34-42_pid10276`:
+  `VPRC_RenderMeshesPass` still dominated one CPU dump at about 27.8 ms, while
+  `ShouldExecuteThisFrame` and `EnsureResourcesAllocated` were each near zero.
+  This rules out the simple skip-predicate/resource-ensure path as the hidden
+  container self-time bottleneck.
+- GPU profiling in PID `10276` was attempted but failed with
+  `No GPU timing history has been captured for any render pipeline.` Profile
+  stats reported `gpu_pipeline_profiling_enabled=false` and
+  `gpu_pipeline_status="GPU render-pipeline command timing is disabled."`
+  This run is therefore CPU-only evidence.
+- PID `10276` showed the actual runtime bootstrap still requesting 4096x4096
+  shadow resources, so the earlier editor unit-test lighting resolution change
+  did not affect the active bootstrap path. The 80-sample window reported about
+  0.99 fps, render dispatch average about 1003.8 ms, FBO bandwidth about
+  1.78-1.94 GB, and allocated VRAM about 933 MB.
+- Patched `BootstrapLightingBuilder` to use 1024x1024 directional shadow maps
+  for Vulkan unit-testing bootstrap, matching the editor unit-test lighting
+  helper. Local editor Debug build passed with 0 warnings and 0 errors.
+- Post-patch evidence from PID `16520`, log directory
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-17_20-41-48_pid16520`:
+  `log_rendering.log` confirmed `ShadowRenderPipeline` resources at
+  1024x1024. The post-warm profile-stat window improved to about 4.96 fps,
+  render dispatch average about 200.9 ms, FBO bandwidth about 335-352 MB,
+  resident texture bytes about 336 MB, and allocated VRAM about 463 MB. This is
+  a real local improvement, but still far from acceptable framerate.
+- CPU dump
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-17_20-41-48_pid16520\profiler-cpu-frame-2026-06-17-20-43-37-660-6389f342.log`
+  showed `XRWindow.RenderViewports` at about 79.6 ms in the current hierarchy,
+  with `VPRC_RenderMotionVectorsPass` at about 26.1 ms and the parent
+  `ViewportRenderCommandContainer.Execute` still carrying about 38.1 ms self
+  time. This dump occurred immediately after a render-profile transition from
+  FXAA to TSR, so motion-vector cost may be TSR/profile-churn related rather
+  than the stable FXAA baseline.
+- GPU profiling in PID `16520` was attempted by setting
+  `Debug.EnableGpuRenderPipelineProfiling=true`, waiting for history, and
+  calling `dump_gpu_render_pipeline_profile`, but it still failed with no GPU
+  timing history. Profile stats never reported
+  `gpu_pipeline_profiling_enabled=true`. Next profiler task: find why the MCP
+  preference write does not affect the active render-pipeline GPU profiler
+  switch or whether another project/runtime override disables it.
+- New active performance trail: the run changed render profile mid-session
+  (`Fxaa->Tsr`, later feature and HDR changes), triggering multi-second default
+  pipeline rebuilds and making the CPU dump less representative of a stable
+  scene. Before another framerate fix, force or stabilize the Unit Testing World
+  render profile so the Vulkan CPU-direct path can be measured without TSR/HDR
+  churn.
+- Added profile-capture manifest fields for deferred debug state. Current
+  framerate launches now pin `XRE_DEFERRED_DEBUG=0`, set MCP
+  `Debug.DeferredDebugView=0`, and verify those values in
+  `profiler-capture-manifest.json` before trusting the visual output. This
+  answers the albedo-only Sponza question: any earlier albedo-only view came
+  from the intentional deferred debug mode, not from the normal lit path.
+- Added Unit Testing World `VSyncOverride = Off` plumbing through bootstrap
+  settings and regenerated the unit-testing schema. Local targeted unit tests
+  passed. Live MCP state in PID `34324` reported `vSync:"Off"` and
+  `targetRenderHz` near 60 Hz, so the current Vulkan CPU-direct low framerate is
+  no longer explained by a hidden VSync override.
+- Skipped the velocity/motion-vector pass unless a velocity consumer is active:
+  vendor upscale, TSR, TAA, DLAA, or motion blur. Local editor Debug build
+  passed with 0 warnings and 0 errors. Live validation in PID `34324`, log
+  directory
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-17_21-14-43_pid34324`,
+  showed no `MotionVectors`/`VelocityFBO` rows in the GPU profile. Compared with
+  PID `36124`, default-pipeline render-thread wall time improved from about
+  115.7 ms average / 157.7 ms p95 to about 24.9 ms average / 40.2 ms p95.
+  Warmup-excluded render-thread time improved from about 112.8 ms average /
+  156.6 ms p95 to about 23.0 ms average / 36.4 ms p95.
+- Remaining active bottleneck after velocity gating: repeated primary command
+  buffer recording. PID `34324` profile stats show recurring
+  `vulkan_command_buffer_frame_op_signature_dirty_count=1`,
+  `vulkan_command_buffer_dirty_summary:"frame-ops"`, and
+  `vulkan_record_command_buffer_allocated_bytes` around 1.6-2.1 MB on dirty
+  frames. Adjacent clean-reuse frames exist, so command-buffer reuse works in
+  principle but is invalidated by a changing frame-op signature. Next run should
+  set `XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF=1` with a small diff limit to identify
+  the exact signature component changing.
+
+Current stop point - 2026-06-18:
+
+- Rendering status: normal lit Sponza is back in Vulkan CPU-direct when
+  deferred debug is disabled. Latest screenshot:
+  `Build\McpCaptures\vulkan-cpudirect-primary-variant-cache\Screenshot_20260618_014646.png`.
+  The image is visibly lit and not the earlier albedo-only/debug view.
+- Fixed frame-op state leakage that caused continuous command-buffer signature
+  churn:
+  - captured/restored Vulkan fixed-function state while collecting material
+    program binding snapshots
+  - canonicalized disabled material blend state so disabled blend no longer
+    inherits stale factors
+  - defaulted fullscreen/utility quad stencil to disabled when the material did
+    not explicitly request a stencil state
+- Evidence after the stencil/default-state fixes:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_01-03-25_pid27544`.
+  A 1342-row steady tail showed 0 primary records, 1342 clean reuses,
+  render dispatch p50 about 14.5 ms, Vulkan frame total p50 about 4.1 ms, and
+  `RecordCommandBuffer` p50 about 3.4 ms. This proved the frame loop can reuse
+  command buffers once the state signature is stable.
+- Dynamic UI correctness/perf trail:
+  - Reusing a single per-image dynamic UI secondary reduced CPU recording cost
+    but validation showed cached primaries were submitting secondaries that had
+    been re-recorded or invalidated.
+  - Forcing the primary dirty whenever dynamic UI changed removed that specific
+    stale-secondary behavior but regressed to constant primary recording because
+    the same swapchain image alternated between two stable normalized frame-op
+    sets.
+  - Latest diff diagnostics showed repeated alternation between about 187 and
+    239 static frame ops; this was not only batched UI text. A one-primary-per-
+    swapchain-image cache is too narrow for the editor path.
+- Current implementation attempt: added a small per-swapchain-image primary
+  command-buffer variant cache keyed by normalized static frame-op signature and
+  dynamic UI signature. Each variant owns its own dynamic UI secondary command
+  buffer, and command-buffer handles are mapped back to the correct swapchain
+  image so descriptor/uniform frame slots no longer fall back to image 0 for
+  secondary/variant command buffers.
+- Validation for that attempt:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 0 warnings and 0 errors.
+- Latest live run:
+  - Label: `vulkan-cpudirect-primary-variant-cache`
+  - PID/log directory:
+    `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_01-45-30_pid28628`
+  - CPU dump:
+    `profiler-cpu-frame-2026-06-18-01-46-48-573-148a0e3a.log`
+  - GPU dumps:
+    `profiler-gpu-pipeline-defaultrenderpipeline-11-2026-06-18_01-46-48-579-50c4ca79.log`
+    plus four shadow pipeline dumps from the same timestamp.
+  - Render-stats 1200-row tail: 14 records, 1186 clean reuses, 0 signature
+    dirty, 0 planner dirty, 0 profiler dirty. Render dispatch p50 about
+    14.8 ms / p95 about 26.1 ms. Vulkan frame total p50 about 3.4 ms.
+    `RecordCommandBuffer` p50 about 2.65 ms. GPU command-buffer p50 about
+    4.57 ms.
+- Remaining blocker before calling the variant cache done: validation still
+  reported command-buffer invalidation during warmup. The latest run showed
+  `vkCmdExecuteCommands` errors for unrecorded secondary command buffers and
+  `vkQueueSubmit2` errors for primaries invalidated by bound objects. These
+  stopped being the dominant steady-state perf symptom, but correctness is not
+  closed yet. Next iteration should inspect the early invalidated-object blocks
+  in `log_vulkan.log` for the exact descriptor set / secondary command-buffer
+  ownership path, then either keep those primaries dirty until descriptors stop
+  churning or move the affected bindings to safe per-frame/update-after-bind
+  behavior.
 
 ## Source Validation
 

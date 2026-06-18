@@ -109,7 +109,7 @@ public partial class DefaultRenderPipeline
             AppendTransparencyPasses(c);
 
             c.Add<VPRC_DepthTest>().Enable = false;
-            AppendVelocityPass(c);
+            AppendVelocityPassSwitch(c);
             c.Add<VPRC_DepthTest>().Enable = false;
             AppendBloomPass(c);
             AppendMotionBlurAndDoF(c);
@@ -602,6 +602,17 @@ public partial class DefaultRenderPipeline
             AppendExactTransparencyCommands(transparencyCommands);
             transparencyChoice.TrueCommands = transparencyCommands;
         }
+    }
+
+    private void AppendVelocityPassSwitch(ViewportRenderCommandContainer c)
+    {
+        var velocityChoice = c.Add<VPRC_IfElse>();
+        velocityChoice.Label = "Velocity Buffer";
+        velocityChoice.ConditionEvaluator = ShouldGenerateVelocityBuffer;
+
+        ViewportRenderCommandContainer velocityCommands = new(this);
+        AppendVelocityPass(velocityCommands);
+        velocityChoice.TrueCommands = velocityCommands;
     }
 
     private void AppendVelocityPass(ViewportRenderCommandContainer c)

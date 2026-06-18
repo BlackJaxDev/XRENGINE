@@ -362,6 +362,7 @@ public static partial class EditorUnitTests
         /// </summary>
         public bool CreateUnitBox { get; set; } = true;
 
+        public EVSyncMode? VSyncOverride = EVSyncMode.Off; //When set, overrides loaded user VSync for unit-test runs. Null preserves saved user settings.
         public float RenderFPS = 0.0f;
         public float UpdateFPS = 60.0f;
         public float FixedFPS = 30.0f;

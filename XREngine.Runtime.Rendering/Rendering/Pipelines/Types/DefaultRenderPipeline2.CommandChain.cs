@@ -135,7 +135,7 @@ public partial class DefaultRenderPipeline2
             // when TAA/TSR tries to blend jittered transparent edges with history.
 
             c.Add<VPRC_DepthTest>().Enable = false;
-            AppendVelocityPass(c);
+            AppendVelocityPassSwitch(c);
             c.Add<VPRC_DepthTest>().Enable = false;
             AppendBloomPass(c);
             AppendMotionBlurAndDoF(c);
@@ -871,6 +871,18 @@ public partial class DefaultRenderPipeline2
 
         AppendExactTransparencyCommands(c);
         EndGpuScope(c, "Transparency");
+    }
+
+    /// <summary>Renders velocity only when enabled features consume the buffer.</summary>
+    private void AppendVelocityPassSwitch(ViewportRenderCommandContainer c)
+    {
+        var velocityChoice = c.Add<VPRC_IfElse>();
+        velocityChoice.Label = "Velocity Buffer";
+        velocityChoice.ConditionEvaluator = ShouldGenerateVelocityBuffer;
+
+        ViewportRenderCommandContainer velocityCommands = new(this);
+        AppendVelocityPass(velocityCommands);
+        velocityChoice.TrueCommands = velocityCommands;
     }
 
     /// <summary>Caches the velocity FBO, renders motion vectors, and restores default clears.</summary>
