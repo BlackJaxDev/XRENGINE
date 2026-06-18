@@ -221,6 +221,10 @@ DeviceCreateInfo
 
 **Optional device extensions:**
 - `VK_KHR_multiview`
+- `VK_KHR_external_memory`
+- `VK_KHR_external_memory_win32`
+- `VK_KHR_external_semaphore`
+- `VK_KHR_external_semaphore_win32`
 - `VK_KHR_draw_indirect_count`
 - `VK_KHR_shader_draw_parameters`
 - `VK_EXT_index_type_uint8`
@@ -228,6 +232,17 @@ DeviceCreateInfo
 - `VK_KHR_dynamic_rendering`
 - `VK_NV_memory_decompression`
 - `VK_NV_copy_memory_indirect`
+
+**OBS hook compatibility:**
+
+Feature guide: [Vulkan OBS Hook Compatibility](../../developer-guides/rendering/vulkan-obs-hook-compatibility.md).
+
+The Windows OBS Vulkan game-capture path is provided by OBS as the implicit `VK_LAYER_OBS_HOOK` layer. XRENGINE does not ship that layer; instead, startup checks whether the loader reports it and whether the selected device can support the layer's shared-texture path:
+
+- the engine leaves the implicit OBS layer enabled by default (`XRE_VK_OBS_HOOK=Auto`)
+- `XRE_VK_OBS_HOOK=Disable` sets `DISABLE_VULKAN_OBS_CAPTURE=1` before `vkCreateInstance`, useful when debugging validation or RenderDoc captures affected by OBS interception
+- `XRE_VK_OBS_HOOK=Require` fails startup if `VK_LAYER_OBS_HOOK` is missing, disabled, or the selected Vulkan device cannot import D3D11 texture KMT shared memory through `VK_KHR_external_memory_win32`
+- swapchain images are created with `VK_IMAGE_USAGE_TRANSFER_SRC_BIT`, matching the access OBS needs when it captures from `vkQueuePresentKHR`
 
 **Render target mode:**
 

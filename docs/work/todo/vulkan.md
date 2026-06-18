@@ -1,6 +1,6 @@
 # Vulkan Manual Validation Guide
 
-Last updated: 2026-06-09
+Last updated: 2026-06-18
 
 This document is now the manual validation plan for making Vulkan a dependable day-to-day render API in XRENGINE. Code-side P0/P1 guard rails and the remaining source-verifiable P2 items are implemented: black-frame diagnostics, final-output checks, descriptor fallback/failure telemetry, descriptor update templates, immutable samplers, push constants, dynamic UBO pressure counters, fence-retired resource-plan replacement, swapchain recovery diagnostics, queue-ownership source coverage, pipeline miss summaries, and the engine-level pipeline prewarm manifest.
 
@@ -46,6 +46,7 @@ Useful diagnostics:
 | `XRE_VK_TRACE_PIPECREATE=1` | Logs pipeline creation details. |
 | `XRE_VK_PIPELINE_PREWARM_CAPTURE=1` | Writes observed pipeline permutations to `%LOCALAPPDATA%\XREngine\Vulkan\PipelinePrewarm\prewarm_*.json` on shutdown. |
 | `XRE_VK_RENDER_TARGET_MODE=Auto|DynamicRendering|LegacyRenderPass` | Selects dynamic rendering or retained legacy `VkRenderPass`/`VkFramebuffer` target recording. |
+| `XRE_VK_OBS_HOOK=Auto|Disable|Require` | Controls OBS Vulkan hook compatibility diagnostics. `Disable` sets `DISABLE_VULKAN_OBS_CAPTURE=1`; `Require` fails startup if `VK_LAYER_OBS_HOOK` or its shared-texture import path is unavailable. |
 
 Render target mode smoke commands:
 

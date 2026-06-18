@@ -103,6 +103,8 @@
       href: rendering/opengl-program-linking.md
     - name: Physics Chain Performance
       href: rendering/physics-chain-performance.md
+    - name: Vulkan OBS Hook Compatibility
+      href: rendering/vulkan-obs-hook-compatibility.md
     - name: Vulkan Upscale Bridge
       href: rendering/vulkan-upscale-bridge.md
     - name: Default Render Pipeline Script

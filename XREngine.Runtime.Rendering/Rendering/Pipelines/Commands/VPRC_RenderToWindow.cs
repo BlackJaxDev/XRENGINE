@@ -181,6 +181,7 @@ void main()
         }
 
         RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
+        renderer.TrackWindowPresentSource(sourceTexture, ResolveSourceFrameBuffer(instance));
         using var areaScope = instance.RenderState.PushRenderArea(region);
         if (ClearColor || ClearDepth || ClearStencil)
             RuntimeEngine.Rendering.State.Clear(ClearColor, ClearDepth, ClearStencil);
@@ -258,6 +259,11 @@ void main()
 
     private string GetSourceDisplayName()
         => SourceTextureName ?? SourceFBOName ?? "Output";
+
+    private XRFrameBuffer? ResolveSourceFrameBuffer(XRRenderPipelineInstance instance)
+        => !string.IsNullOrWhiteSpace(SourceFBOName)
+            ? instance.GetFBO<XRFrameBuffer>(SourceFBOName!)
+            : instance.RenderState.OutputFBO;
 
     private void Present_SettingUniforms(XRRenderProgram program)
     {

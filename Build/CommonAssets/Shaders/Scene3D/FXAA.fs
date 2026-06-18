@@ -3,14 +3,14 @@
 layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
-uniform sampler2D PostProcessOutputTexture;
+uniform sampler2D Texture0;
 uniform vec2 FxaaTexelStep;
 
 const vec3 LumaWeights = vec3(0.299f, 0.587f, 0.114f);
 
 vec3 Sample(vec2 uv)
 {
-    return texture(PostProcessOutputTexture, clamp(uv, vec2(0.0f), vec2(1.0f))).rgb;
+    return texture(Texture0, clamp(uv, vec2(0.0f), vec2(1.0f))).rgb;
 }
 
 void main()

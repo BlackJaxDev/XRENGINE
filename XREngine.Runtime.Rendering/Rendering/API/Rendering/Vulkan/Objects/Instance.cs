@@ -14,6 +14,8 @@ public unsafe partial class VulkanRenderer
 
     private void CreateInstance()
     {
+        PrepareObsHookCompatibility();
+
         if (EnableValidationLayers && !CheckValidationLayerSupport())
         {
             System.Console.WriteLine("Vulkan validation layers requested but not available. Continuing without them.");

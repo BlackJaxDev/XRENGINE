@@ -119,6 +119,8 @@ Tool categories include Setup, Build, Editor, Repo, Docs, Reports, and Deps. `Ex
 
 "Iterate on the editor" (a.k.a. "iterate on the editor") means driving a tight, evidence-based debug loop against a live editor process using the MCP server and the per-run logs, instead of guessing from source alone. Use it for rendering, scene, transform, and other visually observable issues. Each iteration is one full pass through the loop below.
 
+When iterating on the editor to debug one or more issues, create or update a work doc under `docs/work/` for the investigation. Use it as the durable progress tracker until the issue is solved. It should record the problem statement, issues found, suggested solutions, attempted solutions, validation evidence, and whether the user reported each attempted solution worked or did not work.
+
 The loop:
 
 1. Build the editor (`Build-Editor` task or `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`) so the running process reflects current source.
