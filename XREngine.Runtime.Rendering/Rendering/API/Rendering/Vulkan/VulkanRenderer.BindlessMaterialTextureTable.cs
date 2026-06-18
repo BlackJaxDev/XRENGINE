@@ -441,10 +441,13 @@ public unsafe partial class VulkanRenderer
         }
 
         Sampler descriptorSampler = source.DescriptorSampler;
+        if (descriptorSampler.Handle != 0 && !IsLiveSampler(descriptorSampler))
+            descriptorSampler = default;
+
         if (descriptorSampler.Handle == 0)
             descriptorSampler = GetPlaceholderSampler();
 
-        if (descriptorSampler.Handle == 0)
+        if (descriptorSampler.Handle == 0 || !IsLiveSampler(descriptorSampler))
         {
             reason = $"Texture '{texture.Name ?? "<unnamed>"}' has no sampler and the placeholder sampler is unavailable.";
             return false;

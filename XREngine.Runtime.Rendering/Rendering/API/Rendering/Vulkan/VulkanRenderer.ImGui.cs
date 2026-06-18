@@ -43,6 +43,7 @@ public unsafe partial class VulkanRenderer
     private bool _imguiFontReady;
 
     private ImGuiDrawBufferSet[] _imguiDrawBuffers = [];
+    private CommandBuffer[]? _imguiOverlayCommandBuffers;
 
     protected override bool SupportsImGui => true;
 
@@ -720,7 +721,10 @@ public unsafe partial class VulkanRenderer
             return;
 
         if (_imguiFontSampler.Handle != 0)
+        {
+            UnregisterLiveSampler(_imguiFontSampler);
             Api.DestroySampler(device, _imguiFontSampler, null);
+        }
         _imguiFontSampler = default;
 
         if (_imguiFontImageView.Handle != 0)
@@ -886,6 +890,8 @@ public unsafe partial class VulkanRenderer
 
         if (Api.CreateSampler(device, ref samplerInfo, null, out _imguiFontSampler) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui font sampler.");
+
+        RegisterLiveSampler(_imguiFontSampler);
     }
 
     private void CreateImGuiFontDescriptorResources()
@@ -1393,17 +1399,202 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void RenderImGui(CommandBuffer commandBuffer, uint imageIndex)
+    private bool TryRecordImGuiOverlayCommandBuffer(uint imageIndex, out CommandBuffer overlayCommandBuffer)
     {
-        if (!_imguiDrawData.TryConsume(out ImGuiFrameSnapshot? drawData) || drawData is null)
-            return;
+        overlayCommandBuffer = default;
 
-        if (drawData.TotalVertexCount <= 0 || drawData.TotalIndexCount <= 0 || drawData.CommandLists.Count == 0)
-            return;
+        if (RenderDiagnosticsFlags.VkSkipImGui)
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.SkipImGui.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Skipping ImGui overlay due to XRE_SKIP_IMGUI=1.");
+            return false;
+        }
+
+        if (_imguiOverlayCommandBuffers is null ||
+            imageIndex >= _imguiOverlayCommandBuffers.Length ||
+            swapChainImages is null ||
+            imageIndex >= swapChainImages.Length)
+        {
+            return false;
+        }
+
+        bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
+            swapChainImageViews is not null &&
+            imageIndex < swapChainImageViews.Length;
+
+        if (!useDynamicRendering &&
+            (swapChainFramebuffers is null ||
+             imageIndex >= swapChainFramebuffers.Length ||
+             _renderPassLoad.Handle == 0))
+        {
+            return false;
+        }
+
+        if (!_imguiDrawData.TryConsume(out ImGuiFrameSnapshot? drawData) || drawData is null)
+            return false;
+
+        if (!HasRenderableImGuiSnapshot(drawData))
+            return false;
 
         EnsureImGuiFontResources();
         EnsureImGuiPipeline();
 
+        CommandBuffer commandBuffer = _imguiOverlayCommandBuffers[imageIndex];
+        if (commandBuffer.Handle == 0)
+            return false;
+
+        Api!.ResetCommandBuffer(commandBuffer, 0);
+
+        CommandBufferBeginInfo beginInfo = new()
+        {
+            SType = StructureType.CommandBufferBeginInfo,
+            Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+        };
+
+        if (Api.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
+            throw new InvalidOperationException("Failed to begin ImGui overlay command buffer.");
+
+        ResetCommandBufferBindState(commandBuffer);
+        CmdBeginLabel(commandBuffer, "ImGuiOverlay");
+
+        if (useDynamicRendering)
+        {
+            TransitionSwapchainImageForImGuiOverlay(
+                commandBuffer,
+                imageIndex,
+                ImageLayout.PresentSrcKhr,
+                ImageLayout.ColorAttachmentOptimal);
+
+            RenderingAttachmentInfo colorAttachment = new()
+            {
+                SType = StructureType.RenderingAttachmentInfo,
+                ImageView = swapChainImageViews![imageIndex],
+                ImageLayout = ImageLayout.ColorAttachmentOptimal,
+                LoadOp = AttachmentLoadOp.Load,
+                StoreOp = AttachmentStoreOp.Store,
+            };
+
+            RenderingAttachmentInfo depthAttachment = new()
+            {
+                SType = StructureType.RenderingAttachmentInfo,
+                ImageView = _swapchainDepthView,
+                ImageLayout = ImageLayout.DepthStencilAttachmentOptimal,
+                LoadOp = AttachmentLoadOp.DontCare,
+                StoreOp = AttachmentStoreOp.DontCare,
+            };
+
+            RenderingInfo renderingInfo = new()
+            {
+                SType = StructureType.RenderingInfo,
+                RenderArea = new Rect2D
+                {
+                    Offset = new Offset2D(0, 0),
+                    Extent = swapChainExtent
+                },
+                LayerCount = 1,
+                ColorAttachmentCount = 1,
+                PColorAttachments = &colorAttachment,
+                PDepthAttachment = _swapchainDepthView.Handle != 0 ? &depthAttachment : null,
+            };
+
+            Api.CmdBeginRendering(commandBuffer, &renderingInfo);
+            RenderImGuiSnapshot(commandBuffer, imageIndex, drawData);
+            Api.CmdEndRendering(commandBuffer);
+
+            TransitionSwapchainImageForImGuiOverlay(
+                commandBuffer,
+                imageIndex,
+                ImageLayout.ColorAttachmentOptimal,
+                ImageLayout.PresentSrcKhr);
+        }
+        else
+        {
+            RenderPassBeginInfo renderPassInfo = new()
+            {
+                SType = StructureType.RenderPassBeginInfo,
+                RenderPass = _renderPassLoad,
+                Framebuffer = swapChainFramebuffers![imageIndex],
+                RenderArea = new Rect2D
+                {
+                    Offset = new Offset2D(0, 0),
+                    Extent = swapChainExtent
+                }
+            };
+
+            const uint attachmentCount = 2;
+            ClearValue* clearValues = stackalloc ClearValue[(int)attachmentCount];
+            _state.WriteClearValues(clearValues, attachmentCount);
+            renderPassInfo.ClearValueCount = attachmentCount;
+            renderPassInfo.PClearValues = clearValues;
+
+            Api.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.Inline);
+            RenderImGuiSnapshot(commandBuffer, imageIndex, drawData);
+            Api.CmdEndRenderPass(commandBuffer);
+        }
+
+        CmdEndLabel(commandBuffer);
+
+        if (Api.EndCommandBuffer(commandBuffer) != Result.Success)
+            throw new InvalidOperationException("Failed to end ImGui overlay command buffer.");
+
+        overlayCommandBuffer = commandBuffer;
+        return true;
+    }
+
+    private static bool HasRenderableImGuiSnapshot(ImGuiFrameSnapshot drawData)
+        => drawData.TotalVertexCount > 0 &&
+           drawData.TotalIndexCount > 0 &&
+           drawData.CommandLists.Count > 0 &&
+           drawData.DisplaySize.X > 0f &&
+           drawData.DisplaySize.Y > 0f;
+
+    private void TransitionSwapchainImageForImGuiOverlay(
+        CommandBuffer commandBuffer,
+        uint imageIndex,
+        ImageLayout oldLayout,
+        ImageLayout newLayout)
+    {
+        if (swapChainImages is null || imageIndex >= swapChainImages.Length || oldLayout == newLayout)
+            return;
+
+        ImageMemoryBarrier barrier = new()
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            SrcAccessMask = oldLayout == ImageLayout.ColorAttachmentOptimal
+                ? AccessFlags.ColorAttachmentWriteBit
+                : 0,
+            DstAccessMask = newLayout == ImageLayout.ColorAttachmentOptimal
+                ? AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit
+                : 0,
+            OldLayout = oldLayout,
+            NewLayout = newLayout,
+            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            Image = swapChainImages[imageIndex],
+            SubresourceRange = new ImageSubresourceRange
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1
+            }
+        };
+
+        PipelineStageFlags srcStage = oldLayout == ImageLayout.ColorAttachmentOptimal
+            ? PipelineStageFlags.ColorAttachmentOutputBit
+            : PipelineStageFlags.BottomOfPipeBit;
+        PipelineStageFlags dstStage = newLayout == ImageLayout.ColorAttachmentOptimal
+            ? PipelineStageFlags.ColorAttachmentOutputBit
+            : PipelineStageFlags.BottomOfPipeBit;
+
+        CmdPipelineBarrierTracked(commandBuffer, srcStage, dstStage, 0, 0, null, 0, null, 1, &barrier);
+    }
+
+    private void RenderImGuiSnapshot(CommandBuffer commandBuffer, uint imageIndex, ImGuiFrameSnapshot drawData)
+    {
         ulong vertexBytes = (ulong)(drawData.TotalVertexCount * sizeof(ImDrawVert));
         ulong indexBytes = (ulong)(drawData.TotalIndexCount * sizeof(ushort));
         int bufferSlot = EnsureImGuiDrawBuffers(imageIndex, vertexBytes, indexBytes);
@@ -1650,8 +1841,14 @@ public unsafe partial class VulkanRenderer
 
         descriptorView = ResolveImGuiDescriptorView(source);
         descriptorSampler = source.DescriptorSampler;
+        if (descriptorSampler.Handle != 0 && !IsLiveSampler(descriptorSampler))
+            descriptorSampler = default;
+
+        if (descriptorSampler.Handle == 0)
+            descriptorSampler = GetPlaceholderSampler();
+
         descriptorLayout = ResolveDescriptorImageLayout(source, DescriptorType.CombinedImageSampler);
-        return descriptorView.Handle != 0 && descriptorSampler.Handle != 0;
+        return descriptorView.Handle != 0 && descriptorSampler.Handle != 0 && IsLiveSampler(descriptorSampler);
     }
 
     private void TryUploadImGuiTextureIfUninitialized(XRTexture texture, ref IVkImageDescriptorSource source)

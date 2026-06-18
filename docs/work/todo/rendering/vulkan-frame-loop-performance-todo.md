@@ -53,18 +53,25 @@ These are the follow-up todos from the 2026-06-17 slow Vulkan default pipeline
 capture and bindless/deferred-texturing audit. Keep these unchecked until there
 is source change plus live evidence in this document.
 
-- [x] Debug the new Vulkan black-frame regression introduced after the Vulkan
-  bindless updates. The current observed repro is that deferred Sponza/3D
-  geometry renders black, while zooming out shows the skybox still renders. This
-  is not currently a full-frame black-until-window-resize repro. Treat it as a
-  geometry, deferred material, GBuffer, lighting, or descriptor correctness
-  blocker for the traditional Vulkan CPU-driven path; do not defer it behind
-  GPU-indirect zero-readback, instrumented, or meshlet path work. Local fix
-  landed on 2026-06-17: the final presented target was the FXAA output, and the
-  Vulkan FXAA material was sampling a shader uniform name that did not match the
-  material texture slot descriptor. Switching FXAA to sample `Texture0` and
-  avoiding per-frame material texture-list churn made `FxaaOutputTexture` and
-  the viewport nonblack in MCP captures.
+- [x] Debug the Vulkan deferred-Sponza fully-black regression introduced after
+  the Vulkan bindless updates. The confirmed repro was black Sponza/3D geometry
+  with sky/background still visible, not a full-frame black-until-window-resize
+  issue. Evidence from
+  `Build\McpCaptures\vulkan-black-regression-check\Screenshot_20260618_123624.png`
+  showed black Sponza geometry while `AmbientOcclusionTexture` still contained
+  visible geometry. Root-cause split on 2026-06-18: enabling dense imported
+  texture residency restored textured `AlbedoOpacity` and nonblack output.
+  Follow-up source stabilization keeps Vulkan dense imported texture promotions
+  active by default and limits Vulkan imported-texture resident transitions to
+  one resident mip until the upload queue is moved off one-shot synchronous
+  submits. No-env visual gates after the fix:
+  `Build\McpCaptures\vulkan-visual-gate-default-dense-residency-fix\Screenshot_20260618_125652.png`,
+  `Build\McpCaptures\vulkan-visual-gate-default-dense-residency-fix\RenderPipeline_AlbedoOpacity_20260618_125654.png`,
+  `Build\McpCaptures\vulkan-visual-gate-preview-mip-fix\Screenshot_20260618_130243.png`,
+  and
+  `Build\McpCaptures\vulkan-visual-gate-preview-mip-fix\RenderPipeline_AlbedoOpacity_20260618_130246.png`.
+  Remaining Sponza darkness is tracked separately below as an AO/global-ambient
+  issue.
 - [ ] Keep the prior startup-size/1x1 render-resource hypothesis as a secondary
   resize-stability check only, not the active Sponza-black root-cause theory.
   The 2026-06-17 run logged skipped 0x0 viewport resizes followed by 1x1
@@ -73,6 +80,41 @@ is source change plus live evidence in this document.
   Source mitigation started on 2026-06-17: scene-panel render-region publication
   and the scene-panel FBO adapter now reject sub-2-pixel extents before they can
   resize the real viewport or trigger default-pipeline resource generation.
+- [ ] Track the remaining deferred Sponza darkness as a separate AO/global
+  ambient issue, not the active framerate investigation. Current working
+  observation from 2026-06-18: the skybox renders, there is no confirmed
+  black-until-resize full-scene repro, no light probes are captured in this
+  test scene, so GI is absent by design, and the global ambient term should
+  still light dark regions. Resume this after the CPU-direct Vulkan framerate
+  path is back under control.
+- [ ] Use Vulkan visual-output regression gates for every CPU-direct framerate
+  patch. A performance change is not complete unless a post-change MCP capture
+  proves the default pipeline still produces visible Sponza geometry, or the
+  capture is explicitly recorded as the same pre-existing AO/global-ambient
+  issue with no worsening. Required captures: viewport screenshot from at least
+  two camera positions, `AlbedoOpacity`, `Normal`, `RMSE`, `DepthView`,
+  `AmbientOcclusionTexture`, `LightingAccumTexture`, `HDRSceneTex`,
+  `FinalPostProcessOutputTexture`, and the active AA output (`FxaaOutputTexture`
+  or `TsrOutputTexture`).
+- [x] Diagnose the directional-light shadow-map flicker observed during Vulkan
+  CPU-direct framerate iteration. User evidence on 2026-06-18 showed a frame
+  where the directional shadow contribution appeared to flicker off while the
+  rest of the deferred scene continued rendering. Matching log evidence from
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_13-24-40_pid45296\log_lighting.log`
+  showed the dynamic shadow atlas repeatedly deferring 7-10 shadow requests
+  after rendering only 1-4 tiles, with a 2 ms shadow budget. Root cause: dirty
+  directional cascades that missed refresh could publish `ActiveFallback=Lit`,
+  making receiver bindings disable the cascade for that frame. Source fix:
+  directional atlas requests with a previously rendered tile now keep
+  `ShadowFallbackMode.StaleTile` sampleable until their dirty refresh actually
+  renders. Local validation passed through
+  `ShadowAtlasManagerPhaseTests` and the editor build. Live visual confirmation
+  is still required on the next MCP/editor run.
+- [ ] Add a live shadow-flicker regression gate before accepting further
+  Vulkan CPU-direct framerate fixes: enable directional shadow audit when
+  needed, capture the directional atlas output while moving/settling the camera,
+  and confirm dirty directional cascades no longer produce one-frame
+  `DirectionalShadowAtlasEnabled=false`/lit fallback flashes.
 - [ ] Audit bindless leakage into traditional CPU-driven Vulkan draws. CPU-direct
   rendering must continue to use ordinary per-material Vulkan descriptors and
   non-bindless shaders unless the draw path explicitly opts into bindless
@@ -119,6 +161,21 @@ is source change plus live evidence in this document.
 - [ ] Investigate texture-streaming warmup and any `GLTieredTextureResidencyBackend`
   label or path that appears during Vulkan runs. Confirm whether this is naming
   only or an unintended GL-era residency path.
+- [x] Live-validate the latest camera-motion editor crash fix. The 2026-06-18
+  crash logs point to Vulkan device loss during dense Sponza imported-texture
+  upload, not ImGui itself. Source mitigation now keeps Vulkan dense imported
+  texture promotions to one resident mip until a synchronized Vulkan upload
+  queue/render-graph path exists. Required evidence: rebuild editor, move the
+  Unit Testing World camera enough to force Sponza texture promotions, confirm
+  the ImGui editor remains visible, confirm frames continue rendering, capture
+  CPU/GPU profiler dumps, and verify no `ErrorDeviceLost` appears in
+  `log_vulkan.log`. Short live validation completed on 2026-06-18 with editor
+  PID 10844 and log session
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_14-10-25_pid10844`.
+- [ ] Run a longer manual/editor soak if the user can still reproduce the
+  camera-motion crash after the single-mip Vulkan dense-promotion mitigation.
+  The current MCP validation covered 45 automated camera moves and did not
+  reproduce device loss, but it is not a multi-minute manual navigation soak.
 - [ ] Investigate Vulkan BVH picking fallback spam. Confirm whether editor
   selection/picking is forcing OpenGL-only fallback work during the default
   Vulkan profile.
@@ -135,6 +192,34 @@ is source change plus live evidence in this document.
 - [ ] Add a full editor/window capture path for presentation/UI flicker
   debugging. `capture_viewport_screenshot` reads the renderer viewport/present
   source and can omit ImGui editor chrome/frontbuffer timing.
+- [x] Fix Vulkan ImGui overlay cadence and corrupt/stale UI flicker. Source
+  diagnosis: ImGui draw data was stored as a single latest snapshot in
+  `VulkanRenderer.ImGui`, then consumed only while the reusable Vulkan primary
+  swapchain command buffer was recorded. Clean command-buffer reuse could
+  present the scene at normal cadence while the overlay rotated through stale
+  per-swapchain-image UI snapshots. Implemented proper fix on 2026-06-18:
+  allocate one primary ImGui overlay command buffer per swapchain image, record
+  it every presented frame in `Vulkan.FrameLifecycle.RecordImGuiOverlay`, submit
+  it after the cached scene primary and before present, and remove the old
+  in-primary `RenderImGui(commandBuffer, imageIndex)` path. Vulkan dynamic
+  rendering overlays now transition the swapchain image
+  `PresentSrcKhr -> ColorAttachmentOptimal -> PresentSrcKhr`; legacy render-pass
+  overlays use the load-preserving swapchain render pass. `VulkanFeatureProfile`
+  now reports ImGui enabled for Vulkan profiles so diagnostics no longer say
+  `ImGui=False` while the renderer supports it. Added source-contract coverage in
+  `VulkanImGuiOverlay_RecordsOutsideReusableScenePrimary`.
+  Validation:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false /v:minimal`
+  passed with 0 warnings/errors; exact test
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~VulkanImGuiOverlay_RecordsOutsideReusableScenePrimary" /m:1 /nodeReuse:false /p:UseSharedCompilation=false /v:minimal`
+  passed. A short Vulkan Unit Testing World smoke run stayed alive for 25s and
+  was deliberately stopped; fresh log session
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_15-22-03_pid14064`
+  reports `ImGui=True` and the filtered logs show no VUIDs, validation errors,
+  device loss, queue-submit failures, or ImGui overlay recording failures.
+  Remaining evidence needed: manual full-window observation while moving the
+  editor camera, because MCP viewport screenshots do not capture the full ImGui
+  frontbuffer/chrome cadence.
 - [ ] Narrow broad `AllCommandsBit` Vulkan barriers in stable default-pipeline
   passes. Record before/after barrier counts, affected resources, and GPU timing
   deltas.
@@ -231,6 +316,150 @@ Next implementation work to resume:
 - [ ] Consider enhancing `dump_cpu_frame_profile` to optionally wait for a
   minimum number of profiler snapshots or dump the worst retained frame; the
   first dump after self-enabling frame logging can be too shallow.
+
+## Live Investigation Progress - 2026-06-18
+
+Problem statement:
+
+- Focus remains the traditional Vulkan CPU-driven path with
+  `XRE_FORCE_MESH_SUBMISSION_STRATEGY=CpuDirect`.
+- Regression guard: deferred Sponza is fully black again in the latest MCP
+  evidence. Screenshots
+  `Build\McpCaptures\vulkan-recordprimary-scopes\Screenshot_20260618_122533.png`
+  and
+  `Build\McpCaptures\vulkan-recordprimary-detail\Screenshot_20260618_123216.png`
+  are full black frames. Treat nonblack scene output as a hard validation gate
+  for every framerate change; do not accept a CPU/GPU timing improvement unless
+  the same iteration also proves the viewport or final pipeline target is
+  presentably nonblack.
+- Earlier over-dark Sponza/AO/global-ambient work remains separate, but the
+  current fully black regression is not paused. Keep performance patches
+  constrained to CPU-direct recording unless they are explicitly debugging the
+  black-output path, and validate visual output immediately after each patch.
+- The editor process for the latest MCP iteration exited after profiler capture;
+  local engine logs do not contain a managed exception, device-lost marker, or
+  validation error at the end of the run.
+
+Attempted solutions in the current pass:
+
+- [x] Added skipped-resize-frame timestamp accounting in
+  `Drawing.Core.cs`. Resize/zero-surface skips now call
+  `MarkSkippedResizeFrameObserved(...)` before returning, so minimized or
+  invalid-surface frames do not poison later "gap since last completed frame"
+  diagnostics.
+- [x] Added bounded per-frame retired-resource draining in
+  `Drawing.ResourceRetirement.cs`. Normal frames now drain a capped number of
+  retired descriptor pools, pipelines, framebuffers, buffers, and images per
+  frame-slot visit, while explicit force-flush paths remain unbounded.
+- [x] Added env-gated Vulkan primary-recording detail scopes in
+  `CommandBuffers.cs`. `XRE_VULKAN_RECORDING_PROFILE_DETAIL=1` now splits the
+  primary recording loop by frame-op category; the latest detailed run points at
+  `Vulkan.RecordPrimary.Op.MeshDraw` as the dominant CPU-direct recorder cost.
+
+Validation evidence:
+
+- 2026-06-18:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 0 warnings and 0 errors after the skipped-frame timestamp and
+  retired-resource drain-budget patches.
+- Latest live run:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_11-33-15_pid45776`.
+- Launch mode: Debug editor, Unit Testing World, MCP enabled, Vulkan,
+  `CpuDirect`, `XRE_DEFERRED_DEBUG=0`, and no Vulkan progressive texture upload
+  override.
+- MCP screenshot:
+  `Build\McpCaptures\vulkan-retirement-budget\Screenshot_20260618_113434.png`.
+  It still shows visual AO/ambient-lighting problems, but the viewport is not a
+  full black frame.
+- MCP CPU dump:
+  `profiler-cpu-frame-2026-06-18-11-34-34-025-54c9a7ba.log`. This dump was too
+  shallow (`ThreadHistoryCount=1`, `TotalThreadMs=2.247`) and reinforces the
+  need for a worst-retained-frame CPU dump mode.
+- MCP GPU dump:
+  `profiler-gpu-pipeline-defaultrenderpipeline-28-2026-06-18-11-34-34-031-fc438c9b.log`.
+  The default pipeline GPU timing is not the bottleneck: tracked frames were
+  around p50 5.2 ms and p95 6.1 ms, while render-thread wall time stayed much
+  higher.
+
+Issues found:
+
+- The retired-resource drain cap fixed the explicit drain cliff in the sampled
+  MCP state: `vulkan.frame_lifecycle.drain_retired_resources_ms` was about
+  `0.005 ms` after the patch.
+- The cap exposed a root-cause churn problem instead of solving it. Startup
+  still created many `DefaultRenderPipeline` instances and resource generations
+  before settling on `DefaultRenderPipeline#28`, including 2048x2048,
+  4096x2048, 4096x4096, 1024x1024, 1x1, and finally 1537x865 profiles.
+- `log_rendering.log` shows a late `FrameProfileChanged` rebuild on
+  `DefaultRenderPipeline#28` with `Delta=vulkanSafe:False->True`, followed by
+  incremental generation work.
+- `XRRenderPipelineInstance.DestroyCache` ran on the render thread during the
+  same startup window, and `log_vulkan.log` recorded
+  `DeviceWaitIdle before render-pipeline physical resource destruction:
+  DestroyCache` twice. This is acceptable during teardown only; during editor
+  startup/profile settling it creates expensive render-thread stalls and
+  resource churn.
+- Several `ResourcePlanReplacement` descriptor-reference releases happened
+  during startup, touching up to 150 mesh renderers and 272 materials.
+- Fresh FPS-drop evidence points at `Vulkan.RecordCommandBuffer.RefreshFrameData`
+  and `Vulkan.RecordCommandBuffer.RecordPrimary` as the dominant CPU-side hot
+  paths, with the collect-visible thread mostly blocked in `WaitForRender`.
+- The latest `profiler-fps-drops.log` still reports `RenderWorkShadowQueueDepth`
+  at 9 on slow frames, but `Lights3DCollection.UpdateShadowAtlasRequests` is now
+  single-digit to low-double-digit milliseconds rather than yesterday's 160 ms
+  self-time.
+- Latest detailed CPU attribution run:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_12-31-31_pid1252`.
+  `profiler-fps-drops.log` repeatedly identifies
+  `Vulkan.RecordPrimary.MainOpLoop > Vulkan.RecordPrimary.Op.MeshDraw` as the
+  worst hot path, including samples around 88 ms, 135 ms, 226 ms, and 232 ms.
+  Texture work queues were mostly empty at capture time, so the next
+  CPU-direct optimization target is per-draw mesh recording, not GPU-indirect,
+  meshlet, or progressive texture upload paths.
+- The same detailed run produced no `VUID`, validation, managed exception,
+  device-lost, or fatal log markers, but its MCP screenshots were fully black.
+  This makes the run useful for CPU hot-path attribution only; it is not an
+  acceptable rendering validation baseline.
+- The 11:33 run ended without an in-engine crash signature. Windows Application
+  events in the broader period show earlier `LiveKernelEvent 141` GPU watchdog
+  reports at 11:19, but no matching managed `.NET Runtime` or `Application
+  Error` event for the 11:35 process exit. Treat this crash as inconclusive
+  until a reproducible run captures either a Vulkan device-lost marker, WER app
+  crash, or GPU watchdog event at the same timestamp.
+- MCP `dump_gpu_render_pipeline_profile` reports a filename with an underscore
+  between date and time in its structured response, while the actual file uses
+  hyphens. This is a tooling paper cut for LLM-driven log lookup.
+
+Next implementation work to resume:
+
+- [ ] Stop unnecessary default-pipeline cache destruction and physical-resource
+  rebuilds while the editor viewport/profile is still settling. First targets:
+  the `vulkanSafe:False->True` profile transition, repeated
+  `DefaultRenderPipeline#N` startup instances, and render-thread
+  `XRRenderPipelineInstance.DestroyCache` jobs.
+- [ ] Remove or defer render-thread `DeviceWaitIdle` from
+  `DestroyCache`/resource replacement paths where retire queues and fences can
+  safely own destruction.
+- [ ] Prevent 1x1 or pre-layout render-resource generations from creating real
+  Vulkan image/FBO work for the default pipeline. The existing scene-panel guard
+  is not sufficient; the 2026-06-18 run still logged a 1x1
+  `DefaultRenderPipeline#28` pending generation before superseding to 1537x865.
+- [ ] Add a profiler dump mode that writes the worst retained CPU frame rather
+  than the most recent shallow snapshot.
+- [ ] Split `Vulkan.RecordCommandBuffer.RefreshFrameData` and
+  `Vulkan.RecordCommandBuffer.RecordPrimary` further if cache/rebuild churn is
+  fixed but frame recording remains above budget.
+- [ ] Reduce traditional Vulkan CPU-direct `MeshDraw` recording cost without
+  changing shader selection, material descriptor semantics, bindless opt-in
+  rules, or deferred output. First suspect: per-draw mapped uniform writes in
+  `VkMeshRenderer`, which currently map/unmap host-visible buffers during
+  `UpdateEngineUniformBuffersForDraw` and `UpdateAutoUniformBuffersForDraw`.
+- [ ] After any `MeshDraw` optimization, immediately rerun Unit Testing World
+  Vulkan `CpuDirect` with deferred debug disabled, capture MCP viewport/final
+  pipeline output, and mark the attempt invalid if the frame remains fully
+  black.
+- [ ] Reproduce the editor exit with a fresh run and capture Windows event log,
+  engine logs, and GPU watchdog timing immediately afterward.
 
 ## Live Investigation Progress - 2026-06-17 Evening
 
@@ -331,11 +560,11 @@ Solutions attempted:
   editor build passed with 0 warnings and 0 errors. Live screenshots remain
   useful only after the MCP capture-orientation fix below; user confirmation is
   still needed for the real viewport.
-- Changed Vulkan screenshot export to respect
-  `RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan)`
-  instead of hard-coding no vertical flip. This makes default Vulkan/Y-up MCP
-  PNGs use the same visual orientation as the presented viewport path, assuming
-  the user's observed viewport is authoritative.
+- Corrected Vulkan screenshot export after the MCP capture orientation
+  regression: `ScreenshotRequiresVerticalFlip` is CPU image export row-order
+  policy, not framebuffer texture UV sampling policy. Vulkan readback now
+  hard-codes no additional PNG flip again, while shader paths continue using
+  `RenderClipSpacePolicy.FramebufferTextureYDirection(...)`.
 - Preserved existing pipeline framebuffer descriptors when Vulkan re-registers
   live framebuffers, avoiding descriptor churn from declarative
   `InternalResolution` FBOs becoming absolute-pixel descriptors.
@@ -403,6 +632,10 @@ User feedback on attempted solutions:
   viewport, and the user questioned whether capturing without ImGui editor chrome
   was intentional. Treat MCP viewport captures as render-target captures, not
   full editor-window captures, until a dedicated full-window path exists.
+- 2026-06-18 follow-up: MCP captures became upside down again because Vulkan
+  `ScreenshotRequiresVerticalFlip` drifted back to framebuffer texture sampling
+  direction. Source fix restored Vulkan screenshot export to no CPU vertical flip
+  and documented that this flag is independent from shader UV policy.
 
 Profiler capture rule for remaining Vulkan CPU-direct performance iterations:
 
@@ -569,6 +802,337 @@ Current stop point - 2026-06-18:
   ownership path, then either keep those primaries dirty until descriptors stop
   churning or move the affected bindings to safe per-frame/update-after-bind
   behavior.
+
+Additional 2026-06-18 framerate/crash iteration:
+
+- User clarification: the over-dark Sponza issue should be treated as a
+  separate ambient-occlusion/global-ambient correctness bug for now, not the
+  current framerate blocker. There are currently no captured light probes, so
+  no GI is expected; the global ambient term should still light dark areas.
+  Keep this visual issue tracked, but do not let it distract the current
+  Vulkan CPU-direct framerate work.
+- Crash evidence from the dense texture upload path:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_10-53-15_pid25748`.
+  The render stall log showed
+  `MainThreadJobs.Normal.Coroutine:TextureStreaming.ApplyResidentData[chain_texture_bump]`
+  with a dense texture upload monopolizing the render thread for about 4.9 s
+  despite the 2 ms texture work budget. `log_vulkan.log` then reported
+  `WaitForFences for one-shot submit failed (result=ErrorDeviceLost)` in
+  `VkImageBackedTexture<T>.TransitionImageLayout` / `VkTexture2D.PushTextureData`.
+- Attempted fix: generalized the existing OpenGL progressive texture upload
+  path for Vulkan imported textures so mip data could be uploaded through
+  `PushMipLevelRequested` instead of one dense render-thread upload. This made
+  the budget shape better in principle, but live validation showed the first
+  Vulkan implementation was unsafe.
+- Attempted fix: disabled accidental use of NV indirect buffer-to-image copy
+  uploads. `TryCopyBufferToImageViaIndirectNv` now honors
+  `CanUseNvIndirectBufferCopyUploads`, and texture staging only requests
+  shader-device-address staging when that same gate is enabled.
+- Attempted fix: corrected progressive Vulkan image mip capacity so a source
+  texture with more mips than the active locked range can create/recreate a
+  full mip-chain image. This removed the `vkCmdCopyBufferToImage` out-of-range
+  mip validation errors seen in
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_11-16-04_pid21068`.
+- Remaining progressive-upload blocker: even after the mip-capacity fix,
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_11-18-52_pid556`
+  device-lost at 2026-06-18 11:19:19 in
+  `VkImageBackedTexture<T>.CopyBufferToImage` / `TransitionImageLayout` while
+  running `VkTexture2D.PushMipLevel`. The progressive Vulkan path still uses
+  one-shot layout transitions and copies in a way that can race the render
+  graph or otherwise invalidate device execution. It must stay experimental
+  until texture upload is moved to a properly synchronized Vulkan upload queue.
+- Current stabilization: Vulkan progressive texture upload is now opt-in via
+  `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1`. The default Vulkan path returns
+  to dense uploads plus the NV-indirect-copy gate fix. OpenGL keeps its
+  progressive upload behavior.
+- 2026-06-18 directional shadow flicker note: the latest user-captured bright
+  frame is consistent with directional atlas cascade fallback, not full-scene
+  black output. The 13:24 log repeatedly deferred shadow requests after
+  rendering only part of the requested tile set. Dirty directional cascades that
+  missed the refresh budget could publish a lit fallback despite having a
+  previously rendered atlas tile, which made the light-combine receiver treat
+  the cascade as unsampleable for that frame. Source fix in
+  `ShadowAtlasManager.CreateResidentAllocation`: directional requests with a
+  previous rendered tile now keep `StaleTile` fallback until refreshed. This
+  intentionally preserves a potentially stale shadow for a frame instead of
+  popping the shadow contribution off.
+- Follow-up: rerun a live Vulkan CPU-direct editor pass with directional shadow
+  audit enabled if the flicker is still visible. Confirm the deferred-bind
+  audit no longer reports a transient disabled directional atlas while the
+  light has resident previously rendered cascades. Do this before resuming
+  framerate-only changes.
+- Stable baseline validation after defaulting Vulkan progressive upload off:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 0 warnings and 0 errors.
+- Live baseline run:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_11-21-43_pid45040`,
+  label `vulkan-cpudirect-dense-upload-no-nv-indirect`, strategy
+  `CpuDirect`, deferred debug disabled. MCP screenshot:
+  `Build\McpCaptures\vulkan-dense-upload-no-nv-indirect\Screenshot_20260618_112256.png`.
+  MCP dumps:
+  `profiler-cpu-frame-2026-06-18-11-22-58-953-0035343c.log` and
+  `profiler-gpu-pipeline-defaultrenderpipeline-28-2026-06-18-11-22-58-973-c1c38db2.log`.
+- The dense baseline did not reproduce device loss or Vulkan validation errors
+  before the later zero-sized-surface event. It did record a render stall:
+  `Vulkan.FrameLifecycle.DrainRetiredResources` took about 364 ms on the last
+  completed render, and another stall was detected while recording the primary
+  command buffer. This keeps retired-resource draining on the active CPU
+  framerate list.
+- The latest "renderer crashed" log check found no newer XRENGINE log session
+  after PID `45040`. The live PID `45040` was still responding, but its
+  `log_vulkan.log` showed repeated 6.6-29.7 s frame-gap warnings followed by
+  `Skipping frame while resize resources settle. Reason=Live surface size is zero`.
+  Treat that as a zero-sized/minimized/closed-surface loop unless a newer crash
+  log appears.
+- Current performance evidence from the same dense baseline: the MCP stats at
+  dump time still showed about 87.6 ms GPU-pipeline frame time, about 41.0 ms
+  Vulkan total frame time, about 40.2 ms command-buffer recording time, and
+  about 12.0 ms GPU command-buffer time. Later stats had clean-reuse frames
+  near 6 ms Vulkan total / 5 ms record time, but dirty or warmup frames spiked
+  to 77-201 ms recording with dirty reasons including
+  `EnsureUniformDrawSlotCapacity` and `TryEnqueueVulkanGraphicsPipelineCompile`.
+- Next CPU-direct framerate todos:
+  - Continue from the default dense-upload baseline. Do not enable
+    `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1` except when explicitly testing
+    the experimental upload path.
+  - Design a synchronized Vulkan texture upload queue before re-enabling
+    progressive texture upload by default. The fix needs render-graph/transfer
+    synchronization, not more one-shot transition calls inside texture objects.
+  - Reduce `Vulkan.FrameLifecycle.DrainRetiredResources` spikes; batch or
+    amortize retirement work and verify resource retirement is not freeing
+    objects still referenced by cached primary/secondary command buffers.
+  - Pre-size uniform draw slots before frame recording so
+    `EnsureUniformDrawSlotCapacity` does not invalidate cached command buffers
+    during visible-frame recording.
+  - Move `TryEnqueueVulkanGraphicsPipelineCompile` work out of the recorded
+    frame path, or batch/warm the needed pipelines before primary command
+    buffer recording starts.
+  - Fix the zero-sized-surface loop so it does not repeatedly emit frame-gap
+    warnings or keep reporting stale timeline values while resize resources are
+    intentionally skipped.
+  - Improve the CPU profiler dump so MCP can capture the retained worst render
+    frame; the current dump is sometimes too shallow when invoked after the
+    spike has already recovered.
+  - Return to the AO/global-ambient Sponza visual issue after framerate and
+    crash stability are no longer moving underfoot.
+
+Current stop point - 2026-06-18 texture residency visual gate:
+
+- Attempted isolation: launched a Vulkan `CpuDirect` Unit Testing World with
+  dense imported texture residency enabled and progressive texture upload still
+  disabled. Evidence:
+  `Build\McpCaptures\vulkan-visual-gate-dense-residency\Screenshot_20260618_124957.png`
+  and
+  `Build\McpCaptures\vulkan-visual-gate-dense-residency\RenderPipeline_AlbedoOpacity_20260618_124959.png`.
+  Result: Sponza albedo and final output were textured/nonblack. This isolated
+  the fully-black Sponza regression to imported texture residency, not geometry,
+  depth, AO visibility, or final presentation alone.
+- Source fix: the default imported texture streaming path now allows visible
+  dense promotions and gates the bound-material fallback uplift behind
+  `allowPromotions`. Preview-tier resident transitions upload one resident mip
+  instead of the whole mip chain. After the latest device-loss crash analysis,
+  Vulkan dense resident promotions also stay single-mip until a synchronized
+  Vulkan upload queue/render-graph path replaces the one-shot layout/copy
+  upload path.
+- Visual validation after the default dense-residency source fix, no special
+  Vulkan residency env vars:
+  `Build\McpCaptures\vulkan-visual-gate-default-dense-residency-fix\Screenshot_20260618_125652.png`,
+  `Build\McpCaptures\vulkan-visual-gate-default-dense-residency-fix\RenderPipeline_AlbedoOpacity_20260618_125654.png`,
+  and
+  `Build\McpCaptures\vulkan-visual-gate-default-dense-residency-fix\RenderPipeline_FinalPostProcessOutputTexture_20260618_125700.png`.
+  Result: Sponza was textured/nonblack, though still too bright/dark depending
+  on exposure/AO/global ambient.
+- Visual validation after the preview mip-chain reduction:
+  `Build\McpCaptures\vulkan-visual-gate-preview-mip-fix\Screenshot_20260618_130243.png`
+  and
+  `Build\McpCaptures\vulkan-visual-gate-preview-mip-fix\RenderPipeline_AlbedoOpacity_20260618_130246.png`.
+  Result: textured/nonblack Sponza remained intact. Treat the remaining
+  over-dark look as the separate AO/global-ambient item, not the fully-black
+  imported texture regression.
+- Texture residency timing evidence improved. Before the preview mip-chain
+  reduction, the 2026-06-18 12:56 run reported
+  `maxUploadMs=2573.78` and `maxQueueWaitMs=2573.78` with preview transitions
+  uploading full chains. After the reduction, the 13:02 run logged 64 px preview
+  transitions as `includeMipChain=False mips=1` and the frame-120 summary
+  reported `maxUploadMs=657.71`, `maxQueueWaitMs=657.71`,
+  `visibleNoPreview=0`, `previewReady=26`, `fallback=0`, and `failed=0`.
+- Performance evidence after the preview mip-chain reduction:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_13-02-12_pid41032`.
+  MCP stats after settling still showed `vulkan_total_ms` about 18.27 ms,
+  `gpu_command_buffer_ms` about 8.55 ms, and `record_command_buffer_ms` about
+  17.06 ms for the sampled frame. CPU dumps at
+  `profiler-cpu-frame-2026-06-18-13-04-47-854-aef117d9.log` showed the current
+  worst thread around 1.83 ms, but retained history still had prior render
+  spikes. GPU pipeline dump
+  `profiler-gpu-pipeline-defaultrenderpipeline-28-2026-06-18-13-04-47-870-7bb47951.log`
+  reported the default pipeline around p50 5.86 ms, p95 6.69 ms, avg 5.84 ms,
+  with last-300 p95 around 6.88 ms.
+- Build/test validation:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 0 warnings and 0 errors after the dense-residency and preview
+  mip-chain changes. Focused tests passed:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~ImportedTextureStreamingPhaseTests|FullyQualifiedName~ImportedTextureStreamingContractTests" /p:UseSharedCompilation=false`
+  with 43 passed, 0 failed. A stale source-contract assertion for
+  `Texture.CacheStale` was updated because production still logs the event, but
+  no longer through the old direct-call formatting.
+- Remaining CPU-direct framerate trail: the GPU pipeline is not the primary
+  blocker at roughly 6-7 ms p95. Render-thread wall time remains high and is
+  still mostly attributed above the named Vulkan/GPU pipeline buckets under
+  `XRWindow.DoRender`, so the next iteration should split present/swap pacing
+  and uninstrumented `DoRender` work before chasing more GPU pass cost.
+- Remaining texture-upload trail: full 1024 px dense promotions still cost
+  render-thread jobs around 8-11 ms during startup. Do not re-enable
+  `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1` by default until Vulkan texture
+  uploads are moved to a synchronized transfer/render-graph path.
+- Tooling follow-up: `dump_gpu_render_pipeline_profile` can report a response
+  filename with underscores between date/time while the actual file on disk uses
+  hyphens. This does not affect profiling, but it slows LLM-driven log lookup.
+
+Additional 2026-06-18 camera-motion crash/device-loss iteration:
+
+- User status before this iteration: flickering appeared gone, Sponza colors
+  were working, and framerate was decent, but moving the camera for a while
+  caused the ImGui editor to disappear and no new frames to render.
+- Latest crash log reviewed:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_13-59-22_pid36092`.
+  First hard Vulkan failure occurred at 2026-06-18 14:00:32.415:
+  `WaitForFences for one-shot submit failed (result=ErrorDeviceLost)`.
+  Stack root:
+  `VulkanRenderer.CommandsStop` ->
+  `VulkanRenderer.CommandScope.Dispose` ->
+  `VkImageBackedTexture<T>.TransitionImageLayout` ->
+  `VkTexture2D.PushTextureData`.
+- Immediate pre-loss evidence: the log created 512x512 dedicated Sponza texture
+  images with `mips=10`, including `sponza_column_b_diff` and
+  `sponza_column_b_bump`, plus a 4 MB staging allocation for
+  `sponza_column_b_diff`. No relevant validation `VUID` appeared before device
+  loss. Later `InvalidOperationException` entries such as
+  `Cannot CreateBuffer after the Vulkan device was lost` are fallout from the
+  lost device, not the root crash.
+- Attempted source fix: `ImportedTextureStreamingManager` now routes resident
+  mip-chain decisions through `ShouldIncludeResidentMipChain(...)`. For Vulkan,
+  dense imported-texture promotions use one resident mip until a synchronized
+  upload queue exists. OpenGL keeps the previous full-chain resident behavior.
+- Validation completed for the source change:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~ImportedTextureStreamingPhaseTests|FullyQualifiedName~ImportedTextureStreamingContractTests" /p:UseSharedCompilation=false`
+  passed with 43 passed, 0 failed.
+- Short live editor validation completed after the source change:
+  launched the editor with Unit Testing World and MCP on port 5468, drove 45
+  automated camera moves through/around Sponza, captured
+  `Build\McpCaptures\vulkan-camera-crash-fix-live\Screenshot_20260618_141201.png`
+  and
+  `Build\McpCaptures\vulkan-camera-crash-fix-live\Screenshot_20260618_141303.png`,
+  and dumped CPU/GPU profiler logs under
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_14-10-25_pid10844`.
+  `rg` found no `ErrorDeviceLost`, no one-shot fence failure, no
+  device-lost `InvalidOperationException`, no validation `VUID`, and no MCP
+  profiler validation errors in that session. The final MCP stats reported
+  `validation_errors=0`, `vulkan_total_ms=8.9417`,
+  `record_command_buffer_ms=7.8929`, and
+  `gpu_command_buffer_ms=6.7208`.
+- Visual result: both captures remained textured/nonblack. The second capture is
+  very close to a red banner and still shows the known dark AO/exposure behavior
+  on adjacent geometry; this does not reintroduce the fully-black Sponza
+  regression.
+- GPU timing after the camera-motion validation:
+  `profiler-gpu-pipeline-defaultrenderpipeline-28-2026-06-18-14-13-04-497-bbf71bf9.log`
+  reported default-pipeline warmup-excluded p50 about 5.0 ms, p95 about
+  6.3 ms, max about 8.0 ms, and last-300 p95 about 5.1 ms. The remaining
+  performance issue is still render-thread wall time/unattributed wait, not a
+  default-pipeline GPU explosion.
+- Follow-up user repro: zooming farther out of the scene still caused the editor
+  renderer to stop after the short MCP validation. Latest log session reviewed:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_14-17-36_pid34772`.
+  First hard Vulkan failure occurred at 2026-06-18 14:21:32.752:
+  `WaitForFences for one-shot submit failed (result=ErrorDeviceLost)`.
+  This was a different first stack than the prior imported-texture upload
+  device loss:
+  `VulkanRenderer.CommandsStop` ->
+  `VulkanRenderer.CommandScope.Dispose` ->
+  `VkImageBackedTexture<T>.TransitionImageLayout` ->
+  `VulkanRenderer.UpdateAutoExposureGpu`.
+- Negative evidence for the zoom-out/demotion hypothesis: the texture log near
+  device loss reported `queuedDemotions=0`, `queuedPromotions=0`, `pending=0`,
+  and all 39 tracked textures promoted/resident. There were earlier Sponza
+  texture downscale/residency transitions and dedicated texture image creations,
+  so camera distance may still be a stress correlation, but the immediate
+  failure signature is auto-exposure layout synchronization rather than
+  demotion.
+- Attempted source fix: `VulkanAutoExposure.UpdateAutoExposureGpu` no longer
+  performs out-of-band one-shot layout transitions for planner-backed
+  `AutoExposureTex` images. The exposure update pass already declares
+  `AutoExposureTex` as `ReadWriteTexture(...)`, so render-graph barriers own
+  the GENERAL/storage-write and shader-read transitions for the default
+  pipeline texture. Standalone/non-render-graph exposure textures keep the old
+  explicit transition behavior.
+- Validation completed for this source change:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~VulkanAutoExposure_ClampsPlannerBackedSourcesToBaseMip" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 1 passed, 0 failed.
+- Live validation of the auto-exposure graph-barrier fix found the next root
+  crash rather than fully clearing the issue. Fresh run:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_14-30-56_pid44744`.
+  After 120 automated near/far camera moves, the first hard failure occurred at
+  2026-06-18 14:32:01.609:
+  `WaitForFences for one-shot submit failed (result=ErrorDeviceLost)`.
+  Stack root:
+  `VulkanRenderer.CommandsStop` ->
+  `VulkanRenderer.CommandScope.Dispose` ->
+  `VkImageBackedTexture<T>.TransitionImageLayout` ->
+  `VkTexture2D.PushTextureData`.
+  The later `ForwardPlusLocalLightsBuffer` descriptor warnings happened after
+  device loss and are fallout.
+- Negative evidence for the demotion hypothesis in the 14:30 run: texture
+  summaries around/after device loss still reported `queuedDemotions=0`,
+  `queuedPromotions=0`, `pending=0`, and all tracked textures resident. The
+  upload stack came through
+  `GLTieredTextureResidencyBackend.ScheduleResidentLoad` ->
+  `XRTexture2D.ScheduleGpuUploadInternal` ->
+  `VkTexture2D.PushTextureData`, so the immediate failure is a Vulkan dense
+  residency upload/resource-swap path, not a confirmed demotion transition.
+- Source containment fix: `ImportedTextureStreamingManager` now freezes
+  preview-ready imported texture residency on Vulkan via
+  `ResolveVulkanSafeResidentSize(...)` /
+  `ShouldFreezeVulkanImportedTextureResidency(...)`. This prevents Vulkan from
+  promoting or demoting imported textures after their preview upload is visible,
+  avoiding live backing-image replacement and one-shot layout/copy uploads while
+  the frame loop is active. OpenGL keeps its existing resident promotion and
+  demotion behavior.
+- Tradeoff accepted for this stabilization pass: Vulkan Sponza remains colored
+  and nonblack, but imported textures stay at preview residency (`64px`) until a
+  synchronized Vulkan texture upload queue/render-graph upload path replaces the
+  one-shot texture-object upload path. This is intentionally scoped to the WIP
+  Vulkan CPU-direct path so framerate/crash work can continue without device
+  loss.
+- Validation completed for the containment fix:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~ImportedTextureStreamingPhaseTests|FullyQualifiedName~ImportedTextureStreamingContractTests" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 43 passed, 0 failed. Note: an accidental parallel test/editor
+  build corrupted generated `AotFactoryRegistrations.g.cs`; deleting that
+  generated file and rerunning sequentially fixed it. Do not run these generator
+  builds in parallel.
+- Editor build validation completed:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false /v:minimal`
+  passed with 0 warnings and 0 errors.
+- Live validation completed after the containment fix: launched Unit Testing
+  World Vulkan `CpuDirect` with MCP on port 5470, kept
+  `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=0`, drove 120 automated camera moves
+  from close Sponza views to far zoomed-out views, and captured
+  `Build\McpCaptures\vulkan-texture-freeze-live\Screenshot_20260618_144426.png`.
+  Fresh log session:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_14-43-24_pid21544`.
+  Grep found no `ErrorDeviceLost`, no `WaitForFences for one-shot`, no Vulkan
+  `VUID`, and no render exception. MCP profiler stats reported validation
+  `error_count=0`. Texture telemetry showed `previewReady=39`, `atPreview=39`,
+  `promoted=0`, `pending=0`, `queuedPromotions=0`, `queuedDemotions=0`, and
+  `maxResident=64`.
+- [ ] Implement the real Vulkan imported-texture upload fix: a synchronized
+  transfer/render-graph upload queue that owns image creation, layout barriers,
+  copy commands, descriptor rebinding, and retirement before re-enabling
+  runtime Vulkan texture promotions/demotions or
+  `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1`.
+- [ ] Re-enable and validate high-res imported texture residency on Vulkan only
+  after the synchronized upload path exists. Validation gate: close/far camera
+  motion should keep Sponza colored/nonblack, allow `promoted>0`, produce no
+  one-shot upload stacks, and show no Vulkan validation/device-loss errors.
 
 ## Source Validation
 
@@ -864,6 +1428,24 @@ Update this section whenever the local source validation is run.
 
 Latest source-backed result:
 
+- 2026-06-18:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~McpServerAutomationTests" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 2 passed, 0 skipped, 0 failed after restoring Vulkan MCP
+  screenshot export to no additional vertical flip.
+- 2026-06-18:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false /v:minimal`
+  passed with 0 warnings and 0 errors after the same MCP screenshot
+  orientation fix.
+- 2026-06-18:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~ShadowAtlasManagerPhaseTests" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 29 passed, 0 skipped, 0 failed after changing dirty directional
+  atlas refreshes to keep stale fallback sampleable until the refresh renders.
+  The first sandboxed attempt failed before tests ran because native MSBuild
+  FileTracker access was denied; the escalated validation run above passed.
+- 2026-06-18:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false /v:minimal`
+  passed with 0 warnings and 0 errors after the same directional shadow atlas
+  fallback fix.
 - 2026-06-17:
   `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore /p:UseSharedCompilation=false`
   passed with 0 warnings and 0 errors.
@@ -930,6 +1512,14 @@ Latest live GPU result:
   `Build\McpCaptures\vulkan-frame-loop-capture-yfix\Screenshot_20260617_190305.png`
   and motion captures in the same directory are nonblack, but MCP viewport
   captures still omit full ImGui/frontbuffer UI.
+- Manual MCP screenshot after restoring Vulkan screenshot export to no CPU
+  vertical flip:
+  `Build\McpCaptures\vulkan-screenshot-row-order-fix-warm\Screenshot_20260618_150021.png`.
+  The capture is visible and oriented upright for the forced camera pose.
+  Latest short-run log directory:
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_14-59-51_pid42380`.
+  Grep found no `ErrorDeviceLost`, no one-shot fence failure, no Vulkan `VUID`,
+  no `InvalidOperationException`, and no fatal/error marker.
 - Manual post-warm motion validation after the buffer-registry fix:
   `Build\McpCaptures\vulkan-frame-loop-buffer-registry-fix\` and
   `Build\McpCaptures\vulkan-frame-loop-second-postwarm-motion\`. Latest log

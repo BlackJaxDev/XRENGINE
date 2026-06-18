@@ -74,7 +74,10 @@ public unsafe partial class VulkanRenderer
         };
 
         if (Api!.CreateSampler(device, ref info, null, out Sampler handle) == Result.Success)
+        {
             _canonicalImmutableSamplers[index] = handle;
+            RegisterLiveSampler(handle);
+        }
         else
             Debug.VulkanWarning($"[Vulkan] Failed to create canonical immutable sampler '{sampler}'.");
     }
@@ -86,6 +89,7 @@ public unsafe partial class VulkanRenderer
             if (_canonicalImmutableSamplers[i].Handle == 0)
                 continue;
 
+            UnregisterLiveSampler(_canonicalImmutableSamplers[i]);
             Api!.DestroySampler(device, _canonicalImmutableSamplers[i], null);
             _canonicalImmutableSamplers[i] = default;
         }

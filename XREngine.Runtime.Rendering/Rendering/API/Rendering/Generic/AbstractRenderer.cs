@@ -538,6 +538,11 @@ namespace XREngine.Rendering
 
         public abstract void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ);
 
+        /// <summary>
+        /// True when images returned by <see cref="GetScreenshotAsync"/> need a CPU-side
+        /// vertical flip before being written in normal top-left image-file order.
+        /// This is independent from framebuffer texture UV sampling direction.
+        /// </summary>
         public virtual bool ScreenshotRequiresVerticalFlip => true;
 
         public abstract void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback);

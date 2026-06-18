@@ -26,6 +26,33 @@ namespace XREngine.Rendering.Vulkan
             [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
 
         private readonly object _retiredResourceLock = new();
+        private const int RetiredDescriptorPoolDrainLimitPerFrame = 8;
+        private const int RetiredPipelineDrainLimitPerFrame = 8;
+        private const int RetiredFramebufferDrainLimitPerFrame = 16;
+        private const int RetiredBufferDrainLimitPerFrame = 64;
+        private const int RetiredImageDrainLimitPerFrame = 8;
+
+        private static int GetRetiredResourceDrainCount(int queuedCount, int maxItems)
+        {
+            if (queuedCount <= 0 || maxItems <= 0)
+                return 0;
+
+            return queuedCount <= maxItems ? queuedCount : maxItems;
+        }
+
+        private void ReportRetiredResourceBacklog(string resourceKind, int frameSlot, int remaining)
+        {
+            if (remaining <= 0)
+                return;
+
+            Debug.VulkanEvery(
+                $"Vulkan.RetiredResourceBacklog.{GetHashCode()}.{resourceKind}.{frameSlot}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Retired {0} backlog remains for frame slot {1}: {2}",
+                resourceKind,
+                frameSlot,
+                remaining);
+        }
 
         // =========== Framebuffer Retirement ===========
 
@@ -81,21 +108,31 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void DrainRetiredPipelines()
+        private void DrainRetiredPipelines(int maxItems = RetiredPipelineDrainLimitPerFrame)
         {
             int frameSlot = currentFrame;
             Pipeline[] retired;
+            int remaining;
 
             lock (_retiredResourceLock)
             {
                 var list = _retiredPipelines[frameSlot];
-                if (list.Count == 0)
+                int drainCount = GetRetiredResourceDrainCount(list.Count, maxItems);
+                if (drainCount == 0)
                     return;
 
-                retired = [.. list];
-                list.Clear();
-                _retiredPipelineHandles[frameSlot].Clear();
+                retired = new Pipeline[drainCount];
+                list.CopyTo(0, retired, 0, drainCount);
+                list.RemoveRange(0, drainCount);
+                foreach (Pipeline pipeline in retired)
+                {
+                    if (pipeline.Handle != 0)
+                        _retiredPipelineHandles[frameSlot].Remove(pipeline.Handle);
+                }
+                remaining = list.Count;
             }
+
+            ReportRetiredResourceBacklog("pipelines", frameSlot, remaining);
 
             if (Api is null || device.Handle == 0)
                 return;
@@ -130,22 +167,32 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void DrainRetiredDescriptorPools()
-            => DrainRetiredDescriptorPools(currentFrame);
+            => DrainRetiredDescriptorPools(currentFrame, RetiredDescriptorPoolDrainLimitPerFrame);
 
-        private void DrainRetiredDescriptorPools(int frameSlot)
+        private void DrainRetiredDescriptorPools(int frameSlot, int maxItems = int.MaxValue)
         {
             DescriptorPool[] retired;
+            int remaining;
 
             lock (_retiredResourceLock)
             {
                 var list = _retiredDescriptorPools[frameSlot];
-                if (list.Count == 0)
+                int drainCount = GetRetiredResourceDrainCount(list.Count, maxItems);
+                if (drainCount == 0)
                     return;
 
-                retired = [.. list];
-                list.Clear();
-                _retiredDescriptorPoolHandles[frameSlot].Clear();
+                retired = new DescriptorPool[drainCount];
+                list.CopyTo(0, retired, 0, drainCount);
+                list.RemoveRange(0, drainCount);
+                foreach (DescriptorPool pool in retired)
+                {
+                    if (pool.Handle != 0)
+                        _retiredDescriptorPoolHandles[frameSlot].Remove(pool.Handle);
+                }
+                remaining = list.Count;
             }
+
+            ReportRetiredResourceBacklog("descriptor pools", frameSlot, remaining);
 
             if (Api is null || device.Handle == 0)
                 return;
@@ -167,7 +214,7 @@ namespace XREngine.Rendering.Vulkan
         internal void DrainAllRetiredDescriptorPools()
         {
             for (int frameSlot = 0; frameSlot < _retiredDescriptorPools.Length; frameSlot++)
-                DrainRetiredDescriptorPools(frameSlot);
+                DrainRetiredDescriptorPools(frameSlot, int.MaxValue);
         }
 
         internal void ReleaseDescriptorReferencesForPhysicalResourceDestruction(string reason)
@@ -192,7 +239,6 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            DrainAllRetiredDescriptorPools();
             MarkCommandBuffersDirty();
 
             Debug.VulkanEvery(
@@ -231,24 +277,30 @@ namespace XREngine.Rendering.Vulkan
         /// Destroys all framebuffers that were retired during the last use of
         /// the current frame slot.  Called immediately after <c>WaitForFences</c>.
         /// </summary>
-        private void DrainRetiredFramebuffers()
+        private void DrainRetiredFramebuffers(int maxItems = RetiredFramebufferDrainLimitPerFrame)
         {
-            List<Framebuffer> list;
+            int frameSlot = currentFrame;
+            Framebuffer[] retired;
+            int remaining;
             lock (_retiredResourceLock)
             {
-                list = _retiredFramebuffers[currentFrame];
-                if (list.Count == 0)
+                List<Framebuffer> list = _retiredFramebuffers[frameSlot];
+                int drainCount = GetRetiredResourceDrainCount(list.Count, maxItems);
+                if (drainCount == 0)
                     return;
+
+                retired = new Framebuffer[drainCount];
+                list.CopyTo(0, retired, 0, drainCount);
+                list.RemoveRange(0, drainCount);
+                foreach (Framebuffer framebuffer in retired)
+                {
+                    if (framebuffer.Handle != 0)
+                        _retiredFramebufferHandles[frameSlot].Remove(framebuffer.Handle);
+                }
+                remaining = list.Count;
             }
 
-            // Copy under lock, then destroy outside.
-            Framebuffer[] retired;
-            lock (_retiredResourceLock)
-            {
-                retired = [.. list];
-                list.Clear();
-                _retiredFramebufferHandles[currentFrame].Clear();
-            }
+            ReportRetiredResourceBacklog("framebuffers", frameSlot, remaining);
 
             if (Api is null || device.Handle == 0)
                 return;
@@ -297,22 +349,33 @@ namespace XREngine.Rendering.Vulkan
         /// Destroys all buffers that were retired during the last use of the current
         /// frame slot.  Called immediately after <c>WaitForFences</c>.
         /// </summary>
-        private void DrainRetiredBuffers()
+        private void DrainRetiredBuffers(int maxItems = RetiredBufferDrainLimitPerFrame)
         {
             int frameSlot = currentFrame;
             (Silk.NET.Vulkan.Buffer Buffer, DeviceMemory Memory)[] retired;
+            int remaining;
 
             lock (_retiredResourceLock)
             {
                 var list = _retiredBuffers[frameSlot];
-                if (list.Count == 0)
+                int drainCount = GetRetiredResourceDrainCount(list.Count, maxItems);
+                if (drainCount == 0)
                     return;
 
-                retired = [.. list];
-                list.Clear();
-                _retiredBufferHandles[frameSlot].Clear();
-                _retiredMemoryHandles[frameSlot].Clear();
+                retired = new (Silk.NET.Vulkan.Buffer Buffer, DeviceMemory Memory)[drainCount];
+                list.CopyTo(0, retired, 0, drainCount);
+                list.RemoveRange(0, drainCount);
+                foreach (var (buffer, memory) in retired)
+                {
+                    if (buffer.Handle != 0)
+                        _retiredBufferHandles[frameSlot].Remove(buffer.Handle);
+                    if (memory.Handle != 0)
+                        _retiredMemoryHandles[frameSlot].Remove(memory.Handle);
+                }
+                remaining = list.Count;
             }
+
+            ReportRetiredResourceBacklog("buffers", frameSlot, remaining);
 
             if (Api is null || device.Handle == 0)
                 return;
@@ -417,6 +480,8 @@ namespace XREngine.Rendering.Vulkan
 
                 if (sampler.Handle != 0 && !_retiredSamplerHandles[frameSlot].Add(sampler.Handle))
                     sampler = default;
+                else if (sampler.Handle != 0)
+                    UnregisterLiveSampler(sampler);
 
                 if (image.Handle == 0 &&
                     memory.Handle == 0 &&
@@ -473,24 +538,45 @@ namespace XREngine.Rendering.Vulkan
         /// Destroys all image resources that were retired during the last use of
         /// the current frame slot.  Called immediately after <c>WaitForFences</c>.
         /// </summary>
-        private void DrainRetiredImages()
+        private void DrainRetiredImages(int maxItems = RetiredImageDrainLimitPerFrame)
         {
             int frameSlot = currentFrame;
             RetiredImageResources[] retired;
+            int remaining;
 
             lock (_retiredResourceLock)
             {
                 var list = _retiredImages[frameSlot];
-                if (list.Count == 0)
+                int drainCount = GetRetiredResourceDrainCount(list.Count, maxItems);
+                if (drainCount == 0)
                     return;
 
-                retired = [.. list];
-                list.Clear();
-                _retiredImageHandles[frameSlot].Clear();
-                _retiredImageMemoryHandles[frameSlot].Clear();
-                _retiredImageViewHandles[frameSlot].Clear();
-                _retiredSamplerHandles[frameSlot].Clear();
+                retired = new RetiredImageResources[drainCount];
+                list.CopyTo(0, retired, 0, drainCount);
+                list.RemoveRange(0, drainCount);
+                foreach (RetiredImageResources resources in retired)
+                {
+                    if (resources.Image.Handle != 0)
+                        _retiredImageHandles[frameSlot].Remove(resources.Image.Handle);
+                    if (resources.Memory.Handle != 0)
+                        _retiredImageMemoryHandles[frameSlot].Remove(resources.Memory.Handle);
+                    if (resources.PrimaryView.Handle != 0)
+                        _retiredImageViewHandles[frameSlot].Remove(resources.PrimaryView.Handle);
+                    if (resources.AttachmentViews is not null)
+                    {
+                        foreach (ImageView view in resources.AttachmentViews)
+                        {
+                            if (view.Handle != 0)
+                                _retiredImageViewHandles[frameSlot].Remove(view.Handle);
+                        }
+                    }
+                    if (resources.Sampler.Handle != 0)
+                        _retiredSamplerHandles[frameSlot].Remove(resources.Sampler.Handle);
+                }
+                remaining = list.Count;
             }
+
+            ReportRetiredResourceBacklog("images", frameSlot, remaining);
 
             int destroyedImages = 0;
             int freedMemories = 0;
@@ -582,11 +668,11 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             {
                 currentFrame = i;
-                DrainRetiredDescriptorPools();
-                DrainRetiredPipelines();
-                DrainRetiredBuffers();
-                DrainRetiredFramebuffers();
-                DrainRetiredImages();
+                DrainRetiredDescriptorPools(currentFrame, int.MaxValue);
+                DrainRetiredPipelines(int.MaxValue);
+                DrainRetiredBuffers(int.MaxValue);
+                DrainRetiredFramebuffers(int.MaxValue);
+                DrainRetiredImages(int.MaxValue);
             }
             currentFrame = saved;
         }

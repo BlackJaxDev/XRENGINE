@@ -1977,14 +1977,17 @@ public sealed class ShadowAtlasManager
 
         bool requiresFreshRender = request.IsDirty || !request.CanReusePreviousFrame;
         bool hasRenderedTile = lastRendered != 0u;
-        bool allowStaleTile = request.Fallback == ShadowFallbackMode.StaleTile && !ShouldRenderFreshTileBeforeStale(request);
+        bool fallbackCanUseStaleTile = request.Fallback == ShadowFallbackMode.StaleTile;
+        bool shouldRefreshBeforeStale = ShouldRenderFreshTileBeforeStale(request);
+        bool allowStaleTile = fallbackCanUseStaleTile && !shouldRefreshBeforeStale;
+        bool keepDirectionalStaleTileUntilRefresh = fallbackCanUseStaleTile && IsDirectionalRequest(request);
         bool reuseStaleTile = hasRenderedTile && requiresFreshRender && allowStaleTile;
         ShadowFallbackMode activeFallback = ShadowFallbackMode.None;
         SkipReason skipReason = SkipReason.None;
 
         if (hasRenderedTile && requiresFreshRender)
         {
-            if (reuseStaleTile)
+            if (reuseStaleTile || keepDirectionalStaleTileUntilRefresh)
             {
                 activeFallback = ShadowFallbackMode.StaleTile;
                 skipReason = SkipReason.StaleTileReused;

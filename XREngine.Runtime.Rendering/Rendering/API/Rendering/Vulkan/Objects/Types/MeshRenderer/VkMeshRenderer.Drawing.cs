@@ -373,6 +373,9 @@ public unsafe partial class VulkanRenderer
 		internal bool TryRefreshReusableCommandBufferFrameData(uint imageIndex, in PendingMeshDraw draw, int drawUniformSlot)
 		{
 			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+			if (!TryPrepareForRendering(material, out _))
+				return false;
+
 			if (_program?.Data is { } programData)
 				NotifyDrawUniforms(material, programData, draw);
 
@@ -388,6 +391,9 @@ public unsafe partial class VulkanRenderer
 		internal string DescribeReusableCommandBufferFrameDataBlocker(in PendingMeshDraw draw, int drawUniformSlot)
 		{
 			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+			if (!TryPrepareForRendering(material, out string prepareReason))
+				return $"render preparation failed: {prepareReason}; {LastPrepareDetail}";
+
 			return CanReuseRecordedDescriptorSets(material, drawUniformSlot, out string reason)
 				? "reusable descriptor sets; refresh likely failed after descriptor check"
 				: reason;

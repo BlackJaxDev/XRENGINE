@@ -72,9 +72,7 @@ public unsafe partial class VulkanRenderer
         lock (_computeDescriptorCacheLock)
         {
             int imageCount = _computeDescriptorCaches?.Length ?? _commandBuffers?.Length ?? 0;
-            int poolCount = CountComputeDescriptorPools_NoLock();
-
-            DestroyComputeDescriptorCaches_NoLock();
+            int poolCount = RetireComputeDescriptorCaches_NoLock();
 
             if (imageCount > 0)
             {
@@ -87,25 +85,28 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private int CountComputeDescriptorPools_NoLock()
+    private int RetireComputeDescriptorCaches_NoLock()
     {
         if (_computeDescriptorCaches is null)
             return 0;
 
-        HashSet<ulong> poolHandles = [];
+        HashSet<ulong> retiredPools = [];
         foreach (ComputeDescriptorImageCache cache in _computeDescriptorCaches)
         {
             foreach (List<ComputeDescriptorPoolBlock> blocks in cache.PoolsBySchema.Values)
             {
                 foreach (ComputeDescriptorPoolBlock block in blocks)
                 {
-                    if (block.Pool.Handle != 0)
-                        poolHandles.Add(block.Pool.Handle);
+                    if (block.Pool.Handle == 0 || !retiredPools.Add(block.Pool.Handle))
+                        continue;
+
+                    RetireDescriptorPool(block.Pool);
                 }
             }
         }
 
-        return poolHandles.Count;
+        _computeDescriptorCaches = null;
+        return retiredPools.Count;
     }
 
     internal bool TryGetOrCreateComputeDescriptorSets(

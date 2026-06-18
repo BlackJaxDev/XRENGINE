@@ -1058,6 +1058,16 @@ namespace XREngine.Rendering
         private bool ShouldBeRendering()
             => !_isDisposed && !_isDisposing && Viewports.Count > 0 && TargetWorldInstance is not null;
 
+        private bool HasRenderableHostSurface()
+        {
+            var framebufferSize = Window.FramebufferSize;
+            var windowSize = Window.Size;
+
+            int width = Math.Max(framebufferSize.X, windowSize.X);
+            int height = Math.Max(framebufferSize.Y, windowSize.Y);
+            return width > 0 && height > 0;
+        }
+
         #endregion
 
         #region Render Callback
@@ -1097,9 +1107,24 @@ namespace XREngine.Rendering
                     RuntimeRenderingHostServices.Current.IsOpenXRActive &&
                     RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR &&
                     RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures;
+                bool hasRenderableHostSurface = HasRenderableHostSurface();
+                if (!hasRenderableHostSurface)
+                {
+                    Debug.RenderingEvery(
+                        $"XRWindow.RenderCallback.ZeroSurface.{GetHashCode()}",
+                        TimeSpan.FromMilliseconds(500),
+                        "[RenderDiag] Skipping viewport rendering because the host surface is zero-sized. Window={0} WindowSize={1}x{2} FramebufferSize={3}x{4}",
+                        GetHashCode(),
+                        Window.Size.X,
+                        Window.Size.Y,
+                        Window.FramebufferSize.X,
+                        Window.FramebufferSize.Y);
+                }
+
                 bool canRenderWindowViewports =
-                    !RuntimeRenderingHostServices.Current.IsInVR ||
-                    (RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR && !mirrorByComposition);
+                    hasRenderableHostSurface &&
+                    (!RuntimeRenderingHostServices.Current.IsInVR ||
+                     (RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR && !mirrorByComposition));
 
                 //LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports, forceFullViewport);
                 ApplyForcedDebugOpaquePipelineOverride();

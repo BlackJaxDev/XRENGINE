@@ -407,7 +407,8 @@ namespace XREngine.Rendering.Vulkan
                 or Format.D24UnormS8Uint
                 or Format.D32SfloatS8Uint
                 or Format.D16UnormS8Uint
-                or Format.X8D24UnormPack32;
+                or Format.X8D24UnormPack32
+                or Format.S8Uint;
 
         private static bool IsCombinedDepthStencilFormat(Format format)
             => format is Format.D24UnormS8Uint
@@ -416,13 +417,27 @@ namespace XREngine.Rendering.Vulkan
 
         private static ImageAspectFlags NormalizeBarrierAspectMask(Format format, ImageAspectFlags aspectMask)
         {
-            if (!IsCombinedDepthStencilFormat(format))
-                return aspectMask;
+            if (!IsDepthOrStencilFormat(format))
+            {
+                ImageAspectFlags colorMask = aspectMask & ImageAspectFlags.ColorBit;
+                return colorMask != ImageAspectFlags.None ? colorMask : ImageAspectFlags.ColorBit;
+            }
 
-            if ((aspectMask & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) == 0)
-                return aspectMask;
+            ImageAspectFlags supported = format switch
+            {
+                Format.S8Uint => ImageAspectFlags.StencilBit,
+                Format.D24UnormS8Uint or Format.D32SfloatS8Uint or Format.D16UnormS8Uint =>
+                    ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit,
+                _ => ImageAspectFlags.DepthBit
+            };
 
-            return aspectMask | ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit;
+            ImageAspectFlags normalized = aspectMask & supported;
+            if (normalized == ImageAspectFlags.None)
+                return supported;
+
+            return IsCombinedDepthStencilFormat(format)
+                ? normalized | ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit
+                : normalized;
         }
 
         // =========== Swapchain Image Resolution ===========

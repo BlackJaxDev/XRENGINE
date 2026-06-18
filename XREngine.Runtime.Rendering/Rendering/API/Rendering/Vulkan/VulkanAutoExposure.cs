@@ -140,12 +140,28 @@ public unsafe partial class VulkanRenderer
 
         float alpha = 1.0f - MathF.Exp(-settings.ExposureTransitionSpeed * deltaTime);
 
-        // Ensure exposure image is in GENERAL for storage write.
+        bool exposureLayoutManagedByRenderGraph = false;
+
+        // Ensure standalone exposure images are in GENERAL for storage write.
+        // Render-graph images already have pass-declared read/write usage and
+        // must not be transitioned through an out-of-band one-shot submit.
         if (GetOrCreateAPIRenderObject(exposureTex, generateNow: true) is VkTexture2D vkExposure)
         {
-            Silk.NET.Vulkan.ImageLayout oldLayout = vkExposure.CurrentImageLayout;
-            if (oldLayout != Silk.NET.Vulkan.ImageLayout.General)
-                vkExposure.TransitionImageLayout(oldLayout, Silk.NET.Vulkan.ImageLayout.General);
+            exposureLayoutManagedByRenderGraph = vkExposure.UsesAllocatorImage;
+            if (exposureLayoutManagedByRenderGraph)
+            {
+                Debug.VulkanEvery(
+                    "Vulkan.AutoExposure.PlannerExposureGraphBarriers",
+                    TimeSpan.FromSeconds(5),
+                    "[Vulkan] Auto exposure is relying on render-graph barriers for planner-backed exposure texture '{0}'.",
+                    exposureTex.Name ?? "<unnamed>");
+            }
+            else
+            {
+                Silk.NET.Vulkan.ImageLayout oldLayout = vkExposure.CurrentImageLayout;
+                if (oldLayout != Silk.NET.Vulkan.ImageLayout.General)
+                    vkExposure.TransitionImageLayout(oldLayout, Silk.NET.Vulkan.ImageLayout.General);
+            }
         }
 
         program.Uniform("SmallestMip", sampledSmallestMip);
@@ -183,7 +199,7 @@ public unsafe partial class VulkanRenderer
         DispatchCompute(program, 1, 1, 1);
         MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.TextureFetch);
 
-        if (GetOrCreateAPIRenderObject(exposureTex, generateNow: true) is VkTexture2D vkExposurePost)
+        if (!exposureLayoutManagedByRenderGraph && GetOrCreateAPIRenderObject(exposureTex, generateNow: true) is VkTexture2D vkExposurePost)
         {
             Silk.NET.Vulkan.ImageLayout oldLayout = vkExposurePost.CurrentImageLayout;
             if (oldLayout != Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal)
@@ -306,8 +322,29 @@ float ComputeMeteredLuminance()
 {
     if (MeteringMode == 0)
     {
-        vec3 src = texelFetch(SourceTex, ivec2(0, 0), SmallestMip).rgb;
-        return SafeLum(src);
+        int mip = clamp(SmallestMip, 0, SmallestMip);
+        ivec2 sz = textureSize(SourceTex, mip);
+        int w = max(sz.x, 1);
+        int h = max(sz.y, 1);
+        int sampleCount = min(w * h, MAX_SAMPLES);
+        if (sampleCount <= 1)
+        {
+            vec3 src = texelFetch(SourceTex, ivec2(0, 0), mip).rgb;
+            return SafeLum(src);
+        }
+
+        int stride = max((w * h) / sampleCount, 1);
+        float sum = 0.0;
+        for (int i = 0; i < sampleCount; ++i)
+        {
+            int idx = i * stride;
+            int x = idx % w;
+            int y = idx / w;
+            vec3 src = texelFetch(SourceTex, ivec2(x, y), mip).rgb;
+            sum += SafeLum(src);
+        }
+
+        return sum / float(sampleCount);
     }
 
     int mip = clamp(MeteringMip, 0, SmallestMip);
@@ -445,8 +482,29 @@ float ComputeMeteredLuminanceForLayer(int layer)
 {
     if (MeteringMode == 0)
     {
-        vec3 src = texelFetch(SourceTex, ivec3(0, 0, layer), SmallestMip).rgb;
-        return SafeLum(src);
+        int mip = clamp(SmallestMip, 0, SmallestMip);
+        ivec2 sz = textureSize(SourceTex, mip).xy;
+        int w = max(sz.x, 1);
+        int h = max(sz.y, 1);
+        int sampleCount = min(w * h, MAX_SAMPLES);
+        if (sampleCount <= 1)
+        {
+            vec3 src = texelFetch(SourceTex, ivec3(0, 0, layer), mip).rgb;
+            return SafeLum(src);
+        }
+
+        int stride = max((w * h) / sampleCount, 1);
+        float sum = 0.0;
+        for (int i = 0; i < sampleCount; ++i)
+        {
+            int idx = i * stride;
+            int x = idx % w;
+            int y = idx / w;
+            vec3 src = texelFetch(SourceTex, ivec3(x, y, layer), mip).rgb;
+            sum += SafeLum(src);
+        }
+
+        return sum / float(sampleCount);
     }
 
     int mip = clamp(MeteringMip, 0, SmallestMip);

@@ -137,7 +137,7 @@ public unsafe partial class VulkanRenderer
         Offset3D imageOffset,
         Extent3D imageExtent)
     {
-        if (!SupportsNvCopyMemoryIndirect || !SupportsBufferDeviceAddress)
+        if (!CanUseNvIndirectBufferCopyUploads)
             return false;
 
         ulong srcAddress = GetBufferDeviceAddress(srcBuffer);

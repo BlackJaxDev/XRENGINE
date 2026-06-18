@@ -405,7 +405,7 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
-    public void SolveAllocations_DirtyDirectionalRefreshDoesNotPublishStaleFallbackBeforeRender()
+    public void SolveAllocations_DirtyDirectionalRefreshKeepsStaleFallbackBeforeRender()
     {
         ShadowAtlasManager manager = CreateManager(pageSize: 1024u, maxPages: 1);
         DirectionalLightComponent light = CreateDirectionalLight(1024u);
@@ -438,8 +438,9 @@ public sealed class ShadowAtlasManagerPhaseTests
         ShadowAtlasFrameData frameData = manager.PublishedFrameData;
         frameData.TryGetAllocation(movedRequest.Key, out ShadowAtlasAllocation movedAllocation).ShouldBeTrue();
         movedAllocation.LastRenderedFrame.ShouldBe(1u);
-        movedAllocation.ActiveFallback.ShouldBe(ShadowFallbackMode.Lit);
-        movedAllocation.SkipReason.ShouldBe(SkipReason.None);
+        movedAllocation.ContentVersion.ShouldBe(firstAllocation.ContentVersion);
+        movedAllocation.ActiveFallback.ShouldBe(ShadowFallbackMode.StaleTile);
+        movedAllocation.SkipReason.ShouldBe(SkipReason.StaleTileReused);
     }
 
     [Test]
