@@ -33,6 +33,7 @@ public unsafe partial class VulkanRenderer
     private const int FrameOpKindDlssFrameGeneration = 8;
     private const int FrameOpKindTransformFeedback = 9;
     private const int FrameOpKindComputeDispatch = 10;
+    private const int FrameOpKindTextureUpload = 11;
 
     internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpContext Context);
 
@@ -162,6 +163,10 @@ public unsafe partial class VulkanRenderer
         ComputeDispatchSnapshot Snapshot,
         FrameOpContext Context) : FrameOp(PassIndex, null, Context);
 
+    internal sealed record TextureUploadFrameOp(
+        VulkanImportedTexturePendingUpload Upload,
+        FrameOpContext Context) : FrameOp(int.MinValue, null, Context);
+
     internal void EnqueueFrameOp(FrameOp op)
     {
         FrameOp validatedOp = EnsureValidFrameOpPassIndex(op);
@@ -171,6 +176,9 @@ public unsafe partial class VulkanRenderer
 
     private FrameOp EnsureValidFrameOpPassIndex(FrameOp op)
     {
+        if (op is TextureUploadFrameOp)
+            return op;
+
         int validatedPassIndex = EnsureValidPassIndex(op.PassIndex, op.GetType().Name, op.Context.PassMetadata);
         if (validatedPassIndex == op.PassIndex)
             return op;
@@ -385,6 +393,18 @@ public unsafe partial class VulkanRenderer
                     hash.Add(compute.GroupsZ);
                     HashProgramBindingSnapshot(ref hash, compute.Snapshot);
                     break;
+                case TextureUploadFrameOp upload:
+                    hash.Add(upload.Upload.PublicationToken);
+                    hash.Add(upload.Upload.Request.StreamingGeneration);
+                    hash.Add(upload.Upload.Image.Handle);
+                    hash.Add(upload.Upload.ImageView.Handle);
+                    hash.Add(upload.Upload.Sampler.Handle);
+                    hash.Add(upload.Upload.Extent.Width);
+                    hash.Add(upload.Upload.Extent.Height);
+                    hash.Add(upload.Upload.MipLevels);
+                    hash.Add((ulong)Math.Max(upload.Upload.CommittedBytes, 0L));
+                    hash.Add(upload.Upload.StagingResources.Length);
+                    break;
             }
         }
 
@@ -404,6 +424,7 @@ public unsafe partial class VulkanRenderer
             DlssFrameGenerationOp => FrameOpKindDlssFrameGeneration,
             TransformFeedbackOp => FrameOpKindTransformFeedback,
             ComputeDispatchOp => FrameOpKindComputeDispatch,
+            TextureUploadFrameOp => FrameOpKindTextureUpload,
             _ => FrameOpKindUnknown
         };
 

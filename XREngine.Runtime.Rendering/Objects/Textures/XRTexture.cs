@@ -334,6 +334,16 @@ namespace XREngine.Rendering
             set => SetField(ref _autoGenerateMipmaps, value);
         }
 
+        internal void ApplyImportedTextureStreamingMipRangeMetadata(
+            bool autoGenerateMipmaps,
+            int largestMipmapLevel,
+            int smallestAllowedMipmapLevel)
+        {
+            _autoGenerateMipmaps = autoGenerateMipmaps;
+            _largestMipmapLevel = largestMipmapLevel;
+            _smallestAllowedMipmapLevel = smallestAllowedMipmapLevel;
+        }
+
         private bool _alphaAsTransparency = false;
         public bool AlphaAsTransparency
         {

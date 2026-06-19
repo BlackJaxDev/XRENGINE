@@ -171,6 +171,44 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void Registry_ExplicitTextureRebindUpdatesDescriptorSizeAndSignature()
+    {
+        RenderResourceRegistry registry = new();
+        TextureResourceDescriptor halfResolutionGtao = new(
+            "GTAORawTexture",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(1280u, 684u),
+            FormatLabel: ESizedInternalFormat.R16f.ToString(),
+            Usage: RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment,
+            SizedInternalFormat: ESizedInternalFormat.R16f);
+
+        registry.RegisterTextureDescriptor(halfResolutionGtao);
+        int initialRevision = registry.DescriptorRevision;
+        int initialSignature = registry.DescriptorSignature;
+
+        XRTexture2D fullResolutionTexture = XRTexture2D.CreateFrameBufferTexture(
+            2560u,
+            1369u,
+            EPixelInternalFormat.R16f,
+            EPixelFormat.Red,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        fullResolutionTexture.Name = "GTAORawTexture";
+
+        TextureResourceDescriptor fullResolutionGtao = halfResolutionGtao with
+        {
+            SizePolicy = RenderResourceSizePolicy.Absolute(2560u, 1369u)
+        };
+        registry.BindTexture(fullResolutionTexture, fullResolutionGtao);
+
+        TextureResourceDescriptor actual = registry.TextureRecords["GTAORawTexture"].Descriptor;
+        actual.SizePolicy.Width.ShouldBe(2560u);
+        actual.SizePolicy.Height.ShouldBe(1369u);
+        registry.DescriptorRevision.ShouldBeGreaterThan(initialRevision);
+        registry.DescriptorSignature.ShouldNotBe(initialSignature);
+    }
+
+    [Test]
     public void RenderPassMetadata_RevisionsAndCachedViewsChangeOnlyOnMutation()
     {
         RenderPassMetadataCollection collection = new();
@@ -399,6 +437,22 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         TextureSpec depth = msaa.ResourcesByName[DefaultRenderPipeline.MsaaDepthStencilTextureName].ShouldBeOfType<TextureSpec>();
         depth.Samples.ShouldBe(4u);
+    }
+
+    [Test]
+    public void DefaultRenderPipeline_GtaoScratchResources_FollowResolutionFeatureMask()
+    {
+        DefaultRenderPipeline pipeline = new();
+
+        AssertGtaoScratchScale(
+            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u)),
+            0.5f);
+        AssertGtaoScratchScale(
+            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: 1UL << 6)),
+            1.0f);
+        AssertGtaoScratchScale(
+            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: 1UL << 7)),
+            0.25f);
     }
 
     [Test]
@@ -720,7 +774,20 @@ public sealed class RenderPipelineResourceLifecycleTests
         }
     }
 
-    private static RenderPipelineResourceProfile CreateProfile(EAntiAliasingMode aaMode, uint msaaSamples)
+    private static void AssertGtaoScratchScale(RenderPipelineResourceLayout layout, float expectedScale)
+    {
+        TextureSpec raw = layout.ResourcesByName[DefaultRenderPipeline.GTAORawTextureName].ShouldBeOfType<TextureSpec>();
+        TextureSpec intermediate = layout.ResourcesByName[DefaultRenderPipeline.GTAOBlurIntermediateTextureName].ShouldBeOfType<TextureSpec>();
+
+        raw.SizePolicy.SizeClass.ShouldBe(RenderResourceSizeClass.InternalResolution);
+        intermediate.SizePolicy.SizeClass.ShouldBe(RenderResourceSizeClass.InternalResolution);
+        raw.SizePolicy.ScaleX.ShouldBe(expectedScale, 0.0001f);
+        raw.SizePolicy.ScaleY.ShouldBe(expectedScale, 0.0001f);
+        intermediate.SizePolicy.ScaleX.ShouldBe(expectedScale, 0.0001f);
+        intermediate.SizePolicy.ScaleY.ShouldBe(expectedScale, 0.0001f);
+    }
+
+    private static RenderPipelineResourceProfile CreateProfile(EAntiAliasingMode aaMode, uint msaaSamples, ulong featureMask = 0UL)
         => new(
             DisplayWidth: 1280u,
             DisplayHeight: 720u,
@@ -730,7 +797,8 @@ public sealed class RenderPipelineResourceLifecycleTests
             AntiAliasingMode: aaMode,
             MsaaSampleCount: msaaSamples,
             Stereo: false,
-            UseVulkanSafeFeatureProfile: false);
+            UseVulkanSafeFeatureProfile: false,
+            FeatureMask: featureMask);
 
     private static ResourceGenerationKey CreateKey()
         => new(

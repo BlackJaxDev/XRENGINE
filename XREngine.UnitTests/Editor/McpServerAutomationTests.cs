@@ -27,6 +27,21 @@ public sealed class McpServerAutomationTests
     }
 
     [Test]
+    public void McpServer_ExposesTextureStreamingTelemetryTools()
+    {
+        string textureActions = ReadWorkspaceFile("XREngine.Editor/Mcp/Actions/EditorMcpActions.TextureStreaming.cs");
+
+        textureActions.ShouldContain("[XRMcp(Name = \"get_texture_streaming_summary\"");
+        textureActions.ShouldContain("[XRMcp(Name = \"list_texture_streaming_textures\"");
+        textureActions.ShouldContain("XRTexture2D.GetImportedTextureStreamingTelemetry()");
+        textureActions.ShouldContain("XRTexture2D.GetImportedTextureStreamingTextureTelemetry()");
+        textureActions.ShouldContain("resident_generation");
+        textureActions.ShouldContain("published_generation");
+        textureActions.ShouldContain("upload_generation");
+        textureActions.ShouldContain("retirement_generation");
+    }
+
+    [Test]
     public void McpServer_CanPersistAndLaunchWithPermissionPolicy()
     {
         string host = ReadWorkspaceFile("XREngine.Editor/Mcp/McpServerHost.cs");

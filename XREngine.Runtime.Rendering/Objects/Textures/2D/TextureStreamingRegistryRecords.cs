@@ -34,6 +34,10 @@ internal sealed class ImportedTextureStreamingRecord(XRTexture2D texture)
     public uint ResidentMaxDimension;
     public uint DesiredMaxDimension;
     public uint PendingMaxDimension;
+    public long ResidentGeneration;
+    public long PublishedGeneration;
+    public long UploadGeneration;
+    public long RetirementGeneration;
     public int SparseNumLevels;
     public long LastVisibleFrameId = long.MinValue;
     public float MinVisibleDistance = float.PositiveInfinity;
@@ -83,6 +87,10 @@ internal readonly record struct ImportedTextureStreamingSnapshot(
     uint SourceHeight,
     uint ResidentMaxDimension,
     uint PendingMaxDimension,
+    long ResidentGeneration,
+    long PublishedGeneration,
+    long UploadGeneration,
+    long RetirementGeneration,
     int SparseNumLevels,
     long CurrentCommittedBytes,
     SparseTextureStreamingPageSelection CurrentPageSelection,

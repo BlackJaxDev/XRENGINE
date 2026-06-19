@@ -86,17 +86,21 @@ namespace XREngine.Rendering.Vulkan
                     MinLod = Data.MinLod,
                     MaxLod = Math.Max(Data.MinLod, Data.MaxLod),
                     BorderColor = ConvertBorderColor(Data.BorderColor),
-                    AnisotropyEnable = Data.EnableAnisotropy ? Vk.True : Vk.False,
+                    AnisotropyEnable = Vk.False,
                     MaxAnisotropy = Math.Max(1f, Data.MaxAnisotropy),
                     CompareEnable = Data.EnableComparison ? Vk.True : Vk.False,
                     CompareOp = SamplerConversions.FromCompareOp(Data.CompareFunc),
                     UnnormalizedCoordinates = Vk.False,
                 };
 
-                if (Data.EnableAnisotropy)
+                if (Data.EnableAnisotropy && Renderer.SamplerAnisotropyEnabled)
                 {
                     Api!.GetPhysicalDeviceProperties(PhysicalDevice, out PhysicalDeviceProperties props);
-                    samplerInfo.MaxAnisotropy = MathF.Min(samplerInfo.MaxAnisotropy, props.Limits.MaxSamplerAnisotropy);
+                    if (props.Limits.MaxSamplerAnisotropy > 1f)
+                    {
+                        samplerInfo.AnisotropyEnable = Vk.True;
+                        samplerInfo.MaxAnisotropy = MathF.Min(samplerInfo.MaxAnisotropy, props.Limits.MaxSamplerAnisotropy);
+                    }
                 }
 
                 if (Api!.CreateSampler(Device, ref samplerInfo, null, out _sampler) != Result.Success)

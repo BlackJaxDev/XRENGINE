@@ -303,6 +303,65 @@ public partial class XRTexture2D
             $"lockMipLevel={lockMipLevel} SmallestAllowedMipmapLevel={texture.SmallestAllowedMipmapLevel}.");
     }
 
+    internal static void ApplyResidentDataForVulkanPublication(
+        XRTexture2D texture,
+        TextureStreamingResidentData residentData,
+        bool includeMipChain)
+    {
+        int previousMipmapCount = texture.Mipmaps?.Length ?? 0;
+        uint previousWidth = texture.Mipmaps is { Length: > 0 } ? texture.Mipmaps[0].Width : 0u;
+        uint previousHeight = texture.Mipmaps is { Length: > 0 } ? texture.Mipmaps[0].Height : 0u;
+
+        int lockMipLevel = -1;
+        if (includeMipChain
+            && residentData.Mipmaps.Length > 0
+            && texture.Mipmaps is { Length: > 0 }
+            && residentData.Mipmaps.Length > texture.Mipmaps.Length)
+        {
+            lockMipLevel = residentData.Mipmaps.Length - texture.Mipmaps.Length;
+        }
+
+        if (texture.SparseTextureStreamingEnabled
+            || texture.SparseTextureStreamingResidentBaseMipLevel != int.MaxValue
+            || texture.SparseTextureStreamingCommittedBaseMipLevel != int.MaxValue
+            || texture.SparseTextureStreamingCommittedBytes > 0L)
+        {
+            TextureRuntimeDiagnostics.LogSparseStateClearedForDenseUpload(
+                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                texture.Name,
+                texture.FilePath,
+                texture.SparseTextureStreamingResidentBaseMipLevel,
+                texture.SparseTextureStreamingCommittedBaseMipLevel,
+                texture.SparseTextureStreamingCommittedBytes,
+                residentData.ResidentMaxDimension,
+                residentData.Mipmaps.Length);
+        }
+
+        texture.ClearSparseTextureStreamingState();
+        texture.StreamingLockMipLevel = lockMipLevel;
+        texture._mipmaps = residentData.Mipmaps;
+        texture._resizable = false;
+        texture._sizedInternalFormat = ESizedInternalFormat.Rgba8;
+        texture.ApplyImportedTextureStreamingMipRangeMetadata(
+            autoGenerateMipmaps: false,
+            largestMipmapLevel: 0,
+            smallestAllowedMipmapLevel: includeMipChain && residentData.Mipmaps.Length > 0
+                ? residentData.Mipmaps.Length - 1
+                : 0);
+        texture._minFilter = includeMipChain && residentData.Mipmaps.Length > 1
+            ? ETexMinFilter.LinearMipmapLinear
+            : ETexMinFilter.Linear;
+        texture._magFilter = ETexMagFilter.Linear;
+
+        uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
+        uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;
+        Debug.Textures(
+            $"[ApplyResidentData][VulkanPublish] '{texture.Name}' includeMipChain={includeMipChain} " +
+            $"previous={previousWidth}x{previousHeight}({previousMipmapCount}mips) -> " +
+            $"new={newWidth}x{newHeight}({residentData.Mipmaps.Length}mips) " +
+            $"lockMipLevel={lockMipLevel} SmallestAllowedMipmapLevel={texture.SmallestAllowedMipmapLevel}.");
+    }
+
     internal static uint GetPreviewResidentSize(uint sourceMaxDimension)
         => sourceMaxDimension == 0
             ? ImportedPreviewMaxDimensionInternal

@@ -56,6 +56,7 @@ internal readonly record struct ImportedTextureStreamingBudgetInput(
 
 public readonly record struct ImportedTextureStreamingTelemetry(
     string BackendName,
+    string DisplayBackendName,
     int ActiveImportScopes,
     int TrackedTextureCount,
     int PendingTransitionCount,
@@ -70,7 +71,9 @@ public readonly record struct ImportedTextureStreamingTelemetry(
     long AvailableManagedBytes,
     long AssignedManagedBytes,
     long UploadBytesScheduledThisFrame,
-    bool PromotionsBlocked);
+    bool PromotionsBlocked,
+    bool VulkanFrozen,
+    string FreezeReason);
 
 public readonly record struct ImportedTextureStreamingTextureTelemetry(
     string? TextureName,
@@ -100,7 +103,14 @@ public readonly record struct ImportedTextureStreamingTextureTelemetry(
     double OldestQueueWaitMilliseconds,
     double LastUploadMilliseconds,
     float PriorityScore,
-    string BackendName);
+    string BackendName,
+    string DisplayBackendName,
+    bool VulkanFrozen,
+    string FreezeReason,
+    long ResidentGeneration,
+    long PublishedGeneration,
+    long UploadGeneration,
+    long RetirementGeneration);
 
 internal interface ITextureStreamingSource
 {
@@ -130,7 +140,8 @@ internal interface ITextureResidencyBackend
         Action<float>? onProgress = null,
         Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low);
+        JobPriority priority = JobPriority.Low,
+        long streamingGeneration = 0);
     EnumeratorJob ScheduleResidentLoad(
         ITextureStreamingSource source,
         XRTexture2D target,
@@ -144,5 +155,6 @@ internal interface ITextureResidencyBackend
         Action? onCanceled = null,
         Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low);
+        JobPriority priority = JobPriority.Low,
+        long streamingGeneration = 0);
 }

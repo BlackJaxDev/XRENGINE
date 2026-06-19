@@ -831,7 +831,7 @@ namespace XREngine.Rendering.Vulkan
                     UnnormalizedCoordinates = Vk.False,
                 };
 
-                if (Renderer.SamplerAnisotropyEnabled && Data.NumLevels > 1)
+                if (Renderer.SamplerAnisotropyEnabled)
                 {
                     Api!.GetPhysicalDeviceProperties(PhysicalDevice, out PhysicalDeviceProperties props);
                     if (props.Limits.MaxSamplerAnisotropy > 1f)

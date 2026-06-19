@@ -558,6 +558,7 @@ public sealed class ImportedTextureStreamingPhaseTests
             TextureUploadPriorityClass.Background,
             out CancellationTokenSource? previousCts).ShouldBeTrue();
         previousCts.ShouldBeNull();
+        record.UploadGeneration.ShouldBe(1L);
 
         queue.TryBeginTransition(
             record,
@@ -580,6 +581,7 @@ public sealed class ImportedTextureStreamingPhaseTests
         {
             record.PendingLoadCts.ShouldBe(secondCts);
             record.PendingMaxDimension.ShouldBe(256u);
+            record.UploadGeneration.ShouldBe(2L);
             record.LastTransitionFrameId.ShouldBe(11L);
             record.PendingTransitionBackendName.ShouldBe("second");
             record.PendingTransitionPriority.ShouldBe(JobPriority.High);

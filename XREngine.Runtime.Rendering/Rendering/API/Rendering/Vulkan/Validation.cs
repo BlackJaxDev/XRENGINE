@@ -47,6 +47,30 @@ public unsafe partial class VulkanRenderer
         debugUtils!.CmdEndDebugUtilsLabel(commandBuffer);
     }
 
+    private void SetDebugObjectName(ObjectType objectType, ulong objectHandle, string name)
+    {
+        if (!SupportsDebugUtilsLabels || device.Handle == 0 || objectHandle == 0 || string.IsNullOrWhiteSpace(name))
+            return;
+
+        nint namePtr = SilkMarshal.StringToPtr(name);
+        try
+        {
+            DebugUtilsObjectNameInfoEXT nameInfo = new()
+            {
+                SType = StructureType.DebugUtilsObjectNameInfoExt,
+                ObjectType = objectType,
+                ObjectHandle = objectHandle,
+                PObjectName = (byte*)namePtr,
+            };
+
+            _ = debugUtils!.SetDebugUtilsObjectName(device, in nameInfo);
+        }
+        finally
+        {
+            SilkMarshal.Free(namePtr);
+        }
+    }
+
     private readonly string[] validationLayers =
     [
         "VK_LAYER_KHRONOS_validation"
