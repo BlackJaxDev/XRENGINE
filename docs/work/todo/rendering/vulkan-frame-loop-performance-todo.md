@@ -1097,12 +1097,25 @@ Additional 2026-06-18 camera-motion crash/device-loss iteration:
   avoiding live backing-image replacement and one-shot layout/copy uploads while
   the frame loop is active. OpenGL keeps its existing resident promotion and
   demotion behavior.
-- Tradeoff accepted for this stabilization pass: Vulkan Sponza remains colored
-  and nonblack, but imported textures stay at preview residency (`64px`) until a
-  synchronized Vulkan texture upload queue/render-graph upload path replaces the
-  one-shot texture-object upload path. This is intentionally scoped to the WIP
-  Vulkan CPU-direct path so framerate/crash work can continue without device
-  loss.
+- Superseded user visual follow-up: the preview-only containment made the editor
+  visibly blurry, with texture telemetry showing `Vulkan residency: frozen`,
+  `Resident=64`, `Desired=64`, and `vk-froz` on all imported Sponza textures.
+  Source was adjusted so `XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE=1` is now
+  an explicit emergency kill switch instead of the default. Default Vulkan dense
+  imported-texture promotions are enabled again, still limited to one resident
+  mip, and `VkImageBackedTexture` now waits for all in-flight frame slots before
+  retiring/recreating a dedicated imported texture image. Follow-up after user
+  validation re-enabled controlled Vulkan visibility demotions so offscreen
+  textures can relinquish residency after the normal grace/cooldown window.
+- Source validation for the user visual follow-up:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~ImportedTextureStreamingPhaseTests|FullyQualifiedName~ImportedTextureStreamingContractTests" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 45 passed, 0 failed; editor build
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false /v:minimal`
+  passed with 0 warnings and 0 errors.
+- Follow-up source validation after MCP protocol repair:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~McpServerHostProtocolTests|FullyQualifiedName~ImportedTextureStreamingPhaseTests|FullyQualifiedName~ImportedTextureStreamingContractTests" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 54 passed, 0 failed. Editor build passed again with 0 warnings
+  and 0 errors.
 - Validation completed for the containment fix:
   `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~ImportedTextureStreamingPhaseTests|FullyQualifiedName~ImportedTextureStreamingContractTests" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
   passed with 43 passed, 0 failed. Note: an accidental parallel test/editor
@@ -1128,11 +1141,109 @@ Additional 2026-06-18 camera-motion crash/device-loss iteration:
   transfer/render-graph upload queue that owns image creation, layout barriers,
   copy commands, descriptor rebinding, and retirement before re-enabling
   runtime Vulkan texture promotions/demotions or
-  `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1`.
-- [ ] Re-enable and validate high-res imported texture residency on Vulkan only
-  after the synchronized upload path exists. Validation gate: close/far camera
-  motion should keep Sponza colored/nonblack, allow `promoted>0`, produce no
-  one-shot upload stacks, and show no Vulkan validation/device-loss errors.
+  `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1`. Detailed implementation tracker:
+  [Vulkan Imported Texture Streaming TODO](vulkan-imported-texture-streaming-todo.md).
+- [ ] Live-validate restored high-res single-mip imported texture residency on
+  Vulkan. Validation gate: close/far camera motion should keep Sponza
+  colored/nonblack, allow `promoted>0`, produce no one-shot upload device-loss
+  failures, and show no Vulkan validation/device-loss errors. The remaining
+  synchronized upload-service work is still required before full mip-chain
+  progressive uploads or demotions are considered stable.
+  Partial live evidence on 2026-06-18 resolves the user-reported "still frozen"
+  visual failure: launched PID `45540` with Unit Testing World Vulkan
+  `CpuDirect`, MCP port `5475`,
+  `XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE=0`, and
+  `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=0`. MCP texture summary reported
+  `TrackedTextureCount=39`, `PendingTransitionCount=0`,
+  `CurrentManagedBytes=115219084`, `AssignedManagedBytes=182278792`,
+  `PromotionsBlocked=false`, and `VulkanFrozen=false`. Per-texture telemetry
+  reported `count=39`; the serialized sample of 16 rows all had
+  `ResidentMaxDimension=1024`, `DesiredResidentMaxDimension=1024`, and
+  `PendingResidentMaxDimension=0`. Screenshot
+  `Build\McpSmokeCaptures\Screenshot_20260618_175043.png` is nonblank and
+  visibly textured. MCP render profiler stats reported Vulkan backend,
+  validation `error_count=0`, descriptor `binding_failures=0`, dropped draw and
+  compute ops `0`. Full close/far camera-motion validation remains required.
+- MCP tooling fix from this iteration: `McpServerHost` now reads JSON-RPC POST
+  bodies by `ContentLength64` when available and wraps early invalid requests in
+  a normal JSON-RPC error response. This unblocked external MCP `initialize`,
+  `tools/list`, `invoke_method`, render-state, profiler, and screenshot calls
+  during the live Vulkan smoke.
+- Follow-up demotion/filtering source fix: removed the temporary Vulkan
+  `ShouldPreserveVulkanResidentSizeAgainstDemotion` guard so the shared
+  offscreen residency policy can queue demotions again after promotion
+  validation. Vulkan sampler creation now explicitly enables anisotropy on
+  capable devices for image-backed textures, texture views, and explicit
+  `XRSampler` objects, while keeping `AnisotropyEnable=false` if the device
+  feature was not enabled. Full mip-chain/progressive imported streaming is
+  still deferred to the synchronized upload-service work.
+  Validation: 46 focused imported-texture tests passed, editor build passed with
+  0 warnings/errors, and live PID `29572` on MCP port `5476` dropped texture
+  telemetry from `CurrentManagedBytes=115219084` before moving the camera to
+  `CurrentManagedBytes=602112` after moving the camera off-scene and waiting
+  past the grace window. Vulkan MCP stats reported validation `error_count=0`,
+  descriptor `binding_failures=0`, and dropped draw/compute ops `0`; the fresh
+  log scan found no `ErrorDeviceLost`, `WaitForFences`, `VUID`, exception, or
+  failure markers.
+
+Additional 2026-06-18 cascaded directional grouped-render iteration:
+
+- Vulkan capability evidence from
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_16-44-54_pid43976`:
+  `log_vulkan.log` reported `multiViewport=True`, `shaderOutputViewportIndex=True`,
+  `shaderOutputLayer=True`, and `geometryShader=True`; the instanced layered and
+  geometry shader cascade pipelines both compiled. The fallback was therefore
+  not a Vulkan feature or shader compilation failure.
+- Root cause: `log_lighting.log` reported directional cascade render-mode
+  fallback from `InstancedLayered` / `GeometryShader` to `Sequential` with
+  `reason=MissingGroupedAtlasAllocation` even though the atlas solve created a
+  directional cascade group. `ShadowAtlasManager.RenderScheduledTiles` only
+  matched a grouped directional allocation when the current dirty request was
+  the first cascade in the group. Once request sorting reached cascade 1, 2, or
+  3 first, the scheduler failed the lookup and rendered tiles sequentially.
+- Source fix: grouped directional lookup now matches any cascade member in the
+  atlas allocation, and a grouped directional request that cannot fit the
+  current tile budget is deferred as a group instead of silently degrading to
+  one-tile sequential rendering. If an actual grouped render attempt fails, the
+  existing safety fallback path still keeps shadows renderable.
+- Follow-up root cause from the 17:13 user validation run: collection and swap
+  planned the atlas path before a concrete atlas group existed, published an
+  artificial `MissingGroupedAtlasAllocation` plan, and left the inspector/logs
+  showing `effective=Sequential`. The solver also rejected grouped allocations
+  unless the active directional cascade count was exactly four, so transient
+  two- or three-cascade states during settings changes could never use the
+  grouped atlas path.
+- Follow-up source fix: atlas grouped collection/swap now publish the intended
+  grouped atlas render plan when the backend supports it, while still collecting
+  and swapping per-cascade fallback command buffers for safety. Directional
+  grouped atlas reservation now accepts 2-4 cascades instead of only exactly
+  four.
+- Follow-up evidence from
+  `Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-18_17-23-38_pid38184`:
+  `MissingGroupedAtlasAllocation` no longer appeared, `directionalGroups=1/4/0`
+  was still produced, and one grouped directional render completed. However,
+  repeated warnings still showed real sequential cascade tile renders with
+  `atlasFallback=None`, so the previous patch did not fully remove the slow
+  fallback path.
+- Follow-up source fix: a requested grouped directional atlas render that fails
+  no longer falls through to `RenderCascadeShadowAtlasTile`. It records grouped
+  failure diagnostics, keeps the old atlas tiles stale for that frame, and
+  retries later instead of silently using the sequential path.
+- Validation completed:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "Name=DirectionalCascadeGroupLookup_MatchesAnyCascadeMember|Name=DirectionalCascadeAtlasGroupedPath_UsesAtlasBackendAndLayeredRendering" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 2 passed, 0 failed. `dotnet build
+  .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1
+  /nodeReuse:false /p:UseSharedCompilation=false /v:minimal` passed with
+  0 warnings and 0 errors.
+- Follow-up validation completed:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "Name=SolveAllocations_PublishesGroupedDirectionalCascadeRecord|Name=SolveAllocations_PublishesGroupedDirectionalCascadeRecordForResidentSubset|Name=DirectionalCascadeGroupLookup_MatchesAnyCascadeMember|Name=DirectionalCascadeAtlasGroupedPath_UsesAtlasBackendAndLayeredRendering" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 4 passed, 0 failed. Editor build passed again with 0 warnings and
+  0 errors.
+- Remaining live validation: run the Vulkan Unit Testing World with directional
+  cascades set to `InstancedLayered` and `GeometryShader`, confirm
+  `log_lighting.log` no longer reports `MissingGroupedAtlasAllocation` fallback,
+  and capture the directional atlas to verify all cascades update in one grouped
+  render pass.
 
 ## Source Validation
 
@@ -1428,6 +1539,20 @@ Update this section whenever the local source validation is run.
 
 Latest source-backed result:
 
+- 2026-06-18:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~ImportedTextureStreamingPhaseTests|FullyQualifiedName~ImportedTextureStreamingContractTests" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 46 passed, 0 skipped, 0 failed after re-enabling controlled
+  Vulkan demotion and tightening Vulkan anisotropy sampler creation.
+- 2026-06-18:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false /v:minimal`
+  passed with 0 warnings and 0 errors after the same demotion/anisotropy fix.
+- 2026-06-18:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~McpServerHostProtocolTests|FullyQualifiedName~ImportedTextureStreamingPhaseTests|FullyQualifiedName~ImportedTextureStreamingContractTests" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
+  passed with 54 passed, 0 skipped, 0 failed after restoring default Vulkan
+  imported-texture promotions and fixing MCP POST body/error-envelope handling.
+- 2026-06-18:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore /m:1 /nodeReuse:false /p:UseSharedCompilation=false /v:minimal`
+  passed with 0 warnings and 0 errors after the same texture/MCP fixes.
 - 2026-06-18:
   `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~McpServerAutomationTests" /m:1 /nodeReuse:false /p:UseSharedCompilation=false`
   passed with 2 passed, 0 skipped, 0 failed after restoring Vulkan MCP

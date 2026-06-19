@@ -268,6 +268,9 @@ public unsafe partial class VulkanRenderer
 
         private static int ResolvePassOrder(FrameOp op, VulkanCompiledRenderGraph graph)
         {
+            if (op is TextureUploadFrameOp)
+                return int.MinValue;
+
             if (graph.PassOrder.TryGetValue(op.PassIndex, out int graphOrder))
                 return graphOrder;
 

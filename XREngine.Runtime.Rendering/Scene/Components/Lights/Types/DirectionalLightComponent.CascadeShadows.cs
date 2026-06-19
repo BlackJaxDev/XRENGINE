@@ -1756,14 +1756,16 @@ namespace XREngine.Components.Lights
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
             int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
-            DirectionalCascadeShadowRenderPlan plan = CreateCascadeShadowRenderPlan(cascadeCount);
-            PublishCascadeShadowRenderPlan(plan);
             bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedCascadeCollection(cascadeCount);
+            DirectionalCascadeShadowRenderPlan plan = prepareAtlasGroupedCommands
+                ? CreateAtlasCascadeShadowRenderPlan(cascadeCount, hasGroupedAtlasAllocation: true)
+                : CreateCascadeShadowRenderPlan(cascadeCount);
+            PublishCascadeShadowRenderPlan(plan);
             if (plan.IsLayered || prepareAtlasGroupedCommands)
             {
                 XRViewport viewport = cascadeShadowViewports[0];
                 viewport.CollectVisible(false, collectionVolumeOverride: GetPublishedCascadeUnionCullVolume(cascadeCount));
-                if (prepareAtlasGroupedCommands && !plan.IsLayered)
+                if (prepareAtlasGroupedCommands && plan.IsAtlasPage)
                 {
                     for (int i = 1; i < cascadeCount; i++)
                         cascadeShadowViewports[i].CollectVisible(false, collectionVolumeOverride: GetPublishedCascadeCullVolume(i));
@@ -1787,16 +1789,20 @@ namespace XREngine.Components.Lights
 
             XRViewport[] cascadeShadowViewports = _cascadeShadowViewports;
             int cascadeCount = GetPublishedCascadeViewportCount(cascadeShadowViewports);
-            DirectionalCascadeShadowRenderPlan plan = CreateCascadeShadowRenderPlan(cascadeCount);
-            PublishCascadeShadowRenderPlan(plan);
             bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedCascadeCollection(cascadeCount);
+            DirectionalCascadeShadowRenderPlan plan = prepareAtlasGroupedCommands
+                ? CreateAtlasCascadeShadowRenderPlan(cascadeCount, hasGroupedAtlasAllocation: true)
+                : CreateCascadeShadowRenderPlan(cascadeCount);
+            PublishCascadeShadowRenderPlan(plan);
             if (plan.IsLayered && !prepareAtlasGroupedCommands)
             {
                 cascadeShadowViewports[0].SwapBuffers();
             }
             else
             {
-                LogCascadeRenderModeFallbackIfNeeded(plan);
+                if (!prepareAtlasGroupedCommands)
+                    LogCascadeRenderModeFallbackIfNeeded(plan);
+
                 for (int i = 0; i < cascadeCount; i++)
                     cascadeShadowViewports[i].SwapBuffers();
             }

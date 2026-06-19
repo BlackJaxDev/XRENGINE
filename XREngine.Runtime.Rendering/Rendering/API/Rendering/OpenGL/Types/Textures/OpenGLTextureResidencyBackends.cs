@@ -2,6 +2,7 @@ using System.Collections;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering;
 
@@ -79,7 +80,8 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         Action<float>? onProgress = null,
         Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low)
+        JobPriority priority = JobPriority.Low,
+        long streamingGeneration = 0)
         => ScheduleResidentLoad(
             source,
             target,
@@ -94,7 +96,8 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
             shouldAcceptResult,
             cancellationToken,
             priority,
-            onProgress);
+            onProgress,
+            streamingGeneration);
 
     public EnumeratorJob ScheduleResidentLoad(
         ITextureStreamingSource source,
@@ -109,7 +112,8 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         Action? onCanceled = null,
         Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low)
+        JobPriority priority = JobPriority.Low,
+        long streamingGeneration = 0)
         => ScheduleResidentLoad(
             source,
             target,
@@ -124,7 +128,8 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
             shouldAcceptResult,
             cancellationToken,
             priority,
-            onProgress: null);
+            onProgress: null,
+            streamingGeneration);
 
     private static EnumeratorJob ScheduleResidentLoad(
         ITextureStreamingSource source,
@@ -140,7 +145,8 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         Func<bool>? shouldAcceptResult,
         CancellationToken cancellationToken,
         JobPriority priority,
-        Action<float>? onProgress)
+        Action<float>? onProgress,
+        long streamingGeneration)
     {
         Interlocked.Increment(ref s_queuedDecodeCount);
 
@@ -224,6 +230,25 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     }
 
                     cancellationPhase = "during upload";
+                    if (TryScheduleVulkanSynchronizedUpload(
+                        target,
+                        source,
+                        residentData,
+                        includeMipChain,
+                        maxResidentDimension,
+                        streamingGeneration,
+                        priority,
+                        shouldAcceptResult,
+                        cancellationToken,
+                        onFinished,
+                        onError,
+                        onCanceled,
+                        onProgress,
+                        ReportCanceled))
+                    {
+                        return;
+                    }
+
                     XRTexture2D.ApplyResidentData(target, residentData, includeMipChain);
                     onProgress?.Invoke(0.5f);
 
@@ -295,6 +320,72 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
             Routine,
             priority,
             cancellationToken: CancellationToken.None);
+    }
+
+    private static bool TryScheduleVulkanSynchronizedUpload(
+        XRTexture2D target,
+        ITextureStreamingSource source,
+        TextureStreamingResidentData residentData,
+        bool includeMipChain,
+        uint maxResidentDimension,
+        long streamingGeneration,
+        JobPriority priority,
+        Func<bool>? shouldAcceptResult,
+        CancellationToken cancellationToken,
+        Action<XRTexture2D>? onFinished,
+        Action<Exception>? onError,
+        Action? onCanceled,
+        Action<float>? onProgress,
+        Action<string> reportCanceled)
+    {
+        if (RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
+            return false;
+
+        if (AbstractRenderer.Current is not VulkanRenderer renderer)
+        {
+            onError?.Invoke(new InvalidOperationException("Vulkan imported texture upload service could not resolve the active Vulkan renderer."));
+            return true;
+        }
+
+        if (!VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable)
+        {
+            onError?.Invoke(new InvalidOperationException("Vulkan synchronized imported texture upload service is not available."));
+            return true;
+        }
+
+        if (cancellationToken.IsCancellationRequested
+            || (shouldAcceptResult is not null && !shouldAcceptResult()))
+        {
+            reportCanceled("before synchronized Vulkan upload");
+            return true;
+        }
+
+        long uploadBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
+        RecordUploadBytes(uploadBytes);
+        onProgress?.Invoke(0.5f);
+
+        bool queued = renderer.TryScheduleImportedTextureResidencyTransition(
+            target,
+            residentData,
+            includeMipChain,
+            maxResidentDimension,
+            streamingGeneration,
+            ImportedTextureStreamingManager.ResolveUploadPriorityClass(priority),
+            shouldAcceptResult,
+            tex =>
+            {
+                onProgress?.Invoke(1.0f);
+                onFinished?.Invoke(tex);
+            },
+            onCanceled,
+            onError,
+            cancellationToken);
+
+        if (!queued)
+            reportCanceled("synchronized Vulkan upload queue rejected request");
+
+        _ = source;
+        return true;
     }
 
     private static bool TryEnterRenderThreadApplyBudget()
@@ -434,7 +525,8 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
         Action<float>? onProgress = null,
         Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low)
+        JobPriority priority = JobPriority.Low,
+        long streamingGeneration = 0)
         => ScheduleResidentLoad(
             source,
             target,
@@ -449,7 +541,8 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
             shouldAcceptResult,
             cancellationToken,
             priority,
-            onProgress);
+            onProgress,
+            streamingGeneration);
 
     public EnumeratorJob ScheduleResidentLoad(
         ITextureStreamingSource source,
@@ -464,7 +557,8 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
         Action? onCanceled = null,
         Func<bool>? shouldAcceptResult = null,
         CancellationToken cancellationToken = default,
-        JobPriority priority = JobPriority.Low)
+        JobPriority priority = JobPriority.Low,
+        long streamingGeneration = 0)
         => ScheduleResidentLoad(
             source,
             target,
@@ -479,7 +573,8 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
             shouldAcceptResult,
             cancellationToken,
             priority,
-            onProgress: null);
+            onProgress: null,
+            streamingGeneration);
 
     private static EnumeratorJob ScheduleResidentLoad(
         ITextureStreamingSource source,
@@ -495,7 +590,8 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
         Func<bool>? shouldAcceptResult,
         CancellationToken cancellationToken,
         JobPriority priority,
-        Action<float>? onProgress)
+        Action<float>? onProgress,
+        long streamingGeneration)
     {
         Interlocked.Increment(ref s_queuedDecodeCount);
 

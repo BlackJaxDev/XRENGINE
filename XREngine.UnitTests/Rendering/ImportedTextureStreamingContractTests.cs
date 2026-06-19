@@ -1,7 +1,10 @@
 using System;
 using System.IO;
+using System.Threading;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Rendering;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -162,20 +165,164 @@ public sealed class ImportedTextureStreamingContractTests
     }
 
     [Test]
-    public void ImportedTextureStreaming_VulkanDensePromotionsUseSingleMipUntilUploadQueueExists()
+    public void ImportedTextureStreaming_VulkanDensePromotionsUseSynchronizedUploadService()
     {
         string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+        string serviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanTextureUploadService.cs");
+        string hookSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanTextureStreamingHooks.cs");
+        string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkImageBackedTexture.cs");
 
         managerSource.ShouldContain("bool freezeResidentSizeForVulkan = ShouldFreezeVulkanImportedTextureResidency(snapshot);");
         managerSource.ShouldContain("desiredResidentSize = ResolveVulkanSafeResidentSize(snapshot, desiredResidentSize);");
         managerSource.ShouldContain("&& !freezeResidentSizeForVulkan");
         managerSource.ShouldContain("private static uint ResolveVulkanSafeResidentSize(");
         managerSource.ShouldContain("private static bool ShouldFreezeVulkanImportedTextureResidency(ImportedTextureStreamingSnapshot snapshot)");
+        managerSource.ShouldContain("docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md");
+        managerSource.ShouldContain("VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable");
+        managerSource.ShouldContain("XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE");
+        managerSource.ShouldContain("&& IsVulkanImportedTexturePreviewFreezeForced();");
+        managerSource.ShouldNotContain("&& (!VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable");
+        managerSource.ShouldNotContain("ShouldPreserveVulkanResidentSizeAgainstDemotion");
+        ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/TextureResidencyPolicy.cs")
+            .ShouldContain("visibility grace demotion");
         managerSource.ShouldContain("includeMipChain = ShouldIncludeResidentMipChain(backend, normalizedTarget);");
         managerSource.ShouldContain("private static bool ShouldIncludeResidentMipChain(ITextureResidencyBackend backend, uint normalizedTarget)");
-        managerSource.ShouldContain("return RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan;");
+        managerSource.ShouldContain("|| VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable;");
         managerSource.ShouldNotContain("includeMipChain = normalizedTarget > minimumResidentSize;");
         managerSource.ShouldNotContain("includeMipChain = normalizedTarget > backend.PreviewMaxDimension;");
+        imageTextureSource.ShouldContain("WaitForInFlightWorkBeforeImportedTextureReplacement(");
+        imageTextureSource.ShouldContain("Renderer.WaitForAllInFlightWork();");
+        imageTextureSource.ShouldContain("ShouldSynchronizeDedicatedImportedTextureReplacement()");
+
+        serviceSource.ShouldContain("internal sealed class VulkanTextureUploadService");
+        serviceSource.ShouldContain("VulkanTextureUploadGenerationState");
+        serviceSource.ShouldContain("RejectStaleOrCanceledResult(");
+        serviceSource.ShouldContain("TryScheduleImportedTextureUpload(");
+        hookSource.ShouldContain("private readonly VulkanTextureUploadService _textureUploadService = new();");
+        hookSource.ShouldContain("TryScheduleImportedTextureResidencyTransition(");
+    }
+
+    [Test]
+    public void VulkanTextureSamplers_EnableAnisotropyWhenDeviceFeatureIsEnabled()
+    {
+        string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkImageBackedTexture.cs");
+        string textureViewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkTextureView.cs");
+        string samplerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VKSampler.cs");
+        string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/LogicalDevice.cs");
+
+        logicalDeviceSource.ShouldContain("deviceFeatures.SamplerAnisotropy = Vk.True;");
+        logicalDeviceSource.ShouldContain("_supportsAnisotropy = true;");
+
+        imageTextureSource.ShouldContain("if (Renderer.SamplerAnisotropyEnabled)");
+        imageTextureSource.ShouldContain("AnisotropyEnable = anisotropyEnable");
+        imageTextureSource.ShouldContain("MaxAnisotropy = maxAnisotropy");
+
+        textureViewSource.ShouldContain("if (Renderer.SamplerAnisotropyEnabled)");
+        textureViewSource.ShouldContain("samplerInfo.AnisotropyEnable = Vk.True;");
+        textureViewSource.ShouldContain("samplerInfo.MaxAnisotropy = MathF.Min(props.Limits.MaxSamplerAnisotropy, 16f);");
+        textureViewSource.ShouldNotContain("Renderer.SamplerAnisotropyEnabled && Data.NumLevels > 1");
+
+        samplerSource.ShouldContain("Data.EnableAnisotropy && Renderer.SamplerAnisotropyEnabled");
+        samplerSource.ShouldContain("samplerInfo.AnisotropyEnable = Vk.True;");
+        samplerSource.ShouldContain("samplerInfo.MaxAnisotropy = MathF.Min(samplerInfo.MaxAnisotropy, props.Limits.MaxSamplerAnisotropy);");
+    }
+
+    [Test]
+    public void ImportedTextureStreaming_VulkanFreezeTelemetryIsExplicitInLogsAndUi()
+    {
+        string contractsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/TextureStreamingContracts.cs");
+        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+        string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/TextureRuntimeDiagnostics.cs");
+        string panelSource = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.TextureStreamingPanel.cs");
+
+        contractsSource.ShouldContain("bool VulkanFrozen");
+        contractsSource.ShouldContain("string FreezeReason");
+        contractsSource.ShouldContain("long ResidentGeneration");
+        contractsSource.ShouldContain("long PublishedGeneration");
+        contractsSource.ShouldContain("long UploadGeneration");
+
+        managerSource.ShouldContain("ResolveTelemetryBackendName(");
+        managerSource.ShouldContain("Vulkan dense tiered (GLTieredTextureResidencyBackend)");
+        diagnosticsSource.ShouldContain("vulkanFrozen=");
+        diagnosticsSource.ShouldContain("freezeReason='");
+        diagnosticsSource.ShouldContain("Texture.VulkanUploadState");
+        diagnosticsSource.ShouldContain("Texture.VulkanUploadRejected");
+        panelSource.ShouldContain("t.DisplayBackendName");
+        panelSource.ShouldContain("tex.DisplayBackendName");
+        panelSource.ShouldContain("tex.ResidentGeneration");
+        panelSource.ShouldContain("tex.PublishedGeneration");
+        panelSource.ShouldContain("tex.UploadGeneration");
+        panelSource.ShouldContain("vk-frozen");
+    }
+
+    [Test]
+    public void VulkanTextureUploadService_RejectsStaleOrCanceledGenerationBeforePublication()
+    {
+        VulkanTextureUploadService service = new();
+        XRTexture2D texture = new() { Name = "stale-vulkan-upload" };
+        VulkanImportedTextureUploadRequest request = new(
+            new WeakReference<XRTexture2D>(texture),
+            texture.Name,
+            "stale.png",
+            512u,
+            new VulkanImportedTextureUploadMipRange(0, 1, 512u, 512u),
+            XREngine.Data.Rendering.ESizedInternalFormat.Rgba8,
+            "sRGB",
+            512L * 512L * 4L,
+            StreamingGeneration: 7L,
+            TextureUploadPriorityClass.VisibleNow,
+            CancellationToken.None);
+
+        service.ShouldAcceptResult(request, currentStreamingGeneration: 8L).ShouldBeFalse();
+        VulkanImportedTextureUploadResult result = service.RejectStaleOrCanceledResult(request, currentStreamingGeneration: 8L);
+        result.State.ShouldBe(VulkanImportedTextureUploadResultState.Canceled);
+        result.SourceGeneration.ShouldBe(7L);
+        result.FailureReason.ShouldNotBeNull();
+        result.FailureReason.ShouldContain("stale generation");
+
+        using CancellationTokenSource cts = new();
+        cts.Cancel();
+        VulkanImportedTextureUploadRequest canceled = request with { CancellationToken = cts.Token };
+        service.ShouldAcceptResult(canceled, currentStreamingGeneration: 7L).ShouldBeFalse();
+    }
+
+    [Test]
+    public void VulkanTextureUploadService_RecordsCopiesBarriersAndFrameSafePublication()
+    {
+        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string serviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanTextureUploadService.cs");
+        string hookSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanTextureStreamingHooks.cs");
+        string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkImageBackedTexture.cs");
+        string backendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Textures/OpenGLTextureResidencyBackends.cs");
+        string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/TextureRuntimeDiagnostics.cs");
+        string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Validation.cs");
+
+        meshRendererSource.ShouldContain("TextureUploadFrameOp");
+        meshRendererSource.ShouldContain("FrameOpKindTextureUpload");
+        commandBufferSource.ShouldContain("RecordTextureUploadOp(");
+        commandBufferSource.ShouldContain("ImageLayout.TransferDstOptimal");
+        commandBufferSource.ShouldContain("Api!.CmdCopyBufferToImage(");
+        commandBufferSource.ShouldContain("ImageLayout.ShaderReadOnlyOptimal");
+        commandBufferSource.ShouldContain("PublishSynchronizedImportedTextureUpload(upload)");
+        commandBufferSource.ShouldContain("RetireTextureUploadStagingResources(upload)");
+        commandBufferSource.ShouldContain("VulkanTextureUploadGenerationState.Retired");
+
+        serviceSource.ShouldContain("VulkanImportedTexturePendingUpload");
+        serviceSource.ShouldContain("StagingResources");
+        serviceSource.ShouldContain("PreparedTimestamp");
+        serviceSource.ShouldNotContain("NewTransferCommandScope()");
+        serviceSource.ShouldNotContain("NewCommandScope()");
+        hookSource.ShouldContain("EnqueueImportedTextureUpload(");
+        imageTextureSource.ShouldContain("TryCreateSynchronizedImportedUpload(");
+        imageTextureSource.ShouldContain("ReleasePreparedImportedUploadResources(");
+        imageTextureSource.ShouldContain("Renderer.MarkCommandBuffersDirty(\"ImportedTextureUploadPublished\")");
+        imageTextureSource.ShouldContain("Renderer.SetDebugObjectName(ObjectType.Image");
+        imageTextureSource.ShouldContain("Renderer.SetDebugObjectName(ObjectType.Buffer");
+        backendSource.ShouldContain("TryScheduleVulkanSynchronizedUpload(");
+        backendSource.ShouldContain("RuntimeGraphicsApiKind.Vulkan");
+        diagnosticsSource.ShouldContain("Texture.VulkanUploadLatency");
+        validationSource.ShouldContain("SetDebugObjectName(ObjectType objectType");
     }
 
     [Test]

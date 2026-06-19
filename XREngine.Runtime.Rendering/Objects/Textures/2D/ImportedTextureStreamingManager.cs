@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering;
 
@@ -30,6 +31,9 @@ internal sealed class ImportedTextureStreamingManager
     private const int RecordRefCompactionIntervalFrames = 600;
     private const int TextureSummaryIntervalFrames = 60;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
+    private const string VulkanImportedTextureStreamingTodoPath = "docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md";
+    private const string VulkanImportedTexturePreviewFreezeEnvVar = "XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE";
+    private const string VulkanPreviewFreezeReason = "explicit Vulkan imported-texture preview freeze requested";
 
     /// <summary>
     /// If a pending transition has been stuck for this many frames with no active
@@ -156,6 +160,9 @@ internal sealed class ImportedTextureStreamingManager
                     record.PendingMaxDimension = 0;
                     record.PreviewReady = true;
                     record.Backend = ResolveBackendForTexture(residentData.SourceWidth, residentData.SourceHeight, record.Format);
+                    long generation = Math.Max(record.ResidentGeneration, record.PublishedGeneration) + 1L;
+                    record.ResidentGeneration = generation;
+                    record.UploadGeneration = generation;
                     readyBackend = record.Backend;
                 }
 
@@ -183,6 +190,8 @@ internal sealed class ImportedTextureStreamingManager
                 {
                     record.SparseNumLevels = tex.SparseTextureStreamingNumSparseLevels;
                     record.Backend ??= ResolveBackendForTexture(record.SourceWidth, record.SourceHeight, record.Format);
+                    if (record.UploadGeneration > record.PublishedGeneration)
+                        record.PublishedGeneration = record.UploadGeneration;
                 }
 
                 onFinished?.Invoke(tex);
@@ -213,20 +222,32 @@ internal sealed class ImportedTextureStreamingManager
         List<ImportedTextureStreamingSnapshot> snapshots = CollectSnapshots();
         int pendingTransitions = 0;
         string backendName = "None";
+        string displayBackendName = "None";
+        int vulkanFrozenCount = 0;
+        string freezeReason = string.Empty;
         for (int i = 0; i < snapshots.Count; i++)
         {
             if (snapshots[i].PendingMaxDimension != 0)
                 pendingTransitions++;
+
+            if (ShouldFreezeVulkanImportedTextureResidency(snapshots[i]))
+            {
+                vulkanFrozenCount++;
+                if (string.IsNullOrEmpty(freezeReason))
+                    freezeReason = ResolveVulkanFreezeReason(snapshots[i]);
+            }
         }
 
         if (snapshots.Count > 0)
         {
             backendName = snapshots[0].Backend.Name;
+            displayBackendName = ResolveTelemetryBackendName(snapshots[0].Backend);
             for (int i = 1; i < snapshots.Count; i++)
             {
                 if (!string.Equals(backendName, snapshots[i].Backend.Name, StringComparison.Ordinal))
                 {
                     backendName = "Mixed";
+                    displayBackendName = "Mixed";
                     break;
                 }
             }
@@ -234,6 +255,7 @@ internal sealed class ImportedTextureStreamingManager
 
         return new ImportedTextureStreamingTelemetry(
             backendName,
+            displayBackendName,
             Volatile.Read(ref _activeImportedModelImports),
             snapshots.Count,
             pendingTransitions,
@@ -248,7 +270,9 @@ internal sealed class ImportedTextureStreamingManager
             Volatile.Read(ref _lastAvailableManagedBytes),
             Volatile.Read(ref _lastAssignedManagedBytes),
             _tieredBackend.UploadBytesScheduledThisFrame + _sparseBackend.UploadBytesScheduledThisFrame,
-            Volatile.Read(ref _activeImportedModelImports) > 0);
+            Volatile.Read(ref _activeImportedModelImports) > 0,
+            vulkanFrozenCount > 0,
+            freezeReason);
     }
 
     public IReadOnlyList<ImportedTextureStreamingTextureTelemetry> GetTrackedTextureTelemetry()
@@ -283,6 +307,7 @@ internal sealed class ImportedTextureStreamingManager
             double lastUploadMilliseconds = Math.Max(snapshot.LastTransitionExecutionMilliseconds, snapshot.LastTextureUploadMilliseconds);
             bool isSlow = oldestQueueWaitMilliseconds >= slowQueueThreshold
                 || lastUploadMilliseconds >= slowUploadThreshold;
+            bool vulkanFrozen = ShouldFreezeVulkanImportedTextureResidency(snapshot);
 
             telemetry.Add(new ImportedTextureStreamingTextureTelemetry(
                 snapshot.TextureName,
@@ -312,7 +337,14 @@ internal sealed class ImportedTextureStreamingManager
                 oldestQueueWaitMilliseconds,
                 lastUploadMilliseconds,
                 CalculatePriorityScore(snapshot),
-                snapshot.Backend.Name));
+                snapshot.Backend.Name,
+                ResolveTelemetryBackendName(snapshot.Backend),
+                vulkanFrozen,
+                vulkanFrozen ? ResolveVulkanFreezeReason(snapshot) : string.Empty,
+                snapshot.ResidentGeneration,
+                snapshot.PublishedGeneration,
+                snapshot.UploadGeneration,
+                snapshot.RetirementGeneration));
         }
 
         return telemetry;
@@ -890,7 +922,6 @@ internal sealed class ImportedTextureStreamingManager
                 snapshot.Backend,
                 snapshot.Format,
                 snapshot.SparseNumLevels);
-
             SparseTextureStreamingPageSelection desiredPageSelection = DetermineDesiredPageSelection(snapshot, assignedResidentSize, frameId);
             long targetCommittedBytes = snapshot.Backend.EstimateCommittedBytes(
                 snapshot.SourceWidth,
@@ -991,6 +1022,7 @@ internal sealed class ImportedTextureStreamingManager
             int atPreviewCount = 0;
             int promotedCount = 0;
             int pendingCount = 0;
+            int vulkanFrozenCount = 0;
             uint maxResident = 0;
             float maxPixelSpan = 0;
             for (int i = 0; i < snapshots.Count; i++)
@@ -1003,6 +1035,7 @@ internal sealed class ImportedTextureStreamingManager
                 if (s.ResidentMaxDimension <= previewSize) atPreviewCount++;
                 else promotedCount++;
                 if (s.PendingMaxDimension != 0) pendingCount++;
+                if (ShouldFreezeVulkanImportedTextureResidency(s)) vulkanFrozenCount++;
                 if (s.ResidentMaxDimension > maxResident) maxResident = s.ResidentMaxDimension;
                 if (s.MaxProjectedPixelSpan > maxPixelSpan) maxPixelSpan = s.MaxProjectedPixelSpan;
             }
@@ -1011,6 +1044,7 @@ internal sealed class ImportedTextureStreamingManager
                 $"[TextureStreaming] frame={frameId} tracked={snapshots.Count} visible={visibleCount} " +
                 $"visibleNoPreview={visibleNoPreviewCount} previewReady={previewReadyCount} atPreview={atPreviewCount} promoted={promotedCount} " +
                 $"pending={pendingCount} maxResident={maxResident} maxPixelSpan={maxPixelSpan:F0} " +
+                $"vulkanFrozen={vulkanFrozenCount} freezeReason='{(vulkanFrozenCount > 0 ? VulkanPreviewFreezeReason : string.Empty)}' " +
                 $"allowPromotions={allowPromotions} importsActive={importsActive} activeImports={Volatile.Read(ref _activeImportedModelImports)} " +
                 $"queuedTransitions={queuedTransitions} queuedPromotions={queuedPromotions} queuedDemotions={queuedDemotions} " +
                 $"budget={(availableManagedBytes == long.MaxValue ? "unlimited" : $"{availableManagedBytes / (1024 * 1024)}MB")}");
@@ -1185,6 +1219,10 @@ internal sealed class ImportedTextureStreamingManager
                 return ReferenceEquals(record.PendingLoadCts, cts) && !cts.IsCancellationRequested;
         }
 
+        long streamingGeneration;
+        lock (record.Sync)
+            streamingGeneration = record.UploadGeneration;
+
         if (string.IsNullOrWhiteSpace(filePath) || source is null)
         {
             TextureRuntimeDiagnostics.LogTransitionCanceled(
@@ -1261,7 +1299,8 @@ internal sealed class ImportedTextureStreamingManager
             () => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId),
             shouldAcceptResult: IsCurrentTransition,
             cancellationToken: cts.Token,
-            priority: transitionPriority);
+            priority: transitionPriority,
+            streamingGeneration: streamingGeneration);
 
         return true;
     }
@@ -1273,12 +1312,11 @@ internal sealed class ImportedTextureStreamingManager
         if (RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
             return desiredResidentSize;
 
-        // The current Vulkan dense texture streaming path recreates the image and
-        // uploads through one-shot layout/copy submissions. Freeze a preview-ready
-        // imported texture at its current residency until a synchronized Vulkan
-        // upload queue owns those transitions.
+        // See docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md.
+        // The preview freeze remains available as an explicit emergency kill
+        // switch for device-loss isolation.
         if (!ShouldFreezeVulkanImportedTextureResidency(snapshot))
-            return Math.Min(desiredResidentSize, snapshot.Backend.PreviewMaxDimension);
+            return desiredResidentSize;
 
         uint currentResidentSize = snapshot.PendingMaxDimension != 0
             ? snapshot.PendingMaxDimension
@@ -1294,17 +1332,51 @@ internal sealed class ImportedTextureStreamingManager
 
     private static bool ShouldFreezeVulkanImportedTextureResidency(ImportedTextureStreamingSnapshot snapshot)
         => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan
-            && snapshot.PreviewReady;
+            && snapshot.PreviewReady
+            && IsVulkanImportedTexturePreviewFreezeForced();
+
+    private static bool IsVulkanImportedTexturePreviewFreezeForced()
+        => string.Equals(
+            Environment.GetEnvironmentVariable(VulkanImportedTexturePreviewFreezeEnvVar),
+            "1",
+            StringComparison.OrdinalIgnoreCase);
+
+    private static string ResolveVulkanFreezeReason(ImportedTextureStreamingSnapshot snapshot)
+    {
+        if (RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
+            return string.Empty;
+
+        if (!snapshot.PreviewReady)
+            return "preview not ready";
+
+        if (IsVulkanImportedTexturePreviewFreezeForced())
+            return $"{VulkanImportedTexturePreviewFreezeEnvVar}=1";
+
+        return string.Empty;
+    }
+
+    private static string ResolveTelemetryBackendName(ITextureResidencyBackend backend)
+    {
+        if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan
+            && string.Equals(backend.Name, nameof(GLTieredTextureResidencyBackend), StringComparison.Ordinal))
+        {
+            return "Vulkan dense tiered (GLTieredTextureResidencyBackend)";
+        }
+
+        return backend.Name;
+    }
 
     private static bool ShouldIncludeResidentMipChain(ITextureResidencyBackend backend, uint normalizedTarget)
     {
         if (normalizedTarget <= backend.PreviewMaxDimension)
             return false;
 
-        // Vulkan dense imported-texture uploads still use one-shot layout/copy
-        // submissions. Keep them to one resident mip until a synchronized Vulkan
-        // upload queue replaces that path.
-        return RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan;
+        // Vulkan dense imported-texture uploads include the resident mip chain
+        // only after the synchronized service owns frame-timeline upload and
+        // publication; XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1 stays
+        // experimental and does not bypass this service boundary.
+        return RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan
+            || VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable;
     }
 
     private static void ClearPendingTransition(
@@ -1361,7 +1433,12 @@ internal sealed class ImportedTextureStreamingManager
 
             if (completedResidentSize > 0)
             {
+                long previousPublishedGeneration = record.PublishedGeneration;
                 record.ResidentMaxDimension = completedResidentSize;
+                record.ResidentGeneration = Math.Max(record.ResidentGeneration + 1L, record.UploadGeneration);
+                record.PublishedGeneration = record.ResidentGeneration;
+                if (previousPublishedGeneration > 0 && previousPublishedGeneration != record.PublishedGeneration)
+                    record.RetirementGeneration = previousPublishedGeneration;
                 record.PreviewReady = true;
                 if (completedResidentSize > previousResidentSize)
                 {

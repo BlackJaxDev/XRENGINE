@@ -14,6 +14,7 @@ public unsafe partial class VulkanRenderer
         private RenderPass _renderPass = default;
         private FrameBufferAttachmentSignature[]? _attachmentSignature;
         private ImageView[]? _attachmentViews;
+        private Extent2D[]? _attachmentExtents;
 
         public override VkObjectType Type { get; } = VkObjectType.Framebuffer;
         public override bool IsGenerated => IsActive;
@@ -236,6 +237,32 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        internal Extent2D ResolveAttachmentCompatibleDrawExtent()
+        {
+            Extent2D[]? extents = _attachmentExtents;
+            if (extents is null || extents.Length == 0)
+                return ResolveDrawExtent();
+
+            uint minWidth = uint.MaxValue;
+            uint minHeight = uint.MaxValue;
+            bool found = false;
+
+            for (int i = 0; i < extents.Length; i++)
+            {
+                Extent2D extent = extents[i];
+                if (extent.Width == 0 || extent.Height == 0)
+                    continue;
+
+                minWidth = Math.Min(minWidth, extent.Width);
+                minHeight = Math.Min(minHeight, extent.Height);
+                found = true;
+            }
+
+            return found
+                ? new Extent2D(Math.Max(minWidth, 1u), Math.Max(minHeight, 1u))
+                : ResolveDrawExtent();
+        }
+
         internal Extent2D ResolveDrawExtent()
         {
             if (FramebufferWidth > 0 && FramebufferHeight > 0)
@@ -424,6 +451,7 @@ public unsafe partial class VulkanRenderer
             _renderPass = default;
             _attachmentSignature = null;
             _attachmentViews = null;
+            _attachmentExtents = null;
             FramebufferWidth = 0;
             FramebufferHeight = 0;
             PostDeleted();
@@ -434,14 +462,17 @@ public unsafe partial class VulkanRenderer
             AttachmentBuildInfo[] attachments = BuildAttachmentInfos();
             ImageView[] views = new ImageView[attachments.Length];
             FrameBufferAttachmentSignature[] signatures = new FrameBufferAttachmentSignature[attachments.Length];
+            Extent2D[] extents = new Extent2D[attachments.Length];
 
             for (int i = 0; i < attachments.Length; i++)
             {
                 views[i] = attachments[i].View;
                 signatures[i] = attachments[i].Signature;
+                extents[i] = attachments[i].Extent;
             }
 
             _attachmentSignature = signatures;
+            _attachmentExtents = extents;
 
             var (fbWidth, fbHeight) = ResolveFramebufferExtent();
             FramebufferWidth = fbWidth;
@@ -959,7 +990,7 @@ public unsafe partial class VulkanRenderer
                 {
                     uint slot = ResolveColorSlot(attachment, ref nextImplicitColorSlot, usedColorSlots);
                     FrameBufferAttachmentSignature signature = BuildAttachmentSignature(source, role, slot);
-                    colorAttachments.Add(new AttachmentBuildInfo(source.View, signature, slot));
+                    colorAttachments.Add(new AttachmentBuildInfo(source.View, signature, slot, ResolveAttachmentExtent(target, mip)));
                     continue;
                 }
 
@@ -967,7 +998,7 @@ public unsafe partial class VulkanRenderer
                     throw new InvalidOperationException($"Framebuffer '{Data.Name ?? "<unnamed>"}' defines multiple depth/stencil attachments which is not supported in Vulkan subpasses.");
 
                 FrameBufferAttachmentSignature depthSignature = BuildAttachmentSignature(source, role, 0);
-                depthAttachment = new AttachmentBuildInfo(source.View, depthSignature, 0);
+                depthAttachment = new AttachmentBuildInfo(source.View, depthSignature, 0, ResolveAttachmentExtent(target, mip));
             }
 
             colorAttachments.Sort((a, b) => a.ColorIndex.CompareTo(b.ColorIndex));
@@ -992,6 +1023,20 @@ public unsafe partial class VulkanRenderer
 
             throw new InvalidOperationException(
                 $"Attachment '{DescribeAttachment(attachment)}' size ({attachment.Width}x{attachment.Height}) does not match framebuffer dimensions ({expectedWidth}x{expectedHeight}).");
+        }
+
+        private static Extent2D ResolveAttachmentExtent(IFrameBufferAttachement attachment, int mipLevel)
+        {
+            uint width = Math.Max(attachment.Width, 1u);
+            uint height = Math.Max(attachment.Height, 1u);
+            int mip = Math.Max(mipLevel, 0);
+            if (mip > 0)
+            {
+                width = Math.Max(width >> mip, 1u);
+                height = Math.Max(height >> mip, 1u);
+            }
+
+            return new Extent2D(width, height);
         }
 
         private static string DescribeAttachment(IFrameBufferAttachement attachment)
@@ -1176,7 +1221,7 @@ public unsafe partial class VulkanRenderer
 
         private readonly record struct AttachmentSource(ImageView View, Format Format, SampleCountFlags Samples, ImageAspectFlags AspectMask, ImageUsageFlags Usage);
 
-        private readonly record struct AttachmentBuildInfo(ImageView View, FrameBufferAttachmentSignature Signature, uint ColorIndex);
+        private readonly record struct AttachmentBuildInfo(ImageView View, FrameBufferAttachmentSignature Signature, uint ColorIndex, Extent2D Extent);
 
         protected override void DeleteObjectInternal() { }
 

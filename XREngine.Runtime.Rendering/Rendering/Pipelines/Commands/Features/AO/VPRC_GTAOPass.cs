@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -268,10 +269,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Name = OutputFBOName
             };
 
-            instance.SetFBO(genFbo);
-            instance.SetFBO(horizontalBlurFbo);
-            instance.SetFBO(verticalBlurFbo);
-            instance.SetFBO(outputFbo);
+            SetDynamicFBO(instance, genFbo);
+            SetDynamicFBO(instance, horizontalBlurFbo);
+            SetDynamicFBO(instance, verticalBlurFbo);
+            SetDynamicFBO(instance, outputFbo);
         }
 
         private XRTexture ResolveAoTexture(
@@ -294,9 +295,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                 previousTexture.Destroy();
 
             XRTexture createdTexture = CreateAoTexture(width, height, textureName, samplerName, bilinear);
-            instance.SetTexture(createdTexture);
+            SetDynamicTexture(instance, createdTexture);
             return createdTexture;
         }
+
+        private static void SetDynamicTexture(XRRenderPipelineInstance instance, XRTexture texture)
+            => instance.SetTexture(texture, RenderResourceDescriptorFactory.FromTexture(texture));
+
+        private static void SetDynamicFBO(XRRenderPipelineInstance instance, XRFrameBuffer frameBuffer)
+            => instance.SetFBO(frameBuffer, RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer));
 
         private static bool TextureMatchesSize(XRTexture texture, int width, int height)
         {
@@ -368,13 +375,6 @@ namespace XREngine.Rendering.Pipelines.Commands
                 program,
                 AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
                 ResolveSettingsPipeline());
-
-            // The visibility-bitmask GTAO variant currently over-occludes under Vulkan
-            // clip/depth conventions; use the classic horizon integration there.
-            if (RuntimeEngine.Rendering.IsVulkanRendererActive())
-            {
-                program.Uniform("UseVisibilityBitmask", false);
-            }
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);

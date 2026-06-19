@@ -1998,6 +1998,9 @@ namespace XREngine.Rendering.Vulkan
                     case ComputeDispatchOp compute:
                         AddComputeDispatchSignatureParts(parts, i, opType, compute);
                         break;
+                    case TextureUploadFrameOp upload:
+                        AddTextureUploadSignaturePart(parts, i, opType, upload);
+                        break;
                 }
             }
 
@@ -2273,6 +2276,23 @@ namespace XREngine.Rendering.Vulkan
             AddProgramBindingSignatureParts(parts, opIndex, opType, "computeProgram", compute.Snapshot);
         }
 
+        private static void AddTextureUploadSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, TextureUploadFrameOp upload)
+        {
+            HashCode hash = new();
+            hash.Add(upload.Upload.PublicationToken);
+            hash.Add(upload.Upload.Request.StreamingGeneration);
+            hash.Add(upload.Upload.Image.Handle);
+            hash.Add(upload.Upload.ImageView.Handle);
+            hash.Add(upload.Upload.StagingResources.Length);
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                "textureUpload",
+                hash,
+                $"token={upload.Upload.PublicationToken} gen={upload.Upload.Request.StreamingGeneration} extent={upload.Upload.Extent.Width}x{upload.Upload.Extent.Height} mips={upload.Upload.MipLevels}");
+        }
+
         private static void AddProgramBindingSignatureParts(
             List<FrameOpSignatureDebugPart> parts,
             int opIndex,
@@ -2525,6 +2545,7 @@ namespace XREngine.Rendering.Vulkan
                 MemoryBarrierOp => "Vulkan.RecordPrimary.Op.MemoryBarrier",
                 DlssUpscaleOp => "Vulkan.RecordPrimary.Op.DlssUpscale",
                 DlssFrameGenerationOp => "Vulkan.RecordPrimary.Op.DlssFrameGeneration",
+                TextureUploadFrameOp => "Vulkan.RecordPrimary.Op.TextureUpload",
                 _ => "Vulkan.RecordPrimary.Op.Unknown"
             };
 
@@ -2546,6 +2567,183 @@ namespace XREngine.Rendering.Vulkan
 
             foreach (KeyValuePair<VkMeshRenderer, int> pair in meshDrawSlotsByRenderer)
                 pair.Key.EnsureUniformDrawSlotCapacity(pair.Value);
+        }
+
+        private void RecordTextureUploadOp(CommandBuffer commandBuffer, VulkanImportedTexturePendingUpload upload)
+        {
+            VulkanImportedTextureUploadRequest request = upload.Request;
+            if (!upload.ShouldPublish())
+            {
+                _textureUploadService.RecordState(
+                    request,
+                    VulkanTextureUploadGenerationState.Canceled,
+                    "request became stale or canceled before command recording");
+                upload.Texture.ReleasePreparedImportedUploadResources(upload);
+                InvokeTextureUploadCanceled(upload);
+                return;
+            }
+
+            _textureUploadService.RecordState(
+                request,
+                VulkanTextureUploadGenerationState.UploadRecording,
+                $"recording {upload.StagingResources.Length} mip copies token={upload.PublicationToken}");
+            upload.MarkRecordStarted();
+            TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
+                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                request.TextureName,
+                request.SourcePath,
+                request.StreamingGeneration,
+                upload.PublicationToken,
+                "decodeCompleteToUploadRecord",
+                TextureRuntimeDiagnostics.ElapsedMilliseconds(upload.PreparedTimestamp));
+
+            ImageSubresourceRange range = new()
+            {
+                AspectMask = upload.AspectMask,
+                BaseMipLevel = 0,
+                LevelCount = upload.MipLevels,
+                BaseArrayLayer = 0,
+                LayerCount = 1,
+            };
+
+            ImageMemoryBarrier uploadBeginBarrier = new()
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = 0,
+                DstAccessMask = AccessFlags.TransferWriteBit,
+                OldLayout = ImageLayout.Undefined,
+                NewLayout = ImageLayout.TransferDstOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = upload.Image,
+                SubresourceRange = range,
+            };
+
+            CmdPipelineBarrierTracked(
+                commandBuffer,
+                PipelineStageFlags.TopOfPipeBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &uploadBeginBarrier);
+
+            for (int i = 0; i < upload.StagingResources.Length; i++)
+            {
+                VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
+                BufferImageCopy copyRegion = staging.CopyRegion;
+                Api!.CmdCopyBufferToImage(
+                    commandBuffer,
+                    staging.Buffer,
+                    upload.Image,
+                    ImageLayout.TransferDstOptimal,
+                    1,
+                    ref copyRegion);
+            }
+
+            ImageMemoryBarrier uploadEndBarrier = new()
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.TransferWriteBit,
+                DstAccessMask = AccessFlags.ShaderReadBit,
+                OldLayout = ImageLayout.TransferDstOptimal,
+                NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = upload.Image,
+                SubresourceRange = range,
+            };
+
+            CmdPipelineBarrierTracked(
+                commandBuffer,
+                PipelineStageFlags.TransferBit,
+                PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &uploadEndBarrier);
+
+            _textureUploadService.RecordState(
+                request,
+                VulkanTextureUploadGenerationState.Uploaded,
+                $"recorded {upload.StagingResources.Length} mip copies");
+            _textureUploadService.RecordState(
+                request,
+                VulkanTextureUploadGenerationState.DescriptorPublishPending,
+                $"publicationToken={upload.PublicationToken}");
+
+            long publicationStart = TextureRuntimeDiagnostics.StartTiming();
+            upload.Texture.PublishSynchronizedImportedTextureUpload(upload);
+            upload.MarkPublished();
+            RetireTextureUploadStagingResources(upload);
+            TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
+                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                request.TextureName,
+                request.SourcePath,
+                request.StreamingGeneration,
+                upload.PublicationToken,
+                "uploadRecordToDescriptorPublication",
+                upload.RecordTimestamp == 0L ? 0.0 : TextureRuntimeDiagnostics.ElapsedMilliseconds(upload.RecordTimestamp));
+            TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadLatency(
+                RuntimeRenderingHostServices.Current.LastRenderTimestampTicks,
+                request.TextureName,
+                request.SourcePath,
+                request.StreamingGeneration,
+                upload.PublicationToken,
+                "publicationToOldResourceRetirementEnqueue",
+                TextureRuntimeDiagnostics.ElapsedMilliseconds(publicationStart));
+
+            _textureUploadService.RecordState(
+                request,
+                VulkanTextureUploadGenerationState.Published,
+                $"publicationToken={upload.PublicationToken}");
+            _textureUploadService.RecordState(
+                request,
+                VulkanTextureUploadGenerationState.Retired,
+                "old texture and staging resources enqueued for frame-slot retirement");
+            InvokeTextureUploadFinished(upload);
+        }
+
+        private void RetireTextureUploadStagingResources(VulkanImportedTexturePendingUpload upload)
+        {
+            for (int i = 0; i < upload.StagingResources.Length; i++)
+            {
+                VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[i];
+                RetireBuffer(staging.Buffer, staging.Memory);
+            }
+        }
+
+        private static void InvokeTextureUploadFinished(VulkanImportedTexturePendingUpload upload)
+        {
+            if (!upload.TryGetTexture(out XRTexture2D? texture) || texture is null)
+                return;
+
+            try
+            {
+                upload.OnFinished?.Invoke(texture);
+            }
+            catch (Exception ex)
+            {
+                upload.OnError?.Invoke(ex);
+            }
+        }
+
+        private static void InvokeTextureUploadCanceled(VulkanImportedTexturePendingUpload upload)
+        {
+            try
+            {
+                upload.OnCanceled?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                upload.OnError?.Invoke(ex);
+            }
         }
 
         private bool RecordDynamicUiBatchTextSecondaryCommandBuffer(
@@ -3464,6 +3662,11 @@ namespace XREngine.Rendering.Vulkan
                     fboRenderWidth = Math.Min(fboRenderWidth, vkFrameBuffer.FramebufferWidth);
                 if (vkFrameBuffer.FramebufferHeight > 0)
                     fboRenderHeight = Math.Min(fboRenderHeight, vkFrameBuffer.FramebufferHeight);
+                Extent2D attachmentCompatibleExtent = vkFrameBuffer.ResolveAttachmentCompatibleDrawExtent();
+                if (attachmentCompatibleExtent.Width > 0)
+                    fboRenderWidth = Math.Min(fboRenderWidth, attachmentCompatibleExtent.Width);
+                if (attachmentCompatibleExtent.Height > 0)
+                    fboRenderHeight = Math.Min(fboRenderHeight, attachmentCompatibleExtent.Height);
 
                 Rect2D fboRenderArea = new()
                 {
@@ -3932,6 +4135,21 @@ namespace XREngine.Rendering.Vulkan
                     var op = ops[opIndex];
                     try
                     {
+                        if (op is TextureUploadFrameOp textureUploadOp)
+                        {
+                            EndActiveRenderPass();
+                            if (passIndexLabelActive)
+                            {
+                                CmdEndLabel(commandBuffer);
+                                passIndexLabelActive = false;
+                            }
+
+                            CmdBeginLabel(commandBuffer, "TextureUpload");
+                            RecordTextureUploadOp(commandBuffer, textureUploadOp.Upload);
+                            CmdEndLabel(commandBuffer);
+                            continue;
+                        }
+
                         if (!hasActiveContext || !Equals(activeContext, op.Context))
                         {
                             IDisposable? contextChangeProfileScope = null;

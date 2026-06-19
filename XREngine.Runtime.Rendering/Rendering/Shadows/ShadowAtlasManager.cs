@@ -1370,7 +1370,7 @@ public sealed class ShadowAtlasManager
                 continue;
             }
 
-            if (TryGetFirstDirectionalCascadeGroup(request, out ShadowAtlasGroupedDirectionalCascadeAllocation group) &&
+            if (TryGetDirectionalCascadeGroupContainingRequest(request, out ShadowAtlasGroupedDirectionalCascadeAllocation group) &&
                 TryGetDirectionalCascadeGroupRenderRequirement(group, out bool requiresGroupedRender))
             {
                 if (requiresGroupedRender &&
@@ -1405,6 +1405,18 @@ public sealed class ShadowAtlasManager
 
                         continue;
                     }
+
+                    checkedTiles += group.CascadeCount;
+                    failedRender += group.CascadeCount;
+                    deferredByBudget = _requests.Count - i;
+                    firstDeferredRequestIndex = i;
+                    break;
+                }
+                else if (requiresGroupedRender)
+                {
+                    deferredByBudget = _requests.Count - i;
+                    firstDeferredRequestIndex = i;
+                    break;
                 }
             }
 
@@ -2110,7 +2122,7 @@ public sealed class ShadowAtlasManager
             prior.ContentVersion != request.ContentHash;
     }
 
-    private bool TryGetFirstDirectionalCascadeGroup(
+    private bool TryGetDirectionalCascadeGroupContainingRequest(
         ShadowMapRequest request,
         out ShadowAtlasGroupedDirectionalCascadeAllocation group)
     {
@@ -2128,7 +2140,7 @@ public sealed class ShadowAtlasManager
                 candidate.Encoding != request.Encoding ||
                 candidate.Members is null ||
                 candidate.Members.Length == 0 ||
-                candidate.Members[0].CascadeIndex != request.FaceOrCascadeIndex)
+                !DirectionalCascadeGroupContainsCascade(candidate, request.FaceOrCascadeIndex))
             {
                 continue;
             }
@@ -2138,6 +2150,21 @@ public sealed class ShadowAtlasManager
         }
 
         group = default;
+        return false;
+    }
+
+    private static bool DirectionalCascadeGroupContainsCascade(
+        in ShadowAtlasGroupedDirectionalCascadeAllocation group,
+        int cascadeIndex)
+    {
+        if (group.Members is null)
+            return false;
+
+        int count = Math.Min(group.CascadeCount, group.Members.Length);
+        for (int i = 0; i < count; i++)
+            if (group.Members[i].CascadeIndex == cascadeIndex)
+                return true;
+
         return false;
     }
 
@@ -2282,6 +2309,17 @@ public sealed class ShadowAtlasManager
 
         if (succeeded)
             _directionalGroupedFrame = true;
+
+        if (!succeeded)
+        {
+            XREngine.Debug.LightingWarningEvery(
+                $"ShadowAtlas.GroupedDirectionalCascade.Failed.{seedRequest.Key.LightId}",
+                TimeSpan.FromSeconds(2.0),
+                "[ShadowAtlas] Grouped directional cascade render failed for '{0}', cascades={1}, page={2}; leaving atlas tiles stale instead of falling back to sequential.",
+                LightName(light),
+                group.CascadeCount,
+                group.PageIndex);
+        }
 
         if (!RenderDiagnosticsFlags.DirectionalShadowAudit)
             return;
@@ -2569,7 +2607,7 @@ public sealed class ShadowAtlasManager
             if (cascadeCount <= 1)
                 continue;
 
-            if (cascadeCount != 4)
+            if (cascadeCount > 4)
                 continue;
 
             if (!TryGetEqualDirectionalCascadeGroupResolution(seed, entryCount, out uint resolution))

@@ -724,6 +724,9 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         cascadeSource.ShouldContain("DirectionalCascadeShadowBackend");
         cascadeSource.ShouldContain("AtlasPage");
         cascadeSource.ShouldContain("CreateAtlasCascadeShadowRenderPlan(");
+        cascadeSource.ShouldContain("prepareAtlasGroupedCommands");
+        cascadeSource.ShouldContain("hasGroupedAtlasAllocation: true");
+        cascadeSource.ShouldContain("if (!prepareAtlasGroupedCommands)");
         cascadeSource.ShouldContain("MissingGroupedAtlasAllocation");
         cascadeSource.ShouldContain("UnsupportedViewportScissorArray");
         cascadeSource.ShouldContain("UnsupportedVertexStageViewportIndexWrites");
@@ -747,6 +750,13 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         atlasManagerSource.ShouldContain("ShadowDirectionalAtlasLightDiagnostic");
         atlasManagerSource.ShouldContain("GroupReservationFailureReason");
         atlasManagerSource.ShouldContain("TryRenderDirectionalCascadeGroup");
+        atlasManagerSource.ShouldContain("TryGetDirectionalCascadeGroupContainingRequest");
+        atlasManagerSource.ShouldContain("DirectionalCascadeGroupContainsCascade");
+        atlasManagerSource.ShouldContain("else if (requiresGroupedRender)");
+        atlasManagerSource.ShouldContain("GroupedDirectionalCascade.Failed");
+        atlasManagerSource.ShouldContain("failedRender += group.CascadeCount");
+        atlasManagerSource.ShouldContain("if (cascadeCount > 4)");
+        atlasManagerSource.ShouldNotContain("cascadeCount != 4");
         atlasManagerSource.ShouldContain("CanUseLegacyLayeredDirectionalCascadeShadowRendering");
         atlasManagerSource.ShouldContain("RenderGroupedCascadeShadowAtlasTiles(group, page.FrameBuffer");
         atlasManagerSource.ShouldContain("allocation.LastRenderedFrame == _frameId");

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Threading;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering;
 
@@ -650,6 +651,65 @@ internal static class TextureRuntimeDiagnostics
             $"frame={frameId} textureQueue={snapshot.TextureUploadQueueDepth} urgentTextureRepair={snapshot.UrgentTextureRepairQueueDepth} shadowQueue={snapshot.ShadowAtlasQueueDepth} textureBudgetMs={snapshot.TextureUploadBudgetMilliseconds:F2} textureConsumedMs={snapshot.TextureUploadConsumedMilliseconds:F2} oldestTextureWaitMs={snapshot.OldestTextureQueueWaitMilliseconds:F2} lastShadowMs={snapshot.LastShadowAtlasMilliseconds:F2} startupBoost={snapshot.StartupBoostActive} reason='{Label(reason)}'");
     }
 
+    public static void LogVulkanImportedTextureUploadState(
+        long frameId,
+        string? textureName,
+        string? sourcePath,
+        long generation,
+        uint targetResidentMaxDimension,
+        long estimatedBytes,
+        TextureUploadPriorityClass priorityClass,
+        VulkanTextureUploadGenerationState state,
+        string? detail)
+    {
+        if (!ShouldLog(TextureRuntimeEventImportance.Verbose))
+            return;
+
+        StringBuilder builder = RentBuilder();
+        builder.Append("frame=").Append(frameId)
+            .Append(" texture='").AppendLabel(textureName)
+            .Append("' source='").AppendLabel(sourcePath)
+            .Append("' generation=").Append(generation)
+            .Append(" targetResident=").Append(targetResidentMaxDimension)
+            .Append(" estimatedBytes=").Append(estimatedBytes)
+            .Append(" priority=").Append(priorityClass)
+            .Append(" state=").Append(state)
+            .Append(" detail='").AppendLabel(detail).Append('\'');
+        LogPooled("Texture.VulkanUploadState", builder);
+    }
+
+    public static void LogVulkanImportedTextureUploadRejected(
+        long frameId,
+        string? textureName,
+        string? sourcePath,
+        long requestGeneration,
+        long currentGeneration,
+        string reason)
+    {
+        Interlocked.Increment(ref s_staleUploadCanceledCount);
+        if (!ShouldLog(TextureRuntimeEventImportance.Warning))
+            return;
+
+        Log("Texture.VulkanUploadRejected",
+            $"frame={frameId} texture='{Label(textureName)}' source='{Label(sourcePath)}' requestGeneration={requestGeneration} currentGeneration={currentGeneration} reason='{Label(reason)}'");
+    }
+
+    public static void LogVulkanImportedTextureUploadLatency(
+        long frameId,
+        string? textureName,
+        string? sourcePath,
+        long generation,
+        ulong publicationToken,
+        string phase,
+        double milliseconds)
+    {
+        if (!ShouldLog(TextureRuntimeEventImportance.Verbose))
+            return;
+
+        Log("Texture.VulkanUploadLatency",
+            $"frame={frameId} texture='{Label(textureName)}' source='{Label(sourcePath)}' generation={generation} token={publicationToken} phase='{Label(phase)}' ms={milliseconds:F3}");
+    }
+
     public static void LogSummary(
         long frameId,
         ImportedTextureStreamingTelemetry telemetry,
@@ -669,6 +729,7 @@ internal static class TextureRuntimeDiagnostics
         int promotionQueued = 0;
         int promoted = 0;
         int failed = 0;
+        int vulkanFrozen = 0;
         long residentBytes = 0L;
         double oldestWait = 0.0;
         double maxUpload = 0.0;
@@ -697,6 +758,8 @@ internal static class TextureRuntimeDiagnostics
                 slow++;
             if (texture.HasValidationFailure)
                 failed++;
+            if (texture.VulkanFrozen)
+                vulkanFrozen++;
 
             uint previewSize = texture.SourceWidth == 0 && texture.SourceHeight == 0
                 ? 64u
@@ -753,6 +816,8 @@ internal static class TextureRuntimeDiagnostics
             .Append(" previewResident=").Append(previewResident)
             .Append(" promotionQueued=").Append(promotionQueued)
             .Append(" promoted=").Append(promoted)
+            .Append(" vulkanFrozen=").Append(vulkanFrozen)
+            .Append(" freezeReason='").AppendLabel(telemetry.FreezeReason).Append('\'')
             .Append(" fallback=").Append(FallbackBoundCount)
             .Append(" failed=").Append(failed)
             .Append(" residentBytes=").Append(residentBytes)

@@ -500,12 +500,19 @@ namespace XREngine.Editor.Mcp
             byte[] requestBody;
             try
             {
-                requestBody = await ReadRequestBodyAsync(context.Request.InputStream, maxRequestBytes, requestToken);
+                requestBody = await ReadRequestBodyFromRequestAsync(context.Request, maxRequestBytes, requestToken);
             }
             catch (InvalidDataException)
             {
                 response.StatusCode = (int)HttpStatusCode.RequestEntityTooLarge;
                 LogRequest(requestId, "PayloadTooLarge", context.Request, response.StatusCode, "stream_limit_exceeded");
+                response.Close();
+                return;
+            }
+            catch (EndOfStreamException)
+            {
+                response.StatusCode = (int)HttpStatusCode.BadRequest;
+                LogRequest(requestId, "Malformed", context.Request, response.StatusCode, "incomplete_body");
                 response.Close();
                 return;
             }
@@ -832,20 +839,20 @@ namespace XREngine.Editor.Mcp
         private async Task<object?> HandleRpcAsync(JsonElement root, CancellationToken token, EditorPreferences prefs)
         {
             if (root.ValueKind != JsonValueKind.Object)
-                return CreateError(root, -32600, "Invalid JSON-RPC request object.");
+                return CreateErrorResponse(root, -32600, "Invalid JSON-RPC request object.");
 
             if (root.TryGetProperty("jsonrpc", out var jsonRpcElement))
             {
                 if (jsonRpcElement.ValueKind != JsonValueKind.String || !string.Equals(jsonRpcElement.GetString(), "2.0", StringComparison.Ordinal))
-                    return CreateError(root, -32600, "Unsupported JSON-RPC version. Expected '2.0'.");
+                    return CreateErrorResponse(root, -32600, "Unsupported JSON-RPC version. Expected '2.0'.");
             }
 
             if (!root.TryGetProperty("method", out var methodElement))
-                return CreateError(root, -32600, "Missing method.");
+                return CreateErrorResponse(root, -32600, "Missing method.");
 
             string? method = methodElement.GetString();
             if (string.IsNullOrWhiteSpace(method))
-                return CreateError(root, -32600, "Invalid method.");
+                return CreateErrorResponse(root, -32600, "Invalid method.");
 
             bool hasId = root.TryGetProperty("id", out var idElement);
 
@@ -1443,6 +1450,16 @@ namespace XREngine.Editor.Mcp
             return new McpError(code, message);
         }
 
+        private static object CreateErrorResponse(JsonElement root, int code, string message)
+        {
+            McpError error = new(code, message);
+            object? id = null;
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("id", out var idElement))
+                id = idElement.Clone();
+
+            return new { jsonrpc = "2.0", id, error = new { code = error.Code, message = error.Message } };
+        }
+
         private static bool IsAuthorized(HttpListenerRequest request, EditorPreferences prefs, out string? error)
         {
             error = null;
@@ -1521,6 +1538,38 @@ namespace XREngine.Editor.Mcp
             }
 
             return false;
+        }
+
+        private static async Task<byte[]> ReadRequestBodyFromRequestAsync(HttpListenerRequest request, int maxBytes, CancellationToken token)
+        {
+            long contentLength = request.ContentLength64;
+            if (contentLength >= 0)
+                return await ReadKnownLengthRequestBodyAsync(request.InputStream, contentLength, maxBytes, token);
+
+            return await ReadRequestBodyAsync(request.InputStream, maxBytes, token);
+        }
+
+        private static async Task<byte[]> ReadKnownLengthRequestBodyAsync(Stream stream, long contentLength, int maxBytes, CancellationToken token)
+        {
+            if (contentLength > maxBytes)
+                throw new InvalidDataException("Request payload exceeds maximum size.");
+
+            using var ms = contentLength > 0 ? new MemoryStream((int)contentLength) : new MemoryStream();
+            byte[] buffer = new byte[8192];
+            long remaining = contentLength;
+
+            while (remaining > 0)
+            {
+                int requestedBytes = (int)Math.Min(buffer.Length, remaining);
+                int read = await stream.ReadAsync(buffer.AsMemory(0, requestedBytes), token);
+                if (read <= 0)
+                    throw new EndOfStreamException("Request body ended before Content-Length was read.");
+
+                ms.Write(buffer, 0, read);
+                remaining -= read;
+            }
+
+            return ms.ToArray();
         }
 
         private static async Task<byte[]> ReadRequestBodyAsync(Stream stream, int maxBytes, CancellationToken token)

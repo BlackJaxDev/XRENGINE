@@ -1018,6 +1018,431 @@ public unsafe partial class VulkanRenderer
             RuntimeEngine.Rendering.Stats.Vram.AddTextureAllocation(_allocatedVRAMBytes);
         }
 
+        internal bool TryCreateSynchronizedImportedUpload(
+            in VulkanImportedTextureUploadRequest request,
+            TextureStreamingResidentData residentData,
+            bool includeMipChain,
+            ulong publicationToken,
+            Func<bool>? shouldAcceptResult,
+            Action<XRTexture2D>? onFinished,
+            Action? onCanceled,
+            Action<Exception>? onError,
+            out VulkanImportedTexturePendingUpload? pendingUpload,
+            out string? failureReason)
+        {
+            pendingUpload = null;
+            failureReason = null;
+
+            if (this is not VkTexture2D texture2D)
+            {
+                failureReason = "synchronized imported texture uploads are only implemented for XRTexture2D";
+                return false;
+            }
+
+            if (Data is not XRTexture2D texture)
+            {
+                failureReason = "texture data is not XRTexture2D";
+                return false;
+            }
+
+            if (Renderer.IsDeviceLost)
+            {
+                failureReason = "Vulkan device is lost";
+                return false;
+            }
+
+            if (request.CancellationToken.IsCancellationRequested
+                || (shouldAcceptResult is not null && !shouldAcceptResult()))
+            {
+                failureReason = "request was canceled before upload resources were prepared";
+                return false;
+            }
+
+            XRTexture2D.ApplyResidentDataForVulkanPublication(texture, residentData, includeMipChain);
+            RefreshLayout();
+
+            Format format = ResolvedFormat;
+            ImageAspectFlags aspectMask = NormalizeAspectMaskForFormat(format, AspectFlags);
+            AspectFlags = aspectMask;
+            Extent3D extent = ResolvedExtent;
+            uint mipLevels = Math.Max(ResolvedMipLevels, 1u);
+            uint arrayLayers = Math.Max(ResolvedArrayLayers, 1u);
+            Image image = default;
+            DeviceMemory memory = default;
+            ImageView imageView = default;
+            Sampler sampler = default;
+            long committedBytes = 0L;
+            string debugName = BuildImportedUploadDebugName(request, publicationToken);
+            List<VulkanImportedTextureUploadStagingResource> stagingResources = new(Math.Max(residentData.Mipmaps.Length, 1));
+
+            try
+            {
+                if (!TryCreateImportedUploadImage(extent, mipLevels, arrayLayers, format, out image, out memory, out committedBytes, out failureReason))
+                    return false;
+
+                Renderer.SetDebugObjectName(ObjectType.Image, image.Handle, $"{debugName}.Image");
+                Renderer.SetDebugObjectName(ObjectType.DeviceMemory, memory.Handle, $"{debugName}.Memory");
+
+                imageView = CreateImportedUploadImageView(image, format, aspectMask, mipLevels, arrayLayers);
+                Renderer.SetDebugObjectName(ObjectType.ImageView, imageView.Handle, $"{debugName}.View");
+                if (CreateSampler)
+                {
+                    sampler = CreateImportedUploadSampler();
+                    Renderer.SetDebugObjectName(ObjectType.Sampler, sampler.Handle, $"{debugName}.Sampler");
+                }
+
+                uint levelCount = Math.Min((uint)residentData.Mipmaps.Length, mipLevels);
+                for (uint level = 0; level < levelCount; level++)
+                {
+                    Mipmap2D? mip = residentData.Mipmaps[level];
+                    if (mip is null)
+                        continue;
+
+                    DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, format, out bool ownsUploadData);
+                    try
+                    {
+                        if (!TryCreateStagingBuffer(uploadData, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
+                        {
+                            failureReason = $"could not create staging buffer for mip {level}";
+                            return false;
+                        }
+
+                        Renderer.SetDebugObjectName(ObjectType.Buffer, stagingBuffer.Handle, $"{debugName}.StagingMip{level}");
+
+                        Extent3D mipExtent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1u);
+                        BufferImageCopy region = new()
+                        {
+                            BufferOffset = 0,
+                            BufferRowLength = 0,
+                            BufferImageHeight = 0,
+                            ImageSubresource = new ImageSubresourceLayers
+                            {
+                                AspectMask = aspectMask,
+                                MipLevel = level,
+                                BaseArrayLayer = 0,
+                                LayerCount = 1,
+                            },
+                            ImageOffset = new Offset3D(0, 0, 0),
+                            ImageExtent = mipExtent,
+                        };
+
+                        stagingResources.Add(new VulkanImportedTextureUploadStagingResource(
+                            stagingBuffer,
+                            stagingMemory,
+                            region,
+                            (ulong)(uploadData?.Length ?? 0u)));
+                    }
+                    finally
+                    {
+                        if (ownsUploadData)
+                            uploadData?.Dispose();
+                    }
+                }
+
+                if (stagingResources.Count == 0)
+                {
+                    failureReason = "resident data did not produce any staging uploads";
+                    return false;
+                }
+
+                pendingUpload = new VulkanImportedTexturePendingUpload(
+                    request,
+                    texture2D,
+                    image,
+                    memory,
+                    imageView,
+                    sampler,
+                    format,
+                    aspectMask,
+                    extent,
+                    mipLevels,
+                    committedBytes,
+                    publicationToken,
+                    [.. stagingResources],
+                    shouldAcceptResult,
+                    onFinished,
+                    onCanceled,
+                    onError);
+
+                image = default;
+                memory = default;
+                imageView = default;
+                sampler = default;
+                stagingResources.Clear();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                failureReason = ex.Message;
+                return false;
+            }
+            finally
+            {
+                if (image.Handle != 0 || memory.Handle != 0 || imageView.Handle != 0 || sampler.Handle != 0 || stagingResources.Count > 0)
+                {
+                    ReleasePreparedImportedUploadResources(
+                        image,
+                        memory,
+                        imageView,
+                        sampler,
+                        committedBytes,
+                        [.. stagingResources]);
+                }
+            }
+        }
+
+        private static string BuildImportedUploadDebugName(in VulkanImportedTextureUploadRequest request, ulong publicationToken)
+        {
+            string textureName = string.IsNullOrWhiteSpace(request.TextureName)
+                ? "ImportedTexture"
+                : request.TextureName!;
+            return $"ImportedTextureUpload.{textureName}.gen{request.StreamingGeneration}.token{publicationToken}";
+        }
+
+        private bool TryCreateImportedUploadImage(
+            Extent3D extent,
+            uint mipLevels,
+            uint arrayLayers,
+            Format format,
+            out Image image,
+            out DeviceMemory memory,
+            out long committedBytes,
+            out string? failureReason)
+        {
+            image = default;
+            memory = default;
+            committedBytes = 0L;
+            failureReason = null;
+
+            ImageUsageFlags usage = DefaultUsage;
+            if (Data.RequiresStorageUsage)
+                usage |= ImageUsageFlags.StorageBit;
+            if (VkFormatConversions.IsDepthStencilFormat(format))
+            {
+                usage &= ~ImageUsageFlags.ColorAttachmentBit;
+                usage |= ImageUsageFlags.DepthStencilAttachmentBit;
+            }
+
+            ImageCreateInfo imageInfo = new()
+            {
+                SType = StructureType.ImageCreateInfo,
+                Flags = AdditionalImageFlags,
+                ImageType = TextureImageType,
+                Extent = extent,
+                MipLevels = mipLevels,
+                ArrayLayers = arrayLayers,
+                Format = format,
+                Tiling = Tiling,
+                InitialLayout = ImageLayout.Undefined,
+                Usage = usage,
+                Samples = SampleCountFlags.Count1Bit,
+                SharingMode = SharingMode.Exclusive,
+            };
+
+            Result createResult = Api!.CreateImage(Device, ref imageInfo, null, out image);
+            if (createResult != Result.Success || image.Handle == 0)
+            {
+                image = default;
+                failureReason = $"failed to create synchronized imported texture image ({createResult})";
+                return false;
+            }
+
+            Api!.GetImageMemoryRequirements(Device, image, out MemoryRequirements memRequirements);
+            VulkanMemoryAllocation allocation = Renderer.AllocateImageMemoryWithFallback(image, MemoryProperties);
+            Renderer._imageAllocations[image.Handle] = allocation;
+            memory = allocation.Memory;
+
+            Result bindResult = Api!.BindImageMemory(Device, image, allocation.Memory, allocation.Offset);
+            if (bindResult != Result.Success)
+            {
+                Renderer._imageAllocations.TryRemove(image.Handle, out _);
+                Renderer.FreeMemoryAllocation(allocation);
+                memory = default;
+                failureReason = $"failed to bind synchronized imported texture image memory ({bindResult})";
+                return false;
+            }
+
+            committedBytes = (long)memRequirements.Size;
+            RuntimeEngine.Rendering.Stats.Vram.AddTextureAllocation(committedBytes);
+            return true;
+        }
+
+        private ImageView CreateImportedUploadImageView(
+            Image image,
+            Format format,
+            ImageAspectFlags aspectMask,
+            uint mipLevels,
+            uint arrayLayers)
+        {
+            ImageViewCreateInfo viewInfo = new()
+            {
+                SType = StructureType.ImageViewCreateInfo,
+                Image = image,
+                ViewType = DefaultViewType,
+                Format = format,
+                Components = new ComponentMapping(
+                    ComponentSwizzle.Identity,
+                    ComponentSwizzle.Identity,
+                    ComponentSwizzle.Identity,
+                    ComponentSwizzle.Identity),
+                SubresourceRange = new ImageSubresourceRange
+                {
+                    AspectMask = aspectMask,
+                    BaseMipLevel = 0,
+                    LevelCount = mipLevels,
+                    BaseArrayLayer = 0,
+                    LayerCount = arrayLayers,
+                }
+            };
+
+            if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
+                throw new Exception("Failed to create synchronized imported texture image view.");
+
+            return created;
+        }
+
+        private Sampler CreateImportedUploadSampler()
+        {
+            var (minFilter, magFilter, mipmapMode, uWrap, vWrap, wWrap, lodBias) = ReadSamplerSettingsFromData();
+            var (minLod, maxLod) = ResolveSamplerLodRange();
+            var (compareEnable, compareOp) = ReadCompareSettingsFromData();
+
+            uint anisotropyEnable = Vk.False;
+            float maxAnisotropy = 1f;
+            if (Renderer.SamplerAnisotropyEnabled)
+            {
+                Api!.GetPhysicalDeviceProperties(PhysicalDevice, out PhysicalDeviceProperties props);
+                if (props.Limits.MaxSamplerAnisotropy > 1f)
+                {
+                    anisotropyEnable = Vk.True;
+                    maxAnisotropy = MathF.Min(props.Limits.MaxSamplerAnisotropy, 16f);
+                }
+            }
+
+            SamplerCreateInfo samplerInfo = new()
+            {
+                SType = StructureType.SamplerCreateInfo,
+                MagFilter = magFilter,
+                MinFilter = minFilter,
+                AddressModeU = uWrap,
+                AddressModeV = vWrap,
+                AddressModeW = wWrap,
+                AnisotropyEnable = anisotropyEnable,
+                MaxAnisotropy = maxAnisotropy,
+                BorderColor = BorderColor.IntOpaqueBlack,
+                UnnormalizedCoordinates = Vk.False,
+                CompareEnable = compareEnable,
+                CompareOp = compareOp,
+                MipmapMode = mipmapMode,
+                MipLodBias = lodBias,
+                MinLod = minLod,
+                MaxLod = maxLod,
+            };
+
+            if (Api!.CreateSampler(Device, ref samplerInfo, null, out Sampler created) != Result.Success)
+                throw new Exception("Failed to create synchronized imported texture sampler.");
+
+            Renderer.RegisterLiveSampler(created);
+            return created;
+        }
+
+        internal void ReleasePreparedImportedUploadResources(VulkanImportedTexturePendingUpload pendingUpload)
+        {
+            ReleasePreparedImportedUploadResources(
+                pendingUpload.Image,
+                pendingUpload.Memory,
+                pendingUpload.ImageView,
+                pendingUpload.Sampler,
+                pendingUpload.CommittedBytes,
+                pendingUpload.StagingResources);
+            pendingUpload.DetachPublishedImageHandles();
+        }
+
+        private void ReleasePreparedImportedUploadResources(
+            Image image,
+            DeviceMemory memory,
+            ImageView imageView,
+            Sampler sampler,
+            long committedBytes,
+            VulkanImportedTextureUploadStagingResource[] stagingResources)
+        {
+            for (int i = 0; i < stagingResources.Length; i++)
+            {
+                VulkanImportedTextureUploadStagingResource staging = stagingResources[i];
+                Renderer.RetireBuffer(staging.Buffer, staging.Memory);
+            }
+
+            if (image.Handle != 0 || memory.Handle != 0 || imageView.Handle != 0 || sampler.Handle != 0)
+            {
+                Renderer.RetireImageResources(new RetiredImageResources(
+                    image,
+                    memory,
+                    imageView,
+                    [],
+                    sampler,
+                    committedBytes));
+            }
+
+            if (committedBytes > 0)
+                RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(committedBytes);
+        }
+
+        internal void PublishSynchronizedImportedTextureUpload(VulkanImportedTexturePendingUpload pendingUpload)
+        {
+            if (!ReferenceEquals(pendingUpload.Texture, this))
+                throw new InvalidOperationException("Imported texture upload publication target does not match the prepared texture wrapper.");
+
+            ImageView[] retiredAttachmentViews;
+            if (_attachmentViews.Count > 0)
+            {
+                retiredAttachmentViews = new ImageView[_attachmentViews.Count];
+                int index = 0;
+                foreach ((_, ImageView attachmentView) in _attachmentViews)
+                    retiredAttachmentViews[index++] = attachmentView;
+            }
+            else
+            {
+                retiredAttachmentViews = [];
+            }
+
+            Renderer.RetireImageResources(new RetiredImageResources(
+                _ownsImageMemory ? _image : default,
+                _ownsImageMemory ? _memory : default,
+                _view,
+                retiredAttachmentViews,
+                _sampler,
+                _ownsImageMemory ? _allocatedVRAMBytes : 0));
+
+            if (_ownsImageMemory && _allocatedVRAMBytes > 0)
+                RuntimeEngine.Rendering.Stats.Vram.RemoveTextureAllocation(_allocatedVRAMBytes);
+
+            _image = pendingUpload.Image;
+            _memory = pendingUpload.Memory;
+            _view = pendingUpload.ImageView;
+            _sampler = pendingUpload.Sampler;
+            _ownsImageMemory = true;
+            _physicalGroup = null;
+            _extentOverride = null;
+            _formatOverride = null;
+            _arrayLayersOverride = null;
+            _mipLevelsOverride = null;
+            _samplesOverride = null;
+            _allocatedVRAMBytes = pendingUpload.CommittedBytes;
+            _layout = new TextureLayout(pendingUpload.Extent, 1u, Math.Max(pendingUpload.MipLevels, 1u));
+            _layoutInitialized = true;
+            Format = pendingUpload.Format;
+            AspectFlags = pendingUpload.AspectMask;
+            _attachmentViews.Clear();
+            _currentImageLayout = ImageLayout.ShaderReadOnlyOptimal;
+            ResetAttachmentLayoutTracking();
+            MarkUploaded();
+            if (!IsActive)
+                _bindingId = CacheObject(this);
+
+            pendingUpload.DetachPublishedImageHandles();
+            Renderer.MarkCommandBuffersDirty("ImportedTextureUploadPublished");
+        }
+
         #endregion
 
         #region Image View Management
@@ -2298,8 +2723,42 @@ public unsafe partial class VulkanRenderer
             if (!IsActive)
                 return;
 
+            WaitForInFlightWorkBeforeImportedTextureReplacement("storage property changed");
             Destroy();
             Generate();
+        }
+
+        private void WaitForInFlightWorkBeforeImportedTextureReplacement(string reason)
+        {
+            if (!ShouldSynchronizeDedicatedImportedTextureReplacement())
+                return;
+
+            Debug.VulkanEvery(
+                $"Vulkan.ImportedTextureReplacementSync.{Data.GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Waiting for in-flight frames before replacing imported texture '{0}' ({1}).",
+                Data.Name ?? Data.GetDescribingName(),
+                reason);
+            Renderer.WaitForAllInFlightWork();
+        }
+
+        private bool ShouldSynchronizeDedicatedImportedTextureReplacement()
+        {
+            if (Renderer.IsDeviceLost || _image.Handle == 0 || _physicalGroup is not null)
+                return false;
+
+            if (Data is not XRTexture2D texture)
+                return false;
+
+            if (texture.FrameBufferAttachment.HasValue
+                || texture.Resizable
+                || texture.RequiresStorageUsage
+                || string.IsNullOrWhiteSpace(texture.FilePath))
+            {
+                return false;
+            }
+
+            return texture.Mipmaps is { Length: > 0 };
         }
 
         private static bool IsSamplerDataProperty(string? propertyName)

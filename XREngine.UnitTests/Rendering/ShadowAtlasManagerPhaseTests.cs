@@ -32,6 +32,10 @@ public sealed class ShadowAtlasManagerPhaseTests
         "MarkTileRendered",
         BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("ShadowAtlasManager.MarkTileRendered method was not found.");
+    private static readonly MethodInfo TryGetDirectionalCascadeGroupContainingRequestMethod = typeof(ShadowAtlasManager).GetMethod(
+        "TryGetDirectionalCascadeGroupContainingRequest",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("ShadowAtlasManager.TryGetDirectionalCascadeGroupContainingRequest method was not found.");
     private static readonly MethodInfo ResolveShadowDirtyReasonMethod = typeof(Lights3DCollection).GetMethod(
         "ResolveShadowDirtyReason",
         BindingFlags.Static | BindingFlags.NonPublic)
@@ -769,6 +773,35 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
+    public void DirectionalCascadeGroupLookup_MatchesAnyCascadeMember()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 2048u, maxPages: 1, maxRequests: 4);
+        DirectionalLightComponent light = CreateDirectionalLight(512u);
+        ShadowMapRequest[] requests = new ShadowMapRequest[4];
+        for (int cascadeIndex = 0; cascadeIndex < requests.Length; cascadeIndex++)
+        {
+            requests[cascadeIndex] = CreateRequest(
+                light,
+                EShadowProjectionType.DirectionalCascade,
+                cascadeIndex,
+                desiredResolution: 512u,
+                minimumResolution: 512u,
+                priority: 100.0f - cascadeIndex,
+                contentHash: (ulong)(cascadeIndex + 1));
+        }
+
+        RunSolvedFrame(manager, 1u, requests);
+
+        ShadowAtlasGroupedDirectionalCascadeAllocation group = GetDirectionalCascadeGroupContainingRequest(
+            manager,
+            requests[2]);
+
+        group.LightId.ShouldBe(light.ID);
+        group.CascadeCount.ShouldBe(4);
+        DirectionalCascadeGroupContainsCascade(group, 2).ShouldBeTrue();
+    }
+
+    [Test]
     public void SolveAllocations_OverBudgetDemotionHasBoundedAttemptCount()
     {
         const int requestCount = 12;
@@ -1184,6 +1217,27 @@ public sealed class ShadowAtlasManagerPhaseTests
 
             MarkTileRenderedMethod.Invoke(manager, new object[] { request, allocation });
         }
+    }
+
+    private static ShadowAtlasGroupedDirectionalCascadeAllocation GetDirectionalCascadeGroupContainingRequest(
+        ShadowAtlasManager manager,
+        ShadowMapRequest request)
+    {
+        object?[] args = [request, default(ShadowAtlasGroupedDirectionalCascadeAllocation)];
+        bool found = (bool)TryGetDirectionalCascadeGroupContainingRequestMethod.Invoke(manager, args)!;
+        found.ShouldBeTrue();
+        return (ShadowAtlasGroupedDirectionalCascadeAllocation)args[1]!;
+    }
+
+    private static bool DirectionalCascadeGroupContainsCascade(
+        ShadowAtlasGroupedDirectionalCascadeAllocation group,
+        int cascadeIndex)
+    {
+        for (int i = 0; i < group.CascadeCount; i++)
+            if (group.Members[i].CascadeIndex == cascadeIndex)
+                return true;
+
+        return false;
     }
 
     private static ShadowDirtyReason ResolveDirtyReasonForContentChange(

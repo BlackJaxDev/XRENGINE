@@ -82,7 +82,16 @@ public static partial class EditorImGuiUI
 
         ImGui.Text("Backend:");
         ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.6f, 0.9f, 1.0f, 1.0f), t.BackendName);
+        ImGui.TextColored(new Vector4(0.6f, 0.9f, 1.0f, 1.0f), t.DisplayBackendName);
+
+        if (t.VulkanFrozen)
+        {
+            ImGui.Text("Vulkan residency:");
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.2f, 1.0f), "frozen");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(t.FreezeReason);
+        }
 
         ImGui.Text("Promotions:");
         ImGui.SameLine();
@@ -185,7 +194,7 @@ public static partial class EditorImGuiUI
             ImGuiTableFlags.SizingStretchProp;
 
         float tableHeight = ImGui.GetContentRegionAvail().Y - ImGui.GetTextLineHeightWithSpacing();
-        if (!ImGui.BeginTable("TextureStreamingTable", 16, flags, new Vector2(0, tableHeight)))
+        if (!ImGui.BeginTable("TextureStreamingTable", 20, flags, new Vector2(0, tableHeight)))
             return;
 
         ImGui.TableSetupScrollFreeze(0, 1);
@@ -195,6 +204,10 @@ public static partial class EditorImGuiUI
         ImGui.TableSetupColumn("Resident",     ImGuiTableColumnFlags.None,       65f);
         ImGui.TableSetupColumn("Desired",      ImGuiTableColumnFlags.None,       60f);
         ImGui.TableSetupColumn("Pending",      ImGuiTableColumnFlags.None,       60f);
+        ImGui.TableSetupColumn("ResGen",       ImGuiTableColumnFlags.None,       55f);
+        ImGui.TableSetupColumn("PubGen",       ImGuiTableColumnFlags.None,       55f);
+        ImGui.TableSetupColumn("UpGen",        ImGuiTableColumnFlags.None,       55f);
+        ImGui.TableSetupColumn("RetGen",       ImGuiTableColumnFlags.None,       55f);
         ImGui.TableSetupColumn("Committed",    ImGuiTableColumnFlags.None,       70f);
         ImGui.TableSetupColumn("Priority",     ImGuiTableColumnFlags.None,       65f);
         ImGui.TableSetupColumn("Queue",        ImGuiTableColumnFlags.None,       55f);
@@ -230,7 +243,7 @@ public static partial class EditorImGuiUI
             }
 
             ImGui.TableSetColumnIndex(1);
-            ImGui.TextUnformatted(tex.BackendName);
+            ImGui.TextUnformatted(tex.DisplayBackendName);
 
             ImGui.TableSetColumnIndex(2);
             if (tex.SourceWidth == 0 && tex.SourceHeight == 0)
@@ -261,33 +274,48 @@ public static partial class EditorImGuiUI
                 ImGui.TextColored(new Vector4(1.0f, 1.0f, 0.4f, 1.0f), $"{tex.PendingResidentMaxDimension}");
 
             ImGui.TableSetColumnIndex(6);
-            DrawTextureStreamingBytes(tex.CurrentCommittedBytes);
+            ImGui.Text($"{tex.ResidentGeneration}");
 
             ImGui.TableSetColumnIndex(7);
-            ImGui.Text($"{tex.PriorityScore:F0}");
+            ImGui.Text($"{tex.PublishedGeneration}");
 
             ImGui.TableSetColumnIndex(8);
-            DrawTextureStreamingDuration(tex.OldestQueueWaitMilliseconds, tex.IsSlow);
+            ImGui.Text($"{tex.UploadGeneration}");
 
             ImGui.TableSetColumnIndex(9);
-            DrawTextureStreamingDuration(tex.LastUploadMilliseconds, tex.IsSlow);
+            if (tex.RetirementGeneration == 0)
+                ImGui.TextDisabled("-");
+            else
+                ImGui.Text($"{tex.RetirementGeneration}");
 
             ImGui.TableSetColumnIndex(10);
+            DrawTextureStreamingBytes(tex.CurrentCommittedBytes);
+
+            ImGui.TableSetColumnIndex(11);
+            ImGui.Text($"{tex.PriorityScore:F0}");
+
+            ImGui.TableSetColumnIndex(12);
+            DrawTextureStreamingDuration(tex.OldestQueueWaitMilliseconds, tex.IsSlow);
+
+            ImGui.TableSetColumnIndex(13);
+            DrawTextureStreamingDuration(tex.LastUploadMilliseconds, tex.IsSlow);
+
+            ImGui.TableSetColumnIndex(14);
             if (tex.MaxProjectedPixelSpan <= 0.0f)
                 ImGui.TextDisabled("-");
             else
                 ImGui.Text($"{tex.MaxProjectedPixelSpan:F0}");
 
-            ImGui.TableSetColumnIndex(11);
+            ImGui.TableSetColumnIndex(15);
             string pageText = $"{tex.CurrentPageCoverage * 100.0f:F0}%";
             if (MathF.Abs(tex.DesiredPageCoverage - tex.CurrentPageCoverage) > 0.01f)
                 pageText = $"{pageText}->{tex.DesiredPageCoverage * 100.0f:F0}%";
             ImGui.Text(pageText);
 
-            ImGui.TableSetColumnIndex(12);
+            ImGui.TableSetColumnIndex(16);
             ImGui.Text($"{tex.UvDensityHint:F2}");
 
-            ImGui.TableSetColumnIndex(13);
+            ImGui.TableSetColumnIndex(17);
             if (!visibleThisFrame)
                 ImGui.TextDisabled("-");
             else if (float.IsInfinity(tex.MinVisibleDistance))
@@ -295,7 +323,7 @@ public static partial class EditorImGuiUI
             else
                 ImGui.Text($"{tex.MinVisibleDistance:F1}");
 
-            ImGui.TableSetColumnIndex(14);
+            ImGui.TableSetColumnIndex(18);
             if (visibleThisFrame)
                 ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.4f, 1.0f), "visible");
             else if (framesSinceVisible <= 12)
@@ -303,7 +331,7 @@ public static partial class EditorImGuiUI
             else
                 ImGui.TextDisabled("hidden");
 
-            ImGui.TableSetColumnIndex(15);
+            ImGui.TableSetColumnIndex(19);
             string flagsText = BuildTextureStreamingFlags(tex);
             if (tex.HasValidationFailure)
                 ImGui.TextColored(new Vector4(1.0f, 0.35f, 0.25f, 1.0f), flagsText);
@@ -388,6 +416,8 @@ public static partial class EditorImGuiUI
             flags += ",slow";
         if (tex.WasPressureDemoted)
             flags += ",pressure";
+        if (tex.VulkanFrozen)
+            flags += ",vk-frozen";
         if (tex.HasValidationFailure)
             flags += $",invalid:{tex.ValidationFailureCount}";
         return flags;

@@ -215,6 +215,10 @@ internal sealed class TextureStreamingRegistry
                     record.SourceHeight,
                     record.ResidentMaxDimension,
                     record.PendingMaxDimension,
+                    record.ResidentGeneration,
+                    record.PublishedGeneration,
+                    record.UploadGeneration,
+                    record.RetirementGeneration,
                     record.SparseNumLevels,
                     texture.SparseTextureStreamingEnabled
                         ? texture.SparseTextureStreamingCommittedBytes

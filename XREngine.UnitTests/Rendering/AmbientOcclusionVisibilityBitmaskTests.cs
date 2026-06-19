@@ -26,8 +26,8 @@ public sealed class AmbientOcclusionVisibilityBitmaskTests
         settings.GroundTruth.VisibilityBitmaskThickness.ShouldBe(0.22f, 0.0001f);
     }
 
-    [TestCase("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs")]
-    [TestCase("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs")]
+    [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs")]
+    [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs")]
     public void GtaoVisibilityBitmask_IsExposedInPostProcessSchema(string relativePath)
     {
         string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
@@ -45,12 +45,31 @@ public sealed class AmbientOcclusionVisibilityBitmaskTests
     [Test]
     public void GtaoSettings_AndShaders_DeclareVisibilityBitmaskUniforms()
     {
-        string settingsSource = ReadWorkspaceFile("XRENGINE/Rendering/Camera/GroundTruthAmbientOcclusionSettings.cs").Replace("\r\n", "\n");
+        string settingsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Camera/GroundTruthAmbientOcclusionSettings.cs").Replace("\r\n", "\n");
         settingsSource.ShouldContain("program.Uniform(\"UseVisibilityBitmask\", UseVisibilityBitmask);");
         settingsSource.ShouldContain("program.Uniform(\"VisibilityBitmaskThickness\", PositiveOr(VisibilityBitmaskThickness, DefaultVisibilityBitmaskThickness));");
 
         AssertShaderContainsVisibilityBitmaskPath("Build/CommonAssets/Shaders/Scene3D/GTAOGen.fs");
         AssertShaderContainsVisibilityBitmaskPath("Build/CommonAssets/Shaders/Scene3D/GTAOGenStereo.fs");
+    }
+
+    [Test]
+    public void GtaoPass_DoesNotForceDisableVisibilityBitmaskUnderVulkan()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_GTAOPass.cs").Replace("\r\n", "\n");
+
+        source.ShouldNotContain("program.Uniform(\"UseVisibilityBitmask\", false);");
+        source.ShouldNotContain("RuntimeEngine.Rendering.IsVulkanRendererActive()");
+    }
+
+    [Test]
+    public void GtaoPass_RebindsDynamicResourcesWithFreshDescriptors()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_GTAOPass.cs").Replace("\r\n", "\n");
+
+        source.ShouldContain("SetDynamicTexture(instance, createdTexture);");
+        source.ShouldContain("instance.SetTexture(texture, RenderResourceDescriptorFactory.FromTexture(texture));");
+        source.ShouldContain("instance.SetFBO(frameBuffer, RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer));");
     }
 
     private static void AssertShaderContainsVisibilityBitmaskPath(string relativePath)

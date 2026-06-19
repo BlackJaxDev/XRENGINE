@@ -15,6 +15,8 @@ public partial class DefaultRenderPipeline
         ForwardDepthPrePassHalfResolution = 1UL << 3,
         ForwardDepthPrePassQuarterResolution = 1UL << 4,
         VendorUpscalePreferred = 1UL << 5,
+        GtaoFullResolution = 1UL << 6,
+        GtaoQuarterResolution = 1UL << 7,
     }
 
     private const RenderPipelineResourceUsage SampledColorAttachment =
@@ -53,6 +55,13 @@ public partial class DefaultRenderPipeline
         {
             EDepthNormalPrePassResolution.Half => DefaultPipelineResourceFeature.ForwardDepthPrePassHalfResolution,
             EDepthNormalPrePassResolution.Quarter => DefaultPipelineResourceFeature.ForwardDepthPrePassQuarterResolution,
+            _ => DefaultPipelineResourceFeature.None,
+        };
+
+        mask |= ResolveGtaoResolutionForGenerationKey() switch
+        {
+            GroundTruthAmbientOcclusionSettings.EResolution.Full => DefaultPipelineResourceFeature.GtaoFullResolution,
+            GroundTruthAmbientOcclusionSettings.EResolution.Quarter => DefaultPipelineResourceFeature.GtaoQuarterResolution,
             _ => DefaultPipelineResourceFeature.None,
         };
 
@@ -159,7 +168,7 @@ public partial class DefaultRenderPipeline
     private void DeclareAmbientOcclusionResources(RenderPipelineResourceLayoutBuilder builder)
     {
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
-        RenderResourceSizePolicy halfSize = RenderResourceSizePolicy.Internal(0.5f);
+        RenderResourceSizePolicy gtaoScratchSize = GtaoScratchSizePolicy(builder.Profile);
         uint layerCount = DeclaredLayerCount(builder);
 
         Texture(builder, AmbientOcclusionRawTextureName, internalSize, PrecomputedColorTexture,
@@ -183,14 +192,14 @@ public partial class DefaultRenderPipeline
             .StereoCompatible(builder.Profile.Stereo)
             .Add();
 
-        Texture(builder, GTAORawTextureName, halfSize, PrecomputedColorTexture,
+        Texture(builder, GTAORawTextureName, gtaoScratchSize, PrecomputedColorTexture,
             EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f,
             CreateGTAORawTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
             .Add();
 
-        Texture(builder, GTAOBlurIntermediateTextureName, halfSize, PrecomputedColorTexture,
+        Texture(builder, GTAOBlurIntermediateTextureName, gtaoScratchSize, PrecomputedColorTexture,
             EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f,
             CreateGTAOBlurIntermediateTexture)
             .Layers(layerCount)
@@ -798,20 +807,84 @@ public partial class DefaultRenderPipeline
             linearFiltering: false);
 
     private XRTexture CreateGTAORawTexture()
-        => CreateAmbientOcclusionScratchTexture(
+    {
+        (uint width, uint height) = GetDesiredGtaoScratchSize();
+        return CreateAmbientOcclusionScratchTexture(
             GTAORawTextureName,
             "GTAOInputTexture",
-            Math.Max(1u, InternalWidth / 2u),
-            Math.Max(1u, InternalHeight / 2u),
+            width,
+            height,
             linearFiltering: false);
+    }
 
     private XRTexture CreateGTAOBlurIntermediateTexture()
-        => CreateAmbientOcclusionScratchTexture(
+    {
+        (uint width, uint height) = GetDesiredGtaoScratchSize();
+        return CreateAmbientOcclusionScratchTexture(
             GTAOBlurIntermediateTextureName,
             "GTAOInputTexture",
-            Math.Max(1u, InternalWidth / 2u),
-            Math.Max(1u, InternalHeight / 2u),
+            width,
+            height,
             linearFiltering: true);
+    }
+
+    private static RenderResourceSizePolicy GtaoScratchSizePolicy(RenderPipelineResourceProfile profile)
+    {
+        int divisor = GtaoResolutionDivisor(ResolveGtaoResolutionFromFeatureMask(profile.FeatureMask));
+        return RenderResourceSizePolicy.Internal(1.0f / divisor);
+    }
+
+    private (uint Width, uint Height) GetDesiredGtaoScratchSize()
+    {
+        int divisor = GtaoResolutionDivisor(ResolveGtaoResolutionForTextureFactory());
+        return (
+            Math.Max(1u, InternalWidth / (uint)divisor),
+            Math.Max(1u, InternalHeight / (uint)divisor));
+    }
+
+    private GroundTruthAmbientOcclusionSettings.EResolution ResolveGtaoResolutionForGenerationKey()
+        => ResolveAmbientOcclusionSettings()?.GroundTruth.Resolution
+            ?? GroundTruthAmbientOcclusionSettings.DefaultResolution;
+
+    private GroundTruthAmbientOcclusionSettings.EResolution ResolveGtaoResolutionForTextureFactory()
+    {
+        if (TryResolveCurrentResourceFeatureMask(out ulong featureMask))
+            return ResolveGtaoResolutionFromFeatureMask(featureMask);
+
+        return ResolveGtaoResolutionForGenerationKey();
+    }
+
+    private static bool TryResolveCurrentResourceFeatureMask(out ulong featureMask)
+    {
+        XRRenderPipelineInstance? pipeline = RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance
+            ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+
+        if (pipeline?.CurrentResourceBuildContext is XRRenderPipelineInstance.ResourceBuildContext context)
+        {
+            featureMask = context.Key.FeatureMask;
+            return true;
+        }
+
+        featureMask = 0UL;
+        return false;
+    }
+
+    private static GroundTruthAmbientOcclusionSettings.EResolution ResolveGtaoResolutionFromFeatureMask(ulong featureMask)
+    {
+        if ((featureMask & (ulong)DefaultPipelineResourceFeature.GtaoQuarterResolution) != 0)
+            return GroundTruthAmbientOcclusionSettings.EResolution.Quarter;
+
+        if ((featureMask & (ulong)DefaultPipelineResourceFeature.GtaoFullResolution) != 0)
+            return GroundTruthAmbientOcclusionSettings.EResolution.Full;
+
+        return GroundTruthAmbientOcclusionSettings.DefaultResolution;
+    }
+
+    private static int GtaoResolutionDivisor(GroundTruthAmbientOcclusionSettings.EResolution resolution)
+    {
+        int divisor = (int)resolution;
+        return divisor > 0 ? divisor : (int)GroundTruthAmbientOcclusionSettings.DefaultResolution;
+    }
 
     private XRTexture CreateAmbientOcclusionScratchTexture(
         string textureName,
