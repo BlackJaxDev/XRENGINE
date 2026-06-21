@@ -469,13 +469,8 @@ namespace XREngine.Rendering
             // Experimental only: see docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md.
             // This does not bypass the imported-texture preview freeze kill switch or make
             // full mip-chain residency safe without VulkanTextureUploadService publication.
-            if (!string.Equals(
-                Environment.GetEnvironmentVariable("XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD"),
-                "1",
-                StringComparison.OrdinalIgnoreCase))
-            {
+            if (!RenderDiagnosticsFlags.VkProgressiveTextureUpload)
                 return false;
-            }
 
             Mipmap2D[]? mipmaps = texture.Mipmaps;
             return mipmaps is { Length: > 1 };

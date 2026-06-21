@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Threading;
+
 namespace XREngine.Rendering;
 
 /// <summary>
@@ -160,6 +163,50 @@ public static class RenderDiagnosticsFlags
     public static volatile bool VkSkipImGui;
 
     /// <summary>
+    /// Enables the Vulkan imported-texture upload preparation queue. Default <b>true</b>. Seed:
+    /// <c>XRE_VULKAN_ASYNC_TEXTURE_UPLOAD=0</c> disables and routes scheduling through the
+    /// synchronous compatibility path.
+    /// </summary>
+    public static volatile bool VkAsyncTextureUpload = true;
+
+    /// <summary>
+    /// Requests the Vulkan transfer-queue texture upload path. Default <b>true</b>. Until the
+    /// dedicated transfer queue is active, Vulkan logs an explicit graphics-queue compatibility
+    /// message. Seed: <c>XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE=0</c> disables.
+    /// </summary>
+    public static volatile bool VkTextureUploadTransferQueue = true;
+
+    /// <summary>
+    /// Requests worker-side Vulkan upload preparation. Default <b>false</b>; the current safe path
+    /// is budgeted render-thread preparation. Seed: <c>XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER=1</c>.
+    /// </summary>
+    public static volatile bool VkTextureUploadPrepWorker;
+
+    /// <summary>Verbose Vulkan imported-texture upload lifecycle trace. Seed: <c>XRE_VULKAN_TEXTURE_UPLOAD_TRACE=1</c>.</summary>
+    public static volatile bool VkTextureUploadTrace;
+
+    /// <summary>
+    /// Experimental Vulkan progressive render-thread texture upload path. Seed:
+    /// <c>XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1</c>.
+    /// </summary>
+    public static volatile bool VkProgressiveTextureUpload;
+
+    /// <summary>
+    /// Emergency kill switch that freezes Vulkan imported textures at preview residency.
+    /// Seed: <c>XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE=1</c>.
+    /// </summary>
+    public static volatile bool VkImportedTexturePreviewFreeze;
+
+    private static double _vkTextureUploadPrepBudgetMilliseconds = 0.5;
+
+    /// <summary>
+    /// Millisecond budget used by the Vulkan render-thread upload-prep compatibility drain.
+    /// Seed: <c>XRE_VULKAN_TEXTURE_UPLOAD_PREP_BUDGET_MS=&lt;float&gt;</c>.
+    /// </summary>
+    public static double VkTextureUploadPrepBudgetMilliseconds
+        => Volatile.Read(ref _vkTextureUploadPrepBudgetMilliseconds);
+
+    /// <summary>
     /// Compute skinning pre-pass diagnostics: per-dispatch GPU output/palette readbacks
     /// (<c>[SkinReadback]</c>, <c>[SkinPaletteGpu]</c>), settle/seed/residency traces
     /// (<c>[SkinSettle]</c>, <c>[SkinResidency]</c>), and bone-palette order verification. Heavy
@@ -292,6 +339,13 @@ public static class RenderDiagnosticsFlags
         VkSkipUiBatchText = ReadBool("XRE_SKIP_UI_BATCH_TEXT");
         VkForceSwapchainMagenta = ReadBool("XRE_FORCE_SWAPCHAIN_MAGENTA");
         VkSkipImGui = ReadBool("XRE_SKIP_IMGUI");
+        VkAsyncTextureUpload = ReadBoolDefaultTrue("XRE_VULKAN_ASYNC_TEXTURE_UPLOAD");
+        VkTextureUploadTransferQueue = ReadBoolDefaultTrue("XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE");
+        VkTextureUploadPrepWorker = ReadBool("XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER");
+        VkTextureUploadTrace = ReadBool("XRE_VULKAN_TEXTURE_UPLOAD_TRACE");
+        VkProgressiveTextureUpload = ReadBool("XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD");
+        VkImportedTexturePreviewFreeze = ReadBool("XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE");
+        SetVkTextureUploadPrepBudgetMilliseconds(ReadDouble("XRE_VULKAN_TEXTURE_UPLOAD_PREP_BUDGET_MS", 0.5));
 
         // SkinningPrepassDiag legacy-style contract: default ON, env="0"/"false" disables.
         try
@@ -347,6 +401,41 @@ public static class RenderDiagnosticsFlags
         DeferredDebugView = value;
     }
 
+    private static bool ReadBoolDefaultTrue(string name)
+    {
+        try
+        {
+            string? raw = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrWhiteSpace(raw))
+                return true;
+            return !(raw == "0"
+                || raw.Equals("false", StringComparison.OrdinalIgnoreCase)
+                || raw.Equals("no", StringComparison.OrdinalIgnoreCase)
+                || raw.Equals("off", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static double ReadDouble(string name, double fallback)
+    {
+        try
+        {
+            string? raw = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrWhiteSpace(raw))
+                return fallback;
+            return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+                ? parsed
+                : fallback;
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
     public static void SetModelRenderDiagEnabled(bool value) => ModelRenderDiagEnabled = value;
     public static void SetDirectionalShadowAudit(bool value) => DirectionalShadowAudit = value;
 
@@ -367,6 +456,14 @@ public static class RenderDiagnosticsFlags
     public static void SetVkSkipUiPipeline(bool value) => VkSkipUiPipeline = value;
     public static void SetVkForceSwapchainMagenta(bool value) => VkForceSwapchainMagenta = value;
     public static void SetVkSkipImGui(bool value) => VkSkipImGui = value;
+    public static void SetVkAsyncTextureUpload(bool value) => VkAsyncTextureUpload = value;
+    public static void SetVkTextureUploadTransferQueue(bool value) => VkTextureUploadTransferQueue = value;
+    public static void SetVkTextureUploadPrepWorker(bool value) => VkTextureUploadPrepWorker = value;
+    public static void SetVkTextureUploadTrace(bool value) => VkTextureUploadTrace = value;
+    public static void SetVkProgressiveTextureUpload(bool value) => VkProgressiveTextureUpload = value;
+    public static void SetVkImportedTexturePreviewFreeze(bool value) => VkImportedTexturePreviewFreeze = value;
+    public static void SetVkTextureUploadPrepBudgetMilliseconds(double value)
+        => Volatile.Write(ref _vkTextureUploadPrepBudgetMilliseconds, Math.Clamp(value, 0.0, 100.0));
     public static void SetSkinningPrepassDiag(bool value) => SkinningPrepassDiag = value;
     public static void SetForceSkinnedUnbounded(bool value) => ForceSkinnedUnbounded = value;
     public static void SetSkinCullRejectDiag(bool value) => SkinCullRejectDiag = value;

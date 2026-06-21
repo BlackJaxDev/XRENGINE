@@ -46,6 +46,7 @@ internal sealed class ImportedTextureStreamingManager
 
     private readonly ITextureResidencyBackend _tieredBackend = new GLTieredTextureResidencyBackend();
     private readonly ITextureResidencyBackend _sparseBackend = new GLSparseTextureResidencyBackend();
+    private readonly ITextureResidencyBackend _vulkanDenseBackend = new VulkanDenseTextureResidencyBackend();
     private readonly TextureStreamingRegistry _registry = new();
     private readonly TextureTransitionQueue _transitionQueue = new();
 
@@ -259,9 +260,9 @@ internal sealed class ImportedTextureStreamingManager
             Volatile.Read(ref _activeImportedModelImports),
             snapshots.Count,
             pendingTransitions,
-            _tieredBackend.ActiveDecodeCount + _sparseBackend.ActiveDecodeCount,
-            _tieredBackend.QueuedDecodeCount + _sparseBackend.QueuedDecodeCount,
-            _tieredBackend.ActiveGpuUploadCount + _sparseBackend.ActiveGpuUploadCount,
+            _tieredBackend.ActiveDecodeCount + _sparseBackend.ActiveDecodeCount + _vulkanDenseBackend.ActiveDecodeCount,
+            _tieredBackend.QueuedDecodeCount + _sparseBackend.QueuedDecodeCount + _vulkanDenseBackend.QueuedDecodeCount,
+            _tieredBackend.ActiveGpuUploadCount + _sparseBackend.ActiveGpuUploadCount + _vulkanDenseBackend.ActiveGpuUploadCount,
             Volatile.Read(ref _queuedTransitionsThisFrame),
             Volatile.Read(ref _queuedPromotionTransitionsThisFrame),
             Volatile.Read(ref _queuedDemotionTransitionsThisFrame),
@@ -269,7 +270,7 @@ internal sealed class ImportedTextureStreamingManager
             Volatile.Read(ref _lastCurrentManagedBytes),
             Volatile.Read(ref _lastAvailableManagedBytes),
             Volatile.Read(ref _lastAssignedManagedBytes),
-            _tieredBackend.UploadBytesScheduledThisFrame + _sparseBackend.UploadBytesScheduledThisFrame,
+            _tieredBackend.UploadBytesScheduledThisFrame + _sparseBackend.UploadBytesScheduledThisFrame + _vulkanDenseBackend.UploadBytesScheduledThisFrame,
             Volatile.Read(ref _activeImportedModelImports) > 0,
             vulkanFrozenCount > 0,
             freezeReason);
@@ -377,7 +378,9 @@ internal sealed class ImportedTextureStreamingManager
         ESizedInternalFormat format = ESizedInternalFormat.Rgba8,
         int sparseNumLevels = 0)
     {
-        backend ??= _tieredBackend;
+        backend ??= RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan
+            ? _vulkanDenseBackend
+            : _tieredBackend;
         return TextureResidencyPolicy.FitResidentSizeToBudget(input, desiredResidentSize, availableManagedBytes, backend, format, sparseNumLevels);
     }
 
@@ -397,14 +400,24 @@ internal sealed class ImportedTextureStreamingManager
         => TextureResidencyPolicy.DetermineDesiredPageSelection(snapshot, residentSize, frameId);
 
     private ITextureResidencyBackend ResolvePreviewBackendCandidate(ESizedInternalFormat format)
-        => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL
+    {
+        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+        if (backend == RuntimeGraphicsApiKind.Vulkan)
+            return _vulkanDenseBackend;
+
+        return backend == RuntimeGraphicsApiKind.OpenGL
             && RuntimeRenderingHostServices.Current.GetSparseTextureStreamingSupport(format).IsAvailable
                 ? _sparseBackend
                 : _tieredBackend;
+    }
 
     private ITextureResidencyBackend ResolveBackendForTexture(uint sourceWidth, uint sourceHeight, ESizedInternalFormat format)
     {
-        if (RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.OpenGL)
+        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+        if (backend == RuntimeGraphicsApiKind.Vulkan)
+            return _vulkanDenseBackend;
+
+        if (backend != RuntimeGraphicsApiKind.OpenGL)
             return _tieredBackend;
 
         SparseTextureStreamingSupport support = RuntimeRenderingHostServices.Current.GetSparseTextureStreamingSupport(format);
@@ -1336,10 +1349,7 @@ internal sealed class ImportedTextureStreamingManager
             && IsVulkanImportedTexturePreviewFreezeForced();
 
     private static bool IsVulkanImportedTexturePreviewFreezeForced()
-        => string.Equals(
-            Environment.GetEnvironmentVariable(VulkanImportedTexturePreviewFreezeEnvVar),
-            "1",
-            StringComparison.OrdinalIgnoreCase);
+        => RenderDiagnosticsFlags.VkImportedTexturePreviewFreeze;
 
     private static string ResolveVulkanFreezeReason(ImportedTextureStreamingSnapshot snapshot)
     {
@@ -1357,10 +1367,13 @@ internal sealed class ImportedTextureStreamingManager
 
     private static string ResolveTelemetryBackendName(ITextureResidencyBackend backend)
     {
+        if (string.Equals(backend.Name, nameof(VulkanDenseTextureResidencyBackend), StringComparison.Ordinal))
+            return "Vulkan dense residency (compat, synchronized upload)";
+
         if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan
             && string.Equals(backend.Name, nameof(GLTieredTextureResidencyBackend), StringComparison.Ordinal))
         {
-            return "Vulkan dense tiered (GLTieredTextureResidencyBackend)";
+            return "Vulkan dense tiered (legacy GL compat backend)";
         }
 
         return backend.Name;

@@ -85,6 +85,7 @@ namespace XREngine.Rendering.Vulkan
             if (device.Handle != 0)
                 DeviceWaitIdle();
 
+            _textureUploadService.CancelAllQueuedWork(this, "Vulkan renderer shutdown");
             DrainVulkanPipelineCompileQueueForShutdown();
             WaitForPendingReadbackTasks(TimeSpan.FromSeconds(6));
             DestroyComputeTransientResources();
