@@ -1,6 +1,9 @@
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <mutex>
 #include <type_traits>
+#include <unordered_map>
 
 #include <vulkan/vulkan.h>
 
@@ -54,6 +57,50 @@ VmaAllocationCreateInfo makeAllocationCreateInfo(std::uint32_t requiredPropertie
     }
 
     return createInfo;
+}
+
+} // namespace
+
+namespace {
+
+std::mutex g_allocationMapCountsMutex;
+std::unordered_map<void*, std::uint32_t> g_allocationMapCounts;
+
+void recordAllocationMap(void* allocation) {
+    if (allocation == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> lock(g_allocationMapCountsMutex);
+    std::uint32_t& count = g_allocationMapCounts[allocation];
+    if (count < std::numeric_limits<std::uint32_t>::max())
+        ++count;
+}
+
+bool consumeAllocationMap(void* allocation) {
+    if (allocation == nullptr)
+        return false;
+
+    std::lock_guard<std::mutex> lock(g_allocationMapCountsMutex);
+    auto it = g_allocationMapCounts.find(allocation);
+    if (it == g_allocationMapCounts.end() || it->second == 0)
+        return false;
+
+    --it->second;
+    return true;
+}
+
+std::uint32_t takeAllocationMapCount(void* allocation) {
+    if (allocation == nullptr)
+        return 0;
+
+    std::lock_guard<std::mutex> lock(g_allocationMapCountsMutex);
+    auto it = g_allocationMapCounts.find(allocation);
+    if (it == g_allocationMapCounts.end())
+        return 0;
+
+    std::uint32_t count = it->second;
+    g_allocationMapCounts.erase(it);
+    return count;
 }
 
 } // namespace
@@ -212,8 +259,13 @@ __declspec(dllexport) VkResult xre_vma_bind_image_memory(
 }
 
 __declspec(dllexport) void xre_vma_free(VmaAllocator allocator, void* allocation) {
-    if (allocator != nullptr && allocation != nullptr)
+    if (allocator != nullptr && allocation != nullptr) {
+        const std::uint32_t mapCount = takeAllocationMapCount(allocation);
+        for (std::uint32_t i = 0; i < mapCount; ++i)
+            vmaUnmapMemory(allocator, static_cast<VmaAllocation>(allocation));
+
         vmaFreeMemory(allocator, static_cast<VmaAllocation>(allocation));
+    }
 }
 
 __declspec(dllexport) VkResult xre_vma_map_memory(
@@ -224,11 +276,15 @@ __declspec(dllexport) VkResult xre_vma_map_memory(
         return VK_ERROR_INITIALIZATION_FAILED;
 
     *outData = nullptr;
-    return vmaMapMemory(allocator, static_cast<VmaAllocation>(allocation), outData);
+    VkResult result = vmaMapMemory(allocator, static_cast<VmaAllocation>(allocation), outData);
+    if (result == VK_SUCCESS)
+        recordAllocationMap(allocation);
+
+    return result;
 }
 
 __declspec(dllexport) void xre_vma_unmap_memory(VmaAllocator allocator, void* allocation) {
-    if (allocator != nullptr && allocation != nullptr)
+    if (allocator != nullptr && allocation != nullptr && consumeAllocationMap(allocation))
         vmaUnmapMemory(allocator, static_cast<VmaAllocation>(allocation));
 }
 

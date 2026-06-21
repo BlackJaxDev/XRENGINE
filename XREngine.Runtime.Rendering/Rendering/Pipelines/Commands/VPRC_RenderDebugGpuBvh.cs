@@ -283,11 +283,11 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
                 target.ColorAccess,
                 ERenderPassLoadOp.Load,
                 target.GetColorStoreOp());
-            graphics.UseDepthAttachment(
-                MakeFboDepthResource(target.Name),
-                target.DepthAccess,
+            UseRenderTargetDepthStencilAttachments(
+                graphics,
+                target,
                 ERenderPassLoadOp.Load,
-                target.GetDepthStoreOp());
+                ERenderPassLoadOp.Load);
         }
     }
 }

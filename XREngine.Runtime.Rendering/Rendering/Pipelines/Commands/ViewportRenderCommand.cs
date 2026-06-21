@@ -118,24 +118,57 @@ namespace XREngine.Rendering.Pipelines.Commands
         protected static string MakeFboDepthResource(string fboName)
             => RenderGraphResourceNames.MakeFboDepth(fboName);
 
+        protected static string MakeFboStencilResource(string fboName)
+            => RenderGraphResourceNames.MakeFboStencil(fboName);
+
         protected static string MakeTextureResource(string textureName)
             => RenderGraphResourceNames.MakeTexture(textureName);
 
-    internal virtual void OnAttachedToContainer()
-    {
-    }
+        protected static void UseRenderTargetDepthStencilAttachments(
+            RenderPassBuilder builder,
+            RenderTargetBinding target,
+            ERenderPassLoadOp depthLoad,
+            ERenderPassLoadOp stencilLoad)
+        {
+            if (IsColorOnlyPostProcessOutputTarget(target.Name))
+                return;
 
-    internal virtual void OnParentPipelineAssigned()
-    {
-    }
+            builder.UseDepthAttachment(
+                MakeFboDepthResource(target.Name),
+                target.DepthAccess,
+                depthLoad,
+                target.GetDepthStoreOp());
 
-    internal virtual void AllocateContainerResources(XRRenderPipelineInstance instance)
-    {
-    }
+            // FBO metadata describes depth and stencil as separate graph resources.
+            // Vulkan resolves the stencil resource only when the runtime FBO actually
+            // has a stencil aspect, so declaring it here is safe for depth-only FBOs
+            // and keeps depth-stencil FBOs from losing stencil writes in on-top passes.
+            builder.UseStencilAttachment(
+                MakeFboStencilResource(target.Name),
+                target.DepthAccess,
+                stencilLoad,
+                target.GetStencilStoreOp());
+        }
 
-    internal virtual void ReleaseContainerResources(XRRenderPipelineInstance instance)
-    {
-    }
+        private static bool IsColorOnlyPostProcessOutputTarget(string targetName)
+            => string.Equals(targetName, DefaultRenderPipeline.PostProcessOutputFBOName, StringComparison.Ordinal)
+            || string.Equals(targetName, DefaultRenderPipeline.FinalPostProcessOutputFBOName, StringComparison.Ordinal);
+
+        internal virtual void OnAttachedToContainer()
+        {
+        }
+
+        internal virtual void OnParentPipelineAssigned()
+        {
+        }
+
+        internal virtual void AllocateContainerResources(XRRenderPipelineInstance instance)
+        {
+        }
+
+        internal virtual void ReleaseContainerResources(XRRenderPipelineInstance instance)
+        {
+        }
         public void ExecuteIfShould()
         {
             bool shouldExecute = ShouldExecute;

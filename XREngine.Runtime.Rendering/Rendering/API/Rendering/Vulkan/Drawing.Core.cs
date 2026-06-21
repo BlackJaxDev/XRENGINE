@@ -282,8 +282,7 @@ namespace XREngine.Rendering.Vulkan
         protected override void WindowRenderCallback(double delta)
         {
             if (_deviceLost)
-                throw new InvalidOperationException(
-                    "Vulkan device is lost. Cannot render until the device is recreated.");
+                throw CreateDeviceLostException("RenderWindow", Result.ErrorDeviceLost);
 
             _vkDebugFrameCounter++;
 
@@ -482,6 +481,9 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (!NvidiaDlssManager.Native.TryAcquireProxyNextImage(this, swapChain, ulong.MaxValue, acquireSemaphore, default, ref imageIndex, out result, out string failureReason))
                     {
+                        if (result == Result.ErrorDeviceLost)
+                            throw CreateDeviceLostException("Streamline AcquireNextImage", result);
+
                         string message = $"NVIDIA DLSS frame generation failed to acquire the swapchain image through Streamline: {failureReason}";
                         Debug.RenderingError(message);
                         throw new InvalidOperationException(message);
@@ -503,7 +505,11 @@ namespace XREngine.Rendering.Vulkan
                 imageIndex,
                 _lastPresentedImageIndex);
 
-            if (result == Result.ErrorOutOfDateKhr)
+            if (result == Result.ErrorDeviceLost)
+            {
+                throw CreateDeviceLostException("AcquireNextImage", result);
+            }
+            else if (result == Result.ErrorOutOfDateKhr)
             {
                 ScheduleSwapchainRecreate("AcquireNextImage returned ErrorOutOfDateKhr");
                 return;
@@ -597,7 +603,7 @@ namespace XREngine.Rendering.Vulkan
             if (bridgeResult != Result.Success)
             {
                 if (bridgeResult == Result.ErrorDeviceLost)
-                    MarkDeviceLost();
+                    throw CreateDeviceLostException("Acquire bridge QueueSubmit", bridgeResult);
 
                 throw new Exception($"Failed to bridge swapchain acquire semaphore to timeline ({bridgeResult}).");
             }
@@ -752,7 +758,7 @@ namespace XREngine.Rendering.Vulkan
             if (submitResult != Result.Success)
             {
                 if (submitResult == Result.ErrorDeviceLost)
-                    MarkDeviceLost();
+                    throw CreateDeviceLostException("Draw QueueSubmit", submitResult);
 
                 throw new Exception($"Failed to submit draw command buffer ({submitResult}).");
             }
@@ -800,6 +806,9 @@ namespace XREngine.Rendering.Vulkan
                     {
                         if (!NvidiaDlssManager.Native.TryQueueProxyPresent(this, presentQueue, ref presentInfo, out result, out string failureReason))
                         {
+                            if (result == Result.ErrorDeviceLost)
+                                throw CreateDeviceLostException("Streamline QueuePresent", result);
+
                             string message = $"NVIDIA DLSS frame generation failed to present through Streamline: {failureReason}";
                             Debug.RenderingError(message);
                             throw new InvalidOperationException(message);
@@ -828,7 +837,11 @@ namespace XREngine.Rendering.Vulkan
                 imageIndex,
                 result);
 
-            if (result == Result.ErrorOutOfDateKhr)
+            if (result == Result.ErrorDeviceLost)
+            {
+                throw CreateDeviceLostException("QueuePresent", result);
+            }
+            else if (result == Result.ErrorOutOfDateKhr)
             {
                 ScheduleSwapchainRecreate("QueuePresent returned ErrorOutOfDateKhr");
             }

@@ -60,6 +60,40 @@ public sealed class AmbientOcclusionShaderUvConventionTests
         source.ShouldNotContain("vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f)");
     }
 
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/GTAOGen.fs")]
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/GTAOGenStereo.fs")]
+    public void GroundTruthAoDepthReconstruction_UsesSharedClipDepthPolicy(string relativePath)
+    {
+        string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
+
+        source.ShouldContain("AOViewPosFromDepth(depth, uv");
+        source.ShouldContain("AOViewPosFromDepth(fDepth, fUV");
+        source.ShouldContain("AOViewPosFromDepth(bDepth, bUV");
+        source.ShouldNotContain("XRENGINE_ViewPosFromDepthRaw");
+    }
+
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/GTAOGen.fs")]
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/GTAOGenStereo.fs")]
+    public void GroundTruthAoSliceTangent_UsesTextureToClipDirectionPolicy(string relativePath)
+    {
+        string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
+
+        source.ShouldContain("vec2 clipDir = AOClipDirectionFromTextureDirection(screenDir);");
+        source.ShouldContain("vec3 sliceTangent = normalize(vec3(clipDir.x * invProjX, clipDir.y * invProjY, 0.0f));");
+        source.ShouldNotContain("vec3 sliceTangent = normalize(vec3(screenDir.x * invProjX, screenDir.y * invProjY, 0.0f));");
+    }
+
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/GTAOBlur.fs")]
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/GTAOBlurStereo.fs")]
+    public void GroundTruthAoBlur_SkipsOutOfFrameTapsInsteadOfClampingEdges(string relativePath)
+    {
+        string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
+
+        source.ShouldContain("vec2 sampleUV = uv + BlurDirection * texelSize * float(offset);");
+        source.ShouldContain("if (sampleUV.x < 0.0f || sampleUV.x > 1.0f || sampleUV.y < 0.0f || sampleUV.y > 1.0f)");
+        source.ShouldNotContain("sampleUV = clamp");
+    }
+
     [Test]
     public void AoCommon_UsesRuntimeClipSpacePolicy()
     {
@@ -70,6 +104,8 @@ public sealed class AmbientOcclusionShaderUvConventionTests
         source.ShouldContain("float AODepthToClipZ(float depth)");
         source.ShouldContain("ClipDepthRange == 1 ? depth * 2.0f - 1.0f : depth");
         source.ShouldContain("if (FramebufferTextureYDirection == 1)");
+        source.ShouldContain("vec2 AOClipDirectionFromTextureDirection(vec2 textureDirection)");
+        source.ShouldContain("textureDirection.y = -textureDirection.y;");
         source.ShouldContain("AODepthToClipZ(depth)");
         source.ShouldNotContain("vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f)");
     }

@@ -8,6 +8,11 @@ namespace XREngine.Rendering;
 public interface IRuntimeRendererHost
 {
     /// <summary>
+    /// True after the backend detected a terminal graphics-device loss.
+    /// </summary>
+    bool IsDeviceLost { get; }
+
+    /// <summary>
     /// Returns whether this renderer can consume a GPU-written indirect draw-count buffer directly.
     /// </summary>
     bool SupportsIndirectCountDraw();

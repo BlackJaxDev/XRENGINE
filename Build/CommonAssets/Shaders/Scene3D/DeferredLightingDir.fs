@@ -523,7 +523,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewD
 		if (DirectionalShadowAtlasEnabled)
 		{
 			ivec4 atlasI0 = DirectionalShadowAtlasPacked0[0];
-			bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < 2;
+			bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < textureSize(DirectionalShadowAtlas, 0).z;
 			if (atlasEnabled)
 			{
 				vec4 atlasUvScaleBias = DirectionalShadowAtlasUvScaleBias[0];
@@ -569,7 +569,6 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewD
 					ShadowVogelTapCount) * contact;
 			}
 
-			return contact;
 		}
 
 		if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
@@ -750,7 +749,6 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 					ShadowVogelTapCount) * contact;
 			}
 
-			return contact;
 		}
 
 		if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)

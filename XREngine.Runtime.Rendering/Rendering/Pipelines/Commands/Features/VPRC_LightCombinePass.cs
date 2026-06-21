@@ -514,7 +514,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             else if (_currentLightComponent is DirectionalLightComponent)
             {
                 materialProgram.Uniform("LightHasShadowMap", directionalHasShadowMap);
-                materialProgram.Sampler("ShadowMap", !useDirectionalShadowAtlas && selectedShadowMap is XRTexture2D shadow2D ? shadow2D : DummyShadowMap, 4);
+                materialProgram.Sampler("ShadowMap", selectedShadowMap is XRTexture2D shadow2D ? shadow2D : DummyShadowMap, 4);
             }
         }
 
@@ -694,7 +694,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     _directionalShadowAtlasPacked0,
                     _directionalShadowAtlasUvScaleBias,
                     _directionalShadowAtlasDepthParams);
-                hasSampleableAtlasTile = HasAnyDirectionalAtlasTileSampleable(
+                hasSampleableAtlasTile = AreRequiredDirectionalAtlasTilesSampleable(
                     _directionalShadowAtlasPacked0,
                     useCascadedDirectionalShadows ? directionalLight.ActiveCascadeCount : 1);
             }
@@ -703,7 +703,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (hasSampleableAtlasTile)
             {
                 ShadowMapFormatSelection shadowFormat = directionalLight.ResolveShadowMapFormat(preferredStorageFormat: null);
-                hasSampleableAtlasTile = lights!.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, shadowFormat.Encoding, 0, out atlasTexture);
+                hasSampleableAtlasTile =
+                    lights!.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, shadowFormat.Encoding, 0, out atlasTexture) &&
+                    AreRequiredDirectionalAtlasTilesSampleable(
+                        _directionalShadowAtlasPacked0,
+                        useCascadedDirectionalShadows ? directionalLight.ActiveCascadeCount : 1,
+                        checked((int)Math.Max(1u, atlasTexture.Depth)));
             }
             materialProgram.Sampler(DirectionalShadowAtlasName, atlasTexture ?? DummyShadowMapArray, directionalAtlasUnit);
 
@@ -721,17 +726,23 @@ namespace XREngine.Rendering.Pipelines.Commands
             return hasSampleableAtlasTile;
         }
 
-        private static bool HasAnyDirectionalAtlasTileSampleable(IVector4[] packed0, int count)
+        private static bool AreRequiredDirectionalAtlasTilesSampleable(IVector4[] packed0, int count)
+            => AreRequiredDirectionalAtlasTilesSampleable(packed0, count, int.MaxValue);
+
+        private static bool AreRequiredDirectionalAtlasTilesSampleable(IVector4[] packed0, int count, int maxPageCount)
         {
             int clampedCount = Math.Min(Math.Max(count, 0), packed0.Length);
             if (clampedCount <= 0)
                 return false;
 
             for (int i = 0; i < clampedCount; i++)
-                if (packed0[i].X != 0)
-                    return true;
+            {
+                IVector4 packed = packed0[i];
+                if (packed.X == 0 || packed.Y < 0 || packed.Y >= maxPageCount)
+                    return false;
+            }
 
-            return false;
+            return true;
         }
 
         private static void LogDeferredDirectionalShadowBinding(

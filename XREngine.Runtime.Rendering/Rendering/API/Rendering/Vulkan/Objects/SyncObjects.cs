@@ -26,11 +26,15 @@ public unsafe partial class VulkanRenderer
     /// forever with cascading failures.
     /// </summary>
     private volatile bool _deviceLost;
-    internal bool IsDeviceLost => _deviceLost;
+    private string? _deviceLostReason;
+    public override bool IsDeviceLost => _deviceLost;
 
-    private void MarkDeviceLost()
+    private void MarkDeviceLost(string? reason = null)
     {
+        bool firstObservation = !_deviceLost;
         _deviceLost = true;
+        if (!string.IsNullOrWhiteSpace(reason) && string.IsNullOrWhiteSpace(_deviceLostReason))
+            _deviceLostReason = reason;
 
         // Device loss means pending timeline signals will never arrive. Clear
         // them so teardown/recovery paths do not block on dead semaphore values.
@@ -40,6 +44,20 @@ public unsafe partial class VulkanRenderer
             Array.Clear(_swapchainImageTimelineValues);
         _acquireTimelineValue = 0;
         _graphicsTimelineValue = 0;
+
+        if (firstObservation)
+        {
+            Debug.VulkanWarning(
+                "[Vulkan] Logical device lost. Reason={0}. The current Vulkan renderer cannot submit more work; recreate the renderer/window to recover.",
+                string.IsNullOrWhiteSpace(_deviceLostReason) ? "<unknown>" : _deviceLostReason);
+        }
+    }
+
+    private InvalidOperationException CreateDeviceLostException(string operation, Result result)
+    {
+        MarkDeviceLost($"{operation} returned {result}");
+        return new InvalidOperationException(
+            $"Vulkan device lost during {operation} ({result}). The logical device is terminal and the renderer/window must be recreated before Vulkan can render again.");
     }
 
     private void EnsureSwapchainTimelineState()
@@ -77,7 +95,7 @@ public unsafe partial class VulkanRenderer
         Result waitResult = Api!.WaitSemaphores(device, &waitInfo, ulong.MaxValue);
         if (waitResult == Result.ErrorDeviceLost)
         {
-            MarkDeviceLost();
+            MarkDeviceLost($"WaitSemaphores for timeline value {value} returned {waitResult}");
 
             throw new InvalidOperationException(
                 $"Vulkan device lost while waiting for timeline value {value}. Timeline state has been reset.");

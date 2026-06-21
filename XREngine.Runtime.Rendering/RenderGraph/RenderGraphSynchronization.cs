@@ -190,7 +190,9 @@ public static class RenderGraphSynchronizationPlanner
             }
         }
 
-        SortedSet<int> ready = new(inDegree.Where(kvp => kvp.Value == 0).Select(kvp => kvp.Key));
+        SortedSet<int> ready = new(
+            inDegree.Where(kvp => kvp.Value == 0).Select(kvp => kvp.Key),
+            Comparer<int>.Create((left, right) => ComparePassDeclarationOrder(lookup, left, right)));
         List<RenderPassMetadata> ordered = new(lookup.Count);
 
         while (ready.Count > 0)
@@ -212,13 +214,31 @@ public static class RenderGraphSynchronizationPlanner
             return ordered;
 
         HashSet<int> included = ordered.Select(p => p.PassIndex).ToHashSet();
-        foreach (RenderPassMetadata pass in lookup.Values.OrderBy(p => p.PassIndex))
+        foreach (RenderPassMetadata pass in lookup.Values
+            .OrderBy(static p => p.DeclarationOrder)
+            .ThenBy(static p => p.PassIndex))
         {
             if (!included.Contains(pass.PassIndex))
                 ordered.Add(pass);
         }
 
         return ordered;
+    }
+
+    private static int ComparePassDeclarationOrder(
+        IReadOnlyDictionary<int, RenderPassMetadata> lookup,
+        int left,
+        int right)
+    {
+        if (left == right)
+            return 0;
+
+        int leftOrder = lookup[left].DeclarationOrder;
+        int rightOrder = lookup[right].DeclarationOrder;
+        int orderCompare = leftOrder.CompareTo(rightOrder);
+        return orderCompare != 0
+            ? orderCompare
+            : left.CompareTo(right);
     }
 
     private static RenderGraphSyncState ResolveDependencyState(IReadOnlyCollection<RenderPassMetadata> passMetadata, int passIndex)

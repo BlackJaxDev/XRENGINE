@@ -79,6 +79,12 @@ public sealed class VulkanShaderCompilationRegressionTests
         "Common/GizmoArrowHead.gs",
     ];
 
+    private static readonly (string ShaderRelativePath, string ColorInputName)[] GizmoFragmentShaders =
+    [
+        ("Common/GizmoLine.fs", "GizmoLineColor"),
+        ("Common/GizmoTriangle.fs", "ArrowColor"),
+    ];
+
     private static readonly string[] UberVertexShaders =
     [
         "Uber/UberShader.vert",
@@ -249,9 +255,37 @@ public sealed class VulkanShaderCompilationRegressionTests
         rewrittenSource.ShouldNotBeNull();
         rewrittenSource.ShouldContain("#define XRENGINE_VULKAN 1");
         rewrittenSource.ShouldContain("uniform XREngine_AutoUniforms");
+        rewrittenSource.ShouldContain("vec4 MatColor;");
         rewrittenSource.ShouldContain("int ClipDepthRange;");
         rewrittenSource.ShouldNotContain("in gl_PerVertex");
         rewrittenSource.ShouldNotContain("out gl_PerVertex");
+    }
+
+    [TestCaseSource(nameof(GizmoFragmentShaders))]
+    public void GizmoFragmentShader_ConsumesGeometryStageMaterialColor_ForVulkan((string ShaderRelativePath, string ColorInputName) shaderCase)
+    {
+        LoadedShaderSource loadedShader = LoadShaderSource(shaderCase.ShaderRelativePath);
+        var shaderSource = new TextFile
+        {
+            FilePath = loadedShader.FullPath,
+            Text = loadedShader.Source
+        };
+
+        XRShader shader = new(EShaderType.Fragment, shaderSource);
+
+        byte[] spirv = VulkanShaderCompiler.Compile(
+            shader,
+            out string entryPoint,
+            out _,
+            out string? rewrittenSource);
+
+        entryPoint.ShouldBe("main");
+        spirv.ShouldNotBeNull();
+        spirv.Length.ShouldBeGreaterThan(0);
+        rewrittenSource.ShouldNotBeNull();
+        rewrittenSource.ShouldContain("#define XRENGINE_VULKAN 1");
+        rewrittenSource.ShouldContain(shaderCase.ColorInputName);
+        rewrittenSource.ShouldNotContain("vec4 MatColor;");
     }
 
     [Test]

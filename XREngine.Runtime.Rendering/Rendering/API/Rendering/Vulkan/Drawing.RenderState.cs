@@ -100,6 +100,9 @@ namespace XREngine.Rendering.Vulkan
         }
 
         public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)
+            => SetMaterialUniforms(material, program, LayeredShadowUniformState.CaptureFromCurrentRenderingState());
+
+        private void SetMaterialUniforms(XRMaterial material, XRRenderProgram program, in LayeredShadowUniformState shadowState)
         {
             if (material is null || program is null)
                 return;
@@ -109,7 +112,7 @@ namespace XREngine.Rendering.Vulkan
 
             XRMaterial? shadowBindingSource = null;
             MaterialShadowBindingPlan? shadowBindingPlan = null;
-            if (RuntimeEngine.Rendering.State.IsShadowPass)
+            if (shadowState.IsShadowPass)
             {
                 shadowBindingSource = material.ShadowBindingSourceMaterial;
                 if (shadowBindingSource is not null)
@@ -198,7 +201,7 @@ namespace XREngine.Rendering.Vulkan
                 program.Uniform(EEngineUniform.FramebufferTextureYDirection.ToStringFast(), (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan));
             }
 
-            if (!RuntimeEngine.Rendering.State.IsShadowPass)
+            if (!shadowState.IsShadowPass)
             {
                 material.OnSettingUniforms(program);
                 RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);

@@ -66,6 +66,7 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
             builder.WithName($"{passName}_{target.Name}");
             var colorLoad = target.ConsumeColorLoadOp();
             var depthLoad = target.ConsumeDepthLoadOp();
+            var stencilLoad = target.ConsumeStencilLoadOp();
 
             builder.UseColorAttachment(
                 MakeFboColorResource(target.Name),
@@ -73,11 +74,7 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
                 colorLoad,
                 target.GetColorStoreOp());
 
-            builder.UseDepthAttachment(
-                MakeFboDepthResource(target.Name),
-                target.DepthAccess,
-                depthLoad,
-                target.GetDepthStoreOp());
+            UseRenderTargetDepthStencilAttachments(builder, target, depthLoad, stencilLoad);
         }
     }
 

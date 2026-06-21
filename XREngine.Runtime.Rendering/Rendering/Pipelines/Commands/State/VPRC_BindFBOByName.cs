@@ -141,6 +141,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             string colorResource = MakeFboColorResource(frameBufferName);
             string depthResource = MakeFboDepthResource(frameBufferName);
+            string stencilResource = MakeFboStencilResource(frameBufferName);
             XRFrameBuffer? frameBuffer = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.GetFBO<XRFrameBuffer>(frameBufferName);
 
             foreach (RenderPassMetadata pass in GetTopologicalPassOrder(metadata))
@@ -159,10 +160,18 @@ namespace XREngine.Rendering.Pipelines.Commands
                         return pass.PassIndex;
                     }
 
-                    if ((clearDepth || clearStencil) &&
-                        (usage.ResourceType == ERenderPassResourceType.DepthAttachment ||
-                         usage.ResourceType == ERenderPassResourceType.StencilAttachment) &&
+                    if (clearDepth &&
+                        usage.ResourceType == ERenderPassResourceType.DepthAttachment &&
                         (string.Equals(usage.ResourceName, depthResource, StringComparison.OrdinalIgnoreCase) ||
+                         MatchesFrameBufferAttachmentResource(frameBuffer, usage.ResourceName, colorAttachment: false)))
+                    {
+                        return pass.PassIndex;
+                    }
+
+                    if (clearStencil &&
+                        usage.ResourceType == ERenderPassResourceType.StencilAttachment &&
+                        (string.Equals(usage.ResourceName, stencilResource, StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(usage.ResourceName, depthResource, StringComparison.OrdinalIgnoreCase) ||
                          MatchesFrameBufferAttachmentResource(frameBuffer, usage.ResourceName, colorAttachment: false)))
                     {
                         return pass.PassIndex;

@@ -53,6 +53,9 @@ public sealed class RenderPassBuilder
     public RenderPassBuilder UseDepthAttachment(string resourceName, ERenderGraphAccess access = ERenderGraphAccess.ReadWrite, ERenderPassLoadOp load = ERenderPassLoadOp.Load, ERenderPassStoreOp store = ERenderPassStoreOp.Store)
         => AddUsage(resourceName, ERenderPassResourceType.DepthAttachment, access, load, store);
 
+    public RenderPassBuilder UseStencilAttachment(string resourceName, ERenderGraphAccess access = ERenderGraphAccess.ReadWrite, ERenderPassLoadOp load = ERenderPassLoadOp.Load, ERenderPassStoreOp store = ERenderPassStoreOp.Store)
+        => AddUsage(resourceName, ERenderPassResourceType.StencilAttachment, access, load, store);
+
     public RenderPassBuilder UseResolveAttachment(string resourceName, ERenderPassStoreOp store = ERenderPassStoreOp.Store)
         => AddUsage(resourceName, ERenderPassResourceType.ResolveAttachment, ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, store);
 

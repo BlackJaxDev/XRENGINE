@@ -113,11 +113,11 @@ public class VPRC_RenderByRenderGroup : ViewportRenderCommand
                 target.ConsumeColorLoadOp(),
                 target.GetColorStoreOp());
 
-            builder.UseDepthAttachment(
-                MakeFboDepthResource(target.Name),
-                target.DepthAccess,
+            UseRenderTargetDepthStencilAttachments(
+                builder,
+                target,
                 target.ConsumeDepthLoadOp(),
-                target.GetDepthStoreOp());
+                target.ConsumeStencilLoadOp());
         }
     }
 }

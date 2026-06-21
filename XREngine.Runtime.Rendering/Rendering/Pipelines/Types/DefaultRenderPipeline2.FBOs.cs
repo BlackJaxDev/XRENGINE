@@ -68,7 +68,7 @@ public partial class DefaultRenderPipeline2
             {
                 DepthTest = new DepthTest()
                 {
-                    Enabled = ERenderParamUsage.Enabled,
+                    Enabled = ERenderParamUsage.Disabled,
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
@@ -84,11 +84,8 @@ public partial class DefaultRenderPipeline2
     private XRFrameBuffer CreatePostProcessOutputFBO()
     {
         IFrameBufferAttachement attach = EnsureTextureAttachment(PostProcessOutputTextureName, CreatePostProcessOutputTexture);
-        IFrameBufferAttachement depthStencilAttach = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
 
-        return new XRFrameBuffer(
-            (attach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-            (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
             Name = PostProcessOutputFBOName
         };

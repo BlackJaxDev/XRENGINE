@@ -150,19 +150,52 @@ namespace XREngine.Rendering.Vulkan
 
         public override float GetDepth(int x, int y)
         {
-            // Synchronous depth readback from the swapchain depth buffer.
-            // Note: This is slow and should be avoided in performance-critical code.
+            if (_boundReadFrameBuffer is not null)
+            {
+                x = Math.Clamp(x, 0, Math.Max((int)_boundReadFrameBuffer.Width - 1, 0));
+                y = Math.Clamp(y, 0, Math.Max((int)_boundReadFrameBuffer.Height - 1, 0));
+
+                if (TryResolveBlitImage(
+                        _boundReadFrameBuffer,
+                        _lastPresentedImageIndex,
+                        GetReadBufferMode(),
+                        wantColor: false,
+                        wantDepth: true,
+                        wantStencil: false,
+                        out BlitImageInfo depthSource,
+                        isSource: true) &&
+                    TryReadDepthPixel(depthSource, x, y, out float fboDepth))
+                {
+                    return fboDepth;
+                }
+
+                Debug.VulkanWarningEvery(
+                    "Vulkan.Readback.DepthBoundFboFailed",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] GetDepth fallback to swapchain: unable to resolve/read bound read framebuffer '{0}'.",
+                    _boundReadFrameBuffer.Name ?? "<unnamed>");
+            }
+
+            return TryReadSwapchainDepthPixel(x, y, out float depth)
+                ? depth
+                : 1.0f;
+        }
+
+        private bool TryReadSwapchainDepthPixel(int x, int y, out float depth)
+        {
+            depth = 1.0f;
+
             if (_swapchainDepthImage.Handle == 0)
-                return 1.0f;
+                return false;
 
             // Clamp coordinates to valid range
-            x = Math.Clamp(x, 0, (int)swapChainExtent.Width - 1);
-            y = Math.Clamp(y, 0, (int)swapChainExtent.Height - 1);
+            x = Math.Clamp(x, 0, Math.Max((int)swapChainExtent.Width - 1, 0));
+            y = Math.Clamp(y, 0, Math.Max((int)swapChainExtent.Height - 1, 0));
 
             // Determine byte size based on depth format
             uint pixelSize = GetDepthFormatPixelSize(_swapchainDepthFormat);
             if (pixelSize == 0)
-                return 1.0f;
+                return false;
 
             ulong bufferSize = pixelSize;
 
@@ -241,23 +274,24 @@ namespace XREngine.Rendering.Vulkan
             catch
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
-                return 1.0f;
+                return false;
             }
 
             // Map and read depth value
             if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
             {
                 DestroyBuffer(stagingBuffer, stagingMemory);
-                return 1.0f;
+                return false;
             }
 
-            float depth = ReadDepthValue(mappedPtr, _swapchainDepthFormat);
+            depth = ReadDepthValue(mappedPtr, _swapchainDepthFormat);
 
             UnmapBufferMemory(stagingBuffer, stagingMemory);
             DestroyBuffer(stagingBuffer, stagingMemory);
 
-            return depth;
+            return true;
         }
+
         public override void GetDepthAsync(XRFrameBuffer fbo, int x, int y, Action<float> depthCallback)
         {
             // Prefer reading from the provided FBO depth attachment when available.
@@ -431,6 +465,9 @@ namespace XREngine.Rendering.Vulkan
 
             if (depthSubmitResult != Result.Success)
             {
+                if (depthSubmitResult == Result.ErrorDeviceLost)
+                    MarkDeviceLost("Depth readback QueueSubmit returned ErrorDeviceLost");
+
                 Api!.DestroyFence(device, fence, null);
                 Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
                 DestroyBuffer(stagingBuffer, stagingMemory);
@@ -456,6 +493,9 @@ namespace XREngine.Rendering.Vulkan
 
                     if (result != Result.Success)
                     {
+                        if (result == Result.ErrorDeviceLost)
+                            MarkDeviceLost("Depth readback WaitForFences returned ErrorDeviceLost");
+
                         depthCallback?.Invoke(1.0f);
                         return;
                     }

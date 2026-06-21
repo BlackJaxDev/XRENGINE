@@ -25,6 +25,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Forward depth-normal TransformId | Active | [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md) | Shared forward prepass follow-up so depth, normal, and transform ID describe the same surface. |
 | Dynamic indirect material bindings | Active | [design/rendering/dynamic-indirect-material-bindings.md](design/rendering/dynamic-indirect-material-bindings.md), [todo/rendering/optimization/material-table-and-texture-binding-ladder-todo.md](todo/rendering/optimization/material-table-and-texture-binding-ladder-todo.md) | Layout-driven material table roadmap for zero-readback indirect rendering, replacing hardcoded opaque-deferred rows with generated shader and packer layouts. |
 | Runtime modularization | Active | [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
+| Finalized game builds and asset cooking | Stable doc | [../user-guide/finalized-game-builds.md](../user-guide/finalized-game-builds.md) | User-facing guide for cooked AOT and explicitly non-AOT finalized game builds. |
 | Physics-chain performance | Stable doc + testing | [../developer-guides/rendering/physics-chain-performance.md](../developer-guides/rendering/physics-chain-performance.md) | Remaining validation lives in [testing/physics-chain-performance.md](testing/physics-chain-performance.md). |
 | Native FBX import/export | Active | [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md) | Assimp replacement roadmap for a low-allocation native FBX path. |
 | fastgltf glTF import | Stable doc + testing | [../developer-guides/assets/model-import.md](../developer-guides/assets/model-import.md) | Native glTF import shipped; validation record lives in [testing/gltf-import.md](testing/gltf-import.md). |
@@ -78,7 +79,6 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/avatar/cluster-virtualized-avatar-rendering-todo.md](todo/avatar/cluster-virtualized-avatar-rendering-todo.md)
 - [todo/avatar/gaussian-splat-distant-crowd-lod-todo.md](todo/avatar/gaussian-splat-distant-crowd-lod-todo.md)
 - [todo/avatar/humanoid-body-root-compensation-todo.md](todo/avatar/humanoid-body-root-compensation-todo.md)
-- [todo/aot-final-game-builds.md](todo/aot-final-game-builds.md)
 - [todo/rendering/atmospheric-scattering-component-todo.md](todo/rendering/atmospheric-scattering-component-todo.md)
 - [todo/animated-gaussian-cloud-capture-and-streaming-todo.md](todo/animated-gaussian-cloud-capture-and-streaming-todo.md)
 - [todo/rendering/optimization/compact-zero-readback-rendering-todo.md](todo/rendering/optimization/compact-zero-readback-rendering-todo.md)

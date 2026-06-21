@@ -11,12 +11,21 @@ uniform sampler2D DepthView;
 uniform sampler2D Normal;
 
 uniform vec2 BlurDirection = vec2(1.0f, 0.0f);
-uniform int DenoiseRadius = 8;
-uniform float DenoiseSharpness = 14.02f;
+uniform int DenoiseRadius = 5;
+uniform float DenoiseSharpness = 10.0f;
 uniform bool DenoiseEnabled = true;
 uniform bool UseInputNormals = true;
 uniform bool UseNormalWeightedBlur = true;
 uniform vec2 TexelSize = vec2(0.0f); // Set from C#; when zero, falls back to input texture size
+
+float ComputeDenoiseEdgeFade(vec2 uv)
+{
+    vec2 screenSize = vec2(textureSize(DepthView, 0));
+    vec2 edgePixels = min(uv, 1.0f - uv) * screenSize;
+    float nearestEdgePixels = min(edgePixels.x, edgePixels.y);
+    float fadePixels = clamp(float(clamp(DenoiseRadius, 1, 16)) * 0.5f, 1.0f, 4.0f);
+    return smoothstep(0.0f, fadePixels, nearestEdgePixels);
+}
 
 void main()
 {
@@ -27,7 +36,7 @@ void main()
     float centerAO = texture(GTAOInputTexture, uv).r;
     if (!DenoiseEnabled || DenoiseRadius <= 0)
     {
-        OutIntensity = centerAO;
+        OutIntensity = mix(1.0f, centerAO, ComputeDenoiseEdgeFade(uv));
         return;
     }
 
@@ -55,7 +64,10 @@ void main()
     int radius = clamp(DenoiseRadius, 1, 16);
     for (int offset = -radius; offset <= radius; ++offset)
     {
-        vec2 sampleUV = clamp(uv + BlurDirection * texelSize * float(offset), vec2(0.0f), vec2(1.0f));
+        vec2 sampleUV = uv + BlurDirection * texelSize * float(offset);
+        if (sampleUV.x < 0.0f || sampleUV.x > 1.0f || sampleUV.y < 0.0f || sampleUV.y > 1.0f)
+            continue;
+
         float sampleAO = texture(GTAOInputTexture, sampleUV).r;
         float sampleDepth = texture(DepthView, sampleUV).r;
         if (AOIsFarDepth(sampleDepth))
@@ -76,5 +88,6 @@ void main()
         weightSum += weight;
     }
 
-    OutIntensity = weightSum > 0.0f ? clamp(result / weightSum, 0.0f, 1.0f) : centerAO;
+    float blurredAO = weightSum > 0.0f ? clamp(result / weightSum, 0.0f, 1.0f) : centerAO;
+    OutIntensity = mix(1.0f, blurredAO, ComputeDenoiseEdgeFade(uv));
 }

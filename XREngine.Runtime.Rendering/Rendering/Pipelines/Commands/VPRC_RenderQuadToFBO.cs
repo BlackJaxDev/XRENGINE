@@ -432,6 +432,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                     ERenderGraphAccess.Read,
                     ERenderPassLoadOp.Load,
                     ERenderPassStoreOp.Store);
+                builder.UseStencilAttachment(
+                    MakeFboStencilResource(destination),
+                    ERenderGraphAccess.Read,
+                    ERenderPassLoadOp.Load,
+                    ERenderPassStoreOp.Store);
             }
         }
 
@@ -792,8 +797,6 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private static bool SamplesSharedDepthView(string sourceFboName, string destinationFboName)
             => (string.Equals(sourceFboName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal) &&
-                string.Equals(destinationFboName, DefaultRenderPipeline.ForwardPassFBOName, StringComparison.Ordinal))
-            || (string.Equals(sourceFboName, DefaultRenderPipeline.PostProcessFBOName, StringComparison.Ordinal) &&
-                string.Equals(destinationFboName, DefaultRenderPipeline.PostProcessOutputFBOName, StringComparison.Ordinal));
+                string.Equals(destinationFboName, DefaultRenderPipeline.ForwardPassFBOName, StringComparison.Ordinal));
     }
 }

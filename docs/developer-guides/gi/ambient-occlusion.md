@@ -1,6 +1,6 @@
 # Ambient Occlusion
 
-Last updated: 2026-04-28
+Last updated: 2026-06-18
 
 Ambient Occlusion (AO) simulates the soft shadows that occur in crevices, corners, and areas where surfaces are close together. XREngine provides multiple AO techniques with varying quality and performance characteristics.
 
@@ -91,26 +91,26 @@ GTAO now has a real slice-based horizon gather and edge-aware denoise path. It d
 
 ```csharp
 aoSettings.Type = AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion;
-aoSettings.Radius = 4.052f;
-aoSettings.Bias = 0.1054f;
-aoSettings.Power = 2.503f;
+aoSettings.Radius = 2.2f;
+aoSettings.Bias = 0.06f;
+aoSettings.Power = 1.35f;
 
 // GTAO-specific settings
 aoSettings.GTAOSliceCount = 5;
 aoSettings.GTAOStepsPerSlice = 10;
 aoSettings.GTAODenoiseEnabled = true;
-aoSettings.GTAODenoiseRadius = 8;
-aoSettings.GTAODenoiseSharpness = 14.02f;
+aoSettings.GTAODenoiseRadius = 5;
+aoSettings.GTAODenoiseSharpness = 10.0f;
 aoSettings.GTAOUseInputNormals = true;
 aoSettings.GTAOUseVisibilityBitmask = true;
-aoSettings.GTAOVisibilityBitmaskThickness = 1.5002f;
+aoSettings.GTAOVisibilityBitmaskThickness = 0.12f;
 aoSettings.GTAOMultiBounceEnabled = true;
 aoSettings.GTAOSpecularOcclusionEnabled = true;
 aoSettings.GTAOResolution = GroundTruthAmbientOcclusionSettings.EResolution.Half;
 aoSettings.GTAOUseNormalWeightedBlur = true;
 ```
 
-When visibility-bitmask mode is enabled, GTAO replaces the classic falloff-driven horizon accumulation with hemisphere sector coverage using a constant thickness value. `GTAOFalloffStartRatio` and `GTAOThicknessHeuristic` only affect the classic horizon mode.
+When visibility-bitmask mode is enabled, GTAO replaces the classic horizon accumulation with hemisphere sector coverage. It applies distance falloff and thin-occluder attenuation to both the marked angular thickness and each newly covered sector's weight, so weak same-plane samples do not claim full-dark sectors. The raw gather and denoise passes also keep screen-edge fading narrow, which prevents missing off-screen samples from turning into a visible border halo.
 
 ## Voxel Ambient Occlusion (VXAO)
 

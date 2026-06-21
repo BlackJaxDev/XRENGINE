@@ -98,8 +98,14 @@ namespace XREngine.Rendering
         private Exception? _lastRenderException;
         private int _consecutiveRenderFailures;
         private DateTime _renderDisabledUntilUtc;
+        private bool _renderPermanentlyDisabled;
+        private string? _renderPermanentlyDisabledReason;
 
         private bool _rendererInitialized;
+        private AbstractRenderer _renderer = null!;
+        private bool _rendererRecreationInProgress;
+        private int _rendererRecreationAttempts;
+        private const int MaxRendererRecreationAttempts = 3;
 
         #region Properties
 
@@ -111,7 +117,7 @@ namespace XREngine.Rendering
         /// <summary>
         /// Interface to render a scene for this window using the requested graphics API.
         /// </summary>
-        public AbstractRenderer Renderer { get; }
+        public AbstractRenderer Renderer => _renderer;
 
         public IInputContext? Input { get; private set; }
 
@@ -170,12 +176,21 @@ namespace XREngine.Rendering
             => _renderDisabledUntilUtc == default ? null : _renderDisabledUntilUtc;
 
         public bool IsRenderTemporarilyDisabled
-            => RenderDisabledUntilUtc is DateTime until && DateTime.UtcNow < until;
+            => !_renderPermanentlyDisabled &&
+               RenderDisabledUntilUtc is DateTime until &&
+               DateTime.UtcNow < until;
+
+        public bool IsRenderPermanentlyDisabled => _renderPermanentlyDisabled;
+
+        public string? RenderPermanentlyDisabledReason => _renderPermanentlyDisabledReason;
 
         public TimeSpan? RenderDisableRemaining
         {
             get
             {
+                if (_renderPermanentlyDisabled)
+                    return null;
+
                 DateTime? until = RenderDisabledUntilUtc;
                 if (until is null)
                     return null;
@@ -190,6 +205,23 @@ namespace XREngine.Rendering
             _consecutiveRenderFailures = 0;
             _renderDisabledUntilUtc = default;
             _lastRenderException = null;
+        }
+
+        private void DisableRenderingPermanently(string reason, Exception? exception = null)
+        {
+            if (_renderPermanentlyDisabled)
+                return;
+
+            _renderPermanentlyDisabled = true;
+            _renderPermanentlyDisabledReason = reason;
+            _renderDisabledUntilUtc = DateTime.MaxValue;
+            _lastRenderException = exception;
+
+            Debug.RenderingWarning(
+                "[RenderDiag] Rendering permanently disabled for window {0}. Reason={1}{2}",
+                GetHashCode(),
+                reason,
+                exception is null ? string.Empty : $" Exception={exception}");
         }
 
         public void ApplyVSyncMode(EVSyncMode globalVSyncMode)
@@ -383,8 +415,210 @@ namespace XREngine.Rendering
                 Window.FramebufferSize.X,
                 Window.FramebufferSize.Y);
 
-            Renderer = (AbstractRenderer)RuntimeRenderingHostServices.Current.CreateRenderer(this, ToRuntimeGraphicsApiKind(Window.API.API));
-            Debug.Rendering("[XRWindow] Renderer created for hash={0}. RendererType={1}", GetHashCode(), Renderer.GetType().Name);
+            _renderer = CreateRendererForCurrentWindow("initial window construction");
+        }
+
+        #endregion
+
+        #region Renderer Lifecycle
+
+        private AbstractRenderer CreateRendererForCurrentWindow(string reason)
+        {
+            RuntimeGraphicsApiKind apiKind = ToRuntimeGraphicsApiKind(Window.API.API);
+            AbstractRenderer renderer = (AbstractRenderer)RuntimeRenderingHostServices.Current.CreateRenderer(this, apiKind);
+            Debug.Rendering(
+                "[XRWindow] Renderer created for hash={0}. RendererType={1} Api={2} Reason={3}",
+                GetHashCode(),
+                renderer.GetType().Name,
+                apiKind,
+                reason);
+            return renderer;
+        }
+
+        private void DestroyRenderer(AbstractRenderer renderer, string reason, bool waitForGpu)
+        {
+            Debug.Rendering(
+                "[XRWindow] Destroying renderer for hash={0}. RendererType={1} WaitForGpu={2} Reason={3}",
+                GetHashCode(),
+                renderer.GetType().Name,
+                waitForGpu,
+                reason);
+
+            if (waitForGpu)
+                TryRendererCleanupStep(renderer, reason, "WaitForGpu", renderer.WaitForGpu);
+
+            TryRendererCleanupStep(renderer, reason, "DestroyCachedAPIRenderObjects", renderer.DestroyCachedAPIRenderObjects);
+            TryRendererCleanupStep(
+                renderer,
+                reason,
+                "DestroyObjectsForRenderer",
+                () => RuntimeRenderingHostServices.Current.DestroyObjectsForRenderer(renderer));
+            TryRendererCleanupStep(renderer, reason, "CleanUp", renderer.CleanUp);
+        }
+
+        private void TryRendererCleanupStep(AbstractRenderer renderer, string reason, string step, Action action)
+        {
+            try
+            {
+                using var sample = RuntimeRenderingHostServices.Current.StartProfileScope($"XRWindow.RendererCleanup.{step}");
+                action();
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingWarning(
+                    "[XRWindow] Renderer cleanup step failed. Window={0} RendererType={1} Step={2} Reason={3} Error={4}",
+                    GetHashCode(),
+                    renderer.GetType().Name,
+                    step,
+                    reason,
+                    ex);
+            }
+        }
+
+        private bool TryRecreateRendererAfterDeviceLoss(AbstractRenderer lostRenderer, string reason, Exception? exception)
+        {
+            if (_isDisposed || _isDisposing)
+                return false;
+
+            if (!ReferenceEquals(lostRenderer, _renderer))
+                return true;
+
+            if (!lostRenderer.IsDeviceLost)
+                return false;
+
+            if (_rendererRecreationInProgress)
+                return false;
+
+            if (_rendererRecreationAttempts >= MaxRendererRecreationAttempts)
+            {
+                DisableRenderingPermanently(
+                    $"Renderer device-loss recovery exceeded {MaxRendererRecreationAttempts} attempts. Last reason: {reason}",
+                    exception);
+                return false;
+            }
+
+            _rendererRecreationInProgress = true;
+            _rendererRecreationAttempts++;
+
+            Debug.RenderingWarning(
+                "[RenderDiag] Recreating renderer for existing window after device loss. Window={0} Attempt={1}/{2} RendererType={3} Api={4} Reason={5}",
+                GetHashCode(),
+                _rendererRecreationAttempts,
+                MaxRendererRecreationAttempts,
+                lostRenderer.GetType().Name,
+                Window.API.API,
+                reason);
+
+            try
+            {
+                lostRenderer.Active = false;
+                if (ReferenceEquals(AbstractRenderer.Current, lostRenderer))
+                    AbstractRenderer.Current = null;
+
+                _rendererInitialized = false;
+                DestroyRenderer(lostRenderer, $"device loss recovery: {reason}", waitForGpu: true);
+
+                AbstractRenderer replacement = CreateRendererForCurrentWindow("device loss recovery");
+                try
+                {
+                    replacement.Initialize();
+                }
+                catch
+                {
+                    DestroyRenderer(replacement, "failed device loss recovery initialization", waitForGpu: false);
+                    throw;
+                }
+
+                _renderer = replacement;
+                _rendererInitialized = true;
+                _renderPermanentlyDisabled = false;
+                _renderPermanentlyDisabledReason = null;
+                ResetRenderCircuitBreaker();
+                InvalidateRendererDependentResourcesAfterRecovery();
+
+                Debug.Rendering(
+                    "[RenderDiag] Renderer recreated for existing window. Window={0} RendererType={1} Attempt={2}",
+                    GetHashCode(),
+                    replacement.GetType().Name,
+                    _rendererRecreationAttempts);
+                return true;
+            }
+            catch (Exception recoveryEx)
+            {
+                _lastRenderException = recoveryEx;
+                DisableRenderingPermanently(
+                    $"Renderer recreation after device loss failed. Original reason: {reason}",
+                    recoveryEx);
+                return false;
+            }
+            finally
+            {
+                _rendererRecreationInProgress = false;
+            }
+        }
+
+        private void InvalidateRendererDependentResourcesAfterRecovery()
+        {
+            try
+            {
+                _scenePanelAdapter.InvalidateResourcesImmediate();
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingWarning(
+                    "[XRWindow] Failed to invalidate scene-panel resources after renderer recovery. Window={0} Error={1}",
+                    GetHashCode(),
+                    ex);
+            }
+
+            foreach (var viewport in Viewports)
+            {
+                try
+                {
+                    viewport.RenderPipelineInstance.InvalidatePhysicalResources();
+                }
+                catch (Exception ex)
+                {
+                    Debug.RenderingWarning(
+                        "[XRWindow] Failed to invalidate viewport pipeline resources after renderer recovery. Window={0} Viewport={1} Error={2}",
+                        GetHashCode(),
+                        viewport.Index,
+                        ex);
+                }
+            }
+
+            Vector2D<int> framebufferSize = Window.FramebufferSize;
+            if (framebufferSize.X > 0 && framebufferSize.Y > 0)
+            {
+                try
+                {
+                    foreach (var viewport in Viewports)
+                        viewport.Resize((uint)framebufferSize.X, (uint)framebufferSize.Y, setInternalResolution: true);
+
+                    _scenePanelAdapter.OnFramebufferResized(this, framebufferSize.X, framebufferSize.Y);
+                }
+                catch (Exception ex)
+                {
+                    Debug.RenderingWarning(
+                        "[XRWindow] Failed to refresh framebuffer-sized resources after renderer recovery. Window={0} Size={1}x{2} Error={3}",
+                        GetHashCode(),
+                        framebufferSize.X,
+                        framebufferSize.Y,
+                        ex);
+                }
+            }
+
+            try
+            {
+                _renderer.FrameBufferInvalidated();
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingWarning(
+                    "[XRWindow] Failed to mark renderer framebuffer invalidated after recovery. Window={0} Error={1}",
+                    GetHashCode(),
+                    ex);
+            }
         }
 
         #endregion
@@ -962,7 +1196,7 @@ namespace XREngine.Rendering
 
             Debug.Rendering("[XRWindow] BeginTick hash={0} viewports={1} targetWorld={2}", GetHashCode(), Viewports.Count, TargetWorldInstance?.TargetWorldName ?? "<null>");
 
-            Renderer.Initialize();
+            _renderer.Initialize();
             _rendererInitialized = true;
             RuntimeRenderingHostServices.Current.SubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
 
@@ -975,14 +1209,7 @@ namespace XREngine.Rendering
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.Unsubscribe"))
                 RuntimeRenderingHostServices.Current.UnsubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.WaitForGpu"))
-                Renderer.WaitForGpu();
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.DestroyCachedAPIRenderObjects"))
-                Renderer.DestroyCachedAPIRenderObjects();
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.DestroyObjectsForRenderer"))
-                RuntimeRenderingHostServices.Current.DestroyObjectsForRenderer(Renderer);
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.RendererCleanUp"))
-                Renderer.CleanUp();
+            DestroyRenderer(_renderer, "EndTick", waitForGpu: true);
             _rendererInitialized = false;
             using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick.DoEvents"))
                 Window.DoEvents();
@@ -1078,25 +1305,38 @@ namespace XREngine.Rendering
             if (_isDisposed || _isDisposing)
                 return;
 
+            if (_renderPermanentlyDisabled)
+                return;
+
             if (_renderDisabledUntilUtc != default && DateTime.UtcNow < _renderDisabledUntilUtc)
                 return;
 
             using var frameSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.RenderFrame");
-
-            // Reset per-frame rendering statistics at the start of each frame
-            RuntimeRenderingHostServices.Current.BeginRenderStatsFrame();
-            Renderer.PollGpuRenderStatsReadbacks();
-
-            // Process any pending async buffer uploads within the frame budget
-            using (var uploadSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.ProcessPendingUploads"))
-            {
-                Renderer.ProcessPendingUploads();
-            }
+            AbstractRenderer frameRenderer = _renderer;
 
             try
             {
-                Renderer.Active = true;
-                AbstractRenderer.Current = Renderer;
+                if (frameRenderer.IsDeviceLost)
+                {
+                    TryRecreateRendererAfterDeviceLoss(
+                        frameRenderer,
+                        "renderer reported device loss before the frame began",
+                        _lastRenderException);
+                    return;
+                }
+
+                // Reset per-frame rendering statistics at the start of each frame.
+                RuntimeRenderingHostServices.Current.BeginRenderStatsFrame();
+                frameRenderer.PollGpuRenderStatsReadbacks();
+
+                // Process any pending async buffer uploads within the frame budget.
+                using (var uploadSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.ProcessPendingUploads"))
+                {
+                    frameRenderer.ProcessPendingUploads();
+                }
+
+                frameRenderer.Active = true;
+                AbstractRenderer.Current = frameRenderer;
 
                 bool useScenePanelMode = RuntimeRenderingHostServices.Current.IsWindowScenePanelPresentationEnabled;
                 bool forceFullViewport = RuntimeRenderingHostServices.Current.ForceFullViewport;
@@ -1156,6 +1396,7 @@ namespace XREngine.Rendering
                 // executing. In OpenGL the window swap is handled by Silk.NET automatically, but
                 // Vulkan requires explicit present — skipping it leaves the window uninitialized (white).
                 bool viewportRenderFailed = false;
+                Exception? viewportRenderException = null;
                 try
                 {
                     if (RuntimeEngine.PlayMode.IsTransitioning)
@@ -1176,12 +1417,22 @@ namespace XREngine.Rendering
                 catch (Exception vpEx)
                 {
                     viewportRenderFailed = true;
+                    viewportRenderException = vpEx;
                     string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
                     Debug.RenderingWarningEvery(
                         keyBase + ".ViewportException",
                         TimeSpan.FromSeconds(1),
                         "[RenderDiag] Viewport/pipeline rendering failed (Vulkan present will still run). {0}",
                         vpEx);
+                }
+
+                if (frameRenderer.IsDeviceLost)
+                {
+                    TryRecreateRendererAfterDeviceLoss(
+                        frameRenderer,
+                        "renderer reported device loss during viewport rendering",
+                        viewportRenderException);
+                    return;
                 }
 
                 using (var postRenderSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.GlobalPostRender"))
@@ -1209,16 +1460,16 @@ namespace XREngine.Rendering
                     int markerHeight = Math.Min(96, Window.FramebufferSize.Y);
                     var markerRegion = new BoundingRectangle(0, 0, markerWidth, markerHeight);
 
-                    Renderer.BindFrameBuffer(EFramebufferTarget.Framebuffer, null);
-                    using (Renderer.PushUiClipSpacePolicy())
+                    frameRenderer.BindFrameBuffer(EFramebufferTarget.Framebuffer, null);
+                    using (frameRenderer.PushUiClipSpacePolicy())
                     {
-                        Renderer.SetRenderArea(fullRegion);
-                        Renderer.SetCroppingEnabled(true);
-                        Renderer.CropRenderArea(markerRegion);
-                        Renderer.ClearColor(RuntimeEngine.StartupPresentationClearColor);
-                        Renderer.Clear(color: true, depth: false, stencil: false);
-                        Renderer.SetCroppingEnabled(false);
-                        Renderer.SetRenderArea(fullRegion);
+                        frameRenderer.SetRenderArea(fullRegion);
+                        frameRenderer.SetCroppingEnabled(true);
+                        frameRenderer.CropRenderArea(markerRegion);
+                        frameRenderer.ClearColor(RuntimeEngine.StartupPresentationClearColor);
+                        frameRenderer.Clear(color: true, depth: false, stencil: false);
+                        frameRenderer.SetCroppingEnabled(false);
+                        frameRenderer.SetRenderArea(fullRegion);
                     }
                 }
 
@@ -1228,7 +1479,7 @@ namespace XREngine.Rendering
                 // minimum clear to the background color and render the debug triangle + ImGui overlay.
                 using (var renderWindowSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Renderer.RenderWindow"))
                 {
-                    Renderer.RenderWindow(delta);
+                    frameRenderer.RenderWindow(delta);
                 }
 
                 using (var postViewportsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.PostRenderViewportsCallback"))
@@ -1253,6 +1504,16 @@ namespace XREngine.Rendering
             catch (Exception ex)
             {
                 _lastRenderException = ex;
+
+                if (frameRenderer.IsDeviceLost)
+                {
+                    TryRecreateRendererAfterDeviceLoss(
+                        frameRenderer,
+                        "renderer reported device loss during the frame",
+                        ex);
+                    return;
+                }
+
                 _consecutiveRenderFailures++;
 
                 // Simple circuit breaker to avoid exception spam + runaway per-frame failures.
@@ -1271,8 +1532,9 @@ namespace XREngine.Rendering
             }
             finally
             {
-                Renderer.Active = false;
-                AbstractRenderer.Current = null;
+                frameRenderer.Active = false;
+                if (ReferenceEquals(AbstractRenderer.Current, frameRenderer))
+                    AbstractRenderer.Current = null;
             }
         }
 
@@ -1569,22 +1831,12 @@ namespace XREngine.Rendering
                 else if (_rendererInitialized)
                 {
                     // Defensive: if renderer was initialized without tick linking, still attempt cleanup.
-                    try
-                    {
-                        Renderer.WaitForGpu();
-                        Renderer.DestroyCachedAPIRenderObjects();
-                        RuntimeRenderingHostServices.Current.DestroyObjectsForRenderer(Renderer);
-                        Renderer.CleanUp();
-                    }
-                    catch
-                    {
-                    }
-
+                    DestroyRenderer(_renderer, "Dispose", waitForGpu: true);
                     _rendererInitialized = false;
                 }
 
                 bool skipNativeWindowDispose = _approvedNativeCloseInProgress &&
-                    Renderer.ShouldSkipNativeWindowDisposeForShutdown;
+                    _renderer.ShouldSkipNativeWindowDisposeForShutdown;
 
                 if (skipNativeWindowDispose)
                 {

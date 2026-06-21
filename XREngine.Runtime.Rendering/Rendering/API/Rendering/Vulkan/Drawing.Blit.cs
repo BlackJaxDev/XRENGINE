@@ -1279,14 +1279,43 @@ namespace XREngine.Rendering.Vulkan
 
         // =========== Depth Pixel Reading ===========
 
+        public bool TryReadDepthPixelDebug(XRFrameBuffer frameBuffer, int x, int y, out VulkanDepthReadbackDebugInfo info)
+        {
+            info = VulkanDepthReadbackDebugInfo.Failed("No framebuffer supplied.", x, y);
+
+            if (frameBuffer is null)
+                return false;
+
+            x = Math.Clamp(x, 0, Math.Max((int)frameBuffer.Width - 1, 0));
+            y = Math.Clamp(y, 0, Math.Max((int)frameBuffer.Height - 1, 0));
+
+            if (!TryResolveBlitImage(
+                    frameBuffer,
+                    _lastPresentedImageIndex,
+                    GetReadBufferMode(),
+                    wantColor: false,
+                    wantDepth: true,
+                    wantStencil: false,
+                    out BlitImageInfo depthSource,
+                    isSource: true))
+            {
+                info = VulkanDepthReadbackDebugInfo.Failed("Could not resolve a depth attachment image for the framebuffer.", x, y);
+                return false;
+            }
+
+            return TryReadDepthPixelDebug(depthSource, x, y, out info);
+        }
+
         private bool TryReadDepthPixel(in BlitImageInfo source, int x, int y, out float depth)
         {
             depth = 1.0f;
 
             if (!source.IsValid || !IsDepthOrStencilAspect(source.AspectMask))
                 return false;
+            if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
+                return false;
 
-            uint pixelSize = GetDepthFormatPixelSize(source.Format);
+            uint pixelSize = GetDepthFormatPixelSize(liveSource.Format);
             if (pixelSize == 0)
                 return false;
 
@@ -1297,17 +1326,17 @@ namespace XREngine.Rendering.Vulkan
             {
                 using var scope = NewCommandScope();
 
-                ImageLayout preTransferLayout = source.PreferredLayout;
-                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(source);
+                ImageLayout preTransferLayout = liveSource.PreferredLayout;
+                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(liveSource);
 
                 TransitionForBlit(
                     scope.CommandBuffer,
-                    source,
+                    liveSource,
                     preTransferLayout,
                     ImageLayout.TransferSrcOptimal,
-                    source.AccessMask,
+                    liveSource.AccessMask,
                     AccessFlags.TransferReadBit,
-                    source.StageMask,
+                    liveSource.StageMask,
                     PipelineStageFlags.TransferBit);
 
                 BufferImageCopy copy = new()
@@ -1317,12 +1346,12 @@ namespace XREngine.Rendering.Vulkan
                     BufferImageHeight = 0,
                     ImageSubresource = new ImageSubresourceLayers
                     {
-                        AspectMask = source.AspectMask.HasFlag(ImageAspectFlags.DepthBit)
+                        AspectMask = liveSource.AspectMask.HasFlag(ImageAspectFlags.DepthBit)
                             ? ImageAspectFlags.DepthBit
-                            : source.AspectMask,
-                        MipLevel = source.MipLevel,
-                        BaseArrayLayer = source.BaseArrayLayer,
-                        LayerCount = source.LayerCount,
+                            : liveSource.AspectMask,
+                        MipLevel = liveSource.MipLevel,
+                        BaseArrayLayer = liveSource.BaseArrayLayer,
+                        LayerCount = liveSource.LayerCount,
                     },
                     ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
                     ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
@@ -1330,7 +1359,7 @@ namespace XREngine.Rendering.Vulkan
 
                 Api!.CmdCopyImageToBuffer(
                     scope.CommandBuffer,
-                    source.Image,
+                    liveSource.Image,
                     ImageLayout.TransferSrcOptimal,
                     stagingBuffer,
                     1,
@@ -1338,13 +1367,13 @@ namespace XREngine.Rendering.Vulkan
 
                 TransitionForBlit(
                     scope.CommandBuffer,
-                    source,
+                    liveSource,
                     ImageLayout.TransferSrcOptimal,
                     postTransferLayout,
                     AccessFlags.TransferReadBit,
-                    source.AccessMask,
+                    liveSource.AccessMask,
                     PipelineStageFlags.TransferBit,
-                    source.StageMask);
+                    liveSource.StageMask);
             }
             catch
             {
@@ -1358,9 +1387,122 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            depth = ReadDepthValue(mappedPtr, source.Format);
+            depth = ReadDepthValue(mappedPtr, liveSource.Format);
             UnmapBufferMemory(stagingBuffer, stagingMemory);
             DestroyBuffer(stagingBuffer, stagingMemory);
+            return true;
+        }
+
+        private bool TryReadDepthPixelDebug(in BlitImageInfo source, int x, int y, out VulkanDepthReadbackDebugInfo info)
+        {
+            info = VulkanDepthReadbackDebugInfo.Failed("Depth readback was not attempted.", x, y);
+
+            if (!source.IsValid || !IsDepthOrStencilAspect(source.AspectMask))
+            {
+                info = VulkanDepthReadbackDebugInfo.Failed("Source is not a depth/stencil image.", x, y);
+                return false;
+            }
+
+            if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
+            {
+                info = VulkanDepthReadbackDebugInfo.Failed("Could not resolve the live depth image handle.", x, y);
+                return false;
+            }
+
+            uint pixelSize = GetDepthFormatPixelSize(liveSource.Format);
+            if (pixelSize == 0)
+            {
+                info = VulkanDepthReadbackDebugInfo.Failed($"Unsupported depth format '{liveSource.Format}'.", x, y);
+                return false;
+            }
+
+            ulong bufferSize = pixelSize;
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(bufferSize);
+            ImageLayout preTransferLayout = liveSource.PreferredLayout;
+            ImageLayout postTransferLayout = ResolvePostTransferReadLayout(liveSource);
+
+            try
+            {
+                using var scope = NewCommandScope();
+
+                TransitionForBlit(
+                    scope.CommandBuffer,
+                    liveSource,
+                    preTransferLayout,
+                    ImageLayout.TransferSrcOptimal,
+                    liveSource.AccessMask,
+                    AccessFlags.TransferReadBit,
+                    liveSource.StageMask,
+                    PipelineStageFlags.TransferBit);
+
+                BufferImageCopy copy = new()
+                {
+                    BufferOffset = 0,
+                    BufferRowLength = 0,
+                    BufferImageHeight = 0,
+                    ImageSubresource = new ImageSubresourceLayers
+                    {
+                        AspectMask = ImageAspectFlags.DepthBit,
+                        MipLevel = liveSource.MipLevel,
+                        BaseArrayLayer = liveSource.BaseArrayLayer,
+                        LayerCount = liveSource.LayerCount,
+                    },
+                    ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
+                    ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
+                };
+
+                Api!.CmdCopyImageToBuffer(
+                    scope.CommandBuffer,
+                    liveSource.Image,
+                    ImageLayout.TransferSrcOptimal,
+                    stagingBuffer,
+                    1,
+                    &copy);
+
+                TransitionForBlit(
+                    scope.CommandBuffer,
+                    liveSource,
+                    ImageLayout.TransferSrcOptimal,
+                    postTransferLayout,
+                    AccessFlags.TransferReadBit,
+                    liveSource.AccessMask,
+                    PipelineStageFlags.TransferBit,
+                    liveSource.StageMask);
+            }
+            catch (Exception ex)
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                info = VulkanDepthReadbackDebugInfo.Failed($"Depth copy command failed: {ex.Message}", x, y);
+                return false;
+            }
+
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, bufferSize, out void* mappedPtr))
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                info = VulkanDepthReadbackDebugInfo.Failed("Could not map depth readback staging memory.", x, y);
+                return false;
+            }
+
+            byte[] rawBytes = new byte[pixelSize];
+            byte* src = (byte*)mappedPtr;
+            for (int i = 0; i < rawBytes.Length; i++)
+                rawBytes[i] = src[i];
+
+            float decodedDepth = ReadDepthValue(mappedPtr, liveSource.Format);
+            UnmapBufferMemory(stagingBuffer, stagingMemory);
+            DestroyBuffer(stagingBuffer, stagingMemory);
+
+            info = VulkanDepthReadbackDebugInfo.FromRawBytes(
+                x,
+                y,
+                liveSource.Format.ToString(),
+                liveSource.AspectMask.ToString(),
+                preTransferLayout.ToString(),
+                postTransferLayout.ToString(),
+                liveSource.StageMask.ToString(),
+                liveSource.AccessMask.ToString(),
+                rawBytes,
+                decodedDepth);
             return true;
         }
 
@@ -1370,8 +1512,10 @@ namespace XREngine.Rendering.Vulkan
 
             if (!source.IsValid || !source.AspectMask.HasFlag(ImageAspectFlags.StencilBit))
                 return false;
+            if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
+                return false;
 
-            uint pixelSize = GetDepthFormatPixelSize(source.Format);
+            uint pixelSize = GetDepthFormatPixelSize(liveSource.Format);
             if (pixelSize == 0)
                 return false;
 
@@ -1382,17 +1526,17 @@ namespace XREngine.Rendering.Vulkan
             {
                 using var scope = NewCommandScope();
 
-                ImageLayout preTransferLayout = source.PreferredLayout;
-                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(source);
+                ImageLayout preTransferLayout = liveSource.PreferredLayout;
+                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(liveSource);
 
                 TransitionForBlit(
                     scope.CommandBuffer,
-                    source,
+                    liveSource,
                     preTransferLayout,
                     ImageLayout.TransferSrcOptimal,
-                    source.AccessMask,
+                    liveSource.AccessMask,
                     AccessFlags.TransferReadBit,
-                    source.StageMask,
+                    liveSource.StageMask,
                     PipelineStageFlags.TransferBit);
 
                 BufferImageCopy copy = new()
@@ -1403,9 +1547,9 @@ namespace XREngine.Rendering.Vulkan
                     ImageSubresource = new ImageSubresourceLayers
                     {
                         AspectMask = ImageAspectFlags.StencilBit,
-                        MipLevel = source.MipLevel,
-                        BaseArrayLayer = source.BaseArrayLayer,
-                        LayerCount = source.LayerCount,
+                        MipLevel = liveSource.MipLevel,
+                        BaseArrayLayer = liveSource.BaseArrayLayer,
+                        LayerCount = liveSource.LayerCount,
                     },
                     ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
                     ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
@@ -1413,7 +1557,7 @@ namespace XREngine.Rendering.Vulkan
 
                 Api!.CmdCopyImageToBuffer(
                     scope.CommandBuffer,
-                    source.Image,
+                    liveSource.Image,
                     ImageLayout.TransferSrcOptimal,
                     stagingBuffer,
                     1,
@@ -1421,13 +1565,13 @@ namespace XREngine.Rendering.Vulkan
 
                 TransitionForBlit(
                     scope.CommandBuffer,
-                    source,
+                    liveSource,
                     ImageLayout.TransferSrcOptimal,
                     postTransferLayout,
                     AccessFlags.TransferReadBit,
-                    source.AccessMask,
+                    liveSource.AccessMask,
                     PipelineStageFlags.TransferBit,
-                    source.StageMask);
+                    liveSource.StageMask);
             }
             catch
             {
@@ -1441,7 +1585,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            stencil = ReadStencilValue(mappedPtr, source.Format);
+            stencil = ReadStencilValue(mappedPtr, liveSource.Format);
             UnmapBufferMemory(stagingBuffer, stagingMemory);
             DestroyBuffer(stagingBuffer, stagingMemory);
             return true;
@@ -1485,6 +1629,102 @@ namespace XREngine.Rendering.Vulkan
                 Format.S8Uint => *(byte*)ptr,
                 _ => 0,
             };
+        }
+
+        public sealed record VulkanDepthReadbackDebugInfo(
+            bool Success,
+            string? Failure,
+            int X,
+            int Y,
+            string Format,
+            string AspectMask,
+            string PreferredLayout,
+            string PostTransferLayout,
+            string StageMask,
+            string AccessMask,
+            int PixelSize,
+            string RawBytesHex,
+            uint RawUInt32,
+            ushort RawUInt16,
+            float DecodedDepth,
+            float D24Low24Depth,
+            float D24High24Depth,
+            float D16Depth,
+            float? D32FloatDepth,
+            byte LowByte,
+            byte HighByte)
+        {
+            public static VulkanDepthReadbackDebugInfo Failed(string failure, int x, int y)
+                => new(
+                    false,
+                    failure,
+                    x,
+                    y,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    0,
+                    string.Empty,
+                    0u,
+                    0,
+                    1.0f,
+                    1.0f,
+                    1.0f,
+                    1.0f,
+                    null,
+                    0,
+                    0);
+
+            public static VulkanDepthReadbackDebugInfo FromRawBytes(
+                int x,
+                int y,
+                string format,
+                string aspectMask,
+                string preferredLayout,
+                string postTransferLayout,
+                string stageMask,
+                string accessMask,
+                byte[] rawBytes,
+                float decodedDepth)
+            {
+                uint raw32 = rawBytes.Length >= 4
+                    ? rawBytes[0] | ((uint)rawBytes[1] << 8) | ((uint)rawBytes[2] << 16) | ((uint)rawBytes[3] << 24)
+                    : 0u;
+                ushort raw16 = rawBytes.Length >= 2
+                    ? (ushort)(rawBytes[0] | (rawBytes[1] << 8))
+                    : (ushort)0;
+                float? d32Float = rawBytes.Length >= 4
+                    ? BitConverter.ToSingle(rawBytes, 0)
+                    : null;
+                if (d32Float is { } value && !float.IsFinite(value))
+                    d32Float = null;
+
+                return new VulkanDepthReadbackDebugInfo(
+                    true,
+                    null,
+                    x,
+                    y,
+                    format,
+                    aspectMask,
+                    preferredLayout,
+                    postTransferLayout,
+                    stageMask,
+                    accessMask,
+                    rawBytes.Length,
+                    BitConverter.ToString(rawBytes),
+                    raw32,
+                    raw16,
+                    decodedDepth,
+                    (raw32 & 0x00FF_FFFFu) / 16777215.0f,
+                    ((raw32 >> 8) & 0x00FF_FFFFu) / 16777215.0f,
+                    raw16 / 65535.0f,
+                    d32Float,
+                    rawBytes.Length > 0 ? rawBytes[0] : (byte)0,
+                    rawBytes.Length > 0 ? rawBytes[^1] : (byte)0);
+            }
         }
     }
 }

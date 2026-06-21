@@ -91,6 +91,8 @@ public unsafe partial class VulkanRenderer
 
         if (result == Result.Success)
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
+        else if (result == Result.ErrorDeviceLost)
+            MarkDeviceLost("QueueSubmit returned ErrorDeviceLost");
 
         return result;
     }

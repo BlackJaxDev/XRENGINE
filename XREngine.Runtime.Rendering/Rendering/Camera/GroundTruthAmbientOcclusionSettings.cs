@@ -18,8 +18,8 @@ namespace XREngine.Rendering
         public const int DefaultSliceCount = 5;
         public const int DefaultStepsPerSlice = 10;
         public const bool DefaultDenoiseEnabled = true;
-        public const int DefaultDenoiseRadius = 8;
-        public const float DefaultDenoiseSharpness = 14.02f;
+        public const int DefaultDenoiseRadius = 5;
+        public const float DefaultDenoiseSharpness = 10.0f;
         public const bool DefaultUseInputNormals = true;
         public const float DefaultFalloffStartRatio = 0.4f;
         public const float DefaultThicknessHeuristic = 1.0f;
@@ -28,7 +28,7 @@ namespace XREngine.Rendering
         public const EResolution DefaultResolution = EResolution.Half;
         public const bool DefaultUseNormalWeightedBlur = true;
         public const bool DefaultUseVisibilityBitmask = true;
-        public const float DefaultVisibilityBitmaskThickness = 1.5002f;
+        public const float DefaultVisibilityBitmaskThickness = 0.12f;
 
         private int _sliceCount = DefaultSliceCount;
         private int _stepsPerSlice = DefaultStepsPerSlice;

@@ -104,8 +104,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
             var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_RenderScreenSpaceUI), ERenderGraphPassStage.Graphics);
-            builder.UseColorAttachment(MakeFboColorResource(target));
-            builder.UseDepthAttachment(MakeFboDepthResource(target));
+            builder.UseColorAttachment(MakeColorTargetResource(target));
+            if (!string.Equals(target, RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
+            {
+                builder.UseDepthAttachment(MakeFboDepthResource(target));
+                builder.UseStencilAttachment(MakeFboStencilResource(target));
+            }
         }
     }
 }

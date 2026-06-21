@@ -3,7 +3,8 @@
 Last Updated: 2026-06-17
 Owner: Rendering
 Status: Proposed
-Related TODO: `docs/work/todo/rendering/vulkan-frame-loop-performance-todo.md`
+Implementation TODO: `docs/work/todo/rendering/vulkan-parallel-command-chain-refactor-todo.md`
+Related Testing Guide: `docs/work/todo/rendering/vulkan-frame-loop-performance-todo.md`
 
 ## Problem
 
@@ -853,4 +854,3 @@ The refactor is successful when:
 - The single-thread debug mode and the parallel mode produce equivalent images.
 - The profiler clearly reports primary record time, secondary record time,
   worker time, cache reuse, and dirty reasons.
-

@@ -57,6 +57,8 @@ public unsafe partial class VulkanRenderer
 				return false;
 
 			EnsureUniformDrawSlotCapacity(drawUniformSlot + 1);
+			if (!EnsureDescriptorUniformBuffers(bindings))
+				return false;
 
 			int frameCount = Renderer.swapChainImages.Length;
 			int drawSlotCount = UniformBufferSlotCount;
@@ -172,6 +174,32 @@ public unsafe partial class VulkanRenderer
 			_descriptorAllocations[allocationKey] = allocation;
 			ActivateDescriptorAllocation(allocation);
 			_descriptorDirty = false;
+			return true;
+		}
+
+		private bool EnsureDescriptorUniformBuffers(IReadOnlyList<DescriptorBindingInfo> bindings)
+		{
+			if (_program is null)
+				return false;
+
+			foreach (DescriptorBindingInfo binding in bindings)
+			{
+				if (binding.DescriptorType != DescriptorType.UniformBuffer)
+					continue;
+
+				if (_program.TryGetAutoUniformBlockFuzzy(binding.Name ?? string.Empty, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
+				{
+					if (!EnsureAutoUniformBuffer(block.InstanceName, Math.Max(block.Size, 1u)))
+						return false;
+					continue;
+				}
+
+				string bindingName = binding.Name ?? string.Empty;
+				uint engineSize = GetEngineUniformSize(bindingName);
+				if (engineSize != 0 && !EnsureEngineUniformBuffer(NormalizeEngineUniformName(bindingName), engineSize))
+					return false;
+			}
+
 			return true;
 		}
 

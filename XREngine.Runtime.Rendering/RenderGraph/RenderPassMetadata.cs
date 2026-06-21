@@ -19,13 +19,15 @@ public sealed class RenderPassMetadata
     private int _revision;
 
     public int PassIndex { get; }
+    public int DeclarationOrder { get; }
     public ERenderGraphPassStage Stage { get; private set; }
     public string Name { get; private set; }
     public int Revision => _revision;
 
-    public RenderPassMetadata(int passIndex, string name, ERenderGraphPassStage stage)
+    public RenderPassMetadata(int passIndex, string name, ERenderGraphPassStage stage, int? declarationOrder = null)
     {
         PassIndex = passIndex;
+        DeclarationOrder = declarationOrder ?? passIndex;
         Name = string.IsNullOrWhiteSpace(name) ? $"Pass{passIndex}" : name;
         Stage = stage;
         _resourceUsagesView = _resourceUsages.AsReadOnly();

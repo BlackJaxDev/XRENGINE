@@ -875,11 +875,6 @@ namespace XREngine.Scene
                         firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding &&
                         firstDirLight.CastsShadows;
 
-                    if (useDirectionalShadowAtlas)
-                    {
-                        forwardShadowTex = null;
-                    }
-
                     if (forwardShadowTex is null && forwardCascadeShadowTex is null)
                     {
                         // Log once per distinct reason — useful when the light casts shadows
@@ -985,8 +980,7 @@ namespace XREngine.Scene
 
                     if (dirLight.CastsShadows)
                     {
-                        if (!perLightUseAtlas)
-                            perLightShadowTex = FindDirectionalShadowReceiverTexture(dirLight);
+                        perLightShadowTex = FindDirectionalShadowReceiverTexture(dirLight);
                         perLightUseCascades =
                             directionalShadowCameraWantsCascades &&
                             dirLight.EnableCascadedShadows &&

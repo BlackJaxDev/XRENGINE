@@ -756,13 +756,19 @@ namespace XREngine.Components.Lights
             }
         }
 
-        internal void ClearCascadeAtlasSlots()
+        internal void ClearDirectionalAtlasSlots()
         {
             lock (_cascadeDataLock)
             {
                 _primaryAtlasSlot = default;
                 Array.Clear(_cascadeAtlasSlots);
             }
+        }
+
+        internal void ClearCascadeAtlasSlots()
+        {
+            lock (_cascadeDataLock)
+                Array.Clear(_cascadeAtlasSlots);
         }
 
         private static DirectionalCascadeAtlasSlot CreateAtlasSlot(
@@ -1333,7 +1339,7 @@ namespace XREngine.Components.Lights
         }
 
         /// <summary>
-        /// Clears all published cascade bounds, slices, and atlas slot metadata.
+        /// Clears all published cascade bounds, slices, and cascade atlas slot metadata.
         /// </summary>
         internal void ClearCascadeShadows()
         {
@@ -1341,7 +1347,6 @@ namespace XREngine.Components.Lights
             {
                 _cascadeAabbs.Clear();
                 _cascadeShadowSlices.Clear();
-                _primaryAtlasSlot = default;
                 Array.Clear(_cascadeAtlasSlots);
                 _publishedCascadeRangeNear = 0.0f;
                 _publishedCascadeRangeFar = 0.0f;

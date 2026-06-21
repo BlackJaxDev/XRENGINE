@@ -272,7 +272,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             SetDynamicFBO(instance, genFbo);
             SetDynamicFBO(instance, horizontalBlurFbo);
             SetDynamicFBO(instance, verticalBlurFbo);
-            SetDynamicFBO(instance, outputFbo);
+            SetDynamicFBO(instance, outputFbo, RenderResourceSizePolicy.Internal());
         }
 
         private XRTexture ResolveAoTexture(
@@ -302,8 +302,17 @@ namespace XREngine.Rendering.Pipelines.Commands
         private static void SetDynamicTexture(XRRenderPipelineInstance instance, XRTexture texture)
             => instance.SetTexture(texture, RenderResourceDescriptorFactory.FromTexture(texture));
 
-        private static void SetDynamicFBO(XRRenderPipelineInstance instance, XRFrameBuffer frameBuffer)
-            => instance.SetFBO(frameBuffer, RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer));
+        private static void SetDynamicFBO(
+            XRRenderPipelineInstance instance,
+            XRFrameBuffer frameBuffer,
+            RenderResourceSizePolicy? sizePolicy = null)
+        {
+            FrameBufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer);
+            if (sizePolicy is { } resolvedSizePolicy)
+                descriptor = descriptor with { SizePolicy = resolvedSizePolicy };
+
+            instance.SetFBO(frameBuffer, descriptor);
+        }
 
         private static bool TextureMatchesSize(XRTexture texture, int width, int height)
         {

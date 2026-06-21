@@ -17,20 +17,10 @@ public unsafe partial class VulkanRenderer
     };
 
     internal bool ShouldEnableDeviceAddressForSceneDatabaseBuffer(XRDataBuffer buffer)
-    {
-        if (!SupportsBufferDeviceAddress)
-            return false;
-
-        return IsSceneDatabaseDeviceAddressCandidate(buffer);
-    }
+        => !SupportsBufferDeviceAddress ? false : IsSceneDatabaseDeviceAddressCandidate(buffer);
 
     internal bool IsSceneDatabaseDeviceAddressCandidate(XRDataBuffer buffer)
-    {
-        if (buffer.Target != EBufferTarget.ShaderStorageBuffer)
-            return false;
-
-        return SceneDatabaseDeviceAddressBuffers.Contains(buffer.AttributeName);
-    }
+        => buffer.Target != EBufferTarget.ShaderStorageBuffer ? false : SceneDatabaseDeviceAddressBuffers.Contains(buffer.AttributeName);
 
     internal string ResolveSceneDatabaseDeviceAddressStatus(XRDataBuffer buffer, ulong resolvedAddress)
     {

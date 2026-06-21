@@ -8,6 +8,8 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
 {
+    private const string PassNamePrefix = "FullOverdraw";
+
     private static readonly int[] DefaultRenderPasses =
     [
         (int)EDefaultRenderPass.Background,
@@ -87,8 +89,9 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
         {
             int pass = RenderPasses[i];
             material.RenderPass = pass;
+            int renderGraphPass = ResolveRenderGraphPassIndex(pass);
 
-            using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(pass);
+            using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(renderGraphPass);
             if (useGpuRenderPath)
             {
                 commands.RenderCPUFiltered(
@@ -106,6 +109,27 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
                     respectCpuQueryOcclusion: true);
             }
         }
+    }
+
+    private int ResolveRenderGraphPassIndex(int renderPass)
+    {
+        string passName = BuildRenderGraphPassName(renderPass);
+        if (ParentPipeline?.PassMetadata is not { Count: > 0 } metadata)
+            return renderPass;
+
+        foreach (RenderPassMetadata pass in metadata)
+        {
+            if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
+                return pass.PassIndex;
+        }
+
+        Debug.RenderingWarningEvery(
+            $"FullOverdraw.MissingRenderGraphPass.{passName}",
+            TimeSpan.FromSeconds(2),
+            "[RenderDiag] Full-overdraw pass '{0}' has no matching render-graph metadata; using source pass {1}.",
+            passName,
+            FormatRenderPassName(renderPass));
+        return renderPass;
     }
 
     private static bool IsGpuPathCpuFallbackMesh(IRenderCommandMesh meshCommand)
@@ -131,8 +155,8 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
         for (int i = 0; i < RenderPasses.Length; i++)
         {
             int renderPass = RenderPasses[i];
-            string passName = $"FullOverdraw_{renderPass}";
-            var builder = context.Metadata.ForPass(renderPass, passName, ERenderGraphPassStage.Graphics);
+            string passName = BuildRenderGraphPassName(renderPass);
+            var builder = context.GetOrCreateSyntheticPass(passName, ERenderGraphPassStage.Graphics);
             builder
                 .UseEngineDescriptors()
                 .UseMaterialDescriptors();
@@ -140,7 +164,6 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
             if (context.CurrentRenderTarget is not { } target)
                 continue;
 
-            builder.WithName($"{passName}_{target.Name}");
             builder.UseColorAttachment(
                 MakeFboColorResource(target.Name),
                 target.ColorAccess,
@@ -148,4 +171,12 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
                 target.GetColorStoreOp());
         }
     }
+
+    private static string BuildRenderGraphPassName(int renderPass)
+        => $"{PassNamePrefix}_{FormatRenderPassName(renderPass)}";
+
+    private static string FormatRenderPassName(int renderPass)
+        => Enum.IsDefined(typeof(EDefaultRenderPass), renderPass)
+            ? ((EDefaultRenderPass)renderPass).ToString()
+            : renderPass.ToString();
 }

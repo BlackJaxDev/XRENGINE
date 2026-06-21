@@ -4,6 +4,7 @@ using Shouldly;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
@@ -241,6 +242,61 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void RenderGraphTopologicalSort_UsesDeclarationOrderForReadyPassTieBreaks()
+    {
+        RenderPassMetadataCollection metadata = new();
+        int background = (int)EDefaultRenderPass.Background;
+        int onTop = (int)EDefaultRenderPass.OnTopForward;
+        const int temporalResolve = 100000;
+
+        metadata.ForPass(background, EDefaultRenderPass.Background.ToString(), ERenderGraphPassStage.Graphics);
+        metadata.ForPass(temporalResolve, "Temporal_AccumulationResolve", ERenderGraphPassStage.Graphics);
+        metadata.ForPass(onTop, EDefaultRenderPass.OnTopForward.ToString(), ERenderGraphPassStage.Graphics)
+            .DependsOn(background);
+
+        int[] orderedPasses = RenderGraphSynchronizationPlanner
+            .TopologicallySort(metadata.Build())
+            .Select(static pass => pass.PassIndex)
+            .ToArray();
+
+        orderedPasses.ShouldBe([background, temporalResolve, onTop]);
+    }
+
+    [Test]
+    public void FullOverdrawMetadata_UsesSyntheticPassesWithoutPollutingSourcePasses()
+    {
+        const string forwardFbo = "ForwardPassFBO";
+        const string fullOverdrawFbo = "FullOverdrawCountFBO";
+        int onTopPassIndex = (int)EDefaultRenderPass.OnTopForward;
+
+        RenderPassMetadataCollection metadata = new();
+        metadata.ForPass(onTopPassIndex, EDefaultRenderPass.OnTopForward.ToString(), ERenderGraphPassStage.Graphics)
+            .UseColorAttachment(RenderGraphResourceNames.MakeFboColor(forwardFbo))
+            .UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(forwardFbo));
+
+        ViewportRenderCommandContainer container = new();
+        using (container.AddUsing<VPRC_BindFBOByName>(x =>
+            x.SetOptions(fullOverdrawFbo, write: true, clearColor: true, clearDepth: false, clearStencil: false)))
+        {
+            container.Add<VPRC_RenderFullOverdrawPass>().RenderPasses = [onTopPassIndex];
+        }
+
+        container.BuildRenderPassMetadata(metadata);
+
+        RenderPassMetadata[] built = metadata.Build().ToArray();
+        RenderPassMetadata onTop = built.Single(pass => pass.PassIndex == onTopPassIndex);
+        onTop.Name.ShouldBe(EDefaultRenderPass.OnTopForward.ToString());
+        onTop.ResourceUsages.ShouldNotContain(usage =>
+            usage.ResourceName.Contains(fullOverdrawFbo, StringComparison.OrdinalIgnoreCase));
+
+        RenderPassMetadata fullOverdraw = built.Single(pass => pass.Name == "FullOverdraw_OnTopForward");
+        fullOverdraw.PassIndex.ShouldNotBe(onTopPassIndex);
+        fullOverdraw.ResourceUsages.ShouldContain(usage =>
+            usage.ResourceType == ERenderPassResourceType.ColorAttachment &&
+            usage.ResourceName == RenderGraphResourceNames.MakeFboColor(fullOverdrawFbo));
+    }
+
+    [Test]
     public void VulkanPlanner_AllocatesSourceTexturesAndResolvesViewsToPhysicalGroups()
     {
         RenderResourceRegistry registry = new();
@@ -352,6 +408,52 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void QuadBlit_PostProcessOutputMetadata_SamplesDepthStencilWithoutAttachingDestinationDepth()
+    {
+        RenderPassMetadataCollection metadata = new();
+        RenderGraphDescribeContext context = new(metadata);
+
+        new VPRC_RenderQuadToFBO()
+            .SetTargets(DefaultRenderPipeline.PostProcessFBOName, DefaultRenderPipeline.PostProcessOutputFBOName)
+            .DescribeRenderPass(context);
+
+        RenderPassMetadata pass = metadata.Build().Single(static x =>
+            string.Equals(x.Name, "QuadBlit_PostProcessFBO_to_PostProcessOutputFBO", StringComparison.Ordinal));
+
+        pass.ResourceUsages.ShouldContain(static x =>
+            x.ResourceType == ERenderPassResourceType.SampledTexture &&
+            x.ResourceName == "tex::DepthView");
+        pass.ResourceUsages.ShouldContain(static x =>
+            x.ResourceType == ERenderPassResourceType.SampledTexture &&
+            x.ResourceName == "tex::StencilView");
+        pass.ResourceUsages.ShouldNotContain(static x =>
+            x.ResourceType == ERenderPassResourceType.DepthAttachment ||
+            x.ResourceType == ERenderPassResourceType.StencilAttachment);
+    }
+
+    [Test]
+    public void LateDebugOverlay_PostProcessOutputMetadata_IsColorOnly()
+    {
+        RenderPassMetadataCollection metadata = new();
+        RenderGraphDescribeContext context = new(metadata);
+
+        context.PushRenderTarget(DefaultRenderPipeline.PostProcessOutputFBOName, writes: true, clearColor: false, clearDepth: false, clearStencil: false);
+        new VPRC_RenderDebugShapes { RenderGraphPassName = "LateDebugOverlay" }
+            .DescribeRenderPass(context);
+        context.PopRenderTarget();
+
+        RenderPassMetadata pass = metadata.Build().Single(static x =>
+            string.Equals(x.Name, "LateDebugOverlay", StringComparison.Ordinal));
+
+        pass.ResourceUsages.ShouldContain(static x =>
+            x.ResourceType == ERenderPassResourceType.ColorAttachment &&
+            x.ResourceName == "fbo::PostProcessOutputFBO::color");
+        pass.ResourceUsages.ShouldNotContain(static x =>
+            x.ResourceType == ERenderPassResourceType.DepthAttachment ||
+            x.ResourceType == ERenderPassResourceType.StencilAttachment);
+    }
+
+    [Test]
     public void LayoutBuilder_RejectsMissingFrameBufferAttachment()
     {
         RenderPipelineResourceLayoutBuilder builder = new();
@@ -381,6 +483,15 @@ public sealed class RenderPipelineResourceLifecycleTests
         layout.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.FinalPostProcessOutputFBOName);
         layout.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.FxaaFBOName);
         layout.ResourcesByName.Keys.ShouldNotContain(DefaultRenderPipeline.TsrUpscaleFBOName);
+
+        FrameBufferSpec postProcessOutput = layout.ResourcesByName[DefaultRenderPipeline.PostProcessOutputFBOName].ShouldBeOfType<FrameBufferSpec>();
+        postProcessOutput.Attachments.Select(static x => x.ResourceName).ToArray().ShouldBe([
+            DefaultRenderPipeline.PostProcessOutputTextureName
+        ]);
+        postProcessOutput.Attachments.ShouldNotContain(static x =>
+            x.Attachment == EFrameBufferAttachment.DepthAttachment ||
+            x.Attachment == EFrameBufferAttachment.DepthStencilAttachment ||
+            x.Attachment == EFrameBufferAttachment.StencilAttachment);
 
         FrameBufferSpec gBuffer = layout.ResourcesByName[DefaultRenderPipeline.DeferredGBufferFBOName].ShouldBeOfType<FrameBufferSpec>();
         gBuffer.Attachments.Select(x => x.ResourceName).ToArray().ShouldBe([

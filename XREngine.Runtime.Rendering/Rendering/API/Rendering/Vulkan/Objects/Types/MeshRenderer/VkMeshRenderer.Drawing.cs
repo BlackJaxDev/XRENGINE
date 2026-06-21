@@ -43,6 +43,7 @@ public unsafe partial class VulkanRenderer
 			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
 			bool depthStencilReadOnly,
 			string pipelineName,
+			string targetName,
 			int drawUniformSlot)
 		{
 			var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
@@ -128,8 +129,10 @@ public unsafe partial class VulkanRenderer
 				PushPerDrawConstants(commandBuffer, material, drawCopy);
 
 				if (verboseTrace)
-					Debug.MeshesWarning("[DrawTrace] {0}: CmdDrawIndexed({1}) pipeline=0x{2:X} topology={3} cull={4} blend={5} depthTest={6} depthWrite={7} depthCmp={8} colorWrite={9} viewport=({10},{11},{12},{13}) scissor=({14},{15},{16},{17}) prog={18}",
-						Mesh?.Name ?? "?", indexCount, pipeline.Handle, topology,
+					Debug.MeshesWarning("[DrawTrace] {0}: CmdDrawIndexed({1}) pass={2} target={3} dynRender={4} dsReadOnly={5} pipeline=0x{6:X} topology={7} cull={8} blend={9} depthTest={10} depthWrite={11} depthCmp={12} colorWrite={13} viewport=({14},{15},{16},{17}) scissor=({18},{19},{20},{21}) prog={22}",
+						Mesh?.Name ?? "?", indexCount,
+						passIndex, targetName, useDynamicRendering, depthStencilReadOnly,
+						pipeline.Handle, topology,
 						drawCopy.CullMode, drawCopy.BlendEnabled, drawCopy.DepthTestEnabled, drawCopy.DepthWriteEnabled, drawCopy.DepthCompareOp, drawCopy.ColorWriteMask,
 						drawCopy.Viewport.X, drawCopy.Viewport.Y, drawCopy.Viewport.Width, drawCopy.Viewport.Height,
 						drawCopy.Scissor.Offset.X, drawCopy.Scissor.Offset.Y, drawCopy.Scissor.Extent.Width, drawCopy.Scissor.Extent.Height,
@@ -247,13 +250,14 @@ public unsafe partial class VulkanRenderer
 		{
 			if (draw.ProgramBindingSnapshot is { } snapshot && _program is not null)
 			{
+				LogGizmoBindingSnapshot(material, snapshot, "apply");
 				_program.ApplyBindingSnapshot(snapshot);
 				return;
 			}
 
-			Renderer.SetMaterialUniforms(material, programData);
+			Renderer.SetMaterialUniforms(material, programData, draw.ShadowUniformState);
 			MeshRenderer.OnSettingUniforms(programData, programData);
-			MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material);
+			MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, draw.ShadowUniformState);
 		}
 
 		private static bool IsTriangleClassTopology(PrimitiveTopology topology)
@@ -435,7 +439,7 @@ public unsafe partial class VulkanRenderer
 			Renderer.PushConstantsTracked(
 				commandBuffer,
 				_program.PipelineLayout,
-				ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit | ShaderStageFlags.ComputeBit,
+				CommonPushConstantStageFlags,
 				0,
 				constants);
 		}

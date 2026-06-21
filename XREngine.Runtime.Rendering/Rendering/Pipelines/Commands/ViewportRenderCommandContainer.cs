@@ -331,7 +331,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                         _commands[i].GetType().Name,
                         ex.GetType().FullName ?? ex.GetType().Name,
                         ex.Message,
-                        ex.StackTrace ?? "<no stack>");
+                        ex.ToString());
                 }
             }
         }

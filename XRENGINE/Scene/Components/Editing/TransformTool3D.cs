@@ -437,6 +437,7 @@ namespace XREngine.Scene.Components.Editing
             material.RenderOptions.CullMode = ECullMode.None;
             ConfigurePremultipliedGizmoTransparency(material);
             XRMaterial.ConfigureGizmoMaterial(material);
+            DisableGizmoPostProcessBypass(material);
             return material;
         }
 
@@ -459,7 +460,15 @@ namespace XREngine.Scene.Components.Editing
             material.RenderOptions.CullMode = ECullMode.None;
             ConfigurePremultipliedGizmoTransparency(material);
             XRMaterial.ConfigureGizmoMaterial(material);
+            DisableGizmoPostProcessBypass(material);
             return material;
+        }
+
+        private static void DisableGizmoPostProcessBypass(XRMaterial material)
+        {
+            // The transform tool is transparent screen-space geometry. Let it pass through final
+            // postprocess instead of stamping a full stencil bypass footprint over bloom.
+            material.RenderOptions.StencilTest.Enabled = ERenderParamUsage.Disabled;
         }
 
         private static void ConfigurePremultipliedGizmoTransparency(XRMaterial material)
@@ -894,6 +903,7 @@ namespace XREngine.Scene.Components.Editing
         private const float _gizmoLineWidthPixels = 1.45f;
         private const float _arrowHeadLengthPixels = 20.0f;
         private const float _arrowHeadHalfWidthPixels = 7.0f;
+        private const string GizmoColorParameterName = "MatColor";
         private const float _axisLength = _orbRadius * 2.0f;
         private const float _axisHalfLength = _orbRadius * 0.75f;
         private const float _scaleHalf1LDist = _orbRadius * 0.8f;
@@ -1471,16 +1481,16 @@ namespace XREngine.Scene.Components.Editing
                 ColorF4 yColor = _hiAxis.Y ? ColorF4.Yellow : ColorF4.Green;
                 ColorF4 zColor = _hiAxis.Z ? ColorF4.Yellow : ColorF4.Blue;
 
-                _axisMat[0].Parameter<ShaderVector4>(0)!.Value = xColor;
-                _axisMat[1].Parameter<ShaderVector4>(0)!.Value = yColor;
-                _axisMat[2].Parameter<ShaderVector4>(0)!.Value = zColor;
-                _axisArrowMat[0].Parameter<ShaderVector4>(0)!.Value = xColor;
-                _axisArrowMat[1].Parameter<ShaderVector4>(0)!.Value = yColor;
-                _axisArrowMat[2].Parameter<ShaderVector4>(0)!.Value = zColor;
-                _rotationAxisMat[0].Parameter<ShaderVector4>(0)!.Value = xColor;
-                _rotationAxisMat[1].Parameter<ShaderVector4>(0)!.Value = yColor;
-                _rotationAxisMat[2].Parameter<ShaderVector4>(0)!.Value = zColor;
-                _screenMat!.Parameter<ShaderVector4>(0)!.Value = _hiCam ? ColorF4.Yellow : ColorF4.LightGray;
+                SetGizmoColor(_axisMat[0], xColor);
+                SetGizmoColor(_axisMat[1], yColor);
+                SetGizmoColor(_axisMat[2], zColor);
+                SetGizmoColor(_axisArrowMat[0], xColor);
+                SetGizmoColor(_axisArrowMat[1], yColor);
+                SetGizmoColor(_axisArrowMat[2], zColor);
+                SetGizmoColor(_rotationAxisMat[0], xColor);
+                SetGizmoColor(_rotationAxisMat[1], yColor);
+                SetGizmoColor(_rotationAxisMat[2], zColor);
+                SetGizmoColor(_screenMat, _hiCam ? ColorF4.Yellow : ColorF4.LightGray);
 
                 GetDependentColors();
 
@@ -1514,20 +1524,23 @@ namespace XREngine.Scene.Components.Editing
 
             if (TransformMode == ETransformMode.Translate)
             {
-                _transPlaneMat[0].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Y ? ColorF4.Yellow : ColorF4.Red;
-                _transPlaneMat[1].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Red;
-                _transPlaneMat[2].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Y && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Green;
-                _transPlaneMat[3].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Y && _hiAxis.X ? ColorF4.Yellow : ColorF4.Green;
-                _transPlaneMat[4].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Z && _hiAxis.X ? ColorF4.Yellow : ColorF4.Blue;
-                _transPlaneMat[5].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Z && _hiAxis.Y ? ColorF4.Yellow : ColorF4.Blue;
+                SetGizmoColor(_transPlaneMat[0], _hiAxis.X && _hiAxis.Y ? ColorF4.Yellow : ColorF4.Red);
+                SetGizmoColor(_transPlaneMat[1], _hiAxis.X && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Red);
+                SetGizmoColor(_transPlaneMat[2], _hiAxis.Y && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Green);
+                SetGizmoColor(_transPlaneMat[3], _hiAxis.Y && _hiAxis.X ? ColorF4.Yellow : ColorF4.Green);
+                SetGizmoColor(_transPlaneMat[4], _hiAxis.Z && _hiAxis.X ? ColorF4.Yellow : ColorF4.Blue);
+                SetGizmoColor(_transPlaneMat[5], _hiAxis.Z && _hiAxis.Y ? ColorF4.Yellow : ColorF4.Blue);
             }
             else
             {
-                _scalePlaneMat[0].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Y && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Red;
-                _scalePlaneMat[1].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Green;
-                _scalePlaneMat[2].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Y ? ColorF4.Yellow : ColorF4.Blue;
+                SetGizmoColor(_scalePlaneMat[0], _hiAxis.Y && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Red);
+                SetGizmoColor(_scalePlaneMat[1], _hiAxis.X && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Green);
+                SetGizmoColor(_scalePlaneMat[2], _hiAxis.X && _hiAxis.Y ? ColorF4.Yellow : ColorF4.Blue);
             }
         }
+
+        private static void SetGizmoColor(XRMaterial? material, ColorF4 color)
+            => material?.Parameter<ShaderVector4>(GizmoColorParameterName)?.SetValue(color);
 
         private void OnPressed()
         {

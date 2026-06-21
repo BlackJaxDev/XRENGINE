@@ -10,14 +10,14 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class AmbientOcclusionGtaoDefaultsTests
 {
     [Test]
-    public void AmbientOcclusionSettings_DefaultToRequestedGtaoTuning()
+    public void AmbientOcclusionSettings_DefaultToBalancedGtaoTuning()
     {
         AmbientOcclusionSettings settings = new();
 
         settings.Type.ShouldBe(AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion);
-        settings.Radius.ShouldBe(4.052f, 0.0001f);
-        settings.Power.ShouldBe(2.503f, 0.0001f);
-        settings.Bias.ShouldBe(0.1054f, 0.0001f);
+        settings.Radius.ShouldBe(2.2f, 0.0001f);
+        settings.Power.ShouldBe(1.35f, 0.0001f);
+        settings.Bias.ShouldBe(0.06f, 0.0001f);
 
         settings.GroundTruth.SliceCount.ShouldBe(5);
         settings.GTAOSliceCount.ShouldBe(5);
@@ -25,16 +25,16 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
         settings.GTAOStepsPerSlice.ShouldBe(10);
         settings.GroundTruth.DenoiseEnabled.ShouldBeTrue();
         settings.GTAODenoiseEnabled.ShouldBeTrue();
-        settings.GroundTruth.DenoiseRadius.ShouldBe(8);
-        settings.GTAODenoiseRadius.ShouldBe(8);
-        settings.GroundTruth.DenoiseSharpness.ShouldBe(14.02f, 0.0001f);
-        settings.GTAODenoiseSharpness.ShouldBe(14.02f, 0.0001f);
+        settings.GroundTruth.DenoiseRadius.ShouldBe(5);
+        settings.GTAODenoiseRadius.ShouldBe(5);
+        settings.GroundTruth.DenoiseSharpness.ShouldBe(10.0f, 0.0001f);
+        settings.GTAODenoiseSharpness.ShouldBe(10.0f, 0.0001f);
         settings.GroundTruth.UseInputNormals.ShouldBeTrue();
         settings.GTAOUseInputNormals.ShouldBeTrue();
         settings.GroundTruth.UseVisibilityBitmask.ShouldBeTrue();
         settings.GTAOUseVisibilityBitmask.ShouldBeTrue();
-        settings.GroundTruth.VisibilityBitmaskThickness.ShouldBe(1.5002f, 0.0001f);
-        settings.GTAOVisibilityBitmaskThickness.ShouldBe(1.5002f, 0.0001f);
+        settings.GroundTruth.VisibilityBitmaskThickness.ShouldBe(0.12f, 0.0001f);
+        settings.GTAOVisibilityBitmaskThickness.ShouldBe(0.12f, 0.0001f);
         settings.GroundTruth.MultiBounceEnabled.ShouldBeTrue();
         settings.GTAOMultiBounceEnabled.ShouldBeTrue();
         settings.GroundTruth.SpecularOcclusionEnabled.ShouldBeTrue();
@@ -68,7 +68,7 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
     }
 
     [Test]
-    public void GtaoRuntimeFallbacks_AndShaderDefaults_MatchRequestedTuning()
+    public void GtaoRuntimeFallbacks_AndShaderDefaults_MatchBalancedTuning()
     {
         string settingsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Camera/GroundTruthAmbientOcclusionSettings.cs").Replace("\r\n", "\n");
         settingsSource.ShouldContain("program.Uniform(\"Radius\", PositiveOr(Owner.Radius, AmbientOcclusionSettings.DefaultRadius));");
@@ -82,6 +82,7 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
         string blurPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/AO/VPRC_GTAOPass.cs").Replace("\r\n", "\n");
         blurPassSource.ShouldContain("program.Uniform(\"DenoiseRadius\", Math.Clamp(settings?.GTAODenoiseRadius ?? GroundTruthAmbientOcclusionSettings.DefaultDenoiseRadius, 0, 16));");
         blurPassSource.ShouldContain("program.Uniform(\"DenoiseSharpness\", settings?.GTAODenoiseSharpness is > 0.0f ? settings.GTAODenoiseSharpness : GroundTruthAmbientOcclusionSettings.DefaultDenoiseSharpness);");
+        blurPassSource.ShouldContain("SetDynamicFBO(instance, outputFbo, RenderResourceSizePolicy.Internal());");
 
         AssertShaderContainsDefaults("Build/CommonAssets/Shaders/Scene3D/GTAOGen.fs");
         AssertShaderContainsDefaults("Build/CommonAssets/Shaders/Scene3D/GTAOGenStereo.fs");
@@ -92,20 +93,28 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
     private static void AssertShaderContainsDefaults(string relativePath)
     {
         string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
-        source.ShouldContain("uniform float Radius = 4.052f;");
-        source.ShouldContain("uniform float Bias = 0.1054f;");
-        source.ShouldContain("uniform float Power = 2.503f;");
+        source.ShouldContain("uniform float Radius = 2.2f;");
+        source.ShouldContain("uniform float Bias = 0.06f;");
+        source.ShouldContain("uniform float Power = 1.35f;");
         source.ShouldContain("uniform int SliceCount = 5;");
         source.ShouldContain("uniform int StepsPerSlice = 10;");
         source.ShouldContain("uniform bool UseVisibilityBitmask = true;");
-        source.ShouldContain("uniform float VisibilityBitmaskThickness = 1.5002f;");
+        source.ShouldContain("uniform float VisibilityBitmaskThickness = 0.12f;");
+        source.ShouldContain("float ComputeSampleFalloff(vec3 delta, float dist, vec3 viewDir, float falloffStart, float radiusVS, float thicknessLimit)");
+        source.ShouldContain("bitmaskThickness * falloff");
+        source.ShouldContain("float occludedSectorWeight = 0.0f;");
+        source.ShouldContain("1.0f - occludedSectorWeight / float(VISIBILITY_BITMASK_SECTOR_COUNT)");
+        source.ShouldContain("float ComputeScreenEdgeFade(vec2 uv, float radiusPixels)");
+        source.ShouldContain("visibility = mix(1.0f, visibility, ComputeScreenEdgeFade(uv, radiusPixels));");
     }
 
     private static void AssertBlurShaderContainsDefaults(string relativePath)
     {
         string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
-        source.ShouldContain("uniform int DenoiseRadius = 8;");
-        source.ShouldContain("uniform float DenoiseSharpness = 14.02f;");
+        source.ShouldContain("uniform int DenoiseRadius = 5;");
+        source.ShouldContain("uniform float DenoiseSharpness = 10.0f;");
+        source.ShouldContain("float ComputeDenoiseEdgeFade(vec2 uv)");
+        source.ShouldContain("OutIntensity = mix(1.0f, blurredAO, ComputeDenoiseEdgeFade(uv));");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

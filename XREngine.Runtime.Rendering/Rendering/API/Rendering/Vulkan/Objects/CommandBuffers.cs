@@ -14,6 +14,13 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         internal const uint CommonPushConstantSize = 16;
+        internal const ShaderStageFlags CommonPushConstantStageFlags =
+            ShaderStageFlags.VertexBit |
+            ShaderStageFlags.TessellationControlBit |
+            ShaderStageFlags.TessellationEvaluationBit |
+            ShaderStageFlags.GeometryBit |
+            ShaderStageFlags.FragmentBit |
+            ShaderStageFlags.ComputeBit;
         private const int PrimaryCommandBufferVariantCapacity = 4;
 
         private CommandBuffer[]? _commandBuffers;
@@ -2884,6 +2891,7 @@ namespace XREngine.Rendering.Vulkan
                     drawOp.Context.PassMetadata,
                     depthStencilReadOnly: false,
                     drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
+                    drawOp.Target?.Name ?? "<swapchain>",
                     GetMeshDrawUniformSlot(drawOp.Draw.Renderer));
             }
 
@@ -3763,7 +3771,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         SType = StructureType.RenderingInfo,
                         RenderArea = fboRenderArea,
-                        LayerCount = 1,
+                        LayerCount = Math.Max(vkFrameBuffer.FramebufferLayers, 1u),
                         ColorAttachmentCount = colorAttachmentCount,
                         PColorAttachments = colorAttachmentCount > 0 ? colorAttachments : null,
                         PDepthAttachment = hasDepthAttachment ? &depthAttachment : null,
@@ -4441,6 +4449,7 @@ namespace XREngine.Rendering.Vulkan
                             drawOp.Context.PassMetadata,
                             activeDepthStencilReadOnly,
                             drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
+                            drawOp.Target?.Name ?? "<swapchain>",
                             GetMeshDrawUniformSlot(drawOp.Draw.Renderer));
                         break;
 
@@ -4856,11 +4865,19 @@ namespace XREngine.Rendering.Vulkan
             if (clearArea.Extent.Width == 0 || clearArea.Extent.Height == 0)
                 return;
 
+            VkFrameBuffer? clearTargetFrameBuffer = op.Target is not null
+                ? GenericToAPI<VkFrameBuffer>(op.Target)
+                : null;
+            clearTargetFrameBuffer?.EnsureCurrent();
+            uint clearLayerCount = op.Target is null
+                ? 1u
+                : Math.Max(clearTargetFrameBuffer?.FramebufferLayers ?? 1u, 1u);
+
             ClearRect clearRect = new()
             {
                 Rect = clearArea,
                 BaseArrayLayer = 0,
-                LayerCount = 1
+                LayerCount = clearLayerCount
             };
 
             ClearRect* rectPtr = stackalloc ClearRect[1];
@@ -4928,7 +4945,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            var vkFrameBuffer = GenericToAPI<VkFrameBuffer>(op.Target);
+            var vkFrameBuffer = clearTargetFrameBuffer;
             if (vkFrameBuffer is null)
                 return;
 
@@ -5545,7 +5562,7 @@ namespace XREngine.Rendering.Vulkan
             PushConstantsTracked(
                 commandBuffer,
                 op.Program.PipelineLayout,
-                ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit | ShaderStageFlags.ComputeBit,
+                CommonPushConstantStageFlags,
                 0,
                 new ComputeDispatchPushConstants(op.GroupsX, op.GroupsY, op.GroupsZ, 0u));
             Api!.CmdDispatch(commandBuffer, op.GroupsX, op.GroupsY, op.GroupsZ);
@@ -5745,11 +5762,14 @@ namespace XREngine.Rendering.Vulkan
             FrameBufferAttachmentSignature[] signatures,
             bool beginRendering)
         {
-            var targets = fbo.Targets;
-            if (targets is null || targets.Length == 0 || signatures.Length == 0)
+            if (signatures.Length == 0)
                 return;
 
-            int barrierCapacity = Math.Min(targets.Length, signatures.Length);
+            VkFrameBuffer? vkFbo = GenericToAPI<VkFrameBuffer>(fbo);
+            if (vkFbo is null || vkFbo.AttachmentCount == 0)
+                return;
+
+            int barrierCapacity = Math.Min((int)vkFbo.AttachmentCount, signatures.Length);
             if (barrierCapacity <= 0)
                 return;
 
@@ -5770,9 +5790,21 @@ namespace XREngine.Rendering.Vulkan
                 if (newLayout == ImageLayout.Undefined)
                     continue;
 
-                var (target, _, mipLevel, layerIndex) = targets[i];
-                if (target is null)
+                if (!vkFbo.TryGetAttachmentTarget(
+                    i,
+                    out IFrameBufferAttachement? target,
+                    out _,
+                    out int mipLevel,
+                    out int layerIndex))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.DynamicRendering.FboTransition.NoTarget.{fbo.GetHashCode()}.{i}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Skipping dynamic-rendering FBO transition for '{0}' attachment {1}: ordered attachment target metadata was unavailable.",
+                        fbo.Name ?? "<unnamed>",
+                        i);
                     continue;
+                }
 
                 ImageAspectFlags aspectMask = NormalizeBarrierAspectMask(signature.Format, signature.AspectMask);
                 if (!TryResolveAttachmentImage(target, mipLevel, layerIndex, aspectMask, out BlitImageInfo info) ||
@@ -5978,41 +6010,38 @@ namespace XREngine.Rendering.Vulkan
         private void UpdatePhysicalGroupLayoutsForFbo(XRFrameBuffer fbo)
         {
             var vkFbo = GenericToAPI<VkFrameBuffer>(fbo);
-            UpdatePhysicalGroupLayoutsForFbo(fbo, vkFbo?.GetFinalLayouts());
+            if (vkFbo is not null)
+                UpdatePhysicalGroupLayoutsForFbo(vkFbo, vkFbo.GetFinalLayouts());
         }
 
         private void UpdatePhysicalGroupLayoutsForFbo(XRFrameBuffer fbo, ImageLayout[]? finalLayouts)
         {
-            var targets = fbo.Targets;
-            if (targets is null)
-                return;
+            var vkFbo = GenericToAPI<VkFrameBuffer>(fbo);
+            if (vkFbo is not null)
+                UpdatePhysicalGroupLayoutsForFbo(vkFbo, finalLayouts);
+        }
 
-            int attachmentIndex = 0;
-            foreach (var (target, attachment, mipLevel, layerIndex) in targets)
+        private void UpdatePhysicalGroupLayoutsForFbo(VkFrameBuffer vkFbo, ImageLayout[]? finalLayouts)
+        {
+            int attachmentCount = vkFbo.AttachmentCount > 0
+                ? (int)vkFbo.AttachmentCount
+                : finalLayouts?.Length ?? 0;
+            for (int attachmentIndex = 0; attachmentIndex < attachmentCount; attachmentIndex++)
             {
                 ImageLayout finalLayout = (finalLayouts is not null && attachmentIndex < finalLayouts.Length)
                     ? finalLayouts[attachmentIndex]
                     : ImageLayout.Undefined;
-                attachmentIndex++;
 
                 if (finalLayout == ImageLayout.Undefined)
                     continue;
 
-                switch (target)
-                {
-                    case XRRenderBuffer rb:
-                    {
-                        if (GetOrCreateAPIRenderObject(rb, true) is VkRenderBuffer vkRb && vkRb.PhysicalGroup is { } group)
-                            group.LastKnownLayout = finalLayout;
-                        break;
-                    }
-                    case XRTexture tex:
-                    {
-                        if (GetOrCreateAPIRenderObject(tex, true) is IVkFrameBufferAttachmentSource attSrc)
-                            attSrc.UpdateAttachmentTrackedLayout(finalLayout, mipLevel, layerIndex);
-                        break;
-                    }
-                }
+                if (vkFbo.TryGetAttachmentTarget(
+                    attachmentIndex,
+                    out IFrameBufferAttachement? target,
+                    out _,
+                    out int mipLevel,
+                    out int layerIndex))
+                    UpdateAttachmentTrackedLayout(target, mipLevel, layerIndex, finalLayout);
             }
         }
 
@@ -6021,11 +6050,14 @@ namespace XREngine.Rendering.Vulkan
             FrameBufferAttachmentSignature[] signatures,
             bool useReferenceLayouts)
         {
-            var targets = fbo.Targets;
-            if (targets is null || signatures.Length == 0)
+            if (signatures.Length == 0)
                 return;
 
-            int attachmentCount = Math.Min(targets.Length, signatures.Length);
+            var vkFbo = GenericToAPI<VkFrameBuffer>(fbo);
+            if (vkFbo is null || vkFbo.AttachmentCount == 0)
+                return;
+
+            int attachmentCount = Math.Min((int)vkFbo.AttachmentCount, signatures.Length);
             for (int attachmentIndex = 0; attachmentIndex < attachmentCount; attachmentIndex++)
             {
                 ImageLayout layout = useReferenceLayouts
@@ -6035,21 +6067,35 @@ namespace XREngine.Rendering.Vulkan
                 if (layout == ImageLayout.Undefined)
                     continue;
 
-                var (target, _, mipLevel, layerIndex) = targets[attachmentIndex];
-                switch (target)
+                if (vkFbo.TryGetAttachmentTarget(
+                    attachmentIndex,
+                    out IFrameBufferAttachement? target,
+                    out _,
+                    out int mipLevel,
+                    out int layerIndex))
+                    UpdateAttachmentTrackedLayout(target, mipLevel, layerIndex, layout);
+            }
+        }
+
+        private void UpdateAttachmentTrackedLayout(
+            IFrameBufferAttachement target,
+            int mipLevel,
+            int layerIndex,
+            ImageLayout layout)
+        {
+            switch (target)
+            {
+                case XRRenderBuffer rb:
                 {
-                    case XRRenderBuffer rb:
-                    {
-                        if (GetOrCreateAPIRenderObject(rb, true) is VkRenderBuffer vkRb && vkRb.PhysicalGroup is { } group)
-                            group.LastKnownLayout = layout;
-                        break;
-                    }
-                    case XRTexture tex:
-                    {
-                        if (GetOrCreateAPIRenderObject(tex, true) is IVkFrameBufferAttachmentSource attSrc)
-                            attSrc.UpdateAttachmentTrackedLayout(layout, mipLevel, layerIndex);
-                        break;
-                    }
+                    if (GetOrCreateAPIRenderObject(rb, true) is VkRenderBuffer vkRb && vkRb.PhysicalGroup is { } group)
+                        group.LastKnownLayout = layout;
+                    break;
+                }
+                case XRTexture tex:
+                {
+                    if (GetOrCreateAPIRenderObject(tex, true) is IVkFrameBufferAttachmentSource attSrc)
+                        attSrc.UpdateAttachmentTrackedLayout(layout, mipLevel, layerIndex);
+                    break;
                 }
             }
         }
@@ -6061,18 +6107,24 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private ImageLayout[]? QueryCurrentAttachmentLayouts(XRFrameBuffer fbo, VkFrameBuffer vkFbo)
         {
-            var targets = fbo.Targets;
-            if (targets is null)
+            if (vkFbo.AttachmentCount == 0)
                 return null;
 
-            int count = vkFbo.AttachmentCount > 0 ? (int)vkFbo.AttachmentCount : targets.Length;
+            int count = (int)vkFbo.AttachmentCount;
             ImageLayout[] layouts = new ImageLayout[count];
 
-            int i = 0;
-            foreach (var (target, _, mipLevel, layerIndex) in targets)
+            for (int i = 0; i < count; i++)
             {
-                if (i >= layouts.Length)
-                    break;
+                if (!vkFbo.TryGetAttachmentTarget(
+                    i,
+                    out IFrameBufferAttachement? target,
+                    out _,
+                    out int mipLevel,
+                    out int layerIndex))
+                {
+                    layouts[i] = ImageLayout.Undefined;
+                    continue;
+                }
 
                 ImageLayout layout = ImageLayout.Undefined;
                 switch (target)
@@ -6092,7 +6144,7 @@ namespace XREngine.Rendering.Vulkan
                         break;
                     }
                 }
-                layouts[i++] = layout;
+                layouts[i] = layout;
             }
 
             return layouts;

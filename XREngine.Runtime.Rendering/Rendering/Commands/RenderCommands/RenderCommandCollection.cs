@@ -153,6 +153,7 @@ namespace XREngine.Rendering.Commands
         private static bool HasEquivalentPassMetadata(RenderPassMetadata existing, RenderPassMetadata incoming)
         {
             if (existing.PassIndex != incoming.PassIndex ||
+                existing.DeclarationOrder != incoming.DeclarationOrder ||
                 existing.Stage != incoming.Stage ||
                 !string.Equals(existing.Name, incoming.Name, StringComparison.Ordinal))
             {
