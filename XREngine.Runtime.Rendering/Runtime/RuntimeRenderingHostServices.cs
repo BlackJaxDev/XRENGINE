@@ -882,6 +882,25 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RecordRenderVulkanCommandChainMetrics(
+            int chainsScheduled,
+            int chainsRecorded,
+            int chainsReused,
+            int chainsFrameDataRefreshed,
+            int volatileChainsRecorded,
+            int primaryCommandBuffersReused,
+            int primaryCommandBuffersRecorded,
+            int visibilityPackets,
+            int renderPackets,
+            int secondaryCommandBuffers,
+            TimeSpan chainWorkerRecordTime,
+            TimeSpan renderThreadWaitForWorkersTime,
+            string? firstStructuralDirtyReason,
+            string? firstDescriptorGenerationMismatch,
+            string? firstResourcePlanRevisionMismatch)
+        {
+        }
+
         public void RecordRenderVulkanGpuDrivenStageTiming(int stage, TimeSpan elapsed)
         {
         }

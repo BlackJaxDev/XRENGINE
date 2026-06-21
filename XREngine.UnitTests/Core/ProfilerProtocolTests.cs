@@ -376,6 +376,21 @@ public sealed class ProfilerProtocolTests
                 CommandBufferPlannerDirtyCount = 14,
                 CommandBufferProfilerDirtyCount = 15,
                 CommandBufferDirtySummary = "forced,frame-ops,dirty:RecreateSwapchain",
+                CommandChainsScheduled = 26,
+                CommandChainsRecorded = 27,
+                CommandChainsReused = 28,
+                CommandChainsFrameDataRefreshed = 29,
+                VolatileCommandChainsRecorded = 30,
+                PrimaryCommandBuffersReused = 31,
+                PrimaryCommandBuffersRecorded = 32,
+                VisibilityPacketCount = 33,
+                RenderPacketCount = 34,
+                SecondaryCommandBufferCount = 35,
+                CommandChainWorkerRecordMs = 1.125,
+                RenderThreadWaitForChainWorkersMs = 0.375,
+                FirstCommandChainStructuralDirtyReason = "structure:draw-count",
+                FirstCommandChainDescriptorGenerationMismatch = "descriptor:g12->g13",
+                FirstCommandChainResourcePlanRevisionMismatch = "resource-plan:r4->r5",
                 RetiredDescriptorPoolCount = 16,
                 RetiredPipelineCount = 17,
                 RetiredFramebufferCount = 18,
@@ -739,6 +754,21 @@ public sealed class ProfilerProtocolTests
         clone.VulkanFrameLoop.CommandBufferPlannerDirtyCount.ShouldBe(14);
         clone.VulkanFrameLoop.CommandBufferProfilerDirtyCount.ShouldBe(15);
         clone.VulkanFrameLoop.CommandBufferDirtySummary.ShouldBe("forced,frame-ops,dirty:RecreateSwapchain");
+        clone.VulkanFrameLoop.CommandChainsScheduled.ShouldBe(26);
+        clone.VulkanFrameLoop.CommandChainsRecorded.ShouldBe(27);
+        clone.VulkanFrameLoop.CommandChainsReused.ShouldBe(28);
+        clone.VulkanFrameLoop.CommandChainsFrameDataRefreshed.ShouldBe(29);
+        clone.VulkanFrameLoop.VolatileCommandChainsRecorded.ShouldBe(30);
+        clone.VulkanFrameLoop.PrimaryCommandBuffersReused.ShouldBe(31);
+        clone.VulkanFrameLoop.PrimaryCommandBuffersRecorded.ShouldBe(32);
+        clone.VulkanFrameLoop.VisibilityPacketCount.ShouldBe(33);
+        clone.VulkanFrameLoop.RenderPacketCount.ShouldBe(34);
+        clone.VulkanFrameLoop.SecondaryCommandBufferCount.ShouldBe(35);
+        clone.VulkanFrameLoop.CommandChainWorkerRecordMs.ShouldBe(1.125);
+        clone.VulkanFrameLoop.RenderThreadWaitForChainWorkersMs.ShouldBe(0.375);
+        clone.VulkanFrameLoop.FirstCommandChainStructuralDirtyReason.ShouldBe("structure:draw-count");
+        clone.VulkanFrameLoop.FirstCommandChainDescriptorGenerationMismatch.ShouldBe("descriptor:g12->g13");
+        clone.VulkanFrameLoop.FirstCommandChainResourcePlanRevisionMismatch.ShouldBe("resource-plan:r4->r5");
         clone.VulkanFrameLoop.RetiredDescriptorPoolCount.ShouldBe(16);
         clone.VulkanFrameLoop.RetiredPipelineCount.ShouldBe(17);
         clone.VulkanFrameLoop.RetiredFramebufferCount.ShouldBe(18);

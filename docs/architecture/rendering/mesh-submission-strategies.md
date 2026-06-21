@@ -74,6 +74,21 @@ Default derivation:
 
 Dynamic material-table layouts for additional deferred, forward+, Uber, and annotated custom shader paths are proposed in [Dynamic Indirect Material Bindings](../../work/design/rendering/dynamic-indirect-material-bindings.md).
 
+## Vulkan Command-Chain Volatility
+
+Vulkan command chains do not choose the mesh submission strategy; they cache the backend recording work after a pass has already resolved to CPU direct, GPU indirect, or meshlet submission. The pass strategy still owns which draw commands are generated. Command-chain lowering only classifies the resulting Vulkan `FrameOp` stream for reuse.
+
+The command-chain volatility contract is:
+
+| Volatility | Meaning |
+|------------|---------|
+| `FrameDataOnly` | The chain structure is stable and only per-frame data such as view/projection matrices, model matrices, material constants, descriptor contents, or resource-plan generations may need refresh. |
+| `DynamicCommand` | The command payload itself can change every frame, such as UI text, ImGui/profiler overlays, editor gizmos, or diagnostic draws. |
+
+Mesh scene draws should remain `FrameDataOnly` when their target, pass, pipeline identity, descriptor layout, mesh buffers, draw count, and view/shadow identity are unchanged. Camera movement, transform publication, and ordinary material constant updates should refresh chain frame data without re-recording static secondary command buffers. Structural changes such as a different mesh, target, pass, descriptor layout, pipeline generation, render target attachment signature, shadow atlas packing, or VR eye/single-pass mode change must dirty the affected chain.
+
+Dynamic overlay work is deliberately split from static mesh chains. A text/profiler overlay changing every frame should record only its volatile chain and must not invalidate the static Sponza-style scene mesh chains underneath it.
+
 ## Pass Contract
 
 `PreRender` and `PostRender` remain CPU-only in the default pipelines. Scene geometry passes request the resolved mesh submission strategy. Capture commands (`VPRC_RenderCubemap`, `VPRC_RenderToCubemapFace`, `VPRC_RenderToTextureArray`) carry the same strategy so capture passes do not silently choose a different submission path.

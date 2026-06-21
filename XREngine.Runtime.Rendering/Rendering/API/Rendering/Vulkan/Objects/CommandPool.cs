@@ -14,6 +14,8 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyCommandPool()
         {
+            DestroyCommandChainRecordingWorkers();
+
             lock (_commandPoolsLock)
             {
                 HashSet<ulong> destroyed = [];

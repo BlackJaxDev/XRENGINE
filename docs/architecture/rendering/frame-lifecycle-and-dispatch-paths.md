@@ -530,6 +530,23 @@ Viewport responsibilities:
 - route mesh passes to the resolved mesh submission strategy
 - submit final draws
 
+Backend command-buffer work happens after the viewport/pipeline has emitted its render commands. In Vulkan command-chain mode, the render thread still owns the authoritative ordering and submit path:
+
+```text
+Render thread
+  -> drain published Vulkan FrameOps
+  -> sort them through the render graph compiler
+  -> freeze the Vulkan resource-plan revision
+  -> lower ops into visibility/render packets and chain groups
+  -> record or reuse secondary command chains
+  -> record or reuse the primary command buffer
+  -> submit on the graphics queue
+```
+
+The worker split is deliberately below scene mutation and below `SwapBuffers`. Workers receive only immutable packet/schedule data plus frozen Vulkan resource/descriptor snapshots. They must not mutate scene state, render pipeline state, descriptor pools, FBO declarations, or the active resource planner. Dynamic UI/text/profiler overlay ops are kept as volatile chains so they can be re-recorded without dirtying static scene chains.
+
+When parallel packet build is enabled, independent packet snapshots can be built off-thread and then sorted deterministically before scheduling. When command-chain worker recording is enabled, worker timing is tracked separately from render-thread wait time. Primary command-buffer reuse remains a render-thread decision because it depends on the final ordered group signature and secondary command-buffer handles.
+
 ## Current-State Summary
 
 If you need the practical, non-aspirational summary of the engine as it exists today:
@@ -538,6 +555,7 @@ If you need the practical, non-aspirational summary of the engine as it exists t
 - 3D CPU scene visibility uses a CPU BVH by default, with an opt-in octree via engine setting, project override, or `XRE_CPU_SCENE_CULLING_STRUCTURE=Octree`.
 - GPU-driven rendering uses `GPUScene` plus `GPURenderPassCollection` for later GPU culling and indirect generation.
 - GPU BVH exists and is wired for GPU command culling, but it is optional and not the same thing as choosing the CPU BVH/octree scene tree.
+- Vulkan command-chain mode is a feature-flagged backend recording path. It consumes the same sorted `FrameOp` stream, caches reusable secondary chains per swapchain image, isolates volatile overlay work, and keeps the legacy frame-op recorder available for fallback and validation.
 - Per-mesh CPU BVHs exist for picking/raycast/skinned-mesh work.
 - Meshlet infrastructure exists, with `GpuMeshletZeroReadback` as the production zero-readback strategy and `GpuMeshletInstrumented` as the diagnostics strategy. Both require production indirect-count mesh task dispatch; unsupported requests fall back visibly through the mesh submission strategy resolver.
 

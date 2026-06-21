@@ -972,6 +972,39 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderVulkanCommandBuffersDirty(string? reason)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanCommandBuffersDirty(reason);
 
+    public void RecordRenderVulkanCommandChainMetrics(
+        int chainsScheduled,
+        int chainsRecorded,
+        int chainsReused,
+        int chainsFrameDataRefreshed,
+        int volatileChainsRecorded,
+        int primaryCommandBuffersReused,
+        int primaryCommandBuffersRecorded,
+        int visibilityPackets,
+        int renderPackets,
+        int secondaryCommandBuffers,
+        TimeSpan chainWorkerRecordTime,
+        TimeSpan renderThreadWaitForWorkersTime,
+        string? firstStructuralDirtyReason,
+        string? firstDescriptorGenerationMismatch,
+        string? firstResourcePlanRevisionMismatch)
+        => Engine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
+            chainsScheduled,
+            chainsRecorded,
+            chainsReused,
+            chainsFrameDataRefreshed,
+            volatileChainsRecorded,
+            primaryCommandBuffersReused,
+            primaryCommandBuffersRecorded,
+            visibilityPackets,
+            renderPackets,
+            secondaryCommandBuffers,
+            chainWorkerRecordTime,
+            renderThreadWaitForWorkersTime,
+            firstStructuralDirtyReason,
+            firstDescriptorGenerationMismatch,
+            firstResourcePlanRevisionMismatch);
+
     public void RecordRenderVulkanGpuDrivenStageTiming(int stage, TimeSpan elapsed)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming((Engine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming)stage, elapsed);
 

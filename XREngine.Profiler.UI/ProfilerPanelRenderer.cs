@@ -784,6 +784,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"  Frame Ops: {loop.FrameOpTotalCount:N0} total | clear {loop.FrameOpClearCount:N0} | mesh {loop.FrameOpMeshDrawCount:N0} | indirect {loop.FrameOpIndirectDrawCount:N0} | mesh task {loop.FrameOpMeshTaskDispatchCount:N0} | blit {loop.FrameOpBlitCount:N0} | compute {loop.FrameOpComputeCount:N0}");
         ImGui.Text($"  Frame Op Targets: swapchain writes {loop.FrameOpSwapchainWriteCount:N0} | FBO writes {loop.FrameOpFboWriteCount:N0} | passes {loop.FrameOpUniquePassCount:N0} | contexts {loop.FrameOpUniqueContextCount:N0} | targets {loop.FrameOpUniqueTargetCount:N0}");
         ImGui.Text($"  Command Buffer Cache: clean reuse {loop.CommandBufferCleanReuseCount:N0} | records {loop.CommandBufferRecordCount:N0} | forced {loop.CommandBufferForcedDirtyCount:N0} | frame ops {loop.CommandBufferFrameOpSignatureDirtyCount:N0} | planner {loop.CommandBufferPlannerDirtyCount:N0} | profiler {loop.CommandBufferProfilerDirtyCount:N0}");
+        ImGui.Text($"  Command Chains: packets V/R {loop.VisibilityPacketCount:N0}/{loop.RenderPacketCount:N0} | scheduled {loop.CommandChainsScheduled:N0} | recorded {loop.CommandChainsRecorded:N0} | reused {loop.CommandChainsReused:N0} | refreshed {loop.CommandChainsFrameDataRefreshed:N0} | volatile {loop.VolatileCommandChainsRecorded:N0} | secondary {loop.SecondaryCommandBufferCount:N0}");
+        ImGui.Text($"  Command Chain Timing: worker record {loop.CommandChainWorkerRecordMs:F3} ms | wait workers {loop.RenderThreadWaitForChainWorkersMs:F3} ms | primary reused/recorded {loop.PrimaryCommandBuffersReused:N0}/{loop.PrimaryCommandBuffersRecorded:N0}");
         ImGui.Text($"  Retired Drains: pools {loop.RetiredDescriptorPoolCount:N0} | pipelines {loop.RetiredPipelineCount:N0} | framebuffers {loop.RetiredFramebufferCount:N0} | buffers {loop.RetiredBufferCount:N0}/{loop.RetiredBufferMemoryCount:N0} mem | images {loop.RetiredImageCount:N0}/{loop.RetiredImageMemoryCount:N0} mem | views {loop.RetiredImageViewCount:N0} | samplers {loop.RetiredSamplerCount:N0} | image MB {loop.RetiredImageBytes / (1024.0 * 1024.0):F2}");
         if (stats.VulkanMissingSceneSwapchainWriteFrames > 0)
             ImGui.TextColored(new Vector4(1.0f, 0.35f, 0.25f, 1.0f), $"  Missing scene swapchain writers: {stats.VulkanMissingSceneSwapchainWriteFrames:N0}");
@@ -791,6 +793,18 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             ImGui.CollapsingHeader("Vulkan Command Buffer Dirty Reasons"))
         {
             ImGui.TextWrapped(loop.CommandBufferDirtySummary);
+        }
+        if ((!string.IsNullOrWhiteSpace(loop.FirstCommandChainStructuralDirtyReason) ||
+             !string.IsNullOrWhiteSpace(loop.FirstCommandChainDescriptorGenerationMismatch) ||
+             !string.IsNullOrWhiteSpace(loop.FirstCommandChainResourcePlanRevisionMismatch)) &&
+            ImGui.CollapsingHeader("Vulkan Command Chain Diagnostics"))
+        {
+            if (!string.IsNullOrWhiteSpace(loop.FirstCommandChainStructuralDirtyReason))
+                ImGui.TextWrapped($"Structural: {loop.FirstCommandChainStructuralDirtyReason}");
+            if (!string.IsNullOrWhiteSpace(loop.FirstCommandChainDescriptorGenerationMismatch))
+                ImGui.TextWrapped($"Descriptor: {loop.FirstCommandChainDescriptorGenerationMismatch}");
+            if (!string.IsNullOrWhiteSpace(loop.FirstCommandChainResourcePlanRevisionMismatch))
+                ImGui.TextWrapped($"Resource Plan: {loop.FirstCommandChainResourcePlanRevisionMismatch}");
         }
         if (!string.IsNullOrWhiteSpace(stats.VulkanDescriptorFallbackSummary) &&
             ImGui.CollapsingHeader("Vulkan Descriptor Fallbacks"))
