@@ -1547,12 +1547,44 @@ namespace XREngine.Rendering.Vulkan
             return (buffer, allocation.Memory);
         }
 
-        /// <summary>Legacy path for non-VMA device-address buffers that need special allocation flags.</summary>
+        /// <summary>
+        /// Creates a buffer backed by a dedicated <c>vkAllocateMemory</c> allocation.
+        /// Use this for persistently mapped renderer-owned buffers whose map lifetime
+        /// must not depend on allocator suballocation bookkeeping during shutdown.
+        /// </summary>
+        internal (Buffer buffer, DeviceMemory memory) CreateDedicatedBufferRaw(
+            ulong bufferSize,
+            BufferUsageFlags usage,
+            MemoryPropertyFlags properties,
+            bool enableDeviceAddress = false)
+        {
+            ThrowIfDeviceLostForResourceCreation("CreateDedicatedBufferRaw");
+
+            bufferSize = Math.Max(bufferSize, 1UL);
+            if (enableDeviceAddress)
+                usage |= BufferUsageFlags.ShaderDeviceAddressBit;
+
+            BufferCreateInfo bufferInfo = new()
+            {
+                SType = StructureType.BufferCreateInfo,
+                Size = bufferSize,
+                Usage = usage,
+                SharingMode = SharingMode.Exclusive
+            };
+
+            if (Api!.CreateBuffer(device, ref bufferInfo, null, out Buffer buffer) != Result.Success)
+                throw new Exception("Failed to create dedicated Vulkan buffer.");
+
+            return CreateBufferRawLegacy(buffer, usage, properties, bufferSize, enableDeviceAddress);
+        }
+
+        /// <summary>Legacy path for direct Vulkan memory allocations, including non-VMA device-address buffers.</summary>
         private (Buffer buffer, DeviceMemory memory) CreateBufferRawLegacy(
             Buffer buffer,
             BufferUsageFlags usage,
             MemoryPropertyFlags properties,
-            ulong bufferSize)
+            ulong bufferSize,
+            bool enableDeviceAddress = true)
         {
             MemoryRequirements memoryRequirements = Api!.GetBufferMemoryRequirements(device, buffer);
             MemoryAllocateInfo memoryInfo = new()
@@ -1569,12 +1601,14 @@ namespace XREngine.Rendering.Vulkan
                 Flags = MemoryAllocateFlags.DeviceAddressBit,
                 DeviceMask = 0,
             };
-            memoryInfo.PNext = &memoryAllocateFlagsInfo;
+            if (enableDeviceAddress)
+                memoryInfo.PNext = &memoryAllocateFlagsInfo;
 
             if (Api.AllocateMemory(device, ref memoryInfo, null, out DeviceMemory memory) != Result.Success)
             {
                 Api.DestroyBuffer(device, buffer, null);
-                throw new Exception("Failed to allocate Vulkan buffer memory (device-address).");
+                string description = enableDeviceAddress ? "device-address" : "dedicated";
+                throw new Exception($"Failed to allocate Vulkan buffer memory ({description}).");
             }
 
             RecordAllocationTelemetry(properties, (long)memoryInfo.AllocationSize);
@@ -1587,7 +1621,14 @@ namespace XREngine.Rendering.Vulkan
                 properties,
                 -1);
             _legacyBufferAllocations[buffer.Handle] = allocation;
-            RecordBufferAllocationDiagnostics(buffer, usage, properties, allocation, bufferSize, enableDeviceAddress: true, "LegacyDeviceAddress");
+            RecordBufferAllocationDiagnostics(
+                buffer,
+                usage,
+                properties,
+                allocation,
+                bufferSize,
+                enableDeviceAddress,
+                enableDeviceAddress ? "LegacyDeviceAddress" : "Dedicated");
 
             Result bindResult = Api.BindBufferMemory(device, buffer, memory, 0);
             if (bindResult != Result.Success)

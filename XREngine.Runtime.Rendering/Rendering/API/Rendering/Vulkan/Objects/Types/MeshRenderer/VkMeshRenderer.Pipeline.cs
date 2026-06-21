@@ -1483,14 +1483,19 @@ public unsafe partial class VulkanRenderer
 				if (pass.PassIndex != passIndex)
 					continue;
 
+				bool hasDepthStencilUsage = false;
+				bool hasDepthStencilWriteUsage = false;
 				foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
 				{
-					if (usage.Access != ERenderGraphAccess.Read)
-						continue;
-
 					if (usage.ResourceType is ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment)
-						return true;
+					{
+						hasDepthStencilUsage = true;
+						if (usage.Access is ERenderGraphAccess.Write or ERenderGraphAccess.ReadWrite)
+							hasDepthStencilWriteUsage = true;
+					}
 				}
+
+				return hasDepthStencilUsage && !hasDepthStencilWriteUsage;
 			}
 
 			return false;

@@ -14,16 +14,16 @@ layout(location = 0) in vec3 FragPos;
 uniform sampler2DArray Normal;
 uniform sampler2DArray DepthView;
 
-uniform float Radius = 4.052f;
-uniform float Bias = 0.1054f;
-uniform float Power = 2.503f; // Unused in gather — applied post-denoise in DeferredLightCombine
+uniform float Radius = 2.2f;
+uniform float Bias = 0.06f;
+uniform float Power = 1.35f; // Unused in gather - applied post-denoise in DeferredLightCombine
 uniform int SliceCount = 5;
 uniform int StepsPerSlice = 10;
 uniform float FalloffStartRatio = 0.4f;
 uniform float ThicknessHeuristic = 1.0f;
 uniform bool UseInputNormals = true;
 uniform bool UseVisibilityBitmask = true;
-uniform float VisibilityBitmaskThickness = 1.5002f;
+uniform float VisibilityBitmaskThickness = 0.12f;
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
@@ -60,9 +60,12 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 viewMatrix, mat4 inverseProjMat
     float depthY = texture(DepthView, vec3(uvY, gl_ViewID_OVR)).r;
     if (AOIsFarDepth(depthX) || AOIsFarDepth(depthY))
         return vec3(0.0f, 0.0f, 1.0f);
-    vec3 posX = XRENGINE_ViewPosFromDepthRaw(depthX, uvX, inverseProjMatrix);
-    vec3 posY = XRENGINE_ViewPosFromDepthRaw(depthY, uvY, inverseProjMatrix);
-    return normalize(cross(posX - centerPos, posY - centerPos));
+    vec3 posX = AOViewPosFromDepth(depthX, uvX, inverseProjMatrix);
+    vec3 posY = AOViewPosFromDepth(depthY, uvY, inverseProjMatrix);
+    vec3 deltaY = posY - centerPos;
+    if (FramebufferTextureYDirection == 1)
+        deltaY = -deltaY;
+    return normalize(cross(posX - centerPos, deltaY));
 }
 
 float ComputeRadiusPixels(float radiusVS, float viewDepth, mat4 projMatrix)
@@ -74,6 +77,15 @@ float ComputeRadiusPixels(float radiusVS, float viewDepth, mat4 projMatrix)
 float InterleavedGradientNoise(vec2 pixel)
 {
     return fract(52.9829189f * fract(dot(pixel, vec2(0.06711056f, 0.00583715f))));
+}
+
+float ComputeScreenEdgeFade(vec2 uv, float radiusPixels)
+{
+    vec2 screenSize = vec2(textureSize(DepthView, 0).xy);
+    vec2 edgePixels = min(uv, 1.0f - uv) * screenSize;
+    float nearestEdgePixels = min(edgePixels.x, edgePixels.y);
+    float fadePixels = clamp(radiusPixels * 0.08f, 2.0f, 8.0f);
+    return smoothstep(0.0f, fadePixels, nearestEdgePixels);
 }
 
 // Canonical IntegrateArc from Jimenez et al. 2016 (Eq. 10)
@@ -129,6 +141,15 @@ uint AccumulateVisibilitySectors(vec3 deltaPos, vec3 viewDir, float normalAngle,
     return UpdateSectors(minHorizon, maxHorizon, occludedSectors);
 }
 
+float ComputeSampleFalloff(vec3 delta, float dist, vec3 viewDir, float falloffStart, float radiusVS, float thicknessLimit)
+{
+    float falloff = 1.0f - smoothstep(falloffStart, radiusVS, dist);
+    float depthBehind = max(0.0f, -dot(delta, viewDir));
+    if (thicknessLimit > 0.0f)
+        falloff *= 1.0f - smoothstep(0.0f, thicknessLimit, depthBehind);
+    return clamp(falloff, 0.0f, 1.0f);
+}
+
 void main()
 {
     if (FragPos.x > 1.0f || FragPos.y > 1.0f)
@@ -149,7 +170,7 @@ void main()
         OutIntensity = 1.0f;
         return;
     }
-    vec3 centerPos = XRENGINE_ViewPosFromDepthRaw(depth, uv, inverseProjMatrix);
+    vec3 centerPos = AOViewPosFromDepth(depth, uv, inverseProjMatrix);
     vec3 centerNormal = GetViewNormal(uv, centerPos, viewMatrix, inverseProjMatrix);
     vec3 viewDir = normalize(-centerPos);
 
@@ -172,8 +193,9 @@ void main()
     {
         float phi = baseAngle + (PI * float(sliceIndex)) / float(sliceCount);
         vec2 screenDir = vec2(cos(phi), sin(phi));
+        vec2 clipDir = AOClipDirectionFromTextureDirection(screenDir);
 
-        vec3 sliceTangent = normalize(vec3(screenDir.x * invProjX, screenDir.y * invProjY, 0.0f));
+        vec3 sliceTangent = normalize(vec3(clipDir.x * invProjX, clipDir.y * invProjY, 0.0f));
         sliceTangent = normalize(sliceTangent - viewDir * dot(sliceTangent, viewDir));
         vec3 slicePlaneN = normalize(cross(viewDir, sliceTangent));
 
@@ -193,6 +215,7 @@ void main()
         float h1 = HALF_PI;
         float h2 = HALF_PI;
         uint occludedSectors = 0u;
+        float occludedSectorWeight = 0.0f;
 
         for (int step = 0; step < stepCount; ++step)
         {
@@ -206,7 +229,7 @@ void main()
                 float fDepth = texture(DepthView, vec3(fUV, gl_ViewID_OVR)).r;
                 if (!AOIsFarDepth(fDepth))
                 {
-                    vec3 fPos = XRENGINE_ViewPosFromDepthRaw(fDepth, fUV, inverseProjMatrix);
+                    vec3 fPos = AOViewPosFromDepth(fDepth, fUV, inverseProjMatrix);
                     vec3 delta = fPos - centerPos;
                     float dist = length(delta);
 
@@ -214,7 +237,14 @@ void main()
                     {
                         if (UseVisibilityBitmask)
                         {
-                            occludedSectors = AccumulateVisibilitySectors(delta, viewDir, visibilityBitmaskNormalAngle, 1.0f, bitmaskThickness, occludedSectors);
+                            float falloff = ComputeSampleFalloff(delta, dist, viewDir, falloffStart, radiusVS, thicknessLimit);
+                            if (falloff > 0.01f)
+                            {
+                                uint previousSectors = occludedSectors;
+                                uint updatedSectors = AccumulateVisibilitySectors(delta, viewDir, visibilityBitmaskNormalAngle, 1.0f, bitmaskThickness * falloff, occludedSectors);
+                                occludedSectorWeight += float(bitCount(updatedSectors & ~previousSectors)) * falloff;
+                                occludedSectors = updatedSectors;
+                            }
                         }
                         else
                         {
@@ -226,12 +256,7 @@ void main()
                                 projDelta /= projLen;
                                 float candidateH = FastAcos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
 
-                                float falloff = 1.0f - smoothstep(falloffStart, radiusVS, dist);
-
-                                float depthBehind = max(0.0f, -dot(delta, viewDir));
-                                if (thicknessLimit > 0.0f)
-                                    falloff *= 1.0f - smoothstep(0.0f, thicknessLimit, depthBehind);
-
+                                float falloff = ComputeSampleFalloff(delta, dist, viewDir, falloffStart, radiusVS, thicknessLimit);
                                 candidateH = mix(HALF_PI, candidateH, falloff);
                                 candidateH = clamp(candidateH + Bias, 0.0f, HALF_PI);
                                 h1 = min(h1, candidateH);
@@ -248,7 +273,7 @@ void main()
                 float bDepth = texture(DepthView, vec3(bUV, gl_ViewID_OVR)).r;
                 if (!AOIsFarDepth(bDepth))
                 {
-                    vec3 bPos = XRENGINE_ViewPosFromDepthRaw(bDepth, bUV, inverseProjMatrix);
+                    vec3 bPos = AOViewPosFromDepth(bDepth, bUV, inverseProjMatrix);
                     vec3 delta = bPos - centerPos;
                     float dist = length(delta);
 
@@ -256,7 +281,14 @@ void main()
                     {
                         if (UseVisibilityBitmask)
                         {
-                            occludedSectors = AccumulateVisibilitySectors(delta, viewDir, visibilityBitmaskNormalAngle, -1.0f, bitmaskThickness, occludedSectors);
+                            float falloff = ComputeSampleFalloff(delta, dist, viewDir, falloffStart, radiusVS, thicknessLimit);
+                            if (falloff > 0.01f)
+                            {
+                                uint previousSectors = occludedSectors;
+                                uint updatedSectors = AccumulateVisibilitySectors(delta, viewDir, visibilityBitmaskNormalAngle, -1.0f, bitmaskThickness * falloff, occludedSectors);
+                                occludedSectorWeight += float(bitCount(updatedSectors & ~previousSectors)) * falloff;
+                                occludedSectors = updatedSectors;
+                            }
                         }
                         else
                         {
@@ -268,12 +300,7 @@ void main()
                                 projDelta /= projLen;
                                 float candidateH = FastAcos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
 
-                                float falloff = 1.0f - smoothstep(falloffStart, radiusVS, dist);
-
-                                float depthBehind = max(0.0f, -dot(delta, viewDir));
-                                if (thicknessLimit > 0.0f)
-                                    falloff *= 1.0f - smoothstep(0.0f, thicknessLimit, depthBehind);
-
+                                float falloff = ComputeSampleFalloff(delta, dist, viewDir, falloffStart, radiusVS, thicknessLimit);
                                 candidateH = mix(HALF_PI, candidateH, falloff);
                                 candidateH = clamp(candidateH + Bias, 0.0f, HALF_PI);
                                 h2 = min(h2, candidateH);
@@ -285,11 +312,12 @@ void main()
         }
 
         float sliceVis = UseVisibilityBitmask
-            ? 1.0f - float(bitCount(occludedSectors)) / float(VISIBILITY_BITMASK_SECTOR_COUNT)
+            ? 1.0f - occludedSectorWeight / float(VISIBILITY_BITMASK_SECTOR_COUNT)
             : projNLen * (IntegrateArc(h1, gamma) + IntegrateArc(h2, -gamma));
         visibility += clamp(sliceVis, 0.0f, 1.0f);
     }
 
     visibility = clamp(visibility / float(sliceCount), 0.0f, 1.0f);
+    visibility = mix(1.0f, visibility, ComputeScreenEdgeFade(uv, radiusPixels));
     OutIntensity = visibility;
 }

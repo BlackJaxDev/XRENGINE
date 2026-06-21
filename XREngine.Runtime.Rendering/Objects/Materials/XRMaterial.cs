@@ -1246,6 +1246,7 @@ namespace XREngine.Rendering
                     ETransparencyMode.WeightedBlendedOit => ShaderHelper.GetWeightedBlendedOitForwardVariant(shader),
                     ETransparencyMode.PerPixelLinkedList => ShaderHelper.GetPerPixelLinkedListForwardVariant(shader),
                     ETransparencyMode.DepthPeeling => ShaderHelper.GetDepthPeelingForwardVariant(shader),
+                    _ when keepDeferredBase && ShaderHelper.IsDeferredShader(shader) => null,
                     _ when keepDeferredBase => ShaderHelper.GetDeferredVariantOfShader(shader),
                     _ => ShaderHelper.GetStandardForwardVariant(shader),
                 };

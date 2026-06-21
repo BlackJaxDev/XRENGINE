@@ -729,6 +729,7 @@ public unsafe partial class VulkanRenderer
         // line/point geometry shaders) must read these snapshots instead.
         int RenderAreaWidth,
         int RenderAreaHeight,
+        LayeredShadowUniformState ShadowUniformState,
         ComputeDispatchSnapshot? ProgramBindingSnapshot);
 
     private static bool ViewportEquals(in Viewport a, in Viewport b)
@@ -1351,7 +1352,8 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
-            ComputeDispatchSnapshot? programBindingSnapshot = CaptureProgramBindingSnapshot(effectiveMaterial);
+            LayeredShadowUniformState shadowUniformState = LayeredShadowUniformState.CaptureFromCurrentRenderingState();
+            ComputeDispatchSnapshot? programBindingSnapshot = CaptureProgramBindingSnapshot(effectiveMaterial, shadowUniformState);
             IndexedViewportScissorSnapshot indexedViewportScissors = Renderer.GetCurrentIndexedViewportScissorSnapshot();
             uint viewportScissorCount = indexedViewportScissors.Count > 1 ? indexedViewportScissors.Count : 1u;
 
@@ -1405,6 +1407,7 @@ public unsafe partial class VulkanRenderer
                 cameraRightSnapshot,
                 renderAreaWidthSnapshot,
                 renderAreaHeightSnapshot,
+                shadowUniformState,
                 programBindingSnapshot);
 
             FrameOpContext context = Renderer.CaptureFrameOpContext();
@@ -1415,7 +1418,7 @@ public unsafe partial class VulkanRenderer
                 context));
         }
 
-        private ComputeDispatchSnapshot? CaptureProgramBindingSnapshot(XRMaterial material)
+        private ComputeDispatchSnapshot? CaptureProgramBindingSnapshot(XRMaterial material, in LayeredShadowUniformState shadowUniformState)
         {
             if (!MeshRenderer.CaptureUniformsOnRender || !MeshRenderer.HasSettingUniformsHandlers)
                 return null;
@@ -1426,15 +1429,46 @@ public unsafe partial class VulkanRenderer
             VulkanFixedFunctionStateSnapshot stateSnapshot = Renderer.CaptureFixedFunctionState();
             try
             {
-                Renderer.SetMaterialUniforms(material, programData);
+                Renderer.SetMaterialUniforms(material, programData, shadowUniformState);
                 MeshRenderer.OnSettingUniforms(programData, programData);
-                MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material);
-                return program.CaptureComputeSnapshot();
+                MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, shadowUniformState);
+                ComputeDispatchSnapshot snapshot = program.CaptureComputeSnapshot();
+                LogGizmoBindingSnapshot(material, snapshot, "capture");
+                return snapshot;
             }
             finally
             {
                 Renderer.RestoreFixedFunctionState(stateSnapshot);
             }
+        }
+
+        private void LogGizmoBindingSnapshot(XRMaterial material, ComputeDispatchSnapshot snapshot, string phase)
+        {
+            if (!MaterialBindingDiagnosticsEnabled || !IsGizmoDiagnosticProgram())
+                return;
+
+            Debug.MeshesWarningEvery(
+                $"Vulkan.GizmoBindingSnapshot.{GetHashCode()}.{_program?.Data?.Name}.{material.Name}.{phase}",
+                TimeSpan.FromSeconds(1),
+                "[VkGizmoBindingSnapshot] phase={0} program='{1}' mesh='{2}' material='{3}' uniforms={4} MatColor={5} LineWidth={6} ArrowHeadLengthPixels={7} ArrowHeadHalfWidthPixels={8}",
+                phase,
+                _program?.Data?.Name ?? "<null>",
+                Mesh?.Name ?? "<null>",
+                material.Name ?? "<null>",
+                snapshot.Uniforms.Count,
+                FormatSnapshotUniform(snapshot, "MatColor"),
+                FormatSnapshotUniform(snapshot, "LineWidth"),
+                FormatSnapshotUniform(snapshot, "ArrowHeadLengthPixels"),
+                FormatSnapshotUniform(snapshot, "ArrowHeadHalfWidthPixels"));
+        }
+
+        private static string FormatSnapshotUniform(ComputeDispatchSnapshot snapshot, string name)
+        {
+            if (!snapshot.Uniforms.TryGetValue(name, out ProgramUniformValue value))
+                return "<missing>";
+
+            string arraySuffix = value.IsArray ? "[]" : string.Empty;
+            return $"{value.Type}{arraySuffix}:{FormatMaterialUniformDiagnosticValue(value.Value)}";
         }
 
         private static SampleCountFlags ResolveRasterizationSamples(XRFrameBuffer? target)

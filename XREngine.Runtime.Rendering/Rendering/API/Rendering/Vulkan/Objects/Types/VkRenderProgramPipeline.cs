@@ -219,7 +219,7 @@ public unsafe partial class VulkanRenderer
         private static PushConstantRange CreateCommonPushConstantRange()
             => new()
             {
-                StageFlags = ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit | ShaderStageFlags.ComputeBit,
+                StageFlags = CommonPushConstantStageFlags,
                 Offset = 0,
                 Size = CommonPushConstantSize
             };

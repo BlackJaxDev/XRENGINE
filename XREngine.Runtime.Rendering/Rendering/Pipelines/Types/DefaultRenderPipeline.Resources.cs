@@ -492,9 +492,8 @@ public partial class DefaultRenderPipeline
         builder.FrameBuffer(PostProcessOutputFBOName)
             .Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
             .Color(0, PostProcessOutputTextureName)
-            .DepthStencil(DepthStencilTextureName)
             .Factory(CreatePostProcessOutputFBO)
             .Add();
 

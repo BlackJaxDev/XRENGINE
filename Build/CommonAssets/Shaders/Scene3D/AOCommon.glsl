@@ -48,6 +48,13 @@ vec2 AOClipXYFromTextureUV(vec2 uv)
     return uv * 2.0f - 1.0f;
 }
 
+vec2 AOClipDirectionFromTextureDirection(vec2 textureDirection)
+{
+    if (FramebufferTextureYDirection == 1)
+        textureDirection.y = -textureDirection.y;
+    return textureDirection;
+}
+
 vec2 AOTextureUVFromFragPos(vec3 fragPos)
 {
     // FullscreenTri.vs emits clip-space FragPos. Deriving AO UVs from the

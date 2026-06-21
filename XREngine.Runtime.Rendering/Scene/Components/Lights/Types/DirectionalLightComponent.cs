@@ -436,6 +436,14 @@ namespace XREngine.Components.Lights
                 case nameof(CascadeCount):
                     EnsureCascadeShadowResources();
                     break;
+                case nameof(EnableCascadedShadows):
+                    ClearDirectionalAtlasSlots();
+                    if (EnableCascadedShadows)
+                        EnsureCascadeShadowResources();
+                    else
+                        ClearCascadeShadows();
+                    EnsureShadowMapForActiveDynamicLight();
+                    break;
                 case nameof(ShadowMapStorageFormat):
                 case nameof(ShadowMapEncoding):
                 case nameof(ShadowMomentUseMipmaps):

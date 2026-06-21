@@ -8,12 +8,13 @@ namespace XREngine.Rendering.RenderGraph;
 public sealed class RenderPassMetadataCollection
 {
     private readonly Dictionary<int, RenderPassMetadata> _passes = new();
+    private int _nextDeclarationOrder;
 
     public RenderPassBuilder ForPass(int passIndex, string? name = null, ERenderGraphPassStage stage = ERenderGraphPassStage.Graphics)
     {
         if (!_passes.TryGetValue(passIndex, out RenderPassMetadata? metadata))
         {
-            metadata = new RenderPassMetadata(passIndex, name ?? $"Pass{passIndex}", stage);
+            metadata = new RenderPassMetadata(passIndex, name ?? $"Pass{passIndex}", stage, _nextDeclarationOrder++);
             _passes.Add(passIndex, metadata);
         }
         else

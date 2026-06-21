@@ -829,6 +829,7 @@ namespace XREngine
         private const int ImportedSurfaceDetailNormalMapMode = 0;
         private const int ImportedSurfaceDetailHeightMapMode = 1;
         private const float ImportedHeightMapScale = 1.0f;
+        private const string ImportedHeightMapShaderDefine = "XRENGINE_HEIGHTMAP_MODE";
 
         private static TextureType NormalizeTextureType(TextureType textureType)
             => textureType switch
@@ -909,6 +910,11 @@ namespace XREngine
             parameters[^2] = new ShaderInt(isHeightMap ? ImportedSurfaceDetailHeightMapMode : ImportedSurfaceDetailNormalMapMode, "NormalMapMode");
             parameters[^1] = new ShaderFloat(isHeightMap ? ImportedHeightMapScale : 0.0f, "HeightMapScale");
         }
+
+        private static XRShader SelectSurfaceDetailShader(XRShader shader, bool isHeightMap)
+            => isHeightMap
+                ? ShaderHelper.CreateDefinedShaderVariant(shader, ImportedHeightMapShaderDefine) ?? shader
+                : shader;
 
         public static void MakeMaterialDeferred(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
@@ -1007,32 +1013,32 @@ namespace XREngine
                     {
                         // Sparse metallic slot is intentional: the shader expects Texture2=metallic and Texture3=roughness.
                         mat.Textures = [diffuse, normal, metallic, roughness];
-                        mat.Shaders.Add(ShaderHelper.LitTextureNormalRoughnessMetallicDeferred());
+                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalRoughnessMetallicDeferred(), usesHeightMap));
                     }
                     else if (hasNormal && hasMetallic)
                     {
                         mat.Textures = [diffuse, normal, metallic];
-                        mat.Shaders.Add(ShaderHelper.LitTextureNormalMetallicFragDeferred());
+                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalMetallicFragDeferred(), usesHeightMap));
                     }
                     else if (hasNormal && hasSpecular && hasAlphaMask)
                     {
                         mat.Textures = [diffuse, normal, specular, alphaMask];
-                        mat.Shaders.Add(ShaderHelper.LitTextureNormalSpecAlphaFragDeferred());
+                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalSpecAlphaFragDeferred(), usesHeightMap));
                     }
                     else if (hasNormal && hasSpecular)
                     {
                         mat.Textures = [diffuse, normal, specular];
-                        mat.Shaders.Add(ShaderHelper.LitTextureNormalSpecFragDeferred());
+                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalSpecFragDeferred(), usesHeightMap));
                     }
                     else if (hasNormal && hasAlphaMask)
                     {
                         mat.Textures = [diffuse, normal, alphaMask];
-                        mat.Shaders.Add(ShaderHelper.LitTextureNormalAlphaFragDeferred());
+                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalAlphaFragDeferred(), usesHeightMap));
                     }
                     else if (hasNormal)
                     {
                         mat.Textures = [diffuse, normal];
-                        mat.Shaders.Add(ShaderHelper.LitTextureNormalFragDeferred());
+                        mat.Shaders.Add(SelectSurfaceDetailShader(ShaderHelper.LitTextureNormalFragDeferred(), usesHeightMap));
                     }
                     else if (hasMetallic && hasRoughness)
                     {
@@ -1212,6 +1218,9 @@ namespace XREngine
                     shader = ShaderHelper.LitTextureNormalFragForward();
                 else
                     shader = ShaderHelper.LitTextureFragForward();
+
+                if (hasNormal)
+                    shader = SelectSurfaceDetailShader(shader, usesHeightMap);
 
                 mat.Shaders.Add(shader);
                 if (hasAlphaMask)

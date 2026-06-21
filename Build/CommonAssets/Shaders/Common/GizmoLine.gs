@@ -37,8 +37,10 @@ bool ClipLineToNearPlane(inout vec4 a, inout vec4 b)
     return a.w > kEpsilon && b.w > kEpsilon;
 }
 
-void EmitLineVertex(vec4 position, float distancePixels)
+void EmitLineVertex(vec4 position, float distancePixels, float halfWidthPixels)
 {
+    GizmoLineColor = MatColor;
+    GizmoLineHalfWidthPixels = halfWidthPixels;
     GizmoLineDistancePixels = distancePixels;
     gl_Position = position;
     EmitVertex();
@@ -50,8 +52,6 @@ void main()
     vec4 end = gl_in[1].gl_Position;
     if (!ClipLineToNearPlane(start, end))
         return;
-
-    GizmoLineColor = MatColor;
 
     float w = max(1.0, ScreenWidth);
     float h = max(1.0, ScreenHeight);
@@ -68,15 +68,13 @@ void main()
     float halfWidthPixels = max(0.45, LineWidth * 0.5);
     float aaPixels = 0.85;
     float rasterHalfWidthPixels = halfWidthPixels + aaPixels;
-    GizmoLineHalfWidthPixels = halfWidthPixels;
-
     vec2 offsetNdc = (perpScreen * rasterHalfWidthPixels) * (2.0 / viewport);
     vec4 startOffset = vec4(offsetNdc * start.w, 0.0, 0.0);
     vec4 endOffset = vec4(offsetNdc * end.w, 0.0, 0.0);
 
-    EmitLineVertex(start + startOffset, rasterHalfWidthPixels);
-    EmitLineVertex(start - startOffset, -rasterHalfWidthPixels);
-    EmitLineVertex(end + endOffset, rasterHalfWidthPixels);
-    EmitLineVertex(end - endOffset, -rasterHalfWidthPixels);
+    EmitLineVertex(start + startOffset, rasterHalfWidthPixels, halfWidthPixels);
+    EmitLineVertex(start - startOffset, -rasterHalfWidthPixels, halfWidthPixels);
+    EmitLineVertex(end + endOffset, rasterHalfWidthPixels, halfWidthPixels);
+    EmitLineVertex(end - endOffset, -rasterHalfWidthPixels, halfWidthPixels);
     EndPrimitive();
 }

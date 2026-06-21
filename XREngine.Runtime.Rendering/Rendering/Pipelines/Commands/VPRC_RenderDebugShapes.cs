@@ -101,11 +101,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                     target.ColorAccess,
                     ERenderPassLoadOp.Load,
                     target.GetColorStoreOp());
-                builder.UseDepthAttachment(
-                    MakeFboDepthResource(target.Name),
-                    target.DepthAccess,
+                UseRenderTargetDepthStencilAttachments(
+                    builder,
+                    target,
                     ERenderPassLoadOp.Load,
-                    target.GetDepthStoreOp());
+                    ERenderPassLoadOp.Load);
             }
         }
     }

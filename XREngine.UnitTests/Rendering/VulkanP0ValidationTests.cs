@@ -345,6 +345,32 @@ public sealed class VulkanP0ValidationTests
         allocationInfo.ShouldNotContain("VMA_MEMORY_USAGE_AUTO");
     }
 
+    [Test]
+    public void VulkanVmaBridge_GuardsNativeUnmapBalance()
+    {
+        string source = ReadWorkspaceFile("Build/Native/VulkanMemoryAllocatorBridge/VulkanMemoryAllocatorBridge.cpp");
+        string mapMethod = SliceMethod(source, "xre_vma_map_memory");
+        string unmapMethod = SliceMethod(source, "xre_vma_unmap_memory");
+        string freeMethod = SliceMethod(source, "xre_vma_free");
+
+        source.ShouldContain("g_allocationMapCounts");
+        mapMethod.ShouldContain("recordAllocationMap(allocation)");
+        unmapMethod.ShouldContain("consumeAllocationMap(allocation)");
+        freeMethod.ShouldContain("takeAllocationMapCount(allocation)");
+        freeMethod.ShouldContain("vmaUnmapMemory");
+    }
+
+    [Test]
+    public void VulkanDynamicUniformRingBuffer_UsesDedicatedMemoryForPersistentMap()
+    {
+        string ringSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanDynamicUniformRingBuffer.cs");
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkDataBuffer.cs");
+
+        ringSource.ShouldContain("renderer.CreateDedicatedBufferRaw");
+        bufferSource.ShouldContain("CreateDedicatedBufferRaw");
+        bufferSource.ShouldContain("enableDeviceAddress ? \"LegacyDeviceAddress\" : \"Dedicated\"");
+    }
+
     #endregion
 
     #region Stencil Pick Pipeline Contract

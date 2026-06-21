@@ -2068,7 +2068,7 @@ public unsafe partial class VulkanRenderer
         if (activeUsages is null)
             return pass;
 
-        RenderPassMetadata filtered = new(pass.PassIndex, pass.Name, pass.Stage);
+        RenderPassMetadata filtered = new(pass.PassIndex, pass.Name, pass.Stage, pass.DeclarationOrder);
         foreach (RenderPassResourceUsage usage in activeUsages)
             filtered.AddUsage(usage);
 
@@ -2533,6 +2533,7 @@ public unsafe partial class VulkanRenderer
         foreach (RenderPassMetadata pass in passMetadata)
         {
             hash.Add(pass.PassIndex);
+            hash.Add(pass.DeclarationOrder);
             hash.Add((int)pass.Stage);
             hash.Add(pass.Name, StringComparer.Ordinal);
             hash.Add(pass.Revision);
@@ -2567,6 +2568,7 @@ public unsafe partial class VulkanRenderer
         foreach (RenderPassMetadata pass in passMetadata)
         {
             hash.Add(pass.PassIndex);
+            hash.Add(pass.DeclarationOrder);
             hash.Add(pass.Revision);
         }
 
@@ -2599,6 +2601,7 @@ public unsafe partial class VulkanRenderer
             foreach (RenderPassMetadata pass in passMetadata.OrderBy(static p => p.PassIndex))
             {
                 hash.Add(pass.PassIndex);
+                hash.Add(pass.DeclarationOrder);
                 hash.Add((int)pass.Stage);
                 hash.Add(pass.Name, StringComparer.Ordinal);
 

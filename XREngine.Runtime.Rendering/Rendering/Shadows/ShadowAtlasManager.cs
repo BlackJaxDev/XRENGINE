@@ -1387,22 +1387,29 @@ public sealed class ShadowAtlasManager
                     (CanRenderGroupedTileSet(scheduled, budget, group.CascadeCount) || (budget > 0 && criticalDirectionalRefresh));
                 if (canRenderGroupedNow)
                 {
-                    bool groupedSucceeded = TryRenderDirectionalCascadeGroup(request, group, collectVisibleNow, out double groupedElapsedMs);
-                    RecordDirectionalGroupedRenderEvent(request, group, groupedElapsedMs, groupedSucceeded, criticalDirectionalRefresh);
+                    bool groupedSucceeded = TryRenderDirectionalCascadeGroup(
+                        request,
+                        group,
+                        collectVisibleNow,
+                        out double groupedElapsedMs,
+                        out bool usedSequentialFallback);
+                    RecordDirectionalGroupedRenderEvent(request, group, groupedElapsedMs, groupedSucceeded, usedSequentialFallback, criticalDirectionalRefresh);
                     if (groupedSucceeded)
                     {
+                        int lastGroupRequestIndex = FindLastDirectionalCascadeGroupRequestIndex(group, i);
                         scheduled += group.CascadeCount;
                         checkedTiles += group.CascadeCount;
 
                         if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds) &&
-                            !ShouldRenderRefreshPastTimeBudgetAtIndex(i + 1))
+                            !ShouldRenderRefreshPastTimeBudgetAtIndex(lastGroupRequestIndex + 1))
                         {
-                            int nextRequestIndex = i + 1;
+                            int nextRequestIndex = lastGroupRequestIndex + 1;
                             deferredByBudget = _requests.Count - nextRequestIndex;
                             firstDeferredRequestIndex = nextRequestIndex;
                             break;
                         }
 
+                        i = lastGroupRequestIndex;
                         continue;
                     }
 
@@ -2153,6 +2160,29 @@ public sealed class ShadowAtlasManager
         return false;
     }
 
+    private int FindLastDirectionalCascadeGroupRequestIndex(
+        in ShadowAtlasGroupedDirectionalCascadeAllocation group,
+        int firstRequestIndex)
+    {
+        int lastRequestIndex = firstRequestIndex;
+        for (int i = firstRequestIndex + 1; i < _requests.Count; i++)
+        {
+            ShadowMapRequest candidate = _requests[i];
+            if (candidate.ProjectionType != EShadowProjectionType.DirectionalCascade ||
+                candidate.Key.LightId != group.LightId ||
+                candidate.Key.Domain != group.Domain ||
+                candidate.Encoding != group.Encoding ||
+                !DirectionalCascadeGroupContainsCascade(group, candidate.FaceOrCascadeIndex))
+            {
+                continue;
+            }
+
+            lastRequestIndex = i;
+        }
+
+        return lastRequestIndex;
+    }
+
     private static bool DirectionalCascadeGroupContainsCascade(
         in ShadowAtlasGroupedDirectionalCascadeAllocation group,
         int cascadeIndex)
@@ -2197,10 +2227,12 @@ public sealed class ShadowAtlasManager
         ShadowMapRequest seedRequest,
         in ShadowAtlasGroupedDirectionalCascadeAllocation group,
         bool collectVisibleNow,
-        out double elapsedMs)
+        out double elapsedMs,
+        out bool usedSequentialFallback)
     {
         long start = Stopwatch.GetTimestamp();
         elapsedMs = 0.0;
+        usedSequentialFallback = false;
         if (seedRequest.Light is not DirectionalLightComponent light ||
             !GetEncodingState(group.AtlasKind, group.Encoding).TryGetPageResource(group.PageIndex, out ShadowAtlasPageResource? page) ||
             page is null)
@@ -2211,8 +2243,12 @@ public sealed class ShadowAtlasManager
 
         if (!light.RenderGroupedCascadeShadowAtlasTiles(group, page.FrameBuffer, collectVisibleNow))
         {
-            elapsedMs = ElapsedMilliseconds(start);
-            return false;
+            usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(light, group, collectVisibleNow);
+            if (!usedSequentialFallback)
+            {
+                elapsedMs = ElapsedMilliseconds(start);
+                return false;
+            }
         }
 
         for (int i = 0; i < group.CascadeCount; i++)
@@ -2239,6 +2275,44 @@ public sealed class ShadowAtlasManager
         }
 
         return true;
+    }
+
+    private bool TryRenderDirectionalCascadeGroupSequentially(
+        DirectionalLightComponent light,
+        in ShadowAtlasGroupedDirectionalCascadeAllocation group,
+        bool collectVisibleNow)
+    {
+        if (group.Members is null)
+            return false;
+
+        bool renderedAny = false;
+        for (int i = 0; i < group.CascadeCount; i++)
+        {
+            ShadowAtlasGroupedAllocationMember member = group.Members[i];
+            if ((uint)member.RecordIndex >= (uint)_frameAllocations.Count)
+                return false;
+
+            ShadowAtlasAllocation allocation = _frameAllocations[member.RecordIndex];
+            if (!TryFindRequest(allocation.Key, out ShadowMapRequest request) ||
+                request.Light != light ||
+                request.ProjectionType != EShadowProjectionType.DirectionalCascade)
+            {
+                return false;
+            }
+
+            if (!GetEncodingState(allocation.AtlasKind, request.Encoding).TryGetPageResource(allocation.PageIndex, out ShadowAtlasPageResource? page) ||
+                page is null)
+            {
+                return false;
+            }
+
+            if (!light.RenderCascadeShadowAtlasTile(request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow))
+                return false;
+
+            renderedAny = true;
+        }
+
+        return renderedAny;
     }
 
     private bool TryGetFirstPointFaceGroup(
@@ -2302,20 +2376,26 @@ public sealed class ShadowAtlasManager
         in ShadowAtlasGroupedDirectionalCascadeAllocation group,
         double elapsedMs,
         bool succeeded,
+        bool usedSequentialFallback,
         bool criticalBudgetBypassUsed)
     {
         if (seedRequest.Light is not DirectionalLightComponent light)
             return;
 
         if (succeeded)
-            _directionalGroupedFrame = true;
+        {
+            if (usedSequentialFallback)
+                _directionalSequentialFallbackFrame = true;
+            else
+                _directionalGroupedFrame = true;
+        }
 
         if (!succeeded)
         {
             XREngine.Debug.LightingWarningEvery(
                 $"ShadowAtlas.GroupedDirectionalCascade.Failed.{seedRequest.Key.LightId}",
                 TimeSpan.FromSeconds(2.0),
-                "[ShadowAtlas] Grouped directional cascade render failed for '{0}', cascades={1}, page={2}; leaving atlas tiles stale instead of falling back to sequential.",
+                "[ShadowAtlas] Grouped directional cascade render failed for '{0}', cascades={1}, page={2}; sequential fallback also failed, leaving atlas tiles stale.",
                 LightName(light),
                 group.CascadeCount,
                 group.PageIndex);
@@ -2327,12 +2407,12 @@ public sealed class ShadowAtlasManager
         _directionalAtlasRenderEvents.Add(new DirectionalAtlasRenderEvent(
             LightId: seedRequest.Key.LightId,
             RenderedCascades: succeeded ? group.CascadeCount : 0,
-            SequentialCascadeRender: false,
+            SequentialCascadeRender: usedSequentialFallback,
             GroupedRenderAttempted: true,
-            GroupedRenderSucceeded: succeeded,
+            GroupedRenderSucceeded: succeeded && !usedSequentialFallback,
             CriticalBudgetBypassUsed: criticalBudgetBypassUsed,
             SelectedCascadeBackend: light.EffectiveCascadeShadowRenderBackend,
-            FallbackReason: light.CascadeShadowRenderFallbackReason,
+            FallbackReason: usedSequentialFallback ? "GroupedAtlasRenderFailed" : light.CascadeShadowRenderFallbackReason,
             ElapsedShadowMilliseconds: elapsedMs));
     }
 

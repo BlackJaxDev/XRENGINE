@@ -804,12 +804,20 @@ namespace XREngine.Scene
             return false;
         }
 
-        private static bool HasSampleableDirectionalPrimaryAtlas(DirectionalLightComponent light)
-            => light.TryGetPrimaryAtlasSlot(out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot) &&
-               IsSampleableDirectionalAtlasSlot(slot);
-
-        private static bool HasSampleableDirectionalCascadeAtlas(DirectionalLightComponent light, int activeCascadeCount)
+        private bool HasSampleableDirectionalPrimaryAtlas(DirectionalLightComponent light)
         {
+            if (!TryGetDirectionalAtlasPageCount(light, out int pageCount))
+                return false;
+
+            return light.TryGetPrimaryAtlasSlot(out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot) &&
+                   IsSampleableDirectionalAtlasSlot(slot, pageCount);
+        }
+
+        private bool HasSampleableDirectionalCascadeAtlas(DirectionalLightComponent light, int activeCascadeCount)
+        {
+            if (!TryGetDirectionalAtlasPageCount(light, out int pageCount))
+                return false;
+
             int count = Math.Clamp(activeCascadeCount, 0, 8);
             if (count <= 0)
                 return false;
@@ -817,7 +825,7 @@ namespace XREngine.Scene
             for (int i = 0; i < count; i++)
             {
                 if (!light.TryGetCascadeAtlasSlot(i, out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot) ||
-                    !IsSampleableDirectionalAtlasSlot(slot))
+                    !IsSampleableDirectionalAtlasSlot(slot, pageCount))
                 {
                     return false;
                 }
@@ -826,11 +834,31 @@ namespace XREngine.Scene
             return true;
         }
 
-        private static bool IsSampleableDirectionalAtlasSlot(in DirectionalLightComponent.DirectionalCascadeAtlasSlot slot)
+        private bool TryGetDirectionalAtlasPageCount(DirectionalLightComponent light, out int pageCount)
+        {
+            ShadowMapFormatSelection shadowFormat = light.ResolveShadowMapFormat(preferredStorageFormat: null);
+            if (ShadowAtlas.TryGetPageTexture(
+                EShadowAtlasKind.Directional,
+                shadowFormat.Encoding,
+                pageIndex: 0,
+                out XRTexture2DArray atlasTexture))
+            {
+                pageCount = checked((int)Math.Max(1u, atlasTexture.Depth));
+                return true;
+            }
+
+            pageCount = 0;
+            return false;
+        }
+
+        private static bool IsSampleableDirectionalAtlasSlot(
+            in DirectionalLightComponent.DirectionalCascadeAtlasSlot slot,
+            int pageCount)
             => slot.HasAllocation &&
                slot.IsResident &&
                slot.LastRenderedFrame != 0u &&
                slot.PageIndex >= 0 &&
+               slot.PageIndex < pageCount &&
                slot.Fallback is ShadowFallbackMode.None or ShadowFallbackMode.StaleTile;
 
         private static bool ViewportTargetsWorld(XRViewport viewport, IRuntimeRenderWorld world)
@@ -924,7 +952,7 @@ namespace XREngine.Scene
             ShadowAtlasFrameData frameData = ShadowAtlas.PublishedFrameData;
             for (int i = 0; i < DynamicDirectionalLights.Count; i++)
             {
-                DynamicDirectionalLights[i].ClearCascadeAtlasSlots();
+                DynamicDirectionalLights[i].ClearDirectionalAtlasSlots();
                 DynamicDirectionalLights[i].SetShadowAtlasDiagnostic(default);
             }
 

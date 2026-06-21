@@ -14,6 +14,7 @@ public unsafe partial class VulkanRenderer
         private RenderPass _renderPass = default;
         private FrameBufferAttachmentSignature[]? _attachmentSignature;
         private ImageView[]? _attachmentViews;
+        private AttachmentTargetInfo[]? _attachmentTargets;
         private Extent2D[]? _attachmentExtents;
 
         public override VkObjectType Type { get; } = VkObjectType.Framebuffer;
@@ -32,6 +33,12 @@ public unsafe partial class VulkanRenderer
         /// The actual VkFramebuffer height (see <see cref="FramebufferWidth"/>).
         /// </summary>
         public uint FramebufferHeight { get; private set; }
+
+        /// <summary>
+        /// Number of framebuffer layers exposed by the attachment views.
+        /// Texture-array FBOs use this for layered shadow rendering.
+        /// </summary>
+        public uint FramebufferLayers { get; private set; } = 1u;
 
         internal uint AttachmentCount => (uint)(_attachmentSignature?.Length ?? 0);
 
@@ -237,6 +244,31 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        internal bool TryGetAttachmentTarget(
+            int attachmentIndex,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IFrameBufferAttachement? target,
+            out EFrameBufferAttachment attachment,
+            out int mipLevel,
+            out int layerIndex)
+        {
+            if (_attachmentTargets is not null &&
+                (uint)attachmentIndex < (uint)_attachmentTargets.Length)
+            {
+                AttachmentTargetInfo info = _attachmentTargets[attachmentIndex];
+                target = info.Target;
+                attachment = info.Attachment;
+                mipLevel = info.MipLevel;
+                layerIndex = info.LayerIndex;
+                return target is not null;
+            }
+
+            target = null;
+            attachment = default;
+            mipLevel = 0;
+            layerIndex = 0;
+            return false;
+        }
+
         internal Extent2D ResolveAttachmentCompatibleDrawExtent()
         {
             Extent2D[]? extents = _attachmentExtents;
@@ -270,6 +302,21 @@ public unsafe partial class VulkanRenderer
 
             var (width, height) = ResolveFramebufferExtent();
             return new Extent2D(width, height);
+        }
+
+        private static uint ResolveFramebufferLayers(ReadOnlySpan<AttachmentBuildInfo> attachments)
+        {
+            uint layers = uint.MaxValue;
+            bool found = false;
+
+            for (int i = 0; i < attachments.Length; i++)
+            {
+                uint attachmentLayers = Math.Max(attachments[i].LayerCount, 1u);
+                layers = found ? Math.Min(layers, attachmentLayers) : attachmentLayers;
+                found = true;
+            }
+
+            return found ? Math.Max(layers, 1u) : 1u;
         }
 
         private static FrameBufferAttachmentSignature[] ApplyInitialLayoutOverrides(
@@ -451,9 +498,11 @@ public unsafe partial class VulkanRenderer
             _renderPass = default;
             _attachmentSignature = null;
             _attachmentViews = null;
+            _attachmentTargets = null;
             _attachmentExtents = null;
             FramebufferWidth = 0;
             FramebufferHeight = 0;
+            FramebufferLayers = 1u;
             PostDeleted();
         }
 
@@ -462,21 +511,25 @@ public unsafe partial class VulkanRenderer
             AttachmentBuildInfo[] attachments = BuildAttachmentInfos();
             ImageView[] views = new ImageView[attachments.Length];
             FrameBufferAttachmentSignature[] signatures = new FrameBufferAttachmentSignature[attachments.Length];
+            AttachmentTargetInfo[] targetInfos = new AttachmentTargetInfo[attachments.Length];
             Extent2D[] extents = new Extent2D[attachments.Length];
 
             for (int i = 0; i < attachments.Length; i++)
             {
                 views[i] = attachments[i].View;
                 signatures[i] = attachments[i].Signature;
+                targetInfos[i] = attachments[i].TargetInfo;
                 extents[i] = attachments[i].Extent;
             }
 
             _attachmentSignature = signatures;
+            _attachmentTargets = targetInfos;
             _attachmentExtents = extents;
 
             var (fbWidth, fbHeight) = ResolveFramebufferExtent();
             FramebufferWidth = fbWidth;
             FramebufferHeight = fbHeight;
+            FramebufferLayers = ResolveFramebufferLayers(attachments);
 
             if (Renderer.UseDynamicRenderingRenderTargets)
             {
@@ -499,7 +552,7 @@ public unsafe partial class VulkanRenderer
                     PAttachments = viewsPtr,
                     Width = fbWidth,
                     Height = fbHeight,
-                    Layers = 1,
+                    Layers = FramebufferLayers,
                 };
 
                 fixed (Framebuffer* frameBufferPtr = &_frameBuffer)
@@ -515,13 +568,16 @@ public unsafe partial class VulkanRenderer
 
         private bool AttachmentStateMatches(AttachmentBuildInfo[] attachments, uint fbWidth, uint fbHeight)
         {
-            if (_attachmentViews is null || _attachmentSignature is null)
+            if (_attachmentViews is null || _attachmentSignature is null || _attachmentTargets is null)
                 return false;
 
-            if (_attachmentViews.Length != attachments.Length || _attachmentSignature.Length != attachments.Length)
+            if (_attachmentViews.Length != attachments.Length ||
+                _attachmentSignature.Length != attachments.Length ||
+                _attachmentTargets.Length != attachments.Length)
                 return false;
 
-            if (FramebufferWidth != fbWidth || FramebufferHeight != fbHeight)
+            if (FramebufferWidth != fbWidth || FramebufferHeight != fbHeight ||
+                FramebufferLayers != ResolveFramebufferLayers(attachments))
                 return false;
 
             for (int i = 0; i < attachments.Length; i++)
@@ -530,6 +586,9 @@ public unsafe partial class VulkanRenderer
                     return false;
 
                 if (!_attachmentSignature[i].Equals(attachments[i].Signature))
+                    return false;
+
+                if (!_attachmentTargets[i].Equals(attachments[i].TargetInfo))
                     return false;
             }
 
@@ -584,6 +643,7 @@ public unsafe partial class VulkanRenderer
         {
             FrameBufferAttachmentSignature[] planned = (FrameBufferAttachmentSignature[])_attachmentSignature!.Clone();
             HashSet<int> touchedAttachments = [];
+            HashSet<int> writeCapableDepthStencilAttachments = CollectWriteCapableDepthStencilAttachments(planned, pass, frameBufferName);
             string prefix = $"fbo::{frameBufferName}::";
 
             foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
@@ -633,7 +693,9 @@ public unsafe partial class VulkanRenderer
                             existing.StencilLoadOp,
                             existing.StencilStoreOp),
                     };
-                    updated = WithReferenceLayout(updated, ResolveAttachmentReferenceLayout(updated, usage));
+                    updated = WithReferenceLayout(
+                        updated,
+                        ResolveAttachmentReferenceLayout(updated, usage, writeCapableDepthStencilAttachments.Contains(index)));
                     ImageLayout finalLayout = ResolveAttachmentFinalLayoutFromNextConsumer(synchronization, pass, usage, updated);
                     if (finalLayout != ImageLayout.Undefined)
                         updated = WithFinalLayout(updated, finalLayout);
@@ -645,6 +707,35 @@ public unsafe partial class VulkanRenderer
 
             ValidateAttachmentSampleCounts(planned, touchedAttachments, pass, frameBufferName);
             return planned;
+        }
+
+        private static HashSet<int> CollectWriteCapableDepthStencilAttachments(
+            FrameBufferAttachmentSignature[] signatures,
+            RenderPassMetadata pass,
+            string frameBufferName)
+        {
+            HashSet<int> result = [];
+            string prefix = $"fbo::{frameBufferName}::";
+
+            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            {
+                if (!usage.IsAttachment ||
+                    usage.ResourceType is not (ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment) ||
+                    usage.Access == ERenderGraphAccess.Read ||
+                    !usage.ResourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string slot = usage.ResourceName[prefix.Length..];
+                if (string.IsNullOrWhiteSpace(slot))
+                    continue;
+
+                foreach (int index in ResolveMatchingAttachmentIndices(signatures, slot, usage, pass))
+                    result.Add(index);
+            }
+
+            return result;
         }
 
         private static int[] ResolveMatchingAttachmentIndices(
@@ -720,6 +811,9 @@ public unsafe partial class VulkanRenderer
                     return [i];
                 }
 
+                if (usage.ResourceType == ERenderPassResourceType.StencilAttachment)
+                    return [];
+
                 throw new InvalidOperationException(
                     $"Render pass '{pass.Name}' references depth slot '{slot}' but framebuffer has no depth attachment.");
             }
@@ -746,6 +840,9 @@ public unsafe partial class VulkanRenderer
 
                     return [i];
                 }
+
+                if (usage.ResourceType == ERenderPassResourceType.StencilAttachment)
+                    return [];
 
                 throw new InvalidOperationException(
                     $"Render pass '{pass.Name}' references stencil slot '{slot}' but framebuffer has no stencil attachment.");
@@ -914,12 +1011,13 @@ public unsafe partial class VulkanRenderer
 
         private static ImageLayout ResolveAttachmentReferenceLayout(
             FrameBufferAttachmentSignature signature,
-            RenderPassResourceUsage usage)
+            RenderPassResourceUsage usage,
+            bool passHasWriteCapableDepthStencilUsage)
         {
             if (signature.Role == AttachmentRole.Color)
                 return ImageLayout.ColorAttachmentOptimal;
 
-            return usage.Access == ERenderGraphAccess.Read
+            return usage.Access == ERenderGraphAccess.Read && !passHasWriteCapableDepthStencilUsage
                 ? ImageLayout.DepthStencilReadOnlyOptimal
                 : ImageLayout.DepthStencilAttachmentOptimal;
         }
@@ -990,7 +1088,13 @@ public unsafe partial class VulkanRenderer
                 {
                     uint slot = ResolveColorSlot(attachment, ref nextImplicitColorSlot, usedColorSlots);
                     FrameBufferAttachmentSignature signature = BuildAttachmentSignature(source, role, slot);
-                    colorAttachments.Add(new AttachmentBuildInfo(source.View, signature, slot, ResolveAttachmentExtent(target, mip)));
+                    colorAttachments.Add(new AttachmentBuildInfo(
+                        new AttachmentTargetInfo(target, attachment, mip, layer),
+                        source.View,
+                        signature,
+                        slot,
+                        ResolveAttachmentExtent(target, mip),
+                        source.LayerCount));
                     continue;
                 }
 
@@ -998,7 +1102,13 @@ public unsafe partial class VulkanRenderer
                     throw new InvalidOperationException($"Framebuffer '{Data.Name ?? "<unnamed>"}' defines multiple depth/stencil attachments which is not supported in Vulkan subpasses.");
 
                 FrameBufferAttachmentSignature depthSignature = BuildAttachmentSignature(source, role, 0);
-                depthAttachment = new AttachmentBuildInfo(source.View, depthSignature, 0, ResolveAttachmentExtent(target, mip));
+                depthAttachment = new AttachmentBuildInfo(
+                    new AttachmentTargetInfo(target, attachment, mip, layer),
+                    source.View,
+                    depthSignature,
+                    0,
+                    ResolveAttachmentExtent(target, mip),
+                    source.LayerCount);
             }
 
             colorAttachments.Sort((a, b) => a.ColorIndex.CompareTo(b.ColorIndex));
@@ -1070,7 +1180,8 @@ public unsafe partial class VulkanRenderer
                 aspect,
                 (aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0
                     ? ImageUsageFlags.DepthStencilAttachmentBit
-                    : ImageUsageFlags.ColorAttachmentBit);
+                    : ImageUsageFlags.ColorAttachmentBit,
+                1u);
         }
 
         private AttachmentSource ResolveTextureAttachment(XRTexture texture, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)
@@ -1098,7 +1209,11 @@ public unsafe partial class VulkanRenderer
                 usage |= ImageUsageFlags.DepthStencilAttachmentBit;
             }
 
-            return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, aspect, usage);
+            uint layerCount = layerIndex < 0
+                ? Math.Max(source.DescriptorArrayLayers, 1u)
+                : 1u;
+
+            return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, aspect, usage, layerCount);
         }
 
         private static AttachmentRole ResolveAttachmentRole(EFrameBufferAttachment attachment, ImageAspectFlags aspect, Format format)
@@ -1219,17 +1334,49 @@ public unsafe partial class VulkanRenderer
             return normalized != ImageAspectFlags.None ? normalized : supported;
         }
 
-        private readonly record struct AttachmentSource(ImageView View, Format Format, SampleCountFlags Samples, ImageAspectFlags AspectMask, ImageUsageFlags Usage);
+        private readonly record struct AttachmentSource(
+            ImageView View,
+            Format Format,
+            SampleCountFlags Samples,
+            ImageAspectFlags AspectMask,
+            ImageUsageFlags Usage,
+            uint LayerCount);
 
-        private readonly record struct AttachmentBuildInfo(ImageView View, FrameBufferAttachmentSignature Signature, uint ColorIndex, Extent2D Extent);
+        private readonly record struct AttachmentTargetInfo(
+            IFrameBufferAttachement Target,
+            EFrameBufferAttachment Attachment,
+            int MipLevel,
+            int LayerIndex);
+
+        private readonly record struct AttachmentBuildInfo(
+            AttachmentTargetInfo TargetInfo,
+            ImageView View,
+            FrameBufferAttachmentSignature Signature,
+            uint ColorIndex,
+            Extent2D Extent,
+            uint LayerCount);
 
         protected override void DeleteObjectInternal() { }
 
         protected override void LinkData()
-            => Data.Resized += OnFramebufferResized;
+        {
+            Data.Resized += OnFramebufferResized;
+            Data.BindForReadRequested += BindForReading;
+            Data.UnbindFromReadRequested += UnbindFromReading;
+        }
 
         protected override void UnlinkData()
-            => Data.Resized -= OnFramebufferResized;
+        {
+            Data.Resized -= OnFramebufferResized;
+            Data.BindForReadRequested -= BindForReading;
+            Data.UnbindFromReadRequested -= UnbindFromReading;
+        }
+
+        private void BindForReading()
+            => Renderer.BindFrameBuffer(EFramebufferTarget.ReadFramebuffer, Data);
+
+        private void UnbindFromReading()
+            => Renderer.BindFrameBuffer(EFramebufferTarget.ReadFramebuffer, null);
 
         private void OnFramebufferResized()
             => Destroy();

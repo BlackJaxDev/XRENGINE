@@ -5,9 +5,9 @@ namespace XREngine.Rendering
 {
     public partial class AmbientOcclusionSettings : PostProcessSettings
     {
-        public const float DefaultRadius = 4.052f;
-        public const float DefaultPower = 2.503f;
-        public const float DefaultBias = 0.1054f;
+        public const float DefaultRadius = 2.2f;
+        public const float DefaultPower = 1.35f;
+        public const float DefaultBias = 0.06f;
         public const float SpatialHashDefaultRadius = 0.511f;
         public const float SpatialHashDefaultPower = 1.609f;
         public const float SpatialHashDefaultBias = 0.0203f;

@@ -651,7 +651,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         if (NeedsRecreateFboDueToPostProcessIntermediateFormat(fbo) || !fbo.IsLastCheckComplete)
             return true;
 
-        return !HasColorDepthStencilTargets(fbo, PostProcessOutputTextureName, DepthStencilTextureName);
+        return !HasSingleColorTarget(fbo, PostProcessOutputTextureName);
     }
 
     private bool NeedsRecreateFinalPostProcessOutputFbo(XRFrameBuffer fbo)

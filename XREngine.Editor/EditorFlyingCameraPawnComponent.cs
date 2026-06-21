@@ -1807,10 +1807,194 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var fbo = vp.RenderPipelineInstance?.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName);
         if (fbo is null)
             return null;
-        
-        float? depth = XRViewport.GetDepth(fbo, (IVector2)internalSizeCoordinate);
+
+        IVector2 readbackCoordinate = GetDepthReadbackCoordinate(fbo, internalSizeCoordinate);
+        float? depth = XRViewport.GetDepth(fbo, readbackCoordinate);
         return depth;
     }
+
+    private static IVector2 GetDepthReadbackCoordinate(XRFrameBuffer fbo, Vector2 internalSizeCoordinate)
+    {
+        IVector2 coordinate = (IVector2)internalSizeCoordinate;
+        if (!ShouldFlipDepthReadbackY())
+            return coordinate;
+
+        int maxY = Math.Max((int)fbo.Height - 1, 0);
+        coordinate.Y = maxY - coordinate.Y;
+        return coordinate;
+    }
+
+    private static bool ShouldFlipDepthReadbackY()
+    {
+        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+        if (backend == RuntimeGraphicsApiKind.Unknown)
+            return false;
+
+        return RenderClipSpacePolicy.FramebufferTextureYDirection(backend) == ERenderClipSpaceYDirection.YDown;
+    }
+
+    public EditorDepthHitProbeResult ProbeDepthHitAtNormalizedViewport(XRViewport vp, Vector2 normalizedViewportPoint)
+    {
+        var fbo = vp.RenderPipelineInstance?.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName);
+        if (fbo is null)
+            throw new InvalidOperationException($"Viewport render pipeline has no '{DefaultRenderPipeline.ForwardPassFBOName}' framebuffer.");
+
+        Vector2 clamped = ClampNormalizedViewport(normalizedViewportPoint);
+        Vector2 internalCoordinate = vp.DenormalizeInternalCoordinate(clamped);
+        IVector2 unflippedCoordinate = (IVector2)internalCoordinate;
+        IVector2 flippedCoordinate = FlipDepthReadbackCoordinateY(fbo, unflippedCoordinate);
+        IVector2 currentCoordinate = GetDepthReadbackCoordinate(fbo, internalCoordinate);
+        bool currentPolicyFlipsY = ShouldFlipDepthReadbackY();
+
+        EditorDepthHitReadbackSample unflipped = ReadDepthSample(vp, fbo, clamped, unflippedCoordinate);
+        EditorDepthHitReadbackSample flipped = CoordinatesEqual(unflippedCoordinate, flippedCoordinate)
+            ? unflipped
+            : ReadDepthSample(vp, fbo, clamped, flippedCoordinate);
+        EditorDepthHitReadbackSample current = CoordinatesEqual(currentCoordinate, flippedCoordinate) ? flipped : unflipped;
+
+        RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+        ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Current.ClipSpaceYDirection;
+        ERenderClipSpaceYDirection framebufferY = backend == RuntimeGraphicsApiKind.Unknown
+            ? clipY
+            : RenderClipSpacePolicy.FramebufferTextureYDirection(backend);
+
+        Transform? tfm = TransformAs<Transform>();
+        Vector3 cameraPosition = tfm?.WorldTranslation ?? Vector3.Zero;
+        Vector3 cameraForward = tfm is null
+            ? Globals.Forward
+            : Vector3.Normalize(Vector3.Transform(Globals.Forward, tfm.WorldRotation));
+
+        return new EditorDepthHitProbeResult(
+            normalizedViewportPoint,
+            clamped,
+            internalCoordinate,
+            (int)fbo.Width,
+            (int)fbo.Height,
+            backend,
+            clipY,
+            framebufferY,
+            currentPolicyFlipsY,
+            current,
+            unflipped,
+            flipped,
+            cameraPosition,
+            cameraForward);
+    }
+
+    public EditorDepthHitZoomResult DebugZoomAtNormalizedViewport(
+        XRViewport vp,
+        Vector2 normalizedViewportPoint,
+        float scrollDelta,
+        bool smoothScroll)
+    {
+        EditorDepthHitProbeResult probe = ProbeDepthHitAtNormalizedViewport(vp, normalizedViewportPoint);
+        Transform? tfm = TransformAs<Transform>();
+        if (tfm is null)
+            throw new InvalidOperationException("Editor camera pawn has no Transform.");
+
+        Vector3 before = tfm.WorldTranslation;
+        bool previousSmooth = SmoothScrollEnabled;
+        try
+        {
+            SmoothScrollEnabled = smoothScroll;
+            if (probe.Current.ValidDepth && probe.Current.WorldPoint.HasValue)
+            {
+                DepthHitNormalizedViewportPoint = new Vector3(probe.ClampedNormalizedViewportPoint, probe.Current.Depth);
+                WorldDragPoint = probe.Current.WorldPoint.Value;
+            }
+            else
+            {
+                DepthHitNormalizedViewportPoint = null;
+                WorldDragPoint = null;
+            }
+
+            _depthQueryRequested = false;
+            bool changed = ApplyScrollTransformation(vp, tfm, scrollDelta);
+            if (smoothScroll)
+                changed |= UpdateScrollSmooth(tfm);
+
+            if (changed)
+            {
+                InvalidateView();
+                RecalculateCameraWorldMatrix(tfm, forceRenderMatrixNow: !smoothScroll);
+            }
+
+            return new EditorDepthHitZoomResult(
+                probe,
+                scrollDelta,
+                smoothScroll,
+                probe.Current.ValidDepth,
+                changed,
+                before,
+                tfm.WorldTranslation,
+                _scrollSmoothTarget);
+        }
+        finally
+        {
+            SmoothScrollEnabled = previousSmooth;
+        }
+    }
+
+    private static IVector2 FlipDepthReadbackCoordinateY(XRFrameBuffer fbo, IVector2 coordinate)
+    {
+        int maxY = Math.Max((int)fbo.Height - 1, 0);
+        return new IVector2(coordinate.X, maxY - coordinate.Y);
+    }
+
+    private static bool CoordinatesEqual(IVector2 left, IVector2 right)
+        => left.X == right.X && left.Y == right.Y;
+
+    private static EditorDepthHitReadbackSample ReadDepthSample(
+        XRViewport vp,
+        XRFrameBuffer fbo,
+        Vector2 normalizedViewportPoint,
+        IVector2 readbackCoordinate)
+    {
+        float depth = XRViewport.GetDepth(fbo, readbackCoordinate);
+        bool validDepth = depth > 0.0f && depth < 1.0f;
+        Vector3? worldPoint = validDepth
+            ? vp.NormalizedViewportToWorldCoordinate(new Vector3(normalizedViewportPoint, depth))
+            : null;
+        return new EditorDepthHitReadbackSample(
+            readbackCoordinate.X,
+            readbackCoordinate.Y,
+            depth,
+            validDepth,
+            worldPoint);
+    }
+
+    public sealed record EditorDepthHitReadbackSample(
+        int X,
+        int Y,
+        float Depth,
+        bool ValidDepth,
+        Vector3? WorldPoint);
+
+    public sealed record EditorDepthHitProbeResult(
+        Vector2 RequestedNormalizedViewportPoint,
+        Vector2 ClampedNormalizedViewportPoint,
+        Vector2 InternalCoordinate,
+        int FramebufferWidth,
+        int FramebufferHeight,
+        RuntimeGraphicsApiKind RenderBackend,
+        ERenderClipSpaceYDirection ClipSpaceYDirection,
+        ERenderClipSpaceYDirection FramebufferTextureYDirection,
+        bool CurrentPolicyFlipsY,
+        EditorDepthHitReadbackSample Current,
+        EditorDepthHitReadbackSample Unflipped,
+        EditorDepthHitReadbackSample Flipped,
+        Vector3 CameraPosition,
+        Vector3 CameraForward);
+
+    public sealed record EditorDepthHitZoomResult(
+        EditorDepthHitProbeResult Probe,
+        float ScrollDelta,
+        bool SmoothScroll,
+        bool UsedDepthHit,
+        bool TransformChanged,
+        Vector3 CameraPositionBefore,
+        Vector3 CameraPositionAfter,
+        Vector3? ScrollSmoothTarget);
 
     private bool NeedsDepthHit() => _depthQueryRequested;
 

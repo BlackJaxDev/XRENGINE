@@ -16,8 +16,8 @@ public sealed class AmbientOcclusionVisibilityBitmaskTests
 
         settings.GroundTruth.UseVisibilityBitmask.ShouldBeTrue();
         settings.GTAOUseVisibilityBitmask.ShouldBeTrue();
-        settings.GroundTruth.VisibilityBitmaskThickness.ShouldBe(1.5002f, 0.0001f);
-        settings.GTAOVisibilityBitmaskThickness.ShouldBe(1.5002f, 0.0001f);
+        settings.GroundTruth.VisibilityBitmaskThickness.ShouldBe(0.12f, 0.0001f);
+        settings.GTAOVisibilityBitmaskThickness.ShouldBe(0.12f, 0.0001f);
 
         settings.GTAOUseVisibilityBitmask = true;
         settings.GroundTruth.UseVisibilityBitmask.ShouldBeTrue();
@@ -69,19 +69,24 @@ public sealed class AmbientOcclusionVisibilityBitmaskTests
 
         source.ShouldContain("SetDynamicTexture(instance, createdTexture);");
         source.ShouldContain("instance.SetTexture(texture, RenderResourceDescriptorFactory.FromTexture(texture));");
-        source.ShouldContain("instance.SetFBO(frameBuffer, RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer));");
+        source.ShouldContain("FrameBufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer);");
+        source.ShouldContain("instance.SetFBO(frameBuffer, descriptor);");
     }
 
     private static void AssertShaderContainsVisibilityBitmaskPath(string relativePath)
     {
         string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
         source.ShouldContain("uniform bool UseVisibilityBitmask = true;");
-        source.ShouldContain("uniform float VisibilityBitmaskThickness = 1.5002f;");
+        source.ShouldContain("uniform float VisibilityBitmaskThickness = 0.12f;");
         source.ShouldContain("const uint VISIBILITY_BITMASK_SECTOR_COUNT = 32u;");
         source.ShouldContain("uint UpdateSectors(float minHorizon, float maxHorizon, uint globalOccludedBitfield)");
         source.ShouldContain("uint AccumulateVisibilitySectors(vec3 deltaPos, vec3 viewDir, float normalAngle, float samplingDirection, float thickness, uint occludedSectors)");
+        source.ShouldContain("float ComputeSampleFalloff(vec3 delta, float dist, vec3 viewDir, float falloffStart, float radiusVS, float thicknessLimit)");
+        source.ShouldContain("bitmaskThickness * falloff");
+        source.ShouldContain("float occludedSectorWeight = 0.0f;");
+        source.ShouldContain("occludedSectorWeight += float(bitCount(updatedSectors & ~previousSectors)) * falloff;");
         source.ShouldContain("float visibilityBitmaskNormalAngle = -gamma;");
-        source.ShouldContain("bitCount(occludedSectors)");
+        source.ShouldContain("1.0f - occludedSectorWeight / float(VISIBILITY_BITMASK_SECTOR_COUNT)");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

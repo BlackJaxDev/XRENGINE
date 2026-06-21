@@ -97,6 +97,31 @@ public sealed class ImportedDeferredMaterialTests
         material.Textures[0].ShouldBeSameAs(albedo);
         material.Textures[1].ShouldBeSameAs(normal);
         material.Parameter<ShaderVector3>("BaseColor")?.Value.ShouldBe(Vector3.One);
+        (material.FragmentShaders[0].Source?.Text ?? string.Empty).ShouldNotContain("#define XRENGINE_HEIGHTMAP_MODE");
+    }
+
+    [Test]
+    public void MakeMaterialDeferred_HeightTexturesUseCompileTimeHeightMapMode()
+    {
+        XRTexture2D albedo = new();
+        XRTexture2D height = new();
+
+        XRMaterial material = ModelImporter.MakeMaterialDeferred(
+            [albedo, height],
+            [
+                CreateSlot("albedo.png", TextureType.Diffuse),
+                CreateSlot("sponza_floor_bump.png", TextureType.Height),
+            ],
+            "HeightMapMaterial");
+
+        Path.GetFileName(material.FragmentShaders[0].Source?.FilePath ?? material.FragmentShaders[0].FilePath ?? string.Empty)
+            .ShouldBe("TexturedNormalDeferred.fs");
+        material.Textures.Count.ShouldBe(2);
+        material.Textures[0].ShouldBeSameAs(albedo);
+        material.Textures[1].ShouldBeSameAs(height);
+        material.Parameter<ShaderInt>("NormalMapMode")?.Value.ShouldBe(1);
+        material.Parameter<ShaderFloat>("HeightMapScale")?.Value.ShouldBe(1.0f);
+        (material.FragmentShaders[0].Source?.Text ?? string.Empty).ShouldContain("#define XRENGINE_HEIGHTMAP_MODE");
     }
 
     [Test]

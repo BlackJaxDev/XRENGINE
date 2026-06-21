@@ -310,7 +310,12 @@ public unsafe partial class VulkanRenderer
 		private void UpdateAutoUniformBuffersForDraw(int frameIndex, int drawUniformSlot, XRMaterial material, in PendingMeshDraw draw)
 		{
 			if (_program is null || _autoUniformBuffers.Count == 0)
+			{
+				LogGizmoAutoUniformBlocks(material, skipped: true);
 				return;
+			}
+
+			LogGizmoAutoUniformBlocks(material, skipped: false);
 
 			foreach (var pair in _program.AutoUniformBlocks)
 			{
@@ -423,7 +428,7 @@ public unsafe partial class VulkanRenderer
 			if (!MaterialBindingDiagnosticsEnabled || !IsMaterialAutoUniform(member.Name))
 				return;
 
-			Debug.VulkanEvery(
+			Debug.MeshesWarningEvery(
 				$"Vulkan.MaterialAutoUniform.{GetHashCode()}.{_program?.Data?.Name}.{material.Name}.{member.Name}",
 				TimeSpan.FromSeconds(1),
 				"[VkMaterialAutoUniform] program='{0}' mesh='{1}' material='{2}' member='{3}' type={4} source={5} wrote={6} offset={7} size={8} value={9}",
@@ -440,7 +445,43 @@ public unsafe partial class VulkanRenderer
 		}
 
 		private static bool IsMaterialAutoUniform(string name)
-			=> name is "BaseColor" or "Opacity" or "Specular" or "Roughness" or "Metallic" or "Emission" or "AlphaCutoff";
+			=> name is "BaseColor" or "Opacity" or "Specular" or "Roughness" or "Metallic" or "Emission" or "AlphaCutoff"
+			or "MatColor" or "LineWidth" or "ArrowHeadLengthPixels" or "ArrowHeadHalfWidthPixels";
+
+		private bool IsGizmoDiagnosticProgram()
+		{
+			string? name = _program?.Data?.Name;
+			return !string.IsNullOrWhiteSpace(name) &&
+				(name.Contains("Gizmo", StringComparison.OrdinalIgnoreCase) ||
+				 name.Contains("TransformTool", StringComparison.OrdinalIgnoreCase));
+		}
+
+		private void LogGizmoAutoUniformBlocks(XRMaterial material, bool skipped)
+		{
+			if (!MaterialBindingDiagnosticsEnabled || !IsGizmoDiagnosticProgram())
+				return;
+
+			Debug.MeshesWarningEvery(
+				$"Vulkan.GizmoAutoUniformBlocks.{GetHashCode()}.{_program?.Data?.Name}.{material.Name}",
+				TimeSpan.FromSeconds(1),
+				"[VkGizmoAutoUniformBlocks] program='{0}' mesh='{1}' material='{2}' skipped={3} blockCount={4} bufferCount={5} blocks='{6}'",
+				_program?.Data?.Name ?? "<null>",
+				Mesh?.Name ?? "<null>",
+				material.Name ?? "<null>",
+				skipped,
+				_program?.AutoUniformBlocks.Count ?? 0,
+				_autoUniformBuffers.Count,
+				FormatGizmoAutoUniformBlocks());
+		}
+
+		private string FormatGizmoAutoUniformBlocks()
+		{
+			if (_program is null || _program.AutoUniformBlocks.Count == 0)
+				return "<none>";
+
+			return string.Join("; ", _program.AutoUniformBlocks.Select(pair =>
+				$"{pair.Key}[{string.Join(",", pair.Value.Members.Select(static member => member.Name))}]"));
+		}
 
 		private static string FormatMaterialUniformDiagnosticValue(object? value)
 			=> value switch

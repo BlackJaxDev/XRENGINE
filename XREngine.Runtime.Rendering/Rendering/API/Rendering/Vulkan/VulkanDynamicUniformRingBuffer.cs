@@ -40,7 +40,7 @@ public unsafe partial class VulkanRenderer
             renderer.Api!.GetPhysicalDeviceProperties(renderer._physicalDevice, out PhysicalDeviceProperties props);
             _alignment = (uint)Math.Max(props.Limits.MinUniformBufferOffsetAlignment, 1);
 
-            (_buffer, _memory) = renderer.CreateBufferRaw(
+            (_buffer, _memory) = renderer.CreateDedicatedBufferRaw(
                 capacity,
                 BufferUsageFlags.UniformBufferBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
