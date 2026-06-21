@@ -112,6 +112,9 @@ public sealed class VulkanP1ValidationTests
         string imguiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.ImGui.cs");
 
         commandBufferSource.ShouldContain("CommonPushConstantSize = 16");
+        commandBufferSource.ShouldContain("ShaderStageFlags.VertexBit |");
+        commandBufferSource.ShouldContain("ShaderStageFlags.FragmentBit |");
+        commandBufferSource.ShouldContain("ShaderStageFlags.ComputeBit");
         commandBufferSource.ShouldContain("PushConstantsTracked");
         commandBufferSource.ShouldContain("RecordVulkanBindChurn(pushConstantWrites: 1)");
         commandBufferSource.ShouldContain("ComputeDispatchPushConstants");
@@ -120,8 +123,9 @@ public sealed class VulkanP1ValidationTests
         meshSource.ShouldContain("PushPerDrawConstants");
         meshSource.ShouldContain("Renderer.PushConstantsTracked");
         renderProgramSource.ShouldContain("CreateCommonPushConstantRange");
-        renderProgramSource.ShouldContain("ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit | ShaderStageFlags.ComputeBit");
+        renderProgramSource.ShouldContain("StageFlags = CommonPushConstantStageFlags");
         renderProgramPipelineSource.ShouldContain("CreateCommonPushConstantRange");
+        renderProgramPipelineSource.ShouldContain("StageFlags = CommonPushConstantStageFlags");
         imguiSource.ShouldContain("PushConstantsTracked(commandBuffer, _imguiPipelineLayout");
     }
 
@@ -236,6 +240,69 @@ public sealed class VulkanP1ValidationTests
         compilerSource.ShouldContain("_secondaryRecordingBucketScratch");
         compilerSource.ShouldContain("buckets.Clear();");
         compilerSource.ShouldNotContain("List<SecondaryRecordingBucket> buckets = [];");
+    }
+
+    [Test]
+    public void CommandChainResourcePlanFreeze_PreventsPlannerMutationDuringLowering()
+    {
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.State.cs");
+        string loweringSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanCommandChainLowering.cs");
+
+        stateSource.ShouldContain("_commandChainFrozenPlanReaders");
+        stateSource.ShouldContain("_commandChainFrozenResourcePlanRevision");
+        stateSource.ShouldContain("private bool IsCommandChainResourcePlanFrozen => Volatile.Read(ref _commandChainFrozenPlanReaders) > 0;");
+        stateSource.ShouldContain("private readonly struct CommandChainResourcePlanReadScope : IDisposable");
+        stateSource.ShouldContain("Refusing lazy physical-image plan rebuild");
+        stateSource.ShouldContain("Resource planner cannot be replaced while command-chain readers are using frozen plan revision");
+        loweringSource.ShouldContain("BeginCommandChainResourcePlanReadScope(resourcePlanRevision)");
+        loweringSource.ShouldContain("using CommandChainResourcePlanReadScope resourcePlanReadScope");
+
+        string ensurePhysicalImageSource = SliceBetween(
+            stateSource,
+            "internal bool TryEnsurePhysicalImageForTextureResource",
+            "private FrameOpContext PrepareResourcePlannerForFrameOps");
+        int frozenGuardIndex = ensurePhysicalImageSource.IndexOf("if (IsCommandChainResourcePlanFrozen)", StringComparison.Ordinal);
+        int updatePlannerIndex = ensurePhysicalImageSource.IndexOf("UpdateResourcePlannerFromContext(context);", StringComparison.Ordinal);
+        frozenGuardIndex.ShouldBeGreaterThanOrEqualTo(0);
+        updatePlannerIndex.ShouldBeGreaterThan(frozenGuardIndex);
+
+        string plannerUpdateSource = SliceBetween(
+            stateSource,
+            "private void UpdateResourcePlannerFromContext",
+            "private ResourcePlanningInputs PrepareResourcePlanningInputs");
+        plannerUpdateSource.ShouldContain("if (IsCommandChainResourcePlanFrozen)");
+        plannerUpdateSource.IndexOf("if (IsCommandChainResourcePlanFrozen)", StringComparison.Ordinal)
+            .ShouldBeLessThan(plannerUpdateSource.IndexOf("PrepareResourcePlanningInputs", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void DescriptorPoolRetirement_IsFrameSlotAndTimelineBased()
+    {
+        string retirementSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.ResourceRetirement.cs");
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Core.cs");
+        string meshCleanupSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Cleanup.cs");
+        string materialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMaterial.cs");
+
+        retirementSource.ShouldContain("Per-frame-slot retirement queue for descriptor pools whose descriptor");
+        retirementSource.ShouldContain("private readonly List<DescriptorPool>[] _retiredDescriptorPools");
+        retirementSource.ShouldContain("private readonly HashSet<ulong>[] _retiredDescriptorPoolHandles");
+        retirementSource.ShouldContain("int frameSlot = currentFrame;");
+        retirementSource.ShouldContain("_retiredDescriptorPools[frameSlot].Add(descriptorPool);");
+        retirementSource.ShouldContain("DrainRetiredDescriptorPools(currentFrame, RetiredDescriptorPoolDrainLimitPerFrame)");
+        retirementSource.ShouldContain("Api!.DestroyDescriptorPool(device, pool, null);");
+        retirementSource.ShouldContain("RecordVulkanRetiredResourceDrain(descriptorPools: destroyedPools)");
+
+        string frameSlotWaitSource = SliceBetween(
+            drawingSource,
+            "// 1. Wait for the previous submission associated with this in-flight slot.",
+            "// 2. Acquire the next image from the swap chain");
+        int waitIndex = frameSlotWaitSource.IndexOf("WaitForTimelineValue(_graphicsTimelineSemaphore, slotWaitValue);", StringComparison.Ordinal);
+        int drainIndex = frameSlotWaitSource.IndexOf("DrainRetiredDescriptorPools();", StringComparison.Ordinal);
+        waitIndex.ShouldBeGreaterThanOrEqualTo(0);
+        drainIndex.ShouldBeGreaterThan(waitIndex);
+
+        meshCleanupSource.ShouldContain("Renderer.RetireDescriptorPool(descriptorPool);");
+        materialSource.ShouldContain("Renderer.RetireDescriptorPool(state.DescriptorPool);");
     }
 
     [Test]

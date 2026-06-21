@@ -1472,6 +1472,44 @@ internal static partial class RuntimeEngine
                     RuntimeRenderingHostServices.Current.RecordRenderVulkanCommandBuffersDirty(reason);
             }
 
+            public static void RecordVulkanCommandChainMetrics(
+                int chainsScheduled = 0,
+                int chainsRecorded = 0,
+                int chainsReused = 0,
+                int chainsFrameDataRefreshed = 0,
+                int volatileChainsRecorded = 0,
+                int primaryCommandBuffersReused = 0,
+                int primaryCommandBuffersRecorded = 0,
+                int visibilityPackets = 0,
+                int renderPackets = 0,
+                int secondaryCommandBuffers = 0,
+                TimeSpan chainWorkerRecordTime = default,
+                TimeSpan renderThreadWaitForWorkersTime = default,
+                string? firstStructuralDirtyReason = null,
+                string? firstDescriptorGenerationMismatch = null,
+                string? firstResourcePlanRevisionMismatch = null)
+            {
+                if (HasHostStats)
+                {
+                    RuntimeRenderingHostServices.Current.RecordRenderVulkanCommandChainMetrics(
+                        chainsScheduled,
+                        chainsRecorded,
+                        chainsReused,
+                        chainsFrameDataRefreshed,
+                        volatileChainsRecorded,
+                        primaryCommandBuffersReused,
+                        primaryCommandBuffersRecorded,
+                        visibilityPackets,
+                        renderPackets,
+                        secondaryCommandBuffers,
+                        chainWorkerRecordTime,
+                        renderThreadWaitForWorkersTime,
+                        firstStructuralDirtyReason,
+                        firstDescriptorGenerationMismatch,
+                        firstResourcePlanRevisionMismatch);
+                }
+            }
+
             public static void RecordVulkanGpuDrivenStageTiming(EVulkanGpuDrivenStageTiming stage, TimeSpan elapsed)
             {
                 if (HasHostStats)
@@ -1924,6 +1962,38 @@ internal static partial class RuntimeEngine
                         dirtyReason);
                 public static void RecordVulkanCommandBuffersDirty(string? reason)
                     => Stats.RecordVulkanCommandBuffersDirty(reason);
+                public static void RecordVulkanCommandChainMetrics(
+                    int chainsScheduled = 0,
+                    int chainsRecorded = 0,
+                    int chainsReused = 0,
+                    int chainsFrameDataRefreshed = 0,
+                    int volatileChainsRecorded = 0,
+                    int primaryCommandBuffersReused = 0,
+                    int primaryCommandBuffersRecorded = 0,
+                    int visibilityPackets = 0,
+                    int renderPackets = 0,
+                    int secondaryCommandBuffers = 0,
+                    TimeSpan chainWorkerRecordTime = default,
+                    TimeSpan renderThreadWaitForWorkersTime = default,
+                    string? firstStructuralDirtyReason = null,
+                    string? firstDescriptorGenerationMismatch = null,
+                    string? firstResourcePlanRevisionMismatch = null)
+                    => Stats.RecordVulkanCommandChainMetrics(
+                        chainsScheduled,
+                        chainsRecorded,
+                        chainsReused,
+                        chainsFrameDataRefreshed,
+                        volatileChainsRecorded,
+                        primaryCommandBuffersReused,
+                        primaryCommandBuffersRecorded,
+                        visibilityPackets,
+                        renderPackets,
+                        secondaryCommandBuffers,
+                        chainWorkerRecordTime,
+                        renderThreadWaitForWorkersTime,
+                        firstStructuralDirtyReason,
+                        firstDescriptorGenerationMismatch,
+                        firstResourcePlanRevisionMismatch);
                 public static void RecordVulkanGpuDrivenStageTiming(EVulkanGpuDrivenStageTiming stage, TimeSpan elapsed)
                     => Stats.RecordVulkanGpuDrivenStageTiming((Stats.EVulkanGpuDrivenStageTiming)stage, elapsed);
                 public static void RecordVulkanIndirectBatchMerge(int requestedBatches, int mergedBatches)

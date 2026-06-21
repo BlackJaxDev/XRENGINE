@@ -102,6 +102,24 @@ namespace XREngine.Editor.Mcp
                             dirty_summary = VulkanStats.VulkanCommandBufferDirtySummary,
                             record_allocated_bytes = VulkanStats.VulkanRecordCommandBufferAllocatedBytes,
                         },
+                        command_chains = new
+                        {
+                            chains_scheduled = VulkanStats.VulkanCommandChainsScheduled,
+                            chains_recorded = VulkanStats.VulkanCommandChainsRecorded,
+                            chains_reused = VulkanStats.VulkanCommandChainsReused,
+                            chains_frame_data_refreshed = VulkanStats.VulkanCommandChainsFrameDataRefreshed,
+                            volatile_chains_recorded = VulkanStats.VulkanVolatileCommandChainsRecorded,
+                            primary_command_buffers_reused = VulkanStats.VulkanPrimaryCommandBuffersReused,
+                            primary_command_buffers_recorded = VulkanStats.VulkanPrimaryCommandBuffersRecorded,
+                            visibility_packet_count = VulkanStats.VulkanVisibilityPacketCount,
+                            render_packet_count = VulkanStats.VulkanRenderPacketCount,
+                            secondary_command_buffer_count = VulkanStats.VulkanSecondaryCommandBufferCount,
+                            chain_worker_record_ms = VulkanStats.VulkanCommandChainWorkerRecordMs,
+                            render_thread_wait_for_workers_ms = VulkanStats.VulkanRenderThreadWaitForChainWorkersMs,
+                            first_structural_dirty_reason = VulkanStats.VulkanFirstCommandChainStructuralDirtyReason,
+                            first_descriptor_generation_mismatch = VulkanStats.VulkanFirstCommandChainDescriptorGenerationMismatch,
+                            first_resource_plan_revision_mismatch = VulkanStats.VulkanFirstCommandChainResourcePlanRevisionMismatch,
+                        },
                         frame_ops = new
                         {
                             total_count = VulkanStats.VulkanFrameOpTotalCount,

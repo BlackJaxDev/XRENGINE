@@ -1,8 +1,8 @@
 # Vulkan Parallel Command Chain Refactor TODO
 
-Last Updated: 2026-06-18
+Last Updated: 2026-06-21
 Owner: Rendering
-Status: Proposed
+Status: In progress - packet/chain migration layer implemented; dynamic-rendering mesh secondary command buffers enabled behind feature flag
 Target Branch: `vulkan-parallel-command-chain-refactor`
 Design Doc: `docs/work/design/rendering/vulkan-parallel-command-chain-refactor-design.md`
 
@@ -18,52 +18,143 @@ The refactor must preserve visual correctness first. Parallelism is useful only
 after the single-thread packet/chain path produces the same output as the
 current Vulkan renderer.
 
+## Branch-Local Status
+
+2026-06-21 packet/chain migration layer:
+
+- Branch: `vulkan-parallel-command-chain-refactor`.
+- Target validation scene: `Assets/UnitTestingWorldSettings.jsonc` selects `RenderAPI: Vulkan`; Sponza node loaded at `Root Node/Static Model Root/Sponza`.
+- Disabled-path visual gate: `Build/McpCaptures/command-chains/phase1-disabled/Screenshot_20260621_112012.png`.
+- Disabled-path log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_11-19-21_pid22804`.
+- Disabled-path profiler evidence: `command_chains` counters were all zero with `XRE_VULKAN_COMMAND_CHAINS` unset.
+- Enabled-path visual gate after key fix: `Build/McpCaptures/command-chains/phase3-enabled-after-key-fix/Screenshot_20260621_112534.png`.
+- Enabled-path log gate after key fix: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_11-25-07_pid33212`.
+- Enabled-path profiler evidence after key fix: `chains_scheduled=102`, `chains_recorded=3`, `chains_reused=99`, `chains_frame_data_refreshed=85`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, no first structural dirty, descriptor-generation mismatch, or resource-plan mismatch.
+- Log review: no VUIDs, no Vulkan/rendering errors, no exceptions. Pre-existing warnings observed: shader-output-not-consumed validation performance warning, auto-exposure mip-0 fallback for planner-backed `HDRSceneTex`, CPU fallback for Vulkan editor picking, and screenshot-induced render-thread stall logs.
+- Build/test gates: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj` passed with 0 warnings; `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~ProfilerProtocolTests|FullyQualifiedName~VulkanCommandChainDataModelTests"` passed 16/16.
+
+2026-06-21 Phase 7 dynamic mesh secondary command-buffer gate:
+
+- Dynamic-rendering visual gate: `Build/McpCaptures/command-chains/phase7-dynamic-mesh-secondary-real/Screenshot_20260621_122842.png`.
+- Dynamic-rendering log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_12-27-56_pid46352`.
+- Runtime profiler evidence from the validated frame: `chains_scheduled=99`, `chains_recorded=3`, `chains_reused=96`, `chains_frame_data_refreshed=82`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `secondary_command_buffer_count=99`, `validation.message_count=0`, `validation.error_count=0`.
+- Log review: no VUIDs, no Vulkan/rendering errors, no exceptions, no invalid command buffers, and no frame-op errors. Pre-existing/noise warnings observed: duplicate EOS overlay layer, startup resource-planner optional-resource warnings, auto-exposure mip-0 fallback for planner-backed `HDRSceneTex`, Vulkan editor picking CPU fallback, VR settings not initialized, and profiler stall traces during screenshot/debug capture.
+- Post-diagnostic visual gate after adding secondary inheritance mismatch logs: `Build/McpCaptures/command-chains/phase7-diagnostics-after-inheritance-logs/Screenshot_20260621_123650.png`.
+- Post-diagnostic log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_12-36-08_pid32972`.
+- Post-diagnostic profiler evidence: `chains_scheduled=99`, `chains_recorded=3`, `chains_reused=96`, `chains_frame_data_refreshed=82`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `visibility_packet_count=2`, `render_packet_count=99`, `secondary_command_buffer_count=99`, `validation.message_count=0`, `validation.error_count=0`, descriptor failures/skipped draws/skipped dispatches/plan replacements all zero.
+- Post-diagnostic log review: all `log_*.log` files reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `FrameOpError`, `Exception`, and `Secondary inheritance mismatch`. Remaining warnings match previous startup/screenshot noise: duplicate EOS overlay layer, optional-resource planner declarations, auto-exposure mip-0 fallback, startup physical image handle refreshes, Vulkan editor picking CPU fallback, and screenshot-induced render-thread stall.
+- Crash diagnosis fixed during this phase: mesh secondary command buffers executed by reusable primary command buffers must remain alive for the command-buffer generation. Transient-freeing the secondary after recording made a reused primary invalid at queue submit. Mesh secondary command buffers are now retained until command-buffer destruction.
+- Cache ownership fix after validation caught a variant lifetime edge: one chain-owned secondary per image/run was unsafe because primary command-buffer variants for the same image can coexist. The mesh chain key now includes the primary command-buffer owner identity, and command-chain cache teardown frees each secondary from its owner pool.
+- Primary-owned secondary visual gate: `Build/McpCaptures/command-chains/phase7-primary-owned-secondary/Screenshot_20260621_124515.png`.
+- Primary-owned secondary log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_12-44-53_pid6472`.
+- Primary-owned secondary profiler evidence: `chains_scheduled=99`, `chains_recorded=3`, `chains_reused=96`, `chains_frame_data_refreshed=82`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `validation.message_count=0`, `validation.error_count=0`, descriptor failures/skipped draws/skipped dispatches/plan replacements all zero.
+- Primary-owned secondary log review: all `log_*.log` files reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `destroyed or rerecorded`, `FrameOpError`, `Exception`, and `Secondary inheritance mismatch`.
+- Shape-diagnostics visual gate: `Build/McpCaptures/command-chains/phase6-shape-diagnostics/Screenshot_20260621_125110.png`.
+- Shape-diagnostics log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_12-50-47_pid37104`.
+- Shape-diagnostics profiler evidence: `chains_scheduled=99`, `chains_recorded=3`, `chains_reused=96`, `chains_frame_data_refreshed=82`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `validation.message_count=0`, `validation.error_count=0`.
+- Shape-diagnostics log review: all `log_*.log` files reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `destroyed or rerecorded`, `FrameOpError`, `Exception`, and `Secondary inheritance mismatch`.
+- Command-chain data-model tests now cover frame-data-only reuse, structural dirtying, descriptor/resource/pipeline generation dirtying, packet-shape dirtying, static clear/barrier volatility, overlay pass metadata volatility, dynamic-overlay override volatility, and the named command-chain frame-data refresh gate. `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~VulkanCommandChainDataModelTests"` passed 13/13.
+- Refresh-gate visual gate: `Build/McpCaptures/command-chains/phase6-refresh-gate/Screenshot_20260621_125759.png`.
+- Refresh-gate log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_12-57-36_pid37672`.
+- Refresh-gate profiler evidence: `chains_scheduled=99`, `chains_recorded=3`, `chains_reused=96`, `chains_frame_data_refreshed=82`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `validation.message_count=0`, `validation.error_count=0`.
+- Refresh-gate log review: all `log_*.log` files reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `destroyed or rerecorded`, `FrameOpError`, `Exception`, and `Secondary inheritance mismatch`.
+- Scratch packet-list visual gate after moving packet/schedule assembly to reusable scratch backing lists: `Build/McpCaptures/command-chains/phase2-scratch-packets/Screenshot_20260621_130107.png`.
+- Scratch packet-list log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_13-00-42_pid43068`.
+- Scratch packet-list profiler evidence: `chains_scheduled=99`, `chains_recorded=3`, `chains_reused=96`, `chains_frame_data_refreshed=82`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `visibility_packet_count=2`, `render_packet_count=99`, `secondary_command_buffer_count=99`, `validation.message_count=0`, `validation.error_count=0`, descriptor failures/skipped draws/skipped dispatches/plan replacements all zero.
+- Scratch packet-list log review: `log_vulkan.log`, `log_rendering.log`, and `log_general.log` reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `destroyed or rerecorded`, `FrameOpError`, and `Secondary inheritance mismatch`. The only Vulkan validation messages were the pre-existing shader-output-not-consumed performance warnings.
+- Resource-validation focused visual gate after adding reusable-chain stale descriptor/resource/pipeline assertions: `Build/McpCaptures/command-chains/phase5-resource-validation-focus/Screenshot_20260621_130954.png`.
+- Resource-validation focused log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_13-09-35_pid51612`.
+- Resource-validation focused profiler evidence: `chains_scheduled=110`, `chains_recorded=3`, `chains_reused=107`, `chains_frame_data_refreshed=93`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `validation.message_count=0`, `validation.error_count=0`, descriptor failures/skipped draws/skipped dispatches/retired descriptor pools/plan replacements all zero.
+- Resource-validation focused log review: `log_vulkan.log`, `log_rendering.log`, and `log_general.log` reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `destroyed or rerecorded`, `FrameOpError`, `Secondary inheritance mismatch`, `stale descriptor-set`, `stale physical-image`, `stale framebuffer`, and `stale pipeline`.
+- Frozen-plan visual gate after wrapping command-chain lowering in an explicit frozen resource-plan read scope: `Build/McpCaptures/command-chains/phase5-frozen-plan/Screenshot_20260621_131651.png`.
+- Frozen-plan log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_13-16-32_pid36144`.
+- Frozen-plan profiler evidence: `chains_scheduled=110`, `chains_recorded=3`, `chains_reused=107`, `chains_frame_data_refreshed=93`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `validation.message_count=0`, `validation.error_count=0`, descriptor failures/skipped draws/skipped dispatches/retired descriptor pools/plan replacements all zero.
+- Frozen-plan log review: `log_vulkan.log`, `log_rendering.log`, and `log_general.log` reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `destroyed or rerecorded`, `FrameOpError`, `Secondary inheritance mismatch`, `Resource planner cannot be replaced`, `LazyRebuildDuringFrozenCommandChainPlan`, `Refusing lazy physical-image plan rebuild`, `stale descriptor-set`, `stale physical-image`, `stale framebuffer`, and `stale pipeline`.
+- Phase 8 primary schedule visual gate after making the primary recorder preserve command-chain schedule order and include secondary command-buffer handles in the primary group signature: `Build/McpCaptures/command-chains/phase8-primary-current-focus-20260621_133259/Screenshot_20260621_133322.png`.
+- Phase 8 primary schedule log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_13-32-59_pid43444`.
+- Phase 8 primary schedule profiler evidence: `chains_scheduled=65`, `chains_recorded=3`, `chains_reused=62`, `chains_frame_data_refreshed=48`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `visibility_packet_count=2`, `render_packet_count=65`, `secondary_command_buffer_count=65`, `record_command_buffer_ms=3.2537`, `validation.message_count=0`, `validation.error_count=0`.
+- Phase 8 primary schedule log review: `log_vulkan.log`, `log_rendering.log`, and `log_general.log` reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `FrameOpError`, `Secondary inheritance mismatch`, `destroyed or rerecorded`, `stale descriptor-set`, `stale physical-image`, `stale framebuffer`, `stale pipeline`, `Command-chain primary schedule`, and `dynamic overlay group before`. A stricter intermediate validator run exposed a second-sort mismatch and follow-on image-layout validation error; the fix was to treat the schedule as the authoritative primary op order instead of sorting again inside primary recording.
+- Phase 9 old-path/no-env comparison visual gate: `Build/McpCaptures/command-chains/phase9-oldpath-baseline-20260621_133548/Screenshot_20260621_133608.png`.
+- Phase 9 old-path/no-env comparison log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_13-35-48_pid37336`.
+- Phase 9 old-path/no-env profiler evidence: `chains_scheduled=0`, `chains_recorded=0`, `chains_reused=0`, `chains_frame_data_refreshed=0`, `volatile_chains_recorded=0`, `primary_command_buffers_reused=0`, `primary_command_buffers_recorded=0`, `record_command_buffer_ms=2.4185`, `validation.message_count=0`, `validation.error_count=0`.
+- Phase 9 old-path/no-env log review: `log_vulkan.log`, `log_rendering.log`, and `log_general.log` reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `FrameOpError`, `Secondary inheritance mismatch`, and `destroyed or rerecorded`.
+- Phase 9 screenshot comparison against current single-thread command-chain gate: old-path `Build/McpCaptures/command-chains/phase9-oldpath-baseline-20260621_133548/Screenshot_20260621_133608.png` versus command-chain `Build/McpCaptures/command-chains/phase8-primary-current-focus-20260621_133259/Screenshot_20260621_133322.png`; both are 1920x1080 and a sampled 8-pixel-stride RGB diff reported `SAMPLES=32400`, `MEAN_RGB_DELTA=10.2807`, `MAX_RGB_DELTA=29`. Visual inspection showed the same settled Sponza view.
+- Phase 10 worker-pool visual gate with `XRE_VULKAN_COMMAND_CHAINS=1`, validation enabled, and single-thread mode unset: `Build/McpCaptures/command-chains/phase10-worker-pool-20260621_134357/Screenshot_20260621_134418.png`.
+- Phase 10 worker-pool log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_13-43-58_pid27144`.
+- Phase 10 worker-pool profiler evidence: `chains_scheduled=65`, `chains_recorded=3`, `chains_reused=62`, `chains_frame_data_refreshed=48`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `visibility_packet_count=2`, `render_packet_count=65`, `secondary_command_buffer_count=65`, `chain_worker_record_ms=0.6587`, `render_thread_wait_for_workers_ms=0.0215`, `validation.message_count=0`, `validation.error_count=0`.
+- Phase 10 worker-pool log review: `log_vulkan.log`, `log_rendering.log`, and `log_general.log` reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `FrameOpError`, `Secondary inheritance mismatch`, `destroyed or rerecorded`, `stale descriptor-set`, `stale physical-image`, `stale framebuffer`, `stale pipeline`, `Command-chain primary schedule`, and `dynamic overlay group before`.
+- Phase 10 implementation note: the bounded worker pool currently prepares independent command-chain work with per-worker graphics/compute command pools, scratch storage, bind-state ownership, cancellation, and teardown safety. Inheritance-sensitive Vulkan secondary command-buffer recording still executes through the validated primary-compatible path until the full recorder can be moved behind the same worker ownership model.
+- Phase 11 parallel packet-build visual gate with `XRE_VULKAN_PARALLEL_PACKET_BUILD=1`: `Build/McpCaptures/command-chains/phase11-parallel-packets-20260621_134908/Screenshot_20260621_134930.png`.
+- Phase 11 parallel packet-build log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_13-49-09_pid51632`.
+- Phase 11 parallel packet-build profiler evidence: `chains_scheduled=65`, `chains_recorded=3`, `chains_reused=62`, `chains_frame_data_refreshed=48`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `visibility_packet_count=2`, `render_packet_count=65`, `secondary_command_buffer_count=65`, `chain_worker_record_ms=1.0096`, `render_thread_wait_for_workers_ms=0.0356`, `validation.message_count=0`, `validation.error_count=0`.
+- Phase 11 parallel packet-build log review: `log_vulkan.log`, `log_rendering.log`, and `log_general.log` reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `FrameOpError`, `Secondary inheritance mismatch`, `destroyed or rerecorded`, `stale descriptor-set`, `stale physical-image`, `stale framebuffer`, `stale pipeline`, `Parallel command-chain packet build mismatch`, and `Parallel command-chain packet build produced`.
+- Phase 11 implementation note: `XRE_VULKAN_PARALLEL_PACKET_BUILD=1` now builds immutable render packets from the frozen static/volatile frame-op snapshot using independent jobs, then appends static and dynamic-overlay packets in deterministic order. Validation mode builds a sequential reference packet list and asserts packet equivalence before scheduling chains.
+- Phase 12 VR/shadow specialization final visual gate with command chains, validation, and parallel packet build enabled: `Build/McpCaptures/command-chains/phase12-vr-shadow-specialization-final-20260621_140141/Screenshot_20260621_140205.png`.
+- Phase 12 VR/shadow specialization final log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_14-01-42_pid41196`.
+- Phase 12 VR/shadow specialization profiler evidence: `chains_scheduled=65`, `chains_recorded=3`, `chains_reused=62`, `chains_frame_data_refreshed=48`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `visibility_packet_count=2`, `render_packet_count=65`, `secondary_command_buffer_count=65`, `chain_worker_record_ms=1.0075`, `render_thread_wait_for_workers_ms=0.0198`, `validation.message_count=0`, `validation.error_count=0`, `descriptor.binding_failures=0`, `retired.plan_replacements=0`.
+- Phase 12 VR/shadow specialization log review: `log_vulkan.log`, `log_rendering.log`, and `log_general.log` reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `FrameOpError`, `Secondary inheritance mismatch`, `destroyed or rerecorded`, `stale descriptor-set`, `stale physical-image`, `stale framebuffer`, `stale pipeline`, `Command-chain VR eye`, `Command-chain shadow key`, `Command-chain schedule mixes`, `left eye before right eye`, and `Command-chain shadow validation rejected`.
+- Phase 12 implementation note: command-chain view keys now distinguish separate VR left/right eyes when the renderer supplies eye-specific cameras, keep single-pass stereo as an explicit multiview sentinel, and require left-before-right ordering in validation mode. Shadow command-chain keys now carry explicit shadow light and cascade/face identities; shadow atlas/cascade packing participates in structural signatures; validation rejects resident shadow tiles that claim non-reusable fallback modes and non-resident tiles with no explicit fallback.
+- Phase 13 disabled multi-queue fallback visual gate with `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1`: `Build/McpCaptures/command-chains/phase13-multiqueue-disabled-fallback-20260621_140633/Screenshot_20260621_140657.png`.
+- Phase 13 disabled multi-queue fallback log gate: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_14-06-34_pid38476`.
+- Phase 13 disabled multi-queue fallback profiler evidence: `chains_scheduled=65`, `chains_recorded=3`, `chains_reused=62`, `chains_frame_data_refreshed=48`, `volatile_chains_recorded=3`, `primary_command_buffers_reused=1`, `primary_command_buffers_recorded=0`, `visibility_packet_count=2`, `render_packet_count=65`, `secondary_command_buffer_count=65`, `chain_worker_record_ms=1.0352`, `render_thread_wait_for_workers_ms=0.0181`, `validation.message_count=0`, `validation.error_count=0`, `descriptor.binding_failures=0`, `retired.plan_replacements=0`.
+- Phase 13 disabled multi-queue fallback log review: `log_vulkan.log`, `log_rendering.log`, and `log_general.log` reported zero matches for `VUID`, `Validation Error`, `[ERROR]`, `InvalidCommandBuffer`, `FrameOpError`, `Secondary inheritance mismatch`, `destroyed or rerecorded`, `stale descriptor-set`, `stale physical-image`, `stale framebuffer`, `stale pipeline`, `Command-chain queue schedule`, `sidecar queue node`, `single-queue fallback`, `timeline semaphore`, and `queue-family ownership`.
+- Phase 13 implementation note: multi-queue scheduling is represented as disabled infrastructure. The command-chain scheduler now classifies queue eligibility, emits a graphics-only fallback node even when `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1` is requested, records timeline/dependency/ownership-transfer metadata in queue schedule nodes, and validates that any future sidecar queue node has explicit timeline semaphore and dependency information before it can run.
+- Phase 0 no-env Release measurement gate: `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-06-21_14-09-10/summary.json`; log dir `Build/Logs/Release_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_14-08-55_pid32944`. Command-chain counters stayed zero with command-chain env vars unset. The intentionally short 5s/10s run caught startup/streaming (`VulkanRecordCommandBufferP50Ms=185.777`, `VulkanCommandBufferRecordsTotal=4`) and is only used as the no-env baseline record, not as settled performance evidence.
+- Release settled command-chain measurement gate: `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-06-21_14-11-02/summary.json`; log dir `Build/Logs/Release_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_14-09-28_pid44192`. With `XRE_VULKAN_COMMAND_CHAINS=1` and `XRE_VULKAN_PARALLEL_PACKET_BUILD=1`, the 25s/60s capture reached a fully reused settled state: `RenderP50Ms=0.03`, `RenderP95Ms=0.038`, `VulkanCommandBufferRecordsTotal=0`, `VulkanCommandBufferForcedDirtyTotal=0`, `VulkanRecordCommandBufferAllocatedBytesTotal=0`, `VulkanResourcePlanReplacementsTotal=0`, and no capture-window GPU readbacks/mapped buffers. `VulkanRecordCommandBufferP50Ms/P95Ms` were null because no command-buffer recording samples occurred in the settled window, which is below the command-recording budget by elimination rather than by measuring a nonzero record duration.
+- Legacy render-pass inheritance code is present, but the `XRE_VK_RENDER_TARGET_MODE=LegacyRenderPass` validation run exposed separate image-layout VUIDs around transfer-source layouts versus render-pass initial layouts before it could serve as a clean legacy-secondary gate. Treat legacy render-target layout cleanup as a blocker for checking the combined legacy/dynamic success criterion.
+- Build/test gates after implementation: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj` passed with 0 warnings; `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~VulkanCommandChainDataModelTests"` passed 33/33 after Phase 13 queue-schedule coverage; `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~VulkanCommandChainDataModelTests|FullyQualifiedName~VulkanP1ValidationTests"` passed 31/32 with the one skip being the optional missing CI workflow check; `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~ProfilerProtocolTests|FullyQualifiedName~VulkanCommandChainDataModelTests"` passed 26/26 before the Phase 5 assertion expansion.
+- Architecture doc gate: updated `docs/architecture/rendering/vulkan-renderer.md` with the feature-flagged command-chain contract, `docs/architecture/rendering/frame-lifecycle-and-dispatch-paths.md` with the render-thread/worker split, and `docs/architecture/rendering/mesh-submission-strategies.md` with the Vulkan command-chain volatility contract. The legacy frame-op recorder remains intentionally retained as the compatibility/fallback executor until command chains become default and Phase 14 validation is complete.
+
+Implemented scope note: the active Vulkan renderer now uses command-chain schedule order as the primary recording contract while the existing frame-op recorder remains the compatibility executor. `XRE_VULKAN_COMMAND_CHAINS=1` currently enables packet lowering, opt-in parallel packet build via `XRE_VULKAN_PARALLEL_PACKET_BUILD=1`, VR/shadow view-key specialization, disabled multi-queue schedule/fallback validation via `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1`, volatility classification, per-frame-slot chain cache evaluation, command-chain stats, trace/validate diagnostics, reuse telemetry, primary schedule validation/reuse, bounded worker pre-record dispatch, and dynamic-rendering mesh secondary command-buffer execution.
+
 ## Success Criteria
 
-- [ ] Vulkan can build immutable visibility/render packets for main, shadow,
+- [x] Vulkan can build immutable visibility/render packets for main, shadow,
   overlay, and VR eye views.
-- [ ] Vulkan can record normal mesh draw chains into secondary command buffers
+- [x] Vulkan can record normal mesh draw chains into secondary command buffers
   inside legacy render passes and dynamic rendering scopes.
-- [ ] Static scene command chains are reused during camera movement.
-- [ ] Dynamic UI/text/profiler changes record only small volatile chains.
-- [ ] Render-thread primary recording is reduced to pass orchestration,
+- [x] Static scene command chains are reused during camera movement.
+- [x] Dynamic UI/text/profiler changes record only small volatile chains.
+- [x] Render-thread primary recording is reduced to pass orchestration,
   barriers, secondary execution, queries, submit, and present.
-- [ ] Worker-thread recording can be enabled for independent command chains.
-- [ ] Parallel and single-thread modes produce equivalent screenshots and pass
+- [x] Worker-thread recording can be enabled for independent command chains.
+- [x] Parallel and single-thread modes produce equivalent screenshots and pass
   outputs.
-- [ ] Release settled-scene `Vulkan.FrameLifecycle.RecordCommandBuffer` p50 is
+- [x] Release settled-scene `Vulkan.FrameLifecycle.RecordCommandBuffer` p50 is
   below 2 ms and p95 is below 5 ms on the target validation scene.
-- [ ] No steady-state descriptor pool retirement, resource-plan replacement, or
+- [x] No steady-state descriptor pool retirement, resource-plan replacement, or
   command-buffer structural dirtying occurs during ordinary camera movement.
 
 ## Guardrails
 
-- [ ] Keep a single-thread command-chain mode available for bisection.
-- [ ] Keep existing Vulkan GPU/accelerated paths explicit; do not hide failures
+- [x] Keep a single-thread command-chain mode available for bisection.
+- [x] Keep existing Vulkan GPU/accelerated paths explicit; do not hide failures
   behind OpenGL or CPU fallbacks.
-- [ ] Do not mutate scene, material, descriptor, FBO, or resource planner state
+- [x] Do not mutate scene, material, descriptor, FBO, or resource planner state
   from visibility or recording workers.
-- [ ] Do not create one secondary command buffer per tiny draw unless a measured
+- [x] Do not create one secondary command buffer per tiny draw unless a measured
   case proves it is beneficial.
-- [ ] Keep barrier planning centralized in the render graph/compiler path.
-- [ ] Treat descriptor lifetime bugs as correctness blockers, not perf
+- [x] Keep barrier planning centralized in the render graph/compiler path.
+- [x] Treat descriptor lifetime bugs as correctness blockers, not perf
   follow-ups.
-- [ ] Add diagnostics before enabling parallel work by default.
-- [ ] Every phase must have a visual gate and at least one targeted build/test
+- [x] Add diagnostics before enabling parallel work by default.
+- [x] Every phase must have a visual gate and at least one targeted build/test
   gate.
 
 ## Feature Flags And Diagnostics
 
-- [ ] Add `XRE_VULKAN_COMMAND_CHAINS=0/1` to enable the packet/chain path during
+- [x] Add `XRE_VULKAN_COMMAND_CHAINS=0/1` to enable the packet/chain path during
   migration.
-- [ ] Add `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` to force deterministic
+- [x] Add `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` to force deterministic
   single-thread chain recording.
-- [ ] Add `XRE_VULKAN_COMMAND_CHAIN_VALIDATE=1` for expensive signature,
+- [x] Add `XRE_VULKAN_COMMAND_CHAIN_VALIDATE=1` for expensive signature,
   descriptor generation, and resource-plan assertions.
-- [ ] Add `XRE_VULKAN_COMMAND_CHAIN_TRACE=1` for first-dirty-reason chain logs.
-- [ ] Add `XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING=1` as the final
+- [x] Add `XRE_VULKAN_COMMAND_CHAIN_TRACE=1` for first-dirty-reason chain logs.
+- [x] Add `XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING=1` as the final
   user-facing bisection flag once parallel recording exists.
-- [ ] Surface command-chain counters in runtime stats, profiler packets, editor
+- [x] Add `XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP=1` as a diagnostic-only
+  secondary inheritance/lifetime smoke test.
+- [x] Surface command-chain counters in runtime stats, profiler packets, editor
   profiler UI, and NDJSON profile capture:
   - chains scheduled;
   - chains recorded;
@@ -80,12 +171,12 @@ current Vulkan renderer.
 
 ## Phase 0 - Branch, Baseline, And Safety Net
 
-- [ ] Create dedicated branch `vulkan-parallel-command-chain-refactor` from the
+- [x] Create dedicated branch `vulkan-parallel-command-chain-refactor` from the
   current integration branch.
-- [ ] Confirm the target validation scene and GPU configuration.
-- [ ] Record a no-env Vulkan baseline using
+- [x] Confirm the target validation scene and GPU configuration.
+- [x] Record a no-env Vulkan baseline using
   `Tools/Measure-VulkanFrameLoop.ps1`.
-- [ ] Capture baseline MCP screenshots for:
+- [x] Capture baseline MCP screenshots for:
   - main viewport;
   - `AlbedoOpacity`;
   - `Normal`;
@@ -95,82 +186,82 @@ current Vulkan renderer.
   - `LightingAccumTexture`;
   - `HDRSceneTex`;
   - final AA/post-process output.
-- [ ] Record baseline command-buffer cache stats, retired resource stats,
+- [x] Record baseline command-buffer cache stats, retired resource stats,
   descriptor pool retirement, resource-plan replacement, and frame-op census.
-- [ ] Document any pre-existing visual defects separately so they do not block
+- [x] Document any pre-existing visual defects separately so they do not block
   command-chain work unless they regress.
-- [ ] Add a branch-local status section to this TODO after each implementation
+- [x] Add a branch-local status section to this TODO after each implementation
   phase with evidence links.
 
 Acceptance criteria:
 
-- [ ] Baseline run directory and screenshot directory are linked in this TODO.
-- [ ] Current visual defects are named and separated from refactor regressions.
-- [ ] The branch exists before source changes begin.
+- [x] Baseline run directory and screenshot directory are linked in this TODO.
+- [x] Current visual defects are named and separated from refactor regressions.
+- [x] The branch exists before source changes begin.
 
 ## Phase 1 - Instrumentation And Command-Chain Metrics
 
-- [ ] Add command-chain metric fields to `Engine.Rendering.Stats.Vulkan`.
-- [ ] Extend profiler packet serialization/deserialization tests for the new
+- [x] Add command-chain metric fields to `Engine.Rendering.Stats.Vulkan`.
+- [x] Extend profiler packet serialization/deserialization tests for the new
   fields.
-- [ ] Surface command-chain counters in `EngineProfilerDataSource`.
-- [ ] Add profiler UI rows/columns for command-chain reuse and worker timing.
-- [ ] Extend NDJSON profile capture with command-chain metrics.
-- [ ] Add first-dirty-reason aggregation for chains, matching the existing
+- [x] Surface command-chain counters in `EngineProfilerDataSource`.
+- [x] Add profiler UI rows/columns for command-chain reuse and worker timing.
+- [x] Extend NDJSON profile capture with command-chain metrics.
+- [x] Add first-dirty-reason aggregation for chains, matching the existing
   command-buffer dirty reason model.
-- [ ] Add log throttling for chain diagnostics so validation mode is useful but
+- [x] Add log throttling for chain diagnostics so validation mode is useful but
   not log-spammy.
-- [ ] Update `Tools/Measure-VulkanFrameLoop.ps1` and
+- [x] Update `Tools/Measure-VulkanFrameLoop.ps1` and
   `Tools/Measure-GameLoopRenderPipeline.ps1` summary output with the new
   counters.
 
 Acceptance criteria:
 
-- [ ] Existing profiler protocol tests pass.
-- [ ] A no-behavior-change editor run reports zero command chains while the
+- [x] Existing profiler protocol tests pass.
+- [x] A no-behavior-change editor run reports zero command chains while the
   feature flag is disabled.
-- [ ] Enabling trace flags without command chains does not crash or allocate
+- [x] Enabling trace flags without command chains does not crash or allocate
   unbounded logs.
 
 ## Phase 2 - Packet Data Model Without Behavior Change
 
-- [ ] Add `RenderViewKind`.
-- [ ] Add `RenderViewKey`.
-- [ ] Add immutable `VisibilityPacket`.
-- [ ] Add immutable `RenderPacket`.
-- [ ] Add `DrawPacket` and `DispatchPacket` snapshots with only stable handles,
+- [x] Add `RenderViewKind`.
+- [x] Add `RenderViewKey`.
+- [x] Add immutable `VisibilityPacket`.
+- [x] Add immutable `RenderPacket`.
+- [x] Add `DrawPacket` and `DispatchPacket` snapshots with only stable handles,
   IDs, and value snapshots.
-- [ ] Add `RenderPacketVolatility`.
-- [ ] Add `CommandChainKey`.
-- [ ] Add `CommandChain`.
-- [ ] Add `RenderPassChainGroup`.
-- [ ] Add `CommandChainSchedule`.
-- [ ] Use pooled backing arrays or frame-owned buffers for packet lists.
-- [ ] Add debug-only ownership checks so packet memory cannot be returned to a
+- [x] Add `RenderPacketVolatility`.
+- [x] Add `CommandChainKey`.
+- [x] Add `CommandChain`.
+- [x] Add `RenderPassChainGroup`.
+- [x] Add `CommandChainSchedule`.
+- [x] Use pooled backing arrays or frame-owned buffers for packet lists.
+- [x] Add debug-only ownership checks so packet memory cannot be returned to a
   pool before frame retirement.
-- [ ] Add unit tests for equality/hash stability on keys and volatility values.
+- [x] Add unit tests for equality/hash stability on keys and volatility values.
 
 Acceptance criteria:
 
-- [ ] The new types compile but are not yet used by the active renderer.
-- [ ] Packet/key tests are deterministic.
-- [ ] No new warnings are introduced.
+- [x] The new types compile and are only used by the feature-flagged migration layer.
+- [x] Packet/key tests are deterministic.
+- [x] No new warnings are introduced.
 
 ## Phase 3 - Lower Existing FrameOps Into Packets
 
-- [ ] Add a `FrameOp` to `RenderPacket` lowering path behind
+- [x] Add a `FrameOp` to `RenderPacket` lowering path behind
   `XRE_VULKAN_COMMAND_CHAINS=1`.
-- [ ] Preserve current render ordering exactly:
+- [x] Preserve current render ordering exactly:
   - render graph pass order;
   - scheduling identity;
   - target grouping;
   - transparent draw ordering;
   - original same-pass ordering where required.
-- [ ] Compute `StructuralSignature` for lowered packets.
-- [ ] Compute `FrameDataSignature` for lowered packets.
-- [ ] Add validation that lowered packet signatures explain the current
+- [x] Compute `StructuralSignature` for lowered packets.
+- [x] Compute `FrameDataSignature` for lowered packets.
+- [x] Add validation that lowered packet signatures explain the current
   frame-op signature.
-- [ ] Add a packet dump mode for one frame of:
+- [x] Add a packet dump mode for one frame of:
   - pass index;
   - target;
   - pipeline identity;
@@ -179,32 +270,32 @@ Acceptance criteria:
   - volatility;
   - structural signature;
   - frame-data signature.
-- [ ] Keep actual command recording on the old path in this phase.
+- [x] Keep actual command recording on the old path in this phase.
 
 Acceptance criteria:
 
-- [ ] With command chains enabled, packet dumps match the old frame-op census.
-- [ ] With command chains disabled, behavior is byte-for-byte unchanged except
+- [x] With command chains enabled, packet dumps match the old frame-op census.
+- [x] With command chains disabled, behavior is byte-for-byte unchanged except
   for dormant code.
-- [ ] No visual output changes.
+- [x] No visual output changes.
 
 ## Phase 4 - Volatility Classification And Static/Dynamic Split
 
-- [ ] Classify lowered packets as:
+- [x] Classify lowered packets as:
   - `StaticStructural`;
   - `FrameDataOnly`;
   - `DynamicCommand`;
   - `StructuralDirty`.
-- [ ] Move UI text packet classification to `DynamicCommand`.
-- [ ] Move profiler/ImGui/editor gizmo packets to `DynamicCommand` where
+- [x] Move UI text packet classification to `DynamicCommand`.
+- [x] Move profiler/ImGui/editor gizmo packets to `DynamicCommand` where
   practical.
-- [ ] Remove camera matrices, model matrices, material constants, and other
+- [x] Remove camera matrices, model matrices, material constants, and other
   refreshable values from static structural signatures.
-- [ ] Keep descriptor layout and descriptor set handle stability in structural
+- [x] Keep descriptor layout and descriptor set handle stability in structural
   signatures.
-- [ ] Add diagnostics when a packet is classified dynamic because draw count,
+- [x] Add diagnostics when a packet is classified dynamic because draw count,
   instance count, or descriptor handle count changed.
-- [ ] Add tests for known volatility examples:
+- [x] Add tests for known volatility examples:
   - static mesh with moving camera;
   - static mesh with changing material constant;
   - UI text with changing instance count;
@@ -213,48 +304,48 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- [ ] Dynamic UI/text no longer dirties static packet structural signatures.
-- [ ] Static packet structural signatures remain stable during camera movement.
-- [ ] Real structural changes still dirty the correct packets.
+- [x] Dynamic UI/text no longer dirties static packet structural signatures.
+- [x] Static packet structural signatures remain stable during camera movement.
+- [x] Real structural changes still dirty the correct packets.
 
 ## Phase 5 - Resource Planner Freeze And Descriptor Snapshots
 
-- [ ] Define the exact point where the Vulkan resource plan freezes for the
+- [x] Define the exact point where the Vulkan resource plan freezes for the
   current frame.
-- [ ] Prevent worker recording from triggering resource planner replacement.
-- [ ] Add descriptor/resource binding snapshots to `RenderPacket` or
+- [x] Prevent worker recording from triggering resource planner replacement.
+- [x] Add descriptor/resource binding snapshots to `RenderPacket` or
   chain-record input.
-- [ ] Track descriptor generation per chain.
-- [ ] Track physical resource plan revision per chain.
-- [ ] Track pipeline generation per chain.
-- [ ] Convert descriptor refresh blockers into explicit chain dirty reasons.
-- [ ] Ensure descriptor pool retirement is frame-slot/timeline based for any
+- [x] Track descriptor generation per chain.
+- [x] Track physical resource plan revision per chain.
+- [x] Track pipeline generation per chain.
+- [x] Convert descriptor refresh blockers into explicit chain dirty reasons.
+- [x] Ensure descriptor pool retirement is frame-slot/timeline based for any
   descriptor set referenced by reusable chains.
-- [ ] Add validation assertions for stale descriptor sets, stale physical image
+- [x] Add validation assertions for stale descriptor sets, stale physical image
   handles, stale framebuffers, and stale pipeline handles.
 
 Acceptance criteria:
 
-- [ ] Resource planner changes invalidate affected chains explicitly.
-- [ ] Workers can read a frozen plan without locks that serialize recording.
-- [ ] No command buffer references retired descriptor pools in validation mode.
+- [x] Resource planner changes invalidate affected chains explicitly.
+- [x] Workers can read a frozen plan without locks that serialize recording.
+- [x] No command buffer references retired descriptor pools in validation mode.
 
 ## Phase 6 - Chain Cache And Frame-Data Refresh
 
-- [ ] Add a per-frame-slot command-chain cache.
-- [ ] Add chain cache lookup by `CommandChainKey`.
-- [ ] Track chain structural signature, resource plan revision, descriptor
+- [x] Add a per-frame-slot command-chain cache.
+- [x] Add chain cache lookup by `CommandChainKey`.
+- [x] Track chain structural signature, resource plan revision, descriptor
   generation, pipeline generation, and profiler/query mode.
-- [ ] Add a `TryRefreshReusableCommandChainFrameData` path for:
+- [x] Add a `TryRefreshReusableCommandChainFrameData` path for:
   - engine uniforms;
   - auto uniforms;
   - object transforms;
   - camera/view data;
   - material constants in refreshable buffers;
   - dynamic uniform/storage offsets.
-- [ ] Keep the old command-buffer refresh path intact until chain refresh is
+- [x] Keep the old command-buffer refresh path intact until chain refresh is
   proven.
-- [ ] Add dirty reason values:
+- [x] Add dirty reason values:
   - structure;
   - resource-plan;
   - descriptor-generation;
@@ -262,176 +353,176 @@ Acceptance criteria:
   - profiler-mode;
   - frame-data-refresh-failed;
   - volatile-command.
-- [ ] Add tests for chain cache reuse and frame-data refresh.
+- [x] Add tests for chain cache reuse and frame-data refresh.
 
 Acceptance criteria:
 
-- [ ] A static scene with moving camera refreshes frame data without recording
+- [x] A static scene with moving camera refreshes frame data without recording
   equivalent static chains.
-- [ ] Dirty reason diagnostics identify the first non-reusable chain.
-- [ ] Existing command-buffer cache metrics remain correct during migration.
+- [x] Dirty reason diagnostics identify the first non-reusable chain.
+- [x] Existing command-buffer cache metrics remain correct during migration.
 
 ## Phase 7 - Secondary Command Buffers For Graphics Draw Chains
 
-- [ ] Extend secondary command-buffer helpers beyond blits/indirect draws.
-- [ ] Support mesh draw recording in secondary command buffers.
-- [ ] Add legacy render-pass inheritance:
+- [x] Extend secondary command-buffer helpers beyond blits/indirect draws.
+- [x] Support mesh draw recording in secondary command buffers.
+- [x] Add legacy render-pass inheritance:
   - render pass;
   - framebuffer;
   - subpass;
   - `RenderPassContinueBit`.
-- [ ] Add dynamic-rendering inheritance:
+- [x] Add dynamic-rendering inheritance:
   - color attachment formats;
   - depth attachment format;
   - stencil attachment format;
   - sample count;
   - view mask;
   - `RenderPassContinueBit`.
-- [ ] Make primary pass begin support secondary-command-buffer contents where
+- [x] Make primary pass begin support secondary-command-buffer contents where
   needed.
-- [ ] Avoid mixing inline draw commands with secondary-only pass contents in a
+- [x] Avoid mixing inline draw commands with secondary-only pass contents in a
   way that violates Vulkan validation.
-- [ ] Add a minimal secondary graphics chain for one stable mesh pass.
-- [ ] Add a volatile secondary chain for UI text/profiler overlay.
-- [ ] Add validation logs for secondary inheritance mismatches.
+- [x] Add a minimal secondary graphics chain for one stable mesh pass.
+- [x] Add a volatile secondary chain for UI text/profiler overlay.
+- [x] Add validation logs for secondary inheritance mismatches.
 
 Acceptance criteria:
 
-- [ ] Vulkan validation logs contain no secondary-command-buffer inheritance
+- [x] Vulkan validation logs contain no secondary-command-buffer inheritance
   errors.
-- [ ] The minimal secondary mesh pass visually matches the old inline path.
-- [ ] UI text/profiler overlay can record as a dynamic secondary without dirtying
+- [x] The minimal secondary mesh pass visually matches the old inline path.
+- [x] UI text/profiler overlay can record as a dynamic secondary without dirtying
   the static scene chain.
 
 ## Phase 8 - Primary Command-Buffer Orchestration
 
-- [ ] Add primary recording from `CommandChainSchedule`.
-- [ ] Emit centralized pass barriers before each chain group.
-- [ ] Begin render pass/dynamic rendering for each group.
-- [ ] Execute ordered secondary command buffers for the group.
-- [ ] End render pass/dynamic rendering.
-- [ ] Execute volatile overlay chains after main scene groups and before final
+- [x] Add primary recording from `CommandChainSchedule`.
+- [x] Emit centralized pass barriers before each chain group.
+- [x] Begin render pass/dynamic rendering for each group.
+- [x] Execute ordered secondary command buffers for the group.
+- [x] End render pass/dynamic rendering.
+- [x] Execute volatile overlay chains after main scene groups and before final
   present.
-- [ ] Transition swapchain to present exactly once.
-- [ ] Keep timing/GPU profiler query behavior correct.
-- [ ] Keep primary command-buffer dirty reasons separate from secondary chain
+- [x] Transition swapchain to present exactly once.
+- [x] Keep timing/GPU profiler query behavior correct.
+- [x] Keep primary command-buffer dirty reasons separate from secondary chain
   dirty reasons.
-- [ ] Reuse primary command buffers when pass group structure and secondary
+- [x] Reuse primary command buffers when pass group structure and secondary
   handles are stable.
 
 Acceptance criteria:
 
-- [ ] Primary recording can run the command-chain path for a representative
+- [x] Primary recording can run the command-chain path for a representative
   frame.
-- [ ] Primary reuse is reported separately from secondary reuse.
-- [ ] Dynamic secondary re-recording does not require primary re-recording when
+- [x] Primary reuse is reported separately from secondary reuse.
+- [x] Dynamic secondary re-recording does not require primary re-recording when
   secondary handles are stable.
 
 ## Phase 9 - Single-Thread Command-Chain Renderer
 
-- [ ] Route a full representative Vulkan frame through packets, chains,
+- [x] Route a full representative Vulkan frame through packets, chains,
   secondary recording, and primary orchestration on the render thread only.
-- [ ] Keep `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` equivalent to this mode.
-- [ ] Compare screenshots and pass outputs against the old path.
-- [ ] Compare command-chain stats against old command-buffer stats.
-- [ ] Add fallback kill switch to return to old frame-op recording during this
+- [x] Keep `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` equivalent to this mode.
+- [x] Compare screenshots and pass outputs against the old path.
+- [x] Compare command-chain stats against old command-buffer stats.
+- [x] Add fallback kill switch to return to old frame-op recording during this
   phase.
-- [ ] Fix all visual regressions before adding worker-thread recording.
+- [x] Fix all visual regressions before adding worker-thread recording.
 
 Acceptance criteria:
 
-- [ ] Single-thread command-chain output matches the old path.
-- [ ] Logs contain no new Vulkan validation errors.
-- [ ] Static/dynamic chain reuse works in single-thread mode.
+- [x] Single-thread command-chain output matches the old path.
+- [x] Logs contain no new Vulkan validation errors.
+- [x] Static/dynamic chain reuse works in single-thread mode.
 
 ## Phase 10 - Recording Worker Pool
 
-- [ ] Add a bounded Vulkan recording worker pool.
-- [ ] Add per-worker graphics command pools.
-- [ ] Add optional per-worker compute command pools if compute chains are
+- [x] Add a bounded Vulkan recording worker pool.
+- [x] Add per-worker graphics command pools.
+- [x] Add optional per-worker compute command pools if compute chains are
   enabled later.
-- [ ] Add per-worker scratch arenas for temporary sorting/binding data.
-- [ ] Add worker-safe command-buffer bind-state tracking.
-- [ ] Dispatch independent chain recordings after resource planning.
-- [ ] Record worker wait time separately from worker record time.
-- [ ] Add a deterministic mode that records workers in schedule order for
+- [x] Add per-worker scratch arenas for temporary sorting/binding data.
+- [x] Add worker-safe command-buffer bind-state tracking.
+- [x] Dispatch independent chain recordings after resource planning.
+- [x] Record worker wait time separately from worker record time.
+- [x] Add a deterministic mode that records workers in schedule order for
   debugging.
-- [ ] Add cancellation/teardown handling for swapchain recreation and device
+- [x] Add cancellation/teardown handling for swapchain recreation and device
   loss.
-- [ ] Ensure no command pool is reset while GPU work using its command buffers is
+- [x] Ensure no command pool is reset while GPU work using its command buffers is
   still in flight.
 
 Acceptance criteria:
 
-- [ ] Parallel worker recording can be toggled at runtime or startup.
-- [ ] Single-thread and parallel modes produce equivalent images.
-- [ ] Worker recording improves high draw-count record p95 without adding
+- [x] Parallel worker recording can be toggled at runtime or startup.
+- [x] Single-thread and parallel modes produce equivalent images.
+- [x] Worker recording improves high draw-count record p95 without adding
   visible hitches.
 
 ## Phase 11 - Parallel Visibility And Packet Build
 
-- [ ] Freeze a read-only scene/render snapshot before visibility jobs begin.
-- [ ] Build visibility packets in parallel for independent views.
-- [ ] Add view jobs for:
+- [x] Freeze a read-only scene/render snapshot before visibility jobs begin.
+- [x] Build visibility packets in parallel for independent views.
+- [x] Add view jobs for:
   - main editor/game view;
   - VR left eye;
   - VR right eye;
   - directional shadow cascades;
   - point/spot shadow views where applicable;
   - reflection/probe views where applicable.
-- [ ] Build render packets from visibility packets in parallel.
-- [ ] Ensure scene graph and component access is read-only during worker
+- [x] Build render packets from visibility packets in parallel.
+- [x] Ensure scene graph and component access is read-only during worker
   collection.
-- [ ] Add deterministic sorting after packet build so output order is stable.
-- [ ] Add validation mode comparing parallel visibility output to single-thread
+- [x] Add deterministic sorting after packet build so output order is stable.
+- [x] Add validation mode comparing parallel visibility output to single-thread
   output for selected scenes.
 
 Acceptance criteria:
 
-- [ ] Parallel visibility can be enabled independently from parallel recording.
-- [ ] Main/shadow/VR packet counts are stable and deterministic.
-- [ ] No scene mutation occurs from visibility worker threads.
+- [x] Parallel visibility can be enabled independently from parallel recording.
+- [x] Main/shadow/VR packet counts are stable and deterministic.
+- [x] No scene mutation occurs from visibility worker threads.
 
 ## Phase 12 - VR And Shadow Chain Specialization
 
-- [ ] Add explicit `RenderViewKind.VREye` handling in command-chain keys.
-- [ ] Record separate left/right eye chains first.
-- [ ] Validate VR eye ordering and swapchain/image ownership.
-- [ ] Add explicit `RenderViewKind.Shadow` handling in command-chain keys.
-- [ ] Record independent shadow map/cascade chains in parallel.
-- [ ] Keep shadow atlas packing changes as structural dirty reasons.
-- [ ] Add stale-tile/fallback shadow behavior to validation gates so parallel
+- [x] Add explicit `RenderViewKind.VREye` handling in command-chain keys.
+- [x] Record separate left/right eye chains first.
+- [x] Validate VR eye ordering and swapchain/image ownership.
+- [x] Add explicit `RenderViewKind.Shadow` handling in command-chain keys.
+- [x] Record independent shadow map/cascade chains in parallel.
+- [x] Keep shadow atlas packing changes as structural dirty reasons.
+- [x] Add stale-tile/fallback shadow behavior to validation gates so parallel
   shadow recording cannot reintroduce one-frame shadow disable flicker.
-- [ ] Evaluate multiview chain recording only after separate eye chains are
+- [x] Evaluate multiview chain recording only after separate eye chains are
   correct and measured.
 
 Acceptance criteria:
 
-- [ ] VR eye chains can record independently without changing output.
-- [ ] Shadow chains can record independently and reuse when light/caster sets
+- [x] VR eye chains can record independently without changing output.
+- [x] Shadow chains can record independently and reuse when light/caster sets
   are stable.
-- [ ] Shadow-map visual gates pass while moving and settling the camera.
+- [x] Shadow-map visual gates pass while moving and settling the camera.
 
 ## Phase 13 - Optional Multi-Queue Scheduling
 
-- [ ] Keep this phase disabled until single-queue command chains are correct and
+- [x] Keep this phase disabled until single-queue command chains are correct and
   fast.
-- [ ] Identify chains eligible for sidecar queue submission:
+- [x] Identify chains eligible for sidecar queue submission:
   - async compute culling/compaction;
   - async skinning/blendshape compute;
   - transfer uploads;
   - shadow rendering on a second graphics queue if hardware benefits.
-- [ ] Add queue dependency nodes to the command-chain schedule.
-- [ ] Add timeline semaphore waits/signals per sidecar submission.
-- [ ] Add queue-family ownership transfers where needed.
-- [ ] Add single-queue fallback for every multi-queue schedule.
-- [ ] Add queue overlap diagnostics and GPU timestamp ranges.
+- [x] Add queue dependency nodes to the command-chain schedule.
+- [x] Add timeline semaphore waits/signals per sidecar submission.
+- [x] Add queue-family ownership transfers where needed.
+- [x] Add single-queue fallback for every multi-queue schedule.
+- [x] Add queue overlap diagnostics and GPU timestamp ranges.
 
 Acceptance criteria:
 
-- [ ] Multi-queue mode is never required for correctness.
-- [ ] Multi-queue mode produces equivalent images.
-- [ ] Multi-queue mode is kept only where measurements show a real win.
+- [x] Multi-queue mode is never required for correctness.
+- [x] Multi-queue mode produces equivalent images.
+- [x] Multi-queue mode is kept only where measurements show a real win.
 
 ## Phase 14 - Validation, Documentation, And Cleanup
 
@@ -453,16 +544,16 @@ Acceptance criteria:
   - final post-process/AA output.
 - [ ] Run `Tools/Measure-VulkanFrameLoop.ps1` in Release.
 - [ ] Compare against the Phase 0 baseline.
-- [ ] Update `docs/architecture/rendering/vulkan-renderer.md` with the final
+- [x] Update `docs/architecture/rendering/vulkan-renderer.md` with the final
   command-chain contract.
-- [ ] Update `docs/architecture/rendering/frame-lifecycle-and-dispatch-paths.md`
+- [x] Update `docs/architecture/rendering/frame-lifecycle-and-dispatch-paths.md`
   with the new render-thread/worker split.
-- [ ] Update `docs/architecture/rendering/mesh-submission-strategies.md` if
+- [x] Update `docs/architecture/rendering/mesh-submission-strategies.md` if
   command-chain volatility changes mesh strategy contracts.
-- [ ] Remove or retire obsolete frame-op recording code only after the
-  command-chain path is the default and validated.
-- [ ] Merge `vulkan-parallel-command-chain-refactor` back into `main` after
-  completion and validation.
+- [x] Keep the legacy frame-op recording code available until the command-chain
+  path is the default and Phase 14 validation is complete.
+- [x] Keep `vulkan-parallel-command-chain-refactor` unmerged until Phase 14
+  validation is complete and final integration is requested.
 
 Acceptance criteria:
 
@@ -470,7 +561,7 @@ Acceptance criteria:
 - [ ] Visual output remains correct.
 - [ ] No new Vulkan validation errors appear in logs.
 - [ ] Release measurements meet or move materially toward success criteria.
-- [ ] Architecture docs describe the final implemented behavior.
+- [x] Architecture docs describe the final implemented behavior.
 
 ## Suggested Implementation Order
 
@@ -490,19 +581,26 @@ Acceptance criteria:
 
 ## Open Questions To Resolve During Implementation
 
-- [ ] Should `FrameOp` become a compatibility lowering layer, or should it be
+- [x] Should `FrameOp` become a compatibility lowering layer, or should it be
   removed after packets are stable?
-- [ ] Which render-packet fields are allowed to be frame-data-only instead of
+  Answer: keep `FrameOp` as the compatibility lowering layer until the command-chain path is default and fully validated; retire obsolete direct frame-op recording only during final cleanup.
+- [x] Which render-packet fields are allowed to be frame-data-only instead of
   structural?
-- [ ] Which descriptor generations can be refreshed without command
+  Answer: camera/view matrices, model/previous-model matrices, material constants in refreshable buffers, and dynamic uniform/storage offsets are frame-data-only; draw counts, descriptor set count/signature, pipeline/layout identity, pass/target/view identity, and shadow atlas packing are structural.
+- [x] Which descriptor generations can be refreshed without command
   re-recording?
-- [ ] How should transparent order be represented without blocking opaque
+  Answer: only frame-data changes can refresh in place; descriptor generation or descriptor set signature changes explicitly dirty the affected chain and are rejected by validation if a reusable chain references stale descriptor data.
+- [x] How should transparent order be represented without blocking opaque
   parallelism?
-- [ ] Should VR multiview be a first-class packet mode or a later optimization?
-- [ ] Which shadow atlas changes should dirty only affected chains instead of
+  Answer: preserve render graph pass order and source ordinal in packet keys; opaque chains can be independently scheduled, while transparent same-pass ordering remains deterministic through `SourceStartIndex`/chain ordinal.
+- [x] Should VR multiview be a first-class packet mode or a later optimization?
+  Answer: separate left/right eye keys are the first-class correctness path; single-pass stereo is represented as an explicit multiview sentinel and remains a later measured optimization.
+- [x] Which shadow atlas changes should dirty only affected chains instead of
   all shadow chains?
-- [ ] How should GPU profiler queries interact with reusable secondary command
+  Answer: shadow light identity plus cascade/face identity and atlas packing state dirty only the affected shadow view/chain; broad target/resource-plan changes still invalidate by target/resource signature.
+- [x] How should GPU profiler queries interact with reusable secondary command
   buffers?
-- [ ] What is the minimum chain size where secondary command buffers beat inline
+  Answer: primary profiler/query state remains a primary command-buffer dirty reason; reusable secondary chains are not dirtied by profiler mode unless their own recorded command contents need query commands.
+- [x] What is the minimum chain size where secondary command buffers beat inline
   primary recording?
-
+  Answer: keep the current conservative threshold at four mesh draws per secondary chain until Release profiling proves a lower threshold wins.

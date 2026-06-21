@@ -83,6 +83,9 @@ The renderer targets **Vulkan 1.3** (instance) with a **1.1 minimum** API versio
 | `VulkanBindlessMaterialDescriptors.cs` | Reserved descriptor-indexed material texture table binding contract |
 | `VulkanRenderer.BindlessMaterialTextureTable.cs` | Renderer-owned global material texture descriptor table and descriptor-index material row integration |
 | `VulkanComputeDescriptors.cs` | Compute shader descriptor management |
+| `VulkanCommandChains.cs` | Command-chain packet, key, cache, schedule, and queue-schedule data model |
+| `VulkanCommandChainLowering.cs` | Feature-flagged lowering from sorted `FrameOp` arrays into reusable command-chain schedules |
+| `VulkanCommandChainWorkers.cs` | Bounded worker infrastructure for command-chain recording diagnostics and timing |
 | `VulkanFeatureProfile.cs` | Feature toggles/profile configuration |
 | `VulkanRenderTargetMode.cs` | Dynamic-rendering vs legacy render-pass target selection |
 | `VulkanShaderTools.cs` | Shader compilation utilities (GLSL → SPIR-V) |
@@ -406,6 +409,44 @@ RecordCommandBuffer(imageIndex)
 ```
 
 Graphics targets are selected through the resolved render target mode. Dynamic mode records swapchain and `XRFrameBuffer` targets with `vkCmdBeginRendering` / `vkCmdEndRendering`; legacy mode records through `vkCmdBeginRenderPass` / `vkCmdEndRenderPass`. Dynamic FBO scopes reuse `VkFrameBuffer` attachment signatures for image views, formats, load/store ops, clear values, and explicit begin/end layout barriers.
+
+#### Feature-Flagged Command Chains
+
+Vulkan also has a command-chain path that lowers the sorted `FrameOp` stream into reusable packet schedules before recording. It is guarded by environment flags while the legacy frame-op recorder remains the default fallback:
+
+| Flag | Purpose |
+|------|---------|
+| `XRE_VULKAN_COMMAND_CHAINS=1` | Enables command-chain lowering, secondary mesh command buffers, chain cache lookup, and primary schedule signatures. |
+| `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` | Forces deterministic single-thread chain processing for bisection. |
+| `XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING=1` | Keeps command-chain lowering enabled while disabling worker dispatch. |
+| `XRE_VULKAN_PARALLEL_PACKET_BUILD=1` | Builds packet snapshots in parallel and validates them against the sequential result in validation mode. |
+| `XRE_VULKAN_COMMAND_CHAIN_VALIDATE=1` | Enables expensive schedule, view-specialization, queue-schedule, and signature checks. |
+| `XRE_VULKAN_COMMAND_CHAIN_TRACE=1` | Emits throttled first-dirty-reason and schedule diagnostics. |
+| `XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP=1` | Diagnostic mode that records secondary mesh chains without draw payloads. |
+| `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1` | Builds and validates queue-schedule sidecar metadata; execution still falls back to the graphics queue. |
+
+Command-chain recording keeps the render graph as the source of ordering truth:
+
+```text
+DrainFrameOps()
+  -> SortFrameOps()
+  -> Split dynamic UI/text overlay ops
+  -> Prepare and freeze the Vulkan resource plan revision
+  -> Lower static and volatile ops into VisibilityPacket/RenderPacket arrays
+  -> Build RenderPassChainGroup schedule by target/pass/view/volatility
+  -> Refresh reusable chain frame data or record dirty secondary command buffers
+  -> Record/reuse the primary command buffer from the chain group signature
+```
+
+The cache is per swapchain image/frame slot and keyed by `CommandChainKey`, which includes render target identity, pass index, view key, volatility, structural signature, and descriptor/resource generation inputs. Static scene chains can refresh camera/model/material frame data without re-recording secondary command buffers. Dynamic UI text and profiler/overlay work is isolated into volatile chains so it does not dirty static scene chains.
+
+Primary command-buffer reuse is tracked separately from secondary reuse. A primary can be reused when the pass-group layout, schedule signature, and ordered secondary command-buffer handles are unchanged. When only frame data changes, the chain metrics report frame-data refreshes rather than command-buffer records. The profiler/runtime stat surface exposes scheduled, recorded, reused, refreshed, dirty-reason, secondary-count, primary-record/reuse, worker-record, and render-thread-wait metrics.
+
+The worker infrastructure owns per-worker graphics/compute command pools, scratch state, bind-state containers, cancellation, and teardown. Current worker execution is conservative: inheritance-sensitive graphics secondary recording remains on the validated primary-compatible path, while worker timing and scheduling boundaries are available for expansion and measurement. Worker state is cancelled on command-buffer destruction and destroyed before the main command pools.
+
+VR and shadow passes use explicit command-chain view specialization. VR eye chains use left/right eye indices, with a multiview sentinel reserved for single-pass stereo. Shadow chains include light identity, cascade/face identity, target identity, and shadow atlas/fallback state in their structural signatures so atlas repacks or stale-tile fallback modes dirty only the affected chains.
+
+Optional multi-queue scheduling is metadata-only in this phase. The queue scheduler classifies graphics, secondary graphics, compute, and transfer eligibility, validates dependency/timeline data in validation mode, then emits a graphics fallback node for actual execution.
 
 ### The Render Graph
 

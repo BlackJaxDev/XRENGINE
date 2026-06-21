@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -34,12 +35,15 @@ public unsafe partial class VulkanRenderer
     private ResourcePlannerSignatureBreakdown _resourcePlannerSignatureBreakdown;
     private ulong _resourcePlannerRevision;
     private bool _isRecordingCommandBuffer;
+    private int _commandChainFrozenPlanReaders;
+    private ulong _commandChainFrozenResourcePlanRevision;
     private readonly Dictionary<string, XRDataBuffer> _trackedBuffersByName = new(StringComparer.OrdinalIgnoreCase);
     internal VulkanResourcePlanner ResourcePlanner => _resourcePlanner;
     internal VulkanResourcePlan ResourcePlan => _resourcePlanner.CurrentPlan;
     internal VulkanResourceAllocator ResourceAllocator => _resourceAllocator;
     internal VulkanCompiledRenderGraph CompiledRenderGraph => _compiledRenderGraph;
     internal ulong ResourcePlannerRevision => _resourcePlannerRevision;
+    private bool IsCommandChainResourcePlanFrozen => Volatile.Read(ref _commandChainFrozenPlanReaders) > 0;
     private bool[]? _commandBufferDirtyFlags;
     private readonly object _commandBufferDirtyReasonLock = new();
     private readonly Dictionary<string, int> _commandBufferDirtyReasons = new(StringComparer.Ordinal);
@@ -213,6 +217,24 @@ public unsafe partial class VulkanRenderer
         VulkanCompiledRenderGraph CompiledGraph,
         VulkanBarrierPlanner.QueueOwnershipConfig QueueOwnership,
         ResourcePlannerFastPathKey FastPathKey);
+
+    private readonly struct CommandChainResourcePlanReadScope : IDisposable
+    {
+        private readonly VulkanRenderer _renderer;
+
+        public CommandChainResourcePlanReadScope(VulkanRenderer renderer, ulong resourcePlanRevision)
+        {
+            _renderer = renderer;
+            _renderer._commandChainFrozenResourcePlanRevision = resourcePlanRevision;
+            Interlocked.Increment(ref _renderer._commandChainFrozenPlanReaders);
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Decrement(ref _renderer._commandChainFrozenPlanReaders) == 0)
+                _renderer._commandChainFrozenResourcePlanRevision = 0;
+        }
+    }
 
     private readonly record struct PhysicalAllocationPlan(
         VulkanResourceExtentContext ExtentContext,
@@ -1156,6 +1178,18 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        if (IsCommandChainResourcePlanFrozen)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.ResourcePlanner.LazyRebuildDuringFrozenCommandChainPlan.{resourceName}",
+                TimeSpan.FromSeconds(2),
+                "[VulkanResourcePlanner] Refusing lazy physical-image plan rebuild for '{0}' while command-chain readers are using frozen plan revision {1}.",
+                resourceName,
+                _commandChainFrozenResourcePlanRevision);
+            group = null;
+            return false;
+        }
+
         UpdateResourcePlannerFromContext(context);
 
         if (_resourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) &&
@@ -1710,6 +1744,12 @@ public unsafe partial class VulkanRenderer
         HashSet<string>? activeFrameBufferNames = null,
         int activeResourceSetSignature = 0)
     {
+        if (IsCommandChainResourcePlanFrozen)
+        {
+            throw new InvalidOperationException(
+                $"Resource planner cannot be replaced while command-chain readers are using frozen plan revision {_commandChainFrozenResourcePlanRevision}.");
+        }
+
         int activePassSetSignature = ComputeActivePassSetSignature(activePassIndices);
         ResourcePlanningInputs planningInputs = PrepareResourcePlanningInputs(
             context,

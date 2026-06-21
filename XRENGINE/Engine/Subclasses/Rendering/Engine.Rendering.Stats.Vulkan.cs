@@ -259,6 +259,36 @@ namespace XREngine
                     private static int _lastFrameVulkanCommandBufferProfilerDirtyCount;
                     private static string _vulkanCommandBufferDirtySummary = string.Empty;
                     private static string _lastFrameVulkanCommandBufferDirtySummary = string.Empty;
+                    private static int _vulkanCommandChainsScheduled;
+                    private static int _vulkanCommandChainsRecorded;
+                    private static int _vulkanCommandChainsReused;
+                    private static int _vulkanCommandChainsFrameDataRefreshed;
+                    private static int _vulkanVolatileCommandChainsRecorded;
+                    private static int _vulkanPrimaryCommandBuffersReused;
+                    private static int _vulkanPrimaryCommandBuffersRecorded;
+                    private static int _vulkanVisibilityPacketCount;
+                    private static int _vulkanRenderPacketCount;
+                    private static int _vulkanSecondaryCommandBufferCount;
+                    private static long _vulkanCommandChainWorkerRecordTicks;
+                    private static long _vulkanRenderThreadWaitForChainWorkersTicks;
+                    private static string _vulkanFirstCommandChainStructuralDirtyReason = string.Empty;
+                    private static string _vulkanFirstCommandChainDescriptorGenerationMismatch = string.Empty;
+                    private static string _vulkanFirstCommandChainResourcePlanRevisionMismatch = string.Empty;
+                    private static int _lastFrameVulkanCommandChainsScheduled;
+                    private static int _lastFrameVulkanCommandChainsRecorded;
+                    private static int _lastFrameVulkanCommandChainsReused;
+                    private static int _lastFrameVulkanCommandChainsFrameDataRefreshed;
+                    private static int _lastFrameVulkanVolatileCommandChainsRecorded;
+                    private static int _lastFrameVulkanPrimaryCommandBuffersReused;
+                    private static int _lastFrameVulkanPrimaryCommandBuffersRecorded;
+                    private static int _lastFrameVulkanVisibilityPacketCount;
+                    private static int _lastFrameVulkanRenderPacketCount;
+                    private static int _lastFrameVulkanSecondaryCommandBufferCount;
+                    private static long _lastFrameVulkanCommandChainWorkerRecordTicks;
+                    private static long _lastFrameVulkanRenderThreadWaitForChainWorkersTicks;
+                    private static string _lastFrameVulkanFirstCommandChainStructuralDirtyReason = string.Empty;
+                    private static string _lastFrameVulkanFirstCommandChainDescriptorGenerationMismatch = string.Empty;
+                    private static string _lastFrameVulkanFirstCommandChainResourcePlanRevisionMismatch = string.Empty;
                     private static int _vulkanRetiredDescriptorPoolCount;
                     private static int _vulkanRetiredPipelineCount;
                     private static int _vulkanRetiredFramebufferCount;
@@ -418,6 +448,21 @@ namespace XREngine
                     public static int VulkanCommandBufferPlannerDirtyCount => _lastFrameVulkanCommandBufferPlannerDirtyCount;
                     public static int VulkanCommandBufferProfilerDirtyCount => _lastFrameVulkanCommandBufferProfilerDirtyCount;
                     public static string VulkanCommandBufferDirtySummary => _lastFrameVulkanCommandBufferDirtySummary;
+                    public static int VulkanCommandChainsScheduled => _lastFrameVulkanCommandChainsScheduled;
+                    public static int VulkanCommandChainsRecorded => _lastFrameVulkanCommandChainsRecorded;
+                    public static int VulkanCommandChainsReused => _lastFrameVulkanCommandChainsReused;
+                    public static int VulkanCommandChainsFrameDataRefreshed => _lastFrameVulkanCommandChainsFrameDataRefreshed;
+                    public static int VulkanVolatileCommandChainsRecorded => _lastFrameVulkanVolatileCommandChainsRecorded;
+                    public static int VulkanPrimaryCommandBuffersReused => _lastFrameVulkanPrimaryCommandBuffersReused;
+                    public static int VulkanPrimaryCommandBuffersRecorded => _lastFrameVulkanPrimaryCommandBuffersRecorded;
+                    public static int VulkanVisibilityPacketCount => _lastFrameVulkanVisibilityPacketCount;
+                    public static int VulkanRenderPacketCount => _lastFrameVulkanRenderPacketCount;
+                    public static int VulkanSecondaryCommandBufferCount => _lastFrameVulkanSecondaryCommandBufferCount;
+                    public static double VulkanCommandChainWorkerRecordMs => TimeSpan.FromTicks(_lastFrameVulkanCommandChainWorkerRecordTicks).TotalMilliseconds;
+                    public static double VulkanRenderThreadWaitForChainWorkersMs => TimeSpan.FromTicks(_lastFrameVulkanRenderThreadWaitForChainWorkersTicks).TotalMilliseconds;
+                    public static string VulkanFirstCommandChainStructuralDirtyReason => _lastFrameVulkanFirstCommandChainStructuralDirtyReason;
+                    public static string VulkanFirstCommandChainDescriptorGenerationMismatch => _lastFrameVulkanFirstCommandChainDescriptorGenerationMismatch;
+                    public static string VulkanFirstCommandChainResourcePlanRevisionMismatch => _lastFrameVulkanFirstCommandChainResourcePlanRevisionMismatch;
                     public static int VulkanRetiredDescriptorPoolCount => _lastFrameVulkanRetiredDescriptorPoolCount;
                     public static int VulkanRetiredPipelineCount => _lastFrameVulkanRetiredPipelineCount;
                     public static int VulkanRetiredFramebufferCount => _lastFrameVulkanRetiredFramebufferCount;
@@ -738,6 +783,71 @@ namespace XREngine
 
                         lock (_vulkanDiagnosticLock)
                             _vulkanCommandBufferDirtySummary = AppendDiagnosticToken(_vulkanCommandBufferDirtySummary, $"dirty:{reason}");
+                    }
+
+                    public static void RecordVulkanCommandChainMetrics(
+                        int chainsScheduled = 0,
+                        int chainsRecorded = 0,
+                        int chainsReused = 0,
+                        int chainsFrameDataRefreshed = 0,
+                        int volatileChainsRecorded = 0,
+                        int primaryCommandBuffersReused = 0,
+                        int primaryCommandBuffersRecorded = 0,
+                        int visibilityPackets = 0,
+                        int renderPackets = 0,
+                        int secondaryCommandBuffers = 0,
+                        TimeSpan chainWorkerRecordTime = default,
+                        TimeSpan renderThreadWaitForWorkersTime = default,
+                        string? firstStructuralDirtyReason = null,
+                        string? firstDescriptorGenerationMismatch = null,
+                        string? firstResourcePlanRevisionMismatch = null)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        AddNonNegative(ref _vulkanCommandChainsScheduled, chainsScheduled);
+                        AddNonNegative(ref _vulkanCommandChainsRecorded, chainsRecorded);
+                        AddNonNegative(ref _vulkanCommandChainsReused, chainsReused);
+                        AddNonNegative(ref _vulkanCommandChainsFrameDataRefreshed, chainsFrameDataRefreshed);
+                        AddNonNegative(ref _vulkanVolatileCommandChainsRecorded, volatileChainsRecorded);
+                        AddNonNegative(ref _vulkanPrimaryCommandBuffersReused, primaryCommandBuffersReused);
+                        AddNonNegative(ref _vulkanPrimaryCommandBuffersRecorded, primaryCommandBuffersRecorded);
+                        AddNonNegative(ref _vulkanVisibilityPacketCount, visibilityPackets);
+                        AddNonNegative(ref _vulkanRenderPacketCount, renderPackets);
+                        AddNonNegative(ref _vulkanSecondaryCommandBufferCount, secondaryCommandBuffers);
+
+                        if (chainWorkerRecordTime.Ticks > 0)
+                            Interlocked.Add(ref _vulkanCommandChainWorkerRecordTicks, chainWorkerRecordTime.Ticks);
+                        if (renderThreadWaitForWorkersTime.Ticks > 0)
+                            Interlocked.Add(ref _vulkanRenderThreadWaitForChainWorkersTicks, renderThreadWaitForWorkersTime.Ticks);
+
+                        if (string.IsNullOrWhiteSpace(firstStructuralDirtyReason) &&
+                            string.IsNullOrWhiteSpace(firstDescriptorGenerationMismatch) &&
+                            string.IsNullOrWhiteSpace(firstResourcePlanRevisionMismatch))
+                        {
+                            return;
+                        }
+
+                        lock (_vulkanDiagnosticLock)
+                        {
+                            if (string.IsNullOrEmpty(_vulkanFirstCommandChainStructuralDirtyReason) &&
+                                !string.IsNullOrWhiteSpace(firstStructuralDirtyReason))
+                            {
+                                _vulkanFirstCommandChainStructuralDirtyReason = firstStructuralDirtyReason;
+                            }
+
+                            if (string.IsNullOrEmpty(_vulkanFirstCommandChainDescriptorGenerationMismatch) &&
+                                !string.IsNullOrWhiteSpace(firstDescriptorGenerationMismatch))
+                            {
+                                _vulkanFirstCommandChainDescriptorGenerationMismatch = firstDescriptorGenerationMismatch;
+                            }
+
+                            if (string.IsNullOrEmpty(_vulkanFirstCommandChainResourcePlanRevisionMismatch) &&
+                                !string.IsNullOrWhiteSpace(firstResourcePlanRevisionMismatch))
+                            {
+                                _vulkanFirstCommandChainResourcePlanRevisionMismatch = firstResourcePlanRevisionMismatch;
+                            }
+                        }
                     }
 
                     public static void RecordVulkanRetiredResourceDrain(
@@ -1160,6 +1270,18 @@ namespace XREngine
                         _lastFrameVulkanCommandBufferFrameOpSignatureDirtyCount = _vulkanCommandBufferFrameOpSignatureDirtyCount;
                         _lastFrameVulkanCommandBufferPlannerDirtyCount = _vulkanCommandBufferPlannerDirtyCount;
                         _lastFrameVulkanCommandBufferProfilerDirtyCount = _vulkanCommandBufferProfilerDirtyCount;
+                        _lastFrameVulkanCommandChainsScheduled = _vulkanCommandChainsScheduled;
+                        _lastFrameVulkanCommandChainsRecorded = _vulkanCommandChainsRecorded;
+                        _lastFrameVulkanCommandChainsReused = _vulkanCommandChainsReused;
+                        _lastFrameVulkanCommandChainsFrameDataRefreshed = _vulkanCommandChainsFrameDataRefreshed;
+                        _lastFrameVulkanVolatileCommandChainsRecorded = _vulkanVolatileCommandChainsRecorded;
+                        _lastFrameVulkanPrimaryCommandBuffersReused = _vulkanPrimaryCommandBuffersReused;
+                        _lastFrameVulkanPrimaryCommandBuffersRecorded = _vulkanPrimaryCommandBuffersRecorded;
+                        _lastFrameVulkanVisibilityPacketCount = _vulkanVisibilityPacketCount;
+                        _lastFrameVulkanRenderPacketCount = _vulkanRenderPacketCount;
+                        _lastFrameVulkanSecondaryCommandBufferCount = _vulkanSecondaryCommandBufferCount;
+                        _lastFrameVulkanCommandChainWorkerRecordTicks = _vulkanCommandChainWorkerRecordTicks;
+                        _lastFrameVulkanRenderThreadWaitForChainWorkersTicks = _vulkanRenderThreadWaitForChainWorkersTicks;
                         _lastFrameVulkanRetiredDescriptorPoolCount = _vulkanRetiredDescriptorPoolCount;
                         _lastFrameVulkanRetiredPipelineCount = _vulkanRetiredPipelineCount;
                         _lastFrameVulkanRetiredFramebufferCount = _vulkanRetiredFramebufferCount;
@@ -1184,6 +1306,9 @@ namespace XREngine
                             _lastFrameVulkanDescriptorFallbackSummary = _vulkanDescriptorFallbackSummary;
                             _lastFrameVulkanDescriptorFailureSummary = _vulkanDescriptorFailureSummary;
                             _lastFrameVulkanCommandBufferDirtySummary = _vulkanCommandBufferDirtySummary;
+                            _lastFrameVulkanFirstCommandChainStructuralDirtyReason = _vulkanFirstCommandChainStructuralDirtyReason;
+                            _lastFrameVulkanFirstCommandChainDescriptorGenerationMismatch = _vulkanFirstCommandChainDescriptorGenerationMismatch;
+                            _lastFrameVulkanFirstCommandChainResourcePlanRevisionMismatch = _vulkanFirstCommandChainResourcePlanRevisionMismatch;
                         }
 
                         _vulkanIndirectCountPathCalls = 0;
@@ -1299,6 +1424,18 @@ namespace XREngine
                         _vulkanCommandBufferFrameOpSignatureDirtyCount = 0;
                         _vulkanCommandBufferPlannerDirtyCount = 0;
                         _vulkanCommandBufferProfilerDirtyCount = 0;
+                        _vulkanCommandChainsScheduled = 0;
+                        _vulkanCommandChainsRecorded = 0;
+                        _vulkanCommandChainsReused = 0;
+                        _vulkanCommandChainsFrameDataRefreshed = 0;
+                        _vulkanVolatileCommandChainsRecorded = 0;
+                        _vulkanPrimaryCommandBuffersReused = 0;
+                        _vulkanPrimaryCommandBuffersRecorded = 0;
+                        _vulkanVisibilityPacketCount = 0;
+                        _vulkanRenderPacketCount = 0;
+                        _vulkanSecondaryCommandBufferCount = 0;
+                        _vulkanCommandChainWorkerRecordTicks = 0;
+                        _vulkanRenderThreadWaitForChainWorkersTicks = 0;
                         _vulkanRetiredDescriptorPoolCount = 0;
                         _vulkanRetiredPipelineCount = 0;
                         _vulkanRetiredFramebufferCount = 0;
@@ -1323,6 +1460,9 @@ namespace XREngine
                             _vulkanDescriptorFallbackSummary = string.Empty;
                             _vulkanDescriptorFailureSummary = string.Empty;
                             _vulkanCommandBufferDirtySummary = string.Empty;
+                            _vulkanFirstCommandChainStructuralDirtyReason = string.Empty;
+                            _vulkanFirstCommandChainDescriptorGenerationMismatch = string.Empty;
+                            _vulkanFirstCommandChainResourcePlanRevisionMismatch = string.Empty;
                         }
                     }
 

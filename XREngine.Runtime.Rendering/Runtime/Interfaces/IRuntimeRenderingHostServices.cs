@@ -1180,6 +1180,22 @@ public interface IRuntimeRenderingHostServices
         bool profilerDirty,
         string? dirtyReason);
     void RecordRenderVulkanCommandBuffersDirty(string? reason);
+    void RecordRenderVulkanCommandChainMetrics(
+        int chainsScheduled,
+        int chainsRecorded,
+        int chainsReused,
+        int chainsFrameDataRefreshed,
+        int volatileChainsRecorded,
+        int primaryCommandBuffersReused,
+        int primaryCommandBuffersRecorded,
+        int visibilityPackets,
+        int renderPackets,
+        int secondaryCommandBuffers,
+        TimeSpan chainWorkerRecordTime,
+        TimeSpan renderThreadWaitForWorkersTime,
+        string? firstStructuralDirtyReason,
+        string? firstDescriptorGenerationMismatch,
+        string? firstResourcePlanRevisionMismatch);
     void RecordRenderVulkanGpuDrivenStageTiming(int stage, TimeSpan elapsed);
     void RecordRenderVulkanIndirectBatchMerge(int requestedBatchCount, int mergedBatchCount);
     void RecordRenderVulkanIndirectEffectiveness(uint requestedDraws, uint culledDraws, uint emittedIndirectDraws, uint consumedDraws, uint overflowCount = 0u);
