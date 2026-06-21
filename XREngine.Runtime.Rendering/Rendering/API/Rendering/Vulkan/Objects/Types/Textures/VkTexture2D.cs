@@ -19,10 +19,12 @@ public unsafe partial class VulkanRenderer
         {
             base.LinkTextureData();
             Data.PushMipLevelRequested += PushMipLevel;
+            Data.SparseTextureStreamingTransitionRequested += ApplySparseTextureStreamingTransition;
         }
 
         protected override void UnlinkTextureData()
         {
+            Data.SparseTextureStreamingTransitionRequested -= ApplySparseTextureStreamingTransition;
             Data.PushMipLevelRequested -= PushMipLevel;
             base.UnlinkTextureData();
         }
@@ -94,6 +96,75 @@ public unsafe partial class VulkanRenderer
                 GenerateMipmapsGPU();
             else
                 TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+        }
+
+        private SparseTextureStreamingTransitionResult ApplySparseTextureStreamingTransition(SparseTextureStreamingTransitionRequest request)
+        {
+            if (!RuntimeRenderingHostServices.Current.IsRenderThread)
+                return SparseTextureStreamingTransitionResult.Unsupported("Vulkan sparse texture transition compatibility must run on the render thread. Use RuntimeRenderingHostServices.TryScheduleSparseTextureStreamingTransitionAsync or ImportedTextureStreamingManager.");
+
+            if (Renderer.IsDeviceLost)
+                return SparseTextureStreamingTransitionResult.Unsupported("Vulkan device is lost.");
+
+            if (request.ResidentMipmaps is null || request.ResidentMipmaps.Length == 0)
+                return SparseTextureStreamingTransitionResult.Unsupported("Vulkan sparse texture transition compatibility requires resident mip data.");
+
+            Mipmap2D firstMip = request.ResidentMipmaps[0];
+            uint logicalWidth = request.LogicalWidth == 0 ? firstMip.Width : request.LogicalWidth;
+            uint logicalHeight = request.LogicalHeight == 0 ? firstMip.Height : request.LogicalHeight;
+            uint residentMaxDimension = Math.Max(firstMip.Width, firstMip.Height);
+            bool includeMipChain = request.ResidentMipmaps.Length > 1;
+
+            Debug.VulkanWarningEvery(
+                $"Vulkan.Compat.SparseTextureTransition.{Data.GetHashCode()}",
+                TimeSpan.FromSeconds(10),
+                "[Vulkan Compat] SparseTextureStreamingTransitionRequested for '{0}' is being satisfied with a dense resident mip upload. Preferred Vulkan path is ImportedTextureStreamingManager/VulkanTextureUploadService; true Vk sparse image page binding is not implemented yet.",
+                Data.Name ?? Data.GetDescribingName());
+
+            if (request.PageSelection.Normalize().IsPartial)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Compat.SparseTextureTransition.PartialPages.{Data.GetHashCode()}",
+                    TimeSpan.FromSeconds(10),
+                    "[Vulkan Compat] SparseTextureStreamingTransitionRequested for '{0}' included a partial page selection, but Vulkan dense compatibility uploads whole resident mips. Implement true Vk sparse image page binding for partial residency.",
+                    Data.Name ?? Data.GetDescribingName());
+            }
+
+            TextureStreamingResidentData residentData = new(
+                request.ResidentMipmaps,
+                logicalWidth,
+                logicalHeight,
+                residentMaxDimension);
+
+            try
+            {
+                XRTexture2D.ApplyResidentDataForVulkanPublication(Data, residentData, includeMipChain);
+                Destroy();
+                PushTextureData();
+                if (IsGenerated)
+                    MarkUploaded();
+            }
+            catch (Exception ex)
+            {
+                return SparseTextureStreamingTransitionResult.Unsupported(ex.Message);
+            }
+
+            long committedBytes = XRTexture2D.EstimateResidentBytes(
+                logicalWidth,
+                logicalHeight,
+                residentMaxDimension,
+                request.SizedInternalFormat);
+
+            return new SparseTextureStreamingTransitionResult(
+                Applied: true,
+                UsedSparseResidency: false,
+                RequestedBaseMipLevel: request.RequestedBaseMipLevel,
+                CommittedBaseMipLevel: request.RequestedBaseMipLevel,
+                NumSparseLevels: 0,
+                CommittedBytes: committedBytes,
+                ExposureDeferred: false,
+                FenceSync: 0,
+                FailureReason: null);
         }
 
         private bool PushMipLevel(int mipIndex)

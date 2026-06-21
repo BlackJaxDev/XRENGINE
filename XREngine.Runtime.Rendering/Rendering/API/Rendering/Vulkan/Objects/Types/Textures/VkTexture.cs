@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using System.Threading;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -27,6 +28,10 @@ public unsafe partial class VulkanRenderer
         /// refresh their cached image or texel-buffer info.
         /// </summary>
         public bool IsDescriptorDirty { get; protected set; } = true;
+        private long _descriptorGeneration;
+
+        public ulong DescriptorGeneration
+            => unchecked((ulong)Volatile.Read(ref _descriptorGeneration));
 
         /// <summary>
         /// Generic Vulkan texture readiness for descriptor use. Attachment/pass readiness
@@ -106,17 +111,29 @@ public unsafe partial class VulkanRenderer
         }
 
         protected void MarkDescriptorDirty()
-            => IsDescriptorDirty = true;
+        {
+            IsDescriptorDirty = true;
+            IncrementDescriptorGeneration();
+        }
 
         protected void MarkDescriptorClean()
             => IsDescriptorDirty = false;
+
+        protected void MarkDescriptorPublished()
+        {
+            IncrementDescriptorGeneration();
+            MarkDescriptorClean();
+        }
 
         protected void MarkUploaded()
         {
             HasUploadedData = true;
             IsInvalidated = false;
-            MarkDescriptorClean();
+            MarkDescriptorPublished();
         }
+
+        private void IncrementDescriptorGeneration()
+            => Interlocked.Increment(ref _descriptorGeneration);
 
         public virtual void PushData()
         {
@@ -135,7 +152,7 @@ public unsafe partial class VulkanRenderer
             Debug.VulkanEvery(
                 $"Vulkan.Texture.Unbind.{Data.GetHashCode()}",
                 TimeSpan.FromSeconds(5),
-                "[Vulkan] Texture UnbindRequested for '{0}' is a compatibility no-op; Vulkan texture state is descriptor/pass owned.",
+                "[Vulkan Compat] Texture UnbindRequested for '{0}' is a no-op; Vulkan texture state is descriptor/pass owned.",
                 Data.Name ?? Data.GetDescribingName());
         }
 
@@ -143,7 +160,7 @@ public unsafe partial class VulkanRenderer
             => Debug.VulkanWarningEvery(
                 $"Vulkan.Texture.ClearUnsupported.{Data.GetHashCode()}",
                 TimeSpan.FromSeconds(5),
-                "[Vulkan] ClearRequested for texture '{0}' has no image-backed clear path in wrapper '{1}'.",
+                "[Vulkan Compat] ClearRequested for texture '{0}' has no image-backed clear path in wrapper '{1}'. Preferred Vulkan path: issue an explicit clear/copy command through the owning render pass or command context.",
                 Data.Name ?? Data.GetDescribingName(),
                 GetType().Name);
 
@@ -151,7 +168,7 @@ public unsafe partial class VulkanRenderer
             => Debug.VulkanWarningEvery(
                 $"Vulkan.Texture.MipmapUnsupported.{Data.GetHashCode()}",
                 TimeSpan.FromSeconds(5),
-                "[Vulkan] GenerateMipmapsRequested for texture '{0}' is unsupported by wrapper '{1}'.",
+                "[Vulkan Compat] GenerateMipmapsRequested for texture '{0}' is unsupported by wrapper '{1}'. Preferred Vulkan path: generate mips through the image-backed texture upload/blit path.",
                 Data.Name ?? Data.GetDescribingName(),
                 GetType().Name);
 
@@ -163,7 +180,7 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarningEvery(
                     $"Vulkan.Texture.AttachNotGenerated.{Data.GetHashCode()}",
                     TimeSpan.FromSeconds(2),
-                    "[Vulkan] AttachToFBORequested could not generate texture '{0}' for framebuffer '{1}' attachment={2} mip={3}.",
+                    "[Vulkan Compat] AttachToFBORequested could not generate texture '{0}' for framebuffer '{1}' attachment={2} mip={3}. Preferred Vulkan path: declare attachments through XRFrameBuffer.SetRenderTargets before pass construction.",
                     Data.Name ?? Data.GetDescribingName(),
                     fbo.Name ?? fbo.GetDescribingName(),
                     attachment,
@@ -176,7 +193,7 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarningEvery(
                     $"Vulkan.Texture.AttachFboUnavailable.{fbo.GetHashCode()}",
                     TimeSpan.FromSeconds(2),
-                    "[Vulkan] AttachToFBORequested for texture '{0}' could not resolve Vulkan framebuffer '{1}'. Vulkan framebuffer attachments are rebuilt from XRFrameBuffer targets.",
+                    "[Vulkan Compat] AttachToFBORequested for texture '{0}' could not resolve Vulkan framebuffer '{1}'. Vulkan framebuffer attachments are rebuilt from XRFrameBuffer targets; prefer XRFrameBuffer.SetRenderTargets.",
                     Data.Name ?? Data.GetDescribingName(),
                     fbo.Name ?? fbo.GetDescribingName());
             }
@@ -186,7 +203,7 @@ public unsafe partial class VulkanRenderer
             => Debug.VulkanEvery(
                 $"Vulkan.Texture.Detach.{Data.GetHashCode()}",
                 TimeSpan.FromSeconds(5),
-                "[Vulkan] DetachFromFBORequested for texture '{0}' framebuffer '{1}' attachment={2} mip={3}; Vulkan framebuffer attachments are immutable and rebuilt from XRFrameBuffer targets.",
+                "[Vulkan Compat] DetachFromFBORequested for texture '{0}' framebuffer '{1}' attachment={2} mip={3}; Vulkan framebuffer attachments are immutable and rebuilt from XRFrameBuffer targets. Preferred Vulkan path: update XRFrameBuffer.SetRenderTargets.",
                 Data.Name ?? Data.GetDescribingName(),
                 fbo.Name ?? fbo.GetDescribingName(),
                 attachment,

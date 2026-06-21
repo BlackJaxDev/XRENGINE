@@ -1033,6 +1033,61 @@ public unsafe partial class VulkanRenderer
             pendingUpload = null;
             failureReason = null;
 
+            if (!TryCreateSynchronizedImportedUploadPreparation(
+                    request,
+                    residentData,
+                    includeMipChain,
+                    publicationToken,
+                    shouldAcceptResult,
+                    onFinished,
+                    onCanceled,
+                    onError,
+                    out VulkanImportedTextureUploadPreparation? preparation,
+                    out failureReason)
+                || preparation is null)
+            {
+                return false;
+            }
+
+            bool completed = false;
+            try
+            {
+                while (!completed)
+                {
+                    if (!TryAdvanceSynchronizedImportedUploadPreparation(
+                            preparation,
+                            out completed,
+                            out pendingUpload,
+                            out failureReason))
+                    {
+                        return false;
+                    }
+                }
+
+                return pendingUpload is not null;
+            }
+            finally
+            {
+                if (!completed || pendingUpload is null)
+                    ReleaseSynchronizedImportedUploadPreparation(preparation);
+            }
+        }
+
+        internal bool TryCreateSynchronizedImportedUploadPreparation(
+            in VulkanImportedTextureUploadRequest request,
+            TextureStreamingResidentData residentData,
+            bool includeMipChain,
+            ulong publicationToken,
+            Func<bool>? shouldAcceptResult,
+            Action<XRTexture2D>? onFinished,
+            Action? onCanceled,
+            Action<Exception>? onError,
+            out VulkanImportedTextureUploadPreparation? preparation,
+            out string? failureReason)
+        {
+            preparation = null;
+            failureReason = null;
+
             if (this is not VkTexture2D texture2D)
             {
                 failureReason = "synchronized imported texture uploads are only implemented for XRTexture2D";
@@ -1067,128 +1122,228 @@ public unsafe partial class VulkanRenderer
             Extent3D extent = ResolvedExtent;
             uint mipLevels = Math.Max(ResolvedMipLevels, 1u);
             uint arrayLayers = Math.Max(ResolvedArrayLayers, 1u);
-            Image image = default;
-            DeviceMemory memory = default;
-            ImageView imageView = default;
-            Sampler sampler = default;
-            long committedBytes = 0L;
             string debugName = BuildImportedUploadDebugName(request, publicationToken);
-            List<VulkanImportedTextureUploadStagingResource> stagingResources = new(Math.Max(residentData.Mipmaps.Length, 1));
+
+            preparation = new VulkanImportedTextureUploadPreparation(
+                request,
+                texture2D,
+                residentData,
+                includeMipChain,
+                publicationToken,
+                shouldAcceptResult,
+                onFinished,
+                onCanceled,
+                onError,
+                format,
+                aspectMask,
+                extent,
+                mipLevels,
+                arrayLayers,
+                debugName);
+            return true;
+        }
+
+        internal bool TryAdvanceSynchronizedImportedUploadPreparation(
+            VulkanImportedTextureUploadPreparation preparation,
+            out bool completed,
+            out VulkanImportedTexturePendingUpload? pendingUpload,
+            out string? failureReason)
+        {
+            completed = false;
+            pendingUpload = null;
+            failureReason = null;
+
+            if (Renderer.IsDeviceLost)
+            {
+                failureReason = "Vulkan device is lost";
+                return false;
+            }
+
+            if (!preparation.ShouldAccept())
+            {
+                failureReason = "request was canceled before upload resources were prepared";
+                return false;
+            }
 
             try
             {
-                if (!TryCreateImportedUploadImage(extent, mipLevels, arrayLayers, format, out image, out memory, out committedBytes, out failureReason))
-                    return false;
-
-                Renderer.SetDebugObjectName(ObjectType.Image, image.Handle, $"{debugName}.Image");
-                Renderer.SetDebugObjectName(ObjectType.DeviceMemory, memory.Handle, $"{debugName}.Memory");
-
-                imageView = CreateImportedUploadImageView(image, format, aspectMask, mipLevels, arrayLayers);
-                Renderer.SetDebugObjectName(ObjectType.ImageView, imageView.Handle, $"{debugName}.View");
-                if (CreateSampler)
+                switch (preparation.Step)
                 {
-                    sampler = CreateImportedUploadSampler();
-                    Renderer.SetDebugObjectName(ObjectType.Sampler, sampler.Handle, $"{debugName}.Sampler");
-                }
-
-                uint levelCount = Math.Min((uint)residentData.Mipmaps.Length, mipLevels);
-                for (uint level = 0; level < levelCount; level++)
-                {
-                    Mipmap2D? mip = residentData.Mipmaps[level];
-                    if (mip is null)
-                        continue;
-
-                    DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, format, out bool ownsUploadData);
-                    try
-                    {
-                        if (!TryCreateStagingBuffer(uploadData, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
+                    case VulkanImportedTextureUploadPreparationStep.CreateImage:
+                        if (!TryCreateImportedUploadImage(
+                                preparation.Extent,
+                                preparation.MipLevels,
+                                preparation.ArrayLayers,
+                                preparation.Format,
+                                out preparation.Image,
+                                out preparation.Memory,
+                                out preparation.CommittedBytes,
+                                out failureReason))
                         {
-                            failureReason = $"could not create staging buffer for mip {level}";
                             return false;
                         }
 
-                        Renderer.SetDebugObjectName(ObjectType.Buffer, stagingBuffer.Handle, $"{debugName}.StagingMip{level}");
+                        Renderer.SetDebugObjectName(ObjectType.Image, preparation.Image.Handle, $"{preparation.DebugName}.Image");
+                        Renderer.SetDebugObjectName(ObjectType.DeviceMemory, preparation.Memory.Handle, $"{preparation.DebugName}.Memory");
+                        preparation.Step = VulkanImportedTextureUploadPreparationStep.CreateImageView;
+                        return true;
 
-                        Extent3D mipExtent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1u);
-                        BufferImageCopy region = new()
+                    case VulkanImportedTextureUploadPreparationStep.CreateImageView:
+                        preparation.ImageView = CreateImportedUploadImageView(
+                            preparation.Image,
+                            preparation.Format,
+                            preparation.AspectMask,
+                            preparation.MipLevels,
+                            preparation.ArrayLayers);
+                        Renderer.SetDebugObjectName(ObjectType.ImageView, preparation.ImageView.Handle, $"{preparation.DebugName}.View");
+                        preparation.Step = CreateSampler
+                            ? VulkanImportedTextureUploadPreparationStep.CreateSampler
+                            : VulkanImportedTextureUploadPreparationStep.CreateNextStagingMip;
+                        return true;
+
+                    case VulkanImportedTextureUploadPreparationStep.CreateSampler:
+                        preparation.Sampler = CreateImportedUploadSampler();
+                        Renderer.SetDebugObjectName(ObjectType.Sampler, preparation.Sampler.Handle, $"{preparation.DebugName}.Sampler");
+                        preparation.Step = VulkanImportedTextureUploadPreparationStep.CreateNextStagingMip;
+                        return true;
+
+                    case VulkanImportedTextureUploadPreparationStep.CreateNextStagingMip:
+                        if (TryPrepareNextImportedUploadStagingMip(preparation, out failureReason))
+                            return true;
+
+                        if (!string.IsNullOrEmpty(failureReason))
+                            return false;
+
+                        if (preparation.StagingResources.Count == 0)
                         {
-                            BufferOffset = 0,
-                            BufferRowLength = 0,
-                            BufferImageHeight = 0,
-                            ImageSubresource = new ImageSubresourceLayers
-                            {
-                                AspectMask = aspectMask,
-                                MipLevel = level,
-                                BaseArrayLayer = 0,
-                                LayerCount = 1,
-                            },
-                            ImageOffset = new Offset3D(0, 0, 0),
-                            ImageExtent = mipExtent,
-                        };
+                            failureReason = "resident data did not produce any staging uploads";
+                            return false;
+                        }
 
-                        stagingResources.Add(new VulkanImportedTextureUploadStagingResource(
-                            stagingBuffer,
-                            stagingMemory,
-                            region,
-                            (ulong)(uploadData?.Length ?? 0u)));
-                    }
-                    finally
-                    {
-                        if (ownsUploadData)
-                            uploadData?.Dispose();
-                    }
+                        preparation.Step = VulkanImportedTextureUploadPreparationStep.Complete;
+                        return true;
+
+                    case VulkanImportedTextureUploadPreparationStep.Complete:
+                        pendingUpload = new VulkanImportedTexturePendingUpload(
+                            preparation.Request,
+                            preparation.Texture,
+                            preparation.Image,
+                            preparation.Memory,
+                            preparation.ImageView,
+                            preparation.Sampler,
+                            preparation.Format,
+                            preparation.AspectMask,
+                            preparation.Extent,
+                            preparation.MipLevels,
+                            preparation.CommittedBytes,
+                            preparation.PublicationToken,
+                            [.. preparation.StagingResources],
+                            preparation.ShouldAcceptResult,
+                            preparation.OnFinished,
+                            preparation.OnCanceled,
+                            preparation.OnError);
+
+                        preparation.Image = default;
+                        preparation.Memory = default;
+                        preparation.ImageView = default;
+                        preparation.Sampler = default;
+                        preparation.StagingResources.Clear();
+                        completed = true;
+                        return true;
                 }
-
-                if (stagingResources.Count == 0)
-                {
-                    failureReason = "resident data did not produce any staging uploads";
-                    return false;
-                }
-
-                pendingUpload = new VulkanImportedTexturePendingUpload(
-                    request,
-                    texture2D,
-                    image,
-                    memory,
-                    imageView,
-                    sampler,
-                    format,
-                    aspectMask,
-                    extent,
-                    mipLevels,
-                    committedBytes,
-                    publicationToken,
-                    [.. stagingResources],
-                    shouldAcceptResult,
-                    onFinished,
-                    onCanceled,
-                    onError);
-
-                image = default;
-                memory = default;
-                imageView = default;
-                sampler = default;
-                stagingResources.Clear();
-                return true;
             }
             catch (Exception ex)
             {
                 failureReason = ex.Message;
                 return false;
             }
-            finally
+
+            failureReason = $"unknown upload preparation step {preparation.Step}";
+            return false;
+        }
+
+        private bool TryPrepareNextImportedUploadStagingMip(
+            VulkanImportedTextureUploadPreparation preparation,
+            out string? failureReason)
+        {
+            failureReason = null;
+            uint levelCount = Math.Min((uint)preparation.ResidentData.Mipmaps.Length, preparation.MipLevels);
+
+            while (preparation.NextMipLevel < levelCount)
             {
-                if (image.Handle != 0 || memory.Handle != 0 || imageView.Handle != 0 || sampler.Handle != 0 || stagingResources.Count > 0)
+                uint level = (uint)preparation.NextMipLevel++;
+                Mipmap2D? mip = preparation.ResidentData.Mipmaps[level];
+                if (mip is null)
+                    continue;
+
+                DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, preparation.Format, out bool ownsUploadData);
+                try
                 {
-                    ReleasePreparedImportedUploadResources(
-                        image,
-                        memory,
-                        imageView,
-                        sampler,
-                        committedBytes,
-                        [.. stagingResources]);
+                    if (!TryCreateStagingBuffer(uploadData, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
+                    {
+                        failureReason = $"could not create staging buffer for mip {level}";
+                        return false;
+                    }
+
+                    Renderer.SetDebugObjectName(ObjectType.Buffer, stagingBuffer.Handle, $"{preparation.DebugName}.StagingMip{level}");
+
+                    Extent3D mipExtent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1u);
+                    BufferImageCopy region = new()
+                    {
+                        BufferOffset = 0,
+                        BufferRowLength = 0,
+                        BufferImageHeight = 0,
+                        ImageSubresource = new ImageSubresourceLayers
+                        {
+                            AspectMask = preparation.AspectMask,
+                            MipLevel = level,
+                            BaseArrayLayer = 0,
+                            LayerCount = 1,
+                        },
+                        ImageOffset = new Offset3D(0, 0, 0),
+                        ImageExtent = mipExtent,
+                    };
+
+                    preparation.StagingResources.Add(new VulkanImportedTextureUploadStagingResource(
+                        stagingBuffer,
+                        stagingMemory,
+                        region,
+                        (ulong)(uploadData?.Length ?? 0u)));
+                    return true;
+                }
+                finally
+                {
+                    if (ownsUploadData)
+                        uploadData?.Dispose();
                 }
             }
+
+            return false;
+        }
+
+        internal void ReleaseSynchronizedImportedUploadPreparation(VulkanImportedTextureUploadPreparation preparation)
+        {
+            if (preparation.Image.Handle == 0
+                && preparation.Memory.Handle == 0
+                && preparation.ImageView.Handle == 0
+                && preparation.Sampler.Handle == 0
+                && preparation.StagingResources.Count == 0)
+            {
+                return;
+            }
+
+            ReleasePreparedImportedUploadResources(
+                preparation.Image,
+                preparation.Memory,
+                preparation.ImageView,
+                preparation.Sampler,
+                preparation.CommittedBytes,
+                [.. preparation.StagingResources]);
+            preparation.Image = default;
+            preparation.Memory = default;
+            preparation.ImageView = default;
+            preparation.Sampler = default;
+            preparation.StagingResources.Clear();
         }
 
         private static string BuildImportedUploadDebugName(in VulkanImportedTextureUploadRequest request, ulong publicationToken)
@@ -1440,7 +1595,8 @@ public unsafe partial class VulkanRenderer
                 _bindingId = CacheObject(this);
 
             pendingUpload.DetachPublishedImageHandles();
-            Renderer.MarkCommandBuffersDirty("ImportedTextureUploadPublished");
+            Renderer.MarkCommandBuffersDirty(
+                $"ImportedTextureUploadPublished texture='{ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName()}' descriptorGeneration={DescriptorGeneration}");
         }
 
         #endregion

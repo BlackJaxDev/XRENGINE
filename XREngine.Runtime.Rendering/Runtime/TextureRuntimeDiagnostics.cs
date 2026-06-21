@@ -662,7 +662,7 @@ internal static class TextureRuntimeDiagnostics
         VulkanTextureUploadGenerationState state,
         string? detail)
     {
-        if (!ShouldLog(TextureRuntimeEventImportance.Verbose))
+        if (!ShouldLog(TextureRuntimeEventImportance.Verbose) && !RenderDiagnosticsFlags.VkTextureUploadTrace)
             return;
 
         StringBuilder builder = RentBuilder();
@@ -703,7 +703,7 @@ internal static class TextureRuntimeDiagnostics
         string phase,
         double milliseconds)
     {
-        if (!ShouldLog(TextureRuntimeEventImportance.Verbose))
+        if (!ShouldLog(TextureRuntimeEventImportance.Verbose) && !RenderDiagnosticsFlags.VkTextureUploadTrace)
             return;
 
         Log("Texture.VulkanUploadLatency",

@@ -205,9 +205,16 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         => Engine.Assets?.ResolveTextureStreamingAuthorityPath(filePath) ?? Path.GetFullPath(filePath);
 
     public SparseTextureStreamingSupport GetSparseTextureStreamingSupport(ESizedInternalFormat format)
-        => AbstractRenderer.Current is OpenGLRenderer glRenderer
-            ? glRenderer.GetSparseTextureStreamingSupport(format)
-            : SparseTextureStreamingSupport.Unsupported("Sparse texture streaming currently requires the OpenGL renderer.");
+    {
+        if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
+            return glRenderer.GetSparseTextureStreamingSupport(format);
+
+        if (AbstractRenderer.Current is VulkanRenderer)
+            return SparseTextureStreamingSupport.Unsupported(
+                "Vulkan true sparse image page residency is not implemented yet. Vulkan sparse-transition requests are handled by a dense resident mip upload compatibility path; prefer ImportedTextureStreamingManager/VulkanTextureUploadService for Vulkan texture streaming.");
+
+        return SparseTextureStreamingSupport.Unsupported("Sparse texture streaming is unavailable because no renderer-specific sparse handler is active.");
+    }
 
     public bool TryScheduleSparseTextureStreamingTransitionAsync(
         XRTexture2D texture,
@@ -216,6 +223,30 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         Action<SparseTextureStreamingTransitionResult> onCompleted,
         Action<Exception>? onError = null)
     {
+        if (AbstractRenderer.Current is VulkanRenderer)
+        {
+            string vulkanTextureName = string.IsNullOrWhiteSpace(texture.Name) ? "UnnamedTexture" : texture.Name;
+            Engine.EnqueueRenderThreadTask(() =>
+            {
+                try
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        onCompleted(SparseTextureStreamingTransitionResult.Unsupported("Vulkan sparse texture transition was canceled before compatibility upload."));
+                        return;
+                    }
+
+                    onCompleted(texture.ApplySparseTextureStreamingTransition(request));
+                }
+                catch (Exception ex)
+                {
+                    onError?.Invoke(ex);
+                }
+            }, $"XRTexture2D.ScheduleVulkanSparseCompatTransition[{vulkanTextureName}]", RenderThreadJobKind.TextureUpload);
+
+            return true;
+        }
+
         OpenGLRenderer? glRenderer = GetPrimaryOpenGlRenderer();
         if (glRenderer is null)
             return false;
@@ -268,6 +299,17 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         SparseTextureStreamingTransitionRequest request,
         SparseTextureStreamingTransitionResult transitionResult)
     {
+        if (AbstractRenderer.Current is VulkanRenderer)
+        {
+            if (!transitionResult.Applied)
+                return SparseTextureStreamingFinalizeResult.Failed(transitionResult.FailureReason ?? "Vulkan sparse compatibility transition did not apply.");
+
+            if (transitionResult.ExposureDeferred)
+                return SparseTextureStreamingFinalizeResult.Failed("Vulkan dense sparse-compat transitions are not deferred; no sparse fence finalization is available.");
+
+            return SparseTextureStreamingFinalizeResult.Success();
+        }
+
         OpenGLRenderer? glRenderer = GetPrimaryOpenGlRenderer();
         if (glRenderer is null)
             return SparseTextureStreamingFinalizeResult.Failed("OpenGL renderer is unavailable for sparse texture finalization.");

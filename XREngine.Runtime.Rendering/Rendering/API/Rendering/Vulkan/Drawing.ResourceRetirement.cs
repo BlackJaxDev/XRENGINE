@@ -382,6 +382,7 @@ namespace XREngine.Rendering.Vulkan
 
             int destroyedBuffers = 0;
             int freedMemories = 0;
+            int pooledBuffers = 0;
             foreach (var (buf, mem) in retired)
             {
                 DeviceMemory memory = mem;
@@ -389,6 +390,12 @@ namespace XREngine.Rendering.Vulkan
                 // Free through allocator if tracked, otherwise direct FreeMemory.
                 if (buf.Handle != 0)
                 {
+                    if (memory.Handle != 0 && _stagingManager.TryRelease(buf, memory))
+                    {
+                        pooledBuffers++;
+                        continue;
+                    }
+
                     if (_bufferAllocations.TryRemove(buf.Handle, out VulkanMemoryAllocation allocation))
                     {
                         Api!.DestroyBuffer(device, buf, null);
@@ -415,6 +422,15 @@ namespace XREngine.Rendering.Vulkan
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
                 buffers: destroyedBuffers,
                 bufferMemories: freedMemories);
+
+            if (pooledBuffers > 0)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.TextureUpload.StagingReturnedToPool.{GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Returned {0} retired staging buffer(s) to the Vulkan staging pool for reuse.",
+                    pooledBuffers);
+            }
         }
 
         /// <summary>

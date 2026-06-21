@@ -296,7 +296,187 @@ public unsafe partial class VulkanRenderer
             _ => SampleCountFlags.Count1Bit,
         };
 
-        protected override void LinkData() { }
-        protected override void UnlinkData() { }
+        private void AllocateCompat()
+        {
+            if (RuntimeEngine.InvokeOnMainThread(AllocateCompat, "VkRenderBuffer.AllocateCompat"))
+                return;
+
+            if (Renderer.IsDeviceLost)
+                return;
+
+            Debug.VulkanEvery(
+                $"Vulkan.Compat.RenderBuffer.Allocate.{Data.GetHashCode()}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan Compat] XRRenderBuffer.Allocate requested for '{0}'. Vulkan render buffers are VkImages; this invalidates/recreates the image so GL-style Allocate callers keep working. Preferred Vulkan path: update XRFrameBuffer targets/resources and let the render graph or VkFrameBuffer allocate attachments.",
+                Data.Name ?? Data.GetDescribingName());
+
+            bool wasGenerated = IsGenerated;
+            Destroy();
+            if (wasGenerated)
+                Generate();
+        }
+
+        private void BindCompat()
+        {
+            if (RuntimeEngine.InvokeOnMainThread(BindCompat, "VkRenderBuffer.BindCompat"))
+                return;
+
+            if (Renderer.IsDeviceLost)
+                return;
+
+            Debug.VulkanEvery(
+                $"Vulkan.Compat.RenderBuffer.Bind.{Data.GetHashCode()}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan Compat] XRRenderBuffer.Bind requested for '{0}'. Vulkan has no GL renderbuffer bind state; this only ensures the VkImage/view exists. Preferred Vulkan path: attach through XRFrameBuffer.SetRenderTargets or render-graph attachment declarations.",
+                Data.Name ?? Data.GetDescribingName());
+
+            Generate();
+            RefreshIfStale();
+        }
+
+        private void UnbindCompat()
+            => Debug.VulkanEvery(
+                $"Vulkan.Compat.RenderBuffer.Unbind.{Data.GetHashCode()}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan Compat] XRRenderBuffer.Unbind requested for '{0}' is a no-op. Vulkan attachment state is framebuffer/pass owned.",
+                Data.Name ?? Data.GetDescribingName());
+
+        private void AttachToFBOCompat(XRFrameBuffer target, EFrameBufferAttachment attachment, int mipLevel)
+        {
+            if (RuntimeEngine.InvokeOnMainThread(() => AttachToFBOCompat(target, attachment, mipLevel), "VkRenderBuffer.AttachToFBOCompat"))
+                return;
+
+            if (Renderer.IsDeviceLost)
+                return;
+
+            bool addedTarget = AddTargetIfMissing(target, attachment, mipLevel);
+            InvalidateFrameBuffer(target);
+            Generate();
+
+            Debug.VulkanWarningEvery(
+                $"Vulkan.Compat.RenderBuffer.Attach.{Data.GetHashCode()}.{target.GetHashCode()}.{attachment}.{mipLevel}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan Compat] XRRenderBuffer.AttachToFBO requested for renderbuffer '{0}' -> framebuffer '{1}' attachment={2} mip={3}. {4} Preferred Vulkan path: call XRFrameBuffer.SetRenderTargets with this renderbuffer before the pass is built.",
+                Data.Name ?? Data.GetDescribingName(),
+                target.Name ?? target.GetDescribingName(),
+                attachment,
+                mipLevel,
+                addedTarget ? "The XRFrameBuffer target list was patched and the Vulkan framebuffer was invalidated." : "The renderbuffer was already present in XRFrameBuffer targets; the Vulkan framebuffer was invalidated.");
+        }
+
+        private void DetachFromFBOCompat(XRFrameBuffer target, EFrameBufferAttachment attachment, int mipLevel)
+        {
+            if (RuntimeEngine.InvokeOnMainThread(() => DetachFromFBOCompat(target, attachment, mipLevel), "VkRenderBuffer.DetachFromFBOCompat"))
+                return;
+
+            bool removedTarget = RemoveTargetIfPresent(target, attachment, mipLevel);
+            InvalidateFrameBuffer(target);
+
+            Debug.VulkanWarningEvery(
+                $"Vulkan.Compat.RenderBuffer.Detach.{Data.GetHashCode()}.{target.GetHashCode()}.{attachment}.{mipLevel}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan Compat] XRRenderBuffer.DetachFromFBO requested for renderbuffer '{0}' -> framebuffer '{1}' attachment={2} mip={3}. {4} Preferred Vulkan path: remove or replace the target through XRFrameBuffer.SetRenderTargets before pass construction.",
+                Data.Name ?? Data.GetDescribingName(),
+                target.Name ?? target.GetDescribingName(),
+                attachment,
+                mipLevel,
+                removedTarget ? "The XRFrameBuffer target list was patched and the Vulkan framebuffer was invalidated." : "No matching XRFrameBuffer target was present; only the Vulkan framebuffer was invalidated.");
+        }
+
+        private bool AddTargetIfMissing(XRFrameBuffer target, EFrameBufferAttachment attachment, int mipLevel)
+        {
+            var currentTargets = target.Targets;
+            if (currentTargets is not null)
+            {
+                for (int i = 0; i < currentTargets.Length; i++)
+                {
+                    var current = currentTargets[i];
+                    if (ReferenceEquals(current.Target, Data)
+                        && current.Attachment == attachment
+                        && current.MipLevel == mipLevel)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            int existingLength = currentTargets?.Length ?? 0;
+            var newTargets = new (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[existingLength + 1];
+            if (currentTargets is not null)
+                Array.Copy(currentTargets, newTargets, currentTargets.Length);
+            newTargets[existingLength] = (Data, attachment, mipLevel, -1);
+            target.SetRenderTargets(newTargets);
+            return true;
+        }
+
+        private bool RemoveTargetIfPresent(XRFrameBuffer target, EFrameBufferAttachment attachment, int mipLevel)
+        {
+            var currentTargets = target.Targets;
+            if (currentTargets is null || currentTargets.Length == 0)
+                return false;
+
+            int removeCount = 0;
+            for (int i = 0; i < currentTargets.Length; i++)
+            {
+                var current = currentTargets[i];
+                if (ReferenceEquals(current.Target, Data)
+                    && current.Attachment == attachment
+                    && current.MipLevel == mipLevel)
+                {
+                    removeCount++;
+                }
+            }
+
+            if (removeCount == 0)
+                return false;
+
+            if (removeCount == currentTargets.Length)
+            {
+                target.SetRenderTargets(((IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]?)null);
+                return true;
+            }
+
+            var newTargets = new (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[currentTargets.Length - removeCount];
+            int writeIndex = 0;
+            for (int i = 0; i < currentTargets.Length; i++)
+            {
+                var current = currentTargets[i];
+                if (ReferenceEquals(current.Target, Data)
+                    && current.Attachment == attachment
+                    && current.MipLevel == mipLevel)
+                {
+                    continue;
+                }
+
+                newTargets[writeIndex++] = current;
+            }
+
+            target.SetRenderTargets(newTargets);
+            return true;
+        }
+
+        private void InvalidateFrameBuffer(XRFrameBuffer target)
+        {
+            if (Renderer.GetOrCreateAPIRenderObject(target, generateNow: false) is VkFrameBuffer vkFrameBuffer && vkFrameBuffer.IsGenerated)
+                vkFrameBuffer.Destroy();
+        }
+
+        protected override void LinkData()
+        {
+            Data.AllocateRequested += AllocateCompat;
+            Data.BindRequested += BindCompat;
+            Data.UnbindRequested += UnbindCompat;
+            Data.AttachToFBORequested += AttachToFBOCompat;
+            Data.DetachFromFBORequested += DetachFromFBOCompat;
+        }
+
+        protected override void UnlinkData()
+        {
+            Data.AllocateRequested -= AllocateCompat;
+            Data.BindRequested -= BindCompat;
+            Data.UnbindRequested -= UnbindCompat;
+            Data.AttachToFBORequested -= AttachToFBOCompat;
+            Data.DetachFromFBORequested -= DetachFromFBOCompat;
+        }
     }
 }

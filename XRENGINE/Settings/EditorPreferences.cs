@@ -1503,6 +1503,13 @@ namespace XREngine
         private bool _vkSkipUiPipeline = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiPipeline;
         private bool _vkForceSwapchainMagenta = XREngine.Rendering.RenderDiagnosticsFlags.VkForceSwapchainMagenta;
         private bool _vkSkipImGui = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipImGui;
+        private bool _vkAsyncTextureUpload = XREngine.Rendering.RenderDiagnosticsFlags.VkAsyncTextureUpload;
+        private bool _vkTextureUploadTransferQueue = XREngine.Rendering.RenderDiagnosticsFlags.VkTextureUploadTransferQueue;
+        private bool _vkTextureUploadPrepWorker = XREngine.Rendering.RenderDiagnosticsFlags.VkTextureUploadPrepWorker;
+        private double _vkTextureUploadPrepBudgetMilliseconds = XREngine.Rendering.RenderDiagnosticsFlags.VkTextureUploadPrepBudgetMilliseconds;
+        private bool _vkTextureUploadTrace = XREngine.Rendering.RenderDiagnosticsFlags.VkTextureUploadTrace;
+        private bool _vkProgressiveTextureUpload = XREngine.Rendering.RenderDiagnosticsFlags.VkProgressiveTextureUpload;
+        private bool _vkImportedTexturePreviewFreeze = XREngine.Rendering.RenderDiagnosticsFlags.VkImportedTexturePreviewFreeze;
 
         private static int NormalizeProfilerProducerBufferCapacity(int value)
         {
@@ -2275,6 +2282,105 @@ namespace XREngine
             }
         }
 
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Async Texture Upload")]
+        [Description("Enable the Vulkan imported-texture upload preparation queue. Disabling routes scheduling through the synchronous compatibility path. Seed env: XRE_VULKAN_ASYNC_TEXTURE_UPLOAD=0 disables.")]
+        [DefaultValue(true)]
+        public bool VkAsyncTextureUpload
+        {
+            get => _vkAsyncTextureUpload;
+            set
+            {
+                if (SetField(ref _vkAsyncTextureUpload, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkAsyncTextureUpload(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Texture Upload Transfer Queue")]
+        [Description("Request the Vulkan transfer-queue texture upload path. When unavailable, Vulkan logs that it is using graphics-queue compatibility upload. Seed env: XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE=0 disables.")]
+        [DefaultValue(true)]
+        public bool VkTextureUploadTransferQueue
+        {
+            get => _vkTextureUploadTransferQueue;
+            set
+            {
+                if (SetField(ref _vkTextureUploadTransferQueue, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadTransferQueue(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Texture Upload Prep Worker")]
+        [Description("Request worker-side Vulkan upload preparation once the thread-safe upload context is available. Current builds log and use budgeted render-thread compatibility prep. Seed env: XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER.")]
+        [DefaultValue(false)]
+        public bool VkTextureUploadPrepWorker
+        {
+            get => _vkTextureUploadPrepWorker;
+            set
+            {
+                if (SetField(ref _vkTextureUploadPrepWorker, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadPrepWorker(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Texture Upload Prep Budget Ms")]
+        [Description("Millisecond budget for the Vulkan render-thread upload-prep compatibility drain. 0 disables the budget gate. Seed env: XRE_VULKAN_TEXTURE_UPLOAD_PREP_BUDGET_MS.")]
+        [DefaultValue(0.5)]
+        public double VkTextureUploadPrepBudgetMilliseconds
+        {
+            get => _vkTextureUploadPrepBudgetMilliseconds;
+            set
+            {
+                double clamped = Math.Clamp(value, 0.0, 100.0);
+                if (SetField(ref _vkTextureUploadPrepBudgetMilliseconds, clamped))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadPrepBudgetMilliseconds(clamped);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Texture Upload Trace")]
+        [Description("Verbose Vulkan imported-texture upload lifecycle tracing even when texture runtime logging is not globally verbose. Seed env: XRE_VULKAN_TEXTURE_UPLOAD_TRACE.")]
+        [DefaultValue(false)]
+        public bool VkTextureUploadTrace
+        {
+            get => _vkTextureUploadTrace;
+            set
+            {
+                if (SetField(ref _vkTextureUploadTrace, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadTrace(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Progressive Texture Upload")]
+        [Description("Experimental Vulkan progressive render-thread texture upload path. Prefer the synchronized VulkanTextureUploadService for imported texture residency. Seed env: XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD.")]
+        [DefaultValue(false)]
+        public bool VkProgressiveTextureUpload
+        {
+            get => _vkProgressiveTextureUpload;
+            set
+            {
+                if (SetField(ref _vkProgressiveTextureUpload, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkProgressiveTextureUpload(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Imported Texture Preview Freeze")]
+        [Description("Emergency kill switch that freezes Vulkan imported textures at preview residency while diagnosing full-res streaming. Seed env: XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE.")]
+        [DefaultValue(false)]
+        public bool VkImportedTexturePreviewFreeze
+        {
+            get => _vkImportedTexturePreviewFreeze;
+            set
+            {
+                if (SetField(ref _vkImportedTexturePreviewFreeze, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkImportedTexturePreviewFreeze(value);
+            }
+        }
+
         [Category("Profiling")]
         [DisplayName("Enable Profiler Frame Logging")]
         [Description("When enabled, the code profiler records method timings for the Profiler panel. Disable to reduce overhead in hot paths.")]
@@ -2943,6 +3049,13 @@ namespace XREngine
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipUiPipeline(_vkSkipUiPipeline);
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkForceSwapchainMagenta(_vkForceSwapchainMagenta);
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipImGui(_vkSkipImGui);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkAsyncTextureUpload(_vkAsyncTextureUpload);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadTransferQueue(_vkTextureUploadTransferQueue);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadPrepWorker(_vkTextureUploadPrepWorker);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadPrepBudgetMilliseconds(_vkTextureUploadPrepBudgetMilliseconds);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadTrace(_vkTextureUploadTrace);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkProgressiveTextureUpload(_vkProgressiveTextureUpload);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkImportedTexturePreviewFreeze(_vkImportedTexturePreviewFreeze);
         }
 
         public void CopyFrom(EditorDebugOptions source)
@@ -3003,6 +3116,13 @@ namespace XREngine
             VkSkipUiPipeline = source.VkSkipUiPipeline;
             VkForceSwapchainMagenta = source.VkForceSwapchainMagenta;
             VkSkipImGui = source.VkSkipImGui;
+            VkAsyncTextureUpload = source.VkAsyncTextureUpload;
+            VkTextureUploadTransferQueue = source.VkTextureUploadTransferQueue;
+            VkTextureUploadPrepWorker = source.VkTextureUploadPrepWorker;
+            VkTextureUploadPrepBudgetMilliseconds = source.VkTextureUploadPrepBudgetMilliseconds;
+            VkTextureUploadTrace = source.VkTextureUploadTrace;
+            VkProgressiveTextureUpload = source.VkProgressiveTextureUpload;
+            VkImportedTexturePreviewFreeze = source.VkImportedTexturePreviewFreeze;
             UseDebugOpaquePipeline = source.UseDebugOpaquePipeline;
             ForceGpuPassthroughCulling = source.ForceGpuPassthroughCulling;
             AllowGpuCpuFallback = source.AllowGpuCpuFallback;
