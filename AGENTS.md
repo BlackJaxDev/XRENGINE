@@ -37,6 +37,7 @@ XRENGINE is a Windows-first C# XR engine and editor. It has not shipped v1, so t
 - `XREngine.UnitTests/` - engine/editor tests.
 - `Assets/UnitTestingWorldSettings.jsonc` - generated local unit-testing world settings.
 - `Build/Logs/` - per-run logs and profiler traces when file logging is enabled.
+- `Build/_AgentValidation/` - ignored per-task root for AI/LLM scratch outputs, MCP captures, temp validation builds, logs, reports, and generated diagnostics.
 - `.vscode/tasks.json` / `.vscode/launch.json` - canonical local run/debug orchestration.
 - `ExecTool.bat` - interactive launcher for scripts under `Tools/`.
 - `docs/` - architecture, API guides, rendering notes, backlog/design docs.
@@ -115,6 +116,33 @@ Tool categories include Setup, Build, Editor, Repo, Docs, Reports, and Deps. `Ex
 - Regenerate settings/schema with `Tools/Generate-UnitTestingWorldSettings.ps1` or `Generate-UnitTestingWorldSettings` after settings type changes.
 - Pose/networking tests use `XRE_UNIT_TEST_WORLD_KIND=NetworkingPose` plus role env vars: `server`, `sender`, `receiver`.
 
+## Agent Output And Scratch Data
+
+All AI/LLM-generated outputs that are not intended to be committed must live under `Build/_AgentValidation/`. The folder is ignored by Git and should be treated as disposable local evidence, not durable project documentation.
+
+Use one run root per task or investigation:
+
+```powershell
+$RunRoot = "Build\_AgentValidation\$(Get-Date -Format yyyyMMdd-HHmmss)-short-task-name"
+New-Item -ItemType Directory -Force $RunRoot | Out-Null
+```
+
+Organize the run root with clear subfolders:
+
+- `mcp-captures/` - MCP screenshots and viewport captures; pass this as `output_dir` to MCP capture tools.
+- `mcp-output/` - JSON-RPC responses, scene dumps, editor-state snapshots, and other MCP-generated text or JSON.
+- `logs/` - captured build output, command transcripts, copied or filtered engine logs, profiler extracts, and crash diagnostics.
+- `temp-build/` - temporary validation projects, redirected build outputs, disposable binaries, and generated repro assets.
+- `renderdoc/` - `.rdc` captures plus exported render targets, textures, pass lists, binding dumps, and inspection screenshots.
+- `reports/` - generated validation reports, benchmark outputs, analysis tables, CSV/JSON summaries, and diff artifacts.
+- `scratch/` - throwaway scripts, one-off tools, downloaded inspection inputs, and intermediate files.
+
+Do not create new AI scratch folders at the repo root, `McpCaptures/`, `Screenshots/`, `_verify_temp/`, or `Build/TempValidation/`; those are legacy or tool-default locations. If a tool forces output elsewhere, move or copy the useful result into the current `Build/_AgentValidation/<run>/` folder and delete the disposable original when safe.
+
+Engine-owned logs may still be emitted to `Build/Logs/` by the runtime. For investigations, copy the relevant logs or filtered excerpts into the current run's `logs/` folder, or record the exact `Build/Logs/...` session path in the durable `docs/work/` note.
+
+Long-lived findings, decisions, and reproduction steps belong in tracked docs such as `docs/work/`. Ignored agent output should support that write-up, but the repository must not depend on ignored files for required build, test, or docs behavior.
+
 ## Iterating On The Editor
 
 "Iterate on the editor" (a.k.a. "iterate on the editor") means driving a tight, evidence-based debug loop against a live editor process using the MCP server and the per-run logs, instead of guessing from source alone. Use it for rendering, scene, transform, and other visually observable issues. Each iteration is one full pass through the loop below.
@@ -132,7 +160,7 @@ The loop:
 
    Run it as a background/async process so the loop can keep working while it stays open. Confirm the relevant scene content is configured in `Assets/UnitTestingWorldSettings.jsonc` (for example `RenderAPI`, lights, and the model to import) before launching.
 3. Position the view with MCP: `set_editor_camera_view` (or `focus_node_in_view` after locating the subject with `find_nodes_by_name`/`select_node_by_name`). Use `duration: 0` for an immediate cut.
-4. Capture the result with MCP `capture_viewport_screenshot` and actually view the saved PNG. Captures land in `McpCaptures/` by default; pass `output_dir` to control the location. Re-capture from more than one camera position — an artifact that does not change with the camera is sampling stale/uninitialized data rather than rendering the scene.
+4. Capture the result with MCP `capture_viewport_screenshot` and actually view the saved PNG. Pass `output_dir` under the current run root, for example `Build/_AgentValidation/<run>/mcp-captures/`; do not rely on the default `McpCaptures/` location. Re-capture from more than one camera position — an artifact that does not change with the camera is sampling stale/uninitialized data rather than rendering the scene.
 5. Determine what the issue looks like and whether it still exists by inspecting the image(s), not by trusting tool return values.
 6. Close the editor (kill the launch terminal).
 7. Review the last run's logs under `Build/Logs/<configuration>_<tfm>/<platform>/<session>/` — for rendering work this is primarily `log_vulkan.log`, `log_opengl.log`, and `log_rendering.log`. Distinguish steady-state messages from shutdown-only teardown noise (for example `VUID-vkDestroyDevice-device-05137` is teardown, not a render bug). Group/filter validation errors, warnings, and the render-pass (`BeginRendering FBO=...`) sequence.
@@ -155,30 +183,31 @@ For Vulkan or OpenGL rendering issues, use RenderDoc when MCP screenshots and lo
 2. Build and launch from the repo root so assets and generated settings resolve correctly. Capture the editor with the same Unit Testing World/MCP flags used by the editor iteration loop:
 
    ```powershell
-   New-Item -ItemType Directory -Force Build\RenderDoc | Out-Null
-   rdc capture -o Build\RenderDoc\xrengine-vulkan.rdc -- dotnet .\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.dll --unit-testing --mcp --mcp-allow-all --mcp-port 5467
+   $RunRoot = "Build\_AgentValidation\$(Get-Date -Format yyyyMMdd-HHmmss)-renderdoc"
+   New-Item -ItemType Directory -Force "$RunRoot\renderdoc" | Out-Null
+   rdc capture -o "$RunRoot\renderdoc\xrengine-vulkan.rdc" -- dotnet .\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.dll --unit-testing --mcp --mcp-allow-all --mcp-port 5467
    ```
 
    RenderDoc fallback:
 
    ```powershell
-   & "C:\Program Files\RenderDoc\renderdoccmd.exe" capture -w -d . -c Build\RenderDoc\xrengine-vulkan.rdc dotnet .\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.dll --unit-testing --mcp --mcp-allow-all --mcp-port 5467
+   & "C:\Program Files\RenderDoc\renderdoccmd.exe" capture -w -d . -c "$RunRoot\renderdoc\xrengine-vulkan.rdc" dotnet .\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.dll --unit-testing --mcp --mcp-allow-all --mcp-port 5467
    ```
 
 3. Inspect the capture in an open-work-close session:
 
    ```powershell
-   rdc open Build\RenderDoc\xrengine-vulkan.rdc
+   rdc open "$RunRoot\renderdoc\xrengine-vulkan.rdc"
    rdc info --json
    rdc passes
    rdc draws --limit 40
    rdc bindings <EID> --json
-   rdc rt <EID> -o Build\RenderDoc\analysis-pass.png
+   rdc rt <EID> -o "$RunRoot\renderdoc\analysis-pass.png"
    rdc close
    ```
 
 4. Always export suspicious render targets/textures to PNG and visually inspect them. For this engine, useful first checks are directional shadow atlas/cascade depth, Velocity, AmbientOcclusionTexture, LightingAccumTexture, BloomBlurTexture mips, TsrOutputTexture, and the final post-process output.
-5. Keep capture output under `Build\RenderDoc\`, close RenderDoc/`rdc` sessions when done, and record durable findings alongside the MCP/log observations.
+5. Keep capture output under the current run root's `renderdoc/` folder, close RenderDoc/`rdc` sessions when done, and record durable findings alongside the MCP/log observations.
 
 ## Testing Policy
 
