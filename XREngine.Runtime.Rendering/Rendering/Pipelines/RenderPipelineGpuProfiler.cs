@@ -7,6 +7,7 @@ using System.Threading;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering;
@@ -287,6 +288,9 @@ internal sealed class RenderPipelineGpuProfiler
     public bool IsProfilingActive
         => Volatile.Read(ref _enabled) != 0 || IsProfilingRequested();
 
+    public bool ShouldInstrumentCommandScopes
+        => IsProfilingActive && AbstractRenderer.Current is OpenGLRenderer;
+
     private readonly struct UserScopeHandle(ulong frameId, string[] path, GLRenderQuery startQuery)
     {
         public ulong FrameId { get; } = frameId;
@@ -497,7 +501,13 @@ internal sealed class RenderPipelineGpuProfiler
             ResolveOrphanedQueriesNoLock(frameId);
             ResolveCompletedScopesNoLock(frameId);
             if (!_latestSnapshot.Enabled)
-                _latestSnapshot = RenderStatsGpuPipelineSnapshot.Pending(GetLastBackendNameNoLock(), "Waiting for the first resolved GPU command frame.");
+            {
+                string backendName = GetLastBackendNameNoLock();
+                string statusMessage = string.Equals(backendName, "Vulkan", StringComparison.Ordinal)
+                    ? VulkanRenderer.VulkanGpuProfilerCommandTimingStatusMessage
+                    : "Waiting for the first resolved GPU command frame.";
+                _latestSnapshot = RenderStatsGpuPipelineSnapshot.Pending(backendName, statusMessage);
+            }
 
             PublishLatestResolvedFrameNoLock(frameId);
             PruneFramesNoLock(frameId);
@@ -508,7 +518,7 @@ internal sealed class RenderPipelineGpuProfiler
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        if (Volatile.Read(ref _enabled) == 0 && !IsProfilingRequested())
+        if (!ShouldInstrumentCommandScopes)
             return default;
 
         return StartScope(command.GpuProfilingName);
@@ -519,24 +529,11 @@ internal sealed class RenderPipelineGpuProfiler
         if (string.IsNullOrWhiteSpace(scopeName))
             return default;
 
-        if (Volatile.Read(ref _enabled) == 0 && !IsProfilingRequested())
+        if (!ShouldInstrumentCommandScopes)
             return default;
 
         if (AbstractRenderer.Current is not OpenGLRenderer renderer)
-        {
-            string backendName = GetBackendName();
-            if (string.Equals(backendName, "Vulkan", StringComparison.Ordinal))
-                RecordBackendGpuTimingStatus(
-                    RuntimeEngine.Rendering.State.RenderFrameId,
-                    backendName,
-                    "Vulkan GPU timings are collected from recorded command buffers.");
-            else
-            {
-                lock (_lock)
-                    _latestSnapshot = RenderStatsGpuPipelineSnapshot.Unsupported(backendName, "GPU render-pipeline command timing is currently available on OpenGL and Vulkan.");
-            }
             return default;
-        }
 
         XRRenderPipelineInstance instance = ViewportRenderCommand.ActivePipelineInstance;
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
@@ -579,24 +576,11 @@ internal sealed class RenderPipelineGpuProfiler
     public bool PushUserScope(string scopeName)
     {
         if (string.IsNullOrWhiteSpace(scopeName) ||
-            (Volatile.Read(ref _enabled) == 0 && !IsProfilingRequested()))
+            !ShouldInstrumentCommandScopes)
             return false;
 
         if (AbstractRenderer.Current is not OpenGLRenderer renderer)
-        {
-            string backendName = GetBackendName();
-            if (string.Equals(backendName, "Vulkan", StringComparison.Ordinal))
-                RecordBackendGpuTimingStatus(
-                    RuntimeEngine.Rendering.State.RenderFrameId,
-                    backendName,
-                    "Vulkan GPU timings are collected from recorded command buffers.");
-            else
-            {
-                lock (_lock)
-                    _latestSnapshot = RenderStatsGpuPipelineSnapshot.Unsupported(backendName, "GPU render-pipeline command timing is currently available on OpenGL and Vulkan.");
-            }
             return false;
-        }
 
         XRRenderPipelineInstance instance = ViewportRenderCommand.ActivePipelineInstance;
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;

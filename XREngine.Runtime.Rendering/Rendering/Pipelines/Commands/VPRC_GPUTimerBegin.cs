@@ -16,7 +16,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (string.IsNullOrWhiteSpace(Label))
                 return;
 
-            RenderPipelineGpuProfiler.Instance.PushUserScope(Label);
+            RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
+            if (profiler.ShouldInstrumentCommandScopes)
+                profiler.PushUserScope(Label);
         }
     }
 }

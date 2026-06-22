@@ -675,7 +675,6 @@ public sealed class RenderPipelineResourceLifecycleTests
             nameof(ResourceGenerationKey.AntiAliasingMode),
             nameof(ResourceGenerationKey.MsaaSampleCount),
             nameof(ResourceGenerationKey.Stereo),
-            nameof(ResourceGenerationKey.UseVulkanSafeFeatureProfile),
             nameof(ResourceGenerationKey.FeatureMask),
             nameof(ResourceGenerationKey.ReservedViewCount),
             nameof(ResourceGenerationKey.ReservedEyeIndex),
@@ -908,7 +907,6 @@ public sealed class RenderPipelineResourceLifecycleTests
             AntiAliasingMode: aaMode,
             MsaaSampleCount: msaaSamples,
             Stereo: false,
-            UseVulkanSafeFeatureProfile: false,
             FeatureMask: featureMask);
 
     private static ResourceGenerationKey CreateKey()
@@ -921,6 +919,5 @@ public sealed class RenderPipelineResourceLifecycleTests
             OutputHDR: false,
             AntiAliasingMode: EAntiAliasingMode.None,
             MsaaSampleCount: 1u,
-            Stereo: false,
-            UseVulkanSafeFeatureProfile: false);
+            Stereo: false);
 }

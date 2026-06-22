@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
@@ -12,6 +13,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         private static readonly object FactorySync = new();
         private static readonly Dictionary<Type, Func<ViewportRenderCommand>> CommandFactories = [];
+        private static int _structureNotificationSuppressionDepth;
 
         public static Type[] RegisteredCommandTypes
         {
@@ -50,6 +52,23 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             command = factory?.Invoke();
             return command is not null;
+        }
+
+        internal static IDisposable SuppressStructureChangeNotifications()
+        {
+            Interlocked.Increment(ref _structureNotificationSuppressionDepth);
+            return StructureNotificationSuppressionScope.Instance;
+        }
+
+        private static bool StructureChangeNotificationsSuppressed
+            => Volatile.Read(ref _structureNotificationSuppressionDepth) > 0;
+
+        private sealed class StructureNotificationSuppressionScope : IDisposable
+        {
+            public static readonly StructureNotificationSuppressionScope Instance = new();
+
+            public void Dispose()
+                => Interlocked.Decrement(ref _structureNotificationSuppressionDepth);
         }
 
         public enum BranchResourceBehavior
@@ -449,6 +468,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void NotifyStructureChanged()
         {
             _instanceStates.Clear();
+            if (StructureChangeNotificationsSuppressed)
+                return;
+
             _parentPipeline?.NotifyCommandChainStructureChanged();
         }
     }

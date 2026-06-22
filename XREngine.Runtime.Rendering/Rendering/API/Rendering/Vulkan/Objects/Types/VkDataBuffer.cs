@@ -1729,6 +1729,9 @@ namespace XREngine.Rendering.Vulkan
         internal void DestroyBufferRaw(Buffer? buffer, DeviceMemory? memory)
         {
             if (buffer.HasValue && buffer.Value.Handle != 0)
+                _stagingManager.TryForget(buffer.Value, memory.GetValueOrDefault());
+
+            if (buffer.HasValue && buffer.Value.Handle != 0)
             {
                 // If this buffer was tracked through the allocator, free through it.
                 if (_bufferAllocations.TryRemove(buffer.Value.Handle, out VulkanMemoryAllocation allocation))

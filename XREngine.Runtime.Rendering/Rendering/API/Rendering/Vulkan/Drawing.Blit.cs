@@ -961,6 +961,112 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        private bool TryReadDepthRegionRgbaFloat(in BlitImageInfo source, int x, int y, int width, int height, out float[] rgbaFloats)
+        {
+            rgbaFloats = [];
+
+            if (width <= 0 || height <= 0)
+                return false;
+            if (!source.IsValid || !source.AspectMask.HasFlag(ImageAspectFlags.DepthBit))
+                return false;
+            if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
+                return false;
+
+            uint pixelSize = GetDepthFormatPixelSize(liveSource.Format);
+            if (pixelSize == 0)
+                return false;
+
+            int pixelCount = width * height;
+            ulong rawByteCount = (ulong)pixelCount * pixelSize;
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(rawByteCount);
+
+            try
+            {
+                using var scope = NewCommandScope();
+
+                ImageLayout preTransferLayout = liveSource.PreferredLayout;
+                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(liveSource);
+
+                TransitionForBlit(
+                    scope.CommandBuffer,
+                    liveSource,
+                    preTransferLayout,
+                    ImageLayout.TransferSrcOptimal,
+                    liveSource.AccessMask,
+                    AccessFlags.TransferReadBit,
+                    liveSource.StageMask,
+                    PipelineStageFlags.TransferBit);
+
+                BufferImageCopy copy = new()
+                {
+                    BufferOffset = 0,
+                    BufferRowLength = 0,
+                    BufferImageHeight = 0,
+                    ImageSubresource = new ImageSubresourceLayers
+                    {
+                        AspectMask = ImageAspectFlags.DepthBit,
+                        MipLevel = liveSource.MipLevel,
+                        BaseArrayLayer = liveSource.BaseArrayLayer,
+                        LayerCount = liveSource.LayerCount,
+                    },
+                    ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
+                    ImageExtent = new Extent3D { Width = (uint)width, Height = (uint)height, Depth = 1 }
+                };
+
+                Api!.CmdCopyImageToBuffer(
+                    scope.CommandBuffer,
+                    liveSource.Image,
+                    ImageLayout.TransferSrcOptimal,
+                    stagingBuffer,
+                    1,
+                    &copy);
+
+                TransitionForBlit(
+                    scope.CommandBuffer,
+                    liveSource,
+                    ImageLayout.TransferSrcOptimal,
+                    postTransferLayout,
+                    AccessFlags.TransferReadBit,
+                    liveSource.AccessMask,
+                    PipelineStageFlags.TransferBit,
+                    liveSource.StageMask);
+            }
+            catch
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                return false;
+            }
+
+            if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, rawByteCount, out void* mappedPtr))
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                return false;
+            }
+
+            try
+            {
+                rgbaFloats = new float[pixelCount * 4];
+                byte* depthPtr = (byte*)mappedPtr;
+                int depthStride = checked((int)pixelSize);
+                for (int i = 0; i < pixelCount; i++)
+                {
+                    float depth = ReadDepthValue(depthPtr + (i * depthStride), liveSource.Format);
+                    int dst = i * 4;
+                    rgbaFloats[dst + 0] = depth;
+                    rgbaFloats[dst + 1] = depth;
+                    rgbaFloats[dst + 2] = depth;
+                    rgbaFloats[dst + 3] = 1.0f;
+                }
+
+                return true;
+            }
+            finally
+            {
+                UnmapBufferMemory(stagingBuffer, stagingMemory);
+                DestroyBuffer(stagingBuffer, stagingMemory);
+            }
+        }
+
         // =========== Pixel Format Conversion ===========
 
         private static bool TryConvertColorPixelsToRgba8(void* srcPtr, Format format, int pixelCount, byte[] dstRgba)

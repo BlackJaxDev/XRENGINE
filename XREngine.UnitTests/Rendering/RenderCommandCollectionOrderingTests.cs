@@ -3,6 +3,7 @@ using Shouldly;
 using System.Collections.Generic;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Scene;
@@ -12,6 +13,19 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class RenderCommandCollectionOrderingTests
 {
+    private IRuntimeShaderServices? _previousShaderServices;
+
+    [SetUp]
+    public void SetUp()
+    {
+        _previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+    }
+
+    [TearDown]
+    public void TearDown()
+        => RuntimeShaderServices.Current = _previousShaderServices;
+
     [Test]
     public void Equal2DCommands_PreserveSubmissionOrder_InTransparentPass()
     {

@@ -121,8 +121,7 @@ namespace XREngine
 
                 private static bool IsDebugOutputEnabled()
                     => XREngine.Rendering.RenderDiagnosticsFlags.GLDebug ||
-                       Engine.EffectiveSettings.EnableGpuIndirectDebugLogging ||
-                       Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
+                       Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
                 private static bool IsGpuTimestampDenseModeEnabled()
                 {

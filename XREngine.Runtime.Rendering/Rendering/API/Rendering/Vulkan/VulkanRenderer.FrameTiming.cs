@@ -13,6 +13,9 @@ public unsafe partial class VulkanRenderer
     private const uint VulkanGpuProfilerMaxScopesPerFrame = 512;
     private const uint VulkanGpuProfilerQueryCount = VulkanGpuProfilerMaxScopesPerFrame * 2;
     private const string VulkanGpuProfilerBackendName = "Vulkan";
+    private const bool EnableVulkanGpuProfilerCommandBufferInstrumentation = false;
+    private const string VulkanGpuProfilerQuarantinedMessage =
+        "Vulkan GPU pipeline command timing is quarantined because timestamp instrumentation must not mutate main render command buffers.";
 
     private QueryPool[]? _frameTimingQueryPools;
     private bool[]? _frameTimingQueryReady;
@@ -30,6 +33,14 @@ public unsafe partial class VulkanRenderer
     private uint _vulkanGpuProfilerNextQuery;
     private bool[]? _vulkanGpuProfilerCommandBufferInstrumented;
     private int[]? _vulkanGpuProfilerCommandBufferFrameSlots;
+
+    private static bool IsVulkanGpuProfilerCommandBufferInstrumentationEnabled
+        => EnableVulkanGpuProfilerCommandBufferInstrumentation;
+
+    internal static string VulkanGpuProfilerCommandTimingStatusMessage
+        => IsVulkanGpuProfilerCommandBufferInstrumentationEnabled
+            ? "Vulkan GPU timings are collected from recorded command buffers."
+            : VulkanGpuProfilerQuarantinedMessage;
 
     private readonly struct VulkanGpuProfilerPendingScope(string[] path, uint startQuery, uint endQuery)
     {
@@ -242,6 +253,8 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyVulkanGpuProfilerResources()
     {
+        ClearVulkanGpuProfilerPendingQueries();
+
         if (_vulkanGpuProfilerQueryPools is not null)
         {
             for (int i = 0; i < _vulkanGpuProfilerQueryPools.Length; i++)
@@ -252,25 +265,44 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        if (_vulkanGpuProfilerPendingScopes is not null)
-        {
-            for (int i = 0; i < _vulkanGpuProfilerPendingScopes.Length; i++)
-                _vulkanGpuProfilerPendingScopes[i]?.Clear();
-        }
-
         _vulkanGpuProfilerQueryPools = null;
         _vulkanGpuProfilerQueryReady = null;
         _vulkanGpuProfilerPendingScopes = null;
         _vulkanGpuProfilerPendingQueryCounts = null;
         _vulkanGpuProfilerSubmittedFrameIds = null;
         _vulkanGpuProfilerEnabled = false;
+        _vulkanGpuProfilerCommandBufferInstrumented = null;
+        _vulkanGpuProfilerCommandBufferFrameSlots = null;
+    }
+
+    private void ClearVulkanGpuProfilerPendingQueries()
+    {
         _vulkanGpuProfilerRecordingActive = false;
         _vulkanGpuProfilerRecordingFrameSlot = -1;
         _vulkanGpuProfilerNextQuery = 0;
+        _vulkanGpuProfilerBudgetWarningIssued = false;
+
+        if (_vulkanGpuProfilerPendingScopes is not null)
+        {
+            for (int i = 0; i < _vulkanGpuProfilerPendingScopes.Length; i++)
+                _vulkanGpuProfilerPendingScopes[i]?.Clear();
+        }
+
+        if (_vulkanGpuProfilerPendingQueryCounts is not null)
+            Array.Fill(_vulkanGpuProfilerPendingQueryCounts, 0);
+
+        if (_vulkanGpuProfilerSubmittedFrameIds is not null)
+            Array.Fill(_vulkanGpuProfilerSubmittedFrameIds, 0UL);
+
+        if (_vulkanGpuProfilerQueryReady is not null)
+            Array.Fill(_vulkanGpuProfilerQueryReady, false);
     }
 
     private bool IsVulkanGpuProfilerCommandBufferStateDirty(uint imageIndex, bool profilingActive, int frameSlot)
     {
+        if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled)
+            return false;
+
         EnsureVulkanGpuProfilerCommandBufferStateCapacity();
 
         if (_vulkanGpuProfilerCommandBufferInstrumented is null ||
@@ -358,6 +390,19 @@ public unsafe partial class VulkanRenderer
             frameSlot < _vulkanGpuProfilerQueryReady.Length)
         {
             _vulkanGpuProfilerQueryReady[frameSlot] = false;
+        }
+
+        if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled)
+        {
+            if (RenderPipelineGpuProfiler.Instance.IsProfilingActive)
+            {
+                RenderPipelineGpuProfiler.Instance.RecordBackendGpuTimingStatus(
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    VulkanGpuProfilerBackendName,
+                    VulkanGpuProfilerCommandTimingStatusMessage);
+            }
+
+            return;
         }
 
         if (!_vulkanGpuProfilerEnabled ||

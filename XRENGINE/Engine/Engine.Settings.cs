@@ -3,6 +3,7 @@ using System.Reflection;
 using XREngine.Audio;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
+using XREngine.Data.Profiling;
 
 namespace XREngine
 {
@@ -315,7 +316,7 @@ namespace XREngine
                 nameof(EditorPreferences.Debug),
                 HandleGlobalEditorPreferencesChanged);
 
-            UpdateEffectiveEditorPreferences();
+            UpdateEffectiveEditorPreferences(e.PropertyName);
         }
 
         /// <summary>
@@ -340,7 +341,7 @@ namespace XREngine
                 HandleEditorPreferencesOverridesChanged,
                 _trackedEditorDebugOverrideableSettings);
 
-            UpdateEffectiveEditorPreferences();
+            UpdateEffectiveEditorPreferences(ResolveEditorPreferencesOverrideChangedPropertyName(sender, e.PropertyName));
         }
 
         /// <summary>
@@ -353,7 +354,7 @@ namespace XREngine
 
             if (IsEditorPreferencesOverrideSetting(setting))
             {
-                UpdateEffectiveEditorPreferences();
+                UpdateEffectiveEditorPreferences(propertyName);
                 return;
             }
 
@@ -589,15 +590,87 @@ namespace XREngine
         /// <summary>
         /// Replays editor-preference side effects that cannot rely on value-changing setters during startup.
         /// </summary>
-        private static void ApplyEditorPreferencesRuntimeSideEffects()
-            => _editorPreferences?.ApplyRuntimeSideEffects();
+        private static void ApplyEditorPreferencesRuntimeSideEffects(string? changedPropertyName = null)
+        {
+            if (_editorPreferences is null)
+                return;
+
+            if (!IsProfilerOnlyEditorDebugProperty(changedPropertyName))
+            {
+                _editorPreferences.ApplyRuntimeSideEffects();
+                return;
+            }
+
+#if XRE_PUBLISHED
+            Engine.Profiler.EnableFrameLogging = false;
+            Engine.Profiler.EnableComponentTiming = false;
+            Engine.Rendering.Stats.EnableTracking = false;
+            UdpProfilerSender.Stop();
+#else
+            var debug = _editorPreferences.Debug;
+            if (changedPropertyName == nameof(EditorDebugOptions.EnableProfilerFrameLogging))
+                Engine.Profiler.EnableFrameLogging = debug.EnableProfilerFrameLogging;
+            else if (changedPropertyName == nameof(EditorDebugOptions.EnableProfilerComponentTiming))
+                Engine.Profiler.EnableComponentTiming = debug.EnableProfilerComponentTiming;
+            else if (changedPropertyName == nameof(EditorDebugOptions.EnableRenderStatisticsTracking))
+                Engine.Rendering.Stats.EnableTracking = debug.EnableRenderStatisticsTracking;
+            else if (changedPropertyName == nameof(EditorDebugOptions.EnableProfilerUdpSending))
+            {
+                if (debug.EnableProfilerUdpSending)
+                {
+                    Engine.WireProfilerSenderCollectors();
+                    UdpProfilerSender.Start();
+                }
+                else
+                {
+                    UdpProfilerSender.Stop();
+                }
+            }
+#endif
+        }
 
         /// <summary>
         /// Recomputes effective editor preferences from global defaults and project/runtime overrides,
         /// then reapplies their runtime side effects.
         /// </summary>
         public static void RefreshEffectiveEditorPreferences()
-            => UpdateEffectiveEditorPreferences();
+            => UpdateEffectiveEditorPreferences(null);
+
+        /// <summary>
+        /// Replays editor-preference side effects for a specific changed property.
+        /// </summary>
+        public static void RefreshEffectiveEditorPreferences(string? changedPropertyName)
+            => UpdateEffectiveEditorPreferences(changedPropertyName);
+
+        private static string? ResolveEditorPreferencesOverrideChangedPropertyName(object? sender, string? propertyName)
+        {
+            if (sender is IOverrideableSetting setting &&
+                _overrideableSettingPropertyMap.TryGetValue(setting, out string? mappedPropertyName))
+            {
+                return NormalizeEditorPreferenceChangePropertyName(mappedPropertyName);
+            }
+
+            return NormalizeEditorPreferenceChangePropertyName(propertyName);
+        }
+
+        private static string? NormalizeEditorPreferenceChangePropertyName(string? propertyName)
+        {
+            if (string.IsNullOrWhiteSpace(propertyName))
+                return null;
+
+            int dotIndex = propertyName.LastIndexOf('.');
+            if (dotIndex >= 0 && dotIndex < propertyName.Length - 1)
+                propertyName = propertyName[(dotIndex + 1)..];
+
+            if (propertyName is nameof(EditorPreferences.Theme) or nameof(EditorPreferences.Debug))
+                return null;
+
+            const string OverrideSuffix = "Override";
+            if (propertyName.EndsWith(OverrideSuffix, StringComparison.Ordinal))
+                propertyName = propertyName[..^OverrideSuffix.Length];
+
+            return string.IsNullOrWhiteSpace(propertyName) ? null : propertyName;
+        }
 
         /// <summary>
         /// Applies all runtime-effective settings (called when settings change globally).
@@ -907,14 +980,22 @@ namespace XREngine
         /// <summary>
         /// Recomputes effective editor preferences by applying overrides to global preferences.
         /// </summary>
-        private static void UpdateEffectiveEditorPreferences()
+        private static void UpdateEffectiveEditorPreferences(string? changedPropertyName = null)
         {
             _editorPreferences ??= new EditorPreferences();
             _globalEditorPreferences ??= new EditorPreferences();
             _editorPreferencesOverrides ??= new EditorPreferencesOverrides();
 
-            _editorPreferences.CopyFrom(_globalEditorPreferences);
-            _editorPreferences.ApplyOverrides(_editorPreferencesOverrides);
+            string? normalizedPropertyName = NormalizeEditorPreferenceChangePropertyName(changedPropertyName);
+            bool appliedNarrowProfilerChange = normalizedPropertyName is not null &&
+                IsProfilerOnlyEditorDebugProperty(normalizedPropertyName) &&
+                TryUpdateEffectiveEditorDebugProperty(normalizedPropertyName);
+
+            if (!appliedNarrowProfilerChange)
+            {
+                _editorPreferences.CopyFrom(_globalEditorPreferences);
+                _editorPreferences.ApplyOverrides(_editorPreferencesOverrides);
+            }
 
             if (_suppressSettingsCascades)
             {
@@ -922,12 +1003,77 @@ namespace XREngine
             }
             else
             {
-                ApplyEditorPreferencesRuntimeSideEffects();
-                Rendering.ApplyEditorPreferencesChange(null);
+                ApplyEditorPreferencesRuntimeSideEffects(normalizedPropertyName);
+                Rendering.ApplyEditorPreferencesChange(normalizedPropertyName);
                 ApplyAudioPreferences();
             }
 
             EditorPreferencesChanged?.Invoke(_editorPreferences);
+        }
+
+        private static bool IsProfilerOnlyEditorDebugProperty(string? propertyName)
+        {
+            if (string.IsNullOrWhiteSpace(propertyName))
+                return false;
+
+            return propertyName == nameof(EditorDebugOptions.EnableProfilerFrameLogging) ||
+                   propertyName == nameof(EditorDebugOptions.EnableProfilerComponentTiming) ||
+                   propertyName == nameof(EditorDebugOptions.EnableRenderStatisticsTracking) ||
+                   propertyName == nameof(EditorDebugOptions.EnableGpuRenderPipelineProfiling) ||
+                   propertyName == nameof(EditorDebugOptions.EnableProfilerUdpSending) ||
+                   propertyName == nameof(EditorDebugOptions.StartExternalProfilerOnStartup) ||
+                   propertyName == nameof(EditorDebugOptions.CodeProfilerDebugOutputMinElapsedMs) ||
+                   propertyName == nameof(EditorDebugOptions.CodeProfilerStatsThreadIntervalMs) ||
+                   propertyName == nameof(EditorDebugOptions.CodeProfilerSnapshotIntervalMs) ||
+                   propertyName == nameof(EditorDebugOptions.CodeProfilerThreadHistoryCapacity) ||
+                   propertyName == nameof(EditorDebugOptions.CodeProfilerMaxOverflowPerCycle) ||
+                   propertyName == nameof(EditorDebugOptions.CodeProfilerMaxOverflowQueueSize) ||
+                   propertyName == nameof(EditorDebugOptions.CodeProfilerProducerBufferCapacity) ||
+                   propertyName == nameof(EditorDebugOptions.CodeProfilerFpsDropBaselineWindowSamples) ||
+                   propertyName == nameof(EditorDebugOptions.CodeProfilerFpsDropMinPreviousFps) ||
+                   propertyName == nameof(EditorDebugOptions.CodeProfilerFpsDropMinDeltaMs) ||
+                   propertyName == nameof(EditorDebugOptions.CodeProfilerRenderStallThresholdMs) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelPaused) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelSortByTime) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelSmoothingAlpha) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelUpdateIntervalSeconds) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelPersistenceSeconds) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelGraphSampleCount) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelRootHierarchyMinMs) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelRootHierarchyMaxMs) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowCpuTimingRawMsLine) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowCpuTimingSmoothedMsLine) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelInterpolateCpuTimingGraphs) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelCpuTimingDisplayMode) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowGpuTimingRawMsLine) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowGpuTimingSmoothedMsLine) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelInterpolateGpuTimingGraphs) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelGpuTimingDisplayMode) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowTree) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowFpsDropSpikes) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowRenderStats) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowGpuPipeline) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowThreadAllocations) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowComponentTimings) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowBvhMetrics) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowJobSystem) ||
+                   propertyName == nameof(EditorDebugOptions.ProfilerPanelShowMainThreadInvokes);
+        }
+
+        private static bool TryUpdateEffectiveEditorDebugProperty(string propertyName)
+        {
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
+            PropertyInfo? debugProperty = typeof(EditorDebugOptions).GetProperty(propertyName, flags);
+            if (debugProperty is null || !debugProperty.CanRead || !debugProperty.CanWrite)
+                return false;
+
+            object? effectiveValue = debugProperty.GetValue(_globalEditorPreferences!.Debug);
+            PropertyInfo? overrideProperty = typeof(EditorDebugOverrides).GetProperty(propertyName + "Override", flags);
+            if (overrideProperty?.GetValue(_editorPreferencesOverrides!.Debug) is IOverrideableSetting { HasOverride: true } setting)
+                effectiveValue = setting.BoxedValue;
+
+            debugProperty.SetValue(_editorPreferences!.Debug, effectiveValue);
+            return true;
         }
 
         #endregion

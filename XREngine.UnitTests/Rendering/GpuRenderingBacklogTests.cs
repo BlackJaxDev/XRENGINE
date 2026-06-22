@@ -21,6 +21,19 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public class GpuRenderingBacklogTests
 {
+    private IRuntimeShaderServices? _previousShaderServices;
+
+    [SetUp]
+    public void SetUp()
+    {
+        _previousShaderServices = RuntimeShaderServices.Current;
+        RuntimeShaderServices.Current = new GltfImportTestUtilities.TestRuntimeShaderServices();
+    }
+
+    [TearDown]
+    public void TearDown()
+        => RuntimeShaderServices.Current = _previousShaderServices;
+
     [Test]
     public void GPUScene_AddRemove_SharedMeshRefCount_RemainsValid()
     {
@@ -659,13 +672,164 @@ public class GpuRenderingBacklogTests
     [Test]
     public void VR_Vulkan_ParallelSecondaryCommands_NoRenderThreadBlock()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
 
         source.ShouldContain("ExecuteSecondaryCommandBufferBatchParallel");
         source.ShouldContain("Task.Run");
         source.ShouldContain("IndirectDrawBatch");
-        source.ShouldContain("BlitBatch");
+        source.ShouldContain("DispatchCommandChainRecordingWorkers");
         source.ShouldContain("GetThreadCommandPool");
+    }
+
+    [Test]
+    public void Vulkan_GpuPipelineProfilerToggle_DoesNotInstrumentMainRenderCommandBuffers()
+    {
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs")
+            .Replace("\r\n", "\n");
+        string frameTiming = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.FrameTiming.cs")
+            .Replace("\r\n", "\n");
+        string gpuProfiler = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderPipelineGpuProfiler.cs")
+            .Replace("\r\n", "\n");
+        string engineStats = ReadWorkspaceFile("XREngine/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs")
+            .Replace("\r\n", "\n");
+        string engineSettings = ReadWorkspaceFile("XREngine/Engine/Engine.Settings.cs")
+            .Replace("\r\n", "\n");
+        string renderCommands = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs")
+            .Replace("\r\n", "\n");
+        string imguiRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs")
+            .Replace("\r\n", "\n");
+        string uiBatchCollector = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/UI/UIBatchCollector.cs")
+            .Replace("\r\n", "\n");
+        string viewportCommand = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/ViewportRenderCommand.cs")
+            .Replace("\r\n", "\n");
+
+        frameTiming.ShouldContain("private const bool EnableVulkanGpuProfilerCommandBufferInstrumentation = false;");
+        frameTiming.ShouldContain("Vulkan GPU pipeline command timing is quarantined");
+        frameTiming.ShouldContain("internal static string VulkanGpuProfilerCommandTimingStatusMessage");
+        frameTiming.ShouldContain("if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled)\n            return false;");
+        frameTiming.ShouldContain("RecordBackendGpuTimingStatus(");
+        gpuProfiler.ShouldContain("public bool ShouldInstrumentCommandScopes\n        => IsProfilingActive && AbstractRenderer.Current is OpenGLRenderer;");
+        gpuProfiler.ShouldContain("VulkanRenderer.VulkanGpuProfilerCommandTimingStatusMessage");
+        gpuProfiler.ShouldContain("if (!ShouldInstrumentCommandScopes)\n            return default;");
+        gpuProfiler.ShouldContain("!ShouldInstrumentCommandScopes)\n            return false;");
+        engineStats.ShouldContain("private static bool IsDebugOutputEnabled()");
+        engineStats.ShouldNotContain("IsDebugOutputEnabled()\n                    => XREngine.Rendering.RenderDiagnosticsFlags.GLDebug ||\n                       Engine.EffectiveSettings.EnableGpuIndirectDebugLogging ||\n                       Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;");
+        engineSettings.ShouldContain("bool appliedNarrowProfilerChange = normalizedPropertyName is not null &&");
+        engineSettings.ShouldContain("IsProfilerOnlyEditorDebugProperty(normalizedPropertyName) &&");
+        engineSettings.ShouldContain("TryUpdateEffectiveEditorDebugProperty(normalizedPropertyName)");
+        engineSettings.ShouldContain("ApplyEditorPreferencesRuntimeSideEffects(normalizedPropertyName);");
+        engineSettings.ShouldContain("propertyName == nameof(EditorDebugOptions.EnableGpuRenderPipelineProfiling)");
+        engineSettings.ShouldContain("propertyName == nameof(EditorDebugOptions.ProfilerPanelPaused)");
+
+        renderCommands.ShouldContain("if (!profiler.ShouldInstrumentCommandScopes || ShouldSkipGpuScope(command))");
+        imguiRenderer.ShouldContain("bool profilingActive = profiler.ShouldInstrumentCommandScopes;");
+        uiBatchCollector.ShouldContain("bool profileGpu = profiler.ShouldInstrumentCommandScopes;");
+        viewportCommand.ShouldContain("using var gpuScope = gpuProfiler.ShouldInstrumentCommandScopes");
+
+        commandBuffers.ShouldContain("bool gpuPipelineProfilingActive =\n                IsVulkanGpuProfilerCommandBufferInstrumentationEnabled &&\n                RenderPipelineGpuProfiler.Instance.IsProfilingActive;");
+        commandBuffers.ShouldContain("bool gpuProfilerCommandBufferStateDirty = IsVulkanGpuProfilerCommandBufferStateDirty");
+        commandBuffers.ShouldContain("ClearVulkanGpuProfilerPendingQueries();\n                MarkCommandBufferVariantsDirty(imageIndex);");
+        commandBuffers.ShouldContain("UpdateVulkanGpuProfilerCommandBufferState(");
+
+        frameTiming.ShouldContain("private void ClearVulkanGpuProfilerPendingQueries()");
+        frameTiming.ShouldContain("Array.Fill(_vulkanGpuProfilerPendingQueryCounts, 0);");
+        frameTiming.ShouldContain("Array.Fill(_vulkanGpuProfilerQueryReady, false);");
+        frameTiming.ShouldContain("_vulkanGpuProfilerCommandBufferInstrumented = null;");
+    }
+
+    [Test]
+    public void Vulkan_ImGuiOverlay_UsesExplicitSwapchainLayoutHandoff()
+    {
+        string drawingCore = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Core.cs")
+            .Replace("\r\n", "\n");
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs")
+            .Replace("\r\n", "\n");
+        string imgui = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.ImGui.cs")
+            .Replace("\r\n", "\n");
+
+        drawingCore.ShouldContain("TryConsumeRenderableImGuiOverlaySnapshot(out imguiOverlaySnapshot)");
+        drawingCore.ShouldContain("bool preserveSwapchainForImGuiOverlay = hasPendingImGuiOverlay && UseDynamicRenderingRenderTargets;");
+        drawingCore.ShouldContain("EnsureCommandBufferRecorded(\n                        imageIndex,\n                        preserveSwapchainForImGuiOverlay,\n                        out swapchainLayoutAfterScene)");
+        drawingCore.ShouldContain("TryRecordImGuiOverlayCommandBuffer(\n                            imageIndex,\n                            imguiOverlaySnapshot,\n                            swapchainLayoutAfterScene,");
+
+        commandBuffers.ShouldContain("public bool PreserveSwapchainForOverlay { get; set; }");
+        commandBuffers.ShouldContain("public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;");
+        commandBuffers.ShouldContain("variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay");
+        commandBuffers.ShouldContain("int expectedPresentTransitions = preserveSwapchainForOverlay ? 0 : 1;");
+
+        imgui.ShouldContain("ImageLayout initialSwapchainLayout");
+        imgui.ShouldContain("initialSwapchainLayout,\n                ImageLayout.ColorAttachmentOptimal");
+        imgui.ShouldNotContain("imageIndex,\n                ImageLayout.PresentSrcKhr,\n                ImageLayout.ColorAttachmentOptimal");
+        imgui.ShouldNotContain("oldLayout == newLayout");
+    }
+
+    [Test]
+    public void EditorProfilerPreferenceChanges_UseNarrowRenderPreferenceApply()
+    {
+        string engineSettings = ReadWorkspaceFile("XREngine/Engine/Engine.Settings.cs")
+            .Replace("\r\n", "\n");
+        string mcpSettings = ReadWorkspaceFile("XREngine.Editor/Mcp/Actions/EditorMcpActions.Settings.cs")
+            .Replace("\r\n", "\n");
+
+        engineSettings.ShouldContain("UpdateEffectiveEditorPreferences(e.PropertyName);");
+        engineSettings.ShouldContain("UpdateEffectiveEditorPreferences(ResolveEditorPreferencesOverrideChangedPropertyName(sender, e.PropertyName));");
+        engineSettings.ShouldContain("UpdateEffectiveEditorPreferences(propertyName);");
+        engineSettings.ShouldContain("private static string? NormalizeEditorPreferenceChangePropertyName(string? propertyName)");
+        engineSettings.ShouldContain("propertyName = propertyName[(dotIndex + 1)..];");
+        engineSettings.ShouldContain("propertyName.EndsWith(OverrideSuffix, StringComparison.Ordinal)");
+        engineSettings.ShouldContain("bool appliedNarrowProfilerChange = normalizedPropertyName is not null &&");
+        engineSettings.ShouldContain("IsProfilerOnlyEditorDebugProperty(normalizedPropertyName) &&");
+        engineSettings.ShouldContain("TryUpdateEffectiveEditorDebugProperty(normalizedPropertyName);");
+        engineSettings.ShouldContain("ApplyEditorPreferencesRuntimeSideEffects(normalizedPropertyName);");
+        engineSettings.ShouldContain("Rendering.ApplyEditorPreferencesChange(normalizedPropertyName);");
+        engineSettings.ShouldContain("nameof(EditorDebugOptions.EnableGpuRenderPipelineProfiling)");
+        engineSettings.ShouldContain("nameof(EditorDebugOptions.ProfilerPanelPaused)");
+        engineSettings.ShouldContain("private static bool TryUpdateEffectiveEditorDebugProperty(string propertyName)");
+        engineSettings.ShouldNotContain("ApplyEditorPreferencesRuntimeSideEffects();\n                Rendering.ApplyEditorPreferencesChange(null);\n                ApplyAudioPreferences();");
+
+        mcpSettings.ShouldContain("Engine.RefreshEffectiveEditorPreferences(propertyName);");
+        mcpSettings.ShouldNotContain("Engine.RefreshEffectiveEditorPreferences();");
+    }
+
+    [Test]
+    public void RenderPipeline_CommandChainRebuilds_SuppressIntermediateStructureNotifications()
+    {
+        string containerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/ViewportRenderCommandContainer.cs")
+            .Replace("\r\n", "\n");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipeline.cs")
+            .Replace("\r\n", "\n");
+
+        containerSource.ShouldContain("internal static IDisposable SuppressStructureChangeNotifications()");
+        containerSource.ShouldContain("if (StructureChangeNotificationsSuppressed)\n                return;");
+        pipelineSource.ShouldContain("protected void InitializeCommandChain()");
+        pipelineSource.ShouldContain("protected void RebuildCommandChain()");
+        pipelineSource.ShouldContain("using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())\n            CommandChain = GenerateCommandChain();\n\n        NotifyCommandChainStructureChanged();");
+
+        string pipelineDirectory = Path.Combine(
+            GltfImportTestUtilities.ResolveWorkspaceRoot(),
+            "XREngine.Runtime.Rendering",
+            "Rendering",
+            "Pipelines");
+        string[] directAssignments = Directory
+            .GetFiles(pipelineDirectory, "*.cs", SearchOption.AllDirectories)
+            .Where(static path => !path.EndsWith("XRRenderPipeline.cs", StringComparison.Ordinal))
+            .Where(static path => File.ReadAllText(path).Contains("CommandChain = GenerateCommandChain();", StringComparison.Ordinal))
+            .ToArray();
+
+        directAssignments.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void RenderPipelineResourceKey_ExcludesVolatileVulkanFeatureProfileState()
+    {
+        string keySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Resources/Records/ResourceGenerationKey.cs");
+        string profileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Resources/Records/RenderPipelineResourceProfile.cs");
+        string instanceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
+
+        keySource.ShouldNotContain("UseVulkanSafeFeatureProfile");
+        profileSource.ShouldNotContain("UseVulkanSafeFeatureProfile");
+        instanceSource.ShouldNotContain("VulkanFeatureProfile.IsActive");
+        instanceSource.ShouldNotContain("vulkanSafe:");
     }
 
     [Test]
@@ -692,7 +856,7 @@ public class GpuRenderingBacklogTests
         var settings = new XREngine.Engine.Rendering.EngineSettings();
         settings.VrMirrorComposeFromEyeTextures.ShouldBeTrue();
 
-        string windowSource = ReadWorkspaceFile("XRENGINE/Rendering/API/XRWindow.cs");
+        string windowSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
         windowSource.ShouldContain("mirrorByComposition");
         windowSource.ShouldContain("TryRenderDesktopMirrorComposition");
         windowSource.ShouldContain("!mirrorByComposition");
@@ -777,20 +941,12 @@ public class GpuRenderingBacklogTests
 
     private static string ReadWorkspaceFile(string relativePath)
     {
-        string dir = AppContext.BaseDirectory;
-        for (int i = 0; i < 12; i++)
-        {
-            string candidate = Path.Combine(dir, relativePath.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(candidate))
-                return File.ReadAllText(candidate);
+        string workspaceRoot = GltfImportTestUtilities.ResolveWorkspaceRoot();
+        string path = Path.Combine(workspaceRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (File.Exists(path))
+            return File.ReadAllText(path);
 
-            string? parent = Path.GetDirectoryName(dir);
-            if (string.IsNullOrWhiteSpace(parent) || parent == dir)
-                break;
-            dir = parent;
-        }
-
-        throw new FileNotFoundException($"Unable to locate file '{relativePath}' from '{AppContext.BaseDirectory}'.");
+        throw new FileNotFoundException($"Unable to locate file '{relativePath}' from '{workspaceRoot}'.");
     }
 
     private sealed class StubBvhProvider(bool isReady) : IGpuBvhProvider

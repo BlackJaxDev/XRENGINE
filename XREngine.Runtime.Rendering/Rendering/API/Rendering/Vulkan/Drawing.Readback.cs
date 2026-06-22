@@ -991,41 +991,22 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (texture is XRTexture2D tex2D && tex2D.MultiSample)
+            if (!TryResolveTextureMipReadbackSize(texture, out int baseWidth, out int baseHeight, out int layerCount, out bool multisample))
             {
-                failure = "Multisample textures do not support mip readback";
+                failure = "Unsupported texture type";
                 return false;
             }
 
-            if (texture is XRTexture2DArray tex2DArray && tex2DArray.MultiSample)
+            if (multisample)
             {
                 failure = "Multisample textures do not support mip readback";
                 return false;
-            }
-
-            int baseWidth;
-            int baseHeight;
-            switch (texture)
-            {
-                case XRTexture2D t2d:
-                    baseWidth = (int)t2d.Width;
-                    baseHeight = (int)t2d.Height;
-                    break;
-                case XRTexture2DArray t2da:
-                    baseWidth = (int)t2da.Width;
-                    baseHeight = (int)t2da.Height;
-                    break;
-                default:
-                    failure = "Unsupported texture type";
-                    return false;
             }
 
             width = Math.Max(1, baseWidth >> Math.Max(0, mipLevel));
             height = Math.Max(1, baseHeight >> Math.Max(0, mipLevel));
 
-            int clampedLayer = texture is XRTexture2DArray array
-                ? Math.Clamp(layerIndex, 0, Math.Max(0, (int)array.Depth - 1))
-                : 0;
+            int clampedLayer = Math.Clamp(layerIndex, 0, Math.Max(0, layerCount - 1));
 
             if (!TryResolveTextureBlitImage(
                     texture,
@@ -1041,6 +1022,36 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            if (IsDepthOrStencilFormat(source.Format))
+            {
+                if (!TryResolveTextureBlitImage(
+                        texture,
+                        Math.Max(0, mipLevel),
+                        clampedLayer,
+                        ImageAspectFlags.DepthBit,
+                        ImageLayout.DepthStencilReadOnlyOptimal,
+                        PipelineStageFlags.EarlyFragmentTestsBit |
+                        PipelineStageFlags.LateFragmentTestsBit |
+                        PipelineStageFlags.FragmentShaderBit |
+                        PipelineStageFlags.ComputeShaderBit,
+                        AccessFlags.DepthStencilAttachmentReadBit |
+                        AccessFlags.ShaderReadBit |
+                        AccessFlags.MemoryReadBit,
+                        out source))
+                {
+                    failure = "Depth texture not uploaded";
+                    return false;
+                }
+
+                if (!TryReadDepthRegionRgbaFloat(source, 0, 0, width, height, out rgbaFloats))
+                {
+                    failure = "Depth texture readback failed";
+                    return false;
+                }
+
+                return true;
+            }
+
             if (!TryReadColorRegionRgbaFloat(source, 0, 0, width, height, out rgbaFloats))
             {
                 failure = "Texture readback failed";
@@ -1048,6 +1059,47 @@ namespace XREngine.Rendering.Vulkan
             }
 
             return true;
+        }
+
+        private static bool TryResolveTextureMipReadbackSize(
+            XRTexture texture,
+            out int width,
+            out int height,
+            out int layerCount,
+            out bool multisample)
+        {
+            width = 0;
+            height = 0;
+            layerCount = 1;
+            multisample = false;
+
+            switch (texture)
+            {
+                case XRTexture2D tex2D:
+                    width = checked((int)tex2D.Width);
+                    height = checked((int)tex2D.Height);
+                    multisample = tex2D.MultiSample;
+                    return true;
+                case XRTexture2DArray tex2DArray:
+                    width = checked((int)tex2DArray.Width);
+                    height = checked((int)tex2DArray.Height);
+                    layerCount = checked((int)Math.Max(tex2DArray.Depth, 1u));
+                    multisample = tex2DArray.MultiSample;
+                    return true;
+                case XRTexture2DView tex2DView:
+                    width = checked((int)tex2DView.Width);
+                    height = checked((int)tex2DView.Height);
+                    multisample = tex2DView.Multisample;
+                    return true;
+                case XRTexture2DArrayView tex2DArrayView:
+                    width = checked((int)tex2DArrayView.Width);
+                    height = checked((int)tex2DArrayView.Height);
+                    layerCount = checked((int)Math.Max(tex2DArrayView.NumLayers, 1u));
+                    multisample = tex2DArrayView.Multisample;
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         public override bool TryReadTexturePixelRgbaFloat(

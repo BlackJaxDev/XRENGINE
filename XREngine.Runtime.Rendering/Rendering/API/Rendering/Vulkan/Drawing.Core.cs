@@ -631,16 +631,36 @@ namespace XREngine.Rendering.Vulkan
             }
             resetDynamicUniformRingTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
-            // 5. Record the scene command buffer. ImGui is recorded into a separate
+            // 5. Snapshot ImGui before recording the scene primary so the primary can
+            // leave the swapchain in color-attachment layout when an overlay will own
+            // the final transition to PresentSrcKhr.
+            ImGuiFrameSnapshot? imguiOverlaySnapshot = null;
+            bool hasPendingImGuiOverlay = false;
+            stageStartTimestamp = Stopwatch.GetTimestamp();
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.SnapshotImGuiOverlay"))
+            {
+                bool canRecordImGuiOverlay = CanRecordImGuiOverlayCommandBuffer(imageIndex);
+                if (canRecordImGuiOverlay)
+                    hasPendingImGuiOverlay = TryConsumeRenderableImGuiOverlaySnapshot(out imguiOverlaySnapshot);
+            }
+            recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+
+            bool preserveSwapchainForImGuiOverlay = hasPendingImGuiOverlay && UseDynamicRenderingRenderTargets;
+
+            // 6. Record the scene command buffer. ImGui is recorded into a separate
             // per-frame overlay buffer below so cached scene primaries do not freeze UI.
             CommandBuffer submitCommandBuffer;
+            ImageLayout swapchainLayoutAfterScene;
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordCommandBuffer"))
             {
                 long recordAllocationStart = GC.GetAllocatedBytesForCurrentThread();
                 try
                 {
-                    submitCommandBuffer = EnsureCommandBufferRecorded(imageIndex);
+                    submitCommandBuffer = EnsureCommandBufferRecorded(
+                        imageIndex,
+                        preserveSwapchainForImGuiOverlay,
+                        out swapchainLayoutAfterScene);
                 }
                 catch (Exception recordEx)
                 {
@@ -666,7 +686,8 @@ namespace XREngine.Rendering.Vulkan
                 finally
                 {
                     long allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - recordAllocationStart;
-                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRecordCommandBufferAllocation(allocatedBytes);
+                    if (_lastEnsureCommandBufferRecordedPrimary)
+                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRecordCommandBufferAllocation(allocatedBytes);
                 }
             }
             recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
@@ -678,7 +699,14 @@ namespace XREngine.Rendering.Vulkan
             {
                 try
                 {
-                    hasImGuiOverlayCommandBuffer = TryRecordImGuiOverlayCommandBuffer(imageIndex, out imguiOverlayCommandBuffer);
+                    hasImGuiOverlayCommandBuffer = imguiOverlaySnapshot is not null &&
+                        TryRecordImGuiOverlayCommandBuffer(
+                            imageIndex,
+                            imguiOverlaySnapshot,
+                            swapchainLayoutAfterScene,
+                            out imguiOverlayCommandBuffer);
+                    if (preserveSwapchainForImGuiOverlay && !hasImGuiOverlayCommandBuffer)
+                        throw new InvalidOperationException("Scene primary preserved the swapchain for ImGui, but the overlay command buffer was not recorded.");
                 }
                 catch (Exception overlayEx)
                 {

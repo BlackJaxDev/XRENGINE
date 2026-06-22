@@ -60,7 +60,7 @@ public unsafe partial class VulkanRenderer
 
 			_buffersDirty = true;
 			_descriptorDirty = true;
-			Renderer.MarkCommandBuffersDirty();
+			Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
 		}
 
 		private void AddRuntimeDeformationBuffers()
@@ -186,7 +186,7 @@ public unsafe partial class VulkanRenderer
 			if (!_buffersDirty)
 			{
 				_descriptorDirty = true;
-				Renderer.MarkCommandBuffersDirty();
+				Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
 			}
 
 			foreach (var buffer in _bufferCache.Values)
@@ -261,18 +261,20 @@ public unsafe partial class VulkanRenderer
 			_pipelineDirty = true;
 			_descriptorDirty = true;
 			_geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
-			Renderer.MarkCommandBuffersDirty();
+			Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
 		}
 
 		/// <summary>
 		/// Overrides the triangle index buffer binding used for indexed draws.
 		/// This is used by indirect-renderer atlas sync paths where indices are provided externally.
 		/// </summary>
-		internal void SetTriangleIndexBuffer(VkDataBuffer? buffer, IndexSize elementType)
+		internal bool SetTriangleIndexBuffer(VkDataBuffer? buffer, IndexSize elementType)
 		{
+			bool changed = !ReferenceEquals(_triangleIndexBuffer, buffer) || _triangleIndexSize != elementType;
 			_triangleIndexBuffer = buffer;
 			_triangleIndexSize = elementType;
 			_triangleIndexBuffer?.EnsureReadyForRendering();
+			return changed;
 		}
 
 		/// <summary>

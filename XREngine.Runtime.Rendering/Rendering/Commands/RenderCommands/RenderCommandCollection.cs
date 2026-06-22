@@ -768,7 +768,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
-            if (!profiler.IsProfilingActive || ShouldSkipGpuScope(command))
+            if (!profiler.ShouldInstrumentCommandScopes || ShouldSkipGpuScope(command))
             {
                 command.Render();
                 return;

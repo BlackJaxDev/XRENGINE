@@ -10,7 +10,6 @@ public readonly record struct ResourceGenerationKey(
     EAntiAliasingMode AntiAliasingMode,
     uint MsaaSampleCount,
     bool Stereo,
-    bool UseVulkanSafeFeatureProfile,
     ulong FeatureMask = 0,
     uint ReservedViewCount = 1,
     uint ReservedEyeIndex = 0)
@@ -25,7 +24,6 @@ public readonly record struct ResourceGenerationKey(
             AntiAliasingMode,
             Math.Max(1u, MsaaSampleCount),
             Stereo,
-            UseVulkanSafeFeatureProfile,
             FeatureMask);
 
     public override string ToString()

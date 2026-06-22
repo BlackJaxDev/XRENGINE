@@ -138,9 +138,6 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     protected static EMeshSubmissionStrategy MeshSubmissionStrategy
         => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
 
-    private static bool UseVulkanSafeFeatureProfile
-        => VulkanFeatureProfile.IsActive;
-
     private static bool EnableComputeDependentPasses
         => VulkanFeatureProfile.EnableComputeDependentPasses;
 
@@ -1532,7 +1529,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         RuntimeEngine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
         RuntimeEngine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
         ApplyAntiAliasingResolutionHint();
-        CommandChain = GenerateCommandChain();
+        InitializeCommandChain();
     }
 
     private void WarmDeferredLightingShaders()
@@ -1625,9 +1622,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
                 return;
 
             ApplyAntiAliasingResolutionHint();
-            CommandChain = GenerateCommandChain();
-            foreach (var instance in Instances)
-                instance.DestroyCache();
+            RebuildCommandChain();
         }, "DefaultRenderPipeline2: Rendering settings changed", true);
     }
 

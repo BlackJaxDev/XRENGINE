@@ -98,9 +98,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
             {
                 RuntimeEngine.InvokeOnMainThread(() =>
                 {
-                    CommandChain = GenerateCommandChain();
-                    foreach (var instance in Instances)
-                        instance.DestroyCache();
+                    RebuildCommandChain();
                 }, "SurfelDebugRenderPipeline: Visualization mode changed", true);
             }
         }
@@ -113,7 +111,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
 
     public SurfelDebugRenderPipeline() : base(true)
     {
-        CommandChain = GenerateCommandChain();
+        InitializeCommandChain();
     }
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
