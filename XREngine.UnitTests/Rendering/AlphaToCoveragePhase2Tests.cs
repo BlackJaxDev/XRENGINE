@@ -67,7 +67,7 @@ public sealed class AlphaToCoveragePhase2Tests
         framebufferSource.ShouldContain("public bool IsMultisampled => EffectiveSampleCount > 1u;");
         framebufferSource.ShouldContain("XRRenderBuffer renderBuffer => renderBuffer.MultisampleCount > 1u ? renderBuffer.MultisampleCount : 1u");
 
-        string glSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs");
+        string glSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLRenderer.RenderParameters.cs");
         glSource.ShouldContain("ApplyAlphaToCoverage(parameters);");
         glSource.ShouldContain("EnableCap.SampleAlphaToCoverage");
         glSource.ShouldContain("XRFrameBuffer.BoundForWriting");
@@ -75,13 +75,13 @@ public sealed class AlphaToCoveragePhase2Tests
 
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
         pipelineSource.ShouldContain("public bool EnableDeferredMsaa { get; set; } = true;");
-        pipelineSource.ShouldContain("&& (Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;");
+        pipelineSource.ShouldContain("&& (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;");
         pipelineSource.ShouldContain("public const string ForwardPassMsaaDepthViewTextureName = \"ForwardPassMsaaDepthView\";");
         pipelineSource.ShouldContain("depthViewTextureName: ForwardPassMsaaDepthViewTextureName");
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs");
         pipeline2Source.ShouldContain("public bool EnableDeferredMsaa { get; set; } = true;");
-        pipeline2Source.ShouldContain("&& (Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline2)?.EnableDeferredMsaa == true;");
+        pipeline2Source.ShouldContain("&& (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline2)?.EnableDeferredMsaa == true;");
         pipeline2Source.ShouldContain("public const string ForwardPassMsaaDepthViewTextureName = \"ForwardPassMsaaDepthView\";");
 
         string resolveSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_ResolveMsaaGBuffer.cs");
@@ -91,17 +91,17 @@ public sealed class AlphaToCoveragePhase2Tests
         string vkSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Drawing.RenderState.cs");
         vkSource.ShouldContain("_state.SetAlphaToCoverageEnabled(parameters.AlphaToCoverage == ERenderParamUsage.Enabled);");
 
-        string vkMeshSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+        string vkMeshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
         vkMeshSource.ShouldContain("SampleCountFlags RasterizationSamples");
         vkMeshSource.ShouldContain("bool AlphaToCoverageEnabled");
         vkMeshSource.ShouldContain("bool requestedAlphaToCoverage = matOpts?.AlphaToCoverage == ERenderParamUsage.Enabled;");
         vkMeshSource.ShouldContain("alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;");
         vkMeshSource.ShouldContain("private static SampleCountFlags ResolveRasterizationSamples(XRFrameBuffer? target)");
 
-        string vkPipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Pipeline.cs");
+        string vkPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
         vkPipelineSource.ShouldContain("draw.RasterizationSamples");
         vkPipelineSource.ShouldContain("draw.AlphaToCoverageEnabled");
-        vkPipelineSource.ShouldContain("AlphaToCoverageEnable = draw.AlphaToCoverageEnabled ? Vk.True : Vk.False");
+        vkPipelineSource.ShouldContain("AlphaToCoverageEnable = effectiveDraw.AlphaToCoverageEnabled ? Vk.True : Vk.False");
     }
 
     [Test]
@@ -484,7 +484,7 @@ public sealed class AlphaToCoveragePhase2Tests
 
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
         pipelineSource.ShouldContain("internal void SyncPbrLightingResourcesForFrame()");
-        pipelineSource.ShouldContain("if (_probeBindingStateFrameId != Engine.Rendering.State.RenderFrameId)");
+        pipelineSource.ShouldContain("if (_probeBindingStateFrameId != RuntimeEngine.Rendering.State.RenderFrameId)");
         pipelineSource.ShouldNotContain("UpdatePbrLightingResourcesForFrame(");
 
         string pipelineCommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
@@ -493,7 +493,7 @@ public sealed class AlphaToCoveragePhase2Tests
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("internal void SyncPbrLightingResourcesForFrame()");
-        pipeline2Source.ShouldContain("if (_probeBindingStateFrameId != Engine.Rendering.State.RenderFrameId)");
+        pipeline2Source.ShouldContain("if (_probeBindingStateFrameId != RuntimeEngine.Rendering.State.RenderFrameId)");
         pipeline2Source.ShouldNotContain("UpdatePbrLightingResourcesForFrame(");
 
         string pipeline2CommandChainSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs").Replace("\r\n", "\n");
@@ -807,9 +807,24 @@ public sealed class AlphaToCoveragePhase2Tests
             if (File.Exists(candidate))
                 return candidate;
 
+            string? migratedRenderingPath = TryResolveMigratedRenderingPath(dir.FullName, relativePath);
+            if (migratedRenderingPath is not null)
+                return migratedRenderingPath;
+
             dir = dir.Parent;
         }
 
         throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
+    }
+
+    private static string? TryResolveMigratedRenderingPath(string repoCandidate, string relativePath)
+    {
+        const string legacyPrefix = "XRENGINE/Rendering/";
+        if (!relativePath.StartsWith(legacyPrefix, StringComparison.Ordinal))
+            return null;
+
+        string migratedRelativePath = "XREngine.Runtime.Rendering/Rendering/" + relativePath[legacyPrefix.Length..];
+        string candidate = Path.Combine(repoCandidate, migratedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        return File.Exists(candidate) ? candidate : null;
     }
 }

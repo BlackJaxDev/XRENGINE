@@ -1,7 +1,7 @@
 # Vulkan Wrapper Parity TODO
 
-Last Updated: 2026-06-12
-Status: Consolidated open tracker.
+Last Updated: 2026-06-22
+Status: Active tracker; source-contract coverage reconciled, hardware validation remains open.
 
 ## Goal
 
@@ -11,8 +11,10 @@ can request the same generic object behavior and get equivalent correctness,
 invalidation, diagnostics, resource lifetime, shader/material binding, and
 validation behavior from either backend.
 
-This document lists only remaining work. Completed items from the previous
-per-wrapper parity trackers were intentionally omitted during consolidation.
+This document lists remaining work after the 2026-06-22 source-contract
+reconciliation. Completed items from the previous per-wrapper parity trackers
+were intentionally omitted during consolidation; the coverage note below records
+the source-level checks that now carry parity guardrails.
 
 ## Scope
 
@@ -25,6 +27,37 @@ per-wrapper parity trackers were intentionally omitted during consolidation.
 | `XRTexture` and concrete texture types | `VkImageBackedTexture`, `VkTexture*` | `GLTexture`, `GLTexture*` |
 | `XRDataBuffer` | `VkDataBuffer` | `GLDataBuffer` |
 
+## Source-Contract Coverage Reconciled 2026-06-22
+
+The focused wrapper parity source tests live in:
+
+- `XREngine.UnitTests/Rendering/XRMeshAndMeshRendererVulkanParityContractTests.cs`
+- `XREngine.UnitTests/Rendering/XRMaterialAndShaderVulkanParityContractTests.cs`
+- `XREngine.UnitTests/Rendering/XRTextureVulkanParityContractTests.cs`
+- `XREngine.UnitTests/Rendering/VkDataBufferParityContractTests.cs`
+
+Current source-contract coverage includes:
+
+- Wrapper registration, the no-standalone-`XRMesh` backend-wrapper decision,
+  mesh replacement/event symmetry, Vulkan mesh preparation readiness separate
+  from `IsGenerated`, material resolution parity, shadow draw suppression, and
+  geometry layout signatures feeding both OpenGL diagnostics and Vulkan
+  pipeline keys.
+- Shared material texture binding resolution, Vulkan material descriptor
+  resolution, expanded Vulkan material uniform serialization coverage,
+  shader source/type invalidation, Vulkan shader compile status/artifact
+  diagnostics, prepared source, and async shader compile plumbing.
+- Texture event subscription symmetry, generated/uploaded/layout/descriptor
+  readiness separation, sampler-driven descriptor invalidation, rectangle and
+  child texture resize tracking, texture-buffer source upload ordering, and
+  texture-view invalidation.
+- `VkDataBuffer` generation/readiness semantics, event symmetry with
+  `GLDataBuffer`, memory flag/flush/growth diagnostics, program binding
+  resolution, device-address/fallback diagnostics, barrier-planner coverage,
+  and timeline-retired buffer destruction.
+- Material table descriptor-index source contracts, generated Vulkan
+  `nonuniformEXT` material-table sampling, and zero-readback policy guardrails.
+
 ## Shared Remaining TODOs
 
 - [ ] Keep `IsGenerated` semantics consistent across backends: generated means
@@ -34,8 +67,8 @@ per-wrapper parity trackers were intentionally omitted during consolidation.
       native equivalent instead of an OpenGL-shaped implementation.
 - [ ] Do not hide missing GPU or accelerated paths behind silent CPU fallbacks;
       emit diagnostics or an intentional fallback signal.
-- [ ] Add source-verifiable tests for wrapper contracts that do not require a
-      live GPU.
+- [ ] Extend source-verifiable tests only for wrapper contracts not covered by
+      the reconciled parity suite above.
 - [ ] Add hardware validation for behavior that requires Vulkan command
       execution, validation layers, GPU capture, or visual comparison.
 - [ ] Keep hot-path allocations out of per-frame draw, descriptor, buffer, and
@@ -156,20 +189,18 @@ native mechanism.
 
 ## `XRMaterial`
 
-- [ ] When the material-table path is active, resolve texture references as
-      material-row descriptor indices, not as per-draw current sampler state.
-- [ ] Require `nonuniformEXT` in Vulkan shader variants that index descriptor
-      arrays from per-draw or per-material values.
+- [ ] Audit descriptor-array shader variants outside the generated
+      material-table path and require `nonuniformEXT` or an equivalent validated
+      shader variant wherever per-draw, per-material, or GPU-written values
+      index descriptor arrays.
 - [ ] Verify local render-options overrides take priority over material options
       like OpenGL.
 - [ ] Include render-option state in pipeline keys when it affects immutable
       Vulkan pipeline state.
 - [ ] Align std140/std430 layout packing with the reflected descriptor block
       layout instead of hardcoded type sizes.
-- [ ] Use pass-declared material binding layouts and layout hashes for Vulkan
-      descriptor-indexed material paths.
-- [ ] Keep material table row uploads dirty-range based; editing one material
-      must not rewrite unrelated rows.
+- [ ] Extend material-table dirty-range validation so editing one material proves
+      it does not rewrite unrelated rows in OpenGL or Vulkan table paths.
 - [ ] Report active texture binding rung, descriptor-indexing availability,
       material-table layout hash, and fallback reason in renderer diagnostics.
 - [ ] Keep OpenGL bindless handle tables and Vulkan descriptor-indexed texture
@@ -192,8 +223,6 @@ native mechanism.
       material as pipeline/material readiness inputs.
 - [ ] Validate std140/std430/scalar layout offsets from reflection data before
       serializing material parameters into Vulkan uniform/storage buffers.
-- [ ] Require `nonuniformEXT` or an equivalent validated shader variant whenever
-      material or draw data indexes descriptor arrays.
 - [ ] Keep material table updates dirty-range based and report the exact rows,
       byte ranges, texture indices, and descriptor writes touched by a material
       edit.
@@ -217,12 +246,12 @@ native mechanism.
 
 ## `XRShader`
 
-- [ ] Add a Vulkan equivalent for prepared source variants when prewarming or
-      pipeline creation needs resolved source without immediate compile.
-- [ ] Determine whether Vulkan needs a nonblocking compile queue equivalent to
-      OpenGL driver parallel shader compile.
-- [ ] If an async Vulkan compile queue is implemented, add polling/completion
-      state and pipeline readiness integration.
+- [ ] Hardware/profile the Vulkan prepared-source and async compile path against
+      OpenGL parallel compile behavior, including warmup latency and completion
+      polling.
+- [ ] Finish backend-neutral pipeline readiness diagnostics for any remaining
+      callers that still report pending Vulkan shader compile as a generic
+      program or pipeline miss.
 - [ ] Promote Vulkan shader generation into a complete shader artifact chain:
       resolved source, backend-rewritten source, SPIR-V, reflection data,
       descriptor layout signature, push-constant signature, vertex/fragment
@@ -370,9 +399,9 @@ native mechanism.
 
 ## `XRDataBuffer`
 
-- [ ] Add steady-state counters for upload bytes, readback bytes, staging reuse,
-      host-visible writes, host-cached reads, device-address consumers,
-      descriptor-binding fallbacks, and zero-readback violations.
+- [ ] Fill remaining steady-state counters after the current source contracts:
+      staging reuse, host-visible writes, host-cached reads, descriptor-binding
+      fallbacks, and zero-readback violations.
 - [ ] Hardware: run compute skinning, GPUScene, indirect draw, readback, UI
       PBO/webview, and texture-buffer paths with Vulkan validation layers.
 - [ ] Hardware: validate the Vulkan device-address consumer path and confirm the

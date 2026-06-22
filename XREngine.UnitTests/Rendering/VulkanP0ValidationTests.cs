@@ -133,7 +133,7 @@ public sealed class VulkanP0ValidationTests
     public void FrameOpContracts_RejectUndocumentedMinValuePassAtRecording()
     {
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
-        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
 
         commandBufferSource.ShouldContain("op.PassIndex == int.MinValue && activePassIndex != int.MinValue");
         commandBufferSource.ShouldContain("EnsureValidPassIndex(op.PassIndex");
@@ -147,7 +147,7 @@ public sealed class VulkanP0ValidationTests
     {
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
         string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.State.cs");
-        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
         string registrySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Resources/RenderResourceRegistry.cs");
 
         commandBufferSource.ShouldContain("_commandBufferFrameOpSignatures");
@@ -161,8 +161,8 @@ public sealed class VulkanP0ValidationTests
         registrySource.ShouldContain("_cachedDescriptorSignatureRevision");
         registrySource.ShouldContain("_textures.OrderBy");
         registrySource.ShouldContain("_frameBuffers.OrderBy");
-        stateSource.ShouldContain("viewport?.Width ?? 0");
-        stateSource.ShouldContain("viewport?.InternalWidth ?? 0");
+        stateSource.ShouldContain("viewport?.Width");
+        stateSource.ShouldContain("viewport?.InternalWidth");
         meshSource.ShouldContain("hash.Add(op.Context.ViewportIdentity)");
         meshSource.ShouldContain("hash.Add(blit.OutFbo?.GetHashCode() ?? 0)");
     }
@@ -535,7 +535,7 @@ public sealed class VulkanP0ValidationTests
     public void VulkanFramebufferAttachments_TrackMipLayoutsIndependently()
     {
         string attachmentSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/IVkFrameBufferAttachmentSource.cs");
-        string imageBackedTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkImageBackedTexture.cs");
+        string imageBackedTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkImageBackedTexture.cs");
         string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
 
         attachmentSource.ShouldContain("GetAttachmentTrackedLayout(int mipLevel, int layerIndex)");
@@ -547,14 +547,15 @@ public sealed class VulkanP0ValidationTests
         imageBackedTexture.ShouldContain("return ImageLayout.Undefined;");
         imageBackedTexture.ShouldContain("ResetAttachmentLayoutTracking();");
 
-        commandBuffers.ShouldContain("attSrc.UpdateAttachmentTrackedLayout(finalLayout, mipLevel, layerIndex);");
+        commandBuffers.ShouldContain("UpdateAttachmentTrackedLayout(target, mipLevel, layerIndex, finalLayout);");
+        commandBuffers.ShouldContain("attSrc.UpdateAttachmentTrackedLayout(layout, mipLevel, layerIndex);");
         commandBuffers.ShouldContain("attSrc.GetAttachmentTrackedLayout(mipLevel, layerIndex);");
     }
 
     [Test]
     public void VulkanTextureViews_UseViewLocalSamplerState()
     {
-        string textureView = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkTextureView.cs");
+        string textureView = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkTextureView.cs");
         string bloomPass = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_BloomPass.cs");
 
         textureView.ShouldNotContain("_sampler = source.DescriptorSampler;");
@@ -752,12 +753,12 @@ public sealed class VulkanP0ValidationTests
     {
         string retirementSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.ResourceRetirement.cs");
         string drawingCoreSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Core.cs");
-        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Pipeline.cs");
-        string uniformsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Uniforms.cs");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
+        string uniformsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Uniforms.cs");
 
         retirementSource.ShouldContain("private readonly List<Pipeline>[] _retiredPipelines");
         retirementSource.ShouldContain("internal void RetirePipeline(Pipeline pipeline)");
-        retirementSource.ShouldContain("private void DrainRetiredPipelines()");
+        retirementSource.ShouldContain("private void DrainRetiredPipelines(int maxItems = RetiredPipelineDrainLimitPerFrame)");
         drawingCoreSource.ShouldContain("DrainRetiredPipelines();");
 
         string destroyPipelines = SliceMethod(pipelineSource, "private void DestroyPipelines()");
@@ -786,8 +787,8 @@ public sealed class VulkanP0ValidationTests
     [Test]
     public void VulkanMeshRenderer_CachesGeneratedProgramsAcrossPipelineInvalidation()
     {
-        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
-        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Pipeline.cs");
+        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
 
         meshRendererSource.ShouldContain("_programCache");
         meshRendererSource.ShouldContain("_activeProgramIdentity");
@@ -905,7 +906,7 @@ public sealed class VulkanP0ValidationTests
     {
         string shaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkShader.cs");
         string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
-        string meshPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Pipeline.cs");
+        string meshPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
 
         shaderSource.ShouldContain("Task.Run(() => BuildCpuArtifact");
         shaderSource.ShouldContain("TryGenerateFromAsyncCompile");
