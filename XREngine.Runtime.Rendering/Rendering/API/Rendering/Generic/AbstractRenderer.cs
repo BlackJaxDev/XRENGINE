@@ -274,7 +274,7 @@ namespace XREngine.Rendering
                     try
                     {
                         RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
-                        bool profilingActive = profiler.IsProfilingActive;
+                        bool profilingActive = profiler.ShouldInstrumentCommandScopes;
                         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
 
                         long phaseStart = BeginImGuiCpuPhase(profilingActive);

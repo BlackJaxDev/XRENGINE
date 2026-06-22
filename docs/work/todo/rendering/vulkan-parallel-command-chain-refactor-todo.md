@@ -2,7 +2,7 @@
 
 Last Updated: 2026-06-21
 Owner: Rendering
-Status: In progress - packet/chain migration layer implemented; dynamic-rendering mesh secondary command buffers enabled behind feature flag
+Status: Complete - Phase 14 validation passed; command-chain path remains feature-flagged
 Target Branch: `vulkan-parallel-command-chain-refactor`
 Design Doc: `docs/work/design/rendering/vulkan-parallel-command-chain-refactor-design.md`
 
@@ -104,6 +104,17 @@ current Vulkan renderer.
 - Legacy render-pass inheritance code is present, but the `XRE_VK_RENDER_TARGET_MODE=LegacyRenderPass` validation run exposed separate image-layout VUIDs around transfer-source layouts versus render-pass initial layouts before it could serve as a clean legacy-secondary gate. Treat legacy render-target layout cleanup as a blocker for checking the combined legacy/dynamic success criterion.
 - Build/test gates after implementation: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj` passed with 0 warnings; `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~VulkanCommandChainDataModelTests"` passed 33/33 after Phase 13 queue-schedule coverage; `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~VulkanCommandChainDataModelTests|FullyQualifiedName~VulkanP1ValidationTests"` passed 31/32 with the one skip being the optional missing CI workflow check; `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~ProfilerProtocolTests|FullyQualifiedName~VulkanCommandChainDataModelTests"` passed 26/26 before the Phase 5 assertion expansion.
 - Architecture doc gate: updated `docs/architecture/rendering/vulkan-renderer.md` with the feature-flagged command-chain contract, `docs/architecture/rendering/frame-lifecycle-and-dispatch-paths.md` with the render-thread/worker split, and `docs/architecture/rendering/mesh-submission-strategies.md` with the Vulkan command-chain volatility contract. The legacy frame-op recorder remains intentionally retained as the compatibility/fallback executor until command chains become default and Phase 14 validation is complete.
+
+2026-06-21 Phase 14 final integration gate:
+
+- Final cache-safety fix: fast primary command-buffer reuse now requires a cached command-chain schedule and recomputes the current primary group signature from live chain secondary command-buffer handles before reusing a primary. This prevents reusing a primary that references a secondary command buffer that was destroyed or rerecorded.
+- Final build gate: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj -nr:false` passed with 0 warnings and 0 errors.
+- Final unit-test gates: command-chain/profiler/render-ordering/resource lifecycle slice passed 102/102; `Test-VulkanPhase3-Regression` passed 82/82. The render-ordering and backlog fixtures now install `RuntimeShaderServices.Current` with the same test shader service used by nearby rendering fixtures.
+- Final MCP visual gate with command chains, parallel packet build, and multi-queue fallback enabled: `Build/McpCaptures/command-chains/phase14-final-current-postfix-mcp-20260621_164503/`. Screenshots reviewed: `Screenshot_20260621_164505.png` and `Screenshot_20260621_164600.png`; both show Sponza rendering from distinct camera poses. Exported and inspected active pipeline targets: `DepthView`, `AmbientOcclusionTexture`, `LightingAccumTexture`, `BloomBlurTexture`, `Velocity`, `TsrOutputTexture`, and `FinalPostProcessOutputTexture`.
+- Final exact G-buffer/HDR target gate: `Build/McpCaptures/command-chains/phase14-final-current-gbuffer-mcp-20260621_165224/`. Exported and inspected `AlbedoOpacity`, `Normal`, `RMSE`, `HDRSceneTex`, `DepthView`, `FinalPostProcessOutputTexture`, and `TsrOutputTexture`; MCP profiler validation counters were `message_count=0`, `error_count=0`.
+- Final Debug MCP log gates: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_16-44-33_pid51352` and `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_16-51-53_pid16112`. Log scans reported zero matches for `VUID`, `Validation Error`, `InvalidCommandBuffer`, `destroyed or rerecorded`, `[ERROR]`, `Exception`, stale descriptor/physical/framebuffer/pipeline, secondary inheritance, command-chain errors, frame-op errors, device lost, and unhandled exceptions.
+- Final Release measurement gate: `Build/Logs/speed-profiles/game-loop-render-pipeline/2026-06-21_16-50-46/summary.json`; log dir `Build/Logs/Release_net10.0-windows7.0/windows_x64/xrengine_2026-06-21_16-48-51_pid37048`. With `XRE_VULKAN_COMMAND_CHAINS=1`, `XRE_VULKAN_PARALLEL_PACKET_BUILD=1`, and `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1`, the 45s warmup/60s capture passed strict steady-state gates: `VulkanRecordCommandBufferP50Ms=1.966`, `VulkanRecordCommandBufferP95Ms=2.216`, `VulkanCommandBufferRecordsTotal=0`, `VulkanCommandBufferForcedDirtyTotal=0`, `VulkanRecordCommandBufferAllocatedBytesTotal=0`, `VulkanResourcePlanReplacementsTotal=0`, `VulkanPrimaryCommandBuffersReusedTotal=490`, `VulkanPrimaryCommandBuffersRecordedTotal=0`, capture-window `GpuReadbackBytesTotal=0`, capture-window `GpuMappedBuffersTotal=0`, and `ForbiddenFallbackEventsTotal=0`.
+- Final Release log review for `xrengine_2026-06-21_16-48-51_pid37048`: zero matches for `VUID`, `Validation Error`, `InvalidCommandBuffer`, `destroyed or rerecorded`, `[ERROR]`, `Exception`, stale descriptor/physical/framebuffer/pipeline, secondary inheritance, command-chain errors, frame-op errors, device lost, and unhandled exceptions.
 
 Implemented scope note: the active Vulkan renderer now uses command-chain schedule order as the primary recording contract while the existing frame-op recorder remains the compatibility executor. `XRE_VULKAN_COMMAND_CHAINS=1` currently enables packet lowering, opt-in parallel packet build via `XRE_VULKAN_PARALLEL_PACKET_BUILD=1`, VR/shadow view-key specialization, disabled multi-queue schedule/fallback validation via `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1`, volatility classification, per-frame-slot chain cache evaluation, command-chain stats, trace/validate diagnostics, reuse telemetry, primary schedule validation/reuse, bounded worker pre-record dispatch, and dynamic-rendering mesh secondary command-buffer execution.
 
@@ -526,14 +537,14 @@ Acceptance criteria:
 
 ## Phase 14 - Validation, Documentation, And Cleanup
 
-- [ ] Run `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`.
-- [ ] Run command-chain unit tests.
-- [ ] Run profiler protocol tests.
-- [ ] Run render graph ordering tests.
-- [ ] Run `Test-VulkanPhase3-Regression`.
-- [ ] Run Unit Testing World Vulkan with MCP enabled.
-- [ ] Capture visual gates from at least two camera positions.
-- [ ] Export and inspect critical render targets:
+- [x] Run `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`.
+- [x] Run command-chain unit tests.
+- [x] Run profiler protocol tests.
+- [x] Run render graph ordering tests.
+- [x] Run `Test-VulkanPhase3-Regression`.
+- [x] Run Unit Testing World Vulkan with MCP enabled.
+- [x] Capture visual gates from at least two camera positions.
+- [x] Export and inspect critical render targets:
   - `AlbedoOpacity`;
   - `Normal`;
   - `RMSE`;
@@ -542,8 +553,8 @@ Acceptance criteria:
   - `LightingAccumTexture`;
   - `HDRSceneTex`;
   - final post-process/AA output.
-- [ ] Run `Tools/Measure-VulkanFrameLoop.ps1` in Release.
-- [ ] Compare against the Phase 0 baseline.
+- [x] Run `Tools/Measure-VulkanFrameLoop.ps1` in Release.
+- [x] Compare against the Phase 0 baseline.
 - [x] Update `docs/architecture/rendering/vulkan-renderer.md` with the final
   command-chain contract.
 - [x] Update `docs/architecture/rendering/frame-lifecycle-and-dispatch-paths.md`
@@ -557,10 +568,10 @@ Acceptance criteria:
 
 Acceptance criteria:
 
-- [ ] All required builds/tests pass or failures are documented as unrelated.
-- [ ] Visual output remains correct.
-- [ ] No new Vulkan validation errors appear in logs.
-- [ ] Release measurements meet or move materially toward success criteria.
+- [x] All required builds/tests pass or failures are documented as unrelated.
+- [x] Visual output remains correct.
+- [x] No new Vulkan validation errors appear in logs.
+- [x] Release measurements meet or move materially toward success criteria.
 - [x] Architecture docs describe the final implemented behavior.
 
 ## Suggested Implementation Order

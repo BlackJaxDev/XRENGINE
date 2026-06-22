@@ -181,7 +181,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (shouldExecute)
             {
                 using var cpuScope = RuntimeRenderingHostServices.Current.StartProfileScope(CpuProfilingName);
-                using var gpuScope = RenderPipelineGpuProfiler.Instance.StartScope(this);
+                RenderPipelineGpuProfiler gpuProfiler = RenderPipelineGpuProfiler.Instance;
+                using var gpuScope = gpuProfiler.ShouldInstrumentCommandScopes
+                    ? gpuProfiler.StartScope(this)
+                    : default;
                 Execute();
             }
             ShouldExecute = true;

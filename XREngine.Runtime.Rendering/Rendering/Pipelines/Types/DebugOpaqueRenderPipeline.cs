@@ -45,7 +45,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 
     public DebugOpaqueRenderPipeline() : base(true)
     {
-        CommandChain = GenerateCommandChain();
+        InitializeCommandChain();
     }
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()

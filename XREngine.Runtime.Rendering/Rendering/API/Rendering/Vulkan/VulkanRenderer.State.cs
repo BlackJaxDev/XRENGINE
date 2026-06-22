@@ -3211,6 +3211,14 @@ public unsafe partial class VulkanRenderer
             summary);
     }
 
+    internal void MarkCommandBuffersDirtyForLegacyMeshState([CallerMemberName] string? reason = null)
+    {
+        if (CommandChainsEnabled)
+            return;
+
+        MarkCommandBuffersDirty(reason);
+    }
+
     internal override void NotifyRenderResourcesChanged()
         => MarkCommandBuffersDirty();
 

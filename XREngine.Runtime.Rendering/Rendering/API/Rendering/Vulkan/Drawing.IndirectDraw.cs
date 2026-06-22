@@ -96,7 +96,7 @@ namespace XREngine.Rendering.Vulkan
 
             vkMesh.Generate();
             vkIndexBuffer.Generate();
-            vkMesh.SetTriangleIndexBuffer(vkIndexBuffer, elementSize);
+            bool indexBindingChanged = vkMesh.SetTriangleIndexBuffer(vkIndexBuffer, elementSize);
 
             if (_boundMeshRendererForIndirect == vkMesh &&
                 vkMesh.TryGetPrimaryIndexBinding(out _, out IndexType boundType, out uint boundCount))
@@ -105,7 +105,8 @@ namespace XREngine.Rendering.Vulkan
                 _boundIndexCount = boundCount;
             }
 
-            MarkCommandBuffersDirty();
+            if (indexBindingChanged)
+                MarkCommandBuffersDirtyForLegacyMeshState();
             return true;
         }
 

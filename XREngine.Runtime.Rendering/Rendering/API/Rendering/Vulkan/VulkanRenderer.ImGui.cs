@@ -1399,10 +1399,8 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private bool TryRecordImGuiOverlayCommandBuffer(uint imageIndex, out CommandBuffer overlayCommandBuffer)
+    private bool CanRecordImGuiOverlayCommandBuffer(uint imageIndex)
     {
-        overlayCommandBuffer = default;
-
         if (RenderDiagnosticsFlags.VkSkipImGui)
         {
             Debug.VulkanEvery(
@@ -1432,18 +1430,57 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (!_imguiDrawData.TryConsume(out ImGuiFrameSnapshot? drawData) || drawData is null)
+        CommandBuffer commandBuffer = _imguiOverlayCommandBuffers[imageIndex];
+        return commandBuffer.Handle != 0;
+    }
+
+    private bool TryConsumeRenderableImGuiOverlaySnapshot(out ImGuiFrameSnapshot? drawData)
+    {
+        drawData = null;
+
+        if (RenderDiagnosticsFlags.VkSkipImGui)
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.SkipImGui.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Skipping ImGui overlay due to XRE_SKIP_IMGUI=1.");
+            return false;
+        }
+
+        if (!_imguiDrawData.TryConsume(out drawData) || drawData is null)
             return false;
 
         if (!HasRenderableImGuiSnapshot(drawData))
+        {
+            drawData = null;
             return false;
+        }
+
+        return true;
+    }
+
+    private bool TryRecordImGuiOverlayCommandBuffer(
+        uint imageIndex,
+        ImGuiFrameSnapshot drawData,
+        ImageLayout initialSwapchainLayout,
+        out CommandBuffer overlayCommandBuffer)
+    {
+        overlayCommandBuffer = default;
+
+        if (!CanRecordImGuiOverlayCommandBuffer(imageIndex) ||
+            !HasRenderableImGuiSnapshot(drawData))
+        {
+            return false;
+        }
 
         EnsureImGuiFontResources();
         EnsureImGuiPipeline();
 
-        CommandBuffer commandBuffer = _imguiOverlayCommandBuffers[imageIndex];
-        if (commandBuffer.Handle == 0)
-            return false;
+        bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
+            swapChainImageViews is not null &&
+            imageIndex < swapChainImageViews.Length;
+
+        CommandBuffer commandBuffer = _imguiOverlayCommandBuffers![imageIndex];
 
         Api!.ResetCommandBuffer(commandBuffer, 0);
 
@@ -1464,7 +1501,7 @@ public unsafe partial class VulkanRenderer
             TransitionSwapchainImageForImGuiOverlay(
                 commandBuffer,
                 imageIndex,
-                ImageLayout.PresentSrcKhr,
+                initialSwapchainLayout,
                 ImageLayout.ColorAttachmentOptimal);
 
             RenderingAttachmentInfo colorAttachment = new()
@@ -1556,7 +1593,7 @@ public unsafe partial class VulkanRenderer
         ImageLayout oldLayout,
         ImageLayout newLayout)
     {
-        if (swapChainImages is null || imageIndex >= swapChainImages.Length || oldLayout == newLayout)
+        if (swapChainImages is null || imageIndex >= swapChainImages.Length)
             return;
 
         ImageMemoryBarrier barrier = new()

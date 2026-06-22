@@ -9,7 +9,6 @@ public readonly record struct RenderPipelineResourceProfile(
     EAntiAliasingMode AntiAliasingMode,
     uint MsaaSampleCount,
     bool Stereo,
-    bool UseVulkanSafeFeatureProfile,
     ulong FeatureMask = 0)
 {
     public static RenderPipelineResourceProfile Empty { get; } = new(
@@ -20,6 +19,5 @@ public readonly record struct RenderPipelineResourceProfile(
         OutputHDR: false,
         EAntiAliasingMode.None,
         1u,
-        Stereo: false,
-        UseVulkanSafeFeatureProfile: false);
+        Stereo: false);
 }

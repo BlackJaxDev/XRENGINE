@@ -128,12 +128,26 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     protected RenderPipeline(bool deferCommandChainGeneration = false)
     {
         if (!deferCommandChainGeneration)
-            CommandChain = GenerateCommandChain();
+            InitializeCommandChain();
         PassIndicesAndSorters = GetPassIndicesAndSorters();
     }
 
     protected abstract ViewportRenderCommandContainer GenerateCommandChain();
     protected abstract Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters();
+
+    protected void InitializeCommandChain()
+    {
+        using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
+            CommandChain = GenerateCommandChain();
+    }
+
+    protected void RebuildCommandChain()
+    {
+        using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
+            CommandChain = GenerateCommandChain();
+
+        NotifyCommandChainStructureChanged();
+    }
 
     protected virtual void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {

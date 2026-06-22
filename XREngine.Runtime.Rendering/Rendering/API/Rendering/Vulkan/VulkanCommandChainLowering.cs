@@ -23,6 +23,8 @@ public unsafe partial class VulkanRenderer
     internal const int CommandChainStereoMultiviewViewIndex = -1;
 
     private Dictionary<CommandChainKey, CommandChain>[]? _commandChainCaches;
+    private CommandChainSchedule?[]? _commandChainScheduleCache;
+    private ulong[]? _commandChainScheduleFastSignatures;
     private readonly List<RenderPacket> _commandChainPacketScratch = [];
     private readonly List<RenderPassChainGroup> _commandChainGroupScratch = [];
     private readonly List<CommandChainKey> _commandChainGroupKeyScratch = [];
@@ -76,6 +78,16 @@ public unsafe partial class VulkanRenderer
             return null;
 
         using CommandChainResourcePlanReadScope resourcePlanReadScope = BeginCommandChainResourcePlanReadScope(resourcePlanRevision);
+        ulong fastScheduleSignature = ComputeCommandChainFastScheduleSignature(imageIndex, staticOps, volatileOps, resourcePlanRevision);
+        if (TryGetCachedCommandChainSchedule(
+                imageIndex,
+                fastScheduleSignature,
+                out CommandChainSchedule? cachedSchedule,
+                out stats))
+        {
+            return cachedSchedule;
+        }
+
         long start = Stopwatch.GetTimestamp();
         List<RenderPacket> packets = _commandChainPacketScratch;
         packets.Clear();
@@ -85,7 +97,9 @@ public unsafe partial class VulkanRenderer
         if (packets.Count == 0)
         {
             stats = new CommandChainLoweringStats(0, 0, 0, 0, 0, 0, 0, 0, Stopwatch.GetElapsedTime(start), TimeSpan.Zero, null, null, null);
-            return new CommandChainSchedule(0, resourcePlanRevision, ReadOnlyMemory<RenderPassChainGroup>.Empty);
+            CommandChainSchedule emptySchedule = new(0, resourcePlanRevision, ReadOnlyMemory<RenderPassChainGroup>.Empty);
+            CacheCommandChainSchedule(imageIndex, fastScheduleSignature, emptySchedule);
+            return emptySchedule;
         }
 
         Dictionary<CommandChainKey, CommandChain> cache = GetCommandChainCache(imageIndex);
@@ -196,8 +210,9 @@ public unsafe partial class VulkanRenderer
 
         AddCurrentGroup();
 
-        ulong scheduleSignature = MixSignature(frameOpsSignature, volatileSignature);
-        CommandChainSchedule schedule = new(scheduleSignature, resourcePlanRevision, groups.ToArray());
+        RenderPassChainGroup[] groupArray = groups.ToArray();
+        ulong scheduleSignature = ComputeScheduleStructuralSignature(groupArray);
+        CommandChainSchedule schedule = new(scheduleSignature, resourcePlanRevision, groupArray);
         int visibilityPacketCount = CountDistinctViewKeys(packets);
         TimeSpan workerRecordTime = Stopwatch.GetElapsedTime(start);
 
@@ -232,6 +247,7 @@ public unsafe partial class VulkanRenderer
             firstStructuralDirtyReason,
             firstDescriptorMismatch,
             firstResourcePlanMismatch);
+        CacheCommandChainSchedule(imageIndex, fastScheduleSignature, schedule);
         return schedule;
 
         void AddCurrentGroup()
@@ -247,6 +263,123 @@ public unsafe partial class VulkanRenderer
                 currentGroupSignature,
                 supportsSecondaryCommandBuffers: true,
                 dynamicOverlay: currentDynamicOverlay));
+        }
+    }
+
+    private bool TryGetCachedCommandChainSchedule(
+        uint imageIndex,
+        ulong fastScheduleSignature,
+        out CommandChainSchedule? schedule,
+        out CommandChainLoweringStats stats)
+    {
+        schedule = null;
+        stats = default;
+        if (CommandChainValidationEnabled || CommandChainTraceEnabled)
+            return false;
+
+        int slot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+        if (_commandChainScheduleCache is null ||
+            _commandChainScheduleFastSignatures is null ||
+            slot >= _commandChainScheduleCache.Length ||
+            slot >= _commandChainScheduleFastSignatures.Length)
+        {
+            return false;
+        }
+
+        schedule = _commandChainScheduleCache[slot];
+        if (schedule is null || _commandChainScheduleFastSignatures[slot] != fastScheduleSignature)
+        {
+            schedule = null;
+            return false;
+        }
+
+        int chainCount = CountCommandChains(schedule);
+        stats = new CommandChainLoweringStats(
+            VisibilityPackets: schedule.Groups.Length,
+            RenderPackets: chainCount,
+            ChainsScheduled: chainCount,
+            ChainsRecorded: 0,
+            ChainsReused: chainCount,
+            ChainsFrameDataRefreshed: 0,
+            VolatileChainsRecorded: 0,
+            SecondaryCommandBuffers: chainCount,
+            WorkerRecordTime: TimeSpan.Zero,
+            WaitForWorkersTime: TimeSpan.Zero,
+            FirstStructuralDirtyReason: null,
+            FirstDescriptorGenerationMismatch: null,
+            FirstResourcePlanRevisionMismatch: null);
+        return true;
+    }
+
+    private void CacheCommandChainSchedule(uint imageIndex, ulong fastScheduleSignature, CommandChainSchedule schedule)
+    {
+        if (CommandChainValidationEnabled || CommandChainTraceEnabled)
+            return;
+
+        EnsureCommandChainScheduleCache();
+        int slot = unchecked((int)Math.Min(imageIndex, (uint)(_commandChainScheduleCache!.Length - 1)));
+        _commandChainScheduleCache[slot] = schedule;
+        _commandChainScheduleFastSignatures![slot] = fastScheduleSignature;
+    }
+
+    private void EnsureCommandChainScheduleCache()
+    {
+        int count = Math.Max(_commandBuffers?.Length ?? 0, 1);
+        if (_commandChainScheduleCache is not null &&
+            _commandChainScheduleFastSignatures is not null &&
+            _commandChainScheduleCache.Length == count &&
+            _commandChainScheduleFastSignatures.Length == count)
+        {
+            return;
+        }
+
+        _commandChainScheduleCache = new CommandChainSchedule?[count];
+        _commandChainScheduleFastSignatures = new ulong[count];
+    }
+
+    private static int CountCommandChains(CommandChainSchedule schedule)
+    {
+        int count = 0;
+        ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
+        for (int i = 0; i < groups.Length; i++)
+            count += groups[i].ChainKeys.Length;
+        return count;
+    }
+
+    private static ulong ComputeCommandChainFastScheduleSignature(
+        uint imageIndex,
+        FrameOp[] staticOps,
+        FrameOp[] volatileOps,
+        ulong resourcePlanRevision)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(unchecked((int)Math.Min(imageIndex, int.MaxValue)));
+        hash.Add(resourcePlanRevision);
+        AddCommandChainFastScheduleSignatureParts(ref hash, staticOps, dynamicOverlay: false);
+        AddCommandChainFastScheduleSignatureParts(ref hash, volatileOps, dynamicOverlay: true);
+        return hash.ToHash();
+    }
+
+    private static void AddCommandChainFastScheduleSignatureParts(ref FrameOpSignatureHasher hash, FrameOp[] ops, bool dynamicOverlay)
+    {
+        hash.Add(ops.Length);
+        for (int i = 0; i < ops.Length; i++)
+        {
+            FrameOp op = ops[i];
+            RenderViewKey viewKey = BuildRenderViewKey(op, dynamicOverlay);
+            RenderPacketVolatility volatility = ClassifyRenderPacketVolatility(op, dynamicOverlay);
+            hash.Add(op.PassIndex);
+            hash.Add(ResolveCommandChainTargetIdentity(op));
+            hash.Add(dynamicOverlay);
+            hash.Add(i);
+            hash.Add(viewKey.PipelineIdentity);
+            hash.Add(viewKey.ViewportIdentity);
+            hash.Add(viewKey.ViewIndex);
+            hash.Add((int)viewKey.Kind);
+            hash.Add(viewKey.LightIdentity);
+            hash.Add(viewKey.CascadeIndex);
+            hash.Add(ComputeFrameOpStructuralSignature(op, i, volatility));
+            hash.Add(ResolvePipelineGeneration(op));
         }
     }
 
@@ -476,9 +609,31 @@ public unsafe partial class VulkanRenderer
         int recordedProfilerFrameSlot,
         bool currentProfilerActive,
         int currentProfilerFrameSlot)
+        => EvaluatePrimaryCommandBufferDirtyReason(
+            schedule,
+            recordedScheduleSignature,
+            recordedGroupSignature,
+            recordedGroupCount,
+            ComputePrimaryCommandBufferGroupSignature(schedule),
+            recordedResourcePlanRevision,
+            recordedProfilerActive,
+            recordedProfilerFrameSlot,
+            currentProfilerActive,
+            currentProfilerFrameSlot);
+
+    internal static PrimaryCommandBufferDirtyReason EvaluatePrimaryCommandBufferDirtyReason(
+        CommandChainSchedule schedule,
+        ulong recordedScheduleSignature,
+        ulong recordedGroupSignature,
+        int recordedGroupCount,
+        ulong currentGroupSignature,
+        ulong recordedResourcePlanRevision,
+        bool recordedProfilerActive,
+        int recordedProfilerFrameSlot,
+        bool currentProfilerActive,
+        int currentProfilerFrameSlot)
     {
         PrimaryCommandBufferDirtyReason reason = PrimaryCommandBufferDirtyReason.None;
-        ulong currentGroupSignature = ComputePrimaryCommandBufferGroupSignature(schedule);
         if (recordedScheduleSignature != schedule.StructuralSignature)
             reason |= PrimaryCommandBufferDirtyReason.ScheduleStructure;
         if (recordedGroupSignature != currentGroupSignature ||
@@ -495,6 +650,40 @@ public unsafe partial class VulkanRenderer
         }
 
         return reason;
+    }
+
+    private static ulong ComputeScheduleStructuralSignature(ReadOnlySpan<RenderPassChainGroup> groups)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(groups.Length);
+        for (int i = 0; i < groups.Length; i++)
+        {
+            RenderPassChainGroup group = groups[i];
+            hash.Add(group.PassIndex);
+            hash.Add(group.TargetIdentity);
+            hash.Add(group.StructuralSignature);
+            hash.Add(group.SupportsSecondaryCommandBuffers);
+            hash.Add(group.DynamicOverlay);
+
+            ReadOnlySpan<CommandChainKey> keys = group.ChainKeys.Span;
+            hash.Add(keys.Length);
+            for (int keyIndex = 0; keyIndex < keys.Length; keyIndex++)
+            {
+                CommandChainKey key = keys[keyIndex];
+                hash.Add(key.FrameSlot);
+                hash.Add(key.PassIndex);
+                hash.Add(key.TargetIdentity);
+                hash.Add(key.ChainOrdinal);
+                hash.Add(key.ViewKey.PipelineIdentity);
+                hash.Add(key.ViewKey.ViewportIdentity);
+                hash.Add(key.ViewKey.ViewIndex);
+                hash.Add((int)key.ViewKey.Kind);
+                hash.Add(key.ViewKey.LightIdentity);
+                hash.Add(key.ViewKey.CascadeIndex);
+            }
+        }
+
+        return hash.ToHash();
     }
 
     internal static ulong ComputePrimaryCommandBufferGroupSignature(CommandChainSchedule schedule)

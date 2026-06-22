@@ -879,7 +879,7 @@ public sealed class UIBatchCollector : IDisposable
 
         using var sample = RuntimeEngine.Profiler.Start();
         RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
-        bool profileGpu = profiler.IsProfilingActive;
+        bool profileGpu = profiler.ShouldInstrumentCommandScopes;
 
         if (profileGpu)
         {
@@ -958,7 +958,7 @@ public sealed class UIBatchCollector : IDisposable
         using var sample = RuntimeEngine.Profiler.Start();
 
         RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
-        bool profileGpu = profiler.IsProfilingActive;
+        bool profileGpu = profiler.ShouldInstrumentCommandScopes;
         TextGPUResources gpu;
         if (profileGpu)
         {

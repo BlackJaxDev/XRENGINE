@@ -667,8 +667,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             deltas.Add($"msaa:{old.MsaaSampleCount}->{newKey.MsaaSampleCount}");
         if (old.Stereo != newKey.Stereo)
             deltas.Add($"stereo:{old.Stereo}->{newKey.Stereo}");
-        if (old.UseVulkanSafeFeatureProfile != newKey.UseVulkanSafeFeatureProfile)
-            deltas.Add($"vulkanSafe:{old.UseVulkanSafeFeatureProfile}->{newKey.UseVulkanSafeFeatureProfile}");
         if (old.FeatureMask != newKey.FeatureMask)
             deltas.Add($"features:0x{old.FeatureMask:X}->0x{newKey.FeatureMask:X}");
         if (old.ReservedViewCount != newKey.ReservedViewCount)
@@ -740,7 +738,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             antiAliasingMode,
             msaaSamples,
             stereo,
-            VulkanFeatureProfile.IsActive,
             featureMask);
     }
 

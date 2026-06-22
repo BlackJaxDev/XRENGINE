@@ -121,15 +121,38 @@ internal unsafe sealed class VulkanStagingManager
         return false;
     }
 
-    public void Destroy(VulkanRenderer renderer)
+    public bool TryForget(Buffer buffer, DeviceMemory memory)
     {
         lock (_sync)
         {
-            foreach (StagingBufferEntry entry in _entries)
-                renderer.DestroyBufferRaw(entry.Buffer, entry.Memory);
+            for (int i = _entries.Count - 1; i >= 0; i--)
+            {
+                StagingBufferEntry entry = _entries[i];
+                if (entry.Buffer.Handle != buffer.Handle)
+                    continue;
 
+                if (memory.Handle != 0 && entry.Memory.Handle != memory.Handle)
+                    continue;
+
+                _entries.RemoveAt(i);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public void Destroy(VulkanRenderer renderer)
+    {
+        StagingBufferEntry[] entries;
+        lock (_sync)
+        {
+            entries = [.. _entries];
             _entries.Clear();
         }
+
+        foreach (StagingBufferEntry entry in entries)
+            renderer.DestroyBufferRaw(entry.Buffer, entry.Memory);
     }
 
     /// <summary>
@@ -163,6 +186,8 @@ internal unsafe sealed class VulkanStagingManager
 
             _trimFrameCounter = 0;
 
+            List<StagingBufferEntry>? evicted = null;
+
             // Increment idle counters and collect eviction candidates.
             for (int i = _entries.Count - 1; i >= 0; i--)
             {
@@ -180,12 +205,19 @@ internal unsafe sealed class VulkanStagingManager
                 bool stillOverIdleBudget = idleBytes > IdleBytesWatermark;
                 if (entryOldEnough || stillOverEntryBudget || stillOverIdleBudget)
                 {
-                    renderer.DestroyBufferRaw(entry.Buffer, entry.Memory);
+                    evicted ??= [];
+                    evicted.Add(entry);
                     _entries.RemoveAt(i);
                     if (idleEntries > 0)
                         idleEntries--;
                     idleBytes = idleBytes > entry.Size ? idleBytes - entry.Size : 0;
                 }
+            }
+
+            if (evicted is not null)
+            {
+                foreach (StagingBufferEntry entry in evicted)
+                    renderer.DestroyBufferRaw(entry.Buffer, entry.Memory);
             }
         }
     }

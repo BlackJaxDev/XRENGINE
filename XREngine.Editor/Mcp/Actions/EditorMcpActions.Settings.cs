@@ -174,7 +174,7 @@ namespace XREngine.Editor.Mcp
 
             Task<McpToolResponse> result = SetSettingsProperty(Engine.GlobalEditorPreferences, propertyName, value);
             if (!result.Result.IsError)
-                Engine.RefreshEffectiveEditorPreferences();
+                Engine.RefreshEffectiveEditorPreferences(propertyName);
 
             return result;
         }

@@ -12,6 +12,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             => string.IsNullOrWhiteSpace(Label) ? nameof(VPRC_GPUTimerEnd) : $"{nameof(VPRC_GPUTimerEnd)}:{Label}";
 
         protected override void Execute()
-            => RenderPipelineGpuProfiler.Instance.PopUserScope(Label);
+        {
+            RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
+            if (profiler.ShouldInstrumentCommandScopes)
+                profiler.PopUserScope(Label);
+        }
     }
 }
