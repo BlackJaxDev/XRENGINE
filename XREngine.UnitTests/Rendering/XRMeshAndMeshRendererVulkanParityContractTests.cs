@@ -21,7 +21,7 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         runtimeFiles.Any(path => string.Equals(Path.GetFileName(path), "VkMesh.cs", StringComparison.OrdinalIgnoreCase)).ShouldBeFalse();
         runtimeFiles.Any(path => string.Equals(Path.GetFileName(path), "GLMesh.cs", StringComparison.OrdinalIgnoreCase)).ShouldBeFalse();
 
-        string vulkanMap = ReadWorkspaceFile("docs/architecture/rendering/RenderingCodeMap.md");
+        string vulkanMap = ReadWorkspaceFile("docs/architecture/rendering/code-map.md");
         vulkanMap.ShouldContain("has no standalone OpenGL or Vulkan API wrapper");
         vulkanMap.ShouldContain("own mesh draw readiness");
     }
@@ -29,7 +29,7 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     [Test]
     public void VkMeshRenderer_MeshReplacementUnsubscribesOldMeshAndBufferEvents()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
 
         source.ShouldContain("MeshRenderer.PropertyChanging += OnMeshRendererPropertyChanging;");
         source.ShouldContain("MeshRenderer.PropertyChanging -= OnMeshRendererPropertyChanging;");
@@ -47,7 +47,7 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     public void VkMeshRenderer_UsesSharedOpenGlMaterialResolutionSemantics()
     {
         string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MeshRenderMaterialResolver.cs");
-        string vkBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Buffers.cs");
+        string vkBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Buffers.cs");
 
         resolverSource.ShouldContain("GlobalOverride");
         resolverSource.ShouldContain("PipelineOverride");
@@ -69,15 +69,15 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     [Test]
     public void VkMeshRenderer_ShadowDrawsSuppressLinePointAndUploadLayeredUniforms()
     {
-        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Drawing.cs");
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
         string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MeshRenderMaterialResolver.cs");
-        string enqueueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
+        string enqueueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
 
         enqueueSource.ShouldContain("MeshRenderMaterialResolver.ResolveLayeredShadowInstanceCount(effectiveMaterial, instances)");
         drawingSource.ShouldContain("bool skipLinePointDraws = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();");
         drawingSource.ShouldContain("Suppressed line/point index draws for shadow geometry pass");
         drawingSource.ShouldContain("Suppressed non-indexed {0} fallback for shadow geometry pass");
-        drawingSource.ShouldContain("MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material);");
+        drawingSource.ShouldContain("MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, draw.ShadowUniformState);");
 
         resolverSource.ShouldContain("CascadeLayerCount");
         resolverSource.ShouldContain("CascadeViewProjectionMatrices");
@@ -89,9 +89,9 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     [Test]
     public void VkMeshRenderer_ImplementsExplicitPreparationGateSeparateFromGeneration()
     {
-        string mainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs");
-        string prepSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Preparation.cs");
-        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Drawing.cs");
+        string mainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
+        string prepSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Preparation.cs");
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
 
         mainSource.ShouldContain("IRenderPreparationState");
         mainSource.ShouldContain("public override bool IsGenerated => IsActive;");
@@ -113,8 +113,8 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     public void MeshGeometryLayoutSignature_FeedsBothBackendsAndVulkanPipelineKeys()
     {
         string signatureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MeshGeometryLayoutSignature.cs");
-        string vkPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Pipeline.cs");
-        string vkDrawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Drawing.cs");
+        string vkPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
+        string vkDrawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
         string glBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Buffers.cs");
         string glShaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
 
@@ -141,9 +141,9 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     [Test]
     public void VkMeshRenderer_BufferCollectionMatchesOpenGlRuntimeDeformationRules()
     {
-        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Buffers.cs");
-        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Pipeline.cs");
-        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Drawing.cs");
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Buffers.cs");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
 
         bufferSource.ShouldContain("RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader");
         bufferSource.ShouldContain("RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning");
@@ -154,12 +154,13 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         bufferSource.ShouldContain("assignBindingOverride: false");
         bufferSource.ShouldContain("RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask");
         bufferSource.ShouldContain("MarkIndexBuffersDirty");
-        bufferSource.ShouldContain("Mesh.GetIndexBuffer(EPrimitiveType.Triangles");
-        bufferSource.ShouldContain("Mesh.GetIndexBuffer(EPrimitiveType.Lines");
-        bufferSource.ShouldContain("Mesh.GetIndexBuffer(EPrimitiveType.Points");
+        bufferSource.ShouldContain("GetIndexBufferForBinding(EPrimitiveType.Triangles");
+        bufferSource.ShouldContain("GetIndexBufferForBinding(EPrimitiveType.Lines");
+        bufferSource.ShouldContain("GetIndexBufferForBinding(EPrimitiveType.Points");
+        bufferSource.ShouldContain("return mesh.GetIndexBuffer(type, out elementSize, EBufferTarget.ElementArrayBuffer, onReady);");
 
         string drawingSourceWithIndexTypes = drawingSource;
-        string cleanupSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Cleanup.cs");
+        string cleanupSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Cleanup.cs");
         drawingSourceWithIndexTypes.ShouldContain("size == IndexSize.Byte && !Renderer.SupportsIndexTypeUint8");
         cleanupSource.ShouldContain("IndexSize.Byte => IndexType.Uint8Ext");
         cleanupSource.ShouldContain("IndexSize.TwoBytes => IndexType.Uint16");

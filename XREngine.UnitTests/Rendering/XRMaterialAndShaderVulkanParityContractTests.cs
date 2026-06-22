@@ -13,7 +13,7 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
     {
         string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MaterialTextureBindingResolver.cs");
         string vkMaterialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMaterial.cs");
-        string vkMeshDescriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Descriptors.cs");
+        string vkMeshDescriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Descriptors.cs");
 
         resolverSource.ShouldContain("MaterialTextureBindingResolver");
         resolverSource.ShouldContain("ResolveSamplerName");

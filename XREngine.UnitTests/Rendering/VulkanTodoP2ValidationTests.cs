@@ -246,11 +246,11 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
     {
         string prewarmSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanPipelinePrewarmDatabase.cs");
         string pipelineCacheSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanPipelineCache.cs");
-        string meshPipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Pipeline.cs");
-        string meshDrawSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Drawing.cs");
+        string meshPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
+        string meshDrawSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
         string programSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
         string commandBufferSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
-        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs");
+        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vulkan.cs");
         string packetSource = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
         string senderSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfilerSender.cs");
         string editorSource = ReadWorkspaceFile("XRENGINE.Editor/EngineProfilerDataSource.cs");
@@ -398,6 +398,18 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
     {
         string repoRoot = ResolveRepoRoot();
         string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (File.Exists(path))
+            return File.ReadAllText(path);
+
+        const string legacyPrefix = "XRENGINE/Rendering/";
+        if (relativePath.StartsWith(legacyPrefix, StringComparison.Ordinal))
+        {
+            string migratedRelativePath = "XREngine.Runtime.Rendering/Rendering/" + relativePath[legacyPrefix.Length..];
+            path = Path.Combine(repoRoot, migratedRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(path))
+                return File.ReadAllText(path);
+        }
+
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
         return File.ReadAllText(path);
     }

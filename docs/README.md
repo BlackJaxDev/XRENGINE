@@ -65,7 +65,6 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Work Docs
 
 - [Work Docs Index](work/README.md)
-- [Design Doc Implementation Audit](work/design-doc-implementation-audit-2026-06-12.md)
 - [Runtime Modularization Plan](work/design/runtime-modularization-plan.md)
 - [Texture Runtime, Streaming, And Virtual Texturing Design](work/design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
 - [Transparency And OIT Implementation Plan](work/design/rendering/transparency-and-oit-implementation-plan.md)
