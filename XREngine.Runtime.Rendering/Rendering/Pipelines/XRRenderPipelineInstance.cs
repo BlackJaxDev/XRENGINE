@@ -73,10 +73,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public RenderResourceGeneration? ActiveGeneration { get; private set; }
     public RenderResourceGeneration? PendingGeneration { get; private set; }
     public IReadOnlyCollection<RenderResourceGeneration> RetiredGenerations => _retiredGenerations;
+    internal bool SkippedResizeCatchUpThisFrame
+        => _resizeCatchUpSkippedFrameId == RuntimeEngine.Rendering.State.RenderFrameId;
     private int _destroyCacheQueued;
     private int _lastDescriptorParityGeneration = -1;
     private long _pendingGenerationReadyAfterTimestamp;
     private long _pendingGenerationFirstResizeRequestTimestamp;
+    private ulong _resizeCatchUpSkippedFrameId = ulong.MaxValue;
 
     /// <summary>
     /// Monotonically increasing counter incremented each time physical GPU resources
@@ -474,7 +477,20 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands))
             {
                 WarnIfScreenSpaceUiHasNoRenderCommand(userInterface, viewport);
-                EnsureResourceGenerationForCurrentFrame(viewport);
+                if (!EnsureResourceGenerationForCurrentFrame(viewport))
+                {
+                    _resizeCatchUpSkippedFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                    Debug.RenderingEvery(
+                        $"RenderResources.FrameSkippedForResizeCatchUp.{ProfilerKey}",
+                        TimeSpan.FromMilliseconds(250),
+                        "[RenderResources] Skipping command chain until resize resources catch up. Pipeline={0} Active={1} Pending={2} Viewport={3}",
+                        ProfilerKey,
+                        ActiveGeneration?.Key.ToString() ?? "<none>",
+                        PendingGeneration?.Key.ToString() ?? "<none>",
+                        viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}/{viewport.InternalWidth}x{viewport.InternalHeight}");
+                    return;
+                }
+                _resizeCatchUpSkippedFrameId = ulong.MaxValue;
                 BeginRenderGraphValidationFrame();
 
                 if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
@@ -524,15 +540,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return true;
     }
 
-    private void EnsureResourceGenerationForCurrentFrame(XRViewport? viewport)
+    private bool EnsureResourceGenerationForCurrentFrame(XRViewport? viewport)
     {
         if (Pipeline is null || viewport is null)
-            return;
+            return true;
 
         if (viewport.Window?.IsInteractiveResizeInProgress == true && ActiveGeneration is not null)
         {
             DiscardPendingGeneration("InteractiveResize");
-            return;
+            return true;
         }
 
         ResourceGenerationKey key = BuildResourceGenerationKey(
@@ -546,8 +562,51 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         else if (ActiveGeneration is not null && ActiveGeneration.Key != key && PendingGeneration?.Key != key)
             RequestResourceGeneration(key, "FrameProfileChanged");
 
-        TryPreparePendingGeneration("FramePrepare");
+        bool resizeOnlyMismatch =
+            ActiveGeneration is not null &&
+            ActiveGeneration.Key != key &&
+            IsResizeOnlyGenerationDelta(ActiveGeneration.Key, key);
+
+        if (resizeOnlyMismatch && PendingGeneration?.Key == key)
+        {
+            TryPreparePendingGeneration(
+                "FramePrepareResizeCatchUp",
+                forceDue: true,
+                catchUpMaxDuration: TimeSpan.FromMilliseconds(8.0),
+                catchUpMaxSpecsPerSlice: 16);
+        }
+        else
+        {
+            TryPreparePendingGeneration("FramePrepare");
+        }
+
+        if (ActiveGeneration is null)
+        {
+            // Pipelines without a declared resource layout still use the legacy
+            // command path. Do not starve UI/shadow/specialized passes just
+            // because they have no active managed generation.
+            return PendingGeneration is null;
+        }
+
+        if (ActiveGeneration.Key == key)
+            return true;
+
+        return !IsResizeOnlyGenerationDelta(ActiveGeneration.Key, key);
     }
+
+    private static bool IsResizeOnlyGenerationDelta(ResourceGenerationKey oldKey, ResourceGenerationKey newKey)
+        => string.Equals(oldKey.PipelineName, newKey.PipelineName, StringComparison.Ordinal) &&
+           oldKey.OutputHDR == newKey.OutputHDR &&
+           oldKey.AntiAliasingMode == newKey.AntiAliasingMode &&
+           oldKey.MsaaSampleCount == newKey.MsaaSampleCount &&
+           oldKey.Stereo == newKey.Stereo &&
+           oldKey.FeatureMask == newKey.FeatureMask &&
+           oldKey.ReservedViewCount == newKey.ReservedViewCount &&
+           oldKey.ReservedEyeIndex == newKey.ReservedEyeIndex &&
+           (oldKey.DisplayWidth != newKey.DisplayWidth ||
+            oldKey.DisplayHeight != newKey.DisplayHeight ||
+            oldKey.InternalWidth != newKey.InternalWidth ||
+            oldKey.InternalHeight != newKey.InternalHeight);
 
     internal bool RequestResourceGeneration(
         int displayWidth,
@@ -751,12 +810,23 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     }
 
     private bool TryPreparePendingGeneration(string reason)
+        => TryPreparePendingGeneration(
+            reason,
+            forceDue: false,
+            catchUpMaxDuration: TimeSpan.Zero,
+            catchUpMaxSpecsPerSlice: 0);
+
+    private bool TryPreparePendingGeneration(
+        string reason,
+        bool forceDue,
+        TimeSpan catchUpMaxDuration,
+        int catchUpMaxSpecsPerSlice)
     {
         RenderResourceGeneration? pending = PendingGeneration;
         if (pending is null)
             return false;
 
-        if (!IsPendingGenerationDue())
+        if (!forceDue && !IsPendingGenerationDue())
         {
             Debug.RenderingEvery(
                 $"RenderResources.PendingDebounce.{ProfilerKey}",
@@ -769,6 +839,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return false;
         }
 
+        if (forceDue)
+            ClearPendingGenerationDebounce();
+
         if (pending.IsReady)
         {
             CommitPendingGeneration(reason);
@@ -778,8 +851,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         bool immediate = ActiveGeneration is null;
         TimeSpan maxDuration = immediate
             ? TimeSpan.MaxValue
-            : TimeSpan.FromMilliseconds(IncrementalGenerationSliceMilliseconds);
-        int maxSpecsPerSlice = immediate ? int.MaxValue : IncrementalGenerationMaxSpecsPerSlice;
+            : forceDue
+                ? catchUpMaxDuration
+                : TimeSpan.FromMilliseconds(IncrementalGenerationSliceMilliseconds);
+        int maxSpecsPerSlice = immediate
+            ? int.MaxValue
+            : forceDue
+                ? catchUpMaxSpecsPerSlice
+                : IncrementalGenerationMaxSpecsPerSlice;
 
         if (!_resourceManager.MaterializeIncremental(this, pending, maxDuration, maxSpecsPerSlice, out bool completed))
         {

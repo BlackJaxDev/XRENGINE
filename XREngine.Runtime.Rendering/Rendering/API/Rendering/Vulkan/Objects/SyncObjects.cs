@@ -74,10 +74,31 @@ public unsafe partial class VulkanRenderer
             Array.Clear(_swapchainImageTimelineValues, 0, _swapchainImageTimelineValues.Length);
     }
 
-    private void WaitForTimelineValue(Semaphore semaphore, ulong value)
+    private bool HasTimelineValueCompleted(Semaphore semaphore, ulong value)
     {
         if (semaphore.Handle == 0 || value == 0)
-            return;
+            return true;
+
+        ulong currentValue = 0;
+        Result result = Api!.GetSemaphoreCounterValue(device, semaphore, &currentValue);
+        if (result == Result.ErrorDeviceLost)
+        {
+            MarkDeviceLost($"GetSemaphoreCounterValue for timeline value {value} returned {result}");
+
+            throw new InvalidOperationException(
+                $"Vulkan device lost while checking timeline value {value}. Timeline state has been reset.");
+        }
+
+        if (result != Result.Success)
+            throw new InvalidOperationException($"Failed to query timeline semaphore value {value}. Result={result}.");
+
+        return currentValue >= value;
+    }
+
+    private bool TryWaitForTimelineValue(Semaphore semaphore, ulong value, ulong timeoutNanoseconds)
+    {
+        if (semaphore.Handle == 0 || value == 0)
+            return true;
 
         SemaphoreWaitInfo waitInfo = new()
         {
@@ -92,7 +113,13 @@ public unsafe partial class VulkanRenderer
         waitInfo.PSemaphores = semaphorePtr;
         waitInfo.PValues = valuePtr;
 
-        Result waitResult = Api!.WaitSemaphores(device, &waitInfo, ulong.MaxValue);
+        Result waitResult = Api!.WaitSemaphores(device, &waitInfo, timeoutNanoseconds);
+        if (waitResult == Result.Success)
+            return true;
+
+        if (waitResult == Result.Timeout)
+            return false;
+
         if (waitResult == Result.ErrorDeviceLost)
         {
             MarkDeviceLost($"WaitSemaphores for timeline value {value} returned {waitResult}");
@@ -103,6 +130,13 @@ public unsafe partial class VulkanRenderer
 
         if (waitResult != Result.Success)
             throw new InvalidOperationException($"Failed to wait for timeline semaphore value {value}. Result={waitResult}.");
+
+        return true;
+    }
+
+    private void WaitForTimelineValue(Semaphore semaphore, ulong value)
+    {
+        _ = TryWaitForTimelineValue(semaphore, value, ulong.MaxValue);
     }
 
     private void DestroySyncObjects()

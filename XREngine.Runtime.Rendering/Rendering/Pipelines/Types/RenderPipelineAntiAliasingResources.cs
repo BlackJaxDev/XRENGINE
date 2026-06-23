@@ -74,7 +74,6 @@ internal static class RenderPipelineAntiAliasingResources
         DefaultRenderPipeline.DiffuseTextureName,
         DefaultRenderPipeline.HDRSceneTextureName,
         DefaultRenderPipeline.BloomBlurTextureName,
-        DefaultRenderPipeline.AutoExposureTextureName,
         DefaultRenderPipeline.TransparentSceneCopyTextureName,
         DefaultRenderPipeline.TransparentAccumTextureName,
         DefaultRenderPipeline.TransparentRevealageTextureName,

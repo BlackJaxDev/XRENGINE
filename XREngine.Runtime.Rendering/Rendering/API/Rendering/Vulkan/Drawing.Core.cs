@@ -128,9 +128,11 @@ namespace XREngine.Rendering.Vulkan
         // =========== Frame Loop ===========
 
         private const int MAX_FRAMES_IN_FLIGHT = 2;
-        private static readonly TimeSpan SwapchainRecreateDebounce = TimeSpan.FromMilliseconds(100);
+        private static readonly TimeSpan SwapchainRecreateDebounce = TimeSpan.FromMilliseconds(16);
         private static readonly TimeSpan SwapchainResizeSettleDelay = TimeSpan.FromMilliseconds(250);
-        private static readonly TimeSpan InteractiveSwapchainRecreateMinInterval = TimeSpan.FromMilliseconds(100);
+        private static readonly TimeSpan InteractiveSwapchainRecreateMinInterval = TimeSpan.FromMilliseconds(16);
+        private const ulong BlockingAcquireTimeoutNanoseconds = ulong.MaxValue;
+        private const ulong InteractiveResizeAcquireTimeoutNanoseconds = 0UL;
 
         private int currentFrame = 0;
         private ulong _vkDebugFrameCounter = 0;
@@ -176,12 +178,27 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private void WaitCurrentFrameSlotAndDrainRetiredResources()
+            => TryWaitCurrentFrameSlotAndDrainRetiredResources(interactiveResize: false, "blocking skipped-frame cleanup");
+
+        private bool TryWaitCurrentFrameSlotAndDrainRetiredResources(bool interactiveResize, string reason)
         {
             if (_frameSlotTimelineValues is not null &&
                 currentFrame >= 0 &&
                 currentFrame < _frameSlotTimelineValues.Length)
             {
                 ulong slotWaitValue = _frameSlotTimelineValues[currentFrame];
+                if (interactiveResize && !HasTimelineValueCompleted(_graphicsTimelineSemaphore, slotWaitValue))
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.Frame.{GetHashCode()}.InteractiveResizeBusySlot",
+                        TimeSpan.FromMilliseconds(500),
+                        "[Vulkan] Skipping retired-resource cleanup during interactive resize because frame slot {0} is still busy. Reason={1} TimelineValue={2}",
+                        currentFrame,
+                        reason,
+                        slotWaitValue);
+                    return false;
+                }
+
                 WaitForTimelineValue(_graphicsTimelineSemaphore, slotWaitValue);
                 SampleFrameTimingQueries(currentFrame);
             }
@@ -191,6 +208,7 @@ namespace XREngine.Rendering.Vulkan
             DrainRetiredBuffers();
             DrainRetiredFramebuffers();
             DrainRetiredImages();
+            return true;
         }
 
         private bool TryGetViewportResourceBlocker(bool allowInteractiveDisplayMismatch, out string reason)
@@ -205,7 +223,14 @@ namespace XREngine.Rendering.Vulkan
                     continue;
 
                 XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
+                if (instance.SkippedResizeCatchUpThisFrame)
+                {
+                    reason = $"VP[{viewport.Index}] skipped command-chain execution this frame while resize resources catch up";
+                    return true;
+                }
+
                 RenderResourceGeneration? activeGeneration = instance.ActiveGeneration;
+                RenderResourceGeneration? pendingGeneration = instance.PendingGeneration;
                 uint displayWidth = (uint)Math.Max(1, viewport.Width);
                 uint displayHeight = (uint)Math.Max(1, viewport.Height);
                 uint internalWidth = (uint)Math.Max(1, viewport.InternalWidth);
@@ -213,7 +238,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (activeGeneration is null)
                 {
-                    reason = $"VP[{viewport.Index}] has no active resource generation; pending={instance.PendingGeneration?.Key.ToString() ?? "<none>"}";
+                    reason = $"VP[{viewport.Index}] has no active resource generation; pending={pendingGeneration?.Key.ToString() ?? "<none>"}";
                     return true;
                 }
 
@@ -246,9 +271,57 @@ namespace XREngine.Rendering.Vulkan
                     continue;
                 }
 
+                bool pendingMatchesCurrent =
+                    pendingGeneration is not null &&
+                    pendingGeneration.Key.DisplayWidth == displayWidth &&
+                    pendingGeneration.Key.DisplayHeight == displayHeight &&
+                    pendingGeneration.Key.InternalWidth == internalWidth &&
+                    pendingGeneration.Key.InternalHeight == internalHeight;
+
+                if (!pendingMatchesCurrent)
+                {
+                    _ = instance.RequestResourceGeneration(
+                        (int)displayWidth,
+                        (int)displayHeight,
+                        (int)internalWidth,
+                        (int)internalHeight,
+                        "VulkanResizeResourceMismatch");
+
+                    pendingGeneration = instance.PendingGeneration;
+                    pendingMatchesCurrent =
+                        pendingGeneration is not null &&
+                        pendingGeneration.Key.DisplayWidth == displayWidth &&
+                        pendingGeneration.Key.DisplayHeight == displayHeight &&
+                        pendingGeneration.Key.InternalWidth == internalWidth &&
+                        pendingGeneration.Key.InternalHeight == internalHeight;
+                }
+
+                if (pendingMatchesCurrent && internalMatches)
+                {
+                    RenderResourceGeneration pending = pendingGeneration!;
+                    Debug.VulkanEvery(
+                        $"Vulkan.Frame.{GetHashCode()}.PendingResizeResourceCatchUp.{viewport.Index}",
+                        TimeSpan.FromMilliseconds(500),
+                        "[Vulkan] Allowing active presentation-size mismatch while pending generation catches up. VP[{0}] active={1}x{2}/{3}x{4} pending={5} current={6}x{7}/{8}x{9}",
+                        viewport.Index,
+                        key.DisplayWidth,
+                        key.DisplayHeight,
+                        key.InternalWidth,
+                        key.InternalHeight,
+                        pending.Key,
+                        displayWidth,
+                        displayHeight,
+                        internalWidth,
+                        internalHeight);
+                    continue;
+                }
+
+                if (pendingMatchesCurrent)
+                    continue;
+
                 reason =
                     $"VP[{viewport.Index}] active={key.DisplayWidth}x{key.DisplayHeight}/{key.InternalWidth}x{key.InternalHeight} " +
-                    $"current={displayWidth}x{displayHeight}/{internalWidth}x{internalHeight} pending={instance.PendingGeneration?.Key.ToString() ?? "<none>"}";
+                    $"current={displayWidth}x{displayHeight}/{internalWidth}x{internalHeight} pending={pendingGeneration?.Key.ToString() ?? "<none>"}";
                 return true;
             }
 
@@ -475,7 +548,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (!liveSurfaceValid)
             {
-                WaitCurrentFrameSlotAndDrainRetiredResources();
+                _ = TryWaitCurrentFrameSlotAndDrainRetiredResources(interactiveResize, "Live surface size is zero");
                 DrainSkippedResizeFrameOps("Live surface size is zero");
                 MarkSkippedResizeFrameObserved(frameStartTimestamp);
                 return;
@@ -483,7 +556,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (_frameBufferInvalidated || !surfaceMatchesSwapchain)
             {
-                WaitCurrentFrameSlotAndDrainRetiredResources();
+                _ = TryWaitCurrentFrameSlotAndDrainRetiredResources(interactiveResize, "Swapchain resize/recreate pending");
                 DrainSkippedResizeFrameOps(
                     $"Swapchain resize/recreate pending. Pending={_pendingSurfaceWidth}x{_pendingSurfaceHeight} " +
                     $"Live={liveSurfaceWidth}x{liveSurfaceHeight} Swapchain={swapChainExtent.Width}x{swapChainExtent.Height}");
@@ -493,7 +566,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (TryGetViewportResourceBlocker(interactiveResize, out string resourceMismatchReason))
             {
-                WaitCurrentFrameSlotAndDrainRetiredResources();
+                _ = TryWaitCurrentFrameSlotAndDrainRetiredResources(interactiveResize, resourceMismatchReason);
                 DrainSkippedResizeFrameOps(resourceMismatchReason);
                 MarkSkippedResizeFrameObserved(frameStartTimestamp);
                 return;
@@ -514,6 +587,14 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.WaitFrameSlot"))
             {
                 ulong slotWaitValue = _frameSlotTimelineValues![currentFrame];
+                if (interactiveResize && !HasTimelineValueCompleted(_graphicsTimelineSemaphore, slotWaitValue))
+                {
+                    DrainSkippedResizeFrameOps(
+                        $"Interactive resize frame slot {currentFrame} is still busy. TimelineValue={slotWaitValue}");
+                    MarkSkippedResizeFrameObserved(frameStartTimestamp);
+                    return;
+                }
+
                 WaitForTimelineValue(_graphicsTimelineSemaphore, slotWaitValue);
             }
             waitFenceTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
@@ -547,11 +628,14 @@ namespace XREngine.Rendering.Vulkan
             stageStartTimestamp = Stopwatch.GetTimestamp();
             Semaphore acquireSemaphore = acquireBridgeSemaphores![currentFrame];
             Result result;
+            ulong acquireTimeoutNanoseconds = interactiveResize
+                ? InteractiveResizeAcquireTimeoutNanoseconds
+                : BlockingAcquireTimeoutNanoseconds;
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.AcquireNextImage"))
             {
                 if (_streamlineFrameGenerationSwapchainActive)
                 {
-                    if (!NvidiaDlssManager.Native.TryAcquireProxyNextImage(this, swapChain, ulong.MaxValue, acquireSemaphore, default, ref imageIndex, out result, out string failureReason))
+                    if (!NvidiaDlssManager.Native.TryAcquireProxyNextImage(this, swapChain, acquireTimeoutNanoseconds, acquireSemaphore, default, ref imageIndex, out result, out string failureReason))
                     {
                         if (result == Result.ErrorDeviceLost)
                             throw CreateDeviceLostException("Streamline AcquireNextImage", result);
@@ -563,7 +647,7 @@ namespace XREngine.Rendering.Vulkan
                 }
                 else
                 {
-                    result = khrSwapChain!.AcquireNextImage(device, swapChain, ulong.MaxValue, acquireSemaphore, default, ref imageIndex);
+                    result = khrSwapChain!.AcquireNextImage(device, swapChain, acquireTimeoutNanoseconds, acquireSemaphore, default, ref imageIndex);
                 }
             }
             acquireImageTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
@@ -596,8 +680,20 @@ namespace XREngine.Rendering.Vulkan
                 ScheduleSwapchainRecreate("AcquireNextImage returned SuboptimalKhr");
                 return;
             }
-            else if (result == Result.NotReady)
+            else if (result == Result.NotReady || result == Result.Timeout)
             {
+                if (interactiveResize)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.Frame.{GetHashCode()}.InteractiveAcquireNotReady",
+                        TimeSpan.FromMilliseconds(500),
+                        "[Vulkan] AcquireNextImage returned {0} during interactive resize; skipping this repaint tick.",
+                        result);
+                    DrainSkippedResizeFrameOps($"AcquireNextImage returned {result} during interactive resize");
+                    MarkSkippedResizeFrameObserved(frameStartTimestamp);
+                    return;
+                }
+
                 _consecutiveNotReadyCount++;
                 if (_consecutiveNotReadyCount >= MaxConsecutiveNotReadyBeforeRecreate)
                 {

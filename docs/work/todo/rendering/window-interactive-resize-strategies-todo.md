@@ -91,6 +91,71 @@ Target Branch: none; user requested no branch for this work.
 - Follow-up validation after Vulkan blit-region live-extent clamping:
   `dotnet build .\XREngine.Editor\XREngine.Editor.csproj -p:OutDir=Build\_AgentValidation\20260622-133105-vulkan-blit-resize-fix\temp-build\`
   completed with 0 warnings and 0 errors.
+- Follow-up responsiveness fix for Vulkan Win32 modal resizing: live Vulkan
+  resize repaint ticks now use non-blocking swapchain acquire, avoid waiting on
+  busy frame-slot timeline values, and throttle interactive swapchain
+  recreation through the existing minimum interval. The window chrome should
+  stay responsive while the framebuffer is allowed to trail and catch up during
+  continuous drag.
+- The Win32 modal timer still ticks every 16 ms by default, but Vulkan repaint
+  requests are rate-limited to 60 Hz so busy driver ticks can be skipped instead
+  of stalling native resize input.
+- Follow-up validation after non-blocking Vulkan interactive resize:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~VulkanP1ValidationTests"`
+  passed 13/14 with 1 skipped focused CI-lane presence check, and
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj` completed with 0
+  warnings and 0 errors.
+- Follow-up correction after manual drag feedback: removed the live-extent
+  settle gate from interactive Vulkan swapchain recreation so resizing remains
+  visible during continuous border drag instead of waiting until mouse release.
+- Follow-up validation after removing the settle gate:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~VulkanP1ValidationTests"`
+  passed 13/14 with 1 skipped focused CI-lane presence check, and
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj` completed with 0
+  warnings and 0 errors.
+- Follow-up smoothness retune after manual drag feedback: Vulkan interactive
+  swapchain recreation minimum interval was lowered from 100 ms to 16 ms and
+  the Win32 Vulkan live repaint cap was raised from 15 Hz to 60 Hz. The
+  non-blocking acquire/timeline skip behavior remains, so busy driver ticks
+  should drop instead of stalling native resize input.
+- Follow-up validation after 60 Hz smoothness retune:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~VulkanP1ValidationTests"`
+  passed 13/14 with 1 skipped focused CI-lane presence check, and
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj` completed with 0
+  warnings and 0 errors.
+- Follow-up validation after confirming 60 Hz constants:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~VulkanP1ValidationTests"`
+  passed 13/14 with 1 skipped focused CI-lane presence check, and
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj` completed with 0
+  warnings and 0 errors.
+- Follow-up native chrome responsiveness fix: Vulkan `WM_TIMER` repaint ticks
+  during the Win32 move/size modal loop now defer the render-thread catch-up
+  instead of running `Window.DoRender()` synchronously from the timer WndProc.
+  The modal path still coalesces and records the latest client size, while the
+  framebuffer is allowed to trail and catch up after the window thread returns
+  to the render/job pump.
+- Follow-up validation after deferring Vulkan modal timer repaints:
+  `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~VulkanP1ValidationTests"`
+  passed 13/14 with 1 skipped focused CI-lane presence check, and
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj` completed with 0
+  warnings and 0 errors.
+- Follow-up user run after deferring Vulkan modal timer repaints: native window
+  drag became fast again, but live render updates again waited until mouse-up.
+  This confirms that queued render-thread work is not pumped while the current
+  render/window thread is inside the Win32 move/size modal loop. The timer path
+  can choose either synchronous live repaint work that slows native sizing, or
+  deferred work that preserves native sizing but cannot display until the modal
+  loop exits. A real "smooth chrome plus live trailing framebuffer" solution
+  needs either engine-owned borderless resize, or a larger thread split where
+  native window event pumping and expensive render/present work do not occupy
+  the same thread during `WM_ENTERSIZEMOVE`.
+- Follow-up user run for `EngineBorderlessResize`: it currently behaves the
+  same as the default path for the realtime resize goal and does not provide
+  continuous live resizing. Treat it as incomplete for this problem until it has
+  a real engine-owned resize pump that bypasses the native modal loop. The
+  detailed resize architecture is now tracked in
+  `docs/work/design/rendering/dedicated-render-thread-window-ownership-plan.md`
+  under the smooth resize mechanics section.
 
 ## Goal
 
@@ -359,12 +424,17 @@ Risks:
 - Custom chrome is a larger UX surface than just resize rendering.
 - Platform snapping, accessibility, shadows, and system menu behavior need
   deliberate follow-up.
+- Current user testing showed this strategy behaves like the default path for
+  realtime resize. The existing implementation should be treated as a UI/chrome
+  scaffold, not as a completed smooth-resize path.
 
 Acceptance criteria:
 
 - [ ] No OS modal resize loop is entered for engine-owned resize grips.
 - [ ] OpenGL and Vulkan use the same regular render-frame resize path.
 - [ ] Native title-bar mode remains available and unaffected.
+- [ ] Dragging an engine-owned resize grip produces continuous native size
+  updates and continuous render updates without waiting for mouse-up.
 
 ## Shared Implementation Tasks
 
@@ -606,6 +676,45 @@ Acceptance criteria:
   `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
   -m:1 -p:UseSharedCompilation=false` completed with 0 warnings and 0 errors on
   2026-06-22.
+- Follow-up post-mouse-up black flicker fix: after `WM_EXITSIZEMOVE`,
+  `XRWindow` performs the real framebuffer/internal-resolution resize and the
+  render pipeline creates a pending resource generation for the final size.
+  Vulkan was treating the still-active old generation as a hard blocker before
+  command recording, so the pending generation could debounce/build only when
+  frames happened to get past that blocker. This produced black flicker and
+  could stall recovery. Vulkan now allows the active generation to keep
+  presenting while a pending generation exactly matching the current
+  display/internal size catches up, then naturally switches to the new
+  generation when it commits.
+- Follow-up exposure/dark-frame correction: the Win32 modal timer now requests
+  repaint ticks even when the drag size has not changed, so hovering still
+  animates the scene during a border drag. Vulkan catch-up presentation is now
+  limited to active generations whose internal render size still matches the
+  current viewport; internal-size mismatches force the matching pending
+  generation through an accelerated catch-up path instead of rendering old FBOs
+  with new viewport/camera assumptions. `AutoExposureTex` is no longer evicted
+  by viewport resize recovery because it is a 1x1 history texture, not a
+  size-dependent render target.
+- Follow-up crash correction: the accelerated resize generation catch-up must
+  run inside `XRRenderPipelineInstance.Render` after the rendering pipeline and
+  render-state scopes are pushed. Calling it from Vulkan's outer frame guard
+  produced `InvalidOperationException: Rendering pipeline state is not
+  available` on mouse-up. The Vulkan guard now only requests/allows catch-up;
+  the pipeline render path prepares or skips command-chain execution safely.
+- Follow-up UI/shadow regression correction: the resize catch-up skip must only
+  hold pipelines that actually have a pending managed resource generation.
+  `UserInterfaceRenderPipeline` and `ShadowRenderPipeline` can legitimately
+  have `Active=<none>` and `Pending=<none>` because they still use legacy
+  resource paths; treating that as an unready resize generation hid ImGui and
+  stopped shadow/light passes. The no-generation legacy path is allowed through.
+- Follow-up red/black mouse-up flash diagnosis and fix: after the scene
+  pipeline skipped command execution for resize resource catch-up, Vulkan still
+  acquired and presented the window frame. Logs showed zero pre-overlay
+  swapchain writers on those frames, so the user saw a backend/debug clear
+  color instead of the previous valid scene. The scene pipeline now stamps a
+  per-render-frame resize-catch-up skip marker, and Vulkan drops that same frame
+  before acquire/record/present so the last valid swapchain image remains
+  visible until the resized FBO generation commits.
 
 - [ ] Windows + OpenGL + Default.
 - [ ] Windows + OpenGL + GLFW refresh callback.
