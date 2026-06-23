@@ -101,7 +101,7 @@ namespace XREngine.Runtime.InputIntegration
             {
                 System.Diagnostics.Debug.WriteLine($"[LocalPlayerController] UpdateViewportCamera: VP={_viewport.GetHashCode()} Pawn={_controlledPawn?.Name ?? "<null>"}");
                 _viewport.RefreshControlledPawnCamera(_controlledPawn);
-                Input.UpdateDevices(_viewport.InputContext as IInputContext, RuntimeVrInputServices.Actions);
+                Input.UpdateDevices(_viewport.GetThreadAffinedDeviceSourceForBinding() as IInputContext, RuntimeVrInputServices.Actions);
             }
             else
             {

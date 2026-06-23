@@ -369,6 +369,17 @@ namespace XREngine.Rendering.Vulkan
                 string.Equals(meshRenderer.Mesh?.Name, "UIBatchTextQuadMesh", StringComparison.Ordinal);
         }
 
+        private static bool HasTextureUploadFrameOps(FrameOp[] ops)
+        {
+            for (int i = 0; i < ops.Length; i++)
+            {
+                if (ops[i] is TextureUploadFrameOp)
+                    return true;
+            }
+
+            return false;
+        }
+
         private static FrameOp[] FilterDiagnosticSkippedFrameOps(FrameOp[] ops)
         {
             if (ops.Length == 0 || !XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiBatchText)
@@ -1950,6 +1961,7 @@ namespace XREngine.Rendering.Vulkan
             bool dirty = imageForcedDirty || variant.Dirty;
             bool forcedDirty = dirty;
             bool usingCommandChains = commandChainSchedule is not null;
+            bool hasTextureUploadFrameOps = hasStaticFrameOps && HasTextureUploadFrameOps(ops);
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DirtyEvaluation"))
             {
@@ -1963,6 +1975,13 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 if (!dirty && !usingCommandChains && hasFrameOps && variant.FrameOpsSignature != frameOpsSignature)
+                {
+                    LogFrameOpSignatureDiff(imageIndex, variant, frameOpsSignature, ops);
+                    dirty = true;
+                    frameOpSignatureDirty = true;
+                }
+
+                if (!dirty && usingCommandChains && hasTextureUploadFrameOps && variant.FrameOpsSignature != frameOpsSignature)
                 {
                     LogFrameOpSignatureDiff(imageIndex, variant, frameOpsSignature, ops);
                     dirty = true;

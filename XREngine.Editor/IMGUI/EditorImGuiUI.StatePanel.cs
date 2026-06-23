@@ -342,14 +342,27 @@ public static partial class EditorImGuiUI
                 {
                     foreach (var window in windows)
                     {
+                        var mailbox = Engine.WindowThreadMailboxDiagnostics;
                         string windowTitle = window.Window?.Title ?? "<unnamed window>";
                         if (ImGui.TreeNode($"[W] {windowTitle}##Window{window.GetHashCode()}"))
                         {
                             var size = window.Window?.Size ?? new Silk.NET.Maths.Vector2D<int>(0, 0);
                             ImGui.Text($"Size: {size.X}x{size.Y}");
                             ImGui.Text($"Interactive Resize: {window.InteractiveResizeStrategy} ({window.ActualWindowingBackendName})");
+                            ImGui.Text($"Ownership: windowThread={window.NativeWindowThreadId} renderOwner={window.RenderOwnerThreadId} backend={window.WindowBackendKind}");
+                            ImGui.Text($"Backend Caps: {window.WindowBackendOwnership.Capabilities}");
+                            ImGui.Text($"Window Mailbox: depth={mailbox.CurrentDepth}/{mailbox.MaxDepth} enq={mailbox.EnqueuedCount} done={mailbox.CompletedCount} failed={mailbox.FailedCount} inline={mailbox.InlineExecutionCount} wrong={mailbox.WrongThreadBypassCount} waits={mailbox.BlockingWaitCount} flush={mailbox.FlushCount}/{mailbox.FlushTimeoutCount} drains={mailbox.ShutdownDrainCount} stopping={mailbox.IsStopping} avgWait={mailbox.AverageQueueWaitMilliseconds:F3}ms owner={mailbox.OwnerThreadId}");
+                            var eventSnapshot = window.LatestWindowEventSnapshot;
+                            var inputSnapshot = window.LatestWindowInputSnapshot;
+                            ImGui.Text($"Window Event Snapshot: seq={eventSnapshot.Sequence} focus={eventSnapshot.IsFocused} minimized={eventSnapshot.IsMinimized} closing={eventSnapshot.IsClosingOrDisposed} publisher={eventSnapshot.PublicationThreadId}");
+                            ImGui.Text($"Window Input Snapshot: seq={inputSnapshot.Sequence} focus={inputSnapshot.IsFocused} captured={inputSnapshot.IsMouseCaptured} keyboards={inputSnapshot.KeyboardCount} mice={inputSnapshot.MouseCount} gamepads={inputSnapshot.GamepadCount} publisher={inputSnapshot.PublicationThreadId}");
+                            ImGui.Text($"Input Deltas: pointer=({inputSnapshot.PointerDeltaX:F1},{inputSnapshot.PointerDeltaY:F1}) pos=({inputSnapshot.PointerX:F1},{inputSnapshot.PointerY:F1}) scroll=({inputSnapshot.ScrollDeltaX:F1},{inputSnapshot.ScrollDeltaY:F1}) keys={inputSnapshot.KeyDownTransitionCount}/{inputSnapshot.KeyUpTransitionCount} mouse={inputSnapshot.MouseDownTransitionCount}/{inputSnapshot.MouseUpTransitionCount} text={inputSnapshot.TextInputCount}");
                             var resizeDiag = window.InteractiveResizeDiagnostics;
                             ImGui.Text($"Resize Diag: callbacks={resizeDiag.CallbackCount} renders={resizeDiag.InteractiveRenderCount} suppressed={resizeDiag.SuppressedRenderCount} queued={resizeDiag.ResizeQueueCount}");
+                            ImGui.Text($"Resize Extents: native={resizeDiag.NativeClientWidth}x{resizeDiag.NativeClientHeight} presentation={resizeDiag.PresentationWidth}x{resizeDiag.PresentationHeight}");
+                            ImGui.Text($"Resize Output: pipeline={resizeDiag.PipelineOutputWidth}x{resizeDiag.PipelineOutputHeight} internal={resizeDiag.FullInternalWidth}x{resizeDiag.FullInternalHeight} pending={resizeDiag.PendingFullInternalWidth}x{resizeDiag.PendingFullInternalHeight} gen={resizeDiag.FullInternalGeneration}/{resizeDiag.PendingFullInternalGeneration}");
+                            ImGui.Text($"Output Scale: {resizeDiag.OutputScaleMode} src={resizeDiag.OutputSourceWidth}x{resizeDiag.OutputSourceHeight} dst={resizeDiag.OutputDestinationWidth}x{resizeDiag.OutputDestinationHeight} scale=({resizeDiag.OutputScaleX:F3},{resizeDiag.OutputScaleY:F3})");
+                            ImGui.Text($"Resize Snapshots: published={resizeDiag.LatestNativeSnapshotSequence} consumed={resizeDiag.LatestConsumedNativeSnapshotSequence} dropped={resizeDiag.DroppedNativeSnapshotCount} publisherThread={resizeDiag.LatestSnapshotPublicationThreadId}");
                             if (!string.IsNullOrWhiteSpace(resizeDiag.LastResizeReason))
                                 ImGui.Text($"Last Resize: {resizeDiag.LastResizeReason}");
                             

@@ -1140,6 +1140,18 @@ public unsafe partial class VulkanRenderer
                 hash.Add(compute.GroupsZ);
                 hash.Add(ComputeDispatchSnapshotSignature(compute.Snapshot));
                 break;
+            case TextureUploadFrameOp upload:
+                hash.Add(upload.Upload.PublicationToken);
+                hash.Add(upload.Upload.Request.StreamingGeneration);
+                hash.Add(upload.Upload.Image.Handle);
+                hash.Add(upload.Upload.ImageView.Handle);
+                hash.Add(upload.Upload.Sampler.Handle);
+                hash.Add(upload.Upload.Extent.Width);
+                hash.Add(upload.Upload.Extent.Height);
+                hash.Add(upload.Upload.MipLevels);
+                hash.Add((ulong)Math.Max(upload.Upload.CommittedBytes, 0L));
+                hash.Add(upload.Upload.StagingResources.Length);
+                break;
             default:
                 hash.Add(opIndex);
                 break;

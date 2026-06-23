@@ -3346,6 +3346,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     }
 
     private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
+        => ApplyLightCombineProgramBindings(program);
+
+    private void ApplyLightCombineProgramBindings(XRRenderProgram program)
     {
         int deferredDebugMode = ResolveDeferredDebugMode();
         program.Uniform("DeferredDebugMode", deferredDebugMode);

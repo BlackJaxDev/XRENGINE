@@ -431,6 +431,11 @@ public interface IRuntimeRenderingHostServices
     RuntimeGraphicsApiKind CurrentRenderBackend { get; }
 
     /// <summary>
+    /// Gets the renderer currently executing commands, or the primary window renderer when no command scope owns the static current renderer.
+    /// </summary>
+    IRuntimeRendererHost? CurrentRenderer { get; }
+
+    /// <summary>
     /// Gets the render-command state currently active on the host, when any command pass is executing.
     /// </summary>
     IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState { get; }
@@ -799,6 +804,20 @@ public interface IRuntimeRenderingHostServices
     /// Queues named work for execution on the host application/update thread.
     /// </summary>
     void EnqueueAppThreadTask(Action task, string reason);
+
+    /// <summary>
+    /// Queues native window work on the owning window/event thread when a split
+    /// pump host is active. Hosts without a split pump execute inline.
+    /// </summary>
+    void EnqueueWindowThreadTask(IRuntimeRenderWindowHost window, Action task, string reason)
+        => task();
+
+    /// <summary>
+    /// Invokes native window work on the owning window/event thread and returns a
+    /// result. Hosts without a split pump execute inline.
+    /// </summary>
+    T InvokeWindowThreadTask<T>(IRuntimeRenderWindowHost window, Func<T> task, string reason)
+        => task();
 
     /// <summary>
     /// Queues a render-thread coroutine that returns <see langword="true"/> when it should continue.

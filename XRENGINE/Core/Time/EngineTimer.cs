@@ -524,6 +524,7 @@ namespace XREngine.Timers
                     Engine.SetDispatchingRenderFrame(true);
                     try
                     {
+                        Engine.ProcessMainThreadTasks();
                         RenderFrame?.Invoke(); // This dispatch has to be synchronous to stay on the render thread
                     }
                     finally

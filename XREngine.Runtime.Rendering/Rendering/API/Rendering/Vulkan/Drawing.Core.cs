@@ -163,13 +163,25 @@ namespace XREngine.Rendering.Vulkan
         private void DrainSkippedResizeFrameOps(string reason)
         {
             FrameOp[] droppedOps = DrainFrameOps(out _);
+            var liveFramebufferSize = XRWindow.EffectiveFramebufferSize;
+            var resizeExtents = XRWindow.ResizeExtents;
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.ResizeSkip",
                 TimeSpan.FromMilliseconds(500),
-                "[Vulkan] Skipping frame while resize resources settle. Reason={0} DroppedFrameOps={1}",
+                "[Vulkan] Skipping present tick while resize/presentation resources settle. Reason={0} DroppedFrameOps={1} Live={2}x{3} Swapchain={4}x{5} Presentation={6}x{7} Output={8}x{9} Internal={10}x{11}",
                 reason,
-                droppedOps.Length);
+                droppedOps.Length,
+                liveFramebufferSize.X,
+                liveFramebufferSize.Y,
+                swapChainExtent.Width,
+                swapChainExtent.Height,
+                resizeExtents.PresentationExtent.X,
+                resizeExtents.PresentationExtent.Y,
+                resizeExtents.PipelineOutputExtent.X,
+                resizeExtents.PipelineOutputExtent.Y,
+                resizeExtents.FullInternalExtent.X,
+                resizeExtents.FullInternalExtent.Y);
         }
 
         private void MarkSkippedResizeFrameObserved(long frameStartTimestamp)
@@ -348,20 +360,55 @@ namespace XREngine.Rendering.Vulkan
 
         private void RecreateSwapchainImmediately(string reason)
         {
-            _frameBufferInvalidated = false;
-            _swapchainRecreateRequestedAt = 0;
-            _swapchainResizeLastChangedAt = 0;
-            _pendingSurfaceWidth = 0;
-            _pendingSurfaceHeight = 0;
-
+            long recreateStart = Stopwatch.GetTimestamp();
+            uint previousWidth = swapChainExtent.Width;
+            uint previousHeight = swapChainExtent.Height;
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.RecreateImmediate",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Recreating swapchain immediately. Reason={0}",
                 reason);
 
-            RecreateSwapChain();
+            if (!RecreateSwapChain())
+            {
+                TimeSpan failedElapsed = Stopwatch.GetElapsedTime(recreateStart);
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.RecreateResult",
+                    TimeSpan.FromMilliseconds(500),
+                    "[Vulkan] Swapchain recreate deferred/failed. Reason={0} ElapsedMs={1:F3} Previous={2}x{3} Current={4}x{5}",
+                    reason,
+                    failedElapsed.TotalMilliseconds,
+                    previousWidth,
+                    previousHeight,
+                    swapChainExtent.Width,
+                    swapChainExtent.Height);
+                ScheduleSwapchainRecreate($"{reason}; surface not presentable yet");
+                return;
+            }
+
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(recreateStart);
+            _frameBufferInvalidated = false;
+            _swapchainRecreateRequestedAt = 0;
+            _swapchainResizeLastChangedAt = 0;
+            _pendingSurfaceWidth = 0;
+            _pendingSurfaceHeight = 0;
             ResetImGuiFrameMarker();
+
+            var liveFramebufferSize = XRWindow.EffectiveFramebufferSize;
+            Debug.VulkanEvery(
+                $"Vulkan.Frame.{GetHashCode()}.RecreateResult",
+                TimeSpan.FromMilliseconds(500),
+                "[Vulkan] Swapchain recreate completed. Reason={0} ElapsedMs={1:F3} Previous={2}x{3} Current={4}x{5} Live={6}x{7} Divergence={8}x{9}",
+                reason,
+                elapsed.TotalMilliseconds,
+                previousWidth,
+                previousHeight,
+                swapChainExtent.Width,
+                swapChainExtent.Height,
+                liveFramebufferSize.X,
+                liveFramebufferSize.Y,
+                (int)liveFramebufferSize.X - (int)swapChainExtent.Width,
+                (int)liveFramebufferSize.Y - (int)swapChainExtent.Height);
         }
 
         private bool ShouldRunSwapchainRecreate(bool interactiveResize)

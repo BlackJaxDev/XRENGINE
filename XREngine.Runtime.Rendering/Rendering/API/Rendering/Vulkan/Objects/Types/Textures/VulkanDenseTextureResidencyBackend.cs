@@ -345,7 +345,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
             return;
         }
 
-        if (AbstractRenderer.Current is not VulkanRenderer renderer)
+        if ((RuntimeRenderingHostServices.Current.CurrentRenderer ?? AbstractRenderer.Current) is not VulkanRenderer renderer)
         {
             onError?.Invoke(new InvalidOperationException("Vulkan imported texture upload service could not resolve the active Vulkan renderer."));
             return;

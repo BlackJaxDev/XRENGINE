@@ -198,6 +198,14 @@ namespace XREngine
         /// </summary>
         private static IDisposable ExternalProfilingHook(string sampleName) => Profiler.Start(sampleName);
 
+        private static readonly EngineRenderThreadHost s_renderThreadHost = new();
+        private static readonly EngineWindowPumpHost s_windowPumpHost = new();
+
+        internal static EngineRenderThreadHost RenderThreadHost => s_renderThreadHost;
+        internal static EngineWindowPumpHost WindowPumpHost => s_windowPumpHost;
+        public static global::XREngine.Rendering.WindowMailboxDiagnostics WindowThreadMailboxDiagnostics
+            => s_windowPumpHost.Diagnostics;
+
         private static bool ExternalProfilingEnabledHook()
             => Profiler.EnableFrameLogging;
 
@@ -221,7 +229,9 @@ namespace XREngine
             // IsRenderThread to return false, which queues tasks, prematurely
             // creates a JobManager with worker threads, and can deadlock on the
             // type-initializer lock. Initialize() will re-set this to the same value.
-            RenderThreadId = Environment.CurrentManagedThreadId;
+            int bootstrapThreadId = Environment.CurrentManagedThreadId;
+            RenderThreadId = bootstrapThreadId;
+            WindowThreadId = bootstrapThreadId;
 
             // Suppress all settings cascades during type initialization.
             // No worlds, viewports, windows, or audio devices exist yet, so Apply

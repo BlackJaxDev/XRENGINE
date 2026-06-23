@@ -50,6 +50,22 @@ public sealed class SkyboxAmbientContractTests
         fboSource.ShouldContain("mat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");
     }
 
+    [Test]
+    public void DeferredPipeline_LightCombineDrawsPushAmbientAndProbeBindings()
+    {
+        string fboSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs");
+        string commandSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+
+        fboSource.ShouldContain("lightCombineMat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");
+        fboSource.ShouldContain("mat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");
+        commandSource.ShouldContain("x.ApplyUniforms = ApplyLightCombineProgramBindings");
+        commandSource.ShouldContain("x.BindingLocation = DeferredLightProbePositionBufferBinding;");
+        commandSource.ShouldContain("x.BindingLocation = DeferredLightProbeTetraBufferBinding;");
+        commandSource.ShouldContain("x.BindingLocation = DeferredLightProbeParamBufferBinding;");
+        commandSource.ShouldContain("x.BindingLocation = DeferredLightProbeGridCellBufferBinding;");
+        commandSource.ShouldContain("x.BindingLocation = DeferredLightProbeGridIndexBufferBinding;");
+    }
+
     private static string ReadCSharpFile(string relativePath)
     {
         string repoRoot = ResolveRepoRoot();

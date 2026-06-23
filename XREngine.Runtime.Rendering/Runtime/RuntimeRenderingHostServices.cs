@@ -145,6 +145,7 @@ public static class RuntimeRenderingHostServices
         public ETwoPlayerPreference TwoPlayerViewportPreference => RuntimeRenderingHostServiceDefaults.TwoPlayerViewportPreference;
         public EThreePlayerPreference ThreePlayerViewportPreference => RuntimeRenderingHostServiceDefaults.ThreePlayerViewportPreference;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeRenderingHostServiceDefaults.CurrentRenderBackend;
+        public IRuntimeRendererHost? CurrentRenderer => null;
         public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => null;
         public IRuntimeRenderPipelineFrameContext? CurrentRenderPipelineContext => null;
         public bool IsPlayModeTransitioning => RuntimeRenderingHostServiceDefaults.IsPlayModeTransitioning;
@@ -334,6 +335,12 @@ public static class RuntimeRenderingHostServices
             => task();
 
         public void EnqueueAppThreadTask(Action task, string reason)
+            => task();
+
+        public void EnqueueWindowThreadTask(IRuntimeRenderWindowHost window, Action task, string reason)
+            => task();
+
+        public T InvokeWindowThreadTask<T>(IRuntimeRenderWindowHost window, Func<T> task, string reason)
             => task();
 
         public void EnqueueRenderThreadCoroutine(Func<bool> task)
