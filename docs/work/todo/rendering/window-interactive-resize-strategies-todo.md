@@ -1,9 +1,96 @@
 # Window Interactive Resize Strategies TODO
 
-Last Updated: 2026-06-12
+Last Updated: 2026-06-22
 Owner: Rendering
-Status: Planning. Previous GLFW private/reflection plus Win32 resize workaround has been reverted.
+Status: Implemented. Targeted editor build passes; manual resize matrix still needs runtime exercise.
 Target Branch: none; user requested no branch for this work.
+
+## Implementation Notes
+
+- Added `EInteractiveWindowResizeStrategy`, environment parsing via
+  `XRE_INTERACTIVE_RESIZE_STRATEGY`, per-window startup settings, editor
+  preference/override plumbing, and the runtime rendering host bridge.
+- `XRWindow` now owns an `IInteractiveResizeStrategy` instance, logs the
+  resolved strategy and actual windowing backend, queues framebuffer resize
+  work through the existing pending-resize path, and uses a guarded
+  `RenderInteractiveResizeFrame(...)` helper for callback-driven renders.
+- Implemented `Default`, `GlfwRefreshCallback`, `GlfwResizeCallbackRender`,
+  `SdlBackend`, `Win32ModalLoopTimer`, and `EngineBorderlessResize` strategy
+  classes. SDL is selected before `Window.Create`; runtime switches to or from
+  SDL log that the actual backend changes only after window recreation.
+- Added counters for callback, interactive render, suppressed render, queued
+  resize, and last resize reason; the editor Engine State window lists the
+  selected strategy, backend, and resize diagnostics for each window.
+- The Win32 modal-loop timer defaults to 16 ms and can be tuned with
+  `XRE_WIN32_INTERACTIVE_RESIZE_TIMER_MS` (1-250 ms).
+- The Win32 modal-loop strategy now handles live drag as a presentation-only
+  resize: `WM_SIZE`/`WM_SIZING` update the effective framebuffer size,
+  viewport output region, camera aspect, and screen-space UI dimensions, while
+  full internal-resolution/resource invalidation is deferred until
+  `WM_EXITSIZEMOVE`.
+- Live drag renders are rate-limited to 60 Hz and use actual client dimensions
+  from `WM_SIZE` or `GetClientRect`, avoiding the earlier proposed-outer-rect
+  conversion that could over-correct ImGui dimensions during border drags.
+- Vulkan live drag now bypasses swapchain resize debounce and recreates the
+  swapchain immediately when the effective client size diverges from the
+  current swapchain extent. While dragging, Vulkan also allows the previous
+  scene resource generation to present scaled to the live viewport size; the
+  full internal-resolution/resource regeneration still happens on mouse-up.
+- Vulkan crash follow-up from the 2026-06-22 13:04 run
+  (`Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-22_13-04-18_pid36440`):
+  validation reported `vkCmdBeginRendering` with a 1920x1080 render area against
+  a 1914x1077 color image view during live drag, then the renderer entered
+  device-loss recovery and permanently disabled Vulkan after logical-device
+  recreation failed.
+- Vulkan framebuffer attachment sources now report their resolved physical
+  image/view extent. `VkFrameBuffer` builds dynamic-rendering attachment draw
+  extents from that Vulkan-resolved size instead of only the engine-side logical
+  texture size, preventing a stale internal-resolution render area from
+  exceeding the live swapchain/image-view extent during interactive resize.
+- Vulkan crash follow-up from the 2026-06-22 13:19 run
+  (`Build\Logs\Debug_net10.0-windows7.0\windows_x64\xrengine_2026-06-22_13-19-19_pid30788`):
+  the previous `vkCmdBeginRendering` extent error was gone, but `vkCmdBlitImage`
+  still used 1920-wide blit regions against live swapchain-sized images of
+  1915 and then 1654 pixels wide. `BlitImageInfo` now carries the resolved live
+  source/destination extent, and command-buffer blit emission clamps source and
+  destination offsets to those extents before calling Vulkan.
+- `XRWindow` tracks an effective framebuffer size from the latest queued or
+  applied resize. Full-window ImGui, viewport-panel bounds, scene-panel restore
+  sizing, Vulkan live-surface checks, and render-to-window fallback regions use
+  that value so editor UI dimensions update with the in-drag framebuffer rather
+  than Silk.NET's delayed cached `FramebufferSize`.
+- The Win32 modal-loop hook now guards against duplicate/stale WndProc chains,
+  restores only when its own hook is still installed, cancels interactive resize
+  on close/destroy messages, and suppresses resize renders after window closing
+  starts. This specifically protects the close-after-crash path that showed
+  repeated `WindowProc` frames in the stack trace.
+- Immediate ImGui layout flushing on close now verifies a current ImGui context
+  on the render thread before calling `ImGui.SaveIniSettingsToMemory`; if that
+  context is gone, it leaves the layout dirty for the normal async path instead
+  of risking a native access violation during renderer teardown.
+- The editor/project preference default is now `Win32ModalLoopTimer` so Windows
+  editor/runtime windows keep repainting during native border drags by default.
+  Select `Default` explicitly when a baseline/no-hook comparison is needed.
+- Validation run: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`
+  completed with 0 warnings and 0 errors on 2026-06-22.
+- Follow-up validation after live `WM_SIZING` and effective-framebuffer fixes:
+  the normal editor output build was blocked by a running `XREngine.Editor`
+  debug session holding output DLLs, then
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj -p:OutDir=Build\_AgentValidation\20260622-124636-interactive-resize-build\temp-build\`
+  completed with 0 warnings and 0 errors.
+- Follow-up validation after presentation-only live resize split:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj -p:OutDir=Build\_AgentValidation\20260622-125437-interactive-resize-presentation-build\temp-build\`
+  completed with 0 warnings and 0 errors.
+- Follow-up validation after Vulkan interactive resize fast path:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj -p:OutDir=Build\_AgentValidation\20260622-130125-vulkan-interactive-resize-build\temp-build\`
+  completed with 0 warnings and 0 errors.
+- Follow-up validation after Vulkan dynamic-rendering extent and close-hook
+  fixes:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj -p:OutDir=Build\_AgentValidation\20260622-131855-vulkan-resize-crash-fix\temp-build\`
+  completed with 0 warnings and 0 errors.
+- Follow-up validation after Vulkan blit-region live-extent clamping:
+  `dotnet build .\XREngine.Editor\XREngine.Editor.csproj -p:OutDir=Build\_AgentValidation\20260622-133105-vulkan-blit-resize-fix\temp-build\`
+  completed with 0 warnings and 0 errors.
 
 ## Goal
 
@@ -102,9 +189,9 @@ fallback.
 
 Implementation tasks:
 
-- [ ] Add enum value and setting plumbing.
-- [ ] Log the resolved strategy once per window.
-- [ ] Ensure `Default` does not install callbacks, native hooks, private
+- [x] Add enum value and setting plumbing.
+- [x] Log the resolved strategy once per window.
+- [x] Ensure `Default` does not install callbacks, native hooks, private
   reflection hooks, or backend changes.
 
 Acceptance criteria:
@@ -123,15 +210,15 @@ native window handle.
 
 Implementation tasks:
 
-- [ ] Add a small `IInteractiveResizeStrategy` abstraction owned by `XRWindow`.
-- [ ] Resolve the native GLFW window handle through public Silk.NET native
+- [x] Add a small `IInteractiveResizeStrategy` abstraction owned by `XRWindow`.
+- [x] Resolve the native GLFW window handle through public Silk.NET native
   window surfaces only.
-- [ ] Register `glfwSetWindowRefreshCallback` for GLFW windows.
-- [ ] In the callback, request a render through a guarded
+- [x] Register `glfwSetWindowRefreshCallback` for GLFW windows.
+- [x] In the callback, request a render through a guarded
   `XRWindow.RenderInteractiveResizeFrame(...)` helper.
-- [ ] Avoid rendering if the normal render callback is active or the renderer is
+- [x] Avoid rendering if the normal render callback is active or the renderer is
   disposed.
-- [ ] Restore the previous callback on `UnlinkWindow()` / dispose.
+- [x] Restore the previous callback on `UnlinkWindow()` / dispose.
 
 Risks:
 
@@ -157,13 +244,13 @@ those callbacks are delivered during a native drag.
 
 Implementation tasks:
 
-- [ ] Subscribe to `IWindow.Resize` in addition to `FramebufferResize` only for
+- [x] Subscribe to `IWindow.Resize` in addition to `FramebufferResize` only for
   this strategy.
-- [ ] Queue framebuffer resize through the existing pending-resize fields.
-- [ ] Add a guarded interactive render helper that calls the same resize and
+- [x] Queue framebuffer resize through the existing pending-resize fields.
+- [x] Add a guarded interactive render helper that calls the same resize and
   render path as a normal frame.
-- [ ] Coalesce duplicate resize sizes to avoid redundant resource invalidation.
-- [ ] Rate-limit callback rendering to a target such as 30 or 60 Hz.
+- [x] Coalesce duplicate resize sizes to avoid redundant resource invalidation.
+- [x] Rate-limit callback rendering to a target such as 30 or 60 Hz.
 
 Risks:
 
@@ -187,14 +274,14 @@ the GLFW drag hang in a render-thread setup.
 
 Implementation tasks:
 
-- [ ] Add a backend selection helper before `Window.Create(...)`.
-- [ ] For this resize strategy, prioritize SDL instead of GLFW.
+- [x] Add a backend selection helper before `Window.Create(...)`.
+- [x] For this resize strategy, prioritize SDL instead of GLFW.
 - [ ] Verify OpenGL context creation, input, clipboard, cursor capture, DPI, and
   transparent framebuffer behavior through SDL.
 - [ ] Verify Vulkan surface creation through SDL.
 - [ ] Keep fallback behavior clear: if SDL cannot create the requested Vulkan
   window, fall back only according to the existing Vulkan-to-OpenGL policy.
-- [ ] Add startup diagnostics showing the actual windowing backend and graphics
+- [x] Add startup diagnostics showing the actual windowing backend and graphics
   API.
 
 Risks:
@@ -222,16 +309,16 @@ be isolated in a Windows strategy class rather than embedded in `XRWindow`.
 
 Implementation tasks:
 
-- [ ] Add a Windows-only strategy class, compiled or activated only on Windows.
-- [ ] Resolve the `HWND` through public native window data where possible.
-- [ ] Subclass the window proc with a lifetime-owned delegate.
-- [ ] On `WM_ENTERSIZEMOVE`, start a timer at a configurable interval such as
+- [x] Add a Windows-only strategy class, compiled or activated only on Windows.
+- [x] Resolve the `HWND` through public native window data where possible.
+- [x] Subclass the window proc with a lifetime-owned delegate.
+- [x] On `WM_ENTERSIZEMOVE`, start a timer at a configurable interval such as
   16 ms or 33 ms.
-- [ ] On `WM_TIMER`, request an interactive render if the renderer is ready.
-- [ ] On `WM_SIZING` and `WM_WINDOWPOSCHANGED`, queue the latest client size.
-- [ ] On `WM_EXITSIZEMOVE`, stop the timer, queue final resize, and render once.
-- [ ] Restore the original window proc during unlink/dispose.
-- [ ] Add diagnostics for hook install, hook restore, timer start/stop, and
+- [x] On `WM_TIMER`, request an interactive render if the renderer is ready.
+- [x] On `WM_SIZING` and `WM_WINDOWPOSCHANGED`, queue the latest client size.
+- [x] On `WM_EXITSIZEMOVE`, stop the timer, queue final resize, and render once.
+- [x] Restore the original window proc during unlink/dispose.
+- [x] Add diagnostics for hook install, hook restore, timer start/stop, and
   suppressed reentrant renders.
 
 Risks:
@@ -258,13 +345,14 @@ and implementing resize grips in the title-bar/editor UI layer.
 
 Implementation tasks:
 
-- [ ] Extend the existing `UseNativeTitleBar=false` path with hit-test regions
+- [x] Extend the existing `UseNativeTitleBar=false` path with hit-test regions
   for resize edges and corners.
-- [ ] Use platform APIs or Silk.NET window position/size setters to apply
+- [x] Use platform APIs or Silk.NET window position/size setters to apply
   resize during normal engine frames.
-- [ ] Keep normal render/update callbacks active while dragging.
-- [ ] Add cursor feedback for resize edges.
-- [ ] Respect minimum window size and aspect constraints.
+- [x] Keep normal render/update callbacks active while dragging.
+- [x] Add cursor feedback for resize edges.
+- [x] Respect minimum window size; no per-window aspect constraint setting exists
+  yet for this path.
 
 Risks:
 
@@ -280,24 +368,244 @@ Acceptance criteria:
 
 ## Shared Implementation Tasks
 
-- [ ] Add `EInteractiveWindowResizeStrategy`.
-- [ ] Add strategy resolution and diagnostics.
-- [ ] Add `IInteractiveResizeStrategy` with `Install(XRWindow)` and
+- [x] Add `EInteractiveWindowResizeStrategy`.
+- [x] Add strategy resolution and diagnostics.
+- [x] Add `IInteractiveResizeStrategy` with `Install(XRWindow)` and
   `Uninstall()` lifetime.
-- [ ] Add one guarded `XRWindow.RenderInteractiveResizeFrame(string reason)`
+- [x] Add one guarded `XRWindow.RenderInteractiveResizeFrame(string reason)`
   helper shared by callback-based strategies.
-- [ ] Prevent nested renders with an interlocked guard.
-- [ ] Keep `ProcessPendingFramebufferResize()` as the only code that mutates
+- [x] Prevent nested renders with an interlocked guard.
+- [x] Keep `ProcessPendingFramebufferResize()` as the only code that mutates
   viewport sizes and calls `Renderer.FrameBufferInvalidated()`.
-- [ ] Keep scene-panel FBO resizing debounced through
+- [x] Keep scene-panel FBO resizing debounced through
   `XRWindowScenePanelAdapter`; do not destroy scene-panel FBOs on every
   drag-frame unless the selected strategy requires it.
-- [ ] Add per-strategy diagnostics counters:
+- [x] Add per-strategy diagnostics counters:
   callback count, interactive render count, suppressed render count, resize
   queue count, and last resize reason.
-- [ ] Document the selected strategy in startup logs and diagnostics UI.
+- [x] Document the selected strategy in startup logs and diagnostics UI.
 
 ## Validation Matrix
+
+## Vulkan Resize Follow-Up Notes - 2026-06-22
+
+- Latest user run inspected:
+  `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-22_13-33-17_pid47684`.
+- The previous `vkCmdBlitImage` validation/device-loss crash did not recur in
+  the latest logs.
+- The `System.InvalidOperationException` spam in that run was traced to VMA
+  image allocation fallback: device-local image allocation failed, then the
+  renderer tried `HostVisibleBit | HostCoherentBit` for an image allocation and
+  VMA returned `ErrorFeatureNotPresent`.
+- Vulkan also logged explicit resize frame drops:
+  `Skipping frame while resize resources settle`, with active resource
+  generations still at the previous size while the viewport had moved to the
+  new window size.
+- Follow-up patch changed Vulkan live resize behavior so resource-generation
+  size mismatches no longer block presentation frames. The renderer keeps using
+  the active generation while the pending generation settles.
+- Vulkan ImGui sizing now uses `XRWindow.EffectiveFramebufferSize` instead of
+  forcing `io.DisplaySize` back to the current swapchain extent.
+- Generic ImGui rendering now permits multiple ImGui frames per engine
+  timestamp only while the owning window is in interactive resize, preventing
+  stale editor draw data during the Win32 modal loop.
+- VMA `ErrorFeatureNotPresent` is treated as a non-viable try-allocation result
+  instead of throwing `InvalidOperationException`; image allocation no longer
+  attempts the invalid host-visible fallback.
+- Validation: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`
+  redirected to
+  `Build/_AgentValidation/20260622-134526-vulkan-live-resize-imgui-frame-skip/temp-build/`
+  completed with 0 warnings and 0 errors.
+- Later user run inspected:
+  `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-22_13-50-43_pid2516`.
+  Vulkan was following swapchain size during drag, but the resource planner was
+  still refreshing display extents from the live viewport on every intermediate
+  size. Failed image allocations repeated while old physical images and
+  descriptor pools piled up in retirement queues, which explains the
+  over-time lag and occasional final-size mismatch.
+- Vulkan now freezes render-resource planner extents for the duration of an
+  interactive resize and unfreezes on mouse-up. Swapchain/presentation size can
+  keep following the window, while heavy physical render-resource plans wait for
+  the final size.
+- Failed physical resource allocation plans are retried only after a short
+  delay for the same planner/allocation signature, preventing one failed resize
+  plan from hammering VMA every frame while previous resources are still
+  retiring.
+- `XRWindow` now tracks an effective logical window size alongside the effective
+  framebuffer size during Win32 modal resize. The Win32 strategy feeds both from
+  the same native client-size measurement, and ImGui display metrics use that
+  effective logical size so editor layout can update during drag instead of
+  waiting for Silk.NET's final cached size.
+- Vulkan ImGui backend no longer overwrites `io.DisplaySize` after the generic
+  renderer configures logical display size and framebuffer scale.
+- Validation: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj
+  -p:UseSharedCompilation=false` completed with 0 warnings and 0 errors on
+  2026-06-22.
+- Follow-up user run showed the editor UI was being resized but not fully
+  re-laid out, Vulkan drag still felt heavy, and the 3D scene could go black
+  during the debounced internal-resolution update.
+- Win32 modal-loop resize now coalesces Vulkan render-thread resize jobs, drives
+  active Vulkan repaint from the timer rather than every native sizing message,
+  and uses a lower Vulkan sizing repaint cadence so the native drag loop stays
+  lighter.
+- Scene-panel internal render-target resizing is now suppressed while an
+  interactive resize is in progress. Presentation/camera sizes still update
+  live, but expensive internal scene-panel FBO reallocations wait for mouse-up.
+- Vulkan swapchain recreates during interactive resize are throttled to a small
+  cadence instead of rebuilding on every surface-size mismatch.
+- Vulkan render-resource planner extents now stay frozen for the full native
+  drag. The previous "promote after 150 ms stable" behavior was removed because
+  it could allocate a new internal render-resource generation while the mouse
+  was still down, causing the long black pause.
+- Vulkan drops stale ImGui overlay snapshots after a swapchain-size race and
+  resets the ImGui frame marker so the next resize render rebuilds layout at the
+  current display metrics instead of stretching old draw data.
+- Validation: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj -m:1
+  -p:UseSharedCompilation=false` completed with 0 warnings and 0 errors on
+  2026-06-22. `git diff --check` reported no whitespace errors; only
+  line-ending normalization warnings were printed.
+- User follow-up reported GPU instability/corrupted output during Vulkan
+  resizing. Latest log inspected:
+  `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-22_14-31-32_pid2668`.
+- Root cause found in `log_rendering.log`: while the window was being dragged,
+  render-resource generations were still being requested for transient display
+  sizes (`938x685`, `1275x1096`, `653x537`, etc.). After mouse-up queued a final
+  `1920x1080` framebuffer resize, the old pending `653x537` generation kept
+  building and committed at `14:32:40.375`, replacing the correct active
+  `1920x1080` generation and causing the corrupt/stale render output.
+- `XRRenderPipelineInstance` now discards pending render-resource generations
+  during interactive resize when an active generation already exists. If a
+  request arrives for the current active key, any stale pending key is also
+  discarded instead of being allowed to commit later.
+- `XRRenderPipelineInstance.CommitPendingGeneration` now validates the pending
+  key against the current viewport generation key immediately before swapping it
+  active. Mismatches are logged and discarded, preventing delayed intermediate
+  resize generations from replacing the final-size generation.
+- Vulkan present errors now include the actual `Result` in the exception, and
+  `QueuePresent` `ErrorSurfaceLostKhr` is treated as an immediate swapchain
+  recreate path instead of a generic render exception.
+- Validation: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj -m:1
+  -p:UseSharedCompilation=false` completed with 0 warnings and 0 errors after
+  the stale-generation guard and present-result handling changes.
+- Follow-up hard-crash run inspected:
+  `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-22_14-39-59_pid22324`.
+  The run still showed an intermediate `1404x859` generation committing after a
+  `1920x1080` generation, and then a second drag recorded frames with frozen
+  render-resource extents while the swapchain changed to `1517x722` and later
+  `1701x906`.
+- `log_vulkan.log` reported repeated
+  `VUID-vkCmdClearAttachments-pRects-00016` validation errors, meaning clear
+  rectangles were being emitted outside the active render-pass area. The same
+  run also recreated the swapchain several times while the mouse was still down
+  and grew retired descriptor-pool/image backlogs into the hundreds.
+- Vulkan interactive resize is now safety-first: during the Win32 size/move
+  modal loop, Vulkan records the latest desired surface size but defers
+  swapchain recreation until the resize is no longer interactive. Frames are
+  skipped and retired resources are drained whenever swapchain dimensions or
+  active render-resource generations do not match the live viewport.
+- Vulkan explicit clear recording now intersects `vkCmdClearAttachments`
+  rectangles with the currently active render area before issuing the command,
+  preventing the validation error from being submitted even if an upstream op
+  carries stale viewport dimensions.
+- Follow-up user run confirmed that fully deferring swapchain recreation made
+  Vulkan safe but removed dynamic drag-time resizing. The underlying issue is
+  that swapchain/presentation extent and full internal render-resource extent
+  were being treated as one resize operation. Vulkan swapchain images must be
+  recreated to match the live HWND framebuffer, but the default render pipeline
+  render-resource generation is too heavy and hazardous to rebuild for every
+  transient drag size.
+- Vulkan now uses a coalesced presentation resize queue during interactive
+  resize: `_pendingSurfaceWidth/_pendingSurfaceHeight` keep only the latest
+  desired surface extent, and the swapchain is recreated at a bounded
+  interactive cadence instead of every mouse message. Intermediate sizes are
+  intentionally dropped.
+- The Vulkan resource blocker now permits display-size mismatch during
+  interactive resize only when the active generation's internal resource size
+  still matches the viewport's internal size. This allows the old internal scene
+  output to be scaled into the latest recreated swapchain while still blocking
+  unsafe internal-resource mismatches.
+- Final mouse-up resize still uses the full framebuffer resize path, which
+  requests the final render-resource generation and blocks rendering until the
+  active generation matches that final size.
+- Follow-up user run was "almost perfect" but still showed sticky native
+  dragging, ImGui scaling without re-layout, and a black/over-bright exposure
+  pulse after mouse-up. Latest inspected Vulkan log:
+  `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-22_15-40-55_pid28180`.
+- The log showed repeated `AutoExposureTex` validation errors after the final
+  resize: command buffers expected the planner-backed exposure image in
+  `GENERAL` while validation tracked it as `SHADER_READ_ONLY_OPTIMAL`. The
+  temporary CPU fallback made auto exposure visibly wrong, so Vulkan GPU auto
+  exposure is enabled again. Compute dispatch recording now emits an in-command
+  storage-image transition for render-graph-owned image bindings when their
+  live tracked layout is not `GENERAL`, and updates the same physical-image
+  layout tracker used by later graph barriers.
+- Drag-time presentation resizes now trust `XRWindow.EffectiveFramebufferSize`
+  as the surface extent and only use logical window size as a fallback. The
+  previous `max(framebuffer, window)` sampling could chase mismatched transient
+  values from different Win32/Silk.NET timing points.
+- Interactive Vulkan swapchain recreation cadence is now 100 ms. This keeps the
+  coalesced queue responsive enough to show dynamic resize progress while
+  reducing `vkDeviceWaitIdle` pressure from drag-time swapchain rebuilds.
+- `XRViewport.ResizeCameraComponentUI` resize diagnostics are throttled to once
+  per second. The previous unthrottled interpolated log ran on the modal-loop
+  resize hot path and could make native dragging feel heavier.
+- Swapchain recreation now resets the ImGui frame marker so the next overlay
+  draw rebuilds at the recreated swapchain extent. The editor dockspace node is
+  also pushed to the current ImGui main viewport size each frame so saved dock
+  layouts resize instead of only being scaled.
+- ImGui layout was still able to use stale canvas metrics during Win32 modal
+  resize because `UICanvasTransform.ActualSize` is produced by the UI layout
+  pass, which can lag the native drag loop. During an active interactive resize,
+  `AbstractRenderer.ConfigureImGuiDisplay` now bypasses canvas metrics and uses
+  the viewport/window effective size path so ImGui receives the live
+  `DisplaySize` and relays out instead of scaling an old logical frame into the
+  new framebuffer.
+- Validation: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj -m:1
+  -p:UseSharedCompilation=false` completed with 0 warnings and 0 errors on
+  2026-06-22.
+- Follow-up auto-exposure regression fix: removed the planner-backed exposure
+  texture skip in `VulkanAutoExposure`, so `AutoExposureTex` is written by the
+  Vulkan compute path again. Validation: `dotnet build
+  .\XREngine.Editor\XREngine.Editor.csproj -m:1
+  -p:UseSharedCompilation=false` completed with 0 warnings and 0 errors on
+  2026-06-22.
+- Follow-up mouse-up exposure reset fix: full framebuffer resize can replace
+  the Vulkan physical resource allocator even though `AutoExposureTex` remains
+  an absolute 1x1 resource. The old allocator was destroyed without copying
+  that one-pixel exposure history, so the first post-resize GPU auto-exposure
+  update started from fresh image contents and appeared to reset bright.
+  Resource-plan replacement now preserves `AutoExposureTex` by copying the old
+  physical image into the new one before retiring the old allocator. Validation:
+  `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
+  -m:1 -p:UseSharedCompilation=false` completed with 0 warnings and 0 errors on
+  2026-06-22. The broader editor build was blocked by a live `.NET Host`
+  process holding the editor output DLLs.
+- Follow-up native window drag lag fix: the Win32 modal-loop strategy still did
+  engine presentation resize work from synchronous resize messages
+  (`WM_SIZING`, interactive `WM_SIZE`, and Silk framebuffer resize callbacks).
+  Those callbacks run in the native modal loop, so viewport/camera/ImGui layout
+  work delayed the OS border drag itself. The Win32 strategy now only captures
+  the latest client size from those messages and coalesces presentation resize
+  plus render requests through the modal-loop timer. While that strategy is
+  active, Silk framebuffer callbacks only update the effective framebuffer
+  extent and do not walk viewports. Validation:
+  `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
+  -m:1 -p:UseSharedCompilation=false` completed with 0 warnings and 0 errors on
+  2026-06-22.
+- Follow-up native drag still not smooth: the timer path itself was still doing
+  too much. `WM_TIMER` coalesced the size, but then immediately applied
+  viewport/camera/ImGui presentation resize and could call `DoRender` inline
+  when the modal WndProc was running on the render thread. That still blocked
+  Windows' border-drag loop. The Win32 timer now only queues a pending
+  presentation resize, and `XRWindow` consumes that pending presentation resize
+  on the render path before drawing. A later correction restored timer-driven
+  rendering during the modal loop because deferring all timer renders starved
+  the render-thread queue until mouse-up. Timer renders now run only when the
+  timer coalesces a new client size, avoiding duplicate modal-loop frames while
+  keeping visible resize updates active. Validation:
+  `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
+  -m:1 -p:UseSharedCompilation=false` completed with 0 warnings and 0 errors on
+  2026-06-22.
 
 - [ ] Windows + OpenGL + Default.
 - [ ] Windows + OpenGL + GLFW refresh callback.

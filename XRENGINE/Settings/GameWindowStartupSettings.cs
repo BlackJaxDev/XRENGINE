@@ -1,6 +1,7 @@
 ﻿using MemoryPack;
 using System.ComponentModel;
 using XREngine.Data.Core;
+using XREngine.Rendering;
 using XREngine.Scene;
 
 namespace XREngine
@@ -20,6 +21,7 @@ namespace XREngine
         private bool _transparentFramebuffer = false;
         private bool? _outputHDR;
         private bool _useNativeTitleBar = true;
+        private EInteractiveWindowResizeStrategy _interactiveResizeStrategy = EInteractiveWindowResizeStrategy.Default;
         
         [Category("Players")]
         [Description("Which local player indices render to this window.")]
@@ -110,6 +112,15 @@ namespace XREngine
         {
             get => _useNativeTitleBar;
             set => SetField(ref _useNativeTitleBar, value);
+        }
+
+        [Category("Window")]
+        [DisplayName("Interactive Resize Strategy")]
+        [Description("Strategy used to keep the window presenting while the user interactively resizes it. Default preserves the normal Silk.NET behavior.")]
+        public EInteractiveWindowResizeStrategy InteractiveResizeStrategy
+        {
+            get => _interactiveResizeStrategy;
+            set => SetField(ref _interactiveResizeStrategy, value);
         }
 
         /// <summary>

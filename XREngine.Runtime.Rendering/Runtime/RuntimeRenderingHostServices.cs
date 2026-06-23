@@ -964,6 +964,7 @@ public static class RuntimeRenderingHostServices
         }
 
         public bool IsWindowScenePanelPresentationEnabled => RuntimeRenderingHostServiceDefaults.IsWindowScenePanelPresentationEnabled;
+        public EInteractiveWindowResizeStrategy InteractiveResizeStrategy => RuntimeRenderingHostServiceDefaults.InteractiveResizeStrategy;
         public int ScenePanelResizeDebounceMs => RuntimeRenderingHostServiceDefaults.ScenePanelResizeDebounceMs;
         public bool ForceFullViewport => RuntimeRenderingHostServiceDefaults.ForceFullViewport;
 

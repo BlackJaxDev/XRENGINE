@@ -529,6 +529,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (Pipeline is null || viewport is null)
             return;
 
+        if (viewport.Window?.IsInteractiveResizeInProgress == true && ActiveGeneration is not null)
+        {
+            DiscardPendingGeneration("InteractiveResize");
+            return;
+        }
+
         ResourceGenerationKey key = BuildResourceGenerationKey(
             Math.Max(1, viewport.Width),
             Math.Max(1, viewport.Height),
@@ -560,7 +566,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return false;
 
         if (ActiveGeneration?.Key == key)
+        {
+            DiscardPendingGeneration($"Active generation already matches request: {reason}");
             return true;
+        }
 
         if (PendingGeneration?.Key == key)
             return true;
@@ -810,11 +819,44 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         _pendingGenerationFirstResizeRequestTimestamp = 0;
     }
 
+    private void DiscardPendingGeneration(string reason)
+    {
+        RenderResourceGeneration? pending = PendingGeneration;
+        if (pending is null)
+            return;
+
+        Debug.Rendering(
+            "[RenderResources] Pending generation discarded. Pipeline={0} Reason={1} Pending={2} Active={3}",
+            ProfilerKey,
+            reason,
+            pending.Key,
+            ActiveGeneration?.Key.ToString() ?? "<none>");
+
+        PendingGeneration = null;
+        ClearPendingGenerationDebounce();
+        pending.MarkSuperseded(reason);
+        pending.Dispose();
+    }
+
     private void CommitPendingGeneration(string reason)
     {
         RenderResourceGeneration? pending = PendingGeneration;
         if (pending is null || !pending.IsReady)
             return;
+
+        if (TryBuildCurrentViewportGenerationKey(out ResourceGenerationKey currentKey) &&
+            pending.Key != currentKey)
+        {
+            Debug.RenderingWarning(
+                "[RenderResources] Pending generation is stale at commit. Pipeline={0} Reason={1} Pending={2} Current={3} Delta={4}",
+                ProfilerKey,
+                reason,
+                pending.Key,
+                currentKey,
+                DescribeResourceGenerationKeyDelta(pending.Key, currentKey));
+            DiscardPendingGeneration($"StaleCommit:{reason}");
+            return;
+        }
 
         RenderResourceGeneration? old = ActiveGeneration;
         ActiveGeneration = pending;
@@ -842,6 +884,23 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             ActiveGeneration.BufferCount,
             ActiveGeneration.RenderBufferCount,
             ActiveGeneration.BuildDuration.TotalMilliseconds);
+    }
+
+    private bool TryBuildCurrentViewportGenerationKey(out ResourceGenerationKey key)
+    {
+        XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
+        if (viewport is null)
+        {
+            key = default;
+            return false;
+        }
+
+        key = BuildResourceGenerationKey(
+            Math.Max(1, viewport.Width),
+            Math.Max(1, viewport.Height),
+            Math.Max(1, viewport.InternalWidth),
+            Math.Max(1, viewport.InternalHeight));
+        return true;
     }
 
     private void RetireGeneration(RenderResourceGeneration generation, string reason)

@@ -186,7 +186,13 @@ namespace XREngine.Rendering
             Vector2 displayPos = Vector2.Zero;
             Vector2 framebufferScale = Vector2.One;
 
-            if (canvas?.TryGetImGuiDisplayMetrics(viewport, camera, out displaySize, out displayPos, out framebufferScale) == true)
+            bool interactiveResize = viewport?.Window?.IsInteractiveResizeInProgress == true;
+
+            // Canvas ActualSize is layout-produced and can lag the Win32 modal resize loop.
+            // ImGui needs the live viewport/window size here so it relays out instead of
+            // rendering old logical coordinates into the new framebuffer scale.
+            if (!interactiveResize &&
+                canvas?.TryGetImGuiDisplayMetrics(viewport, camera, out displaySize, out displayPos, out framebufferScale) == true)
             {
             }
             else if (viewport is not null)
@@ -197,23 +203,34 @@ namespace XREngine.Rendering
                 var hostWindow = viewport.Window?.Window;
                 if (hostWindow is not null)
                 {
-                    var logicalSize = hostWindow.Size;
-                    var framebufferSize = hostWindow.FramebufferSize;
+                    var logicalSize = viewport.Window?.EffectiveWindowSize ?? hostWindow.Size;
+                    var framebufferSize = viewport.Window?.EffectiveFramebufferSize ?? hostWindow.FramebufferSize;
+                    var scaleSourceFramebufferSize = framebufferSize;
+                    if (scaleSourceFramebufferSize.X <= 0 || scaleSourceFramebufferSize.Y <= 0)
+                        scaleSourceFramebufferSize = hostWindow.FramebufferSize;
 
                     float scaleX = logicalSize.X > 0
-                        ? (float)framebufferSize.X / logicalSize.X
+                        ? (float)scaleSourceFramebufferSize.X / logicalSize.X
                         : 1f;
                     float scaleY = logicalSize.Y > 0
-                        ? (float)framebufferSize.Y / logicalSize.Y
+                        ? (float)scaleSourceFramebufferSize.Y / logicalSize.Y
                         : 1f;
 
                     framebufferScale = new Vector2(
                         MathF.Max(scaleX, float.Epsilon),
                         MathF.Max(scaleY, float.Epsilon));
 
-                    displaySize = new Vector2(
-                        region.Width / framebufferScale.X,
-                        region.Height / framebufferScale.Y);
+                    bool coversWholeFramebuffer =
+                        region.X == 0 &&
+                        region.Y == 0 &&
+                        Math.Abs(region.Width - scaleSourceFramebufferSize.X) <= 1 &&
+                        Math.Abs(region.Height - scaleSourceFramebufferSize.Y) <= 1;
+
+                    displaySize = coversWholeFramebuffer
+                        ? new Vector2(Math.Max(logicalSize.X, 1), Math.Max(logicalSize.Y, 1))
+                        : new Vector2(
+                            region.Width / framebufferScale.X,
+                            region.Height / framebufferScale.Y);
                 }
             }
             else if (camera?.Parameters is XROrthographicCameraParameters ortho)
@@ -258,7 +275,11 @@ namespace XREngine.Rendering
                 return false;
 
             long timestampTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
-            if (ShouldSkipImGuiFrame(allowMultipleInFrame, timestampTicks, _lastImGuiTimestampTicks))
+            bool allowResizeFrame =
+                viewport?.Window?.IsInteractiveResizeInProgress == true ||
+                XRWindow.IsInteractiveResizeInProgress;
+
+            if (ShouldSkipImGuiFrame(allowMultipleInFrame || allowResizeFrame, timestampTicks, _lastImGuiTimestampTicks))
                 return false;
 
             _lastImGuiTimestampTicks = timestampTicks;

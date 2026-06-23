@@ -1339,13 +1339,7 @@ namespace XREngine.Rendering
             int internalResolutionWidth = -1,
             int internalResolutionHeight = -1)
         {
-            float w = windowWidth.ClampMin(1u);
-            float h = windowHeight.ClampMin(1u);
-
-            _region.X = (int)(_leftPercentage * w);
-            _region.Y = (int)(_bottomPercentage * h);
-            _region.Width = (int)(_rightPercentage * w - _region.X);
-            _region.Height = (int)(_topPercentage * h - _region.Y);
+            UpdateRegionFromWindowSize(windowWidth, windowHeight);
 
             if (setInternalResolution)
                 SetInternalResolution(
@@ -1357,6 +1351,24 @@ namespace XREngine.Rendering
             SetAspectRatioToCamera();
             ResizeRenderPipeline();
             Resized?.Invoke(this);
+        }
+
+        internal void ResizePresentationOnly(uint windowWidth, uint windowHeight)
+        {
+            UpdateRegionFromWindowSize(windowWidth, windowHeight);
+            ResizeCameraComponentUI();
+            SetAspectRatioToCamera();
+        }
+
+        private void UpdateRegionFromWindowSize(uint windowWidth, uint windowHeight)
+        {
+            float w = windowWidth.ClampMin(1u);
+            float h = windowHeight.ClampMin(1u);
+
+            _region.X = (int)(_leftPercentage * w);
+            _region.Y = (int)(_bottomPercentage * h);
+            _region.Width = (int)(_rightPercentage * w - _region.X);
+            _region.Height = (int)(_topPercentage * h - _region.Y);
         }
 
         /// <summary>
@@ -1446,11 +1458,21 @@ namespace XREngine.Rendering
             // CameraComponent is set before the viewport is properly resized
             if (_region.Size.X <= 0 || _region.Size.Y <= 0)
             {
-                Debug.Rendering($"[XRViewport] ResizeCameraComponentUI: Skipping resize due to invalid region size ({_region.Size.X}x{_region.Size.Y})");
+                Debug.RenderingEvery(
+                    $"XRViewport.ResizeCameraComponentUI.Invalid.{GetHashCode()}[{Index}]",
+                    TimeSpan.FromSeconds(1),
+                    "[XRViewport] ResizeCameraComponentUI skipped due to invalid region size {0}x{1}.",
+                    _region.Size.X,
+                    _region.Size.Y);
                 return;
             }
 
-            Debug.Rendering($"[XRViewport] ResizeCameraComponentUI: Setting canvas size to {_region.Size.X}x{_region.Size.Y}");
+            Debug.RenderingEvery(
+                $"XRViewport.ResizeCameraComponentUI.Apply.{GetHashCode()}[{Index}]",
+                TimeSpan.FromSeconds(1),
+                "[XRViewport] ResizeCameraComponentUI setting canvas size to {0}x{1}.",
+                _region.Size.X,
+                _region.Size.Y);
             overlay.ResizeScreenSpace(_region.Size);
         }
 

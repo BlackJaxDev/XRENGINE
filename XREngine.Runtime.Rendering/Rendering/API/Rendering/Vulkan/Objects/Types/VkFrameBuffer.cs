@@ -1093,7 +1093,7 @@ public unsafe partial class VulkanRenderer
                         source.View,
                         signature,
                         slot,
-                        ResolveAttachmentExtent(target, mip),
+                        source.Extent,
                         source.LayerCount));
                     continue;
                 }
@@ -1107,7 +1107,7 @@ public unsafe partial class VulkanRenderer
                     source.View,
                     depthSignature,
                     0,
-                    ResolveAttachmentExtent(target, mip),
+                    source.Extent,
                     source.LayerCount);
             }
 
@@ -1160,7 +1160,7 @@ public unsafe partial class VulkanRenderer
         private AttachmentSource ResolveAttachmentSource(IFrameBufferAttachement target, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)
             => target switch
             {
-                XRTexture texture => ResolveTextureAttachment(texture, attachment, mipLevel, layerIndex),
+                XRTexture texture => ResolveTextureAttachment(target, texture, attachment, mipLevel, layerIndex),
                 XRRenderBuffer renderBuffer => ResolveRenderBufferAttachment(renderBuffer),
                 _ => throw new NotSupportedException($"Framebuffer attachment type '{target.GetType().Name}' is not supported yet.")
             };
@@ -1181,10 +1181,11 @@ public unsafe partial class VulkanRenderer
                 (aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0
                     ? ImageUsageFlags.DepthStencilAttachmentBit
                     : ImageUsageFlags.ColorAttachmentBit,
-                1u);
+                1u,
+                vkRenderBuffer.ResolveAttachmentExtent());
         }
 
-        private AttachmentSource ResolveTextureAttachment(XRTexture texture, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)
+        private AttachmentSource ResolveTextureAttachment(IFrameBufferAttachement textureAttachment, XRTexture texture, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)
         {
             if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkFrameBufferAttachmentSource source)
                 throw new InvalidOperationException($"Texture '{texture.Name ?? texture.GetDescribingName()}' is not backed by a Vulkan texture.");
@@ -1213,7 +1214,11 @@ public unsafe partial class VulkanRenderer
                 ? Math.Max(source.DescriptorArrayLayers, 1u)
                 : 1u;
 
-            return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, aspect, usage, layerCount);
+            Extent2D extent = source.TryGetAttachmentExtent(mipLevel, layerIndex, out Extent2D resolvedExtent)
+                ? resolvedExtent
+                : ResolveAttachmentExtent(textureAttachment, mipLevel);
+
+            return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, aspect, usage, layerCount, extent);
         }
 
         private static AttachmentRole ResolveAttachmentRole(EFrameBufferAttachment attachment, ImageAspectFlags aspect, Format format)
@@ -1340,7 +1345,8 @@ public unsafe partial class VulkanRenderer
             SampleCountFlags Samples,
             ImageAspectFlags AspectMask,
             ImageUsageFlags Usage,
-            uint LayerCount);
+            uint LayerCount,
+            Extent2D Extent);
 
         private readonly record struct AttachmentTargetInfo(
             IFrameBufferAttachement Target,

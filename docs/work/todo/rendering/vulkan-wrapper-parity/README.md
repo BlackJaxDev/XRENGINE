@@ -1,7 +1,7 @@
 # Vulkan Wrapper Parity TODO
 
 Last Updated: 2026-06-22
-Status: Active tracker; source-contract coverage reconciled, hardware validation remains open.
+Status: Source/implementation parity items checked; validation-only follow-ups remain open.
 
 ## Goal
 
@@ -57,21 +57,23 @@ Current source-contract coverage includes:
   and timeline-retired buffer destruction.
 - Material table descriptor-index source contracts, generated Vulkan
   `nonuniformEXT` material-table sampling, and zero-readback policy guardrails.
+- Vulkan texture pre/post push callbacks, reflected material UBO layout writes,
+  material-table dirty-range pushes, and no-material-binding diagnostics.
 
 ## Shared Remaining TODOs
 
-- [ ] Keep `IsGenerated` semantics consistent across backends: generated means
+- [x] Keep `IsGenerated` semantics consistent across backends: generated means
       the backend API object or wrapper cache handle exists, not that data,
       descriptors, programs, pipelines, or draw readiness are valid.
-- [ ] Keep backend differences explicit in code comments when Vulkan chooses a
+- [x] Keep backend differences explicit in code comments when Vulkan chooses a
       native equivalent instead of an OpenGL-shaped implementation.
-- [ ] Do not hide missing GPU or accelerated paths behind silent CPU fallbacks;
+- [x] Do not hide missing GPU or accelerated paths behind silent CPU fallbacks;
       emit diagnostics or an intentional fallback signal.
-- [ ] Extend source-verifiable tests only for wrapper contracts not covered by
+- [x] Extend source-verifiable tests only for wrapper contracts not covered by
       the reconciled parity suite above.
 - [ ] Add hardware validation for behavior that requires Vulkan command
       execution, validation layers, GPU capture, or visual comparison.
-- [ ] Keep hot-path allocations out of per-frame draw, descriptor, buffer, and
+- [x] Keep hot-path allocations out of per-frame draw, descriptor, buffer, and
       upload paths.
 
 ## Shared Readiness Vocabulary
@@ -99,36 +101,36 @@ native mechanism.
 
 ## Shared Vulkan-Native TODOs
 
-- [ ] Prefer descriptor readiness, descriptor-set/layout fingerprints, and
+- [x] Prefer descriptor readiness, descriptor-set/layout fingerprints, and
       material binding layouts over emulating OpenGL current binding state.
-- [ ] Prefer render-graph resource declarations, barrier planning, dynamic
+- [x] Prefer render-graph resource declarations, barrier planning, dynamic
       rendering attachment metadata, and explicit load/store decisions over
       order-dependent framebuffer side effects.
-- [ ] Prefer pipeline keys, pipeline prewarm manifests, and structured pipeline
+- [x] Prefer pipeline keys, pipeline prewarm manifests, and structured pipeline
       miss diagnostics over late draw-time pipeline creation.
-- [ ] Prefer timeline/fence-retired destruction over global idle points for
+- [x] Prefer timeline/fence-retired destruction over global idle points for
       wrapper resource replacement.
-- [ ] Keep Vulkan-only accelerants such as descriptor indexing,
+- [x] Keep Vulkan-only accelerants such as descriptor indexing,
       buffer-device-address scene data, mesh-task dispatch, sparse residency,
       memory decompression, and indirect copy explicitly feature-gated and
       diagnostic.
-- [ ] Treat CPU fallback from missing Vulkan GPU paths as a visible policy
+- [x] Treat CPU fallback from missing Vulkan GPU paths as a visible policy
       decision, never as an implicit success path.
 
 ## Shared OpenGL Backfill TODOs
 
 - [ ] Validate render-graph pass metadata in OpenGL even when the executor still
       runs the existing sequential command chain.
-- [ ] Report preparation/readiness state with the same categories Vulkan uses:
+- [x] Report preparation/readiness state with the same categories Vulkan uses:
       buffers, shader/program, descriptors/material bindings, pipeline/render
       state, and texture residency.
-- [ ] Keep OpenGL material-table and bindless texture behavior aligned with the
+- [x] Keep OpenGL material-table and bindless texture behavior aligned with the
       same pass-declared material layout and texture-binding rung that Vulkan
       descriptor indexing consumes.
-- [ ] Expose profiler counters comparable to Vulkan for readback bytes, material
+- [x] Expose profiler counters comparable to Vulkan for readback bytes, material
       table row updates, texture binding rung, shader/program cache misses, and
       fallback reasons.
-- [ ] Keep `GpuIndirectZeroReadback` and `GpuMeshletZeroReadback` no-readback
+- [x] Keep `GpuIndirectZeroReadback` and `GpuMeshletZeroReadback` no-readback
       rules backend-neutral; only instrumented strategies may read back counts
       or visibility buffers.
 
@@ -136,27 +138,27 @@ native mechanism.
 
 - [ ] Verify patch-list behavior, tessellation control points, and topology
       fallback against OpenGL `UsesPatchTopology`.
-- [ ] Align per-frame draw and triangle statistics with OpenGL for indexed and
+- [x] Align per-frame draw and triangle statistics with OpenGL for indexed and
       non-indexed fallback draws.
-- [ ] Report selected mesh submission strategy, requested strategy, fallback
+- [x] Report selected mesh submission strategy, requested strategy, fallback
       reason, and backend capability snapshot for Vulkan mesh draws.
 - [ ] Confirm `GpuIndirectZeroReadback` and `GpuMeshletZeroReadback` draw paths
       do not read count, visibility, or indirect buffers in steady state.
 - [ ] Confirm Vulkan meshlet dispatch uses GPU-written task records and
       indirect-count dispatch on `VK_EXT_mesh_shader` hardware.
-- [ ] Keep missing production meshlet support as a visible downgrade to the
+- [x] Keep missing production meshlet support as a visible downgrade to the
       resolver-selected non-meshlet path, not an implicit CPU direct draw.
-- [ ] Finish Vulkan pipeline-key coverage for multiview/layer count, explicit
+- [x] Finish Vulkan pipeline-key coverage for multiview/layer count, explicit
       tessellation control-point state, and specialization constants.
-- [ ] Record per-renderer Vulkan submission metadata: selected mesh submission
+- [x] Record per-renderer Vulkan submission metadata: selected mesh submission
       strategy, pass intent, state class, material-table path, descriptor
       fallback count, pipeline cache hit/miss, and zero-readback compliance.
-- [ ] Keep meshlet dispatch and indirect-count draw paths explicitly
+- [x] Keep meshlet dispatch and indirect-count draw paths explicitly
       capability-gated; unsupported production meshlet dispatch should downgrade
       through the resolver before draw recording.
-- [ ] Report OpenGL program, VAO, and material binding cache hits and misses in
+- [x] Report OpenGL program, VAO, and material binding cache hits and misses in
       the same profiler shape as Vulkan pipeline and descriptor readiness.
-- [ ] Keep OpenGL zero-readback strategy diagnostics aligned with Vulkan:
+- [x] Keep OpenGL zero-readback strategy diagnostics aligned with Vulkan:
       production indirect and meshlet paths must not read count, visibility, or
       indirect buffers in steady state.
 - [ ] Hardware: compare OpenGL and Vulkan default world opaque, forward, shadow,
@@ -166,22 +168,19 @@ native mechanism.
 
 ## `XRMesh`
 
-- [ ] Use the geometry layout signature as the stable input to Vulkan vertex
+- [x] Use the geometry layout signature as the stable input to Vulkan vertex
       input generation, descriptor requirements, GPU scene database records,
-      indirect draw records, meshlet task records, and pipeline keys. Vertex
-      input generation, descriptor diagnostics, and direct pipeline keys are
-      wired; GPU scene database, indirect records, and meshlet task records
-      remain open.
-- [ ] Require Vulkan GPU-driven paths to consume the same mesh layout contract
+      indirect draw records, meshlet task records, and pipeline keys.
+- [x] Require Vulkan GPU-driven paths to consume the same mesh layout contract
       across CPU direct, GPU indirect, material-table, and meshlet submission.
-- [ ] Record layout diagnostics for unsupported meshlet dialect and indirect
+- [x] Record layout diagnostics for unsupported meshlet dialect and indirect
       count source fallback.
-- [ ] Report OpenGL VAO cache hits/misses, attribute binding decisions,
+- [x] Report OpenGL VAO cache hits/misses, attribute binding decisions,
       instancing divisors, interleaved layouts, and deformation-buffer aliases
       using the same layout signature fields.
-- [ ] Keep OpenGL meshlet diagnostics tied to the shared geometry layout even
+- [x] Keep OpenGL meshlet diagnostics tied to the shared geometry layout even
       when the available OpenGL mesh-shader path remains diagnostic-only.
-- [ ] Preserve the no-standalone-wrapper decision until duplicated geometry
+- [x] Preserve the no-standalone-wrapper decision until duplicated geometry
       layout lifetime across direct, indirect, and meshlet paths proves that a
       real backend mesh resource is cleaner.
 - [ ] Hardware: draw a mesh using triangle, line, point, interleaved, instanced,
@@ -195,51 +194,51 @@ native mechanism.
       index descriptor arrays.
 - [ ] Verify local render-options overrides take priority over material options
       like OpenGL.
-- [ ] Include render-option state in pipeline keys when it affects immutable
+- [x] Include render-option state in pipeline keys when it affects immutable
       Vulkan pipeline state.
-- [ ] Align std140/std430 layout packing with the reflected descriptor block
+- [x] Align std140/std430 layout packing with the reflected descriptor block
       layout instead of hardcoded type sizes.
-- [ ] Extend material-table dirty-range validation so editing one material proves
+- [x] Extend material-table dirty-range validation so editing one material proves
       it does not rewrite unrelated rows in OpenGL or Vulkan table paths.
-- [ ] Report active texture binding rung, descriptor-indexing availability,
+- [x] Report active texture binding rung, descriptor-indexing availability,
       material-table layout hash, and fallback reason in renderer diagnostics.
-- [ ] Keep OpenGL bindless handle tables and Vulkan descriptor-indexed texture
+- [x] Keep OpenGL bindless handle tables and Vulkan descriptor-indexed texture
       arrays on the same logical material/texture index contract.
-- [ ] Warn when a material program has no parameter or sampler bindings after
+- [x] Warn when a material program has no parameter or sampler bindings after
       descriptor resolution.
-- [ ] Add rate-limited texture-risk diagnostics equivalent to OpenGL runtime
+- [x] Add rate-limited texture-risk diagnostics equivalent to OpenGL runtime
       material texture checks.
-- [ ] Make the material binding layout a first-class Vulkan artifact derived
+- [x] Make the material binding layout a first-class Vulkan artifact derived
       from pass intent, shader reflection, material parameters, texture slots,
       engine uniforms, shadow binding source, descriptor-indexing availability,
       and material-table policy.
-- [ ] Have `VkMaterial` populate a prepared binding plan instead of rediscovering
+- [x] Have `VkMaterial` populate a prepared binding plan instead of rediscovering
       descriptor rules during draw recording. The plan should include descriptor
       set layout, descriptor writes, uniform/storage block offsets, push
       constants, texture array indices, fallback resources, and material row
       layout hash.
-- [ ] Treat descriptor layout signature, material row layout hash, texture
+- [x] Treat descriptor layout signature, material row layout hash, texture
       binding rung, render options, shader artifact identity, and shadow source
       material as pipeline/material readiness inputs.
 - [ ] Validate std140/std430/scalar layout offsets from reflection data before
       serializing material parameters into Vulkan uniform/storage buffers.
-- [ ] Keep material table updates dirty-range based and report the exact rows,
+- [x] Keep material table updates dirty-range based and report the exact rows,
       byte ranges, texture indices, and descriptor writes touched by a material
       edit.
-- [ ] Make placeholder texture use visible by role and reason: missing asset,
+- [x] Make placeholder texture use visible by role and reason: missing asset,
       not resident, unsupported format, descriptor allocation failure,
       incompatible sampler/view, or warmup not complete.
-- [ ] Give OpenGL bindless and material-table paths the same pass-declared
+- [x] Give OpenGL bindless and material-table paths the same pass-declared
       material layout hash used by Vulkan descriptor-indexed material paths.
-- [ ] Treat classic OpenGL sampler binding as one texture binding rung under the
+- [x] Treat classic OpenGL sampler binding as one texture binding rung under the
       shared material contract, not as the conceptual source of material texture
       identity.
-- [ ] Update OpenGL material tables with dirty rows and dirty byte ranges so
+- [x] Update OpenGL material tables with dirty rows and dirty byte ranges so
       editing one material does not rewrite unrelated rows.
-- [ ] Report OpenGL bindless handle table state, residency, fallback role,
+- [x] Report OpenGL bindless handle table state, residency, fallback role,
       material row index, texture logical index, and binding rung in profiler
       counters comparable to Vulkan descriptor diagnostics.
-- [ ] Keep OpenGL shader uniform/block packing diagnostics comparable to Vulkan
+- [x] Keep OpenGL shader uniform/block packing diagnostics comparable to Vulkan
       reflection-based material parameter serialization diagnostics.
 - [ ] Hardware: compare ordinary, shadow, depth-normal, FBO/post, and
       bindless-material paths against OpenGL.
@@ -249,40 +248,40 @@ native mechanism.
 - [ ] Hardware/profile the Vulkan prepared-source and async compile path against
       OpenGL parallel compile behavior, including warmup latency and completion
       polling.
-- [ ] Finish backend-neutral pipeline readiness diagnostics for any remaining
+- [x] Finish backend-neutral pipeline readiness diagnostics for any remaining
       callers that still report pending Vulkan shader compile as a generic
       program or pipeline miss.
-- [ ] Promote Vulkan shader generation into a complete shader artifact chain:
+- [x] Promote Vulkan shader generation into a complete shader artifact chain:
       resolved source, backend-rewritten source, SPIR-V, reflection data,
       descriptor layout signature, push-constant signature, vertex/fragment
       interface signature, and pipeline-stage create info.
-- [ ] Cache artifact identity from all source-shaping inputs: include graph,
+- [x] Cache artifact identity from all source-shaping inputs: include graph,
       macros, optimizer identity, backend rewrite version, generated source
       axes, entry point, target environment, specialization constants, and
       feature-profile gates.
-- [ ] Treat reflection output as part of the pipeline/material contract:
+- [x] Treat reflection output as part of the pipeline/material contract:
       descriptor set layouts, descriptor array indexing rules, uniform/storage
       block layouts, push constants, vertex inputs, fragment outputs, and
       multiview/stereo requirements should be available before pipeline
       creation.
-- [ ] Require `nonuniformEXT` or an equivalent validated shader variant for any
+- [x] Require `nonuniformEXT` or an equivalent validated shader variant for any
       Vulkan path that indexes descriptor arrays with per-draw, per-material, or
       GPU-written values.
-- [ ] Feed successful shader artifacts into the Vulkan pipeline prewarm manifest
+- [x] Feed successful shader artifacts into the Vulkan pipeline prewarm manifest
       so warmup can cover shader variants without waiting for a late draw-time
       miss.
-- [ ] Give OpenGL shader/program caches the same identity inputs used by the
+- [x] Give OpenGL shader/program caches the same identity inputs used by the
       Vulkan artifact chain where they affect source shape or interface shape.
-- [ ] Emit reflection-like OpenGL diagnostics for active uniforms, samplers,
+- [x] Emit reflection-like OpenGL diagnostics for active uniforms, samplers,
       storage blocks, uniform blocks, vertex inputs, fragment outputs, and
       program interface mismatches.
-- [ ] Report OpenGL program cache hits, misses, compile/link failures, include
+- [x] Report OpenGL program cache hits, misses, compile/link failures, include
       chains, and generated-source axes in a shape comparable to Vulkan pipeline
       miss summaries.
-- [ ] Keep OpenGL generated shader variants aligned with Vulkan artifact
+- [x] Keep OpenGL generated shader variants aligned with Vulkan artifact
       identity so depth-normal, shadow, stereo, skinning, blendshape, meshlet,
       and material-table variants do not diverge silently.
-- [ ] Preserve OpenGL driver parallel compile support as an implementation
+- [x] Preserve OpenGL driver parallel compile support as an implementation
       detail while exposing backend-neutral compile pending, failed, ready, and
       linked/program-ready states.
 - [ ] Unit/source test: OpenGL and Vulkan source identity inputs agree for a
@@ -292,52 +291,52 @@ native mechanism.
 
 ## `XRTexture`
 
-- [ ] Extend property-driven sampler recreation to future per-texture anisotropy
+- [x] Extend property-driven sampler recreation to future per-texture anisotropy
       and depth-stencil-mode knobs if they are exposed.
-- [ ] Implement equivalents for OpenGL `OnPrePushData` and `OnPostPushData`.
-- [ ] Support per-layer, per-face, and OVR multiview attachment requests where
+- [x] Implement equivalents for OpenGL `OnPrePushData` and `OnPostPushData`.
+- [x] Support per-layer, per-face, and OVR multiview attachment requests where
       the engine exposes them.
-- [ ] Add a Vulkan equivalent to OpenGL detail-preserving 2D compute mipmap path
+- [x] Add a Vulkan equivalent to OpenGL detail-preserving 2D compute mipmap path
       or document why generic blit is the accepted Vulkan v1 behavior.
 - [ ] Validate non-filterable formats and fallback behavior.
-- [ ] Ensure mip-level counts and visible mip ranges match OpenGL for
+- [x] Ensure mip-level counts and visible mip ranges match OpenGL for
       progressive and sparse streaming cases.
-- [ ] Add VRAM budget checks and allocation accounting comparable to OpenGL
+- [x] Add VRAM budget checks and allocation accounting comparable to OpenGL
       texture storage paths.
-- [ ] Rate-limit repeated Vulkan warnings.
-- [ ] Include texture name, type, dimensions, mip count, layer count, format,
+- [x] Rate-limit repeated Vulkan warnings.
+- [x] Include texture name, type, dimensions, mip count, layer count, format,
       usage flags, and descriptor view type in failures.
-- [ ] Require every Vulkan texture allocation or import path to declare its
+- [x] Require every Vulkan texture allocation or import path to declare its
       intended image usage up front: sampled, storage, attachment, transfer
       source/destination, transient, sparse, and any mutable-view requirement.
 - [ ] Validate `VkFormatFeatureFlags` before choosing upload, blit, mipmap,
       storage-image, attachment, depth/stencil, filtering, linear-tiling,
       sampled-image, and texel-buffer paths.
-- [ ] Move layout transitions toward render-graph/pass ownership. Texture
+- [x] Move layout transitions toward render-graph/pass ownership. Texture
       `BindRequested` should not be the hidden authority for image layouts when
       pass metadata can declare the sampled, storage, or attachment use.
-- [ ] Track layout readiness and queue-family ownership separately from
+- [x] Track layout readiness and queue-family ownership separately from
       descriptor readiness so sampled, storage, transfer, and attachment uses
       can report different not-ready reasons.
-- [ ] Include image usage, current/expected layout, queue ownership, format
+- [x] Include image usage, current/expected layout, queue ownership, format
       feature support, residency tier, sparse page state, and mutable-view
       compatibility in texture diagnostics.
-- [ ] Keep sparse residency, partial mip residency, and memory decompression
+- [x] Keep sparse residency, partial mip residency, and memory decompression
       paths feature-gated and diagnostic; missing support should visibly select
       the non-sparse/non-decompressed residency path.
-- [ ] Treat render-target textures as pass resources with explicit load/store
+- [x] Treat render-target textures as pass resources with explicit load/store
       decisions, not only as FBO-like attachment side effects.
-- [ ] Report OpenGL texture readiness with the shared categories from this doc:
+- [x] Report OpenGL texture readiness with the shared categories from this doc:
       generated, uploaded, resident, descriptor/binding ready, and pass ready.
-- [ ] Add sampler fingerprint and texture-view compatibility diagnostics that
+- [x] Add sampler fingerprint and texture-view compatibility diagnostics that
       match the Vulkan descriptor/image-view readiness report shape.
-- [ ] Extend `log_textures.log` entries so OpenGL and Vulkan both report
+- [x] Extend `log_textures.log` entries so OpenGL and Vulkan both report
       residency tier, upload route, fallback texture role, VRAM pressure, and
       descriptor/bindless binding rung.
 - [ ] Validate OpenGL FBO/post textures through the same pass-declared
       attachment intent that Vulkan barrier planning consumes, even while the
       OpenGL executor remains sequential.
-- [ ] Keep OpenGL sparse/progressive streaming behavior on the same logical
+- [x] Keep OpenGL sparse/progressive streaming behavior on the same logical
       residency contract planned for Vulkan sparse or partial-residency paths.
 
 ### `XRTexture1D`
@@ -350,18 +349,18 @@ native mechanism.
 
 ### `XRTexture2D`
 
-- [ ] Port or explicitly replace OpenGL sparse texture streaming behavior.
-- [ ] Port or replace progressive mip upload behavior.
-- [ ] Add detail-preserving compute mipmap parity or document a Vulkan-native
+- [x] Port or explicitly replace OpenGL sparse texture streaming behavior.
+- [x] Port or replace progressive mip upload behavior.
+- [x] Add detail-preserving compute mipmap parity or document a Vulkan-native
       alternative.
 - [ ] Validate video-frame upload behavior against OpenGL import/update paths.
-- [ ] Align storage, external/imported texture, runtime-managed progressive
+- [x] Align storage, external/imported texture, runtime-managed progressive
       range, and diagnostics behavior.
 
 ### `XRTexture2DArray`
 
-- [ ] Add OVR multiview attach/detach event parity.
-- [ ] Add per-layer attach/detach event parity.
+- [x] Add OVR multiview attach/detach event parity.
+- [x] Add per-layer attach/detach event parity.
 
 ### `XRTextureRectangle`
 
@@ -375,19 +374,19 @@ native mechanism.
 
 ### `XRTextureCube`
 
-- [ ] Add face attach/detach event parity.
+- [x] Add face attach/detach event parity.
 - [ ] Validate face ordering and layer indices match OpenGL cubemap face
       behavior.
-- [ ] Ensure depth-only and per-face attachment views work for point shadows.
+- [x] Ensure depth-only and per-face attachment views work for point shadows.
 
 ### `XRTextureBuffer`
 
 - [ ] Validate uniform texel buffer and storage texel buffer descriptors.
-- [ ] Add diagnostics when the source buffer lacks required Vulkan usage flags.
+- [x] Add diagnostics when the source buffer lacks required Vulkan usage flags.
 
 ### `XRTextureView`
 
-- [ ] Support depth/stencil view mode parity where Vulkan aspect masks differ
+- [x] Support depth/stencil view mode parity where Vulkan aspect masks differ
       from OpenGL `DepthStencilTextureMode`.
 
 ### Texture Validation
@@ -399,7 +398,7 @@ native mechanism.
 
 ## `XRDataBuffer`
 
-- [ ] Fill remaining steady-state counters after the current source contracts:
+- [x] Fill remaining steady-state counters after the current source contracts:
       staging reuse, host-visible writes, host-cached reads, descriptor-binding
       fallbacks, and zero-readback violations.
 - [ ] Hardware: run compute skinning, GPUScene, indirect draw, readback, UI

@@ -1,5 +1,6 @@
 using XREngine.Extensions;
 using Newtonsoft.Json;
+using Silk.NET.Core.Contexts;
 using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Windowing;
@@ -94,6 +95,18 @@ namespace XREngine.Rendering
         private int _pendingFramebufferResize;
         private int _pendingFramebufferResizeWidth;
         private int _pendingFramebufferResizeHeight;
+        private int _pendingInteractivePresentationResize;
+        private int _pendingInteractivePresentationFramebufferWidth;
+        private int _pendingInteractivePresentationFramebufferHeight;
+        private int _effectiveFramebufferWidth;
+        private int _effectiveFramebufferHeight;
+        private int _effectiveWindowWidth;
+        private int _effectiveWindowHeight;
+        private int _interactiveResizeInProgress;
+        private int _interactiveResizeRenderActive;
+        private int _interactiveResizeRenderQueued;
+        private int _normalRenderActive;
+        private IInteractiveResizeStrategy _interactiveResizeStrategy;
 
         private Exception? _lastRenderException;
         private int _consecutiveRenderFailures;
@@ -141,6 +154,40 @@ namespace XREngine.Rendering
         /// Per-window request to keep VSync enabled even when the global engine policy is off.
         /// </summary>
         public bool WindowVSyncRequested { get; }
+
+        public EInteractiveWindowResizeStrategy InteractiveResizeStrategy { get; private set; }
+
+        public InteractiveResizeDiagnostics InteractiveResizeDiagnostics { get; } = new();
+
+        public string ActualWindowingBackendName => ResolveActualWindowingBackendName();
+
+        public bool IsInteractiveResizeInProgress => Volatile.Read(ref _interactiveResizeInProgress) != 0;
+
+        public Vector2D<int> EffectiveFramebufferSize
+        {
+            get
+            {
+                int width = Volatile.Read(ref _effectiveFramebufferWidth);
+                int height = Volatile.Read(ref _effectiveFramebufferHeight);
+                if (width > 0 && height > 0)
+                    return new Vector2D<int>(width, height);
+
+                return GetCurrentFramebufferSize();
+            }
+        }
+
+        public Vector2D<int> EffectiveWindowSize
+        {
+            get
+            {
+                int width = Volatile.Read(ref _effectiveWindowWidth);
+                int height = Volatile.Read(ref _effectiveWindowHeight);
+                if (width > 0 && height > 0)
+                    return new Vector2D<int>(width, height);
+
+                return GetCurrentWindowSize();
+            }
+        }
 
         public EventList<XRViewport> Viewports => _viewports;
 
@@ -362,21 +409,28 @@ namespace XREngine.Rendering
 
         #region Constructor
 
-        public XRWindow(WindowOptions options, bool useNativeTitleBar, bool windowVSyncRequested = false)
+        public XRWindow(
+            WindowOptions options,
+            bool useNativeTitleBar,
+            bool windowVSyncRequested = false,
+            EInteractiveWindowResizeStrategy interactiveResizeStrategy = EInteractiveWindowResizeStrategy.Default)
         {
             _viewports.CollectionChanged += ViewportsChanged;
             _scenePanelAdapter = RuntimeRenderingHostServices.Current.CreateWindowScenePanelAdapter();
+            InteractiveResizeStrategy = interactiveResizeStrategy;
+            _interactiveResizeStrategy = InteractiveResizeStrategyFactory.Create(interactiveResizeStrategy);
 
             Debug.Rendering(
-                "[XRWindow] Constructing window title='{0}' size={1}x{2} pos=({3},{4}) api={5}",
+                "[XRWindow] Constructing window title='{0}' size={1}x{2} pos=({3},{4}) api={5} interactiveResize={6}",
                 options.Title,
                 options.Size.X,
                 options.Size.Y,
                 options.Position.X,
                 options.Position.Y,
-                options.API.API);
+                options.API.API,
+                interactiveResizeStrategy);
 
-            Silk.NET.Windowing.Window.PrioritizeGlfw();
+            ApplyWindowingBackendPreference(interactiveResizeStrategy);
             Window = Silk.NET.Windowing.Window.Create(options);
             UseNativeTitleBar = useNativeTitleBar;
             WindowVSyncRequested = windowVSyncRequested;
@@ -395,6 +449,11 @@ namespace XREngine.Rendering
                 _windowInitializationProbe = null;
             }
 
+            UpdateEffectiveFramebufferSize(GetCurrentFramebufferSize());
+            _interactiveResizeStrategy.Install(this);
+            if (Input is not null)
+                _interactiveResizeStrategy.OnInputCreated(Input);
+
             // GLFW does not reliably honor the position hint supplied via WindowOptions
             // on Windows, so we force the requested position after initialization.
             if (Window.Position != options.Position)
@@ -410,12 +469,417 @@ namespace XREngine.Rendering
             }
 
             Debug.Rendering(
-                "[XRWindow] Window.Initialize completed for hash={0}. Framebuffer={1}x{2}",
+                "[XRWindow] Window.Initialize completed for hash={0}. Framebuffer={1}x{2} Backend={3} InteractiveResize={4}",
                 GetHashCode(),
-                Window.FramebufferSize.X,
-                Window.FramebufferSize.Y);
+                EffectiveFramebufferSize.X,
+                EffectiveFramebufferSize.Y,
+                ActualWindowingBackendName,
+                InteractiveResizeStrategy);
 
             _renderer = CreateRendererForCurrentWindow("initial window construction");
+        }
+
+        #endregion
+
+        #region Interactive Resize
+
+        private static void ApplyWindowingBackendPreference(EInteractiveWindowResizeStrategy strategy)
+        {
+            if (strategy == EInteractiveWindowResizeStrategy.SdlBackend)
+            {
+                Debug.Rendering("[InteractiveResize] Prioritizing Silk.NET SDL windowing backend.");
+                Silk.NET.Windowing.Window.PrioritizeSdl();
+                return;
+            }
+
+            Debug.Rendering("[InteractiveResize] Prioritizing Silk.NET GLFW windowing backend.");
+            Silk.NET.Windowing.Window.PrioritizeGlfw();
+        }
+
+        public void SetInteractiveResizeStrategy(EInteractiveWindowResizeStrategy strategy)
+        {
+            if (_isDisposed || _isDisposing || strategy == InteractiveResizeStrategy)
+                return;
+
+            if (strategy == EInteractiveWindowResizeStrategy.SdlBackend ||
+                InteractiveResizeStrategy == EInteractiveWindowResizeStrategy.SdlBackend)
+            {
+                Debug.RenderingWarning(
+                    "[InteractiveResize] Runtime strategy change window={0} from={1} to={2}; actual backend remains {3} until the window is recreated.",
+                    GetHashCode(),
+                    InteractiveResizeStrategy,
+                    strategy,
+                    ActualWindowingBackendName);
+            }
+
+            try
+            {
+                _interactiveResizeStrategy.Uninstall();
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingWarning(
+                    "[InteractiveResize] Strategy uninstall failed during runtime change window={0}. {1}",
+                    GetHashCode(),
+                    ex);
+            }
+
+            InteractiveResizeStrategy = strategy;
+            _interactiveResizeStrategy = InteractiveResizeStrategyFactory.Create(strategy);
+            _interactiveResizeStrategy.Install(this);
+            if (Input is not null)
+                _interactiveResizeStrategy.OnInputCreated(Input);
+
+            Debug.Rendering(
+                "[InteractiveResize] Runtime strategy changed window={0} strategy={1} backend={2}.",
+                GetHashCode(),
+                InteractiveResizeStrategy,
+                ActualWindowingBackendName);
+        }
+
+        internal void QueueCurrentFramebufferResize(string reason)
+            => QueueFramebufferResize(GetCurrentFramebufferSize(), reason);
+
+        internal void QueueFramebufferResize(Vector2D<int> size, string reason)
+            => QueueFramebufferResize(size, null, reason);
+
+        internal void QueueFramebufferResize(Vector2D<int> size, Vector2D<int>? windowSize, string reason)
+        {
+            if (size.X <= 0 || size.Y <= 0)
+                return;
+
+            UpdateEffectiveFramebufferSize(size);
+            if (windowSize.HasValue)
+                UpdateEffectiveWindowSize(windowSize.Value);
+            else
+                UpdateEffectiveWindowSize(GetCurrentWindowSize());
+
+            int currentPending = Volatile.Read(ref _pendingFramebufferResize);
+            int currentWidth = Volatile.Read(ref _pendingFramebufferResizeWidth);
+            int currentHeight = Volatile.Read(ref _pendingFramebufferResizeHeight);
+            if (currentPending != 0 && currentWidth == size.X && currentHeight == size.Y)
+                return;
+
+            Volatile.Write(ref _pendingFramebufferResizeWidth, size.X);
+            Volatile.Write(ref _pendingFramebufferResizeHeight, size.Y);
+            Interlocked.Exchange(ref _pendingFramebufferResize, 1);
+            InteractiveResizeDiagnostics.RecordResizeQueued(reason);
+
+            Debug.RenderingEvery(
+                $"XRWindow.FramebufferResize.Queued.{GetHashCode()}",
+                TimeSpan.FromMilliseconds(250),
+                "[XRWindow] Queued framebuffer resize hash={0} size={1}x{2} reason={3}.",
+                GetHashCode(),
+                size.X,
+                size.Y,
+                reason);
+        }
+
+        internal void BeginInteractiveResize(string reason)
+        {
+            Interlocked.Exchange(ref _interactiveResizeInProgress, 1);
+            UpdateEffectiveWindowSize(GetCurrentWindowSize());
+            InteractiveResizeDiagnostics.RecordCallback(reason);
+        }
+
+        internal void ApplyInteractivePresentationResize(Vector2D<int> size, string reason)
+            => ApplyInteractivePresentationResize(size, null, reason);
+
+        internal void ApplyInteractivePresentationResize(Vector2D<int> size, Vector2D<int>? windowSize, string reason)
+        {
+            if (size.X <= 0 || size.Y <= 0)
+                return;
+
+            UpdateEffectiveFramebufferSize(size);
+            if (windowSize.HasValue)
+                UpdateEffectiveWindowSize(windowSize.Value);
+            else
+                UpdateEffectiveWindowSize(GetCurrentWindowSize());
+
+            uint width = (uint)size.X;
+            uint height = (uint)size.Y;
+            foreach (XRViewport viewport in Viewports)
+                viewport.ResizePresentationOnly(width, height);
+
+            InteractiveResizeDiagnostics.RecordResizeQueued(reason);
+        }
+
+        internal void QueueInteractivePresentationResize(Vector2D<int> size, string reason)
+            => QueueInteractivePresentationResize(size, null, reason);
+
+        internal void QueueInteractivePresentationResize(Vector2D<int> size, Vector2D<int>? windowSize, string reason)
+        {
+            if (size.X <= 0 || size.Y <= 0)
+                return;
+
+            UpdateEffectiveFramebufferSize(size);
+            if (windowSize.HasValue)
+                UpdateEffectiveWindowSize(windowSize.Value);
+
+            int currentPending = Volatile.Read(ref _pendingInteractivePresentationResize);
+            int currentWidth = Volatile.Read(ref _pendingInteractivePresentationFramebufferWidth);
+            int currentHeight = Volatile.Read(ref _pendingInteractivePresentationFramebufferHeight);
+            if (currentPending != 0 && currentWidth == size.X && currentHeight == size.Y)
+                return;
+
+            Volatile.Write(ref _pendingInteractivePresentationFramebufferWidth, size.X);
+            Volatile.Write(ref _pendingInteractivePresentationFramebufferHeight, size.Y);
+            Interlocked.Exchange(ref _pendingInteractivePresentationResize, 1);
+            InteractiveResizeDiagnostics.RecordResizeQueued(reason);
+        }
+
+        internal void EndInteractiveResize(Vector2D<int> finalSize, string reason)
+            => EndInteractiveResize(finalSize, null, reason);
+
+        internal void EndInteractiveResize(Vector2D<int> finalSize, Vector2D<int>? windowSize, string reason)
+        {
+            Interlocked.Exchange(ref _interactiveResizeInProgress, 0);
+            QueueFramebufferResize(finalSize, windowSize, reason);
+        }
+
+        internal void CancelInteractiveResize(string reason)
+        {
+            Interlocked.Exchange(ref _interactiveResizeInProgress, 0);
+            InteractiveResizeDiagnostics.RecordSuppressedRender(reason);
+        }
+
+        internal Vector2D<int> ConvertWindowSizeToFramebufferSize(Vector2D<int> windowSize)
+        {
+            try
+            {
+                Vector2D<int> origin = Window.PointToFramebuffer(Vector2D<int>.Zero);
+                Vector2D<int> bottomRight = Window.PointToFramebuffer(windowSize);
+                int width = Math.Abs(bottomRight.X - origin.X);
+                int height = Math.Abs(bottomRight.Y - origin.Y);
+                if (width > 0 && height > 0)
+                    return new Vector2D<int>(width, height);
+            }
+            catch
+            {
+            }
+
+            return new Vector2D<int>(Math.Max(1, windowSize.X), Math.Max(1, windowSize.Y));
+        }
+
+        private void UpdateEffectiveFramebufferSize(Vector2D<int> size)
+        {
+            if (size.X <= 0 || size.Y <= 0)
+                return;
+
+            Volatile.Write(ref _effectiveFramebufferWidth, size.X);
+            Volatile.Write(ref _effectiveFramebufferHeight, size.Y);
+        }
+
+        private void UpdateEffectiveWindowSize(Vector2D<int> size)
+        {
+            if (size.X <= 0 || size.Y <= 0)
+                return;
+
+            Volatile.Write(ref _effectiveWindowWidth, size.X);
+            Volatile.Write(ref _effectiveWindowHeight, size.Y);
+        }
+
+        internal IntPtr TryGetWin32WindowHandle()
+        {
+            INativeWindow? native = TryGetNativeWindow();
+            if (native is null)
+                return IntPtr.Zero;
+
+            object? win32 = GetNativeHandleProperty(native, nameof(INativeWindow.Win32));
+            if (win32 is null)
+                return IntPtr.Zero;
+
+            object? value = GetNullableValue(win32);
+            if (value is null)
+                return IntPtr.Zero;
+
+            object? hwnd = value.GetType().GetField("Item1")?.GetValue(value);
+            return hwnd is IntPtr ptr ? ptr : IntPtr.Zero;
+        }
+
+        internal void RenderInteractiveResizeFrame(string reason)
+            => RenderInteractiveResizeFrame(reason, allowCurrentThread: false);
+
+        internal void RenderInteractiveResizeFrame(string reason, bool allowCurrentThread)
+            => RenderInteractiveResizeFrame(reason, allowCurrentThread, deferWhenOnRenderThread: false);
+
+        internal void RenderInteractiveResizeFrame(string reason, bool allowCurrentThread, bool deferWhenOnRenderThread)
+        {
+            if (_isDisposed || _isDisposing || _renderPermanentlyDisabled)
+            {
+                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":window-disabled");
+                return;
+            }
+
+            if (_renderDisabledUntilUtc != default && DateTime.UtcNow < _renderDisabledUntilUtc)
+            {
+                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":circuit-breaker");
+                return;
+            }
+
+            bool canRenderOnCurrentThread =
+                (RuntimeEngine.IsRenderThread && !deferWhenOnRenderThread) ||
+                (allowCurrentThread && Window.API.API == ContextAPI.OpenGL);
+
+            if (!canRenderOnCurrentThread)
+            {
+                if (Interlocked.CompareExchange(ref _interactiveResizeRenderQueued, 1, 0) != 0)
+                {
+                    InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":queued");
+                    return;
+                }
+
+                RuntimeEngine.EnqueueRenderThreadTask(
+                    () =>
+                    {
+                        try
+                        {
+                            RenderInteractiveResizeFrame(reason, allowCurrentThread: false);
+                        }
+                        finally
+                        {
+                            Volatile.Write(ref _interactiveResizeRenderQueued, 0);
+                        }
+                    },
+                    $"XRWindow.InteractiveResizeRender[{GetHashCode()}:{reason}]",
+                    RenderThreadJobKind.RequiresGraphicsContext);
+                return;
+            }
+
+            if (Interlocked.CompareExchange(ref _interactiveResizeRenderActive, 1, 0) != 0 ||
+                Volatile.Read(ref _normalRenderActive) != 0)
+            {
+                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":reentrant");
+                Debug.RenderingWarningEvery(
+                    $"XRWindow.InteractiveResize.Reentrant.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[InteractiveResize] Suppressed interactive render window={0} reason={1}.",
+                    GetHashCode(),
+                    reason);
+                return;
+            }
+
+            try
+            {
+                if (Window.API.API == ContextAPI.OpenGL)
+                    Window.MakeCurrent();
+
+                ProcessPendingInteractivePresentationResize();
+                PrepareWindowBackbufferRenderArea();
+
+                if (Volatile.Read(ref _interactiveResizeInProgress) == 0)
+                    ProcessPendingFramebufferResize();
+
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.InteractiveResize.DoRender"))
+                    Window.DoRender();
+
+                InteractiveResizeDiagnostics.RecordInteractiveRender(reason);
+            }
+            catch (Exception ex)
+            {
+                _lastRenderException = ex;
+                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":exception");
+                Debug.RenderingWarningEvery(
+                    $"XRWindow.InteractiveResize.Exception.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[InteractiveResize] Interactive render failed window={0} reason={1}. {2}",
+                    GetHashCode(),
+                    reason,
+                    ex);
+            }
+            finally
+            {
+                Volatile.Write(ref _interactiveResizeRenderActive, 0);
+            }
+        }
+
+        private void ProcessPendingInteractivePresentationResize()
+        {
+            if (Interlocked.Exchange(ref _pendingInteractivePresentationResize, 0) == 0)
+                return;
+
+            int width = Volatile.Read(ref _pendingInteractivePresentationFramebufferWidth);
+            int height = Volatile.Read(ref _pendingInteractivePresentationFramebufferHeight);
+            if (width <= 0 || height <= 0)
+                return;
+
+            uint viewportWidth = (uint)width;
+            uint viewportHeight = (uint)height;
+            foreach (XRViewport viewport in Viewports)
+                viewport.ResizePresentationOnly(viewportWidth, viewportHeight);
+        }
+
+        private void PrepareWindowBackbufferRenderArea()
+        {
+            Vector2D<int> framebufferSize = EffectiveFramebufferSize;
+            if (framebufferSize.X <= 0 || framebufferSize.Y <= 0)
+                return;
+
+            Renderer.BindFrameBuffer(EFramebufferTarget.Framebuffer, null);
+            Renderer.SetCroppingEnabled(false);
+            Renderer.SetRenderArea(new BoundingRectangle(0, 0, framebufferSize.X, framebufferSize.Y));
+        }
+
+        private Vector2D<int> GetCurrentFramebufferSize()
+        {
+            Vector2D<int> framebufferSize = Window.FramebufferSize;
+            if (framebufferSize.X > 0 && framebufferSize.Y > 0)
+                return framebufferSize;
+
+            Vector2D<int> windowSize = Window.Size;
+            return new Vector2D<int>(Math.Max(1, windowSize.X), Math.Max(1, windowSize.Y));
+        }
+
+        private Vector2D<int> GetCurrentWindowSize()
+        {
+            Vector2D<int> windowSize = Window.Size;
+            if (windowSize.X > 0 && windowSize.Y > 0)
+                return windowSize;
+
+            Vector2D<int> framebufferSize = EffectiveFramebufferSize;
+            return new Vector2D<int>(Math.Max(1, framebufferSize.X), Math.Max(1, framebufferSize.Y));
+        }
+
+        private string ResolveActualWindowingBackendName()
+        {
+            INativeWindow? native = TryGetNativeWindow();
+            if (native is null)
+                return "unknown";
+
+            if (HasNativeHandle(native, nameof(INativeWindow.Sdl)))
+                return "SDL";
+            if (HasNativeHandle(native, nameof(INativeWindow.Glfw)))
+                return "GLFW";
+            if (HasNativeHandle(native, nameof(INativeWindow.Win32)))
+                return "Win32";
+
+            return native.Kind.ToString();
+        }
+
+        private INativeWindow? TryGetNativeWindow()
+            => Window is INativeWindowSource nativeSource ? nativeSource.Native : null;
+
+        private static bool HasNativeHandle(INativeWindow native, string propertyName)
+        {
+            object? value = GetNativeHandleProperty(native, propertyName);
+            if (value is null)
+                return false;
+
+            object? nullableValue = GetNullableValue(value);
+            return nullableValue is not null;
+        }
+
+        private static object? GetNativeHandleProperty(INativeWindow native, string propertyName)
+            => typeof(INativeWindow).GetProperty(propertyName)?.GetValue(native);
+
+        private static object? GetNullableValue(object value)
+        {
+            Type valueType = value.GetType();
+            if (Nullable.GetUnderlyingType(valueType) is null)
+                return value;
+
+            bool hasValue = (bool)(valueType.GetProperty("HasValue")?.GetValue(value) ?? false);
+            return hasValue ? valueType.GetProperty("Value")?.GetValue(value) : null;
         }
 
         #endregion
@@ -587,7 +1051,7 @@ namespace XREngine.Rendering
                 }
             }
 
-            Vector2D<int> framebufferSize = Window.FramebufferSize;
+            Vector2D<int> framebufferSize = EffectiveFramebufferSize;
             if (framebufferSize.X > 0 && framebufferSize.Y > 0)
             {
                 try
@@ -787,6 +1251,8 @@ namespace XREngine.Rendering
             //{
                 Input = Window.CreateInput();
                 Input.ConnectionChanged += Input_ConnectionChanged;
+                if (_interactiveResizeStrategy.IsInstalled)
+                    _interactiveResizeStrategy.OnInputCreated(Input);
             //});
 
             if (_windowInitializationProbe is not null)
@@ -995,17 +1461,22 @@ namespace XREngine.Rendering
 
         private void FramebufferResizeCallback(Vector2D<int> obj)
         {
-            Volatile.Write(ref _pendingFramebufferResizeWidth, obj.X);
-            Volatile.Write(ref _pendingFramebufferResizeHeight, obj.Y);
-            Interlocked.Exchange(ref _pendingFramebufferResize, 1);
+            if (Volatile.Read(ref _interactiveResizeInProgress) != 0)
+            {
+                if (_interactiveResizeStrategy.Kind == EInteractiveWindowResizeStrategy.Win32ModalLoopTimer)
+                {
+                    QueueInteractivePresentationResize(obj, "framebuffer-callback-live-coalesced");
+                    _interactiveResizeStrategy.OnFramebufferResizeQueued(obj);
+                    return;
+                }
 
-            Debug.RenderingEvery(
-                $"XRWindow.FramebufferResize.Queued.{GetHashCode()}",
-                TimeSpan.FromMilliseconds(250),
-                "[XRWindow] Queued framebuffer resize hash={0} size={1}x{2}.",
-                GetHashCode(),
-                obj.X,
-                obj.Y);
+                ApplyInteractivePresentationResize(obj, "framebuffer-callback-live");
+                _interactiveResizeStrategy.OnFramebufferResizeQueued(obj);
+                return;
+            }
+
+            QueueFramebufferResize(obj, "framebuffer-callback");
+            _interactiveResizeStrategy.OnFramebufferResizeQueued(obj);
         }
 
         private void ProcessPendingFramebufferResize()
@@ -1040,6 +1511,8 @@ namespace XREngine.Rendering
                 if (Window.API.API == ContextAPI.OpenGL)
                     Window.MakeCurrent();
 
+                UpdateEffectiveFramebufferSize(obj);
+
                 Debug.RenderingEvery(
                     $"XRWindow.FramebufferResize.Apply.{GetHashCode()}",
                     TimeSpan.FromMilliseconds(250),
@@ -1072,6 +1545,8 @@ namespace XREngine.Rendering
                 case IKeyboard keyboard:
                     break;
                 case IMouse mouse:
+                    if (connected && Input is not null)
+                        _interactiveResizeStrategy.OnInputCreated(Input);
                     break;
                 case IGamepad gamepad:
                     break;
@@ -1105,6 +1580,9 @@ namespace XREngine.Rendering
             var w = Window;
             if (w is null)
                 return;
+
+            if (_interactiveResizeStrategy.IsInstalled)
+                _interactiveResizeStrategy.Uninstall();
 
             w.FramebufferResize -= FramebufferResizeCallback;
             w.Render -= RenderCallback;
@@ -1150,7 +1628,7 @@ namespace XREngine.Rendering
             // user manually resizes a panel/window.
             //
             // Force a sizing refresh against the current framebuffer dimensions to mimic that resize.
-            var fb = Window?.FramebufferSize ?? default;
+            var fb = EffectiveFramebufferSize;
             if (fb.X > 0 && fb.Y > 0)
             {
                 foreach (var viewport in Viewports)
@@ -1241,8 +1719,17 @@ namespace XREngine.Rendering
                 return;
 
             phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            ProcessPendingFramebufferResize();
+            if (Volatile.Read(ref _interactiveResizeInProgress) == 0)
+                ProcessPendingFramebufferResize();
             RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.ProcessPendingFramebufferResize", phaseStart);
+
+            if (_isDisposed || _isDisposing)
+                return;
+
+            phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (Volatile.Read(ref _interactiveResizeInProgress) != 0)
+                ProcessPendingInteractivePresentationResize();
+            RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.ProcessPendingInteractivePresentationResize", phaseStart);
 
             if (_isDisposed || _isDisposing)
                 return;
@@ -1287,7 +1774,7 @@ namespace XREngine.Rendering
 
         private bool HasRenderableHostSurface()
         {
-            var framebufferSize = Window.FramebufferSize;
+            var framebufferSize = EffectiveFramebufferSize;
             var windowSize = Window.Size;
 
             int width = Math.Max(framebufferSize.X, windowSize.X);
@@ -1310,6 +1797,17 @@ namespace XREngine.Rendering
 
             if (_renderDisabledUntilUtc != default && DateTime.UtcNow < _renderDisabledUntilUtc)
                 return;
+
+            if (Interlocked.CompareExchange(ref _normalRenderActive, 1, 0) != 0)
+            {
+                InteractiveResizeDiagnostics.RecordSuppressedRender("normal-render-reentrant");
+                Debug.RenderingWarningEvery(
+                    $"XRWindow.RenderCallback.Reentrant.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] Suppressed normal render while another render is active. Window={0}",
+                    GetHashCode());
+                return;
+            }
 
             using var frameSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.RenderFrame");
             AbstractRenderer frameRenderer = _renderer;
@@ -1357,8 +1855,8 @@ namespace XREngine.Rendering
                         GetHashCode(),
                         Window.Size.X,
                         Window.Size.Y,
-                        Window.FramebufferSize.X,
-                        Window.FramebufferSize.Y);
+                        EffectiveFramebufferSize.X,
+                        EffectiveFramebufferSize.Y);
                 }
 
                 bool canRenderWindowViewports =
@@ -1455,9 +1953,10 @@ namespace XREngine.Rendering
                 if (RuntimeEngine.StartupPresentationEnabled)
                 {
                     using var startupPresentationSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.StartupPresentationMarker");
-                    var fullRegion = new BoundingRectangle(0, 0, Window.FramebufferSize.X, Window.FramebufferSize.Y);
-                    int markerWidth = Math.Min(96, Window.FramebufferSize.X);
-                    int markerHeight = Math.Min(96, Window.FramebufferSize.Y);
+                    var framebufferSize = EffectiveFramebufferSize;
+                    var fullRegion = new BoundingRectangle(0, 0, framebufferSize.X, framebufferSize.Y);
+                    int markerWidth = Math.Min(96, framebufferSize.X);
+                    int markerHeight = Math.Min(96, framebufferSize.Y);
                     var markerRegion = new BoundingRectangle(0, 0, markerWidth, markerHeight);
 
                     frameRenderer.BindFrameBuffer(EFramebufferTarget.Framebuffer, null);
@@ -1535,6 +2034,7 @@ namespace XREngine.Rendering
                 frameRenderer.Active = false;
                 if (ReferenceEquals(AbstractRenderer.Current, frameRenderer))
                     AbstractRenderer.Current = null;
+                Volatile.Write(ref _normalRenderActive, 0);
             }
         }
 
@@ -1701,7 +2201,7 @@ namespace XREngine.Rendering
 
                 if (mirrorByComposition)
                 {
-                    var fb = Window.FramebufferSize;
+                    var fb = EffectiveFramebufferSize;
                     uint targetWidth = (uint)Math.Max(1, fb.X);
                     uint targetHeight = (uint)Math.Max(1, fb.Y);
                     RuntimeRenderingHostServices.Current.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);
@@ -1848,6 +2348,17 @@ namespace XREngine.Rendering
                 {
                     // Free dockable scene-panel GPU resources.
                     _scenePanelAdapter.Dispose();
+                }
+
+                if (_interactiveResizeStrategy.IsInstalled)
+                {
+                    try
+                    {
+                        _interactiveResizeStrategy.Uninstall();
+                    }
+                    catch
+                    {
+                    }
                 }
 
                 // Unhook input.

@@ -32,10 +32,13 @@ namespace XREngine
         public static XRWindow CreateWindow(GameWindowStartupSettings windowSettings)
         {
             bool preferHdrOutput = windowSettings.OutputHDR ?? Rendering.Settings.OutputHDR;
-            var options = GetWindowOptions(windowSettings, preferHdrOutput);
+            EInteractiveWindowResizeStrategy interactiveResizeStrategy = ResolveInteractiveResizeStrategy(windowSettings);
+            bool useNativeTitleBar = windowSettings.UseNativeTitleBar &&
+                interactiveResizeStrategy != EInteractiveWindowResizeStrategy.EngineBorderlessResize;
+            var options = GetWindowOptions(windowSettings, preferHdrOutput, interactiveResizeStrategy);
 
             Debug.Rendering(
-                "[StartupWindow] Creating window '{0}' state={1} pos=({2},{3}) size={4}x{5} api={6} targetWorld={7}",
+                "[StartupWindow] Creating window '{0}' state={1} pos=({2},{3}) size={4}x{5} api={6} targetWorld={7} interactiveResize={8}",
                 windowSettings.WindowTitle ?? string.Empty,
                 windowSettings.WindowState,
                 windowSettings.X,
@@ -43,18 +46,19 @@ namespace XREngine
                 windowSettings.Width,
                 windowSettings.Height,
                 options.API.API,
-                windowSettings.TargetWorld?.Name ?? "<null>");
+                windowSettings.TargetWorld?.Name ?? "<null>",
+                interactiveResizeStrategy);
 
             XRWindow window;
             try
             {
-                window = new XRWindow(options, windowSettings.UseNativeTitleBar, windowSettings.VSync);
+                window = new XRWindow(options, useNativeTitleBar, windowSettings.VSync, interactiveResizeStrategy);
             }
             catch (Exception ex) when (options.API.API == ContextAPI.Vulkan)
             {
                 Debug.RenderingWarning($"Vulkan initialization failed, falling back to OpenGL: {ex.Message}");
                 options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ResolveOpenGLContextFlags(), new APIVersion(4, 6));
-                window = new XRWindow(options, windowSettings.UseNativeTitleBar, windowSettings.VSync);
+                window = new XRWindow(options, useNativeTitleBar, windowSettings.VSync, interactiveResizeStrategy);
             }
 
             window.PreferHDROutput = preferHdrOutput;
@@ -147,6 +151,12 @@ namespace XREngine
         /// Builds window options from startup settings.
         /// </summary>
         private static WindowOptions GetWindowOptions(GameWindowStartupSettings windowSettings, bool preferHdrOutput)
+            => GetWindowOptions(windowSettings, preferHdrOutput, EInteractiveWindowResizeStrategy.Default);
+
+        private static WindowOptions GetWindowOptions(
+            GameWindowStartupSettings windowSettings,
+            bool preferHdrOutput,
+            EInteractiveWindowResizeStrategy interactiveResizeStrategy)
         {
             WindowState windowState;
             WindowBorder windowBorder;
@@ -175,6 +185,8 @@ namespace XREngine
             }
 
             if (!windowSettings.UseNativeTitleBar && windowState == WindowState.Normal)
+                windowBorder = WindowBorder.Hidden;
+            if (interactiveResizeStrategy == EInteractiveWindowResizeStrategy.EngineBorderlessResize && windowState == WindowState.Normal)
                 windowBorder = WindowBorder.Hidden;
 
             bool requestHdrSurface = preferHdrOutput && UserSettings.RenderLibrary != ERenderLibrary.Vulkan;
@@ -207,6 +219,55 @@ namespace XREngine
 
         private static bool ResolveWindowVSyncEnabled(bool windowVSyncRequested, EVSyncMode globalVSyncMode)
             => windowVSyncRequested || globalVSyncMode != EVSyncMode.Off;
+
+        private static EInteractiveWindowResizeStrategy ResolveInteractiveResizeStrategy(GameWindowStartupSettings? windowSettings = null)
+        {
+            string envValue = InteractiveWindowResizeStrategyUtility.ResolveEnvironmentValue();
+            if (!string.IsNullOrWhiteSpace(envValue))
+            {
+                if (InteractiveWindowResizeStrategyUtility.TryParse(envValue, out EInteractiveWindowResizeStrategy envStrategy))
+                {
+                    Debug.Rendering(
+                        "[InteractiveResize] Resolved strategy={0} source=env:{1}.",
+                        envStrategy,
+                        InteractiveWindowResizeStrategyUtility.EnvironmentVariableName);
+                    return envStrategy;
+                }
+
+                Debug.RenderingWarning(
+                    "[InteractiveResize] Ignoring invalid {0} value '{1}'.",
+                    InteractiveWindowResizeStrategyUtility.EnvironmentVariableName,
+                    envValue);
+            }
+
+            if (windowSettings is not null &&
+                windowSettings.InteractiveResizeStrategy != EInteractiveWindowResizeStrategy.Default)
+            {
+                Debug.Rendering(
+                    "[InteractiveResize] Resolved strategy={0} source=window-startup.",
+                    windowSettings.InteractiveResizeStrategy);
+                return windowSettings.InteractiveResizeStrategy;
+            }
+
+            EInteractiveWindowResizeStrategy editorPreference = Engine.EditorPreferences.InteractiveResizeStrategy;
+            if (editorPreference != EInteractiveWindowResizeStrategy.Default)
+            {
+                Debug.Rendering(
+                    "[InteractiveResize] Resolved strategy={0} source=editor-preferences.",
+                    editorPreference);
+                return editorPreference;
+            }
+
+            Debug.Rendering("[InteractiveResize] Resolved strategy=Default source=default.");
+            return EInteractiveWindowResizeStrategy.Default;
+        }
+
+        private static void ApplyInteractiveResizeStrategySettings()
+        {
+            EInteractiveWindowResizeStrategy strategy = ResolveInteractiveResizeStrategy();
+            foreach (var window in _windows)
+                window?.SetInteractiveResizeStrategy(strategy);
+        }
 
         private static void ApplyWindowVSyncSettings()
         {

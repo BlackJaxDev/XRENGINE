@@ -336,7 +336,7 @@ public static partial class EditorImGuiUI
             // If we render ImGui using those viewports, ImGui's coordinate space inherits that offset and the
             // computed panel bounds get offset again ("double padding" / drifting render origin).
             // Render ImGui using a dedicated full-window viewport that is NOT part of the window's viewport list.
-            var fbSize = window!.Window.FramebufferSize;
+            var fbSize = window!.EffectiveFramebufferSize;
             if (fbSize.X <= 0 || fbSize.Y <= 0)
                 return;
 
@@ -347,7 +347,7 @@ public static partial class EditorImGuiUI
             // Clear the backbuffer since we won't be rendering the world to it in this mode.
             try
             {
-                var fbSize2 = window!.Window.FramebufferSize;
+                var fbSize2 = window!.EffectiveFramebufferSize;
                 renderer.BindFrameBuffer(EFramebufferTarget.Framebuffer, null);
                 renderer.SetRenderArea(new XREngine.Data.Geometry.BoundingRectangle(0, 0, fbSize2.X, fbSize2.Y));
                 renderer.ClearColor(new XREngine.Data.Colors.ColorF4(0f, 0f, 0f, 1f));
@@ -591,6 +591,7 @@ public static partial class EditorImGuiUI
             ImGui.PopStyleVar(3);
 
             uint dockSpaceId = ImGui.GetID(MainDockSpaceId);
+            ResizeDockSpaceNodeToViewport(dockSpaceId, viewport, totalReservedHeight);
 
             ImGui.DockSpace(dockSpaceId, Vector2.Zero, ImGuiDockNodeFlags.PassthruCentralNode);
             
@@ -1238,6 +1239,20 @@ public static partial class EditorImGuiUI
             ImGuiDockBuilderNative.DockWindow(ConsoleWindowId, bottomDockId);
 
             ImGuiDockBuilderNative.Finish(dockSpaceId);
+        }
+
+        private static void ResizeDockSpaceNodeToViewport(uint dockSpaceId, ImGuiViewportPtr viewport, float reservedHeight)
+        {
+            if (!ImGuiDockBuilderNative.NodeExists(dockSpaceId))
+                return;
+
+            Vector2 dockPos = new(viewport.Pos.X, viewport.Pos.Y + reservedHeight);
+            Vector2 dockSize = new(
+                MathF.Max(1.0f, viewport.Size.X),
+                MathF.Max(1.0f, viewport.Size.Y - reservedHeight));
+
+            ImGuiDockBuilderNative.SetNodePos(dockSpaceId, dockPos);
+            ImGuiDockBuilderNative.SetNodeSize(dockSpaceId, dockSize);
         }
 
         private static void DrawMainMenuBar()
@@ -2141,6 +2156,19 @@ public static partial class EditorImGuiUI
             string? iniFilename = _ownedImGuiIniFilename;
             if (string.IsNullOrWhiteSpace(iniFilename))
                 return;
+
+            if (!Engine.IsRenderThread)
+            {
+                _imguiPanelVisibilityWriteRequested = true;
+                return;
+            }
+
+            IntPtr currentContext = ImGui.GetCurrentContext();
+            if (currentContext == IntPtr.Zero)
+            {
+                _imguiPanelVisibilityWriteRequested = true;
+                return;
+            }
 
             if (Interlocked.CompareExchange(ref _iniSaveInFlight, 1, 0) != 0)
                 return;

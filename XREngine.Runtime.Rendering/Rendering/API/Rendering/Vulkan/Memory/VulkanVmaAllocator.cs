@@ -329,8 +329,12 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
     {
         allocation = VulkanMemoryAllocation.Null;
 
-        if (result == Result.ErrorOutOfDeviceMemory || result == Result.ErrorOutOfHostMemory)
+        if (result == Result.ErrorOutOfDeviceMemory ||
+            result == Result.ErrorOutOfHostMemory ||
+            result == Result.ErrorFeatureNotPresent)
+        {
             return false;
+        }
 
         if (result != Result.Success)
             throw new InvalidOperationException($"VMA allocation failed ({result}). Requested={requiredProperties}.");

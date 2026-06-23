@@ -71,6 +71,85 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
     }
 
     [Test]
+    public void MaterialTableAndDescriptorIndexedPathsShareMaterialLayoutContract()
+    {
+        string layoutSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/MaterialBindingLayout.cs");
+        string tableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/GPUMaterialTable.cs");
+        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
+        string vulkanTableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.BindlessMaterialTextureTable.cs");
+        string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+
+        layoutSource.ShouldContain("public sealed class MaterialBindingLayout");
+        layoutSource.ShouldContain("public uint RowByteCount => RowWordCount * sizeof(uint);");
+        layoutSource.ShouldContain("public string LayoutHash { get; }");
+        layoutSource.ShouldContain("MaterialBindingRowPacker");
+        layoutSource.ShouldContain("MaterialBindingResolverResult");
+        layoutSource.ShouldContain("return texture(XR_BindlessMaterialTextures[nonuniformEXT(descriptorIndex)], uv);");
+
+        tableSource.ShouldContain("public GPUMaterialTableDirtyRange MaterialDirtyRange");
+        tableSource.ShouldContain("public GPUMaterialTableDirtyRange TextureHandleDirtyRange");
+        tableSource.ShouldContain("MarkMaterialRowDirty(materialID);");
+        tableSource.ShouldContain("MarkTextureHandleRowDirty(index);");
+        tableSource.ShouldContain("public void PushDirtyRanges()");
+        tableSource.ShouldContain("buffer.PushSubData((int)offset, length);");
+        tableSource.ShouldContain("MaterialBindingRowPacker.TryWriteOpaqueDeferred");
+        passSource.ShouldContain("_materialTable.PushDirtyRanges();");
+
+        vulkanTableSource.ShouldContain("TryGetOrCreateMaterialTextureDescriptorIndex");
+        vulkanTableSource.ShouldContain("_dirtyGlobalMaterialTextureDescriptorSlots");
+        vulkanTableSource.ShouldContain("FlushGlobalMaterialTextureDescriptorUpdates");
+        vulkanTableSource.ShouldContain("GlobalMaterialTextureDescriptorFallbackReferencesTotal");
+        vulkanTableSource.ShouldContain("RecordVulkanDescriptorFallback");
+
+        hybridSource.ShouldContain("EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable");
+        hybridSource.ShouldContain("EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable");
+        hybridSource.ShouldContain("layout.LayoutHash");
+        hybridSource.ShouldContain("BeginGlobalMaterialTextureDescriptorScope");
+    }
+
+    [Test]
+    public void VulkanMaterialsUsePreparedDescriptorPlansAndVisibleFallbackDiagnostics()
+    {
+        string vkMaterialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMaterial.cs");
+        string vkProgramSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
+        string glMaterialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs");
+        string glProgramSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.UniformBinding.cs");
+
+        vkMaterialSource.ShouldContain("private sealed class ProgramDescriptorState");
+        vkMaterialSource.ShouldContain("public required IReadOnlyList<DescriptorBindingInfo> Bindings { get; init; }");
+        vkMaterialSource.ShouldContain("public required Dictionary<(uint set, uint binding), UniformBindingResource> UniformBindings { get; init; }");
+        vkMaterialSource.ShouldContain("public required bool HasMaterialParameterOrSamplerBindings { get; init; }");
+        vkMaterialSource.ShouldContain("public AutoUniformBlockInfo? ReflectedBlock { get; init; }");
+        vkMaterialSource.ShouldContain("program.TryGetAutoUniformBlockFuzzy(binding.Name, binding.Set, binding.Binding, out AutoUniformBlockInfo block)");
+        vkMaterialSource.ShouldContain("bufferSize = block.Size;");
+        vkMaterialSource.ShouldContain("TryWriteReflectedUniformBlock(data, reflectedBlock)");
+        vkMaterialSource.ShouldContain("return TryWriteSingleUniform(destination, member.Offset, value.Type, value.Value);");
+        vkMaterialSource.ShouldContain("private bool TryEnsureState(VkRenderProgram program, out ProgramDescriptorState? state)");
+        vkMaterialSource.ShouldContain("private static bool HasMaterialParameterOrSamplerBindings(IReadOnlyList<DescriptorBindingInfo> bindings)");
+        vkMaterialSource.ShouldContain("WarnNoMaterialBindings(program);");
+        vkMaterialSource.ShouldContain("has no Vulkan parameter or sampler bindings after descriptor resolution");
+        vkMaterialSource.ShouldContain("RecordDescriptorFallback(binding);");
+        vkMaterialSource.ShouldContain("RecordDescriptorFailure(binding");
+        vkMaterialSource.ShouldContain("binding.ExpectedImageViewType");
+        vkMaterialSource.ShouldContain("ImageUsageFlags.SampledBit");
+        vkMaterialSource.ShouldContain("ImageUsageFlags.StorageBit");
+        vkMaterialSource.ShouldContain("source.GetDepthOnlyDescriptorView()");
+        vkMaterialSource.ShouldContain("source.GetStencilOnlyDescriptorView()");
+
+        vkProgramSource.ShouldContain("ComputeGraphicsPipelineFingerprint");
+        vkProgramSource.ShouldContain("BuildDescriptorLayoutsShared");
+        vkProgramSource.ShouldContain("ComputeComputeDescriptorSchemaFingerprint");
+        vkProgramSource.ShouldContain("TryGetAutoUniformBlockFuzzy");
+        vkProgramSource.ShouldContain("TryGetVertexInputLocation");
+        vkProgramSource.ShouldContain("CreateCommonPushConstantRange");
+        vkProgramSource.ShouldContain("VulkanBindlessMaterialDescriptors.ResolveDescriptorCount");
+
+        glMaterialSource.ShouldContain("TextureRuntimeDiagnostics.LogMaterialBinding");
+        glMaterialSource.ShouldContain("TextureRuntimeDiagnostics.LogBindingRisk");
+        glProgramSource.ShouldContain("WarnIfNoUniformOrSamplerBindings");
+    }
+
+    [Test]
     public void ShaderSourceAndTypeChangesInvalidateSharedProgramInterfaces()
     {
         string xrShaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Resources/Shaders/XRShader.cs");
@@ -118,6 +197,62 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
         compilerSource.ShouldContain("GeneratedUberVariantHash");
         compilerSource.ShouldContain("ShaderConfigVersion");
         compilerSource.ShouldContain("useVulkanClipDepthRemap");
+    }
+
+    [Test]
+    public void ShaderArtifactsCarryReflectionIdentityAndPrewarmInputs()
+    {
+        string resolvedSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Resources/Shaders/ResolvedShaderSource.cs");
+        string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Resources/Shaders/ShaderSourceResolver.cs");
+        string vkShaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkShader.cs");
+        string compilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanShaderTools.cs");
+        string artifactCacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanShaderArtifactCache.cs");
+        string prewarmSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanPipelinePrewarmDatabase.cs");
+        string glDiagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Diagnostics.cs");
+        string glLifecycleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/ShaderProgramLifecycleDiagnostics.cs");
+
+        resolvedSource.ShouldContain("SourceIdentity");
+        resolverSource.ShouldContain("IncludeExpansionCacheKey");
+        resolverSource.ShouldContain("ResolvedPaths");
+
+        vkShaderSource.ShouldContain("VulkanShaderArtifact");
+        vkShaderSource.ShouldContain("byte[] SpirV");
+        vkShaderSource.ShouldContain("DescriptorBindings");
+        vkShaderSource.ShouldContain("VertexInputLocations");
+        vkShaderSource.ShouldContain("AutoUniformBlock");
+        vkShaderSource.ShouldContain("ArtifactIdentity");
+
+        compilerSource.ShouldContain("public sealed record PreparedSource");
+        compilerSource.ShouldContain("string RewrittenSource");
+        compilerSource.ShouldContain("CompilePrepared");
+        compilerSource.ShouldContain("BuildArtifactIdentity");
+        compilerSource.ShouldContain("ResolvedSourceIdentity");
+        compilerSource.ShouldContain("RewrittenSourceHash");
+        compilerSource.ShouldContain("VulkanShaderReflection");
+        compilerSource.ShouldContain("CollectDescriptorBindings");
+        compilerSource.ShouldContain("PushConstant");
+
+        artifactCacheSource.ShouldContain("VulkanShaderArtifactRuntimeFingerprint");
+        artifactCacheSource.ShouldContain("TargetEnvironment: \"Vulkan\"");
+        artifactCacheSource.ShouldContain("RewriteIdentity");
+        artifactCacheSource.ShouldContain("DescriptorBindings = [.. artifact.DescriptorBindings]");
+        artifactCacheSource.ShouldContain("VertexInputLocations = new Dictionary<string, uint>(artifact.VertexInputLocations, StringComparer.Ordinal)");
+
+        prewarmSource.ShouldContain("CreateGraphicsEntry");
+        prewarmSource.ShouldContain("CreateComputeEntry");
+        prewarmSource.ShouldContain("RecordVulkanPipelineCacheMiss(entry.ToProfilerSummary");
+        prewarmSource.ShouldContain("VulkanFeatureProfile.ActiveProfile");
+
+        glDiagnosticsSource.ShouldContain("LinkDiagnosticsSnapshot");
+        glDiagnosticsSource.ShouldContain("PreparedHash");
+        glDiagnosticsSource.ShouldContain("PreparedBinaryCacheHit");
+        glDiagnosticsSource.ShouldContain("BackendCompileMilliseconds");
+        glDiagnosticsSource.ShouldContain("OpenGLShaderCompilerThreadCount");
+        glDiagnosticsSource.ShouldContain("AsyncCompileLinkPending");
+
+        glLifecycleSource.ShouldContain("RecordBinaryCacheHit");
+        glLifecycleSource.ShouldContain("RecordBinaryCacheMiss");
+        glLifecycleSource.ShouldContain("LogSummary");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

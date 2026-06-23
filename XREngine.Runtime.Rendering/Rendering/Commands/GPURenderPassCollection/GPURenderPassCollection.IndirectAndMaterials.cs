@@ -1293,10 +1293,8 @@ namespace XREngine.Rendering.Commands
             }
 
             _materialTable.TrimTrailingUnused(128u);
-            _materialTable.Buffer.PushSubData();
-            if (textureReferenceMode == EMaterialTextureReferenceBuildMode.OpenGLBindlessHandles)
-                _materialTable.TextureHandleBuffer.PushSubData();
-            else if (textureReferenceMode == EMaterialTextureReferenceBuildMode.VulkanDescriptorIndices)
+            _materialTable.PushDirtyRanges();
+            if (textureReferenceMode == EMaterialTextureReferenceBuildMode.VulkanDescriptorIndices)
                 vulkanRenderer?.FlushGlobalMaterialTextureDescriptorUpdates();
 
             if (AbstractRenderer.Current is OpenGLRenderer openGlRenderer)

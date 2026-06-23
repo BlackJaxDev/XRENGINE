@@ -1226,6 +1226,11 @@ public interface IRuntimeRenderingHostServices
     bool IsWindowScenePanelPresentationEnabled { get; }
 
     /// <summary>
+    /// Gets the host default strategy for interactive window resize rendering.
+    /// </summary>
+    EInteractiveWindowResizeStrategy InteractiveResizeStrategy { get; }
+
+    /// <summary>
     /// Gets the scene panel resize debounce interval in milliseconds.
     /// </summary>
     int ScenePanelResizeDebounceMs { get; }

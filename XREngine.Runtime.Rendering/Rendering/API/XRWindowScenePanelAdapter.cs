@@ -115,6 +115,7 @@ namespace XREngine.Rendering
             else
             {
                 DateTime nowUtc = DateTime.UtcNow;
+                bool interactiveResize = window.IsInteractiveResizeInProgress;
 
                 bool sizeChanged = desiredWidth != _lastPanelWidth || desiredHeight != _lastPanelHeight;
                 if (sizeChanged)
@@ -126,9 +127,10 @@ namespace XREngine.Rendering
                         _panelResizeLastChangeUtc = nowUtc;
                     }
 
-                    bool shouldApplyResizeNow = debounceMs == 0 ||
-                        (_panelResizeLastChangeUtc != default &&
-                         (nowUtc - _panelResizeLastChangeUtc) >= TimeSpan.FromMilliseconds(debounceMs));
+                    bool shouldApplyResizeNow = !interactiveResize &&
+                        (debounceMs == 0 ||
+                         (_panelResizeLastChangeUtc != default &&
+                          (nowUtc - _panelResizeLastChangeUtc) >= TimeSpan.FromMilliseconds(debounceMs)));
 
                     if (shouldApplyResizeNow)
                     {
@@ -176,7 +178,7 @@ namespace XREngine.Rendering
             if (!_scenePanelSizingActive)
                 return;
 
-            var fb = window.Window.FramebufferSize;
+            var fb = window.EffectiveFramebufferSize;
             if (fb.X > 0 && fb.Y > 0)
                 RestoreFullWindowSizing(window, fb.X, fb.Y);
         }

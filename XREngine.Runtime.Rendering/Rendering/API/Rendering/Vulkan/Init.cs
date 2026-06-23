@@ -384,16 +384,8 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (requiredProperties.HasFlag(MemoryPropertyFlags.DeviceLocalBit))
-            {
-                MemoryPropertyFlags fallback = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
                 Debug.VulkanWarning(
-                    $"[Vulkan] OOM for image (requested {requiredProperties}). Falling back to {fallback}.");
-                if (alloc.TryAllocateForImage(Api!, device, image, fallback, out allocation))
-                {
-                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanOomFallback();
-                    return allocation;
-                }
-            }
+                    $"[Vulkan] Image allocation failed for {requiredProperties}; no host-visible fallback is attempted for Vulkan images.");
 
             throw new VulkanOutOfMemoryException(
                 $"Vulkan image allocation failed with no viable fallback. Requested={requiredProperties}",

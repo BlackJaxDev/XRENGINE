@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Numerics;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -18,6 +19,7 @@ namespace XREngine.Rendering.Vulkan
             uint baseArrayLayer,
             uint layerCount,
             uint mipLevel,
+            Extent2D extent,
             ImageLayout preferredLayout,
             PipelineStageFlags stageMask,
             AccessFlags accessMask,
@@ -30,6 +32,7 @@ namespace XREngine.Rendering.Vulkan
             public uint BaseArrayLayer { get; } = baseArrayLayer;
             public uint LayerCount { get; } = layerCount;
             public uint MipLevel { get; } = mipLevel;
+            public Extent2D Extent { get; } = extent;
             public ImageLayout PreferredLayout { get; } = preferredLayout;
             public PipelineStageFlags StageMask { get; } = stageMask;
             public AccessFlags AccessMask { get; } = accessMask;
@@ -37,7 +40,7 @@ namespace XREngine.Rendering.Vulkan
             public VkRenderBuffer? RenderBufferSource { get; } = renderBufferSource;
             public bool IsValid => Image.Handle != 0;
 
-            public BlitImageInfo WithResolvedState(Image image, ImageLayout preferredLayout)
+            public BlitImageInfo WithResolvedState(Image image, ImageLayout preferredLayout, Extent2D extent)
                 => new(
                     image,
                     Format,
@@ -45,6 +48,7 @@ namespace XREngine.Rendering.Vulkan
                     BaseArrayLayer,
                     LayerCount,
                     MipLevel,
+                    extent,
                     preferredLayout,
                     StageMask,
                     AccessMask,
@@ -229,6 +233,7 @@ namespace XREngine.Rendering.Vulkan
                         0,
                         1,
                         0,
+                        vkRenderBuffer.ResolveAttachmentExtent(),
                         effectiveLayout,
                         stage,
                         access,
@@ -335,6 +340,7 @@ namespace XREngine.Rendering.Vulkan
                 baseArrayLayer,
                 1,
                 resolvedMipLevel,
+                ResolveTextureBlitExtent(texture, source, mipLevel, layerIndex, resolvedMipLevel),
                 effectiveLayout,
                 stage,
                 access,
@@ -360,7 +366,14 @@ namespace XREngine.Rendering.Vulkan
                 if (liveLayout == ImageLayout.Undefined)
                     liveLayout = info.PreferredLayout;
 
-                resolved = info.WithResolvedState(liveImage, liveLayout);
+                Extent2D liveExtent = info.Extent;
+                if (source is IVkFrameBufferAttachmentSource attachmentSource &&
+                    attachmentSource.TryGetAttachmentExtent(Math.Max((int)info.MipLevel, 0), ResolveBlitInfoLayerIndex(info), out Extent2D attachmentExtent))
+                {
+                    liveExtent = attachmentExtent;
+                }
+
+                resolved = info.WithResolvedState(liveImage, liveLayout, liveExtent);
                 return true;
             }
 
@@ -378,7 +391,7 @@ namespace XREngine.Rendering.Vulkan
                 if (renderBuffer.PhysicalGroup is { } group)
                     liveLayout = group.LastKnownLayout;
 
-                resolved = info.WithResolvedState(liveImage, liveLayout);
+                resolved = info.WithResolvedState(liveImage, liveLayout, renderBuffer.ResolveAttachmentExtent());
                 return true;
             }
 
@@ -453,6 +466,7 @@ namespace XREngine.Rendering.Vulkan
                     0,
                     1,
                     0,
+                    swapChainExtent,
                     ImageLayout.ColorAttachmentOptimal,
                     PipelineStageFlags.ColorAttachmentOutputBit,
                     AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
@@ -477,6 +491,7 @@ namespace XREngine.Rendering.Vulkan
                         0,
                         1,
                         0,
+                        swapChainExtent,
                         ImageLayout.DepthStencilAttachmentOptimal,
                         PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
                         AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit);
@@ -515,13 +530,61 @@ namespace XREngine.Rendering.Vulkan
                 _ => view.MinLayer + resolvedLayer
             };
 
-        private static ImageBlit BuildImageBlit(
+        private static Extent2D ResolveTextureBlitExtent(
+            XRTexture texture,
+            IVkImageDescriptorSource source,
+            int mipLevel,
+            int layerIndex,
+            uint resolvedMipLevel)
+        {
+            if (source is IVkFrameBufferAttachmentSource attachmentSource &&
+                attachmentSource.TryGetAttachmentExtent(Math.Max(mipLevel, 0), layerIndex, out Extent2D resolvedExtent) &&
+                resolvedExtent.Width > 0 &&
+                resolvedExtent.Height > 0)
+            {
+                return resolvedExtent;
+            }
+
+            Vector3 dimensions = texture.WidthHeightDepth;
+            uint width = Math.Max((uint)Math.Max(dimensions.X, 1.0f), 1u);
+            uint height = Math.Max((uint)Math.Max(dimensions.Y, 1.0f), 1u);
+            if (resolvedMipLevel > 0)
+            {
+                width = Math.Max(width >> (int)resolvedMipLevel, 1u);
+                height = Math.Max(height >> (int)resolvedMipLevel, 1u);
+            }
+
+            return new Extent2D(width, height);
+        }
+
+        private static bool TryBuildImageBlit(
             BlitImageInfo source,
             BlitImageInfo destination,
             int inX, int inY, uint inW, uint inH,
-            int outX, int outY, uint outW, uint outH)
+            int outX, int outY, uint outW, uint outH,
+            out ImageBlit region)
         {
-            ImageBlit region = new()
+            region = default;
+
+            int sourceWidth = (int)Math.Max(source.Extent.Width, 1u);
+            int sourceHeight = (int)Math.Max(source.Extent.Height, 1u);
+            int destinationWidth = (int)Math.Max(destination.Extent.Width, 1u);
+            int destinationHeight = (int)Math.Max(destination.Extent.Height, 1u);
+
+            int srcX0 = ClampBlitOffset(inX, sourceWidth);
+            int srcY0 = ClampBlitOffset(inY, sourceHeight);
+            int srcX1 = ClampBlitOffset((long)inX + inW, sourceWidth);
+            int srcY1 = ClampBlitOffset((long)inY + inH, sourceHeight);
+
+            int dstX0 = ClampBlitOffset(outX, destinationWidth);
+            int dstY0 = ClampBlitOffset(outY, destinationHeight);
+            int dstX1 = ClampBlitOffset((long)outX + outW, destinationWidth);
+            int dstY1 = ClampBlitOffset((long)outY + outH, destinationHeight);
+
+            if (srcX1 <= srcX0 || srcY1 <= srcY0 || dstX1 <= dstX0 || dstY1 <= dstY0)
+                return false;
+
+            region = new ImageBlit
             {
                 SrcSubresource = new ImageSubresourceLayers
                 {
@@ -539,12 +602,23 @@ namespace XREngine.Rendering.Vulkan
                 }
             };
 
-            region.SrcOffsets.Element0 = new Offset3D { X = inX, Y = inY, Z = 0 };
-            region.SrcOffsets.Element1 = new Offset3D { X = inX + (int)inW, Y = inY + (int)inH, Z = 1 };
-            region.DstOffsets.Element0 = new Offset3D { X = outX, Y = outY, Z = 0 };
-            region.DstOffsets.Element1 = new Offset3D { X = outX + (int)outW, Y = outY + (int)outH, Z = 1 };
+            region.SrcOffsets.Element0 = new Offset3D { X = srcX0, Y = srcY0, Z = 0 };
+            region.SrcOffsets.Element1 = new Offset3D { X = srcX1, Y = srcY1, Z = 1 };
+            region.DstOffsets.Element0 = new Offset3D { X = dstX0, Y = dstY0, Z = 0 };
+            region.DstOffsets.Element1 = new Offset3D { X = dstX1, Y = dstY1, Z = 1 };
 
-            return region;
+            return true;
+        }
+
+        private static int ClampBlitOffset(long value, int extent)
+        {
+            if (value <= 0)
+                return 0;
+
+            if (value >= extent)
+                return extent;
+
+            return (int)value;
         }
 
         // =========== Image Transitions ===========

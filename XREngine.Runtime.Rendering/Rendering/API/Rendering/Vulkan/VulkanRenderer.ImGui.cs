@@ -281,10 +281,6 @@ public unsafe partial class VulkanRenderer
             var io = ImGui.GetIO();
             io.DeltaTime = deltaSeconds > 0f ? deltaSeconds : 1f / 60f;
 
-            uint width = Math.Max(_renderer.swapChainExtent.Width, 1u);
-            uint height = Math.Max(_renderer.swapChainExtent.Height, 1u);
-            io.DisplaySize = new Vector2(width, height);
-
             TryAttachInputHandlers();
             PushModifierKeyState(io);
             FlushPendingInputEvents(io);
@@ -1456,6 +1452,23 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        if (drawData.FramebufferWidth != swapChainExtent.Width ||
+            drawData.FramebufferHeight != swapChainExtent.Height)
+        {
+            ResetImGuiFrameMarker();
+
+            Debug.VulkanEvery(
+                $"Vulkan.ImGui.StaleSnapshot.{GetHashCode()}",
+                TimeSpan.FromMilliseconds(500),
+                "[Vulkan] Skipping stale ImGui overlay snapshot. Snapshot={0}x{1} Swapchain={2}x{3}.",
+                drawData.FramebufferWidth,
+                drawData.FramebufferHeight,
+                swapChainExtent.Width,
+                swapChainExtent.Height);
+            drawData = null;
+            return false;
+        }
+
         return true;
     }
 
@@ -1585,7 +1598,9 @@ public unsafe partial class VulkanRenderer
            drawData.TotalIndexCount > 0 &&
            drawData.CommandLists.Count > 0 &&
            drawData.DisplaySize.X > 0f &&
-           drawData.DisplaySize.Y > 0f;
+           drawData.DisplaySize.Y > 0f &&
+           drawData.FramebufferWidth > 0 &&
+           drawData.FramebufferHeight > 0;
 
     private void TransitionSwapchainImageForImGuiOverlay(
         CommandBuffer commandBuffer,
@@ -1686,8 +1701,8 @@ public unsafe partial class VulkanRenderer
 
         PushConstantsTracked(commandBuffer, _imguiPipelineLayout, ShaderStageFlags.VertexBit, 0, pushConstants);
 
-        uint fbWidth = (uint)(displaySize.X * clipScale.X);
-        uint fbHeight = (uint)(displaySize.Y * clipScale.Y);
+        uint fbWidth = drawData.FramebufferWidth;
+        uint fbHeight = drawData.FramebufferHeight;
         if (fbWidth == 0 || fbHeight == 0)
             return;
 
@@ -1995,6 +2010,8 @@ public unsafe partial class VulkanRenderer
         public required Vector2 DisplayPos { get; init; }
         public required Vector2 DisplaySize { get; init; }
         public required Vector2 FramebufferScale { get; init; }
+        public required uint FramebufferWidth { get; init; }
+        public required uint FramebufferHeight { get; init; }
         public required int TotalVertexCount { get; init; }
         public required int TotalIndexCount { get; init; }
         public required List<ImGuiCommandListSnapshot> CommandLists { get; init; }
@@ -2063,10 +2080,24 @@ public unsafe partial class VulkanRenderer
                 DisplayPos = drawData.DisplayPos,
                 DisplaySize = drawData.DisplaySize,
                 FramebufferScale = drawData.FramebufferScale,
+                FramebufferWidth = ComputeFramebufferExtent(drawData.DisplaySize.X, drawData.FramebufferScale.X),
+                FramebufferHeight = ComputeFramebufferExtent(drawData.DisplaySize.Y, drawData.FramebufferScale.Y),
                 TotalVertexCount = totalVertices,
                 TotalIndexCount = totalIndices,
                 CommandLists = commandLists
             };
+        }
+
+        private static uint ComputeFramebufferExtent(float displaySize, float framebufferScale)
+        {
+            if (!float.IsFinite(displaySize) || !float.IsFinite(framebufferScale))
+                return 0;
+
+            float value = displaySize * framebufferScale;
+            if (value <= 0f)
+                return 0;
+
+            return value >= uint.MaxValue ? uint.MaxValue : (uint)MathF.Round(value);
         }
     }
 
