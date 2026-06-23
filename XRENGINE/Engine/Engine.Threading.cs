@@ -46,6 +46,20 @@ namespace XREngine
         public static int RenderThreadId { get; private set; }
 
         /// <summary>
+        /// Gets whether the current thread owns backend native window creation and event pumping.
+        /// </summary>
+        public static bool IsWindowThread
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => Environment.CurrentManagedThreadId == WindowThreadId;
+        }
+
+        /// <summary>
+        /// Gets the managed thread ID of the native window/event thread for the current backend mode.
+        /// </summary>
+        public static int WindowThreadId { get; private set; }
+
+        /// <summary>
         /// Gets whether the current thread is the app/update thread.
         /// </summary>
         public static bool IsAppThread
@@ -84,10 +98,16 @@ namespace XREngine
             => PhysicsThreadId = threadId;
 
         /// <summary>
-        /// Sets the render thread ID. Called during initialization.
+        /// Sets the render thread ID. Called by the render host or collapsed render/window startup path.
         /// </summary>
         internal static void SetRenderThreadId(int threadId)
             => RenderThreadId = threadId;
+
+        /// <summary>
+        /// Sets the native window/event thread ID. Called by the backend-required window host.
+        /// </summary>
+        internal static void SetWindowThreadId(int threadId)
+            => WindowThreadId = threadId;
 
         /// <summary>
         /// Sets the app/update thread ID. Called internally by the engine timer.
@@ -326,25 +346,25 @@ namespace XREngine
             => Jobs.Schedule(new LabeledActionJob(task, reason), JobPriority.Normal, JobAffinity.AppThread);
 
         /// <summary>
-        /// Schedules a task to execute on the main (render) thread.
+        /// Compatibility alias for <see cref="EnqueueRenderThreadTask(Action)"/>.
         /// </summary>
         public static void EnqueueMainThreadTask(Action task)
             => EnqueueRenderThreadTask(task);
 
         /// <summary>
-        /// Schedules a task to execute on the main (render) thread with explicit render-thread intent.
+        /// Compatibility alias for <see cref="EnqueueRenderThreadTask(Action, RenderThreadJobKind)"/>.
         /// </summary>
         public static void EnqueueMainThreadTask(Action task, RenderThreadJobKind renderThreadKind)
             => EnqueueRenderThreadTask(task, renderThreadKind);
 
         /// <summary>
-        /// Schedules a labeled task to execute on the main (render) thread.
+        /// Compatibility alias for <see cref="EnqueueRenderThreadTask(Action, string)"/>.
         /// </summary>
         public static void EnqueueMainThreadTask(Action task, string reason)
             => EnqueueRenderThreadTask(task, reason);
 
         /// <summary>
-        /// Schedules a labeled task to execute on the main (render) thread with explicit render-thread intent.
+        /// Compatibility alias for <see cref="EnqueueRenderThreadTask(Action, string, RenderThreadJobKind)"/>.
         /// </summary>
         public static void EnqueueMainThreadTask(Action task, string reason, RenderThreadJobKind renderThreadKind)
             => EnqueueRenderThreadTask(task, reason, renderThreadKind);
@@ -499,13 +519,13 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Invokes a task on the main/render thread if not already there.
+        /// Compatibility alias for <see cref="InvokeOnRenderThread(Action, string, bool)"/>.
         /// </summary>
         public static bool InvokeOnMainThread(Action task, string reason, bool executeNowIfAlreadyMainThread = false)
             => InvokeOnRenderThread(task, reason, executeNowIfAlreadyMainThread);
 
         /// <summary>
-        /// Invokes a task on the main/render thread if not already there.
+        /// Compatibility alias for <see cref="InvokeOnRenderThread(Action, string, RenderThreadJobKind, bool)"/>.
         /// </summary>
         public static bool InvokeOnMainThread(
             Action task,

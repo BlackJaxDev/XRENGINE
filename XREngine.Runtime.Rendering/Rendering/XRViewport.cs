@@ -170,7 +170,11 @@ namespace XREngine.Rendering
         /// </summary>
         public XRWindow? Window { get; set; }
 
-        object? IRuntimeLocalPlayerViewport.InputContext => Window?.Input;
+        WindowInputSnapshot IRuntimeLocalPlayerViewport.InputSnapshot
+            => Window?.LatestWindowInputSnapshot ?? default;
+
+        object? IRuntimeLocalPlayerViewport.GetThreadAffinedDeviceSourceForBinding()
+            => Window?.Input;
 
         /// <summary>
         /// Optional override for the world instance to render.
@@ -1353,12 +1357,15 @@ namespace XREngine.Rendering
             Resized?.Invoke(this);
         }
 
-        internal void ResizePresentationOnly(uint windowWidth, uint windowHeight)
+        public void SetPresentationOutputExtent(uint windowWidth, uint windowHeight)
         {
             UpdateRegionFromWindowSize(windowWidth, windowHeight);
             ResizeCameraComponentUI();
             SetAspectRatioToCamera();
         }
+
+        public void SetFullInternalExtent(uint windowWidth, uint windowHeight)
+            => Resize(windowWidth, windowHeight, setInternalResolution: true);
 
         private void UpdateRegionFromWindowSize(uint windowWidth, uint windowHeight)
         {

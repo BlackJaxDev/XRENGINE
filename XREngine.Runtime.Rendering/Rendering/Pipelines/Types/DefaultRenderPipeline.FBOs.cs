@@ -1420,7 +1420,7 @@ public partial class DefaultRenderPipeline
         // locations are registered in _boundSamplerLocations BEFORE BindFallbackSamplers runs.
         // (XRQuadFrameBuffer.SettingUniforms fires after BindFallbackSamplers, which would
         //  override layout(binding=) probe samplers with fallback textures.)
-        lightCombineMat.SettingUniforms += (_, program) => LightCombineFBO_SettingUniforms(program);
+        lightCombineMat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);
 
         var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false) { Name = LightCombineFBOName };
 
@@ -1691,7 +1691,7 @@ public partial class DefaultRenderPipeline
             $"textures=[{DescribeTextureList(textures)}]");
 
         // Wire through material SettingUniforms (same reason as non-MSAA path above).
-        mat.SettingUniforms += (_, program) => LightCombineFBO_SettingUniforms(program);
+        mat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);
 
         var fbo = new XRQuadFrameBuffer(mat, true, false) { Name = MsaaLightCombineFBOName };
         return fbo;

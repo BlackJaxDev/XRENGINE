@@ -341,7 +341,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         if (RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
             return false;
 
-        if (AbstractRenderer.Current is not VulkanRenderer renderer)
+        if ((RuntimeRenderingHostServices.Current.CurrentRenderer ?? AbstractRenderer.Current) is not VulkanRenderer renderer)
         {
             onError?.Invoke(new InvalidOperationException("Vulkan imported texture upload service could not resolve the active Vulkan renderer."));
             return true;

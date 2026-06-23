@@ -69,7 +69,13 @@ namespace XREngine
             {
                 StartingUp = true;
                 ShuttingDown = false;
-                RenderThreadId = Environment.CurrentManagedThreadId;
+                int startupThreadId = Environment.CurrentManagedThreadId;
+                SetWindowThreadId(startupThreadId);
+                SetRenderThreadId(startupThreadId);
+                Debug.Rendering(
+                    "[WindowOwnership] Startup thread owns collapsed window/render mode. WindowThreadId={0} RenderThreadId={1}.",
+                    WindowThreadId,
+                    RenderThreadId);
 
                 using (SuppressSettingsCascades())
                 {
@@ -145,10 +151,11 @@ namespace XREngine
         /// </summary>
         /// <remarks>
         /// This method will not return until the engine shuts down (all windows closed).
-        /// It must be called from the main/render thread.
+        /// It must be called from the current render host thread. In the collapsed
+        /// GLFW/Silk.NET mode this is also the native window/event thread.
         /// </remarks>
         public static void BlockForRendering()
-            => Time.Timer.BlockForRendering(IsEngineStillActive);
+            => RenderThreadHost.BlockForRendering(IsEngineStillActive);
 
         /// <summary>
         /// Initiates engine shutdown by closing all windows.
@@ -187,6 +194,7 @@ namespace XREngine
             // TODO: Implement clean shutdown where each window disposes of its own allocated assets
             Rendering.SecondaryContext.Dispose();
             Time.Timer.Stop();
+            WindowPumpHost.Stop();
             Jobs.Shutdown(waitForWorkers: false);
             Assets.Dispose();
         }

@@ -662,7 +662,10 @@ internal static class TextureRuntimeDiagnostics
         VulkanTextureUploadGenerationState state,
         string? detail)
     {
-        if (!ShouldLog(TextureRuntimeEventImportance.Verbose) && !RenderDiagnosticsFlags.VkTextureUploadTrace)
+        bool isImportantState = state is VulkanTextureUploadGenerationState.Canceled or VulkanTextureUploadGenerationState.Failed;
+        if (!isImportantState && !ShouldLog(TextureRuntimeEventImportance.Verbose) && !RenderDiagnosticsFlags.VkTextureUploadTrace)
+            return;
+        if (isImportantState && !ShouldLog(TextureRuntimeEventImportance.Warning) && !RenderDiagnosticsFlags.VkTextureUploadTrace)
             return;
 
         StringBuilder builder = RentBuilder();

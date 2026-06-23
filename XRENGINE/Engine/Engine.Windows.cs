@@ -1,5 +1,6 @@
 using Silk.NET.Maths;
 using Silk.NET.Windowing;
+using System.Threading;
 using XREngine.Rendering;
 
 namespace XREngine
@@ -17,8 +18,19 @@ namespace XREngine
         /// <param name="windows">The list of window configurations to create.</param>
         public static void CreateWindows(List<GameWindowStartupSettings> windows)
         {
+            bool splitWindowPumpStarted = WindowPumpHost.TryStartForStartupWindows(windows);
+            if (splitWindowPumpStarted)
+            {
+                SetRenderThreadId(0);
+                Debug.Rendering(
+                    "[RenderThreadHost] Dedicated render thread assignment is pending. WindowThreadId={0}.",
+                    WindowThreadId);
+            }
+
             foreach (var windowSettings in windows)
                 CreateWindow(windowSettings);
+
+            WaitForStartupWindowAttachment(TimeSpan.FromSeconds(5));
         }
 
         /// <summary>
@@ -27,7 +39,8 @@ namespace XREngine
         /// <param name="windowSettings">Configuration for the window.</param>
         /// <returns>The created window instance.</returns>
         /// <remarks>
-        /// If Vulkan initialization fails, automatically falls back to OpenGL.
+        /// If Vulkan initialization fails, automatically falls back to OpenGL in the collapsed
+        /// window/render path. The experimental split window pump path keeps Vulkan explicit.
         /// </remarks>
         public static XRWindow CreateWindow(GameWindowStartupSettings windowSettings)
         {
@@ -38,7 +51,7 @@ namespace XREngine
             var options = GetWindowOptions(windowSettings, preferHdrOutput, interactiveResizeStrategy);
 
             Debug.Rendering(
-                "[StartupWindow] Creating window '{0}' state={1} pos=({2},{3}) size={4}x{5} api={6} targetWorld={7} interactiveResize={8}",
+                "[StartupWindow] Creating window '{0}' state={1} pos=({2},{3}) size={4}x{5} api={6} targetWorld={7} interactiveResize={8} currentThread={9} windowThread={10} renderThread={11}",
                 windowSettings.WindowTitle ?? string.Empty,
                 windowSettings.WindowState,
                 windowSettings.X,
@@ -47,32 +60,74 @@ namespace XREngine
                 windowSettings.Height,
                 options.API.API,
                 windowSettings.TargetWorld?.Name ?? "<null>",
-                interactiveResizeStrategy);
+                interactiveResizeStrategy,
+                Environment.CurrentManagedThreadId,
+                WindowThreadId,
+                RenderThreadId);
 
-            XRWindow window;
+            bool createOnWindowPumpHost = WindowPumpHost.ShouldCreateWindowOnHost(windowSettings);
+            XRWindow window = createOnWindowPumpHost
+                ? WindowPumpHost.CreateWindow(
+                    () => CreateWindowInstance(
+                        options,
+                        useNativeTitleBar,
+                        windowSettings.VSync,
+                        interactiveResizeStrategy,
+                        allowVulkanFallback: false),
+                    $"CreateWindow[{windowSettings.WindowTitle ?? string.Empty}]")
+                : CreateWindowInstance(
+                    options,
+                    useNativeTitleBar,
+                    windowSettings.VSync,
+                    interactiveResizeStrategy,
+                    allowVulkanFallback: true);
+
+            FinishWindowCreation(windowSettings, window, preferHdrOutput);
+
+            return window;
+        }
+
+        private static XRWindow CreateWindowInstance(
+            WindowOptions options,
+            bool useNativeTitleBar,
+            bool windowVSyncRequested,
+            EInteractiveWindowResizeStrategy interactiveResizeStrategy,
+            bool allowVulkanFallback)
+        {
             try
             {
-                window = new XRWindow(options, useNativeTitleBar, windowSettings.VSync, interactiveResizeStrategy);
+                return new XRWindow(options, useNativeTitleBar, windowVSyncRequested, interactiveResizeStrategy);
             }
-            catch (Exception ex) when (options.API.API == ContextAPI.Vulkan)
+            catch (Exception ex) when (allowVulkanFallback && options.API.API == ContextAPI.Vulkan)
             {
                 Debug.RenderingWarning($"Vulkan initialization failed, falling back to OpenGL: {ex.Message}");
                 options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ResolveOpenGLContextFlags(), new APIVersion(4, 6));
-                window = new XRWindow(options, useNativeTitleBar, windowSettings.VSync, interactiveResizeStrategy);
+                return new XRWindow(options, useNativeTitleBar, windowVSyncRequested, interactiveResizeStrategy);
             }
+        }
 
+        private static void FinishWindowCreation(
+            GameWindowStartupSettings windowSettings,
+            XRWindow window,
+            bool preferHdrOutput)
+        {
             window.PreferHDROutput = preferHdrOutput;
             CreateViewports(windowSettings.LocalPlayers, window);
             window.UpdateViewportSizes();
             _windows.Add(window);
             window.ApplyVSyncMode(EffectiveSettings.VSync);
 
+            Vector2D<int> framebufferSize = window.EffectiveFramebufferSize;
             Debug.Rendering(
-                "[StartupWindow] Window created hash={0} framebuffer={1}x{2} viewports={3}",
+                "[StartupWindow] Window created hash={0} framebuffer={1}x{2} viewports={3} backend={4} backendCapabilities={5} nativeWindowThread={6} renderOwnerThread={7}",
                 window.GetHashCode(),
-                window.Window.FramebufferSize.X,
-                window.Window.FramebufferSize.Y,
-                window.Viewports.Count);
+                framebufferSize.X,
+                framebufferSize.Y,
+                window.Viewports.Count,
+                window.WindowBackendKind,
+                window.WindowBackendOwnership.Capabilities,
+                window.NativeWindowThreadId,
+                window.RenderOwnerThreadId);
 
             Rendering.ApplyRenderPipelinePreference();
             window.SetWorld(windowSettings.TargetWorld is null ? null : XRWorldInstance.GetOrInitWorld(windowSettings.TargetWorld));
@@ -82,8 +137,46 @@ namespace XREngine
                 window.GetHashCode(),
                 window.TargetWorldInstance?.TargetWorldName ?? "<null>",
                 window.IsTickLinked);
+        }
 
-            return window;
+        private static void WaitForStartupWindowAttachment(TimeSpan timeout)
+        {
+            if (_windows.Count == 0)
+                return;
+
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            while (true)
+            {
+                bool allReady = true;
+                for (int i = 0; i < _windows.Count; i++)
+                {
+                    if (_windows[i].IsStartupAttachmentComplete)
+                        continue;
+
+                    allReady = false;
+                    break;
+                }
+
+                if (allReady)
+                {
+                    Debug.Rendering(
+                        "[StartupWindow] Startup attachment barrier satisfied. windows={0} elapsedMs={1:F2}.",
+                        _windows.Count,
+                        System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds);
+                    return;
+                }
+
+                if (System.Diagnostics.Stopwatch.GetElapsedTime(start) >= timeout)
+                {
+                    Debug.RenderingWarning(
+                        "[StartupWindow] Startup attachment barrier timed out. windows={0} elapsedMs={1:F2}. Continuing with diagnostics.",
+                        _windows.Count,
+                        System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds);
+                    return;
+                }
+
+                Thread.Sleep(1);
+            }
         }
 
         /// <summary>
@@ -92,6 +185,7 @@ namespace XREngine
         /// <param name="window">The window to remove.</param>
         public static void RemoveWindow(XRWindow window)
         {
+            WindowPumpHost.UnregisterWindow(window);
             _windows.Remove(window);
             if (_windows.Count != 0)
                 return;
@@ -220,7 +314,7 @@ namespace XREngine
         private static bool ResolveWindowVSyncEnabled(bool windowVSyncRequested, EVSyncMode globalVSyncMode)
             => windowVSyncRequested || globalVSyncMode != EVSyncMode.Off;
 
-        private static EInteractiveWindowResizeStrategy ResolveInteractiveResizeStrategy(GameWindowStartupSettings? windowSettings = null)
+        internal static EInteractiveWindowResizeStrategy ResolveInteractiveResizeStrategy(GameWindowStartupSettings? windowSettings = null)
         {
             string envValue = InteractiveWindowResizeStrategyUtility.ResolveEnvironmentValue();
             if (!string.IsNullOrWhiteSpace(envValue))

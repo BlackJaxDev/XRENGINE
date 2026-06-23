@@ -79,27 +79,46 @@ public unsafe partial class VulkanRenderer
     internal Format SwapchainImageFormat => swapChainImageFormat;
     internal Extent2D SwapchainExtent => swapChainExtent;
 
-    private void RecreateSwapChain()
+    private bool RecreateSwapChain()
     {
         if (Interlocked.CompareExchange(ref _recreateSwapChainInProgress, 1, 0) != 0)
-            return;
+            return false;
 
         try
         {
-        Vector2D<int> framebufferSize = XRWindow.EffectiveFramebufferSize;
-        Vector2D<int> windowSize = Window.Size;
-        while (framebufferSize.X == 0 || framebufferSize.Y == 0 || windowSize.X == 0 || windowSize.Y == 0)
-        {
-            framebufferSize = XRWindow.EffectiveFramebufferSize;
-            windowSize = Window.Size;
-            Window.DoEvents();
-        }
+            WindowSurfaceSnapshot snapshot = XRWindow.LatestWindowSurfaceSnapshot;
+            Vector2D<int> framebufferSize = snapshot.HasValidFramebufferExtent
+                ? snapshot.FramebufferExtent
+                : XRWindow.EffectiveFramebufferSize;
+            Vector2D<int> windowSize = snapshot.HasValidClientExtent
+                ? snapshot.ClientExtent
+                : XRWindow.EffectiveWindowSize;
 
-        DisableStreamlineFrameGenerationBeforeSwapchainMutation("swapchain recreation");
-        DeviceWaitIdle();
-        DestroyAllSwapChainObjects();
-        CreateAllSwapChainObjects();
-        EnsureSwapchainTimelineState();
+            if (snapshot.IsMinimized ||
+                framebufferSize.X <= 0 ||
+                framebufferSize.Y <= 0 ||
+                windowSize.X <= 0 ||
+                windowSize.Y <= 0)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.RecreateDeferredForZeroSurface",
+                    TimeSpan.FromMilliseconds(500),
+                    "[Vulkan] Deferring swapchain recreation because the surface is not presentable. SnapshotSeq={0} Minimized={1} Framebuffer={2}x{3} Window={4}x{5}",
+                    snapshot.Sequence,
+                    snapshot.IsMinimized,
+                    framebufferSize.X,
+                    framebufferSize.Y,
+                    windowSize.X,
+                    windowSize.Y);
+                return false;
+            }
+
+            DisableStreamlineFrameGenerationBeforeSwapchainMutation("swapchain recreation");
+            DeviceWaitIdle();
+            DestroyAllSwapChainObjects();
+            CreateAllSwapChainObjects();
+            EnsureSwapchainTimelineState();
+            return true;
         }
         finally
         {

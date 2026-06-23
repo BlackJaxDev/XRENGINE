@@ -389,6 +389,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public ETwoPlayerPreference TwoPlayerViewportPreference => ETwoPlayerPreference.SplitHorizontally;
         public EThreePlayerPreference ThreePlayerViewportPreference => EThreePlayerPreference.PreferFirstPlayer;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeGraphicsApiKind.Unknown;
+        public IRuntimeRendererHost? CurrentRenderer => null;
         public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => null;
         public IRuntimeRenderPipelineFrameContext? CurrentRenderPipelineContext => null;
         public bool IsPlayModeTransitioning => false;

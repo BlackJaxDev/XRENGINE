@@ -154,6 +154,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         }
     }
 
+    public IRuntimeRendererHost? CurrentRenderer
+        => AbstractRenderer.Current ?? Engine.Windows.FirstOrDefault()?.Renderer;
+
     public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState
         => Engine.Rendering.State.CurrentRenderingPipeline?.RenderState;
 
@@ -404,6 +407,12 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void EnqueueAppThreadTask(Action task, string reason)
         => Engine.EnqueueAppThreadTask(task, reason);
+
+    public void EnqueueWindowThreadTask(IRuntimeRenderWindowHost window, Action task, string reason)
+        => Engine.WindowPumpHost.EnqueueWindowTask(window, task, reason);
+
+    public T InvokeWindowThreadTask<T>(IRuntimeRenderWindowHost window, Func<T> task, string reason)
+        => Engine.WindowPumpHost.InvokeWindowTask(window, task, reason);
 
     public void EnqueueRenderThreadCoroutine(Func<bool> task)
         => Engine.AddRenderThreadCoroutine(task);

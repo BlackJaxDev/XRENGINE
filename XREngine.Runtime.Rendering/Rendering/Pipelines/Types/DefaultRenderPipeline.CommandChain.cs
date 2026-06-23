@@ -388,6 +388,32 @@ public partial class DefaultRenderPipeline
             var msaaLightCmds = new ViewportRenderCommandContainer(this);
             using (msaaLightCmds.AddUsing<VPRC_BindFBOByName>(x =>
                 x.SetOptions(MsaaLightingFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+            using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbePositionBufferName;
+                x.BindingLocation = DeferredLightProbePositionBufferBinding;
+            }))
+            using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeTetraBufferName;
+                x.BindingLocation = DeferredLightProbeTetraBufferBinding;
+            }))
+            using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeParamBufferName;
+                x.BindingLocation = DeferredLightProbeParamBufferBinding;
+            }))
+            using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeGridCellBufferName;
+                x.BindingLocation = DeferredLightProbeGridCellBufferBinding;
+            }))
+            using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeGridIndexBufferName;
+                x.BindingLocation = DeferredLightProbeGridIndexBufferBinding;
+            }))
+            using (msaaLightCmds.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
             {
                 msaaLightCmds.Add<VPRC_StencilMask>().Set(~0u);
                 var msaaLightPass = msaaLightCmds.Add<VPRC_LightCombinePass>();
@@ -412,6 +438,32 @@ public partial class DefaultRenderPipeline
         {
             var stdLightCmds = new ViewportRenderCommandContainer(this);
             using (stdLightCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightingAccumFBOName, clearDepth: false, clearStencil: false)))
+            using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbePositionBufferName;
+                x.BindingLocation = DeferredLightProbePositionBufferBinding;
+            }))
+            using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeTetraBufferName;
+                x.BindingLocation = DeferredLightProbeTetraBufferBinding;
+            }))
+            using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeParamBufferName;
+                x.BindingLocation = DeferredLightProbeParamBufferBinding;
+            }))
+            using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeGridCellBufferName;
+                x.BindingLocation = DeferredLightProbeGridCellBufferBinding;
+            }))
+            using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeGridIndexBufferName;
+                x.BindingLocation = DeferredLightProbeGridIndexBufferBinding;
+            }))
+            using (stdLightCmds.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
             {
                 stdLightCmds.Add<VPRC_StencilMask>().Set(~0u);
                 stdLightCmds.Add<VPRC_LightCombinePass>().SetOptions(
@@ -494,7 +546,33 @@ public partial class DefaultRenderPipeline
             }
 
             c.Add<VPRC_DepthTest>().Enable = false;
-            c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+            using (c.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbePositionBufferName;
+                x.BindingLocation = DeferredLightProbePositionBufferBinding;
+            }))
+            using (c.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeTetraBufferName;
+                x.BindingLocation = DeferredLightProbeTetraBufferBinding;
+            }))
+            using (c.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeParamBufferName;
+                x.BindingLocation = DeferredLightProbeParamBufferBinding;
+            }))
+            using (c.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeGridCellBufferName;
+                x.BindingLocation = DeferredLightProbeGridCellBufferBinding;
+            }))
+            using (c.AddUsing<VPRC_BindBuffer>(x =>
+            {
+                x.BufferName = LightProbeGridIndexBufferName;
+                x.BindingLocation = DeferredLightProbeGridIndexBufferBinding;
+            }))
+            using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
+                c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
             AppendDiagnosticTextureCapture(c, "05b_LightCombine", DiffuseTextureName);
 
             c.Add<VPRC_DepthTest>().Enable = true;

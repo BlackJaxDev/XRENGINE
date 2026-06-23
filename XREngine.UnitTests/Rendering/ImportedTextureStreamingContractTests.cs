@@ -171,6 +171,8 @@ public sealed class ImportedTextureStreamingContractTests
         string serviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanTextureUploadService.cs");
         string hookSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanTextureStreamingHooks.cs");
         string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkImageBackedTexture.cs");
+        string denseBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VulkanDenseTextureResidencyBackend.cs");
+        string glBackendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Textures/OpenGLTextureResidencyBackends.cs");
 
         managerSource.ShouldContain("bool freezeResidentSizeForVulkan = ShouldFreezeVulkanImportedTextureResidency(snapshot);");
         managerSource.ShouldContain("desiredResidentSize = ResolveVulkanSafeResidentSize(snapshot, desiredResidentSize);");
@@ -200,6 +202,8 @@ public sealed class ImportedTextureStreamingContractTests
         serviceSource.ShouldContain("TryScheduleImportedTextureUpload(");
         hookSource.ShouldContain("private readonly VulkanTextureUploadService _textureUploadService = new();");
         hookSource.ShouldContain("TryScheduleImportedTextureResidencyTransition(");
+        denseBackendSource.ShouldContain("RuntimeRenderingHostServices.Current.CurrentRenderer ?? AbstractRenderer.Current");
+        glBackendSource.ShouldContain("RuntimeRenderingHostServices.Current.CurrentRenderer ?? AbstractRenderer.Current");
     }
 
     [Test]
@@ -242,7 +246,7 @@ public sealed class ImportedTextureStreamingContractTests
         contractsSource.ShouldContain("long UploadGeneration");
 
         managerSource.ShouldContain("ResolveTelemetryBackendName(");
-        managerSource.ShouldContain("Vulkan dense tiered (GLTieredTextureResidencyBackend)");
+        managerSource.ShouldContain("Vulkan dense tiered (legacy GL compat backend)");
         diagnosticsSource.ShouldContain("vulkanFrozen=");
         diagnosticsSource.ShouldContain("freezeReason='");
         diagnosticsSource.ShouldContain("Texture.VulkanUploadState");
@@ -316,13 +320,29 @@ public sealed class ImportedTextureStreamingContractTests
         hookSource.ShouldContain("EnqueueImportedTextureUpload(");
         imageTextureSource.ShouldContain("TryCreateSynchronizedImportedUpload(");
         imageTextureSource.ShouldContain("ReleasePreparedImportedUploadResources(");
-        imageTextureSource.ShouldContain("Renderer.MarkCommandBuffersDirty(\"ImportedTextureUploadPublished\")");
+        imageTextureSource.ShouldContain("Renderer.MarkCommandBuffersDirty(");
+        imageTextureSource.ShouldContain("ImportedTextureUploadPublished texture=");
         imageTextureSource.ShouldContain("Renderer.SetDebugObjectName(ObjectType.Image");
         imageTextureSource.ShouldContain("Renderer.SetDebugObjectName(ObjectType.Buffer");
         backendSource.ShouldContain("TryScheduleVulkanSynchronizedUpload(");
         backendSource.ShouldContain("RuntimeGraphicsApiKind.Vulkan");
         diagnosticsSource.ShouldContain("Texture.VulkanUploadLatency");
         validationSource.ShouldContain("SetDebugObjectName(ObjectType objectType");
+    }
+
+    [Test]
+    public void VulkanCommandChains_TreatImportedTextureUploadsAsPrimaryCommandWork()
+    {
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string commandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanCommandChainLowering.cs");
+
+        commandBufferSource.ShouldContain("private static bool HasTextureUploadFrameOps(FrameOp[] ops)");
+        commandBufferSource.ShouldContain("usingCommandChains && hasTextureUploadFrameOps && variant.FrameOpsSignature != frameOpsSignature");
+        commandChainSource.ShouldContain("case TextureUploadFrameOp upload:");
+        commandChainSource.ShouldContain("hash.Add(upload.Upload.PublicationToken);");
+        commandChainSource.ShouldContain("hash.Add(upload.Upload.Request.StreamingGeneration);");
+        commandChainSource.ShouldContain("hash.Add(upload.Upload.Image.Handle);");
+        commandChainSource.ShouldContain("hash.Add(upload.Upload.StagingResources.Length);");
     }
 
     [Test]
