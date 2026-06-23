@@ -21,7 +21,7 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
     private const nuint TimerId = 0x5852454Eu;
     private const uint DefaultTimerIntervalMs = 16;
     private const int OpenGlActiveSizingRenderHz = 60;
-    private const int VulkanActiveSizingRenderHz = 30;
+    private const int VulkanActiveSizingRenderHz = 60;
     private const string TimerIntervalEnvironmentVariable = "XRE_WIN32_INTERACTIVE_RESIZE_TIMER_MS";
 
     private static readonly object s_hookSync = new();
@@ -248,8 +248,8 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
             case WM_TIMER:
                 if (wParam == new UIntPtr(TimerId))
                 {
-                    if (ApplyCoalescedClientPresentationResize("win32-timer"))
-                        RecordCallbackAndRenderRateLimited("win32-timer");
+                    ApplyCoalescedClientPresentationResize("win32-timer");
+                    RecordCallbackAndRenderRateLimited("win32-timer");
                 }
                 break;
             case WM_EXITSIZEMOVE:

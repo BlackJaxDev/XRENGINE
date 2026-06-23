@@ -312,7 +312,7 @@ public sealed class VulkanP1ValidationTests
         string frameOpSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
         string recordSource = SliceBetween(
             commandBufferSource,
-            "private void RecordCommandBuffer",
+            "private ImageLayout RecordCommandBuffer",
             "private void RecordFrameOp");
         string drainSource = SliceBetween(
             frameOpSource,
@@ -378,7 +378,14 @@ public sealed class VulkanP1ValidationTests
     public void SwapchainResizeAndPresentation_HaveRecoveryAndPresentTransitionDiagnostics()
     {
         string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Core.cs");
+        string syncSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/SyncObjects.cs");
+        string win32ResizeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/InteractiveResize/Win32ModalLoopTimerInteractiveResizeStrategy.cs");
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string resizeResourceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/RenderPipelineAntiAliasingResources.cs");
+        string resizeRecoveryTextures = SliceBetween(
+            resizeResourceSource,
+            "internal static readonly string[] ResizeRecoveryTextureDependencies",
+            "internal static readonly string[] ResizeRecoveryFrameBufferDependencies");
 
         drawingSource.ShouldContain("AcquireNextImage");
         drawingSource.ShouldContain("Result.ErrorOutOfDateKhr");
@@ -389,11 +396,36 @@ public sealed class VulkanP1ValidationTests
         drawingSource.ShouldContain("RecreateSwapchainImmediately");
         drawingSource.ShouldContain("QueuePresent returned ErrorOutOfDateKhr");
         drawingSource.ShouldContain("QueuePresent returned SuboptimalKhr");
+        drawingSource.ShouldContain("InteractiveResizeAcquireTimeoutNanoseconds");
+        drawingSource.ShouldContain("acquireTimeoutNanoseconds = interactiveResize");
+        drawingSource.ShouldContain("Result.NotReady || result == Result.Timeout");
+        drawingSource.ShouldContain("AcquireNextImage returned {0} during interactive resize; skipping this repaint tick.");
+        drawingSource.ShouldContain("pendingMatchesLive && ShouldRunInteractiveSwapchainRecreate()");
+        drawingSource.ShouldContain("InteractiveSwapchainRecreateMinInterval = TimeSpan.FromMilliseconds(16)");
+        drawingSource.ShouldContain("HasTimelineValueCompleted(_graphicsTimelineSemaphore, slotWaitValue)");
+        drawingSource.ShouldContain("PendingResizeResourceCatchUp");
+        drawingSource.ShouldContain("Allowing active presentation-size mismatch while pending generation catches up");
+        drawingSource.ShouldContain("VulkanResizeResourceMismatch");
+        drawingSource.ShouldContain("SkippedResizeCatchUpThisFrame");
+        drawingSource.ShouldContain("skipped command-chain execution this frame while resize resources catch up");
+        drawingSource.ShouldNotContain("TryPreparePendingGenerationForResizeCatchUp");
+        drawingSource.ShouldNotContain("FramePrepareResizeCatchUp");
+        string pipelineInstanceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
+        pipelineInstanceSource.ShouldContain("FramePrepareResizeCatchUp");
+        pipelineInstanceSource.ShouldContain("FrameSkippedForResizeCatchUp");
+        pipelineInstanceSource.ShouldContain("_resizeCatchUpSkippedFrameId = RuntimeEngine.Rendering.State.RenderFrameId");
+        pipelineInstanceSource.ShouldContain("return PendingGeneration is null;");
+        pipelineInstanceSource.ShouldContain("legacy");
+        syncSource.ShouldContain("GetSemaphoreCounterValue");
+        win32ResizeSource.ShouldContain("private const int VulkanActiveSizingRenderHz = 60;");
+        win32ResizeSource.ShouldNotContain("if (ApplyCoalescedClientPresentationResize(\"win32-timer\"))");
+        resizeRecoveryTextures.ShouldNotContain("AutoExposureTextureName");
 
         commandBufferSource.ShouldContain("swapchainPresentTransitions");
         commandBufferSource.ShouldContain("usedSwapchainDynamicRendering");
         commandBufferSource.ShouldContain("presentTransitions=");
-        commandBufferSource.ShouldContain("expected exactly once");
+        commandBufferSource.ShouldContain("expectedPresentTransitions");
+        commandBufferSource.ShouldContain("expected {1}");
         commandBufferSource.ShouldContain("ImageLayout.PresentSrcKhr");
     }
 
