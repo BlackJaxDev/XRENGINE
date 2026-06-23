@@ -174,6 +174,40 @@ public sealed class VkDataBufferParityContractTests
         retirementSource.ShouldContain("WaitForTimelineValue");
     }
 
+    [Test]
+    public void VkDataBuffer_SourceContracts_CoverSteadyStateCountersAndZeroReadbackTelemetry()
+    {
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkDataBuffer.cs");
+        string runtimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs");
+        string telemetrySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Buffers/XRBufferWriteTelemetry.cs");
+        string stagingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanStagingManager.cs");
+
+        bufferSource.ShouldContain("private readonly VulkanStagingManager _stagingManager = new();");
+        bufferSource.ShouldContain("_lastUploadRoute = ResolveHostVisibleUploadRoute(_lastMemProps) + \"SubData\";");
+        bufferSource.ShouldContain("MemoryPropertyFlags.HostVisibleBit");
+        bufferSource.ShouldContain("MemoryPropertyFlags.HostCachedBit");
+        bufferSource.ShouldContain("RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(count);");
+        bufferSource.ShouldContain("XRBufferWriteTelemetry.RecordHostCachedReadback(count);");
+        bufferSource.ShouldContain("RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.BufferUploadBytes, clampedLength);");
+        bufferSource.ShouldContain("RecordBufferAllocationDiagnostics");
+        bufferSource.ShouldContain("RecordTransferQueuePolicyDiagnostics");
+
+        runtimeSource.ShouldContain("RecordRendererStateCounter");
+        runtimeSource.ShouldContain("RecordVulkanDescriptorFallback");
+        runtimeSource.ShouldContain("RecordVulkanDescriptorBindingFailure");
+        runtimeSource.ShouldContain("RecordGpuReadbackBytes");
+
+        telemetrySource.ShouldContain("RecordZeroReadbackViolation");
+        telemetrySource.ShouldContain("ZeroReadbackViolations");
+        telemetrySource.ShouldContain("RecordUpload");
+        telemetrySource.ShouldContain("AppendProfilerSummary");
+
+        stagingSource.ShouldContain("TryTakeReusable");
+        stagingSource.ShouldContain("Return");
+        stagingSource.ShouldContain("Trim");
+        stagingSource.ShouldContain("HostCachedBit");
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         string fullPath = ResolveWorkspacePath(relativePath);

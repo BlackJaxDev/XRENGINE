@@ -5,6 +5,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using YamlDotNet.Serialization;
 
@@ -38,6 +39,7 @@ namespace XREngine
         private EViewportPresentationMode _viewportPresentationMode = EViewportPresentationMode.FullViewportBehindImGuiUI;
         private ESceneDepthModePreference _sceneDepthMode = ESceneDepthModePreference.UseProjectDefault;
         private int _scenePanelResizeDebounceMs = 0;
+        private EInteractiveWindowResizeStrategy _interactiveResizeStrategy = EInteractiveWindowResizeStrategy.Win32ModalLoopTimer;
         private bool _hoverOutlineEnabled = true;
         private bool _selectionOutlineEnabled = true;
         private ColorF4 _hoverOutlineColor = ColorF4.Yellow;
@@ -149,6 +151,15 @@ namespace XREngine
         {
             get => _scenePanelResizeDebounceMs;
             set => SetField(ref _scenePanelResizeDebounceMs, Math.Max(0, value));
+        }
+
+        [Category("Window")]
+        [DisplayName("Interactive Resize Strategy")]
+        [Description("Default interactive resize strategy for new editor/runtime windows. The XRE_INTERACTIVE_RESIZE_STRATEGY environment variable overrides this.")]
+        public EInteractiveWindowResizeStrategy InteractiveResizeStrategy
+        {
+            get => _interactiveResizeStrategy;
+            set => SetField(ref _interactiveResizeStrategy, value);
         }
 
         [Category("Selection")]
@@ -801,6 +812,7 @@ namespace XREngine
             Debug.CopyFrom(source.Debug);
             ViewportPresentationMode = source.ViewportPresentationMode;
             ScenePanelResizeDebounceMs = source.ScenePanelResizeDebounceMs;
+            InteractiveResizeStrategy = source.InteractiveResizeStrategy;
             HoverOutlineEnabled = source.HoverOutlineEnabled;
             SelectionOutlineEnabled = source.SelectionOutlineEnabled;
             HoverOutlineColor = source.HoverOutlineColor;
@@ -873,6 +885,9 @@ namespace XREngine
 
             if (overrides.ScenePanelResizeDebounceMsOverride is { HasOverride: true } debounceOverride)
                 ScenePanelResizeDebounceMs = Math.Max(0, debounceOverride.Value);
+
+            if (overrides.InteractiveResizeStrategyOverride is { HasOverride: true } interactiveResizeOverride)
+                InteractiveResizeStrategy = interactiveResizeOverride.Value;
 
             if (overrides.HoverOutlineEnabledOverride is { HasOverride: true } hoverOutlineEnabledOverride)
                 HoverOutlineEnabled = hoverOutlineEnabledOverride.Value;

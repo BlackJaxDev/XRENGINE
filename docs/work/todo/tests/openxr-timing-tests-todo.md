@@ -6,6 +6,7 @@ Tracks the remaining test, allocation-audit, and hardware-validation work for th
 
 Sibling future-work tracker: [openxr-future-work-todo.md](../rendering/vr/openxr-future-work-todo.md).
 No-HMD runtime testing design: [OpenXR Monado Testing Pipeline](../../design/VR/openxr-monado-testing-pipeline.md).
+Dedicated Monado implementation tracker: [openxr-monado-testing-pipeline-todo.md](../rendering/vr/openxr-monado-testing-pipeline-todo.md).
 
 ## Contract Tests
 
@@ -47,12 +48,15 @@ Per-row checks:
 
 ## Monado Mock Runtime Lane
 
-- [ ] Create a dedicated branch for the Monado OpenXR testing pipeline work, for example `openxr-monado-testing-pipeline`.
-- [ ] Add a local smoke runner that launches Unit Testing World with `XR_RUNTIME_JSON` pointing at a Monado runtime manifest.
-- [ ] Assert instance/system/session/swapchain/frame lifecycle markers from logs or a structured OpenXR smoke summary.
-- [ ] Keep the existing `EmulatedVRPawn` lane as non-API scene/pawn coverage and document that it does not exercise OpenXR calls.
-- [ ] Promote the Monado lane to optional CI only after the runtime artifact/version and license flow are pinned.
-- [ ] Merge the dedicated branch back into `main` after implementation and validation.
+The detailed execution tracker now lives in
+[openxr-monado-testing-pipeline-todo.md](../rendering/vr/openxr-monado-testing-pipeline-todo.md).
+Keep this section as the timing-tests cross-link so OpenXR test work continues
+to include the no-HMD runtime lane.
+
+- [ ] Run the Lane 2 Monado smoke after OpenXR timing or frame-submission
+  changes once the dedicated tracker lands the local runner.
+- [ ] Keep Lane 0 contract tests independent of Monado so timing regressions can
+  fail before process/run orchestration starts.
 
 ## Phase 4 Input Audit (deferred from main todo)
 
@@ -62,4 +66,5 @@ Per-row checks:
 
 - [OpenXR VR Rendering (architecture)](../../../architecture/rendering/openxr-vr-rendering.md)
 - [OpenXR Monado Testing Pipeline](../../design/VR/openxr-monado-testing-pipeline.md)
+- [OpenXR Monado Testing Pipeline TODO](../rendering/vr/openxr-monado-testing-pipeline-todo.md)
 - [OpenXR Future Work TODO](../rendering/vr/openxr-future-work-todo.md)

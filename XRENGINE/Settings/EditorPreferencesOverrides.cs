@@ -5,6 +5,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Models;
 
 namespace XREngine
@@ -27,6 +28,7 @@ namespace XREngine
         private OverrideableSetting<EditorPreferences.EViewportPresentationMode> _viewportPresentationModeOverride = new();
         private OverrideableSetting<EditorPreferences.ESceneDepthModePreference> _sceneDepthModeOverride = new();
         private OverrideableSetting<int> _scenePanelResizeDebounceMsOverride = new();
+        private OverrideableSetting<EInteractiveWindowResizeStrategy> _interactiveResizeStrategyOverride = new();
         private OverrideableSetting<bool> _hoverOutlineEnabledOverride = new();
         private OverrideableSetting<bool> _selectionOutlineEnabledOverride = new();
         private OverrideableSetting<ColorF4> _hoverOutlineColorOverride = new();
@@ -98,6 +100,14 @@ namespace XREngine
         {
             get => _scenePanelResizeDebounceMsOverride;
             set => SetField(ref _scenePanelResizeDebounceMsOverride, value ?? new());
+        }
+
+        [Category("Window Overrides")]
+        [Description("Override for the editor/runtime interactive window resize strategy.")]
+        public OverrideableSetting<EInteractiveWindowResizeStrategy> InteractiveResizeStrategyOverride
+        {
+            get => _interactiveResizeStrategyOverride;
+            set => SetField(ref _interactiveResizeStrategyOverride, value ?? new());
         }
 
         [Category("Selection Overrides")]

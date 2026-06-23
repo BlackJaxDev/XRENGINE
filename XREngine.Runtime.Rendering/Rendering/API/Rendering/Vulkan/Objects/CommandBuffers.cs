@@ -1844,7 +1844,6 @@ namespace XREngine.Rendering.Vulkan
             {
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps"))
                 {
-                    VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
                     ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                     SplitDynamicUiBatchTextFrameOps(ops, out FrameOp[] staticOps, out dynamicUiBatchTextOps);
                     ops = staticOps;
@@ -2831,7 +2830,6 @@ namespace XREngine.Rendering.Vulkan
             if (ops.Length == 0)
                 return true;
 
-            VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
             ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
 
             Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _refreshMeshDrawSlotsByRendererScratch;
@@ -3354,8 +3352,6 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (commandChainSchedule is null)
                 {
-                    VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
-
                     // Always sort frame ops by (PassOrder, GroupOrder, OriginalIndex).
                     // Render graph pass order preserves producer/consumer dependencies
                     // across pipeline/viewport contexts, while GroupOrder keeps same-pass
@@ -4999,16 +4995,21 @@ namespace XREngine.Rendering.Vulkan
                             // pass alive.  Ending and re-beginning the swapchain render pass
                             // causes a storeOp → layout transition → loadOp cycle that can lose
                             // composited content (e.g. the skybox turns black).
-                            bool canPreserveSwapchainPass = renderPassActive &&
-                                activeTarget is null &&
-                                VulkanRenderGraphCompiler.OpTargetsSwapchain(op);
+                            int incomingPassIndex = op.PassIndex == int.MinValue && activePassIndex != int.MinValue
+                                ? activePassIndex
+                                : EnsureValidPassIndex(op.PassIndex, op.GetType().Name, op.Context.PassMetadata);
 
-                            if (!canPreserveSwapchainPass)
+                            bool preservedSwapchainPass = renderPassActive &&
+                                activeTarget is null &&
+                                VulkanRenderGraphCompiler.OpTargetsSwapchain(op) &&
+                                incomingPassIndex == activePassIndex;
+
+                            if (!preservedSwapchainPass)
                             {
                                 EndActiveRenderPass();
                             }
 
-                            if (passIndexLabelActive)
+                            if (!preservedSwapchainPass && passIndexLabelActive)
                             {
                                 CmdEndLabel(commandBuffer);
                                 passIndexLabelActive = false;
@@ -5040,8 +5041,15 @@ namespace XREngine.Rendering.Vulkan
                                     activeContext.ViewportIdentity);
                             }
 
-                            activePassIndex = int.MinValue;
-                            activeSchedulingIdentity = int.MinValue;
+                            if (preservedSwapchainPass)
+                            {
+                                activeSchedulingIdentity = op.Context.SchedulingIdentity;
+                            }
+                            else
+                            {
+                                activePassIndex = int.MinValue;
+                                activeSchedulingIdentity = int.MinValue;
+                            }
                             }
                             finally
                             {
@@ -5205,13 +5213,13 @@ namespace XREngine.Rendering.Vulkan
                             if (clear.ClearDepth || clear.ClearStencil)
                             {
                                 // Emit depth/stencil clear only — strip the color clear.
-                                RecordClearOp(commandBuffer, imageIndex, clear with { ClearColor = false });
+                                RecordClearOp(commandBuffer, imageIndex, clear with { ClearColor = false }, activeRenderArea);
                             }
                             // else: pure color clear on swapchain after first pass → skip entirely
                         }
                         else
                         {
-                            RecordClearOp(commandBuffer, imageIndex, clear);
+                            RecordClearOp(commandBuffer, imageIndex, clear, activeRenderArea);
                         }
                         break;
 
@@ -5646,15 +5654,18 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void RecordClearOp(CommandBuffer commandBuffer, uint imageIndex, ClearOp op)
+        private void RecordClearOp(CommandBuffer commandBuffer, uint imageIndex, ClearOp op, Rect2D activeRenderArea)
         {
             _ = imageIndex;
 
+            Extent2D targetExtent = op.Target is null
+                ? swapChainExtent
+                : new Extent2D(Math.Max(op.Target.Width, 1u), Math.Max(op.Target.Height, 1u));
+
             Rect2D clearArea = ClampRectToExtent(
                 op.Rect,
-                op.Target is null
-                    ? swapChainExtent
-                    : new Extent2D(Math.Max(op.Target.Width, 1u), Math.Max(op.Target.Height, 1u)));
+                targetExtent);
+            clearArea = ClampRectToRenderArea(clearArea, activeRenderArea);
 
             // Vulkan validation requires non-zero extent for vkCmdClearAttachments.
             if (clearArea.Extent.Width == 0 || clearArea.Extent.Height == 0)
@@ -5821,6 +5832,49 @@ namespace XREngine.Rendering.Vulkan
             };
         }
 
+        private static Rect2D ClampRectToRenderArea(Rect2D rect, Rect2D renderArea)
+        {
+            int renderLeft = renderArea.Offset.X;
+            int renderTop = renderArea.Offset.Y;
+            int renderRight = AddExtentClamped(renderArea.Offset.X, renderArea.Extent.Width);
+            int renderBottom = AddExtentClamped(renderArea.Offset.Y, renderArea.Extent.Height);
+
+            int rectLeft = rect.Offset.X;
+            int rectTop = rect.Offset.Y;
+            int rectRight = AddExtentClamped(rect.Offset.X, rect.Extent.Width);
+            int rectBottom = AddExtentClamped(rect.Offset.Y, rect.Extent.Height);
+
+            int left = Math.Max(rectLeft, renderLeft);
+            int top = Math.Max(rectTop, renderTop);
+            int right = Math.Min(rectRight, renderRight);
+            int bottom = Math.Min(rectBottom, renderBottom);
+
+            if (right <= left || bottom <= top)
+            {
+                return new Rect2D
+                {
+                    Offset = new Offset2D(left, top),
+                    Extent = new Extent2D(0, 0)
+                };
+            }
+
+            return new Rect2D
+            {
+                Offset = new Offset2D(left, top),
+                Extent = new Extent2D((uint)(right - left), (uint)(bottom - top))
+            };
+        }
+
+        private static int AddExtentClamped(int offset, uint extent)
+        {
+            long value = (long)offset + extent;
+            if (value > int.MaxValue)
+                return int.MaxValue;
+            if (value < int.MinValue)
+                return int.MinValue;
+            return (int)value;
+        }
+
         private void RecordBlitOp(CommandBuffer commandBuffer, uint imageIndex, BlitOp op)
         {
             void ExecuteSingleBlit(in BlitImageInfo source, in BlitImageInfo destination, Filter filter)
@@ -5861,7 +5915,37 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                ImageBlit region = BuildImageBlit(resolvedSource, resolvedDestination, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH);
+                if (!TryBuildImageBlit(
+                    resolvedSource,
+                    resolvedDestination,
+                    op.InX,
+                    op.InY,
+                    op.InW,
+                    op.InH,
+                    op.OutX,
+                    op.OutY,
+                    op.OutW,
+                    op.OutH,
+                    out ImageBlit region))
+                {
+                    Debug.VulkanWarningEvery(
+                        "Vulkan.Blit.EmptyClampedRegion",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Blit skipped: requested region does not intersect live extents. SrcReq={0},{1}+{2}x{3} SrcExtent={4}x{5} DstReq={6},{7}+{8}x{9} DstExtent={10}x{11}",
+                        op.InX,
+                        op.InY,
+                        op.InW,
+                        op.InH,
+                        resolvedSource.Extent.Width,
+                        resolvedSource.Extent.Height,
+                        op.OutX,
+                        op.OutY,
+                        op.OutW,
+                        op.OutH,
+                        resolvedDestination.Extent.Width,
+                        resolvedDestination.Extent.Height);
+                    return;
+                }
 
                 // Derive post-blit target layouts.  PreferredLayout may be Undefined
                 // for newly-created dedicated images whose tracked layout hasn't been
@@ -6328,6 +6412,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
+            EnsureComputeStorageImageLayoutsForDispatch(commandBuffer, op.Snapshot);
 
             if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, out _, out var tempBuffers))
             {
@@ -6362,6 +6447,124 @@ namespace XREngine.Rendering.Vulkan
                 new ComputeDispatchPushConstants(op.GroupsX, op.GroupsY, op.GroupsZ, 0u));
             Api!.CmdDispatch(commandBuffer, op.GroupsX, op.GroupsY, op.GroupsZ);
         }
+
+        private void EnsureComputeStorageImageLayoutsForDispatch(CommandBuffer commandBuffer, ComputeDispatchSnapshot snapshot)
+        {
+            foreach (ProgramImageBinding binding in snapshot.Images.Values)
+            {
+                XRTexture texture = binding.Texture;
+                if (texture is null)
+                    continue;
+
+                if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
+                    continue;
+
+                if (!source.UsesAllocatorImage)
+                    continue;
+
+                if ((source.DescriptorUsage & ImageUsageFlags.StorageBit) == 0)
+                    continue;
+
+                uint mipLevels = Math.Max(source.DescriptorMipLevels, 1u);
+                uint arrayLayers = Math.Max(source.DescriptorArrayLayers, 1u);
+                uint baseMipLevel = binding.Level < 0 ? 0u : Math.Min((uint)binding.Level, mipLevels - 1u);
+                uint baseArrayLayer = binding.Layered || binding.Layer < 0 ? 0u : Math.Min((uint)binding.Layer, arrayLayers - 1u);
+                uint layerCount = binding.Layered || binding.Layer < 0 ? arrayLayers - baseArrayLayer : 1u;
+                int trackedLayer = binding.Layered ? -1 : (int)baseArrayLayer;
+
+                IVkFrameBufferAttachmentSource? attachmentSource = source as IVkFrameBufferAttachmentSource;
+                ImageLayout oldLayout = attachmentSource?.GetAttachmentTrackedLayout((int)baseMipLevel, trackedLayer)
+                    ?? source.TrackedImageLayout;
+                if (oldLayout == ImageLayout.Undefined && (mipLevels > 1u || arrayLayers > 1u))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.ComputeStorageImage.MixedLayout.{texture.Name ?? texture.GetHashCode().ToString()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Skipping fallback compute storage layout transition for '{0}' because its live layout is mixed/unknown across subresources.",
+                        texture.Name ?? texture.GetDescribingName());
+                    continue;
+                }
+
+                if (oldLayout == ImageLayout.General)
+                    continue;
+
+                Image image = source.DescriptorImage;
+                if (image.Handle == 0)
+                    continue;
+
+                ImageAspectFlags aspect = source.DescriptorAspect;
+                if (aspect == 0)
+                    aspect = ImageAspectFlags.ColorBit;
+
+                ImageSubresourceRange range = new()
+                {
+                    AspectMask = aspect,
+                    BaseMipLevel = baseMipLevel,
+                    LevelCount = 1u,
+                    BaseArrayLayer = baseArrayLayer,
+                    LayerCount = Math.Max(layerCount, 1u)
+                };
+
+                ImageMemoryBarrier barrier = new()
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    SrcAccessMask = ResolveComputeStorageImageSourceAccess(oldLayout),
+                    DstAccessMask = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+                    OldLayout = oldLayout,
+                    NewLayout = ImageLayout.General,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Image = image,
+                    SubresourceRange = range
+                };
+
+                CmdPipelineBarrierTracked(
+                    commandBuffer,
+                    ResolveComputeStorageImageSourceStage(oldLayout),
+                    PipelineStageFlags.ComputeShaderBit,
+                    DependencyFlags.None,
+                    0,
+                    null,
+                    0,
+                    null,
+                    1,
+                    &barrier);
+
+                if (attachmentSource is not null)
+                {
+                    if (baseMipLevel == 0u && mipLevels == 1u && baseArrayLayer == 0u && layerCount >= arrayLayers)
+                        attachmentSource.UpdateTrackedLayout(ImageLayout.General);
+                    else
+                        attachmentSource.UpdateAttachmentTrackedLayout(ImageLayout.General, (int)baseMipLevel, trackedLayer);
+                }
+            }
+        }
+
+        private static PipelineStageFlags ResolveComputeStorageImageSourceStage(ImageLayout layout)
+            => layout switch
+            {
+                ImageLayout.Undefined => PipelineStageFlags.TopOfPipeBit,
+                ImageLayout.ColorAttachmentOptimal => PipelineStageFlags.ColorAttachmentOutputBit,
+                ImageLayout.DepthStencilAttachmentOptimal or ImageLayout.DepthStencilReadOnlyOptimal =>
+                    PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
+                ImageLayout.TransferSrcOptimal or ImageLayout.TransferDstOptimal => PipelineStageFlags.TransferBit,
+                ImageLayout.ShaderReadOnlyOptimal => PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                ImageLayout.PresentSrcKhr => PipelineStageFlags.BottomOfPipeBit,
+                _ => PipelineStageFlags.AllCommandsBit
+            };
+
+        private static AccessFlags ResolveComputeStorageImageSourceAccess(ImageLayout layout)
+            => layout switch
+            {
+                ImageLayout.Undefined => AccessFlags.None,
+                ImageLayout.ColorAttachmentOptimal => AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
+                ImageLayout.DepthStencilAttachmentOptimal => AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit,
+                ImageLayout.DepthStencilReadOnlyOptimal => AccessFlags.DepthStencilAttachmentReadBit,
+                ImageLayout.TransferSrcOptimal => AccessFlags.TransferReadBit,
+                ImageLayout.TransferDstOptimal => AccessFlags.TransferWriteBit,
+                ImageLayout.ShaderReadOnlyOptimal => AccessFlags.ShaderReadBit,
+                _ => AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit
+            };
 
         private void EmitPendingMemoryBarriers(CommandBuffer commandBuffer)
         {

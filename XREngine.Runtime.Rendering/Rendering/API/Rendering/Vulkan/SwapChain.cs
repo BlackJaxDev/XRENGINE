@@ -86,11 +86,11 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-        Vector2D<int> framebufferSize = Window!.FramebufferSize;
+        Vector2D<int> framebufferSize = XRWindow.EffectiveFramebufferSize;
         Vector2D<int> windowSize = Window.Size;
         while (framebufferSize.X == 0 || framebufferSize.Y == 0 || windowSize.X == 0 || windowSize.Y == 0)
         {
-            framebufferSize = Window.FramebufferSize;
+            framebufferSize = XRWindow.EffectiveFramebufferSize;
             windowSize = Window.Size;
             Window.DoEvents();
         }
@@ -512,7 +512,7 @@ public unsafe partial class VulkanRenderer
             return capabilities.CurrentExtent;
         else
         {
-            Vector2D<int> framebufferSize = Window!.FramebufferSize;
+            Vector2D<int> framebufferSize = XRWindow.EffectiveFramebufferSize;
             Vector2D<int> windowSize = Window.Size;
 
             // Prefer the larger non-zero size signal. Some desktop configurations report a

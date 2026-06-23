@@ -272,7 +272,7 @@ public static class ImGuiFileBrowser
         // Initialize the viewport's region to the current window size
         // This is necessary because ForTotalViewportCount only sets percentages,
         // and Resize is needed to compute actual dimensions
-        var size = window.Window.FramebufferSize;
+        var size = window.EffectiveFramebufferSize;
         viewport.Resize((uint)size.X, (uint)size.Y, true);
         
         window.Viewports.Add(viewport);

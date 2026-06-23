@@ -106,10 +106,15 @@ public unsafe partial class VulkanRenderer
 
         public override void PushData()
         {
+            if (!TryBeginPushData(out bool allowPostPushCallback))
+                return;
+
             Generate();
 
             if (_view.Handle != 0)
                 MarkUploaded();
+
+            CompletePushData(allowPostPushCallback);
         }
 
         public override void Bind()

@@ -87,6 +87,19 @@ public unsafe partial class VulkanRenderer
         internal ImageAspectFlags Aspect => _aspectOverride ?? ResolveAspect(Data.Type);
         internal SampleCountFlags Samples => _samplesOverride ?? ResolveSamples(Data.MultisampleCount);
 
+        internal Extent2D ResolveAttachmentExtent()
+        {
+            RefreshIfStale();
+            if (_physicalGroup is not null)
+            {
+                Extent3D extent = _physicalGroup.ResolvedExtent;
+                if (extent.Width > 0 && extent.Height > 0)
+                    return new Extent2D(extent.Width, extent.Height);
+            }
+
+            return new Extent2D(Math.Max(Data.Width, 1u), Math.Max(Data.Height, 1u));
+        }
+
         protected override uint CreateObjectInternal()
         {
             AcquireImage();

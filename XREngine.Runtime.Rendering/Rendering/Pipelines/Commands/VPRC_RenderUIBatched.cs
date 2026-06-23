@@ -29,14 +29,10 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
 
     protected override void Execute()
     {
-        int activePassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
-        bool preserveParentSwapchainPass =
-            activePassIndex != int.MinValue &&
-            ActivePipelineInstance.RenderState.OutputFBO is null;
-
-        using IDisposable? passScope = preserveParentSwapchainPass
-            ? null
-            : RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_renderPass);
+        // Screen-space UI can be rendered while the parent pipeline has a
+        // synthetic pass active.  Batched UI draws still need the UI pipeline's
+        // pass index so Vulkan validates them against the UI pass metadata.
+        using IDisposable passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_renderPass);
 
         XRCamera? camera = ActivePipelineInstance.RenderState.RenderingCamera
             ?? ActivePipelineInstance.RenderState.SceneCamera

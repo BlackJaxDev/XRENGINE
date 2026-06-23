@@ -130,6 +130,7 @@ namespace XREngine.Rendering.Vulkan
         private const int MAX_FRAMES_IN_FLIGHT = 2;
         private static readonly TimeSpan SwapchainRecreateDebounce = TimeSpan.FromMilliseconds(100);
         private static readonly TimeSpan SwapchainResizeSettleDelay = TimeSpan.FromMilliseconds(250);
+        private static readonly TimeSpan InteractiveSwapchainRecreateMinInterval = TimeSpan.FromMilliseconds(100);
 
         private int currentFrame = 0;
         private ulong _vkDebugFrameCounter = 0;
@@ -139,6 +140,7 @@ namespace XREngine.Rendering.Vulkan
         private uint _pendingSurfaceWidth;
         private uint _pendingSurfaceHeight;
         private long _lastFrameCompletedTimestamp;
+        private long _lastInteractiveSwapchainRecreateTimestamp;
         private int _consecutiveNotReadyCount;
         private const int MaxConsecutiveNotReadyBeforeRecreate = 3;
 
@@ -191,7 +193,7 @@ namespace XREngine.Rendering.Vulkan
             DrainRetiredImages();
         }
 
-        private bool TryGetViewportResourceMismatch(out string reason)
+        private bool TryGetViewportResourceBlocker(bool allowInteractiveDisplayMismatch, out string reason)
         {
             reason = string.Empty;
 
@@ -221,6 +223,26 @@ namespace XREngine.Rendering.Vulkan
                     key.InternalWidth == internalWidth &&
                     key.InternalHeight == internalHeight)
                 {
+                    continue;
+                }
+
+                bool internalMatches =
+                    key.InternalWidth == internalWidth &&
+                    key.InternalHeight == internalHeight;
+
+                if (allowInteractiveDisplayMismatch && internalMatches)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.Frame.{GetHashCode()}.InteractiveDisplayResourceMismatch.{viewport.Index}",
+                        TimeSpan.FromMilliseconds(500),
+                        "[Vulkan] Allowing presentation-only display mismatch during interactive resize. VP[{0}] activeDisplay={1}x{2} currentDisplay={3}x{4} internal={5}x{6}",
+                        viewport.Index,
+                        key.DisplayWidth,
+                        key.DisplayHeight,
+                        displayWidth,
+                        displayHeight,
+                        internalWidth,
+                        internalHeight);
                     continue;
                 }
 
@@ -266,17 +288,28 @@ namespace XREngine.Rendering.Vulkan
                 reason);
 
             RecreateSwapChain();
+            ResetImGuiFrameMarker();
         }
 
-        private bool ShouldRunDebouncedSwapchainRecreate()
+        private bool ShouldRunSwapchainRecreate(bool interactiveResize)
         {
             if (!_frameBufferInvalidated)
                 return false;
+
+            if (interactiveResize)
+                return true;
 
             if (_swapchainRecreateRequestedAt == 0)
                 return true;
 
             return Stopwatch.GetElapsedTime(_swapchainRecreateRequestedAt) >= SwapchainRecreateDebounce;
+        }
+
+        private bool ShouldRunInteractiveSwapchainRecreate()
+        {
+            long last = _lastInteractiveSwapchainRecreateTimestamp;
+            return last == 0 ||
+                Stopwatch.GetElapsedTime(last) >= InteractiveSwapchainRecreateMinInterval;
         }
 
         protected override void WindowRenderCallback(double delta)
@@ -315,13 +348,19 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
+            bool interactiveResize = XRWindow.IsInteractiveResizeInProgress;
+
             // Some platforms/drivers do not reliably emit out-of-date/suboptimal or resize callbacks
             // on every size transition. Proactively compare the live framebuffer size to the current
             // swapchain extent and trigger a rebuild when they diverge.
-            var liveFramebufferSize = Window!.FramebufferSize;
+            var liveFramebufferSize = XRWindow.EffectiveFramebufferSize;
             var liveWindowSize = Window.Size;
-            uint liveSurfaceWidth = (uint)Math.Max(Math.Max(liveFramebufferSize.X, liveWindowSize.X), 0);
-            uint liveSurfaceHeight = (uint)Math.Max(Math.Max(liveFramebufferSize.Y, liveWindowSize.Y), 0);
+            uint liveSurfaceWidth = liveFramebufferSize.X > 0
+                ? (uint)liveFramebufferSize.X
+                : (uint)Math.Max(liveWindowSize.X, 0);
+            uint liveSurfaceHeight = liveFramebufferSize.Y > 0
+                ? (uint)liveFramebufferSize.Y
+                : (uint)Math.Max(liveWindowSize.Y, 0);
 
             bool liveSurfaceValid = liveSurfaceWidth > 0 && liveSurfaceHeight > 0;
 
@@ -347,7 +386,14 @@ namespace XREngine.Rendering.Vulkan
 
             if (liveSurfaceValid && !surfaceMatchesSwapchain)
             {
-                ScheduleSwapchainRecreate("Surface/swapchain size mismatch");
+                if (interactiveResize)
+                {
+                    ScheduleSwapchainRecreate("Interactive resize surface/swapchain size mismatch");
+                }
+                else
+                {
+                    ScheduleSwapchainRecreate("Surface/swapchain size mismatch");
+                }
 
                 Debug.VulkanEvery(
                     $"Vulkan.Frame.{GetHashCode()}.SizeMismatch",
@@ -371,7 +417,7 @@ namespace XREngine.Rendering.Vulkan
 
             // If the window resized (or other framebuffer-dependent state changed), rebuild swapchain resources
             // before we acquire/record/submit. Waiting until after present can cause visible stretching/borders.
-            if (ShouldRunDebouncedSwapchainRecreate())
+            if (ShouldRunSwapchainRecreate(interactiveResize))
             {
                 bool hasPendingSurfaceSize = _pendingSurfaceWidth > 0 && _pendingSurfaceHeight > 0;
                 bool pendingMatchesLive = !hasPendingSurfaceSize ||
@@ -380,8 +426,34 @@ namespace XREngine.Rendering.Vulkan
                     (_swapchainResizeLastChangedAt != 0 &&
                      Stopwatch.GetElapsedTime(_swapchainResizeLastChangedAt) >= SwapchainResizeSettleDelay);
 
-                if (pendingMatchesLive && resizeSettled)
+                if (interactiveResize)
                 {
+                    if (pendingMatchesLive && ShouldRunInteractiveSwapchainRecreate())
+                    {
+                        RecreateSwapchainImmediately("Interactive resize presentation extent");
+                        _lastInteractiveSwapchainRecreateTimestamp = Stopwatch.GetTimestamp();
+                        surfaceMatchesSwapchain = liveSurfaceValid &&
+                            liveSurfaceWidth == swapChainExtent.Width &&
+                            liveSurfaceHeight == swapChainExtent.Height;
+                    }
+                    else
+                    {
+                        Debug.VulkanEvery(
+                            $"Vulkan.Frame.{GetHashCode()}.RecreateDeferredForInteractiveResize",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Deferring interactive swapchain recreate. Pending={0}x{1} Live={2}x{3} Swapchain={4}x{5} PendingMatchesLive={6}",
+                            _pendingSurfaceWidth,
+                            _pendingSurfaceHeight,
+                            liveSurfaceWidth,
+                            liveSurfaceHeight,
+                            swapChainExtent.Width,
+                            swapChainExtent.Height,
+                            pendingMatchesLive);
+                    }
+                }
+                else if (pendingMatchesLive && resizeSettled)
+                {
+                    _lastInteractiveSwapchainRecreateTimestamp = 0;
                     RecreateSwapchainImmediately("Debounce elapsed before frame acquire (resize settled)");
                     surfaceMatchesSwapchain = liveSurfaceValid &&
                         liveSurfaceWidth == swapChainExtent.Width &&
@@ -419,7 +491,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            if (TryGetViewportResourceMismatch(out string resourceMismatchReason))
+            if (TryGetViewportResourceBlocker(interactiveResize, out string resourceMismatchReason))
             {
                 WaitCurrentFrameSlotAndDrainRetiredResources();
                 DrainSkippedResizeFrameOps(resourceMismatchReason);
@@ -465,8 +537,8 @@ namespace XREngine.Rendering.Vulkan
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Frame={0} WindowFB={1}x{2} Swapchain={3}x{4}",
                 _vkDebugFrameCounter,
-                Window.FramebufferSize.X,
-                Window.FramebufferSize.Y,
+                liveFramebufferSize.X,
+                liveFramebufferSize.Y,
                 swapChainExtent.Width,
                 swapChainExtent.Height);
 
@@ -877,10 +949,14 @@ namespace XREngine.Rendering.Vulkan
             {
                 ScheduleSwapchainRecreate("QueuePresent returned SuboptimalKhr");
             }
+            else if (result == Result.ErrorSurfaceLostKhr)
+            {
+                RecreateSwapchainImmediately("QueuePresent returned ErrorSurfaceLostKhr");
+            }
             else if (result != Result.Success)
-                throw new Exception("Failed to present swap chain image.");
+                throw new Exception($"Failed to present swap chain image ({result}).");
 
-            if (ShouldRunDebouncedSwapchainRecreate())
+            if (!interactiveResize && ShouldRunSwapchainRecreate(interactiveResize: false))
                 RecreateSwapchainImmediately("Debounce elapsed after present");
 
             currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;

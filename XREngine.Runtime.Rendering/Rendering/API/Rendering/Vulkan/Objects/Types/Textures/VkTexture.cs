@@ -7,8 +7,17 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
+    public class VulkanPrePushDataCallback
+    {
+        public bool ShouldPush { get; set; } = true;
+        public bool AllowPostPushCallback { get; set; } = true;
+    }
+
     public abstract class VkTexture<T>(VulkanRenderer api, T data) : VkObject<T>(api, data) where T : XRTexture
     {
+        public XREvent<VulkanPrePushDataCallback>? PrePushData;
+        public XREvent<VkTexture<T>>? PostPushData;
+
         public override VkObjectType Type => VkObjectType.Image;
 
         /// <summary>
@@ -135,11 +144,44 @@ public unsafe partial class VulkanRenderer
         private void IncrementDescriptorGeneration()
             => Interlocked.Increment(ref _descriptorGeneration);
 
+        protected virtual void OnPrePushData(out bool shouldPush, out bool allowPostPushCallback)
+        {
+            VulkanPrePushDataCallback callback = new();
+            PrePushData?.Invoke(callback);
+            shouldPush = callback.ShouldPush;
+            allowPostPushCallback = callback.AllowPostPushCallback;
+        }
+
+        protected virtual void OnPostPushData()
+            => PostPushData?.Invoke(this);
+
+        protected bool TryBeginPushData(out bool allowPostPushCallback)
+        {
+            OnPrePushData(out bool shouldPush, out allowPostPushCallback);
+            if (shouldPush)
+                return true;
+
+            if (allowPostPushCallback)
+                OnPostPushData();
+            return false;
+        }
+
+        protected void CompletePushData(bool allowPostPushCallback)
+        {
+            if (allowPostPushCallback)
+                OnPostPushData();
+        }
+
         public virtual void PushData()
         {
+            if (!TryBeginPushData(out bool allowPostPushCallback))
+                return;
+
             Generate();
             if (IsGenerated)
                 MarkUploaded();
+
+            CompletePushData(allowPostPushCallback);
         }
 
         public virtual void Bind()

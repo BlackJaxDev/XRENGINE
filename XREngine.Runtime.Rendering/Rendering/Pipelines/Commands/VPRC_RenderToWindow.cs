@@ -254,7 +254,8 @@ void main()
         if (viewport is not null)
             return viewport.Region;
 
-        return new BoundingRectangle(0, 0, targetWindow.Window.FramebufferSize.X, targetWindow.Window.FramebufferSize.Y);
+        var framebufferSize = targetWindow.EffectiveFramebufferSize;
+        return new BoundingRectangle(0, 0, framebufferSize.X, framebufferSize.Y);
     }
 
     private string GetSourceDisplayName()

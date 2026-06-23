@@ -139,6 +139,76 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     }
 
     [Test]
+    public void MeshSubmissionDiagnosticsExposeRequestedSelectedFallbackAndCapabilityState()
+    {
+        string runtimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs");
+        string sharedPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Shared/VPRC_RenderMeshesPassShared.cs");
+        string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+        string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs");
+
+        runtimeSource.ShouldContain("ResolveMeshSubmissionStrategy");
+        runtimeSource.ShouldContain("LastMeshletDowngradeRequested");
+        runtimeSource.ShouldContain("LastMeshletDowngradeResolved");
+        runtimeSource.ShouldContain("LastMeshletDowngradeReason");
+        runtimeSource.ShouldContain("LastResolvedRendererBackend");
+        runtimeSource.ShouldContain("LastResolvedMeshShaderDialect");
+        runtimeSource.ShouldContain("LastResolvedSupportsMeshletDispatch");
+        runtimeSource.ShouldContain("Mesh submission strategy downgraded");
+
+        sharedPassSource.ShouldContain("Requested={MeshSubmissionStrategy};Selected={selectedStrategy}");
+        sharedPassSource.ShouldContain("FallbackReason={fallbackReason}");
+        sharedPassSource.ShouldContain("SupportsMeshletDispatch()");
+        sharedPassSource.ShouldContain("MeshletDispatchUnsupportedReason");
+        sharedPassSource.ShouldContain("RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(true)");
+        sharedPassSource.ShouldContain("VPRC_RenderMeshesPassMeshlet.Execute(this)");
+
+        hybridSource.ShouldContain("AssertZeroReadbackProductionInvariants");
+        hybridSource.ShouldContain("AssertZeroReadbackUsesGpuCountPath");
+        hybridSource.ShouldContain("RecordGpuMeshletStrategyRequested");
+        hybridSource.ShouldContain("WarnMeshletMaterialFallback");
+        hybridSource.ShouldContain("RecordForbiddenGpuFallback");
+
+        rendererSource.ShouldContain("public virtual bool SupportsMeshletDispatch()");
+        rendererSource.ShouldContain("public virtual string MeshletDispatchUnsupportedReason");
+    }
+
+    [Test]
+    public void MeshGeometryLayoutFeedsGpuSceneIndirectAndMeshletRecords()
+    {
+        string gpuSceneCommandBuffersSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.CommandBuffers.cs");
+        string gpuSceneSoaSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.Soa.cs");
+        string gpuSceneAddRemoveSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AddRemove.cs");
+        string gpuMeshletResourcesSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURendering/Resources/GPUMeshletResources.cs");
+        string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+
+        gpuSceneCommandBuffersSource.ShouldContain("MakeDrawMetadataBuffer(\"DrawMetadataBuffer\")");
+        gpuSceneCommandBuffersSource.ShouldContain("MakeMeshletRangeBuffer()");
+        gpuSceneCommandBuffersSource.ShouldContain("MeshletRangeBuffer/MeshletDescriptorBuffer/MeshletVertexIndexBuffer/MeshletTriangleIndexBuffer");
+        gpuSceneCommandBuffersSource.ShouldContain("public XRDataBuffer DrawMetadataBuffer");
+        gpuSceneCommandBuffersSource.ShouldContain("public XRDataBuffer MeshletRangeBuffer");
+
+        gpuSceneSoaSource.ShouldContain("UpdatingDrawMetadataBuffer.SetDataRawAtIndex(drawId, command.ToDrawMetadata(drawId));");
+        gpuSceneSoaSource.ShouldContain("_drawMetadataDirtyRange.Mark(drawId);");
+
+        gpuSceneAddRemoveSource.ShouldContain("EnsureMeshletRangeForMesh");
+        gpuSceneAddRemoveSource.ShouldContain("MeshletPayload");
+        gpuSceneAddRemoveSource.ShouldContain("MeshletDescriptorBuffer.SetDataRawAtIndex");
+        gpuSceneAddRemoveSource.ShouldContain("MeshletVertexIndexBuffer.SetDataRawAtIndex");
+        gpuSceneAddRemoveSource.ShouldContain("MeshletTriangleIndexBuffer.SetDataRawAtIndex");
+        gpuSceneAddRemoveSource.ShouldContain("FlushMeshletRangeDirtyRange");
+
+        gpuMeshletResourcesSource.ShouldContain("public struct GpuMeshletTaskRecord");
+        gpuMeshletResourcesSource.ShouldContain("MeshletTaskRecordStride");
+        gpuMeshletResourcesSource.ShouldContain("public XRDataBuffer DrawMetadataBuffer { get; }");
+        gpuMeshletResourcesSource.ShouldContain("public XRDataBuffer MeshletRangeBuffer { get; }");
+
+        hybridSource.ShouldContain("DrawMetadataSsboBinding");
+        hybridSource.ShouldContain("MeshletTaskRecordSsboBinding");
+        hybridSource.ShouldContain("SceneDatabaseDrawMetadataAddressUniform");
+        hybridSource.ShouldContain("TryBindSceneDatabaseDeviceAddressUniforms");
+    }
+
+    [Test]
     public void VkMeshRenderer_BufferCollectionMatchesOpenGlRuntimeDeformationRules()
     {
         string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Buffers.cs");

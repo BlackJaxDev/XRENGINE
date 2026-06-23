@@ -8,90 +8,9 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering.Materials
 {
     /// <summary>
-    /// GPU material table entry. Texture fields are indices into <see cref="GPUMaterialTable.TextureHandleBuffer"/>,
-    /// not API handles. This keeps the per-material row small and lets GL bindless handles or Vulkan descriptor
-    /// indices share the same shader-facing indirection contract.
-    /// </summary>
-    public struct GPUMaterialEntry
-    {
-        public uint AlbedoHandleIndex;
-        public uint NormalHandleIndex;
-        public uint RMHandleIndex;
-        public uint Flags;
-        public Vector4 BaseColorOpacity;
-        public Vector4 RMSE;
-    }
-
-    /// <summary>
-    /// Backend texture handles referenced by <see cref="GPUMaterialEntry"/>.
-    /// OpenGL stores ARB_bindless_texture handles split into low/high uints. Vulkan uses the same
-    /// index as the descriptor-array slot and leaves the 64-bit handle zeroed.
-    /// </summary>
-    public struct GPUTextureHandleEntry
-    {
-        public ulong Handle;
-        public uint Flags;
-        public uint Padding0;
-    }
-
-    public readonly record struct GPUMaterialTextureHandles(ulong Albedo, ulong Normal, ulong RM);
-
-    public enum EGPUMaterialTextureReferenceKind : byte
-    {
-        None = 0,
-        OpenGLBindlessHandle,
-        VulkanDescriptorIndex,
-    }
-
-    public readonly record struct GPUMaterialTextureReference(EGPUMaterialTextureReferenceKind Kind, ulong Payload)
-    {
-        public static GPUMaterialTextureReference None => default;
-
-        public static GPUMaterialTextureReference FromOpenGLBindlessHandle(ulong handle)
-            => handle == 0ul
-                ? None
-                : new GPUMaterialTextureReference(EGPUMaterialTextureReferenceKind.OpenGLBindlessHandle, handle);
-
-        public static GPUMaterialTextureReference FromVulkanDescriptorIndex(uint descriptorIndex)
-            => descriptorIndex == GPUMaterialTable.InvalidTextureHandleIndex
-                ? None
-                : new GPUMaterialTextureReference(EGPUMaterialTextureReferenceKind.VulkanDescriptorIndex, descriptorIndex);
-
-        public uint VulkanDescriptorIndex
-            => Kind == EGPUMaterialTextureReferenceKind.VulkanDescriptorIndex
-                ? checked((uint)Payload)
-                : GPUMaterialTable.InvalidTextureHandleIndex;
-    }
-
-    public readonly record struct GPUMaterialTextureReferences(
-        GPUMaterialTextureReference Albedo,
-        GPUMaterialTextureReference Normal,
-        GPUMaterialTextureReference RM)
-    {
-        public static readonly GPUMaterialTextureReferences Empty = new();
-
-        public static GPUMaterialTextureReferences FromOpenGLHandles(GPUMaterialTextureHandles handles)
-            => new(
-                GPUMaterialTextureReference.FromOpenGLBindlessHandle(handles.Albedo),
-                GPUMaterialTextureReference.FromOpenGLBindlessHandle(handles.Normal),
-                GPUMaterialTextureReference.FromOpenGLBindlessHandle(handles.RM));
-    }
-
-    public readonly record struct GPUMaterialRetiredHandle(ulong Handle);
-
-    public readonly record struct GPUMaterialTableUpdate(uint MaterialID, GPUMaterialEntry Entry);
-
-    public readonly record struct GPUMaterialHandleTableUpdate(uint HandleIndex, GPUTextureHandleEntry Entry);
-
-    public readonly record struct GPUMaterialHandleIndices(uint Albedo, uint Normal, uint RM)
-    {
-        public static readonly GPUMaterialHandleIndices Empty = new(0u, 0u, 0u);
-    }
-
-    /// <summary>
     /// Manages the GPU material table and its second-level texture-handle table.
     /// </summary>
-    public class GPUMaterialTable : XRBase, IDisposable
+    public partial class GPUMaterialTable : XRBase, IDisposable
     {
         public const uint InvalidTextureHandleIndex = 0u;
         private const uint InitialHandleIndex = 1u;
@@ -105,6 +24,8 @@ namespace XREngine.Rendering.Materials
         private readonly Dictionary<uint, uint> _handleRefCounts = [];
         private readonly Queue<uint> _freeHandleIndices = [];
         private readonly Queue<GPUMaterialRetiredHandle> _retiredHandles = [];
+        private DirtyByteRange _materialDirtyBytes;
+        private DirtyByteRange _textureHandleDirtyBytes;
         private uint _nextHandleIndex = InitialHandleIndex;
 
         public XRDataBuffer Buffer { get; }
@@ -113,6 +34,8 @@ namespace XREngine.Rendering.Materials
         public uint TextureHandleCapacity { get; private set; }
         public IReadOnlyCollection<uint> ActiveMaterialIds => _activeMaterialIds;
         public IReadOnlyCollection<ulong> ActiveTextureHandles => _handleIndicesByHandle.Keys;
+        public GPUMaterialTableDirtyRange MaterialDirtyRange => _materialDirtyBytes.ToIndexRange(Buffer.ElementSize);
+        public GPUMaterialTableDirtyRange TextureHandleDirtyRange => _textureHandleDirtyBytes.ToIndexRange(TextureHandleBuffer.ElementSize);
 
         public GPUMaterialTable(uint initialCapacity = 128, uint initialHandleCapacity = 256)
         {
@@ -170,6 +93,7 @@ namespace XREngine.Rendering.Materials
             entry.RMHandleIndex = ResolveShaderTextureIndex(textureReferences.RM, rmHandleIndex);
 
             Buffer.SetDataRawAtIndex(materialID, PackMaterialEntry(entry));
+            MarkMaterialRowDirty(materialID);
 
             if (!indices.Equals(GPUMaterialHandleIndices.Empty))
                 _materialHandleIndices[materialID] = indices;
@@ -205,6 +129,7 @@ namespace XREngine.Rendering.Materials
 
             ReleaseMaterialHandleRefs(materialID);
             Buffer.SetDataRawAtIndex(materialID, default(GPUMaterialEntryWords));
+            MarkMaterialRowDirty(materialID);
             return true;
         }
 
@@ -246,6 +171,7 @@ namespace XREngine.Rendering.Materials
                     Flags = 1u,
                     Padding0 = 0u
                 }));
+                MarkTextureHandleRowDirty(index);
             }
 
             _handleRefCounts.TryGetValue(index, out uint refCount);
@@ -297,6 +223,7 @@ namespace XREngine.Rendering.Materials
             }
 
             TextureHandleBuffer.SetDataRawAtIndex(index, default(GPUTextureHandleEntryWords));
+            MarkTextureHandleRowDirty(index);
             _freeHandleIndices.Enqueue(index);
         }
 
@@ -319,43 +246,70 @@ namespace XREngine.Rendering.Materials
             return words;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct GPUMaterialEntryWords
+        public void PushDirtyRanges()
         {
-            public const int WordCount = 12;
-
-            public uint AlbedoHandleIndex;
-            public uint NormalHandleIndex;
-            public uint RMHandleIndex;
-            public uint Flags;
-            public uint BaseColorX;
-            public uint BaseColorY;
-            public uint BaseColorZ;
-            public uint Opacity;
-            public uint Roughness;
-            public uint Metallic;
-            public uint Specular;
-            public uint Emission;
+            PushDirtyRange(Buffer, ref _materialDirtyBytes);
+            PushDirtyRange(TextureHandleBuffer, ref _textureHandleDirtyBytes);
         }
 
-        private struct GPUTextureHandleEntryWords
+        private void MarkMaterialRowDirty(uint rowIndex)
+            => MarkRowDirty(ref _materialDirtyBytes, rowIndex, Buffer.ElementSize);
+
+        private void MarkTextureHandleRowDirty(uint rowIndex)
+            => MarkRowDirty(ref _textureHandleDirtyBytes, rowIndex, TextureHandleBuffer.ElementSize);
+
+        private static void MarkRowDirty(ref DirtyByteRange range, uint rowIndex, uint rowSize)
         {
-            public uint HandleLo;
-            public uint HandleHi;
-            public uint Flags;
-            public uint Padding0;
+            ulong byteOffset64 = (ulong)rowIndex * rowSize;
+            ulong byteEnd64 = byteOffset64 + rowSize;
+            if (byteOffset64 > uint.MaxValue || byteEnd64 > uint.MaxValue)
+                throw new InvalidOperationException("GPU material table dirty byte range exceeds supported buffer upload range.");
+
+            range.Mark((uint)byteOffset64, (uint)rowSize);
+        }
+
+        private static void MarkFullDirty(ref DirtyByteRange range, XRDataBuffer buffer)
+            => range.Mark(0u, buffer.Length);
+
+        private static void PushDirtyRange(XRDataBuffer buffer, ref DirtyByteRange range)
+        {
+            if (!range.HasValue)
+                return;
+
+            uint offset = range.ByteOffset;
+            uint length = range.ByteCount;
+            range.Clear();
+
+            if (length == 0u)
+                return;
+
+            if (offset == 0u && length >= buffer.Length)
+            {
+                buffer.PushSubData();
+                return;
+            }
+
+            if (offset > (uint)int.MaxValue)
+            {
+                buffer.PushSubData();
+                return;
+            }
+
+            buffer.PushSubData((int)offset, length);
         }
 
         private void Resize(uint newCapacity)
         {
             Buffer.Resize(newCapacity);
             Capacity = newCapacity;
+            MarkFullDirty(ref _materialDirtyBytes, Buffer);
         }
 
         private void ResizeTextureHandleTable(uint newCapacity)
         {
             TextureHandleBuffer.Resize(newCapacity);
             TextureHandleCapacity = newCapacity;
+            MarkFullDirty(ref _textureHandleDirtyBytes, TextureHandleBuffer);
         }
 
         public void Dispose()

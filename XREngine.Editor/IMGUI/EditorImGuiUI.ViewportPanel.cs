@@ -180,8 +180,7 @@ public static partial class EditorImGuiUI
             return;
         }
 
-        var hostWindow = window.Window;
-        Vector2D<int> fb = hostWindow.FramebufferSize;
+        Vector2D<int> fb = window.EffectiveFramebufferSize;
 
         if (fb.X <= 0 || fb.Y <= 0)
         {

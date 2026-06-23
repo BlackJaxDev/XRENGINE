@@ -2291,6 +2291,9 @@ namespace XREngine
 
                 if (applyAll || propertyName == nameof(EditorPreferences.SceneDepthMode))
                     ApplySceneCameraDepthModePreference();
+
+                if (applyAll || propertyName == nameof(EditorPreferences.InteractiveResizeStrategy))
+                    Engine.ApplyInteractiveResizeStrategySettings();
             }
 
             public static global::XREngine.Rendering.XRCamera.EDepthMode ResolveSceneCameraDepthModePreference()

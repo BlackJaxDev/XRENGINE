@@ -412,6 +412,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public uint MinShadowAtlasTileResolution => 128u;
         public uint MaxShadowAtlasTileResolution => 4096u;
         public bool IsWindowScenePanelPresentationEnabled => false;
+        public EInteractiveWindowResizeStrategy InteractiveResizeStrategy => EInteractiveWindowResizeStrategy.Default;
         public int ScenePanelResizeDebounceMs => 100;
         public bool ForceFullViewport => false;
         public bool RenderWindowsWhileInVR => false;

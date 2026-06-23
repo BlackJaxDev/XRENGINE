@@ -347,6 +347,11 @@ public static partial class EditorImGuiUI
                         {
                             var size = window.Window?.Size ?? new Silk.NET.Maths.Vector2D<int>(0, 0);
                             ImGui.Text($"Size: {size.X}x{size.Y}");
+                            ImGui.Text($"Interactive Resize: {window.InteractiveResizeStrategy} ({window.ActualWindowingBackendName})");
+                            var resizeDiag = window.InteractiveResizeDiagnostics;
+                            ImGui.Text($"Resize Diag: callbacks={resizeDiag.CallbackCount} renders={resizeDiag.InteractiveRenderCount} suppressed={resizeDiag.SuppressedRenderCount} queued={resizeDiag.ResizeQueueCount}");
+                            if (!string.IsNullOrWhiteSpace(resizeDiag.LastResizeReason))
+                                ImGui.Text($"Last Resize: {resizeDiag.LastResizeReason}");
                             
                             // World instance
                             var worldInstance = window.TargetWorldInstance;

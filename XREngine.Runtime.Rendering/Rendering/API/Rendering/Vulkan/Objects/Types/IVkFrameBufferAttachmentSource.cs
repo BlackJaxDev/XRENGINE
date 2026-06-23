@@ -9,6 +9,18 @@ public unsafe partial class VulkanRenderer
         void EnsureAttachmentLayout(bool depthStencil);
 
         /// <summary>
+        /// Returns the effective extent of the image view that will be used for an
+        /// attachment. Physical render-resource images can resize independently of
+        /// the engine-side texture object during live window resize, so framebuffer
+        /// render areas must prefer this Vulkan-resolved extent when available.
+        /// </summary>
+        bool TryGetAttachmentExtent(int mipLevel, int layerIndex, out Extent2D extent)
+        {
+            extent = default;
+            return false;
+        }
+
+        /// <summary>
         /// Updates the internally tracked image layout.  Called by
         /// <c>UpdatePhysicalGroupLayoutsForFbo</c> after a render pass ends so the
         /// tracked layout reflects the render pass's <c>finalLayout</c>.

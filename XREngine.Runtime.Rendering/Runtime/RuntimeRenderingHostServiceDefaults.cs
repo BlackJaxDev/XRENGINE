@@ -116,6 +116,7 @@ public static class RuntimeRenderingHostServiceDefaults
 
     public const string RendererCreationNotConfiguredMessage = "RuntimeRenderingHostServices.Current has not been configured to create renderers.";
     public const bool IsWindowScenePanelPresentationEnabled = false;
+    public const EInteractiveWindowResizeStrategy InteractiveResizeStrategy = EInteractiveWindowResizeStrategy.Default;
     public const int ScenePanelResizeDebounceMs = 100;
     public const bool ForceFullViewport = false;
 

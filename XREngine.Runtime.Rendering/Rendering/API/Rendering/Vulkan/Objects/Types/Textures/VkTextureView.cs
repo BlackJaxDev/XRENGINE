@@ -269,6 +269,24 @@ namespace XREngine.Rendering.Vulkan
                 return _view;
             }
 
+            bool IVkFrameBufferAttachmentSource.TryGetAttachmentExtent(int mipLevel, int layerIndex, out Extent2D extent)
+            {
+                RefreshFromViewedTextureIfStale();
+
+                if (!TryGetViewedAttachmentSource(out IVkFrameBufferAttachmentSource? source))
+                {
+                    extent = default;
+                    return false;
+                }
+
+                int sourceMip = checked((int)(_baseMipLevel + (uint)Math.Max(mipLevel, 0)));
+                int sourceLayer = layerIndex >= 0
+                    ? checked((int)(_baseArrayLayer + (uint)layerIndex))
+                    : checked((int)_baseArrayLayer);
+
+                return source.TryGetAttachmentExtent(sourceMip, sourceLayer, out extent);
+            }
+
             void IVkFrameBufferAttachmentSource.EnsureAttachmentLayout(bool depthStencil)
             {
                 XRTexture viewedTexture = Data.GetViewedTexture();
@@ -417,11 +435,16 @@ namespace XREngine.Rendering.Vulkan
 
             public override void PushData()
             {
+                if (!TryBeginPushData(out bool allowPostPushCallback))
+                    return;
+
                 XRTexture viewedTexture = Data.GetViewedTexture();
                 viewedTexture?.PushData();
                 Generate();
                 if (IsGenerated)
                     MarkUploaded();
+
+                CompletePushData(allowPostPushCallback);
             }
 
             public override void Bind()

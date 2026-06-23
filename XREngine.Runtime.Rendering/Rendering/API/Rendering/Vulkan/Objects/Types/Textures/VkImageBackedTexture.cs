@@ -1832,6 +1832,29 @@ public unsafe partial class VulkanRenderer
             return cached;
         }
 
+        bool IVkFrameBufferAttachmentSource.TryGetAttachmentExtent(int mipLevel, int layerIndex, out Extent2D extent)
+        {
+            RefreshPhysicalGroupImageIfStale();
+            if (_image.Handle == 0)
+            {
+                AcquireImageHandle();
+                RefreshPhysicalGroupImageIfStale();
+            }
+
+            Extent3D resolvedExtent = ResolvedExtent;
+            if (resolvedExtent.Width == 0 || resolvedExtent.Height == 0)
+            {
+                extent = default;
+                return false;
+            }
+
+            uint baseMip = ClampAttachmentMipLevel(mipLevel);
+            uint width = Math.Max(resolvedExtent.Width >> (int)baseMip, 1u);
+            uint height = Math.Max(resolvedExtent.Height >> (int)baseMip, 1u);
+            extent = new Extent2D(width, height);
+            return true;
+        }
+
         public void EnsureAttachmentLayout(bool depthStencil)
         {
             // Intentionally a no-op.  The render pass handles the initial layout
@@ -2771,9 +2794,14 @@ public unsafe partial class VulkanRenderer
             if (Data is XRTexture2D { RuntimeManagedProgressiveUploadActive: true })
                 return;
 
+            if (!TryBeginPushData(out bool allowPostPushCallback))
+                return;
+
             PushTextureData();
             if (IsGenerated)
                 MarkUploaded();
+
+            CompletePushData(allowPostPushCallback);
         }
 
         /// <summary>

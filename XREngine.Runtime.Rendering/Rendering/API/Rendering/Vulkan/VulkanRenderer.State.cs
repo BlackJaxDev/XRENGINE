@@ -28,6 +28,14 @@ public unsafe partial class VulkanRenderer
     private FrameOpContext? _lastActiveFrameOpContext;
     private ulong _resourcePlannerSignature = ulong.MaxValue;
     private ulong _resourceAllocationSignature = ulong.MaxValue;
+    private bool _interactiveResizePlannerFrozen;
+    private uint _interactiveResizeFrozenDisplayWidth;
+    private uint _interactiveResizeFrozenDisplayHeight;
+    private uint _interactiveResizeFrozenInternalWidth;
+    private uint _interactiveResizeFrozenInternalHeight;
+    private ulong _failedResourcePlannerSignature = ulong.MaxValue;
+    private ulong _failedResourceAllocationSignature = ulong.MaxValue;
+    private long _failedResourceAllocationTimestamp;
     private ResourcePlannerFastPathKey _resourcePlannerFastPathKey;
     private bool _hasResourcePlannerFastPathKey;
     private BarrierPlanFastPathKey _barrierPlanFastPathKey;
@@ -66,6 +74,7 @@ public unsafe partial class VulkanRenderer
     private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterResult;
     private int _lastActiveFilterPassSetSignature = int.MinValue;
     private int _lastActiveFilterResourceSetSignature = int.MinValue;
+    private static readonly TimeSpan ResourceAllocationFailureRetryDelay = TimeSpan.FromMilliseconds(750);
 
     private static readonly HashSet<string> VulkanPlannerOptionalResourceNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -1129,11 +1138,58 @@ public unsafe partial class VulkanRenderer
             displayHeight,
             internalWidth,
             internalHeight);
+        context = ApplyInteractiveResizePlannerFreeze(context);
 
         if (pipeline is not null)
             _lastActiveFrameOpContext = context;
 
         return context;
+    }
+
+    private FrameOpContext ApplyInteractiveResizePlannerFreeze(in FrameOpContext context)
+    {
+        if (!XRWindow.IsInteractiveResizeInProgress)
+        {
+            ResetInteractiveResizePlannerFreeze();
+            return context;
+        }
+
+        if (!_interactiveResizePlannerFrozen)
+        {
+            CaptureInteractiveResizePlannerExtents(context);
+
+            Debug.Vulkan(
+                "[VulkanResourcePlanner] Freezing render-resource extents during interactive resize at {0}x{1}/{2}x{3}.",
+                _interactiveResizeFrozenDisplayWidth,
+                _interactiveResizeFrozenDisplayHeight,
+                _interactiveResizeFrozenInternalWidth,
+                _interactiveResizeFrozenInternalHeight);
+        }
+        return context with
+        {
+            DisplayWidth = _interactiveResizeFrozenDisplayWidth,
+            DisplayHeight = _interactiveResizeFrozenDisplayHeight,
+            InternalWidth = _interactiveResizeFrozenInternalWidth,
+            InternalHeight = _interactiveResizeFrozenInternalHeight
+        };
+    }
+
+    private void CaptureInteractiveResizePlannerExtents(in FrameOpContext context)
+    {
+        _interactiveResizeFrozenDisplayWidth = context.DisplayWidth;
+        _interactiveResizeFrozenDisplayHeight = context.DisplayHeight;
+        _interactiveResizeFrozenInternalWidth = context.InternalWidth;
+        _interactiveResizeFrozenInternalHeight = context.InternalHeight;
+        _interactiveResizePlannerFrozen = true;
+    }
+
+    private void ResetInteractiveResizePlannerFreeze()
+    {
+        _interactiveResizePlannerFrozen = false;
+        _interactiveResizeFrozenDisplayWidth = 0;
+        _interactiveResizeFrozenDisplayHeight = 0;
+        _interactiveResizeFrozenInternalWidth = 0;
+        _interactiveResizeFrozenInternalHeight = 0;
     }
 
     internal FrameOpContext CaptureFrameOpContextOrLastActive()
@@ -1270,6 +1326,9 @@ public unsafe partial class VulkanRenderer
 
     private FrameOpContext RefreshPlannerExtentsFromLiveContext(FrameOpContext context, FrameOp[] ops)
     {
+        if (XRWindow.IsInteractiveResizeInProgress)
+            return ApplyInteractiveResizePlannerFreeze(context);
+
         FrameOpContext live = CaptureFrameOpContextOrLastActive();
         bool refreshExtents =
             ReferenceEquals(context.PipelineInstance, live.PipelineInstance) ||
@@ -1801,6 +1860,17 @@ public unsafe partial class VulkanRenderer
         int retiredBufferCount = 0;
         if (allocationPlan.Changed)
         {
+            if (ShouldDeferFailedResourceAllocationRetry(plannerSignature, allocationPlan.Signature))
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.ResourcePlanner.DeferFailedAllocationRetry.{context.PipelineIdentity}.{context.ViewportIdentity}",
+                    TimeSpan.FromSeconds(1),
+                    "[VulkanResourcePlanner] Deferring retry for previously failed physical resource plan. Planner=0x{0:X16} Allocation=0x{1:X16}.",
+                    plannerSignature,
+                    allocationPlan.Signature);
+                return;
+            }
+
             if (!TryBuildPhysicalAllocator(
                 context,
                 pendingPlanner,
@@ -1810,8 +1880,11 @@ public unsafe partial class VulkanRenderer
                 out retiredImageCount,
                 out retiredBufferCount))
             {
+                RecordResourceAllocationPlanFailure(plannerSignature, allocationPlan.Signature);
                 return;
             }
+
+            ClearResourceAllocationPlanFailure(plannerSignature, allocationPlan.Signature);
         }
 
         _resourcePlanner = pendingPlanner;
@@ -1932,6 +2005,45 @@ public unsafe partial class VulkanRenderer
             allocationPlan.Signature);
     }
 
+    private bool ShouldDeferFailedResourceAllocationRetry(
+        ulong plannerSignature,
+        ulong allocationSignature)
+    {
+        if (_failedResourcePlannerSignature != plannerSignature ||
+            _failedResourceAllocationSignature != allocationSignature ||
+            _failedResourceAllocationTimestamp == 0)
+        {
+            return false;
+        }
+
+        return Stopwatch.GetElapsedTime(_failedResourceAllocationTimestamp) <
+            ResourceAllocationFailureRetryDelay;
+    }
+
+    private void RecordResourceAllocationPlanFailure(
+        ulong plannerSignature,
+        ulong allocationSignature)
+    {
+        _failedResourcePlannerSignature = plannerSignature;
+        _failedResourceAllocationSignature = allocationSignature;
+        _failedResourceAllocationTimestamp = Stopwatch.GetTimestamp();
+    }
+
+    private void ClearResourceAllocationPlanFailure(
+        ulong plannerSignature,
+        ulong allocationSignature)
+    {
+        if (_failedResourcePlannerSignature != plannerSignature ||
+            _failedResourceAllocationSignature != allocationSignature)
+        {
+            return;
+        }
+
+        _failedResourcePlannerSignature = ulong.MaxValue;
+        _failedResourceAllocationSignature = ulong.MaxValue;
+        _failedResourceAllocationTimestamp = 0;
+    }
+
     private bool TryBuildPhysicalAllocator(
         in FrameOpContext context,
         VulkanResourcePlanner pendingPlanner,
@@ -1996,8 +2108,148 @@ public unsafe partial class VulkanRenderer
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
         }
 
+        PreserveAutoExposureHistory(oldAllocator);
+
         oldAllocator.DestroyPhysicalImages(this);
         oldAllocator.DestroyPhysicalBuffers(this);
+    }
+
+    private void PreserveAutoExposureHistory(VulkanResourceAllocator oldAllocator)
+    {
+        if (!oldAllocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.AutoExposureTextureName, out VulkanPhysicalImageGroup? oldGroup) ||
+            !_resourceAllocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.AutoExposureTextureName, out VulkanPhysicalImageGroup? newGroup) ||
+            oldGroup is null ||
+            newGroup is null ||
+            ReferenceEquals(oldGroup, newGroup) ||
+            !oldGroup.IsAllocated ||
+            !newGroup.IsAllocated ||
+            oldGroup.Image.Handle == 0 ||
+            newGroup.Image.Handle == 0 ||
+            oldGroup.LastKnownLayout == ImageLayout.Undefined ||
+            oldGroup.Format != newGroup.Format ||
+            oldGroup.ResolvedExtent.Width != newGroup.ResolvedExtent.Width ||
+            oldGroup.ResolvedExtent.Height != newGroup.ResolvedExtent.Height ||
+            oldGroup.ResolvedExtent.Depth != newGroup.ResolvedExtent.Depth)
+        {
+            return;
+        }
+
+        ImageLayout oldLayout = oldGroup.LastKnownLayout;
+        ImageLayout newLayout = newGroup.LastKnownLayout == ImageLayout.Undefined
+            ? ResolveInitialPhysicalGroupLayout(newGroup.Usage, VulkanResourceAllocator.IsDepthStencilFormat(newGroup.Format))
+            : newGroup.LastKnownLayout;
+
+        using var scope = NewCommandScope();
+
+        TransitionPhysicalGroupForCopy(
+            scope.CommandBuffer,
+            oldGroup,
+            oldLayout,
+            ImageLayout.TransferSrcOptimal,
+            AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+            AccessFlags.TransferReadBit,
+            PipelineStageFlags.AllCommandsBit,
+            PipelineStageFlags.TransferBit);
+
+        TransitionPhysicalGroupForCopy(
+            scope.CommandBuffer,
+            newGroup,
+            newLayout,
+            ImageLayout.TransferDstOptimal,
+            AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+            AccessFlags.TransferWriteBit,
+            PipelineStageFlags.AllCommandsBit,
+            PipelineStageFlags.TransferBit);
+
+        ImageCopy copy = new()
+        {
+            SrcSubresource = new ImageSubresourceLayers
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                MipLevel = 0,
+                BaseArrayLayer = 0,
+                LayerCount = 1
+            },
+            DstSubresource = new ImageSubresourceLayers
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                MipLevel = 0,
+                BaseArrayLayer = 0,
+                LayerCount = 1
+            },
+            Extent = new Extent3D(
+                Math.Max(1u, oldGroup.ResolvedExtent.Width),
+                Math.Max(1u, oldGroup.ResolvedExtent.Height),
+                Math.Max(1u, oldGroup.ResolvedExtent.Depth))
+        };
+
+        Api!.CmdCopyImage(
+            scope.CommandBuffer,
+            oldGroup.Image,
+            ImageLayout.TransferSrcOptimal,
+            newGroup.Image,
+            ImageLayout.TransferDstOptimal,
+            1,
+            &copy);
+
+        TransitionPhysicalGroupForCopy(
+            scope.CommandBuffer,
+            newGroup,
+            ImageLayout.TransferDstOptimal,
+            newLayout,
+            AccessFlags.TransferWriteBit,
+            AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+            PipelineStageFlags.TransferBit,
+            PipelineStageFlags.AllCommandsBit);
+
+        oldGroup.LastKnownLayout = ImageLayout.TransferSrcOptimal;
+        newGroup.LastKnownLayout = newLayout;
+    }
+
+    private void TransitionPhysicalGroupForCopy(
+        CommandBuffer commandBuffer,
+        VulkanPhysicalImageGroup group,
+        ImageLayout oldLayout,
+        ImageLayout newLayout,
+        AccessFlags srcAccess,
+        AccessFlags dstAccess,
+        PipelineStageFlags srcStage,
+        PipelineStageFlags dstStage)
+    {
+        if (oldLayout == newLayout)
+            return;
+
+        ImageMemoryBarrier barrier = new()
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            OldLayout = oldLayout,
+            NewLayout = newLayout,
+            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            Image = group.Image,
+            SubresourceRange = new ImageSubresourceRange
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                BaseMipLevel = 0,
+                LevelCount = Math.Max(1u, group.MipLevels),
+                BaseArrayLayer = 0,
+                LayerCount = Math.Max(1u, group.Template.Layers),
+            },
+            SrcAccessMask = srcAccess,
+            DstAccessMask = dstAccess,
+        };
+
+        CmdPipelineBarrierTracked(
+            commandBuffer,
+            srcStage,
+            dstStage,
+            DependencyFlags.None,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &barrier);
     }
 
     private void RebuildRenderGraphAndBarriers(
