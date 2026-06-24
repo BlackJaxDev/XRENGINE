@@ -114,8 +114,8 @@ public sealed class DirectionalShadowAtlasFallbackTests
     [Test]
     public void VulkanDynamicFramebufferTransitions_UseOrderedAttachmentTargets()
     {
-        string framebufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkFrameBuffer.cs");
-        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string framebufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
+        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
 
         framebufferSource.ShouldContain("private AttachmentTargetInfo[]? _attachmentTargets;");
         framebufferSource.ShouldContain("internal bool TryGetAttachmentTarget(");
@@ -128,8 +128,8 @@ public sealed class DirectionalShadowAtlasFallbackTests
     [Test]
     public void VulkanLayeredFramebuffer_UsesAttachmentLayerCountForTextureArrays()
     {
-        string framebufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkFrameBuffer.cs");
-        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string framebufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
+        string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
 
         framebufferSource.ShouldContain("public uint FramebufferLayers { get; private set; } = 1u;");
         framebufferSource.ShouldContain("FramebufferLayers = ResolveFramebufferLayers(attachments);");
@@ -143,9 +143,9 @@ public sealed class DirectionalShadowAtlasFallbackTests
     [Test]
     public void VulkanDeferredShadowDraws_CaptureLayeredShadowUniformState()
     {
-        string meshRendererSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
-        string drawingSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
-        string renderStateSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.RenderState.cs");
+        string meshRendererSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string drawingSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
+        string renderStateSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderState.cs");
         string resolverSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/MeshRenderMaterialResolver.cs");
 
         meshRendererSource.ShouldContain("LayeredShadowUniformState ShadowUniformState");

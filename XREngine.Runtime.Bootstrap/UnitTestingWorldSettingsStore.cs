@@ -43,11 +43,13 @@ public static class UnitTestingWorldSettingsStore
 
         RuntimeBootstrapState.Settings = settings;
         BootstrapRenderSettings.ApplyOpenGLShaderLinkSettings(settings);
+        UnitTestingOpenGLShaderLinkingSettings linkSettings = ResolveOpenGLShaderLinkingSettings(settings);
         Debug.Out(
             $"[UnitTestingWorldSettings] Loaded '{filePath}' AllowSkinning={settings.AllowSkinning} AllowShaderPipelines={settings.AllowShaderPipelines} Models={settings.ModelsToImport?.Count ?? 0} " +
-            $"OpenGLLink(strategy={settings.OpenGLShaderLinkStrategy}, cache={settings.AllowBinaryProgramCaching}, asyncBinaryUpload={settings.AsyncProgramBinaryUpload}, " +
-            $"asyncSource={settings.AsyncProgramCompilation}, sharedWorkers={settings.OpenGLProgramCompileLinkWorkerCount}, maxAsyncPerFrame={settings.MaxAsyncShaderProgramsPerFrame}, " +
-            $"compilerThreads={settings.OpenGLShaderCompilerThreadCount}, probe={settings.OpenGLParallelShaderCompileProbeEnabled}, probeTimeoutMs={settings.OpenGLParallelShaderCompileProbeTimeoutMs})");
+            $"RenderBackend={ResolveRenderBackend(settings)} FallbackPolicy={ResolveBackendFallbackPolicy(settings)} " +
+            $"OpenGLLink(strategy={linkSettings.Strategy}, cache={linkSettings.AllowBinaryProgramCaching}, asyncBinaryUpload={linkSettings.AsyncProgramBinaryUpload}, " +
+            $"asyncSource={linkSettings.AsyncProgramCompilation}, sharedWorkers={linkSettings.ProgramCompileLinkWorkerCount}, maxAsyncPerFrame={linkSettings.MaxAsyncShaderProgramsPerFrame}, " +
+            $"compilerThreads={linkSettings.DriverCompilerThreadCount}, probe={linkSettings.DriverParallelProbeEnabled}, probeTimeoutMs={linkSettings.DriverParallelProbeTimeoutMs})");
         return settings;
     }
 
@@ -66,9 +68,15 @@ public static class UnitTestingWorldSettingsStore
     {
         bool applied = false;
 
-        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderAPI)))
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering)))
         {
-            userSettings.RenderLibrary = settings.RenderAPI;
+            userSettings.PreferredRenderBackend = settings.Rendering.RenderBackend;
+            userSettings.RenderBackendFallbackPolicyOverride = new(settings.Rendering.BackendFallbackPolicy, true);
+            applied = true;
+        }
+        else if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderAPI)))
+        {
+            userSettings.PreferredRenderBackend = settings.RenderAPI;
             applied = true;
         }
 
@@ -91,6 +99,12 @@ public static class UnitTestingWorldSettingsStore
     public static void ApplyStartupOverrides(GameStartupSettings startupSettings, UnitTestingWorldSettings settings)
     {
         ApplyUserSettingsOverrides(startupSettings.DefaultUserSettings, settings);
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering)))
+        {
+            startupSettings.RenderBackendFallbackPolicyOverride = new(settings.Rendering.BackendFallbackPolicy, true);
+            startupSettings.VulkanRenderTargetModeOverride = new(settings.Rendering.Vulkan.RenderTargetMode, true);
+        }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.GPURenderDispatch)))
             startupSettings.GPURenderDispatch = settings.GPURenderDispatch;
@@ -117,6 +131,32 @@ public static class UnitTestingWorldSettingsStore
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AudioEffects)))
             startupSettings.AudioEffectsOverride = new(settings.AudioEffects, true);
     }
+
+    private static ERenderLibrary ResolveRenderBackend(UnitTestingWorldSettings settings)
+        => settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
+            ? settings.Rendering.RenderBackend
+            : settings.RenderAPI;
+
+    private static RenderBackendFallbackPolicy ResolveBackendFallbackPolicy(UnitTestingWorldSettings settings)
+        => settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
+            ? settings.Rendering.BackendFallbackPolicy
+            : RenderBackendFallbackPolicy.RequireRequested;
+
+    private static UnitTestingOpenGLShaderLinkingSettings ResolveOpenGLShaderLinkingSettings(UnitTestingWorldSettings settings)
+        => settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
+            ? settings.Rendering.OpenGL.ShaderLinking
+            : new UnitTestingOpenGLShaderLinkingSettings
+            {
+                Strategy = settings.OpenGLShaderLinkStrategy,
+                AllowBinaryProgramCaching = settings.AllowBinaryProgramCaching,
+                AsyncProgramBinaryUpload = settings.AsyncProgramBinaryUpload,
+                AsyncProgramCompilation = settings.AsyncProgramCompilation,
+                ProgramCompileLinkWorkerCount = settings.OpenGLProgramCompileLinkWorkerCount,
+                MaxAsyncShaderProgramsPerFrame = settings.MaxAsyncShaderProgramsPerFrame,
+                DriverCompilerThreadCount = settings.OpenGLShaderCompilerThreadCount,
+                DriverParallelProbeEnabled = settings.OpenGLParallelShaderCompileProbeEnabled,
+                DriverParallelProbeTimeoutMs = settings.OpenGLParallelShaderCompileProbeTimeoutMs,
+            };
 
     public static void ApplyWorldKindOverride(UnitTestingWorldSettings settings)
     {

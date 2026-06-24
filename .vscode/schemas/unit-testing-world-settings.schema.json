@@ -82,6 +82,10 @@
       "description": "Controls native FBX importer/exporter trace verbosity. UseEnvironment defers to XRE_FBX_LOG and routes enabled traces to the Assets log category.",
       "markdownDescription": "Supported values: `UseEnvironment`, `Off`, `Errors`, `Warnings`, `Info`, `Verbose`."
     },
+    "Rendering": {
+      "$ref": "#/definitions/UnitTestingRenderSettings",
+      "description": "Grouped render backend, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. When present, this grouped object takes precedence over the legacy flat render keys."
+    },
     "RiveUI": {
       "type": "boolean",
       "description": "Adds a Rive UI component to the scene for testing Rive animations."
@@ -648,6 +652,138 @@
       ],
       "markdownDescription": "Supported values: `UseEnvironment`, `Off`, `Errors`, `Warnings`, `Info`, `Verbose`."
     },
+    "UnitTestingRenderSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "RenderBackend": {
+          "$ref": "#/definitions/ERenderLibrary",
+          "markdownDescription": "Supported values: `OpenGL`, `Vulkan`.",
+          "description": "Selects the RenderBackend enum value."
+        },
+        "BackendFallbackPolicy": {
+          "$ref": "#/definitions/RenderBackendFallbackPolicy",
+          "markdownDescription": "Supported values: `RequireRequested`, `FallbackWithWarning`, `AutoPreferRequested`.",
+          "description": "Selects the BackendFallbackPolicy enum value."
+        },
+        "OpenGL": {
+          "$ref": "#/definitions/UnitTestingOpenGLRenderSettings",
+          "description": "Generated from OpenGL on UnitTestingRenderSettings."
+        },
+        "Vulkan": {
+          "$ref": "#/definitions/UnitTestingVulkanRenderSettings",
+          "description": "Generated from Vulkan on UnitTestingRenderSettings."
+        }
+      }
+    },
+    "ERenderLibrary": {
+      "type": "string",
+      "enum": [
+        "OpenGL",
+        "Vulkan"
+      ],
+      "markdownDescription": "Supported values: `OpenGL`, `Vulkan`."
+    },
+    "RenderBackendFallbackPolicy": {
+      "type": "string",
+      "enum": [
+        "RequireRequested",
+        "FallbackWithWarning",
+        "AutoPreferRequested"
+      ],
+      "markdownDescription": "Supported values: `RequireRequested`, `FallbackWithWarning`, `AutoPreferRequested`."
+    },
+    "UnitTestingOpenGLRenderSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "AllowProgramPipelines": {
+          "type": "boolean",
+          "description": "Enables or disables AllowProgramPipelines."
+        },
+        "ShaderLinking": {
+          "$ref": "#/definitions/UnitTestingOpenGLShaderLinkingSettings",
+          "description": "Generated from ShaderLinking on UnitTestingOpenGLRenderSettings."
+        }
+      }
+    },
+    "UnitTestingOpenGLShaderLinkingSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Strategy": {
+          "$ref": "#/definitions/EOpenGLShaderLinkStrategy",
+          "markdownDescription": "Supported values: `Auto`, `SharedContext`, `DriverParallel`, `Synchronous`.",
+          "description": "Selects the Strategy enum value."
+        },
+        "AllowBinaryProgramCaching": {
+          "type": "boolean",
+          "description": "Enables or disables AllowBinaryProgramCaching."
+        },
+        "AsyncProgramBinaryUpload": {
+          "type": "boolean",
+          "description": "Enables or disables AsyncProgramBinaryUpload."
+        },
+        "AsyncProgramCompilation": {
+          "type": "boolean",
+          "description": "Enables or disables AsyncProgramCompilation."
+        },
+        "ProgramCompileLinkWorkerCount": {
+          "type": "integer",
+          "description": "Generated from ProgramCompileLinkWorkerCount on UnitTestingOpenGLShaderLinkingSettings.",
+          "minimum": 1
+        },
+        "MaxAsyncShaderProgramsPerFrame": {
+          "type": "integer",
+          "description": "Generated from MaxAsyncShaderProgramsPerFrame on UnitTestingOpenGLShaderLinkingSettings.",
+          "minimum": 1
+        },
+        "DriverCompilerThreadCount": {
+          "type": "integer",
+          "description": "Generated from DriverCompilerThreadCount on UnitTestingOpenGLShaderLinkingSettings.",
+          "minimum": -1
+        },
+        "DriverParallelProbeEnabled": {
+          "type": "boolean",
+          "description": "Enables or disables DriverParallelProbeEnabled."
+        },
+        "DriverParallelProbeTimeoutMs": {
+          "type": "integer",
+          "description": "Generated from DriverParallelProbeTimeoutMs on UnitTestingOpenGLShaderLinkingSettings.",
+          "minimum": 0
+        }
+      }
+    },
+    "EOpenGLShaderLinkStrategy": {
+      "type": "string",
+      "enum": [
+        "Auto",
+        "SharedContext",
+        "DriverParallel",
+        "Synchronous"
+      ],
+      "markdownDescription": "Supported values: `Auto`, `SharedContext`, `DriverParallel`, `Synchronous`."
+    },
+    "UnitTestingVulkanRenderSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "RenderTargetMode": {
+          "$ref": "#/definitions/EVulkanRenderTargetMode",
+          "markdownDescription": "Supported values: `Auto`, `DynamicRendering`, `LegacyRenderPass`.",
+          "description": "Selects the RenderTargetMode enum value."
+        }
+      }
+    },
+    "EVulkanRenderTargetMode": {
+      "type": "string",
+      "enum": [
+        "Auto",
+        "DynamicRendering",
+        "LegacyRenderPass"
+      ],
+      "markdownDescription": "Supported values: `Auto`, `DynamicRendering`, `LegacyRenderPass`."
+    },
     "LightProbeMode": {
       "type": "string",
       "enum": [
@@ -860,24 +996,6 @@
         "Passthrough"
       ],
       "markdownDescription": "Supported values: `OpenAL_EFX`, `SteamAudio`, `Passthrough`."
-    },
-    "EOpenGLShaderLinkStrategy": {
-      "type": "string",
-      "enum": [
-        "Auto",
-        "SharedContext",
-        "DriverParallel",
-        "Synchronous"
-      ],
-      "markdownDescription": "Supported values: `Auto`, `SharedContext`, `DriverParallel`, `Synchronous`."
-    },
-    "ERenderLibrary": {
-      "type": "string",
-      "enum": [
-        "OpenGL",
-        "Vulkan"
-      ],
-      "markdownDescription": "Supported values: `OpenGL`, `Vulkan`."
     },
     "EAntiAliasingMode": {
       "type": "string",

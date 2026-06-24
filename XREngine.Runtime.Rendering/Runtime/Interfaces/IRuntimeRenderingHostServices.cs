@@ -237,6 +237,11 @@ public interface IRuntimeRenderingHostServices
     EVulkanGeometryFetchMode VulkanGeometryFetchMode => RuntimeRenderingHostServiceDefaults.VulkanGeometryFetchMode;
 
     /// <summary>
+    /// Gets the Vulkan render-target mode used to choose dynamic rendering or legacy render passes.
+    /// </summary>
+    EVulkanRenderTargetMode VulkanRenderTargetMode => RuntimeRenderingHostServiceDefaults.VulkanRenderTargetMode;
+
+    /// <summary>
     /// Gets the Vulkan GPU-driven feature profile.
     /// </summary>
     EVulkanGpuDrivenProfile VulkanGpuDrivenProfile => RuntimeRenderingHostServiceDefaults.VulkanGpuDrivenProfile;

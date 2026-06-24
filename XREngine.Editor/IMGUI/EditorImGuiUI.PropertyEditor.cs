@@ -3704,6 +3704,76 @@ public static partial class EditorImGuiUI
                 return true;
             }
 
+            if (ReferenceEquals(owner, globalPreferences.Viewport))
+            {
+                overrideOwner = overrides.Viewport;
+                sourceLabel = "Editor Preferences Overrides > Viewport";
+                return true;
+            }
+
+            if (ReferenceEquals(owner, globalPreferences.Selection))
+            {
+                overrideOwner = overrides.Selection;
+                sourceLabel = "Editor Preferences Overrides > Selection";
+                return true;
+            }
+
+            if (ReferenceEquals(owner, globalPreferences.Diagnostics.General))
+            {
+                overrideOwner = overrides.Diagnostics.General;
+                sourceLabel = "Editor Preferences Overrides > Diagnostics > General";
+                return true;
+            }
+
+            if (ReferenceEquals(owner, globalPreferences.Diagnostics.Visualization))
+            {
+                overrideOwner = overrides.Diagnostics.Visualization;
+                sourceLabel = "Editor Preferences Overrides > Diagnostics > Visualization";
+                return true;
+            }
+
+            if (ReferenceEquals(owner, globalPreferences.Diagnostics.RenderPipeline))
+            {
+                overrideOwner = overrides.Diagnostics.RenderPipeline;
+                sourceLabel = "Editor Preferences Overrides > Diagnostics > Render Pipeline";
+                return true;
+            }
+
+            if (ReferenceEquals(owner, globalPreferences.Diagnostics.Culling))
+            {
+                overrideOwner = overrides.Diagnostics.Culling;
+                sourceLabel = "Editor Preferences Overrides > Diagnostics > Culling";
+                return true;
+            }
+
+            if (ReferenceEquals(owner, globalPreferences.Diagnostics.Exceptions))
+            {
+                overrideOwner = overrides.Diagnostics.Exceptions;
+                sourceLabel = "Editor Preferences Overrides > Diagnostics > Exceptions";
+                return true;
+            }
+
+            if (ReferenceEquals(owner, globalPreferences.Diagnostics.OpenGL))
+            {
+                overrideOwner = overrides.Diagnostics.OpenGL;
+                sourceLabel = "Editor Preferences Overrides > Diagnostics > OpenGL";
+                return true;
+            }
+
+            if (ReferenceEquals(owner, globalPreferences.Diagnostics.Vulkan))
+            {
+                overrideOwner = overrides.Diagnostics.Vulkan;
+                sourceLabel = "Editor Preferences Overrides > Diagnostics > Vulkan";
+                return true;
+            }
+
+            if (ReferenceEquals(owner, globalPreferences.Diagnostics.Profiler))
+            {
+                overrideOwner = overrides.Diagnostics.Profiler;
+                sourceLabel = "Editor Preferences Overrides > Diagnostics > Profiler";
+                return true;
+            }
+
             overrideOwner = null!;
             sourceLabel = string.Empty;
             return false;

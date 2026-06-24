@@ -107,13 +107,13 @@ public sealed class WindowOwnershipContractTests
     public void VulkanFrameSlotRetirementDrainsSwapchainDependentResourcesAfterSlotWait()
     {
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
         string frameLoop = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Core.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
         string framebuffer = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkFrameBuffer.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
         string renderbuffer = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderBuffer.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkRenderBuffer.cs");
 
         retirement.ShouldContain("private readonly List<Framebuffer>[] _retiredFramebuffers");
         retirement.ShouldContain("private readonly List<RetiredImageResources>[] _retiredImages");
@@ -142,7 +142,7 @@ public sealed class WindowOwnershipContractTests
     public void VulkanMismatchedSwapchainPresentIsGatedBehindPresentScalingValidation()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Core.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
 
         source.ShouldContain("private bool CanPresentMismatchedSwapchainExtent(");
         source.ShouldContain("VkSwapchainPresentScalingCreateInfoKHR support is queried");
@@ -156,7 +156,7 @@ public sealed class WindowOwnershipContractTests
     public void VulkanBlitRegionsClampToLiveSourceAndDestinationExtents()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Blit.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
 
         int buildStart = source.IndexOf("private static bool TryBuildImageBlit", StringComparison.Ordinal);
         buildStart.ShouldBeGreaterThanOrEqualTo(0);

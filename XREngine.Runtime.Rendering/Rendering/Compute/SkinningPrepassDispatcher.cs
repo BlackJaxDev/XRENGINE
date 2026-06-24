@@ -101,8 +101,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     private XRRenderProgram? _blendshapePrecombineProgram;
     private XRShader? _skinnedBoundsReduceShader;
     private XRRenderProgram? _skinnedBoundsReduceProgram;
-    private XRDataBuffer? _emptySpillHeaders;
-    private XRDataBuffer? _emptySpillEntries;
+    private EmptyStorageBuffers? _emptyBuffers;
 
     private readonly GlobalSkinPaletteBuffers _globalInputs = new();
 
@@ -138,10 +137,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             _blendshapePrecombineShader = null;
             _skinnedBoundsReduceProgram = null;
             _skinnedBoundsReduceShader = null;
-            _emptySpillHeaders?.Destroy();
-            _emptySpillEntries?.Destroy();
-            _emptySpillHeaders = null;
-            _emptySpillEntries = null;
+            _emptyBuffers?.Dispose();
+            _emptyBuffers = null;
 
             _globalInputs.Dispose();
         }
@@ -237,23 +234,54 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         if (mesh is null || mesh.VertexCount <= 0)
             return;
 
-        bool doSkinning = (forceSkinning || RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader)
+        bool computeSkinningEnabledForBackend =
+            RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
+            !RuntimeEngine.Rendering.State.IsVulkan;
+        bool computeBlendshapesEnabledForBackend =
+            RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
+            !RuntimeEngine.Rendering.State.IsVulkan;
+        if (!forceSkinning &&
+            RuntimeEngine.Rendering.State.IsVulkan &&
+            RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
+            mesh.HasSkinning &&
+            RuntimeEngine.Rendering.Settings.AllowSkinning)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.ComputeSkinning.Disabled.{mesh.Name ?? "UnnamedMesh"}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] Compute skinning is disabled for mesh '{0}' because the Vulkan compute-output path is not yet stable; using GPU vertex skinning instead.",
+                mesh.Name ?? "<unnamed>");
+        }
+        if (RuntimeEngine.Rendering.State.IsVulkan &&
+            RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
+            mesh.BlendshapeCount > 0 &&
+            RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.ComputeBlendshapes.Disabled.{mesh.Name ?? "UnnamedMesh"}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] Compute blendshapes are disabled for mesh '{0}' because the Vulkan compute-output path is not yet stable; using GPU vertex blendshapes instead.",
+                mesh.Name ?? "<unnamed>");
+        }
+
+        bool doSkinning = (forceSkinning || computeSkinningEnabledForBackend)
             && mesh.HasSkinning
             && RuntimeEngine.Rendering.Settings.AllowSkinning;
         bool hasBlendshapePath = mesh.BlendshapeCount > 0
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes;
         bool blendshapePathRequested = mesh.BlendshapeCount > 0
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes
-            && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || doSkinning);
+            && (computeBlendshapesEnabledForBackend || doSkinning);
         bool precombinePathRequested = hasBlendshapePath
-            && RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass;
+            && RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
+            && !RuntimeEngine.Rendering.State.IsVulkan;
 
         if (blendshapePathRequested || precombinePathRequested)
             renderer.EnsureBlendshapeBuffers(logWarnings: false);
 
         bool doBlendshapes = blendshapePathRequested && renderer.HasActiveBlendshapes;
         BlendshapePrecombineRendererPath precombinePath =
-            RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || doSkinning
+            computeBlendshapesEnabledForBackend || doSkinning
                 ? BlendshapePrecombineRendererPath.ComputePrepass
                 : BlendshapePrecombineRendererPath.DirectVertex;
         bool wantsPrecombinedBlendshapes = ShouldUseBlendshapePrecombine(renderer, mesh, precombinePath);
@@ -421,11 +449,8 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
             // Compute-skinning INPUT buffers (skin palette, core indices/weights, vertex positions,
             // spill, blendshape source data) upload to the GPU asynchronously across frames via the
-            // upload queue. The compute dispatch binds them with SetBlockIndex, which does NOT force
-            // the pending upload to complete (unlike BindSSBO). So the very first dispatch can read
-            // not-yet-uploaded GPU memory (garbage bone indices and positions) and the corrupt result
-            // is then latched by the output cache (CanReuseOutput) until a bone moves. Force the
-            // read-only inputs fully resident here, synchronously, BEFORE binding/dispatching.
+            // upload queue. Force the read-only inputs fully resident here, synchronously, BEFORE
+            // binding/dispatching so the first cached compute output cannot latch not-yet-uploaded data.
             resources.EnsureSkinningInputsResident(
                 mesh,
                 activeSkinPalette,
@@ -439,24 +464,17 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             // OUTPUT buffers (skinned positions/normals/tangents, or interleaved) are created
             // client-side in EnsureOutputBuffers but their GPU storage allocates lazily -- normally
             // not until the DRAW binds them, which happens AFTER this compute dispatch. The dispatch
-            // binds the output via SetBlockIndex, which (like the inputs) does NOT force storage
-            // allocation. So the compute shader writes its skinned positions into a zero-byte GPU
-            // buffer (the result is discarded), and the subsequent draw then allocates the storage
-            // initialized to the buffer's zeroed client data -> every vertex reads (0,0,0) -> the
-            // mesh collapses to a degenerate point and renders as MISSING (whole mesh, or missing
-            // triangles when only partially allocated). Because the output cache latches after the
-            // first dispatch, it stays missing until a bone move forces a re-dispatch. Force the
-            // output storage allocated HERE, before the dispatch, so the compute writes into real
-            // storage that the draw then reads. This only allocates (and pushes the zeroed client
-            // data once); once allocated it never re-pushes, so it cannot clobber compute results.
+            // output storage must exist before the dispatch writes it. Otherwise the first cached
+            // result can be lost and the later draw may read zero-initialized client data. This only
+            // allocates (and pushes the zeroed client data once); once allocated it never re-pushes,
+            // so it cannot clobber compute results.
             resources.EnsureSkinningOutputResident(isInterleaved, doSkinning);
             bool updateLiveBounds = needsLiveSkinnedBounds &&
                 resources.ResetSkinnedBoundsInOutput(mesh, isInterleaved);
 
             try
             {
-                if (doSkinning && !mesh.HasSpillInfluences)
-                    EnsureEmptySpillBuffers();
+                EmptyStorageBuffers emptyBuffers = GetEmptyStorageBuffers();
 
                 resources.BindBlocks(
                     activeProgram,
@@ -467,8 +485,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                     usePrecombinedBlendshapes,
                     activeSkinPalette,
                     _globalInputs.GlobalBlendshapeWeights,
-                    _emptySpillHeaders,
-                    _emptySpillEntries);
+                    emptyBuffers);
 
                 uint vertexCount = (uint)mesh.VertexCount;
                 activeProgram.Uniform("vertexCount", vertexCount);
@@ -709,8 +726,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         if (buffer is null)
             return;
 
-        buffer.SetBlockIndex(binding);
-        program.BindBuffer(buffer, binding);
+        buffer.BindTo(program, binding);
     }
 
     private static void EnsurePrecombineInputsResident(XRMeshRenderer renderer, XRMesh mesh)
@@ -734,7 +750,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             if (wrapper is OpenGLRenderer.GLDataBuffer gl && !gl.IsReadyForRendering)
                 gl.EnsureStorageAllocatedForGpuCopy();
             else if (wrapper is VulkanRenderer.VkDataBuffer vk)
-                vk.Generate();
+                vk.EnsureStorageAllocatedForGpuUse();
         }
     }
 
@@ -747,21 +763,39 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             glRenderer.RawGL.BindBufferBase(GLEnum.ShaderStorageBuffer, binding, 0);
     }
 
-    private void EnsureEmptySpillBuffers()
-    {
-        _emptySpillHeaders ??= CreateEmptySpillBuffer("EmptyBoneInfluenceSpillHeaders");
-        _emptySpillEntries ??= CreateEmptySpillBuffer("EmptyBoneInfluenceSpillEntries");
-    }
+    private EmptyStorageBuffers GetEmptyStorageBuffers()
+        => _emptyBuffers ??= new EmptyStorageBuffers();
 
-    private static XRDataBuffer CreateEmptySpillBuffer(string name)
+    private sealed class EmptyStorageBuffers : IDisposable
     {
-        XRDataBuffer buffer = new(name, EBufferTarget.ShaderStorageBuffer, 1u, EComponentType.UInt, 1u, false, true)
+        public EmptyStorageBuffers()
         {
-            Usage = EBufferUsage.StaticDraw,
-            DisposeOnPush = false,
-        };
-        buffer.SetDataRawAtIndex(0u, 0u);
-        return buffer;
+            ZeroScalar = CreateEmptyStorageBuffer("EmptySkinningPrepassZeroScalar");
+            SpillHeaders = CreateEmptyStorageBuffer("EmptyBoneInfluenceSpillHeaders");
+            SpillEntries = CreateEmptyStorageBuffer("EmptyBoneInfluenceSpillEntries");
+        }
+
+        public XRDataBuffer ZeroScalar { get; }
+        public XRDataBuffer SpillHeaders { get; }
+        public XRDataBuffer SpillEntries { get; }
+
+        public void Dispose()
+        {
+            ZeroScalar.Destroy();
+            SpillHeaders.Destroy();
+            SpillEntries.Destroy();
+        }
+
+        private static XRDataBuffer CreateEmptyStorageBuffer(string name)
+        {
+            XRDataBuffer buffer = new(name, EBufferTarget.ShaderStorageBuffer, 1u, EComponentType.UInt, 1u, false, true)
+            {
+                Usage = EBufferUsage.StaticDraw,
+                DisposeOnPush = false,
+            };
+            buffer.SetDataRawAtIndex(0u, 0u);
+            return buffer;
+        }
     }
 
     public void RunVisible(RenderCommandCollection commands)
@@ -769,9 +803,19 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         if (commands is null)
             return;
 
-        if (!RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
-            && !RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader
-            && !RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass)
+        bool computeSkinningEnabledForBackend =
+            RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
+            !RuntimeEngine.Rendering.State.IsVulkan;
+        bool computeBlendshapesEnabledForBackend =
+            RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
+            !RuntimeEngine.Rendering.State.IsVulkan;
+        bool precombineEnabledForBackend =
+            RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass &&
+            !RuntimeEngine.Rendering.State.IsVulkan;
+
+        if (!computeSkinningEnabledForBackend
+            && !computeBlendshapesEnabledForBackend
+            && !precombineEnabledForBackend)
         {
             return;
         }
@@ -807,7 +851,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                     if (mesh is null)
                         continue;
 
-                    bool skinningInCompute = RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
+                    bool skinningInCompute = computeSkinningEnabledForBackend
                         && mesh.HasSkinning
                         && RuntimeEngine.Rendering.Settings.AllowSkinning;
                     bool needsSkinPalette = globalSkinPalette
@@ -816,9 +860,9 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                         && skinningInCompute;
                     bool blendshapePathRequested = mesh.BlendshapeCount > 0
                         && RuntimeEngine.Rendering.Settings.AllowBlendshapes
-                        && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader
+                        && (computeBlendshapesEnabledForBackend
                             || skinningInCompute
-                            || RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass);
+                            || precombineEnabledForBackend);
                     if (blendshapePathRequested)
                         renderer.EnsureBlendshapeBuffers(logWarnings: false);
                     bool needsBlend = globalBlend

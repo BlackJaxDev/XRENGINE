@@ -65,7 +65,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="Rendering\API\Rendering\Vulkan\VulkanRaytracing.cs" />
+    <Compile Remove="Rendering\API\Rendering\Vulkan\Features\Raytracing\VulkanRenderer.Raytracing.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -223,7 +223,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="Rendering\API\Rendering\Vulkan\VulkanRaytracing.cs" />
+    <None Include="Rendering\API\Rendering\Vulkan\Features\Raytracing\VulkanRenderer.Raytracing.cs" />
   </ItemGroup>
 
   <ItemGroup>

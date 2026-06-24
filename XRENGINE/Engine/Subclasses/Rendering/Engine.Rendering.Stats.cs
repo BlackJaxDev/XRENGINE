@@ -30,7 +30,7 @@ namespace XREngine
                 /// </summary>
                 public static void BeginFrame()
                 {
-                    bool gpuPipelineProfilingEnabled = EnableTracking && Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
+                    bool gpuPipelineProfilingEnabled = EnableTracking && Engine.EditorPreferences.Diagnostics.Profiler.EnableGpuRenderPipelineProfiling;
                     bool gpuTimestampsDenseMode = gpuPipelineProfilingEnabled && IsGpuTimestampDenseModeEnabled();
                     string activeStrategy = CaptureActiveSubmissionStrategy();
                     RendererState.UpdateFrameContext(

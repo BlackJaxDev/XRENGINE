@@ -67,7 +67,7 @@ public sealed class AlphaToCoveragePhase2Tests
         framebufferSource.ShouldContain("public bool IsMultisampled => EffectiveSampleCount > 1u;");
         framebufferSource.ShouldContain("XRRenderBuffer renderBuffer => renderBuffer.MultisampleCount > 1u ? renderBuffer.MultisampleCount : 1u");
 
-        string glSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLRenderer.RenderParameters.cs");
+        string glSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Commands/OpenGLRenderer.RenderParameters.cs");
         glSource.ShouldContain("ApplyAlphaToCoverage(parameters);");
         glSource.ShouldContain("EnableCap.SampleAlphaToCoverage");
         glSource.ShouldContain("XRFrameBuffer.BoundForWriting");
@@ -88,17 +88,17 @@ public sealed class AlphaToCoveragePhase2Tests
         resolveSource.ShouldContain("public string DepthViewTextureName { get; set; } = DefaultRenderPipeline.MsaaDepthViewTextureName;");
         resolveSource.ShouldContain("ActivePipelineInstance.GetTexture<XRTexture>(DepthViewTextureName)");
 
-        string vkSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Drawing.RenderState.cs");
+        string vkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderState.cs");
         vkSource.ShouldContain("_state.SetAlphaToCoverageEnabled(parameters.AlphaToCoverage == ERenderParamUsage.Enabled);");
 
-        string vkMeshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
+        string vkMeshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         vkMeshSource.ShouldContain("SampleCountFlags RasterizationSamples");
         vkMeshSource.ShouldContain("bool AlphaToCoverageEnabled");
         vkMeshSource.ShouldContain("bool requestedAlphaToCoverage = matOpts?.AlphaToCoverage == ERenderParamUsage.Enabled;");
         vkMeshSource.ShouldContain("alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;");
         vkMeshSource.ShouldContain("private static SampleCountFlags ResolveRasterizationSamples(XRFrameBuffer? target)");
 
-        string vkPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
+        string vkPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
         vkPipelineSource.ShouldContain("draw.RasterizationSamples");
         vkPipelineSource.ShouldContain("draw.AlphaToCoverageEnabled");
         vkPipelineSource.ShouldContain("AlphaToCoverageEnable = effectiveDraw.AlphaToCoverageEnabled ? Vk.True : Vk.False");

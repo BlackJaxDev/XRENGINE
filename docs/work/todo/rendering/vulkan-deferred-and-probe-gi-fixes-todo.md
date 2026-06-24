@@ -135,7 +135,7 @@ Confirmed directly against the reference run and source:
 
 Source confirmation:
 
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.Descriptors.cs` `TryResolveBuffer` resolves buffers only from the mesh-renderer `_bufferCache`, auto-uniforms, and engine-uniforms. There is no path that consults program-bound graphics SSBOs (`XRRenderProgram.BindBuffer(...)`), so probe/forward-plus SSBOs always hit the fallback path.
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs` `TryResolveBuffer` resolves buffers only from the mesh-renderer `_bufferCache`, auto-uniforms, and engine-uniforms. There is no path that consults program-bound graphics SSBOs (`XRRenderProgram.BindBuffer(...)`), so probe/forward-plus SSBOs always hit the fallback path.
 - `XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderQuadToFBO.cs` `DescribeRenderPass` declares only `builder.SampleTexture(MakeFboColorResource(SourceQuadFBOName))` for the light-combine quad. It does not declare GBuffer color/normal/depth, AO/lighting/BRDF, probe arrays, or probe SSBOs as sampled inputs, so the render graph has incomplete resource usage for the `LightCombineFBO -> ForwardPassFBO` blit.
 
 ### Interpretation / prioritization note

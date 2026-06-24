@@ -87,6 +87,38 @@ public enum LightProbeCaptureMode
     Realtime,
 }
 
+public class UnitTestingRenderSettings
+{
+    public ERenderLibrary RenderBackend { get; set; } = ERenderLibrary.OpenGL;
+    public RenderBackendFallbackPolicy BackendFallbackPolicy { get; set; } = RenderBackendFallbackPolicy.RequireRequested;
+    public UnitTestingOpenGLRenderSettings OpenGL { get; set; } = new();
+    public UnitTestingVulkanRenderSettings Vulkan { get; set; } = new();
+}
+
+public class UnitTestingOpenGLRenderSettings
+{
+    public bool AllowProgramPipelines { get; set; } = false;
+    public UnitTestingOpenGLShaderLinkingSettings ShaderLinking { get; set; } = new();
+}
+
+public class UnitTestingOpenGLShaderLinkingSettings
+{
+    public EOpenGLShaderLinkStrategy Strategy { get; set; } = EOpenGLShaderLinkStrategy.Auto;
+    public bool AllowBinaryProgramCaching { get; set; } = true;
+    public bool AsyncProgramBinaryUpload { get; set; } = true;
+    public bool AsyncProgramCompilation { get; set; } = true;
+    public int ProgramCompileLinkWorkerCount { get; set; } = 1;
+    public int MaxAsyncShaderProgramsPerFrame { get; set; } = 16;
+    public int DriverCompilerThreadCount { get; set; } = -1;
+    public bool DriverParallelProbeEnabled { get; set; } = true;
+    public int DriverParallelProbeTimeoutMs { get; set; } = 25;
+}
+
+public class UnitTestingVulkanRenderSettings
+{
+    public EVulkanRenderTargetMode RenderTargetMode { get; set; } = EVulkanRenderTargetMode.Auto;
+}
+
 public class UnitTestingWorldSettings
 {
     [JsonIgnore]
@@ -116,6 +148,7 @@ public class UnitTestingWorldSettings
     public string UltralightWebViewUrl { get; set; } = "https://blackjaxvr.com";
     public bool EnableProfilerLogging = true;
     public UnitTestFbxLogVerbosity FbxLogVerbosity { get; set; } = UnitTestFbxLogVerbosity.UseEnvironment;
+    public UnitTestingRenderSettings Rendering { get; set; } = new();
     public bool RiveUI = false;
     public bool GPURenderDispatch = false;
     public bool StartInPlayModeWithoutTransitions = false;

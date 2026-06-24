@@ -80,6 +80,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool ValidateVulkanDescriptorContracts => Engine.EffectiveSettings.ValidateVulkanDescriptorContracts;
     public EVulkanBindlessMaterialMode VulkanBindlessMaterialMode => Engine.EffectiveSettings.VulkanBindlessMaterialMode;
     public EVulkanGeometryFetchMode VulkanGeometryFetchMode => Engine.EffectiveSettings.VulkanGeometryFetchMode;
+    public EVulkanRenderTargetMode VulkanRenderTargetMode => Engine.EffectiveSettings.VulkanRenderTargetMode;
     public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile => Engine.EffectiveSettings.VulkanGpuDrivenProfile;
     public EVulkanQueueOverlapMode VulkanQueueOverlapMode => Engine.EffectiveSettings.VulkanQueueOverlapMode;
 
@@ -100,11 +101,11 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool IsShadowPass => Engine.Rendering.State.IsShadowPass;
     public bool IsStereoPass => Engine.Rendering.State.IsStereoPass;
     public bool IsSceneCapturePass => Engine.Rendering.State.IsSceneCapturePass;
-    public bool RenderCullingVolumesEnabled => Engine.EditorPreferences.Debug.RenderCullingVolumes;
-    public bool Preview3DWorldOctree => Engine.EditorPreferences.Debug.Preview3DWorldOctree;
-    public bool Preview2DWorldQuadtree => Engine.EditorPreferences.Debug.Preview2DWorldQuadtree;
-    public bool HoverOutlineEnabled => Engine.EditorPreferences.HoverOutlineEnabled;
-    public bool SelectionOutlineEnabled => Engine.EditorPreferences.SelectionOutlineEnabled;
+    public bool RenderCullingVolumesEnabled => Engine.EditorPreferences.Diagnostics.Visualization.RenderCullingVolumes;
+    public bool Preview3DWorldOctree => Engine.EditorPreferences.Diagnostics.Visualization.Preview3DWorldOctree;
+    public bool Preview2DWorldQuadtree => Engine.EditorPreferences.Diagnostics.Visualization.Preview2DWorldQuadtree;
+    public bool HoverOutlineEnabled => Engine.EditorPreferences.Selection.HoverOutlineEnabled;
+    public bool SelectionOutlineEnabled => Engine.EditorPreferences.Selection.SelectionOutlineEnabled;
     public ColorF4 OctreeIntersectedBoundsColor => Engine.EditorPreferences.Theme.OctreeIntersectedBoundsColor;
     public ColorF4 OctreeContainedBoundsColor => Engine.EditorPreferences.Theme.OctreeContainedBoundsColor;
     public ColorF4 QuadtreeIntersectedBoundsColor => Engine.EditorPreferences.Theme.QuadtreeIntersectedBoundsColor;
@@ -171,7 +172,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool DefaultOutputHDR => Engine.Rendering.Settings.OutputHDR;
     public float DefaultTsrRenderScale => Engine.Rendering.Settings.TsrRenderScale;
     public bool EnableRenderStatisticsTracking => Engine.Rendering.Stats.EnableTracking;
-    public bool EnableGpuRenderPipelineProfiling => Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
+    public bool EnableGpuRenderPipelineProfiling => Engine.EditorPreferences.Diagnostics.Profiler.EnableGpuRenderPipelineProfiling;
     public ulong CurrentRenderFrameId => Engine.Rendering.State.RenderFrameId;
     public bool ProvidesShadowAtlasSettings => true;
     public bool UseSpotShadowAtlas => Engine.Rendering.Settings.UseSpotShadowAtlas;
@@ -1112,13 +1113,13 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public bool IsWindowScenePanelPresentationEnabled
         => Engine.IsEditor &&
-           Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel;
+           Engine.EditorPreferences.Viewport.PresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel;
 
     public EInteractiveWindowResizeStrategy InteractiveResizeStrategy
-        => Engine.EditorPreferences.InteractiveResizeStrategy;
+        => Engine.EditorPreferences.Viewport.InteractiveResizeStrategy;
 
     public int ScenePanelResizeDebounceMs
-        => Engine.EditorPreferences.ScenePanelResizeDebounceMs;
+        => Engine.EditorPreferences.Viewport.ScenePanelResizeDebounceMs;
 
     public bool ForceFullViewport => XREngine.Rendering.RenderDiagnosticsFlags.ForceFullViewport;
 

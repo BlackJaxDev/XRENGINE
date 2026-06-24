@@ -16,7 +16,7 @@ public sealed class WindowResizeControllerTests
     public void VulkanSwapchainRecreation_DoesNotPumpNativeWindowEvents()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/SwapChain.cs");
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
 
         source.ShouldNotContain("Window.DoEvents()");
     }

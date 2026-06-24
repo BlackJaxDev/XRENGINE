@@ -243,7 +243,11 @@ public static class BootstrapLightingBuilder
         dirLightComp.DiffuseIntensity = 1.0f;
         dirLightComp.Scale = new Vector3(100.0f, 100.0f, 900.0f);
         dirLightComp.CastsShadows = true;
-        uint shadowResolution = RuntimeBootstrapState.Settings.RenderAPI == ERenderLibrary.Vulkan ? 1024u : 4096u;
+        UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
+        ERenderLibrary renderBackend = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
+            ? settings.Rendering.RenderBackend
+            : settings.RenderAPI;
+        uint shadowResolution = renderBackend == ERenderLibrary.Vulkan ? 1024u : 4096u;
         dirLightComp.SetShadowMapResolution(shadowResolution, shadowResolution);
         return dirLightComp;
     }

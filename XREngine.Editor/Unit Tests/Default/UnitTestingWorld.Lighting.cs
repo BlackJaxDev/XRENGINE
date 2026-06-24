@@ -6,6 +6,7 @@ using XREngine.Components.Capture;
 using XREngine.Scene;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene.Transforms;
 using Quaternion = System.Numerics.Quaternion;
 using XREngine.Components.Lights;
@@ -214,7 +215,11 @@ public static partial class EditorUnitTests
             dirLightComp.DiffuseIntensity = 1.0f;
             dirLightComp.Scale = new Vector3(100.0f, 100.0f, 900.0f);
             dirLightComp.CastsShadows = true;
-            uint shadowResolution = Toggles.RenderAPI == ERenderLibrary.Vulkan ? 1024u : 4096u;
+            UnitTestingWorldSettings runtimeSettings = RuntimeBootstrapState.Settings;
+            ERenderLibrary renderBackend = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
+                ? runtimeSettings.Rendering.RenderBackend
+                : Toggles.RenderAPI;
+            uint shadowResolution = renderBackend == ERenderLibrary.Vulkan ? 1024u : 4096u;
             dirLightComp.SetShadowMapResolution(shadowResolution, shadowResolution);
             return dirLightComp;
         }

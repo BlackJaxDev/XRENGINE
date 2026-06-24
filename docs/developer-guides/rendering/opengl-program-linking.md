@@ -8,13 +8,18 @@ backend lanes.
 
 The implementation lives mainly in:
 
-- [OpenGLShaderLinkBackendSelector.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLShaderLinkBackendSelector.cs)
-- [GLRenderProgram.Linking.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs)
-- [GLRenderProgram.BinaryCache.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.BinaryCache.cs)
-- [GLShader.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLShader.cs)
-- [GLProgramCompileLinkQueue.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/GLProgramCompileLinkQueue.cs)
-- [GLProgramBinaryUploadQueue.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/GLProgramBinaryUploadQueue.cs)
-- [GLSharedContext.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/GLSharedContext.cs)
+- [OpenGLShaderLinkBackendSelector.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Pipelines/OpenGLShaderLinkBackendSelector.cs)
+- [GLRenderProgram.LinkOrchestration.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkOrchestration.cs)
+- [GLRenderProgram.CompileInputs.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.CompileInputs.cs)
+- [GLRenderProgram.AsyncResults.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.AsyncResults.cs)
+- [GLRenderProgram.BinaryCacheInteraction.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.BinaryCacheInteraction.cs)
+- [GLRenderProgram.HazardDetection.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.HazardDetection.cs)
+- [GLRenderProgram.LinkDiagnostics.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkDiagnostics.cs)
+- [GLRenderProgram.BinaryCache.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.BinaryCache.cs)
+- [GLShader.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLShader.cs)
+- [GLProgramCompileLinkQueue.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Pipelines/GLProgramCompileLinkQueue.cs)
+- [GLProgramBinaryUploadQueue.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Pipelines/GLProgramBinaryUploadQueue.cs)
+- [GLSharedContext.cs](../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Bootstrap/GLSharedContext.cs)
 
 ## Runtime Roles
 

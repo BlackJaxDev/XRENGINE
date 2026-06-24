@@ -690,7 +690,7 @@ public sealed class SwapchainContextCoalescingTests
     [Test]
     public void VulkanPassValidation_AllowsActiveParentPassAcrossNestedPipelineMetadata()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.State.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
 
         source.ShouldContain("int currentPassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;");
         source.ShouldContain("if (passIndex != int.MinValue && passIndex == currentPassIndex)");

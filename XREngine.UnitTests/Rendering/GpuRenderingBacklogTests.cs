@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -672,7 +672,7 @@ public class GpuRenderingBacklogTests
     [Test]
     public void VR_Vulkan_ParallelSecondaryCommands_NoRenderThreadBlock()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
 
         source.ShouldContain("ExecuteSecondaryCommandBufferBatchParallel");
         source.ShouldContain("Task.Run");
@@ -684,9 +684,9 @@ public class GpuRenderingBacklogTests
     [Test]
     public void Vulkan_GpuPipelineProfilerToggle_DoesNotInstrumentMainRenderCommandBuffers()
     {
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs")
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs")
             .Replace("\r\n", "\n");
-        string frameTiming = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.FrameTiming.cs")
+        string frameTiming = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameTiming.cs")
             .Replace("\r\n", "\n");
         string gpuProfiler = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderPipelineGpuProfiler.cs")
             .Replace("\r\n", "\n");
@@ -740,11 +740,11 @@ public class GpuRenderingBacklogTests
     [Test]
     public void Vulkan_ImGuiOverlay_UsesExplicitSwapchainLayoutHandoff()
     {
-        string drawingCore = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Core.cs")
+        string drawingCore = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs")
             .Replace("\r\n", "\n");
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs")
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs")
             .Replace("\r\n", "\n");
-        string imgui = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.ImGui.cs")
+        string imgui = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs")
             .Replace("\r\n", "\n");
 
         drawingCore.ShouldContain("TryConsumeRenderableImGuiOverlaySnapshot(out imguiOverlaySnapshot)");

@@ -13,7 +13,7 @@ public sealed class McpServerAutomationTests
     {
         string viewportActions = ReadWorkspaceFile("XREngine.Editor/Mcp/Actions/EditorMcpActions.Viewport.cs");
         string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs");
-        string vulkanReadback = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Readback.cs");
+        string vulkanReadback = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Readback.cs");
         string docs = ReadWorkspaceFile("docs/developer-guides/ai/mcp-server.md");
 
         viewportActions.ShouldContain("[XRMcp(Name = \"capture_viewport_screenshot\")]");

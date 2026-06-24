@@ -167,10 +167,10 @@ Manual hardware validation is still required for final runtime confidence:
 ## Key Files
 
 - `XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs`
-- `XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs`
-- `XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridge.cs`
-- `XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeSidecar.cs`
-- `XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeProbe.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridge.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeSidecar.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeProbe.cs`
 - `XRENGINE/Rendering/DLSS/StreamlineNative.cs`
 - `XRENGINE/Rendering/DLSS/NvidiaDlssManager.cs`
 - `XRENGINE/Rendering/XeSS/IntelXessNative.cs`

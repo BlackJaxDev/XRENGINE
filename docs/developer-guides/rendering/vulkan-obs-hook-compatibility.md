@@ -108,10 +108,10 @@ The strict run should fail early if OBS is not installed or if the device path c
 
 Primary implementation:
 
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanObsHookCompatibility.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Instance.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/LogicalDevice.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/SwapChain.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.ObsHookCompatibility.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Instance.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs`
 
 Related docs:
 

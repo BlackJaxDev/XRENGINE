@@ -11,7 +11,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_ClampsMaxMipLevelToAllocatedStorage()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("int allocatedMaxLevel = _allocatedLevels > 0");
         source.ShouldContain("return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, configuredMaxLevel));");
@@ -21,7 +21,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_ProgressiveUploadKeepsPartialMipRangeHiddenAcrossBinds()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("private int _progressiveVisibleBaseLevel = -1;");
         source.ShouldContain("SetProgressiveVisibleMipRange(seedBase, seedMax);");
@@ -32,7 +32,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_ClearsStaleUnpackStateBeforeCpuMipUploads()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("private static void ResetUnpackStateForTextureUpload(GL gl)");
         source.ShouldContain("gl.PixelStore(UnpackSkipRows, 0);");
@@ -46,8 +46,8 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_SparseStreamingAlsoClearsStaleUnpackStateBeforeCpuMipUploads()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.SparseStreaming.cs");
-        string asyncSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.SparseStreaming.Async.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.SparseStreaming.cs");
+        string asyncSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.SparseStreaming.Async.cs");
 
         source.ShouldContain("ResetUnpackStateForTextureUpload();");
         asyncSource.ShouldContain("ResetUnpackStateForTextureUpload();");
@@ -62,7 +62,7 @@ public sealed class GLTexture2DContractTests
         // floor, storage is sized for only `lockMipLevel + 1` levels while the resident chain has
         // many more, causing upper mip uploads to fall outside allocated storage and leaving
         // sampled content undefined.
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("int mipmapCount = Math.Max(0, Mipmaps?.Length ?? 0);");
         source.ShouldContain("if (mipmapCount > requestedLevels)");
@@ -73,7 +73,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_LogsEveryImmutableStorageAllocation()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("[GLTexture2D] Storage allocated for");
         source.ShouldContain("[GLTexture2D] DataResized scheduling immutable recreate for");
@@ -82,7 +82,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_OutOfRangeMipUploadLogsDiagnosticContext()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("Skipping mip upload outside allocated storage");
         source.ShouldContain("mipmapDims=");
@@ -93,7 +93,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_ValidatesSubImageUploadRectBeforeCallingTexSubImage2D()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("TryPrepareTexSubImageUpload");
         source.ShouldContain("TryValidateTexSubImageUpload");
@@ -106,7 +106,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_CancelsStaleProgressiveUploadsAfterStorageGenerationChanges()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("private int _storageGeneration;");
         source.ShouldContain("CurrentStorageGeneration");
@@ -118,7 +118,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_SparseStorageTracksLogicalAllocationMetadata()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("_allocatedWidth = request.LogicalWidth;");
         source.ShouldContain("_allocatedHeight = request.LogicalHeight;");
@@ -130,8 +130,8 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_SparseAsyncPromotionRequiresPublishedResidentState()
     {
-        string sparseSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.SparseStreaming.cs");
-        string asyncSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.SparseStreaming.Async.cs");
+        string sparseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.SparseStreaming.cs");
+        string asyncSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.SparseStreaming.Async.cs");
 
         sparseSource.ShouldContain("Keep the public sparse state private until UpdateSparseTextureState");
         asyncSource.ShouldContain("HasPublishedSparseStorageForAsyncPromotion(request)");
@@ -144,7 +144,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_SparseResidentUploadsUseLogicalMipLevels()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("int actualMipIndex = Data.SparseTextureStreamingEnabled");
         source.ShouldContain("Data.SparseTextureStreamingResidentBaseMipLevel == int.MaxValue");
@@ -158,7 +158,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_RecreatesStorageWhenLeavingSparseResidency()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("bool switchingFromSparseStorage = _sparseStorageAllocated && !Data.SparseTextureStreamingEnabled;");
         source.ShouldContain("switchingFromSparseStorage");
@@ -168,7 +168,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_SparseStorageAllocationUsesLogicalDimensionsAndLegalLevelCount()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("bool sparseLogicalAllocation = Data.SparseTextureStreamingEnabled");
         source.ShouldContain("width = Math.Max(1u, Data.SparseTextureStreamingLogicalWidth);");
@@ -180,7 +180,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTextureCube_AppliesSamplerParametersAndConfiguredMipRange()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTextureCube.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTextureCube.cs");
 
         source.ShouldContain("protected override void SetParameters()");
         source.ShouldContain("Api.TextureParameter(BindingId, GLEnum.TextureLodBias, Data.LodBias);");
@@ -204,7 +204,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLDataBuffer_DoesNotSubDataImmutableStorageWithoutDynamicStorageBit()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Buffers/GLDataBuffer.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Buffers/GLDataBuffer.cs");
 
         source.ShouldContain("!Data.StorageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage)");
         source.ShouldContain("RecreateBuffer();");
@@ -249,7 +249,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_SparseAsyncPromotionRequiresExistingVisibleCommit()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("bool hasPreviousCommit = previousCommittedBaseMipLevel != int.MaxValue;");
         source.ShouldContain("if (!hasPreviousCommit)");
@@ -261,7 +261,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_LodBiasChangesAreFlushedToOpenGL()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture.cs");
 
         source.ShouldContain("LodBias = 1 << 4");
         source.ShouldContain("nameof(XRTexture2D.LodBias) => TexturePropertyUpdateMask.LodBias");
@@ -291,7 +291,7 @@ public sealed class GLTexture2DContractTests
     [Test]
     public void GLTexture2D_CanRouteAutoMipGenerationThroughDetailPreservingComputeShader()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.cs");
 
         source.ShouldContain("Engine.Rendering.Settings.UseDetailPreservingComputeMipmaps");
         source.ShouldContain("Renderer.GetOrCreateDetailPreservingMipmapProgram(imageFormat)");
@@ -307,7 +307,7 @@ public sealed class GLTexture2DContractTests
         // it MUST explicitly clear the current unit's target via BindTexture(target, 0)
         // and emit a loud diagnostic. Silently returning leaves the unit pointing at
         // whatever the previous draw bound, producing cross-material texture bleed.
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture.cs");
 
         source.ShouldContain("[GLTexture.Bind] Binding SKIPPED (id=InvalidBindingId)");
         source.ShouldContain("[GLTexture.Bind] Binding VETOED by OnPreBind");
@@ -331,7 +331,7 @@ public sealed class GLTexture2DContractTests
     {
         // When LogMaterialTextureBindings is enabled, every (material, slot, unit, texture) binding
         // must be traced so cross-material texture bleed can be diagnosed post-hoc.
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Materials/GLMaterial.cs");
 
         source.ShouldContain("Engine.Rendering.Settings.LogMaterialTextureBindings");
         source.ShouldContain("[GLMaterial.Bind] material=");

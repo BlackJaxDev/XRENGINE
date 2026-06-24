@@ -89,7 +89,7 @@ internal sealed class EngineWindowPumpHost : IDisposable
             return false;
 
         return Engine.ResolveInteractiveResizeStrategy(windowSettings) == EInteractiveWindowResizeStrategy.SdlBackend &&
-            Engine.UserSettings.RenderLibrary == ERenderLibrary.Vulkan;
+            Engine.EffectiveSettings.PreferredRenderBackend == ERenderLibrary.Vulkan;
     }
 
     public XRWindow CreateWindow(Func<XRWindow> factory, string reason)
@@ -255,11 +255,11 @@ internal sealed class EngineWindowPumpHost : IDisposable
             return false;
         }
 
-        if (Engine.UserSettings.RenderLibrary != ERenderLibrary.Vulkan)
+        if (Engine.EffectiveSettings.PreferredRenderBackend != ERenderLibrary.Vulkan)
         {
             Debug.RenderingWarning(
-                "[WindowPumpHost] SDL prototype pump requires Vulkan because OpenGL context transfer is not validated. Current render library={0}.",
-                Engine.UserSettings.RenderLibrary);
+                "[WindowPumpHost] SDL prototype pump requires Vulkan because OpenGL context transfer is not validated. Current render backend={0}.",
+                Engine.EffectiveSettings.PreferredRenderBackend);
             return false;
         }
 

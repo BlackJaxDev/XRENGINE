@@ -69,7 +69,7 @@ Reference constraints for XRENGINE:
 
 ## Current Local Facts
 
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRaytracing.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Raytracing/VulkanRenderer.Raytracing.cs`
   is commented-out legacy scaffolding. Rebuild this subsystem in the current
   `XREngine.Rendering.Vulkan` style instead of uncommenting it.
 - `PhysicalDevice.ProbeVulkanRayTracingSupport()` records ray tracing
@@ -178,8 +178,9 @@ Acceptance criteria:
 
 ## Phase 2 - Vulkan Acceleration Structure Resources
 
-- [ ] Replace the legacy commented `VulkanRaytracing.cs` body with current-style
-      Vulkan RT resource classes or partials.
+- [ ] Replace the legacy commented
+      `Features/Raytracing/VulkanRenderer.Raytracing.cs` body with
+      current-style Vulkan RT resource classes or partials.
 - [ ] Add `VulkanBottomLevelAccelerationStructure` with:
       storage buffer, scratch buffer, compacted-size query support, build sizes,
       geometry ranges, lifetime ownership, and debug name.

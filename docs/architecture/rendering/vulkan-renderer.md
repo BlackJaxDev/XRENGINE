@@ -5,6 +5,7 @@ This document describes how the Vulkan renderer is initialized, how it manages t
 ## Table of Contents
 
 - [Overview](#overview)
+- [Settings Ownership](#settings-ownership)
 - [Source File Inventory](#source-file-inventory)
 - [Initialization](#initialization)
   - [Initialize() Sequence](#initialize-sequence)
@@ -47,7 +48,7 @@ This document describes how the Vulkan renderer is initialized, how it manages t
 `VulkanRenderer` is a partial class extending `AbstractRenderer<Vk>` (where `Vk` is Silk.NET's Vulkan binding). It is split across **40+ files** organized by responsibility. Unlike the OpenGL renderer where swap is automatic, the Vulkan renderer **explicitly manages** the entire frame lifecycle: swapchain image acquisition, command buffer recording, queue submission, and presentation.
 
 ```csharp
-// XRENGINE/Rendering/API/Rendering/Vulkan/Init.cs
+// XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs
 public unsafe partial class VulkanRenderer(XRWindow window, bool shouldLinkWindow = true)
     : AbstractRenderer<Vk>(window, shouldLinkWindow)
 ```
@@ -56,66 +57,55 @@ The renderer targets **Vulkan 1.3** (instance) with a **1.1 minimum** API versio
 
 ---
 
+## Settings Ownership
+
+Vulkan-specific runtime defaults live under `Engine.Rendering.Settings.Vulkan`:
+
+- `Vulkan.Startup.FallbackPolicy` controls whether startup may retry OpenGL after a requested Vulkan window fails.
+- `Vulkan.TargetMode.RenderTargetMode` selects `Auto`, `DynamicRendering`, or `LegacyRenderPass`. `XRE_VK_RENDER_TARGET_MODE` has highest priority for the current process.
+- `Vulkan.GpuDriven` owns the GPU-driven profile and optional geometry-fetch strategy.
+- `Vulkan.Descriptors` owns descriptor indexing, the bindless material table, bindless material policy, and descriptor-contract validation.
+- `Vulkan.Synchronization` owns queue-overlap policy.
+- `Vulkan.Robustness` remains the allocator/synchronization/descriptor-update migration owner.
+
+Flat `Engine.Rendering.EngineSettings` properties such as
+`VulkanGpuDrivenProfile`, `VulkanQueueOverlapMode`,
+`EnableVulkanDescriptorIndexing`, and `VulkanRenderTargetMode` remain
+compatibility aliases that forward to those grouped owners. Runtime renderer
+code should read through `RuntimeEngine.EffectiveSettings` or
+`Engine.EffectiveSettings.RenderSnapshot.Vulkan` so project/user cascade logic
+stays outside backend classes.
+
+Project overrides live under `GameStartupSettings.Rendering.Vulkan` and
+`GameStartupSettings.Rendering.Common`; user fallback overrides live under
+`UserSettings.Rendering.Common`. Editor-only Vulkan diagnostics are exposed as
+`EditorPreferences.Diagnostics.Vulkan` while the existing serialized
+`EditorDebugOptions` fields remain compatibility storage.
+
+---
+
 ## Source File Inventory
 
-### Root (`XRENGINE/Rendering/API/Rendering/Vulkan/`)
+The Vulkan renderer lives under
+`XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/` and uses the
+same responsibility-based backend taxonomy described in
+[Rendering Code Map](code-map.md). Namespaces intentionally remain
+`XREngine.Rendering.Vulkan`; folder names are for ownership and navigation.
 
-| File | Purpose |
-|------|---------|
-| `Init.cs` | Class declaration, `Initialize()`, `CleanUp()` |
-| `Drawing.cs` | Render loop (`WindowRenderCallback`), luminance readback, API object factory |
-| `SwapChain.cs` | Swapchain creation/recreation, depth buffer, HDR/SDR format selection |
-| `PhysicalDevice.cs` | GPU selection, suitability checks, ray tracing probe |
-| `Extensions.cs` | Extension flags, required/optional device extension lists |
-| `Validation.cs` | Debug messenger, validation layers |
-| `FrameBufferRenderPasses.cs` | Legacy FBO-specific render pass creation/caching |
-| `VulkanRenderer.State.cs` | `VulkanStateTracker`, pipeline state, barrier planner, frame ops |
-| `VulkanRenderer.ImGui.cs` | Full ImGui backend (context, font atlas, pipeline, draw commands) |
-| `VulkanRenderer.DebugTriangle.cs` | Debug visualization pipeline |
-| `VulkanRenderGraphCompiler.cs` | Render graph compilation, topological sort, pass batching |
-| `VulkanBarrierPlanner.cs` | Per-pass image/buffer barrier planning |
-| `VulkanResourcePlanner.cs` | Resource allocation planning |
-| `VulkanResourceAllocator.cs` | Physical image/buffer allocation |
-| `VulkanStagingManager.cs` | Staging buffer pool (acquire/release/trim) |
-| `VulkanPipelineCache.cs` | Persistent pipeline cache (disk save/load) |
-| `VulkanDescriptorLayoutCache.cs` | Descriptor set layout caching |
-| `VulkanDescriptorContracts.cs` | Descriptor binding contracts |
-| `VulkanBindlessMaterialDescriptors.cs` | Reserved descriptor-indexed material texture table binding contract |
-| `VulkanRenderer.BindlessMaterialTextureTable.cs` | Renderer-owned global material texture descriptor table and descriptor-index material row integration |
-| `VulkanComputeDescriptors.cs` | Compute shader descriptor management |
-| `VulkanCommandChains.cs` | Command-chain packet, key, cache, schedule, and queue-schedule data model |
-| `VulkanCommandChainLowering.cs` | Feature-flagged lowering from sorted `FrameOp` arrays into reusable command-chain schedules |
-| `VulkanCommandChainWorkers.cs` | Bounded worker infrastructure for command-chain recording diagnostics and timing |
-| `VulkanFeatureProfile.cs` | Feature toggles/profile configuration |
-| `VulkanRenderTargetMode.cs` | Dynamic-rendering vs legacy render-pass target selection |
-| `VulkanShaderTools.cs` | Shader compilation utilities (GLSL → SPIR-V) |
-| `VulkanAutoExposure.cs` | Auto-exposure compute resources |
-| `VulkanRaytracing.cs` | Ray tracing support |
-| `MemoryDecompression.cs` | NV memory decompression (RTX IO) |
-| `MemoryCopyIndirect.cs` | NV indirect memory copy (RTX IO) |
-
-### Objects (`Objects/`)
-
-| File | Purpose |
-|------|---------|
-| `Instance.cs` | `CreateInstance()` — Vulkan 1.3 instance creation |
-| `Surface.cs` | `CreateSurface()` — KHR surface from window |
-| `LogicalDevice.cs` | `CreateLogicalDevice()` — queues, features, extensions |
-| `CommandPool.cs` | Per-thread command pool creation |
-| `CommandBuffers.cs` | Command buffer allocation, recording, bind tracking (~2000 lines) |
-| `SyncObjects.cs` | Semaphores + fences creation |
-| `RenderPasses.cs` | Legacy swapchain render pass creation |
-| `FrameBuffers.cs` | Legacy swapchain framebuffer creation or dynamic-mode command-buffer slot placeholders |
-| `ImageViews.cs` | Swapchain image view creation |
-| `DescriptorSetLayout.cs` | Global UBO descriptor layout |
-| `DescriptorPool.cs` | Per-swapchain descriptor pool |
-| `DescriptorSets.cs` | Per-swapchain descriptor set allocation |
-| `UniformBuffers.cs` | Uniform buffer objects |
-| `GraphicsPipeline.cs` | Pipeline placeholder (real pipelines are per-material) |
-
-### Object Types (`Objects/Types/`)
-
-18 files implementing `VkObject` hierarchy — API wrappers for materials, meshes, textures, shaders, buffers, and framebuffers.
+| Folder | Purpose |
+| --- | --- |
+| `Bootstrap/` | Instance, surface, physical/logical device setup, extension probes, validation, OBS hook compatibility, and renderer initialization. |
+| `Frame/` | Swapchain creation/recreation, per-frame acquire/submit/present flow, synchronization objects, frame timing, and deferred resource retirement. |
+| `Commands/` | Command pools, command-buffer allocation/recording, frame-op signatures and diagnostics, blits, readbacks, indirect draw, render-state mutation, command-chain lowering, and queue-overlap policy. |
+| `RenderGraph/` | Render-graph compilation, barrier planning, resource planning, and the renderer's resource-planner state refresh path. |
+| `Resources/` | Resource allocator, resource registration, framebuffer/image-view helpers, placeholder textures, dynamic uniform and scene database buffers, upload/staging services, and Vulkan memory allocator backends. |
+| `Descriptors/` | Descriptor pools, sets, layouts, update templates, descriptor contracts, image layout policy, immutable samplers, compute descriptors, and bindless material texture tables. |
+| `Pipelines/` | Legacy render-pass helpers, graphics pipeline setup, render target mode resolution, pipeline cache, compile queue, prewarm database, and graphics pipeline library cache. |
+| `Shaders/` | Shader artifact cache, auto-uniform rewriting, source fixups, transform-feedback translation, shaderc compilation, SPIR-V reflection, and shader tool shared types. |
+| `Features/` | Auto exposure, feature profile, meshlets, ray tracing, RTX IO memory copy/decompression, texture streaming hooks, Streamline interop, DLSS command buffers, and the OpenGL-to-Vulkan upscale bridge. |
+| `UI/` | Vulkan ImGui backend integration. |
+| `BackendObjects/` | Vulkan wrappers around engine resources: buffers, textures, framebuffers, materials, mesh renderers, render programs, shaders, queries, samplers, and shared wrapper base types. |
+| `Types/` | Small backend value types, enums, and interop helpers such as queue-family indices, format conversions, transform-feedback metadata, and extension structs. |
 
 ---
 
@@ -145,7 +135,7 @@ public override void Initialize()
 
 ### Instance Creation
 
-From `Objects/Instance.cs`:
+From `Bootstrap/VulkanRenderer.Instance.cs`:
 
 - Creates a Vulkan 1.3 instance with application name "XRENGINE"
 - Enumerates available instance extensions via `vkEnumerateInstanceExtensionProperties`
@@ -162,7 +152,7 @@ From `Validation.cs`:
 
 ### Surface Creation
 
-From `Objects/Surface.cs`:
+From `Bootstrap/VulkanRenderer.Surface.cs`:
 
 ```csharp
 private void CreateSurface()
@@ -186,7 +176,7 @@ From `PhysicalDevice.cs`:
 
 ### Logical Device & Feature Chain
 
-From `Objects/LogicalDevice.cs` (~560 lines):
+From `Bootstrap/VulkanRenderer.LogicalDevice.cs` (~560 lines):
 
 The logical device is created with a carefully constructed `pNext` chain of feature structs:
 
@@ -249,7 +239,10 @@ The Windows OBS Vulkan game-capture path is provided by OBS as the implicit `VK_
 
 **Render target mode:**
 
-After logical-device feature resolution, Vulkan selects a render target path from `XRE_VK_RENDER_TARGET_MODE`:
+After logical-device feature resolution, Vulkan selects a render target path
+from `RuntimeEngine.EffectiveSettings.VulkanRenderTargetMode`; the
+`XRE_VK_RENDER_TARGET_MODE` environment variable overrides the persisted
+setting for the current process:
 
 | Value | Behavior |
 |-------|----------|
@@ -261,7 +254,9 @@ Startup diagnostics report the requested mode, resolved mode, and dynamic-render
 
 **Bindless material mode:**
 
-Vulkan material bindless mode is selected by `Engine.Rendering.Settings.VulkanBindlessMaterialMode` or the `XRE_VULKAN_BINDLESS_MATERIAL_MODE` environment variable:
+Vulkan material bindless mode is selected by
+`Engine.Rendering.Settings.Vulkan.Descriptors.BindlessMaterialMode` or the
+`XRE_VULKAN_BINDLESS_MATERIAL_MODE` environment variable:
 
 | Value | Behavior |
 |-------|----------|
@@ -274,7 +269,7 @@ Startup logs include `Capability.BindlessMaterialTextures` with mode, tier, capa
 
 ### Command Pool
 
-From `Objects/CommandPool.cs`:
+From `Commands/VulkanRenderer.CommandPool.cs`:
 
 ```csharp
 private void CreateCommandPool()
@@ -307,7 +302,7 @@ In dynamic-rendering mode, `CreateRenderPass()` leaves the swapchain render-pass
 
 ### Synchronization Objects
 
-From `Objects/SyncObjects.cs`:
+From `Frame/VulkanRenderer.SyncObjects.cs`:
 
 ```csharp
 Semaphore[] imageAvailableSemaphores;  // Per in-flight frame (2)
@@ -376,7 +371,7 @@ WindowRenderCallback(double delta)
 
 ### Command Buffer Recording
 
-`RecordCommandBuffer(uint imageIndex)` from `Objects/CommandBuffers.cs` (~2000 lines):
+`RecordCommandBuffer(uint imageIndex)` from `Commands/VulkanRenderer.CommandBufferRecording.cs`:
 
 ```
 RecordCommandBuffer(imageIndex)
@@ -415,7 +410,6 @@ Graphics targets are selected through the resolved render target mode. Dynamic m
 Vulkan also has a command-chain path that lowers the sorted `FrameOp` stream into reusable packet schedules before recording. It is guarded by environment flags while the legacy frame-op recorder remains the default fallback:
 
 | Flag | Purpose |
-|------|---------|
 | `XRE_VULKAN_COMMAND_CHAINS=1` | Enables command-chain lowering, secondary mesh command buffers, chain cache lookup, and primary schedule signatures. |
 | `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` | Forces deterministic single-thread chain processing for bisection. |
 | `XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING=1` | Keeps command-chain lowering enabled while disabling worker dispatch. |
@@ -700,7 +694,6 @@ The descriptor-index shader variant emits `GL_EXT_nonuniform_qualifier` and samp
 `VulkanRenderer.BindlessMaterialCapability` exposes the current tier:
 
 | Tier | Meaning |
-|------|---------|
 | `DescriptorIndexingUnavailable` | Required descriptor-indexing features are missing or disabled. |
 | `DescriptorIndexingReady` | Device/profile prerequisites are available. |
 | `GlobalMaterialTextureTableReady` | The global descriptor table, pool, layout, and set are allocated. |
@@ -729,7 +722,7 @@ Troubleshooting bindless material textures:
 > **Note:** The legacy per-object allocator is allocation-heavy and exists primarily as a fallback/debug path. The VMA backend is the intended default path; choose `Managed` when debugging the C# allocator or native wrapper deployment.
 
 Declared render-pipeline resources are synchronized through a staged planner
-swap. `VulkanRenderer.State` builds a pending `VulkanResourcePlanner` from the
+swap. `VulkanRenderer.ResourcePlannerState` builds a pending `VulkanResourcePlanner` from the
 committed logical resource registry, validates render-pass metadata references
 against declared textures, buffers, FBOs, and FBO attachment slots, then asks a
 pending `VulkanResourceAllocator` to rebuild and allocate the replacement
@@ -818,7 +811,7 @@ variable influence branch or a paired bone-world/inverse-bind palette contract.
 
 ### Ray Tracing
 
-`VulkanRaytracing.cs` provides ray tracing support when `VK_KHR_ray_tracing_pipeline` or `VK_NV_ray_tracing` is available:
+`Features/Raytracing/VulkanRenderer.Raytracing.cs` provides ray tracing support when `VK_KHR_ray_tracing_pipeline` or `VK_NV_ray_tracing` is available:
 
 - Probed during physical device selection
 - Sets `Engine.Rendering.State.HasVulkanRayTracing` / `HasNvRayTracing` flags

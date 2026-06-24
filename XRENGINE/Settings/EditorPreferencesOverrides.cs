@@ -75,7 +75,11 @@ namespace XREngine
         public EditorDebugOverrides Debug
         {
             get => _debug;
-            set => SetField(ref _debug, value ?? new EditorDebugOverrides());
+            set
+            {
+                if (SetField(ref _debug, value ?? new EditorDebugOverrides()))
+                    _diagnostics = null;
+            }
         }
 
         [Category("Viewport Overrides")]

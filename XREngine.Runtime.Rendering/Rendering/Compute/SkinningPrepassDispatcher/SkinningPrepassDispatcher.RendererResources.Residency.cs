@@ -125,8 +125,12 @@ internal sealed partial class SkinningPrepassDispatcher
             if (buffer is null)
                 return true;
             foreach (var wrapper in buffer.APIWrappers)
+            {
                 if (wrapper is OpenGLRenderer.GLDataBuffer gl && !gl.IsReadyForRendering)
                     return false;
+                if (wrapper is VulkanRenderer.VkDataBuffer vk && !vk.IsReadyForRendering)
+                    return false;
+            }
             return true;
         }
 
@@ -135,10 +139,9 @@ internal sealed partial class SkinningPrepassDispatcher
         /// <summary>
         /// Forces every read-only compute-skinning INPUT buffer required for this dispatch to be
         /// fully GPU-resident (generated, pending async upload flushed, storage allocated) before
-        /// the dispatch binds and reads them. This mirrors what <c>BindSSBO</c> already does, but
-        /// the skinning dispatcher binds via <c>SetBlockIndex</c>, which skips that guard. Output
-        /// buffers are deliberately NOT touched here: they are written by the compute shader and
-        /// re-uploading them would clobber the skinned results with stale client data.
+        /// the dispatch binds and reads them. Output buffers are deliberately NOT touched here: they
+        /// are written by the compute shader and re-uploading them would clobber the skinned results
+        /// with stale client data.
         /// </summary>
         public void EnsureSkinningInputsResident(
             XRMesh mesh,
@@ -231,7 +234,7 @@ internal sealed partial class SkinningPrepassDispatcher
                 if (wrapper is OpenGLRenderer.GLDataBuffer gl && !gl.IsReadyForRendering)
                     gl.EnsureStorageAllocatedForGpuCopy();
                 else if (wrapper is VulkanRenderer.VkDataBuffer vk)
-                    vk.Generate();
+                    vk.EnsureStorageAllocatedForGpuUse();
             }
         }
 
@@ -260,8 +263,12 @@ internal sealed partial class SkinningPrepassDispatcher
             if (buffer is null)
                 return "null";
             foreach (var wrapper in buffer.APIWrappers)
+            {
                 if (wrapper is OpenGLRenderer.GLDataBuffer gl)
                     return gl.IsReadyForRendering ? "ready" : "PENDING";
+                if (wrapper is VulkanRenderer.VkDataBuffer vk)
+                    return vk.IsReadyForRendering ? "ready" : "PENDING";
+            }
             return "NOWRAP";
         }
     }

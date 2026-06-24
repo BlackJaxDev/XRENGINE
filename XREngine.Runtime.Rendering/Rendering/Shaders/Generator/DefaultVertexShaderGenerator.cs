@@ -262,13 +262,18 @@ namespace XREngine.Rendering.Shaders.Generator
         public virtual bool UsePointLightInstancedLayering => false;
         public virtual bool UsePointLightAtlasInstancedLayering => false;
 
-        private bool UseComputeSkinning => RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader && Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
+        private bool UseComputeSkinning => RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
+            && !RuntimeEngine.Rendering.State.IsVulkan
+            && Mesh.HasSkinning
+            && RuntimeEngine.Rendering.Settings.AllowSkinning;
         private bool UseComputeBlendshapes => Mesh.BlendshapeCount > 0
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+            && !RuntimeEngine.Rendering.State.IsVulkan
             && (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || UseComputeSkinning);
         private bool UseComputeDeformation => UseComputeSkinning || UseComputeBlendshapes;
         private bool UsePrecombinedDirectBlendshapes => Mesh.BlendshapeCount > 0
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+            && !RuntimeEngine.Rendering.State.IsVulkan
             && RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
             && RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombineForDirectVertexPath
             && !UseComputeBlendshapes
@@ -651,14 +656,14 @@ namespace XREngine.Rendering.Shaders.Generator
         }
 
         private bool NeedsSkinningCalc()
-            => Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader;
+            => Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning;
 
         private bool NeedsBlendshapeCalc()
-            => Mesh.BlendshapeCount > 0 && RuntimeEngine.Rendering.Settings.AllowBlendshapes && !RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader;
+            => Mesh.BlendshapeCount > 0 && RuntimeEngine.Rendering.Settings.AllowBlendshapes && !UseComputeBlendshapes;
 
         private bool WriteSkinningCalc()
         {
-            if (RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader)
+            if (UseComputeSkinning)
                 return false;
 
             bool hasNormals = _useNormals;
@@ -680,7 +685,7 @@ namespace XREngine.Rendering.Shaders.Generator
             {
                 Line($"uint boneIndex = uint({boneIndexExpression});");
                 Line($"float weight = {weightExpression};");
-                Line("if (boneIndex > 0u && weight > 0.0f && boneIndex < skinPaletteCount)");
+                Line("if (weight > 0.0f && boneIndex < skinPaletteCount)");
                 using (OpenBracketState())
                 {
                     Line("uint paletteIndex = skinPaletteBase + boneIndex;");
@@ -759,7 +764,7 @@ namespace XREngine.Rendering.Shaders.Generator
         
         private bool WriteBlendshapeCalc()
         {
-            if (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || Mesh.BlendshapeCount == 0 || !RuntimeEngine.Rendering.Settings.AllowBlendshapes || !_useBlendshapeInput)
+            if (UseComputeBlendshapes || Mesh.BlendshapeCount == 0 || !RuntimeEngine.Rendering.Settings.AllowBlendshapes || !_useBlendshapeInput)
                 return false;
 
             bool hasNormals = _useNormals;

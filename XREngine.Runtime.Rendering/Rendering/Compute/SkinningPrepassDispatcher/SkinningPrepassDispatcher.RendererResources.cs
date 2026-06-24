@@ -32,6 +32,7 @@ internal sealed partial class SkinningPrepassDispatcher
         private bool _lastDidBlendshapes;
         private bool _lastUsedPrecombinedBlendshapes;
         private ulong _lastOutputVersion;
+        private int _lastDispatchedPoseHash;
 
         public ulong LastComputePrepassFrameId;
 
@@ -138,6 +139,9 @@ internal sealed partial class SkinningPrepassDispatcher
                 return false;
             }
 
+            if (doSkinning && _lastDispatchedPoseHash != _renderer.ComputeCurrentBonePoseHash())
+                return false;
+
             return doSkinning || doBlendshapes;
         }
 
@@ -148,6 +152,7 @@ internal sealed partial class SkinningPrepassDispatcher
             _lastDidBlendshapes = doBlendshapes;
             _lastUsedPrecombinedBlendshapes = usePrecombinedBlendshapes;
             _lastOutputVersion = _renderer.SkinnedOutputVersion;
+            _lastDispatchedPoseHash = doSkinning ? _renderer.ComputeCurrentBonePoseHash() : 0;
             _renderer.MarkSkinnedOutputClean();
         }
 
@@ -296,6 +301,7 @@ internal sealed partial class SkinningPrepassDispatcher
             _lastDidBlendshapes = false;
             _lastUsedPrecombinedBlendshapes = false;
             _lastOutputVersion = 0;
+            _lastDispatchedPoseHash = 0;
         }
 
         private static readonly PackedUInt4 PositiveInfinityPacked = PackedUInt4.FromVector(new Vector4(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity, 1f));

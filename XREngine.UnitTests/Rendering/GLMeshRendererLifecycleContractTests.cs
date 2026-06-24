@@ -12,7 +12,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLMeshRenderer_RegeneratesProgramsWhenMaterialChanges()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Lifecycle.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Lifecycle.cs");
 
         source.ShouldContain("case nameof(XRMeshRenderer.Material):");
         source.ShouldContain("OnMaterialChanged();");
@@ -27,8 +27,8 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLMeshRenderer_BuildsIndexBuffersOnlyWhenMeshRendererIsGenerated()
     {
-        string lifecycleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Lifecycle.cs");
-        string shaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
+        string lifecycleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Lifecycle.cs");
+        string shaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Shaders.cs");
 
         lifecycleSource.ShouldContain("MakeIndexBuffers();");
         shaderSource.ShouldNotContain("MakeIndexBuffers();");
@@ -37,7 +37,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLMeshRenderer_UsesCombinedProgramsWithTemporaryPipelineFallbackWhilePending()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Shaders.cs");
 
         source.ShouldContain("private bool UseShaderPipelinesForThisRenderer()");
         source.ShouldContain("=> RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines;");
@@ -61,7 +61,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLMeshRenderer_RequiresCombinedProgramUseBeforeReportingProgramsReady()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Shaders.cs");
 
         source.ShouldContain("if (!vertexProgram.Use())");
         source.ShouldContain("vertexProgram = materialProgram = null;");
@@ -74,8 +74,8 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLMeshRenderer_UsesCheapPipelineFallbackWhileUberProgramsArePending()
     {
-        string shaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
-        string renderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Rendering.cs");
+        string shaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Shaders.cs");
+        string renderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Rendering.cs");
 
         shaderSource.ShouldContain("ShouldUsePipelineForPendingUberFallbackMaterial(material)");
         shaderSource.ShouldContain("allowWhenShaderPipelinesDisabled: true");
@@ -90,7 +90,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLMeshRenderer_UsesSharedShadowMaterialForColdUberShadowPass()
     {
-        string renderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Rendering.cs");
+        string renderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Rendering.cs");
 
         renderSource.ShouldContain("CanUseSharedUberShadowFallback(globalMaterialOverride, shadowSourceMaterial)");
         renderSource.ShouldContain("shadowSourceMaterial.TryGetUberMaterialState(out _, out _)");
@@ -100,8 +100,8 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLRenderProgram_UseDoesNotBindPendingAsyncProgramHandles()
     {
-        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.cs");
-        string linkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.cs");
+        string linkSource = ReadGlRenderProgramLinkingSources();
 
         programSource.ShouldContain("public bool Use()");
         programSource.ShouldContain("Link(nonBlocking: true)");
@@ -116,7 +116,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLProgramCompileLinkQueue_SerializesMultiWorkerProgramLinkDriverCalls()
     {
-        string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/GLProgramCompileLinkQueue.cs");
+        string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Pipelines/GLProgramCompileLinkQueue.cs");
 
         queueSource.ShouldContain("XRE_SHARED_CONTEXT_DISABLE_LINK_SERIALIZATION");
         queueSource.ShouldContain("private readonly SemaphoreSlim _programLinkGate;");
@@ -140,9 +140,9 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLRenderProgram_CapturesSharedContextSourceBinariesOffRenderThread()
     {
-        string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/GLProgramCompileLinkQueue.cs");
-        string linkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
-        string binaryCacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.BinaryCache.cs");
+        string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Pipelines/GLProgramCompileLinkQueue.cs");
+        string linkSource = ReadGlRenderProgramLinkingSources();
+        string binaryCacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.BinaryCache.cs");
 
         queueSource.ShouldContain("ProgramBinarySnapshot");
         queueSource.ShouldContain("CaptureProgramBinary");
@@ -156,7 +156,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLRenderProgram_DisablesSharedLinkedProgramReuseByDefault()
     {
-        string linkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+        string linkSource = ReadGlRenderProgramLinkingSources();
 
         linkSource.ShouldContain("XRE_ENABLE_SHARED_LINKED_PROGRAM_REUSE");
         linkSource.ShouldContain("private static readonly bool SharedLinkedProgramReuseEnabled");
@@ -167,8 +167,8 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLRenderProgram_BlocksColdLargeSourceLinksByDefault()
     {
-        string linkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
-        string selectorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLShaderLinkBackendSelector.cs");
+        string linkSource = ReadGlRenderProgramLinkingSources();
+        string selectorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Pipelines/OpenGLShaderLinkBackendSelector.cs");
 
         linkSource.ShouldContain("XRE_ENABLE_LARGE_OPENGL_SOURCE_LINKS");
         linkSource.ShouldContain("LargeSourceSourceLinkWatchdogThresholdBytes = 128 * 1024");
@@ -184,7 +184,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     [Test]
     public void GLRenderProgram_AbandonedSharedContextLinksAvoidDeferredCompletionPolling()
     {
-        string linkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+        string linkSource = ReadGlRenderProgramLinkingSources();
 
         linkSource.ShouldContain("DriverParallelSourceTimeouts");
         linkSource.ShouldContain("programId={abandonedProgramId} leaked to avoid blocking GL cleanup calls");
@@ -227,7 +227,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     public void XRMaterial_DisposesSeparableProgramWhenShaderPipelinesAreDisabled()
     {
         string materialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Materials/XRMaterial.cs");
-        string glMaterialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs");
+        string glMaterialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Materials/GLMaterial.cs");
         string engineSettingsSource = ReadWorkspaceFile("XREngine/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
         string runtimeSettingsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngineFacade.cs");
 
@@ -256,6 +256,17 @@ public sealed class GLMeshRendererLifecycleContractTests
         File.Exists(fullPath).ShouldBeTrue($"Expected workspace file does not exist: {fullPath}");
         return File.ReadAllText(fullPath);
     }
+
+    private static string ReadGlRenderProgramLinkingSources()
+        => string.Join('\n', new[]
+        {
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkOrchestration.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.CompileInputs.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.BinaryCacheInteraction.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.AsyncResults.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.HazardDetection.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkDiagnostics.cs"),
+        });
 
     private static string ResolveWorkspacePath(string relativePath)
     {

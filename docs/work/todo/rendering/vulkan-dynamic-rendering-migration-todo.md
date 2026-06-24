@@ -511,22 +511,22 @@ Keep high-frequency logs behind existing throttles or explicit trace flags.
 
 ## Files Expected To Change (Remaining)
 
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanBarrierPlanner.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderGraphCompiler.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Extensions.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/LogicalDevice.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanSynchronization.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanDescriptorLayoutCache.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanDescriptorUpdateTemplates.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/DescriptorPool.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/DescriptorSetLayout.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/DescriptorSets.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Descriptors.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/Textures/VkImageBackedTexture.cs`
-- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Memory/VulkanVmaAllocator.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanBarrierPlanner.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLayoutCache.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorUpdateTemplates.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorPool.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSetLayout.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs`
+- [ ] `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Memory/VulkanVmaAllocator.cs`
 - [ ] new descriptor heap backend files under `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/`
 - [ ] new shader object backend files under `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/`
 - [ ] new VRS/foveation capability files under `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/`

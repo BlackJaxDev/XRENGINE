@@ -43,7 +43,8 @@ post-process, UI, shadow, and future shader families.
 1. Audit the current landed implementation.
    - Verify every runtime path that can compile shader text: `XRShader`,
      `XRRenderProgramDescriptor`, `XRRenderProgram`, `GLShader`,
-     `GLRenderProgram`, `VulkanShaderTools`, shader editor tools, prewarm
+     `GLRenderProgram`, the split Vulkan shader tooling under
+     `Vulkan/Shaders/`, shader editor tools, prewarm
      paths, inline shaders, generated vertex shaders, generated uber variants,
      compute shaders, and post-process shaders.
    - Record where each path currently sees raw, resolved, optimized, or
@@ -124,8 +125,11 @@ post-process, UI, shadow, and future shader families.
      generic optimizer.
    - Run Vulkan auto-uniform and descriptor rewrites after generic
      optimization.
-   - Split `VulkanShaderTools` into smaller files/classes for auto-uniform
-     rewriting, shader compilation, reflection, and SPIR-V parsing/helpers.
+   - Keep the split Vulkan shader tooling (`VulkanShaderAutoUniforms`,
+     `VulkanShaderCompiler`, `VulkanShaderReflection`,
+     `VulkanShaderSourceFixups`, and related `Vulkan/Shaders/` files)
+     organized around auto-uniform rewriting, shader compilation, reflection,
+     and SPIR-V parsing/helpers.
    - Ensure `ShaderCrossCompiler` consumes already-resolved/optimized source
      when called from runtime shader paths.
 

@@ -43,13 +43,24 @@ public sealed class PhysicsChainShaderContractTests
     [Test]
     public void OpenGlRenderProgram_GeneratesBuffersBeforeComputeBinding()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+        string source = ReadGlRenderProgramLinkingSources();
 
         source.ShouldContain("Renderer.GetOrCreateAPIRenderObject(buffer, generateNow: true)");
     }
 
     private static string ReadPhysicsChainShader(string fileName)
         => ReadWorkspaceFile($"Build/CommonAssets/Shaders/Compute/PhysicsChain/{fileName}");
+
+    private static string ReadGlRenderProgramLinkingSources()
+        => string.Join('\n', new[]
+        {
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkOrchestration.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.CompileInputs.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.BinaryCacheInteraction.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.AsyncResults.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.HazardDetection.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkDiagnostics.cs"),
+        });
 
     private static string ReadWorkspaceFile(string relativePath)
     {

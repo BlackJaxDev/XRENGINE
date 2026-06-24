@@ -211,7 +211,7 @@ void accumulateSkinInfluence(
     inout vec3 skinnedTangent,
     inout float totalWeight)
 {
-    if (boneIndex == 0u || weight <= 0.0f || boneIndex >= skinPaletteCount)
+    if (weight <= 0.0f || boneIndex >= skinPaletteCount)
         return;
 
     uint idx = skinPaletteBase + boneIndex;

@@ -6,6 +6,7 @@ This document describes how the OpenGL 4.6 renderer is initialized, how it manag
 
 - [Overview](#overview)
 - [Source File Inventory](#source-file-inventory)
+- [Settings Ownership](#settings-ownership)
 - [Initialization](#initialization)
   - [GetAPI() and InitGL()](#getapi-and-initgl)
   - [Extension Probing](#extension-probing)
@@ -29,7 +30,7 @@ This document describes how the OpenGL 4.6 renderer is initialized, how it manag
 `OpenGLRenderer` is a partial class that extends `AbstractRenderer<GL>` (where `GL` is Silk.NET's OpenGL 4.6 binding). It obtains an OpenGL context from the Silk.NET window's `GLContext` and wraps all engine render objects with GL-specific API wrappers.
 
 ```csharp
-// XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs
+// XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs
 public partial class OpenGLRenderer : AbstractRenderer<GL>
 ```
 
@@ -37,22 +38,55 @@ A key design decision: **OpenGL's `WindowRenderCallback` is empty**. Unlike Vulk
 
 ---
 
+## Settings Ownership
+
+OpenGL-specific runtime defaults live under `Engine.Rendering.Settings.OpenGL`:
+
+- `OpenGL.Context.DebugContext` covers context creation policy. It is seeded from editor diagnostics and requires window recreation.
+- `OpenGL.ShaderLinking` owns binary program caching, async binary upload, async source compilation, shared worker counts, driver-parallel compile/link strategy, and probe timing.
+- `OpenGL.TextureUpload.UseDetailPreservingComputeMipmaps` owns the detail-preserving compute mipmap path.
+- `OpenGL.Diagnostics` owns GL submit tracing and GL crash breadcrumbs.
+- `OpenGL.AllowProgramPipelines` owns OpenGL program-pipeline composition.
+
+The old flat `Engine.Rendering.EngineSettings` properties such as
+`AllowShaderPipelines`, `OpenGLShaderLinkStrategy`, and
+`UseDetailPreservingComputeMipmaps` remain compatibility aliases that forward
+to the grouped OpenGL owner. Renderer-facing code should prefer
+`Engine.EffectiveSettings.RenderSnapshot.OpenGL` or the specific effective
+setting when available rather than walking user/game/editor settings directly.
+
+Unit-testing world settings use the grouped JSON shape
+`Rendering.OpenGL.ShaderLinking` and `Rendering.OpenGL.AllowProgramPipelines`.
+Legacy top-level OpenGL shader-linking properties are still read when the
+grouped `Rendering` block is absent.
+
+Editor-only OpenGL diagnostics are exposed as
+`EditorPreferences.Diagnostics.OpenGL`; the serialized flat
+`EditorDebugOptions` members remain as compatibility storage.
+
+---
+
 ## Source File Inventory
 
-The OpenGL renderer spans approximately 52 files under `XRENGINE/Rendering/API/Rendering/OpenGL/`:
+The OpenGL renderer lives under
+`XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/` and follows the
+same backend taxonomy as Vulkan where the API concepts line up. Namespaces
+intentionally remain `XREngine.Rendering.OpenGL`; folder names define source
+ownership and navigation.
 
-| Category | Key Files |
-|----------|-----------|
-| **Core** | `OpenGLRenderer.cs` (~3800 lines), `OpenGLRenderer.DebugTracking.cs` |
-| **Buffers** | `GLDataBuffer.cs`, `GLDataBufferView.cs`, `GLUploadQueue.cs` |
-| **Render Targets** | `GLFrameBuffer.cs`, `GLRenderBuffer.cs` |
-| **Textures** | `GLTexture1D/2D/3D.cs`, `GLTextureCube.cs`, `GLTexture2DArray.cs`, `GLTextureBuffer.cs`, `GLTextureRectangle.cs`, `GLTextureView.cs`, `GLSampler.cs` |
-| **Mesh Rendering** | `GLMeshRenderer.cs`, `.Buffers.cs`, `.Debug.cs`, `.Lifecycle.cs`, `.Rendering.cs`, `.Shaders.cs` |
-| **Materials/Shaders** | `GLMaterial.cs`, `GLShader.cs` |
-| **Programs** | `GLRenderProgram.cs`, `GLRenderProgramPipeline.cs` |
-| **Base Types** | `GLObject.cs`, `GLObjectBase.cs`, `IGLObject.cs` |
-| **Queries** | `GLRenderQuery.cs`, `GLTransformFeedback.cs` |
-| **Enums** | 10+ enum translation files (wrap modes, sampler parameters, filters, etc.) |
+| Folder | Purpose |
+| --- | --- |
+| `Bootstrap/` | Renderer class declaration, OpenGL initialization/debug setup, and shared-context worker ownership. |
+| `Frame/` | Frame-adjacent debug tracking, GPU fences, and GPU stats readback. |
+| `Commands/` | Draw submission, blits, readback capture, render-parameter state, clip-space policy, and mesh generation queue work. |
+| `Resources/` | Renderer-owned resource orchestration such as framebuffer binding and upload queue plumbing. |
+| `Descriptors/` | OpenGL binding equivalents: texture binding policy and uniform binding helpers. |
+| `Pipelines/` | Program pool, async program pump, shader link backend selection, compile/link queues, binary upload queue, parallel compile settings, and lifecycle diagnostics. |
+| `Shaders/` | Shader source compatibility and attribute layout resolver helpers. |
+| `Features/` | Bindless paths, luminance readback/dispatch resources, meshlets, sparse texture support, detail-preserving mipmaps, and texture streaming helpers. |
+| `UI/` | ImGui backend integration and platform viewport support. |
+| `BackendObjects/` | OpenGL wrappers around engine resources: buffers, textures, samplers, framebuffers, materials, mesh renderers, render programs, shaders, queries, and wrapper base types. |
+| `Types/` | Small GL-specific enums and value types. |
 
 ---
 
