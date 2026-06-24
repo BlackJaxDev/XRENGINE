@@ -52,11 +52,11 @@ The shared contract lives under:
 
 Backend implementations report the same state categories through:
 
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Buffers/GLDataBuffer.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkDataBuffer.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanStagingManager.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanDynamicUniformRingBuffer.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanSceneDatabaseAddresses.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Buffers/GLDataBuffer.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanStagingManager.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanSceneDatabaseAddresses.cs`
 
 The migration audit remains useful for call-site ownership and policy
 classification:

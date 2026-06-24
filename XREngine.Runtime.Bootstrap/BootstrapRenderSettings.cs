@@ -60,8 +60,19 @@ public static class BootstrapRenderSettings
             renderSettings.TickGroupedItemsInParallel = settings.TickGroupedItemsInParallel;
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)))
             renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR;
-        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
+
+        bool groupedRenderingSpecified = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));
+        if (groupedRenderingSpecified)
+        {
+            renderSettings.AllowShaderPipelines = settings.Rendering.OpenGL.AllowProgramPipelines;
+            renderSettings.VulkanRenderTargetMode = settings.Rendering.Vulkan.RenderTargetMode;
+            renderSettings.Vulkan.Startup.FallbackPolicy = settings.Rendering.BackendFallbackPolicy;
+        }
+        else if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
+        {
             renderSettings.AllowShaderPipelines = settings.AllowShaderPipelines;
+        }
+
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowSkinning)))
             renderSettings.AllowSkinning = settings.AllowSkinning;
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.SinglePassStereoVR)))
@@ -98,6 +109,26 @@ public static class BootstrapRenderSettings
     {
         var renderSettings = Engine.Rendering.Settings;
         bool applied = false;
+
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering)))
+        {
+            UnitTestingOpenGLShaderLinkingSettings linkSettings = settings.Rendering.OpenGL.ShaderLinking;
+            int groupedRawCompilerThreadCount = linkSettings.DriverCompilerThreadCount;
+            int groupedCompilerThreadCount = ResolveOpenGLShaderCompilerThreadCount(linkSettings.Strategy, groupedRawCompilerThreadCount);
+
+            renderSettings.OpenGLShaderLinkStrategy = linkSettings.Strategy;
+            renderSettings.AllowBinaryProgramCaching = linkSettings.AllowBinaryProgramCaching;
+            renderSettings.AsyncProgramBinaryUpload = linkSettings.AsyncProgramBinaryUpload;
+            renderSettings.AsyncProgramCompilation = linkSettings.AsyncProgramCompilation;
+            renderSettings.OpenGLProgramCompileLinkWorkerCount = linkSettings.ProgramCompileLinkWorkerCount;
+            renderSettings.MaxAsyncShaderProgramsPerFrame = linkSettings.MaxAsyncShaderProgramsPerFrame;
+            renderSettings.OpenGLShaderCompilerThreadCount = groupedCompilerThreadCount;
+            renderSettings.OpenGLParallelShaderCompileProbeEnabled = linkSettings.DriverParallelProbeEnabled;
+            renderSettings.OpenGLParallelShaderCompileProbeTimeoutMs = linkSettings.DriverParallelProbeTimeoutMs;
+
+            LogOpenGLShaderLinkSettings(groupedRawCompilerThreadCount, groupedCompilerThreadCount);
+            return;
+        }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowBinaryProgramCaching)))
         {

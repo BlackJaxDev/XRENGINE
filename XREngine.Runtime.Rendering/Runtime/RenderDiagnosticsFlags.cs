@@ -177,8 +177,9 @@ public static class RenderDiagnosticsFlags
     public static volatile bool VkTextureUploadTransferQueue = true;
 
     /// <summary>
-    /// Requests worker-side Vulkan upload preparation. Default <b>false</b>; the current safe path
-    /// is budgeted render-thread preparation. Seed: <c>XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER=1</c>.
+    /// Requests worker-side Vulkan upload preparation. Default <b>true</b>; set
+    /// <c>XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER=0</c> to use the budgeted render-thread
+    /// compatibility drain.
     /// </summary>
     public static volatile bool VkTextureUploadPrepWorker;
 
@@ -341,20 +342,20 @@ public static class RenderDiagnosticsFlags
         VkSkipImGui = ReadBool("XRE_SKIP_IMGUI");
         VkAsyncTextureUpload = ReadBoolDefaultTrue("XRE_VULKAN_ASYNC_TEXTURE_UPLOAD");
         VkTextureUploadTransferQueue = ReadBoolDefaultTrue("XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE");
-        VkTextureUploadPrepWorker = ReadBool("XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER");
+        VkTextureUploadPrepWorker = ReadBoolDefaultTrue("XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER");
         VkTextureUploadTrace = ReadBool("XRE_VULKAN_TEXTURE_UPLOAD_TRACE");
         VkProgressiveTextureUpload = ReadBool("XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD");
         VkImportedTexturePreviewFreeze = ReadBool("XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE");
         SetVkTextureUploadPrepBudgetMilliseconds(ReadDouble("XRE_VULKAN_TEXTURE_UPLOAD_PREP_BUDGET_MS", 0.5));
 
-        // SkinningPrepassDiag legacy-style contract: default ON, env="0"/"false" disables.
+        // SkinningPrepassDiag is deliberately opt-in; it performs blocking GPU readbacks.
         try
         {
             string? raw = Environment.GetEnvironmentVariable("XRE_SKINNING_PREPASS_DIAG");
-            if (string.Equals(raw, "0", StringComparison.Ordinal) ||
-                string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(raw, "1", StringComparison.Ordinal) ||
+                string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase))
             {
-                SkinningPrepassDiag = false;
+                SkinningPrepassDiag = true;
             }
         }
         catch

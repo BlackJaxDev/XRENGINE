@@ -1,9 +1,12 @@
+using MemoryPack;
 using System.ComponentModel;
 using XREngine.Data.Core;
 
 namespace XREngine;
 
-public class VulkanRobustnessSettings : XRBase
+[Serializable]
+[MemoryPackable]
+public partial class VulkanRobustnessSettings : XRBase
 {
     private EVulkanAllocatorBackend _allocatorBackend = EVulkanAllocatorBackend.Vma;
     private EVulkanSynchronizationBackend _syncBackend = EVulkanSynchronizationBackend.Sync2;

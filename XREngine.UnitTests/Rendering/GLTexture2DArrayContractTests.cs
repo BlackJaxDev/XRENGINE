@@ -11,7 +11,7 @@ public sealed class GLTexture2DArrayContractTests
     [Test]
     public void GLTexture2DArray_AllocatesStorageForArraysWithoutSourceSlices()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2DArray.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2DArray.cs");
 
         source.ShouldContain("if (firstSource is null)");
         source.ShouldContain("EnsureStorage(desiredInternalFormat, targetWidth, targetHeight, targetDepth, targetLevels);");
@@ -21,7 +21,7 @@ public sealed class GLTexture2DArrayContractTests
     [Test]
     public void GLTexture2DArray_SkipsUndefinedSourceMipLevelsBeforeCopy()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2DArray.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2DArray.cs");
 
         source.ShouldContain("Api.GetTextureLevelParameter(srcId, mip, GLEnum.TextureWidth, out int sourceMipWidth);");
         source.ShouldContain("Api.GetTextureLevelParameter(srcId, mip, GLEnum.TextureHeight, out int sourceMipHeight);");
@@ -32,7 +32,7 @@ public sealed class GLTexture2DArrayContractTests
     [Test]
     public void GLTexture2DArray_ClampsMaxMipLevelToAllocatedStorage()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2DArray.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2DArray.cs");
 
         source.ShouldContain("int allocatedMaxLevel = _allocatedLevels > 0");
         source.ShouldContain("return Math.Max(baseLevel, Math.Min(allocatedMaxLevel, configuredMaxLevel));");

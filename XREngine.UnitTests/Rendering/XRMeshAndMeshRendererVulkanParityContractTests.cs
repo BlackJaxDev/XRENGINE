@@ -29,7 +29,7 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     [Test]
     public void VkMeshRenderer_MeshReplacementUnsubscribesOldMeshAndBufferEvents()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
 
         source.ShouldContain("MeshRenderer.PropertyChanging += OnMeshRendererPropertyChanging;");
         source.ShouldContain("MeshRenderer.PropertyChanging -= OnMeshRendererPropertyChanging;");
@@ -47,7 +47,7 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     public void VkMeshRenderer_UsesSharedOpenGlMaterialResolutionSemantics()
     {
         string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MeshRenderMaterialResolver.cs");
-        string vkBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Buffers.cs");
+        string vkBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
 
         resolverSource.ShouldContain("GlobalOverride");
         resolverSource.ShouldContain("PipelineOverride");
@@ -69,9 +69,9 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     [Test]
     public void VkMeshRenderer_ShadowDrawsSuppressLinePointAndUploadLayeredUniforms()
     {
-        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
         string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MeshRenderMaterialResolver.cs");
-        string enqueueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
+        string enqueueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
 
         enqueueSource.ShouldContain("MeshRenderMaterialResolver.ResolveLayeredShadowInstanceCount(effectiveMaterial, instances)");
         drawingSource.ShouldContain("bool skipLinePointDraws = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();");
@@ -89,9 +89,9 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     [Test]
     public void VkMeshRenderer_ImplementsExplicitPreparationGateSeparateFromGeneration()
     {
-        string mainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
-        string prepSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Preparation.cs");
-        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
+        string mainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string prepSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Preparation.cs");
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
 
         mainSource.ShouldContain("IRenderPreparationState");
         mainSource.ShouldContain("public override bool IsGenerated => IsActive;");
@@ -113,10 +113,10 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     public void MeshGeometryLayoutSignature_FeedsBothBackendsAndVulkanPipelineKeys()
     {
         string signatureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MeshGeometryLayoutSignature.cs");
-        string vkPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
-        string vkDrawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
-        string glBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Buffers.cs");
-        string glShaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
+        string vkPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+        string vkDrawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
+        string glBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Buffers.cs");
+        string glShaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Shaders.cs");
 
         signatureSource.ShouldContain("MeshGeometryLayoutSignature");
         signatureSource.ShouldContain("InterleavedAttribute");
@@ -211,12 +211,17 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     [Test]
     public void VkMeshRenderer_BufferCollectionMatchesOpenGlRuntimeDeformationRules()
     {
-        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Buffers.cs");
-        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
-        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
 
         bufferSource.ShouldContain("RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader");
         bufferSource.ShouldContain("RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning");
+        bufferSource.ShouldContain("FilterRuntimeDeformationSourceBuffers");
+        bufferSource.ShouldContain("RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceCoreIndices.ToString())");
+        bufferSource.ShouldContain("RemoveCollectedBuffer($\"{ECommonBufferType.BoneMatrices}Buffer\")");
+        bufferSource.ShouldContain("RemoveCollectedBuffer($\"{ECommonBufferType.SkinPalette}Buffer\")");
+        bufferSource.ShouldContain("RemoveCollectedBuffer($\"{ECommonBufferType.BlendshapeWeights}Buffer\")");
         bufferSource.ShouldContain("RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass");
         bufferSource.ShouldContain("MeshRenderer.HasValidPrecombinedBlendshapeDeltas");
         bufferSource.ShouldContain("AddMeshDeformSourceBuffers");
@@ -230,7 +235,7 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         bufferSource.ShouldContain("return mesh.GetIndexBuffer(type, out elementSize, EBufferTarget.ElementArrayBuffer, onReady);");
 
         string drawingSourceWithIndexTypes = drawingSource;
-        string cleanupSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Cleanup.cs");
+        string cleanupSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Cleanup.cs");
         drawingSourceWithIndexTypes.ShouldContain("size == IndexSize.Byte && !Renderer.SupportsIndexTypeUint8");
         cleanupSource.ShouldContain("IndexSize.Byte => IndexType.Uint8Ext");
         cleanupSource.ShouldContain("IndexSize.TwoBytes => IndexType.Uint16");
@@ -245,6 +250,84 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         drawingSource.ShouldContain("_singleVertexBindingBuffer");
         drawingSource.ShouldNotContain(".OrderBy(b => b.Binding)");
     }
+
+    [Test]
+    public void VkMeshRenderer_ResolvesGeneratedSkinningAndBlendshapeUniformsLikeOpenGl()
+    {
+        string vkMainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string vkUniformSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+        string glRenderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Rendering.cs");
+
+        foreach (string uniformName in new[]
+        {
+            "skinPaletteBase",
+            "skinPaletteCount",
+            "skinningInfluenceCap",
+            "blendshapeActiveCount",
+            "blendshapeWeightThreshold",
+            "usePrecombinedBlendshapeDeltas",
+        })
+        {
+            glRenderSource.ShouldContain($"Uniform(\"{uniformName}\"");
+            vkMainSource.ShouldContain(uniformName);
+            vkUniformSource.ShouldContain($"case {ToConstantName(uniformName)}:");
+        }
+
+        vkUniformSource.ShouldContain("value = MeshRenderer.ActiveSkinPaletteBase;");
+        vkUniformSource.ShouldContain("value = MeshRenderer.ActiveSkinPaletteCount;");
+        vkUniformSource.ShouldContain("value = MeshRenderer.ActiveSkinningInfluenceCap;");
+        vkUniformSource.ShouldContain("value = MeshRenderer.ActiveBlendshapeCount;");
+        vkUniformSource.ShouldContain("value = MeshRenderer.BlendshapeActiveWeightThreshold;");
+        vkUniformSource.ShouldContain("MeshRenderer.HasValidPrecombinedBlendshapeDeltas");
+        vkUniformSource.ShouldContain("SkinPaletteBaseUniformName or SkinPaletteCountUniformName or SkinningInfluenceCapUniformName");
+    }
+
+    [Test]
+    public void SkinningPrepass_BindsVulkanComputeDescriptorsThroughSsboPath()
+    {
+        string dispatcherSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/SkinningPrepassDispatcher.cs");
+        string resourcesSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/SkinningPrepassDispatcher/SkinningPrepassDispatcher.RendererResources.cs");
+        string bindingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/SkinningPrepassDispatcher/SkinningPrepassDispatcher.RendererResources.Bindings.cs");
+        string residencySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/SkinningPrepassDispatcher/SkinningPrepassDispatcher.RendererResources.Residency.cs");
+        string vkDataBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
+
+        dispatcherSource.ShouldContain("EmptyStorageBuffers emptyBuffers = GetEmptyStorageBuffers();");
+        dispatcherSource.ShouldContain("private sealed class EmptyStorageBuffers");
+        dispatcherSource.ShouldContain("vk.EnsureStorageAllocatedForGpuUse();");
+
+        bindingSource.ShouldContain("EmptyStorageBuffers emptyBuffers");
+        bindingSource.ShouldContain("emptyBuffers.ZeroScalar");
+        bindingSource.ShouldContain("emptyBuffers.SpillHeaders");
+        bindingSource.ShouldContain("emptyBuffers.SpillEntries");
+        bindingSource.ShouldContain("buffer.BindTo(program, binding);");
+        bindingSource.ShouldNotContain("buffer.SetBlockIndex(binding);");
+
+        residencySource.ShouldContain("vk.EnsureStorageAllocatedForGpuUse();");
+        residencySource.ShouldContain("wrapper is VulkanRenderer.VkDataBuffer vk");
+        residencySource.ShouldContain("wrapper is VulkanRenderer.VkDataBuffer vk && !vk.IsReadyForRendering");
+
+        resourcesSource.ShouldContain("_lastDispatchedPoseHash");
+        resourcesSource.ShouldContain("_lastDispatchedPoseHash != _renderer.ComputeCurrentBonePoseHash()");
+        resourcesSource.ShouldContain("_lastDispatchedPoseHash = doSkinning ? _renderer.ComputeCurrentBonePoseHash() : 0;");
+
+        vkDataBufferSource.ShouldContain("private bool _requiresStorageBufferUsage;");
+        vkDataBufferSource.ShouldContain("internal void EnsureStorageAllocatedForGpuUse()");
+        vkDataBufferSource.ShouldContain("!hasStorageUsage");
+        vkDataBufferSource.ShouldContain("ShouldAddStorageUsageForComputeDeformationSource");
+        vkDataBufferSource.ShouldContain("BufferUsageFlags.StorageBufferBit");
+    }
+
+    private static string ToConstantName(string uniformName)
+        => uniformName switch
+        {
+            "skinPaletteBase" => "SkinPaletteBaseUniformName",
+            "skinPaletteCount" => "SkinPaletteCountUniformName",
+            "skinningInfluenceCap" => "SkinningInfluenceCapUniformName",
+            "blendshapeActiveCount" => "BlendshapeActiveCountUniformName",
+            "blendshapeWeightThreshold" => "BlendshapeWeightThresholdUniformName",
+            "usePrecombinedBlendshapeDeltas" => "UsePrecombinedBlendshapeDeltasUniformName",
+            _ => uniformName
+        };
 
     private static string ReadWorkspaceFile(string relativePath)
     {

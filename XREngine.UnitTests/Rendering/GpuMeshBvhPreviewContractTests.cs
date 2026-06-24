@@ -81,7 +81,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         string gpuMeshBvhSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuMeshBvh.cs");
         string pickSource = ReadWorkspaceFile("XRENGINE/Rendering/XRWorldInstance.cs");
         string editorSource = ReadWorkspaceFile("XREngine.Editor/EditorFlyingCameraPawnComponent.cs");
-        string glDataBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Buffers/GLDataBuffer.cs");
+        string glDataBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Buffers/GLDataBuffer.cs");
         string visualSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/VisualScene3D.cs");
         string raycastDispatcherSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/BvhRaycastDispatcher.cs");
         string packShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/mesh_bvh_pack_triangles.comp");

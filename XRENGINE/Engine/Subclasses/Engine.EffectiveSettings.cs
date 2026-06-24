@@ -78,6 +78,22 @@ namespace XREngine
             #region Rendering Settings
 
             /// <summary>
+            /// Gets the user-preferred render backend before applying startup fallback policy.
+            /// </summary>
+            public static ERenderLibrary PreferredRenderBackend
+                => UserSettings?.PreferredRenderBackend ?? ERenderLibrary.OpenGL;
+
+            /// <summary>
+            /// Gets the effective render backend fallback policy.
+            /// Resolved from: User Override > Project Override > Engine Default.
+            /// </summary>
+            public static RenderBackendFallbackPolicy RenderBackendFallbackPolicy
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.Vulkan.Startup.FallbackPolicy,
+                    GameSettings?.RenderBackendFallbackPolicyOverride,
+                    UserSettings?.RenderBackendFallbackPolicyOverride);
+
+            /// <summary>
             /// Gets the effective Vulkan GPU-driven profile selection.
             /// Resolved from: Project Override > Engine Default.
             /// </summary>
@@ -122,6 +138,52 @@ namespace XREngine
             /// </summary>
             public static EVulkanQueueOverlapMode VulkanQueueOverlapMode
                 => Rendering.Settings.VulkanQueueOverlapMode;
+
+            /// <summary>
+            /// Gets the effective Vulkan target mode used to choose dynamic rendering or legacy render passes.
+            /// Resolved from: Project Override > Engine Default.
+            /// </summary>
+            public static EVulkanRenderTargetMode VulkanRenderTargetMode
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.VulkanRenderTargetMode,
+                    GameSettings?.VulkanRenderTargetModeOverride,
+                    null);
+
+            /// <summary>
+            /// Captures the resolved render settings as grouped backend-specific values.
+            /// </summary>
+            public static EffectiveRenderSettingsSnapshot RenderSnapshot
+                => new(
+                    new EffectiveCommonRenderSettings(
+                        PreferredRenderBackend,
+                        RenderBackendFallbackPolicy),
+                    new EffectiveOpenGLRenderSettings(
+                        AllowShaderPipelines,
+                        Rendering.Settings.AllowBinaryProgramCaching,
+                        Rendering.Settings.AsyncProgramBinaryUpload,
+                        Rendering.Settings.AsyncProgramCompilation,
+                        Rendering.Settings.OpenGLProgramCompileLinkWorkerCount,
+                        Rendering.Settings.MaxAsyncShaderProgramsPerFrame,
+                        Rendering.Settings.OpenGLShaderLinkStrategy,
+                        Rendering.Settings.OpenGLShaderCompilerThreadCount,
+                        Rendering.Settings.OpenGLParallelShaderCompileProbeEnabled,
+                        Rendering.Settings.OpenGLParallelShaderCompileProbeTimeoutMs,
+                        UseDetailPreservingComputeMipmaps),
+                    new EffectiveVulkanRenderSettings(
+                        VulkanGpuDrivenProfile,
+                        VulkanQueueOverlapMode,
+                        EnableVulkanDescriptorIndexing,
+                        EnableVulkanBindlessMaterialTable,
+                        VulkanBindlessMaterialMode,
+                        ValidateVulkanDescriptorContracts,
+                        VulkanGeometryFetchMode,
+                        VulkanRenderTargetMode,
+                        RenderBackendFallbackPolicy,
+                        new EffectiveVulkanRobustnessSettings(
+                            Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend,
+                            Rendering.Settings.VulkanRobustnessSettings.SyncBackend,
+                            Rendering.Settings.VulkanRobustnessSettings.DescriptorUpdateBackend,
+                            Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled)));
 
             /// <summary>
             /// Gets the effective GPU render dispatch setting.

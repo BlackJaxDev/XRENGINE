@@ -11,7 +11,7 @@ public sealed class GLTextureContractTests
     [Test]
     public void GLTexture_BatchesPropertyUpdateInvokesIntoSingleRenderThreadFlush()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture.cs");
 
         source.ShouldContain("private static readonly ConcurrentQueue<GLTexture<T>> s_pendingPropertyUpdateTextures = new();");
         source.ShouldContain("private static int s_propertyUpdateBatchQueued;");

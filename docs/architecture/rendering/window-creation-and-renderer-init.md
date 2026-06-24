@@ -69,7 +69,7 @@ public static void Run(GameStartupSettings startupSettings, GameState state)
 
 | Step | Description |
 |------|-------------|
-| 1 | Store `GameSettings` and `UserSettings` (includes `RenderLibrary` choice) |
+| 1 | Store `GameSettings` and `UserSettings` (includes `PreferredRenderBackend` / compatibility `RenderLibrary` choice) |
 | 2 | `ValidateGpuRenderingStartupConfiguration()` — checks for debug overrides |
 | 3 | `ConfigureJobManager()` — sets up parallel processing |
 | 4 | **`CreateWindows(startupSettings.StartupWindows)`** — creates OS windows and renderers |
@@ -101,23 +101,33 @@ public enum ERenderLibrary
 
 ### Configuration Flow
 
-The render library is stored in `UserSettings.RenderLibrary`:
+The preferred render backend is stored in `UserSettings.PreferredRenderBackend`.
+`UserSettings.RenderLibrary` remains a compatibility alias for existing callers
+and serialized settings:
 
 ```csharp
 private ERenderLibrary _renderLibrary = ERenderLibrary.OpenGL;  // default
-public ERenderLibrary RenderLibrary { get; set; }
+public ERenderLibrary PreferredRenderBackend { get; set; }
+public ERenderLibrary RenderLibrary { get; set; } // compatibility alias
 ```
 
-This value is set from the startup configuration. For the Editor, it comes from the world settings JSON:
+This value is set from startup configuration. Unit-testing world JSON prefers
+the grouped `Rendering.RenderBackend` property; the legacy top-level
+`RenderAPI` property is still honored when the grouped block is absent:
 
 ```csharp
-DefaultUserSettings = new UserSettings()
+Rendering = new UnitTestingRenderSettings
 {
-    RenderLibrary = UnitTestingWorld.Toggles.RenderAPI,  // e.g. "Vulkan" or "OpenGL"
+    RenderBackend = ERenderLibrary.Vulkan,
+    BackendFallbackPolicy = RenderBackendFallbackPolicy.RequireRequested,
 }
 ```
 
-The unit-test settings file (`Assets/UnitTestingWorldSettings.jsonc`) determines which API is used. The Editor typically defaults to Vulkan; the Server defaults to OpenGL.
+Backend fallback is explicit. `Engine.EffectiveSettings.RenderBackendFallbackPolicy`
+resolves the engine default from `Engine.Rendering.Settings.Vulkan.Startup.FallbackPolicy`
+plus project/user overrides. `RequireRequested` fails visibly when Vulkan cannot
+initialize. `FallbackWithWarning` and `AutoPreferRequested` may retry with OpenGL
+after logging the requested backend, fallback policy, and exception summary.
 
 ---
 
@@ -140,7 +150,7 @@ public static XRWindow CreateWindow(GameWindowStartupSettings windowSettings)
     }
     catch (Exception ex) when (options.API.API == ContextAPI.Vulkan)
     {
-        // Vulkan init failed → automatic fallback to OpenGL 4.6
+        // Vulkan init failed -> fallback only when RenderBackendFallbackPolicy permits it.
         Debug.RenderingWarning($"Vulkan initialization failed, falling back to OpenGL: {ex.Message}");
         options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core,
             ContextFlags.ForwardCompatible, new APIVersion(4, 6));
@@ -162,7 +172,7 @@ Key points:
 1. **`GetWindowOptions()`** translates `ERenderLibrary` into a Silk.NET `GraphicsAPI`:
    - `ERenderLibrary.Vulkan` → `ContextAPI.Vulkan` with API version 1.1
    - `ERenderLibrary.OpenGL` → `ContextAPI.OpenGL` with version 4.6, Core profile, forward-compatible
-2. **Automatic Vulkan fallback**: If the `XRWindow` constructor throws while in Vulkan mode, the engine catches the exception and retries with OpenGL 4.6. This ensures the application can always start even on systems without Vulkan support.
+2. **Explicit Vulkan fallback**: If the `XRWindow` constructor throws while in Vulkan mode, the engine retries with OpenGL 4.6 only when `RenderBackendFallbackPolicy` permits fallback. Required Vulkan startup fails with a visible diagnostic instead of silently changing backend.
 3. **HDR surface**: For OpenGL, a 64-bit preferred bit depth is requested when HDR is enabled. Vulkan handles HDR through swapchain format negotiation instead.
 4. After the window is created, viewports are created for local players and the target world is assigned.
 
@@ -174,14 +184,14 @@ private static WindowOptions GetWindowOptions(GameWindowStartupSettings windowSe
     // Determine window state (Fullscreen, Windowed, Borderless)
     // ...
 
-    bool requestHdrSurface = preferHdrOutput && UserSettings.RenderLibrary != ERenderLibrary.Vulkan;
+    bool requestHdrSurface = preferHdrOutput && Engine.EffectiveSettings.PreferredRenderBackend != ERenderLibrary.Vulkan;
     int preferredBitDepth = requestHdrSurface ? 64 : 24;
 
     return new WindowOptions(
         isVisible: true,
         position, size,
         updateRate: 0.0, frameRate: 0.0,
-        api: UserSettings.RenderLibrary == ERenderLibrary.Vulkan
+        api: Engine.EffectiveSettings.PreferredRenderBackend == ERenderLibrary.Vulkan
             ? new GraphicsAPI(ContextAPI.Vulkan, ...)
             : new GraphicsAPI(ContextAPI.OpenGL, ...),
         title, windowState, windowBorder,
@@ -230,7 +240,7 @@ Step by step:
 | `Window.Initialize()` | Opens the OS window, creates the graphics context (GL context or Vulkan surface) |
 | Pattern match on `ContextAPI` | Instantiates either `OpenGLRenderer` or `VulkanRenderer` |
 
-The renderer is chosen by inspecting the **actual** `ContextAPI` from the initialized window, not from `ERenderLibrary` directly. This makes the Vulkan-to-OpenGL fallback in `CreateWindow()` work transparently — if the retry creates an OpenGL context, the pattern match will create an `OpenGLRenderer`.
+The renderer is chosen by inspecting the **actual** `ContextAPI` from the initialized window, not from `ERenderLibrary` directly. This makes explicit Vulkan-to-OpenGL fallback in `CreateWindow()` work transparently when fallback is allowed: if the retry creates an OpenGL context, the pattern match will create an `OpenGLRenderer`.
 
 ### Backend Escape Hatches And Safe Access
 
@@ -357,7 +367,7 @@ Program.Main()
   └─ Engine.Run(startupSettings, gameState)
        └─ Engine.Initialize()
             ├─ UserSettings = GameSettings.DefaultUserSettings
-            │    └─ RenderLibrary = OpenGL | Vulkan
+            │    └─ PreferredRenderBackend = OpenGL | Vulkan
             ├─ ValidateGpuRenderingStartupConfiguration()
             ├─ ConfigureJobManager()
             ├─ CreateWindows(startupSettings.StartupWindows)
@@ -370,7 +380,7 @@ Program.Main()
             │         │    ├─ LinkWindow()                      ← subscribe events
             │         │    ├─ Window.Initialize()               ← graphics context created
             │         │    └─ Renderer = OpenGLRenderer | VulkanRenderer
-            │         ├─ [catch: Vulkan fail → retry with OpenGL]
+            │         ├─ [catch: Vulkan fail → retry with OpenGL only when fallback policy permits]
             │         ├─ CreateViewports(localPlayers)
             │         └─ window.SetWorld(targetWorld)
             │              └─ VerifyTick()

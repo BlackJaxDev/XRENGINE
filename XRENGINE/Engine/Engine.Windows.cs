@@ -39,8 +39,8 @@ namespace XREngine
         /// <param name="windowSettings">Configuration for the window.</param>
         /// <returns>The created window instance.</returns>
         /// <remarks>
-        /// If Vulkan initialization fails, automatically falls back to OpenGL in the collapsed
-        /// window/render path. The experimental split window pump path keeps Vulkan explicit.
+        /// Vulkan initialization only falls back to OpenGL when the effective render backend
+        /// fallback policy permits it. The experimental split window pump path keeps Vulkan explicit.
         /// </remarks>
         public static XRWindow CreateWindow(GameWindowStartupSettings windowSettings)
         {
@@ -66,6 +66,18 @@ namespace XREngine
                 RenderThreadId);
 
             bool createOnWindowPumpHost = WindowPumpHost.ShouldCreateWindowOnHost(windowSettings);
+            RenderBackendFallbackPolicy fallbackPolicy = EffectiveSettings.RenderBackendFallbackPolicy;
+            RenderBackendFallbackPolicy windowCreationFallbackPolicy = createOnWindowPumpHost
+                ? RenderBackendFallbackPolicy.RequireRequested
+                : fallbackPolicy;
+
+            if (createOnWindowPumpHost && fallbackPolicy != RenderBackendFallbackPolicy.RequireRequested)
+            {
+                Debug.RenderingWarning(
+                    "[StartupWindow] Ignoring render backend fallback policy {0} for split window pump startup. Vulkan is required on this path.",
+                    fallbackPolicy);
+            }
+
             XRWindow window = createOnWindowPumpHost
                 ? WindowPumpHost.CreateWindow(
                     () => CreateWindowInstance(
@@ -73,14 +85,14 @@ namespace XREngine
                         useNativeTitleBar,
                         windowSettings.VSync,
                         interactiveResizeStrategy,
-                        allowVulkanFallback: false),
+                        windowCreationFallbackPolicy),
                     $"CreateWindow[{windowSettings.WindowTitle ?? string.Empty}]")
                 : CreateWindowInstance(
                     options,
                     useNativeTitleBar,
                     windowSettings.VSync,
                     interactiveResizeStrategy,
-                    allowVulkanFallback: true);
+                    windowCreationFallbackPolicy);
 
             FinishWindowCreation(windowSettings, window, preferHdrOutput);
 
@@ -92,19 +104,38 @@ namespace XREngine
             bool useNativeTitleBar,
             bool windowVSyncRequested,
             EInteractiveWindowResizeStrategy interactiveResizeStrategy,
-            bool allowVulkanFallback)
+            RenderBackendFallbackPolicy fallbackPolicy)
         {
             try
             {
                 return new XRWindow(options, useNativeTitleBar, windowVSyncRequested, interactiveResizeStrategy);
             }
-            catch (Exception ex) when (allowVulkanFallback && options.API.API == ContextAPI.Vulkan)
+            catch (Exception ex) when (options.API.API == ContextAPI.Vulkan)
             {
-                Debug.RenderingWarning($"Vulkan initialization failed, falling back to OpenGL: {ex.Message}");
+                string exceptionSummary = SummarizeStartupException(ex);
+                if (!AllowsRenderBackendFallback(fallbackPolicy))
+                {
+                    string message =
+                        $"Vulkan initialization failed and render backend fallback is not permitted. RequestedBackend=Vulkan; FallbackPolicy={fallbackPolicy}; Exception={exceptionSummary}";
+                    Debug.RenderingError(message);
+                    throw new InvalidOperationException(message, ex);
+                }
+
+                Debug.RenderingWarning(
+                    "Vulkan initialization failed; falling back to OpenGL. RequestedBackend=Vulkan; FallbackBackend=OpenGL; FallbackPolicy={0}; Exception={1}",
+                    fallbackPolicy,
+                    exceptionSummary);
                 options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ResolveOpenGLContextFlags(), new APIVersion(4, 6));
                 return new XRWindow(options, useNativeTitleBar, windowVSyncRequested, interactiveResizeStrategy);
             }
         }
+
+        private static bool AllowsRenderBackendFallback(RenderBackendFallbackPolicy fallbackPolicy)
+            => fallbackPolicy is RenderBackendFallbackPolicy.FallbackWithWarning
+                or RenderBackendFallbackPolicy.AutoPreferRequested;
+
+        private static string SummarizeStartupException(Exception ex)
+            => $"{ex.GetType().Name}: {ex.Message}";
 
         private static void FinishWindowCreation(
             GameWindowStartupSettings windowSettings,
@@ -236,7 +267,7 @@ namespace XREngine
         private static ContextFlags ResolveOpenGLContextFlags()
         {
             var flags = ContextFlags.ForwardCompatible;
-            if (XREngine.Rendering.RenderDiagnosticsFlags.GLDebug)
+            if (EditorPreferences.Diagnostics.OpenGL.DebugContext)
                 flags |= ContextFlags.Debug;
             return flags;
         }
@@ -283,7 +314,8 @@ namespace XREngine
             if (interactiveResizeStrategy == EInteractiveWindowResizeStrategy.EngineBorderlessResize && windowState == WindowState.Normal)
                 windowBorder = WindowBorder.Hidden;
 
-            bool requestHdrSurface = preferHdrOutput && UserSettings.RenderLibrary != ERenderLibrary.Vulkan;
+            ERenderLibrary preferredRenderBackend = EffectiveSettings.PreferredRenderBackend;
+            bool requestHdrSurface = preferHdrOutput && preferredRenderBackend != ERenderLibrary.Vulkan;
             int preferredBitDepth = requestHdrSurface ? 64 : 24;
 
             return new(
@@ -292,7 +324,7 @@ namespace XREngine
                 size,
                 0.0,
                 0.0,
-                UserSettings.RenderLibrary == ERenderLibrary.Vulkan
+                preferredRenderBackend == ERenderLibrary.Vulkan
                     ? new GraphicsAPI(ContextAPI.Vulkan, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(1, 1))
                     : new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ResolveOpenGLContextFlags(), new APIVersion(4, 6)),
                 windowSettings.WindowTitle ?? string.Empty,
@@ -343,7 +375,7 @@ namespace XREngine
                 return windowSettings.InteractiveResizeStrategy;
             }
 
-            EInteractiveWindowResizeStrategy editorPreference = Engine.EditorPreferences.InteractiveResizeStrategy;
+            EInteractiveWindowResizeStrategy editorPreference = Engine.EditorPreferences.Viewport.InteractiveResizeStrategy;
             if (editorPreference != EInteractiveWindowResizeStrategy.Default)
             {
                 Debug.Rendering(

@@ -36,8 +36,8 @@ public sealed class GpuIndirectProgramContractTests
     [Test]
     public void OpenGlIndirectBinding_SkipsUnlinkedPrograms_And_UsePollsLinkState()
     {
-        string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs");
-        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
+        string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs");
+        string programSource = ReadGlRenderProgramLinkingSources();
 
         rendererSource.ShouldContain("if (glProgram is null || glMesh is null || !glProgram.IsLinked)");
         programSource.ShouldContain("if (!Data.LinkReady || !Link())");
@@ -46,8 +46,8 @@ public sealed class GpuIndirectProgramContractTests
     [Test]
     public void LargeIndirectPrograms_RouteAwayFromDriverParallelLinks()
     {
-        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.Linking.cs");
-        string selectorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/OpenGLShaderLinkBackendSelector.cs");
+        string programSource = ReadGlRenderProgramLinkingSources();
+        string selectorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Pipelines/OpenGLShaderLinkBackendSelector.cs");
 
         programSource.ShouldContain("DriverParallelLargeSourceSharedContextThresholdBytes");
         programSource.ShouldContain("ShouldPreferSharedContextForLargeSource(inputs)");
@@ -156,6 +156,17 @@ public sealed class GpuIndirectProgramContractTests
 
         throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
     }
+
+    private static string ReadGlRenderProgramLinkingSources()
+        => string.Join('\n', new[]
+        {
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkOrchestration.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.CompileInputs.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.BinaryCacheInteraction.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.AsyncResults.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.HazardDetection.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.LinkDiagnostics.cs"),
+        });
 
     private static string InvokeTryAugmentIndirectFragmentShader(string source)
     {

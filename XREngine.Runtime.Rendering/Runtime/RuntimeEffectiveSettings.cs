@@ -33,6 +33,7 @@ internal sealed class RuntimeEffectiveSettings
     private bool _validateVulkanDescriptorContracts = RuntimeRenderingHostServiceDefaults.ValidateVulkanDescriptorContracts;
     private EVulkanBindlessMaterialMode _vulkanBindlessMaterialMode = RuntimeRenderingHostServiceDefaults.VulkanBindlessMaterialMode;
     private EVulkanGeometryFetchMode _vulkanGeometryFetchMode = RuntimeRenderingHostServiceDefaults.VulkanGeometryFetchMode;
+    private EVulkanRenderTargetMode _vulkanRenderTargetMode = RuntimeRenderingHostServiceDefaults.VulkanRenderTargetMode;
     private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = RuntimeRenderingHostServiceDefaults.VulkanGpuDrivenProfile;
     private EVulkanQueueOverlapMode _vulkanQueueOverlapMode = RuntimeRenderingHostServiceDefaults.VulkanQueueOverlapMode;
 
@@ -260,6 +261,13 @@ internal sealed class RuntimeEffectiveSettings
             ? services.VulkanGeometryFetchMode
             : _vulkanGeometryFetchMode;
         set => _vulkanGeometryFetchMode = value;
+    }
+    public EVulkanRenderTargetMode VulkanRenderTargetMode
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.VulkanRenderTargetMode
+            : _vulkanRenderTargetMode;
+        set => _vulkanRenderTargetMode = value;
     }
     public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile
     {

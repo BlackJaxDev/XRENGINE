@@ -81,7 +81,8 @@ public sealed class SecondaryPassShaderContractTests
             "API",
             "Rendering",
             "Vulkan",
-            "VulkanShaderTools.cs"));
+            "Shaders",
+            "VulkanShaderSourceFixups.cs"));
 
         source.ShouldContain("Replace(\"gl_VertexID\", \"gl_VertexIndex\"");
     }
@@ -323,13 +324,15 @@ public sealed class SecondaryPassShaderContractTests
             "API",
             "Rendering",
             "Vulkan",
-            "VulkanRenderer.State.cs"));
+            "Commands",
+            "VulkanRenderer.StateTracking.cs"));
         string vulkanImGui = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
             "Rendering",
             "API",
             "Rendering",
             "Vulkan",
+            "UI",
             "VulkanRenderer.ImGui.cs"));
         string vulkanExtensions = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
@@ -337,13 +340,15 @@ public sealed class SecondaryPassShaderContractTests
             "API",
             "Rendering",
             "Vulkan",
-            "Extensions.cs"));
+            "Bootstrap",
+            "VulkanExtensions.cs"));
         string vulkanDepthClipControl = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
             "Rendering",
             "API",
             "Rendering",
             "Vulkan",
+            "Types",
             "VulkanDepthClipControlExt.cs"));
         string vulkanPipeline = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
@@ -351,9 +356,8 @@ public sealed class SecondaryPassShaderContractTests
             "API",
             "Rendering",
             "Vulkan",
-            "Objects",
-            "Types",
-            "MeshRenderer",
+            "BackendObjects",
+            "MeshRendering",
             "VkMeshRenderer.Pipeline.cs"));
         string vulkanShaderTools = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
@@ -361,7 +365,8 @@ public sealed class SecondaryPassShaderContractTests
             "API",
             "Rendering",
             "Vulkan",
-            "VulkanShaderTools.cs"));
+            "Shaders",
+            "VulkanShaderSourceFixups.cs"));
         string depthUtils = LoadShaderSource(Path.Combine("Snippets", "DepthUtils.glsl"));
         string plan = ReadWorkspaceFile(Path.Combine(
             "docs",

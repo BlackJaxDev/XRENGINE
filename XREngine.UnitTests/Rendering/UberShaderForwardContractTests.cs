@@ -454,7 +454,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     [Test]
     public void CpuDirectUberMainPass_RespectsShaderPipelineSetting()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Shaders.cs");
 
         source.ShouldContain("UseShaderPipelinesForThisRenderer()");
         source.ShouldContain("Combined mode builds a monolithic program for the active material");

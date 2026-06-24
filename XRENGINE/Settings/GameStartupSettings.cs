@@ -20,7 +20,7 @@ namespace XREngine
     {
         public GameStartupSettings()
         {
-            AttachSubSettings(_buildSettings, _defaultUserSettings);
+            AttachSubSettings(_buildSettings, _defaultUserSettings, _rendering);
             TrackOverrideableSettings();
         }
 
@@ -31,6 +31,7 @@ namespace XREngine
         private EThreePlayerPreference _threePlayerViewportPreference;
         private bool _logOutputToFile = true;
         private UserSettings _defaultUserSettings = new();
+        private GameRenderingOverrides _rendering = new();
         private string _texturesFolder = "";
         private float? _targetUpdatesPerSecond = 90.0f;
         private float _fixedFramesPerSecond = 90.0f;
@@ -84,6 +85,14 @@ namespace XREngine
         {
             get => _defaultUserSettings;
             set => SetField(ref _defaultUserSettings, value);
+        }
+
+        [Category("Rendering")]
+        [Description("Project-owned grouped rendering overrides and backend startup policy.")]
+        public GameRenderingOverrides Rendering
+        {
+            get => _rendering;
+            set => SetField(ref _rendering, value ?? new GameRenderingOverrides());
         }
 
         [Category("Viewports")]
@@ -293,21 +302,36 @@ namespace XREngine
                 if (field is UserSettings current)
                     current.PropertyChanged += HandleSubSettingsChanged;
             }
+
+            if (propName == nameof(Rendering))
+            {
+                if (prev is GameRenderingOverrides previous)
+                    previous.PropertyChanged -= HandleSubSettingsChanged;
+
+                if (field is GameRenderingOverrides current)
+                    current.PropertyChanged += HandleSubSettingsChanged;
+            }
         }
 
-        private void AttachSubSettings(BuildSettings? buildSettings, UserSettings? defaultUserSettings)
+        private void AttachSubSettings(BuildSettings? buildSettings, UserSettings? defaultUserSettings, GameRenderingOverrides? rendering)
         {
             if (buildSettings is not null)
                 buildSettings.PropertyChanged += HandleSubSettingsChanged;
 
             if (defaultUserSettings is not null)
                 defaultUserSettings.PropertyChanged += HandleSubSettingsChanged;
+
+            if (rendering is not null)
+                rendering.PropertyChanged += HandleSubSettingsChanged;
         }
 
         private void HandleSubSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
             if (IsSubSettingsMetadataProperty(e.PropertyName))
                 return;
+
+            if (ReferenceEquals(sender, _rendering))
+                OnPropertyChanged(e.PropertyName, e.PreviousValue, e.NewValue);
 
             if (!IsDirty)
                 MarkDirty();
@@ -379,7 +403,6 @@ namespace XREngine
         private OverrideableSetting<bool> _bvhRefitOnlyWhenStableOverride = new();
         private OverrideableSetting<uint> _raycastBufferSizeOverride = new();
         private OverrideableSetting<bool> _enableGpuBvhTimingQueriesOverride = new();
-        private OverrideableSetting<EVulkanGpuDrivenProfile> _vulkanGpuDrivenProfileOverride = new();
 
         // Full cascade settings (Project > Engine, user can override)
         private OverrideableSetting<EAntiAliasingMode> _antiAliasingModeOverride = new();
@@ -394,17 +417,6 @@ namespace XREngine
         private OverrideableSetting<bool> _enableIntelXessOverride = new();
         private OverrideableSetting<EXessQualityMode> _xessQualityOverride = new();
         private OverrideableSetting<XRCamera.EDepthMode> _depthModeOverride = new();
-
-        // Project > Engine only (technical, not user-facing)
-        private OverrideableSetting<bool> _allowShaderPipelinesOverride = new();
-        private OverrideableSetting<bool> _allowSkinningOverride = new();
-        private OverrideableSetting<bool> _useIntegerWeightingIdsOverride = new();
-        private OverrideableSetting<ELoopType> _recalcChildMatricesLoopTypeOverride = new();
-        private OverrideableSetting<ESkinnedBoundsRecomputePolicy> _skinnedBoundsRecomputePolicyOverride = new();
-        private OverrideableSetting<bool> _allowInitialSkinnedBoundsBuildWhenNeverOverride = new();
-        private OverrideableSetting<bool> _calculateSkinningInComputeShaderOverride = new();
-        private OverrideableSetting<bool> _calculateBlendshapesInComputeShaderOverride = new();
-        private OverrideableSetting<bool> _useDetailPreservingComputeMipmapsOverride = new();
 
         private OverrideableSetting<float> _transformReplicationKeyframeIntervalSecOverride = new();
         private OverrideableSetting<float> _timeBetweenReplicationsOverride = new();
@@ -661,8 +673,32 @@ namespace XREngine
         [Description("Project override for the Vulkan GPU-driven runtime profile.")]
         public OverrideableSetting<EVulkanGpuDrivenProfile> VulkanGpuDrivenProfileOverride
         {
-            get => _vulkanGpuDrivenProfileOverride;
-            set => SetField(ref _vulkanGpuDrivenProfileOverride, value ?? new());
+            get => Rendering.Vulkan.GpuDrivenProfileOverride;
+            set => Rendering.Vulkan.GpuDrivenProfileOverride = value ?? new();
+        }
+
+        /// <summary>
+        /// Project override for the render backend fallback policy.
+        /// Takes precedence over engine defaults when HasOverride is true. Can be further overridden by user settings.
+        /// </summary>
+        [Category("Rendering Overrides")]
+        [Description("Project override for render backend fallback behavior during startup.")]
+        public OverrideableSetting<RenderBackendFallbackPolicy> RenderBackendFallbackPolicyOverride
+        {
+            get => Rendering.Common.RenderBackendFallbackPolicyOverride;
+            set => Rendering.Common.RenderBackendFallbackPolicyOverride = value ?? new();
+        }
+
+        /// <summary>
+        /// Project override for Vulkan dynamic-rendering target mode.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// </summary>
+        [Category("Rendering Overrides")]
+        [Description("Project override for Vulkan dynamic-rendering target mode.")]
+        public OverrideableSetting<EVulkanRenderTargetMode> VulkanRenderTargetModeOverride
+        {
+            get => Rendering.Vulkan.RenderTargetModeOverride;
+            set => Rendering.Vulkan.RenderTargetModeOverride = value ?? new();
         }
 
         /// <summary>
@@ -830,8 +866,8 @@ namespace XREngine
         [Description("Project override for shader pipelines (technical).")]
         public OverrideableSetting<bool> AllowShaderPipelinesOverride
         {
-            get => _allowShaderPipelinesOverride;
-            set => SetField(ref _allowShaderPipelinesOverride, value ?? new());
+            get => Rendering.OpenGL.AllowProgramPipelinesOverride;
+            set => Rendering.OpenGL.AllowProgramPipelinesOverride = value ?? new();
         }
 
         /// <summary>
@@ -843,8 +879,8 @@ namespace XREngine
         [Description("Project override for skeletal skinning (technical).")]
         public OverrideableSetting<bool> AllowSkinningOverride
         {
-            get => _allowSkinningOverride;
-            set => SetField(ref _allowSkinningOverride, value ?? new());
+            get => Rendering.Technical.AllowSkinningOverride;
+            set => Rendering.Technical.AllowSkinningOverride = value ?? new();
         }
 
         /// <summary>
@@ -856,8 +892,8 @@ namespace XREngine
         [Description("Project override for integer weighting IDs (technical).")]
         public OverrideableSetting<bool> UseIntegerWeightingIdsOverride
         {
-            get => _useIntegerWeightingIdsOverride;
-            set => SetField(ref _useIntegerWeightingIdsOverride, value ?? new());
+            get => Rendering.Technical.UseIntegerWeightingIdsOverride;
+            set => Rendering.Technical.UseIntegerWeightingIdsOverride = value ?? new();
         }
 
         /// <summary>
@@ -869,8 +905,8 @@ namespace XREngine
         [Description("Project override for child matrix recalculation loop type (technical).")]
         public OverrideableSetting<ELoopType> RecalcChildMatricesLoopTypeOverride
         {
-            get => _recalcChildMatricesLoopTypeOverride;
-            set => SetField(ref _recalcChildMatricesLoopTypeOverride, value ?? new());
+            get => Rendering.Technical.RecalcChildMatricesLoopTypeOverride;
+            set => Rendering.Technical.RecalcChildMatricesLoopTypeOverride = value ?? new();
         }
 
         /// <summary>
@@ -882,8 +918,8 @@ namespace XREngine
         [Description("Project override for skinned mesh bounds recompute policy (technical).")]
         public OverrideableSetting<ESkinnedBoundsRecomputePolicy> SkinnedBoundsRecomputePolicyOverride
         {
-            get => _skinnedBoundsRecomputePolicyOverride;
-            set => SetField(ref _skinnedBoundsRecomputePolicyOverride, value ?? new());
+            get => Rendering.Technical.SkinnedBoundsRecomputePolicyOverride;
+            set => Rendering.Technical.SkinnedBoundsRecomputePolicyOverride = value ?? new();
         }
 
         /// <summary>
@@ -895,8 +931,8 @@ namespace XREngine
         [Description("Project override for allowing one initial runtime skinned-bounds build while the Never policy is active (technical).")]
         public OverrideableSetting<bool> AllowInitialSkinnedBoundsBuildWhenNeverOverride
         {
-            get => _allowInitialSkinnedBoundsBuildWhenNeverOverride;
-            set => SetField(ref _allowInitialSkinnedBoundsBuildWhenNeverOverride, value ?? new());
+            get => Rendering.Technical.AllowInitialSkinnedBoundsBuildWhenNeverOverride;
+            set => Rendering.Technical.AllowInitialSkinnedBoundsBuildWhenNeverOverride = value ?? new();
         }
 
         /// <summary>
@@ -908,8 +944,8 @@ namespace XREngine
         [Description("Project override for compute shader skinning (technical).")]
         public OverrideableSetting<bool> CalculateSkinningInComputeShaderOverride
         {
-            get => _calculateSkinningInComputeShaderOverride;
-            set => SetField(ref _calculateSkinningInComputeShaderOverride, value ?? new());
+            get => Rendering.Technical.CalculateSkinningInComputeShaderOverride;
+            set => Rendering.Technical.CalculateSkinningInComputeShaderOverride = value ?? new();
         }
 
         /// <summary>
@@ -921,8 +957,8 @@ namespace XREngine
         [Description("Project override for compute shader blendshapes (technical).")]
         public OverrideableSetting<bool> CalculateBlendshapesInComputeShaderOverride
         {
-            get => _calculateBlendshapesInComputeShaderOverride;
-            set => SetField(ref _calculateBlendshapesInComputeShaderOverride, value ?? new());
+            get => Rendering.Technical.CalculateBlendshapesInComputeShaderOverride;
+            set => Rendering.Technical.CalculateBlendshapesInComputeShaderOverride = value ?? new();
         }
 
         /// <summary>
@@ -935,8 +971,8 @@ namespace XREngine
         [Description("Project override for detail-preserving compute mipmap generation on eligible OpenGL 2D textures (technical).")]
         public OverrideableSetting<bool> UseDetailPreservingComputeMipmapsOverride
         {
-            get => _useDetailPreservingComputeMipmapsOverride;
-            set => SetField(ref _useDetailPreservingComputeMipmapsOverride, value ?? new());
+            get => Rendering.OpenGL.UseDetailPreservingComputeMipmapsOverride;
+            set => Rendering.OpenGL.UseDetailPreservingComputeMipmapsOverride = value ?? new();
         }
 
         /// <summary>

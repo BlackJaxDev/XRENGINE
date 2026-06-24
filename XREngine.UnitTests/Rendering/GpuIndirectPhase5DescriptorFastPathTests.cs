@@ -12,8 +12,8 @@ public sealed class GpuIndirectPhase5DescriptorFastPathTests
     [Test]
     public void Phase5_DescriptorIndexingPolicy_SourceContracts_ArePresent()
     {
-        string profileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanFeatureProfile.cs");
-        string deviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/LogicalDevice.cs");
+        string profileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/VulkanFeatureProfile.cs");
+        string deviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
 
         profileSource.ShouldContain("ResolveDescriptorIndexingPreference");
         profileSource.ShouldContain("EnableDescriptorIndexing");
@@ -45,8 +45,8 @@ public sealed class GpuIndirectPhase5DescriptorFastPathTests
     [Test]
     public void Phase5_DescriptorContractValidation_SourceContracts_ArePresent()
     {
-        string contractSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanDescriptorContracts.cs");
-        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
+        string contractSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorContracts.cs");
+        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
 
         contractSource.ShouldContain("internal static class VulkanDescriptorContracts");
         contractSource.ShouldContain("TryValidateContract");

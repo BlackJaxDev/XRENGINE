@@ -44,7 +44,6 @@ namespace XREngine
                 _settings.PropertyChanged += HandleSettingsPropertyChanged;
                 _settings.PhysicsVisualizeSettings.PropertyChanged += HandlePhysicsVisualizeSettingsChanged;
                 _settings.PhysicsGpuMemorySettings.PropertyChanged += HandlePhysicsGpuMemorySettingsChanged;
-                _settings.VulkanRobustnessSettings.PropertyChanged += HandleVulkanRobustnessSettingsChanged;
             }
             /// <summary>
             /// The active rendering settings for the engine.
@@ -62,14 +61,12 @@ namespace XREngine
                         _settings.PropertyChanged -= HandleSettingsPropertyChanged;
                         _settings.PhysicsVisualizeSettings.PropertyChanged -= HandlePhysicsVisualizeSettingsChanged;
                         _settings.PhysicsGpuMemorySettings.PropertyChanged -= HandlePhysicsGpuMemorySettingsChanged;
-                        _settings.VulkanRobustnessSettings.PropertyChanged -= HandleVulkanRobustnessSettingsChanged;
                     }
 
                     _settings = value ?? new EngineSettings();
                     _settings.PropertyChanged += HandleSettingsPropertyChanged;
                     _settings.PhysicsVisualizeSettings.PropertyChanged += HandlePhysicsVisualizeSettingsChanged;
                     _settings.PhysicsGpuMemorySettings.PropertyChanged += HandlePhysicsGpuMemorySettingsChanged;
-                    _settings.VulkanRobustnessSettings.PropertyChanged += HandleVulkanRobustnessSettingsChanged;
 
                     if (_projectDefaultSettings is not null)
                         _projectDefaultSettings = _settings;
@@ -150,15 +147,6 @@ namespace XREngine
                         current.PropertyChanged += HandlePhysicsGpuMemorySettingsChanged;
                 }
 
-                if (e.PropertyName == nameof(EngineSettings.VulkanRobustnessSettings))
-                {
-                    if (e.PreviousValue is VulkanRobustnessSettings previous)
-                        previous.PropertyChanged -= HandleVulkanRobustnessSettingsChanged;
-
-                    if (e.NewValue is VulkanRobustnessSettings current)
-                        current.PropertyChanged += HandleVulkanRobustnessSettingsChanged;
-                }
-
                 ApplyEngineSettingChange(e.PropertyName);
                 if (e.PropertyName == nameof(EngineSettings.AllowSkinning))
                     XREngine.Debug.Rendering($"[RenderSettings] AllowSkinning changed to {_settings.AllowSkinning}; ShaderConfigVersion={_settings.ShaderConfigVersion}");
@@ -181,11 +169,6 @@ namespace XREngine
                 SettingsChanged?.Invoke();
             }
 
-            private static void HandleVulkanRobustnessSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
-            {
-                SettingsChanged?.Invoke();
-            }
-            
             // Note: ELoopType and EAntiAliasingMode are now defined in XREngine.Data as top-level enums
             // for use in the cascading settings system. The aliases below maintain API compatibility.
             
@@ -197,7 +180,122 @@ namespace XREngine
             {
                 public EngineSettings()
                 {
+                    AttachRenderSubSettings(_openGL, _vulkan);
                     TrackOverrideableSettings();
+                }
+
+                private OpenGLRenderSettings _openGL = new();
+                private VulkanRenderSettings _vulkan = new();
+
+                [Category("Rendering")]
+                [DisplayName("OpenGL")]
+                [Description("OpenGL-specific runtime settings.")]
+                public OpenGLRenderSettings OpenGL
+                {
+                    get => _openGL;
+                    set => SetField(ref _openGL, value ?? new OpenGLRenderSettings());
+                }
+
+                [Category("Rendering")]
+                [DisplayName("Vulkan")]
+                [Description("Vulkan-specific runtime settings.")]
+                public VulkanRenderSettings Vulkan
+                {
+                    get => _vulkan;
+                    set => SetField(ref _vulkan, value ?? new VulkanRenderSettings());
+                }
+
+                protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+                {
+                    base.OnPropertyChanged(propName, prev, field);
+
+                    if (propName == nameof(OpenGL) || propName == nameof(Vulkan))
+                        RefreshRenderSubSettings(prev, field);
+                }
+
+                private void AttachRenderSubSettings(params IXRNotifyPropertyChanged?[] subSettings)
+                {
+                    for (int i = 0; i < subSettings.Length; i++)
+                    {
+                        if (subSettings[i] is not null)
+                            subSettings[i]!.PropertyChanged += HandleRenderSubSettingsChanged;
+                    }
+                }
+
+                private void RefreshRenderSubSettings<T>(T previous, T current)
+                {
+                    if (previous is IXRNotifyPropertyChanged previousNotify)
+                        previousNotify.PropertyChanged -= HandleRenderSubSettingsChanged;
+
+                    if (current is IXRNotifyPropertyChanged currentNotify)
+                        currentNotify.PropertyChanged += HandleRenderSubSettingsChanged;
+                }
+
+                private void HandleRenderSubSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+                {
+                    string? propertyName = e.PropertyName;
+                    if (propertyName == nameof(OpenGLRenderSettings.AllowProgramPipelines))
+                    {
+                        BumpShaderConfigVersion();
+                        OnPropertyChanged(nameof(AllowShaderPipelines), e.PreviousValue, e.NewValue);
+                        return;
+                    }
+
+                    if (propertyName is nameof(VulkanGpuDrivenSettings.Profile))
+                    {
+                        OnPropertyChanged(nameof(VulkanGpuDrivenProfile), e.PreviousValue, e.NewValue);
+                        return;
+                    }
+
+                    if (propertyName is nameof(VulkanSynchronizationSettings.QueueOverlapMode))
+                    {
+                        OnPropertyChanged(nameof(VulkanQueueOverlapMode), e.PreviousValue, e.NewValue);
+                        return;
+                    }
+
+                    if (propertyName is nameof(VulkanDescriptorSettings.EnableDescriptorIndexing))
+                    {
+                        OnPropertyChanged(nameof(EnableVulkanDescriptorIndexing), e.PreviousValue, e.NewValue);
+                        return;
+                    }
+
+                    if (propertyName is nameof(VulkanDescriptorSettings.EnableBindlessMaterialTable))
+                    {
+                        OnPropertyChanged(nameof(EnableVulkanBindlessMaterialTable), e.PreviousValue, e.NewValue);
+                        return;
+                    }
+
+                    if (propertyName is nameof(VulkanDescriptorSettings.BindlessMaterialMode))
+                    {
+                        OnPropertyChanged(nameof(VulkanBindlessMaterialMode), e.PreviousValue, e.NewValue);
+                        return;
+                    }
+
+                    if (propertyName is nameof(VulkanDescriptorSettings.ValidateContracts))
+                    {
+                        OnPropertyChanged(nameof(ValidateVulkanDescriptorContracts), e.PreviousValue, e.NewValue);
+                        return;
+                    }
+
+                    if (propertyName is nameof(VulkanGpuDrivenSettings.GeometryFetchMode))
+                    {
+                        OnPropertyChanged(nameof(VulkanGeometryFetchMode), e.PreviousValue, e.NewValue);
+                        return;
+                    }
+
+                    if (propertyName is nameof(VulkanTargetModeSettings.RenderTargetMode))
+                    {
+                        OnPropertyChanged(nameof(VulkanRenderTargetMode), e.PreviousValue, e.NewValue);
+                        return;
+                    }
+
+                    if (propertyName == nameof(VulkanRenderSettings.Robustness))
+                    {
+                        OnPropertyChanged(nameof(VulkanRobustnessSettings), e.PreviousValue, e.NewValue);
+                        return;
+                    }
+
+                    OnPropertyChanged(propertyName, e.PreviousValue, e.NewValue);
                 }
 
                 #region Debug/Logging Settings (moved from UserSettings)
@@ -485,22 +583,12 @@ namespace XREngine
                 private float _xessSharpness = 0.2f;
                 private bool _enableIntelXessFrameGeneration = false;
                 private uint _msaaSampleCount = 4u;
-                private bool _allowShaderPipelines = true;
                 private bool _useIntegerUniformsInShaders = true;
                 private bool _tickGroupedItemsInParallel = true;
                 private ELoopType _recalcChildMatricesLoopType = ELoopType.Asynchronous;
                 private ERenderMatrixUpdateMode _renderMatrixUpdateMode = ERenderMatrixUpdateMode.Default;
                 private uint _lightProbeResolution = 512u;
                 private bool _lightProbesCaptureDepth = false;
-                private bool _allowBinaryProgramCaching = true;
-                private bool _asyncProgramBinaryUpload = true;
-                private bool _asyncProgramCompilation = true;
-                private int _openGLProgramCompileLinkWorkerCount = 1;
-                private int _maxAsyncShaderProgramsPerFrame = 16;
-                private EOpenGLShaderLinkStrategy _openGLShaderLinkStrategy = EOpenGLShaderLinkStrategy.Auto;
-                private int _openGLShaderCompilerThreadCount = 1;
-                private bool _openGLParallelShaderCompileProbeEnabled = true;
-                private int _openGLParallelShaderCompileProbeTimeoutMs = 25;
                 private bool _calculateBlendshapesInComputeShader = true;
                 private bool _calculateSkinningInComputeShader = true;
                 private bool _enableBlendshapePrecombinePass = false;
@@ -509,7 +597,6 @@ namespace XREngine
                 private int _blendshapePrecombineComputeMinActiveShapes = 8;
                 private int _blendshapePrecombineDirectMinActiveShapes = 8;
                 private int _blendshapePrecombineMinAffectedVertices = 1024;
-                private bool _useDetailPreservingComputeMipmaps = true;
                 private bool _useGlobalSkinPaletteBufferForComputeSkinning = false;
                 private bool _useGlobalBlendshapeWeightsBufferForComputeSkinning = false;
                 private ESkinnedBoundsRecomputePolicy _skinnedBoundsRecomputePolicy = ESkinnedBoundsRecomputePolicy.Never;
@@ -519,13 +606,6 @@ namespace XREngine
                 private global::XREngine.Rendering.ERenderClipDepthRange _clipDepthRange = global::XREngine.Rendering.ERenderClipDepthRange.ZeroToOne;
                 private bool _useGpuBvh = true;
                 private ECpuSceneCullingStructure _cpuSceneCullingStructure = ECpuSceneCullingStructure.Bvh;
-                private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Diagnostics;
-                private EVulkanQueueOverlapMode _vulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
-                private bool _enableVulkanDescriptorIndexing = true;
-                private bool _enableVulkanBindlessMaterialTable = true;
-                private EVulkanBindlessMaterialMode _vulkanBindlessMaterialMode = EVulkanBindlessMaterialMode.Auto;
-                private bool _validateVulkanDescriptorContracts = true;
-                private EVulkanGeometryFetchMode _vulkanGeometryFetchMode = EVulkanGeometryFetchMode.Atlas;
                 private EGpuCullingDataLayout _gpuCullingDataLayout = EGpuCullingDataLayout.AoSHot;
                 private EGpuSortDomainPolicy _gpuSortDomainPolicy = EGpuSortDomainPolicy.OpaqueFrontToBackTransparentBackToFront;
                 private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.GpuHiZ;
@@ -1003,11 +1083,8 @@ namespace XREngine
                 [Description("Shader pipelines allow for dynamic combination of shaders at runtime, such as mixing and matching vertex and fragment shaders. When this is off, a new shader program must be compiled for each unique combination of shaders. Note that some mesh rendering versions may not support this feature anyways, like when using OVR_MultiView2.")]
                 public bool AllowShaderPipelines
                 {
-                    get => _allowShaderPipelines;
-                    set => SetField(ref _allowShaderPipelines, value, null, _ =>
-                    {
-                        BumpShaderConfigVersion();
-                    });
+                    get => OpenGL.AllowProgramPipelines;
+                    set => OpenGL.AllowProgramPipelines = value;
                 }
 
                 /// <summary>
@@ -1110,8 +1187,8 @@ namespace XREngine
                 [Description("If true, the engine will cache compiled binary programs for faster loading times on next startups until the GPU driver is updated.")]
                 public bool AllowBinaryProgramCaching 
                 {
-                    get => _allowBinaryProgramCaching;
-                    set => SetField(ref _allowBinaryProgramCaching, value);
+                    get => OpenGL.ShaderLinking.AllowBinaryProgramCaching;
+                    set => OpenGL.ShaderLinking.AllowBinaryProgramCaching = value;
                 }
 
                 /// <summary>
@@ -1124,8 +1201,8 @@ namespace XREngine
                 [Description("If true, cached program binaries are uploaded asynchronously on a shared GL context thread to avoid main-thread stalls. Requires AllowBinaryProgramCaching.")]
                 public bool AsyncProgramBinaryUpload
                 {
-                    get => _asyncProgramBinaryUpload;
-                    set => SetField(ref _asyncProgramBinaryUpload, value);
+                    get => OpenGL.ShaderLinking.AsyncProgramBinaryUpload;
+                    set => OpenGL.ShaderLinking.AsyncProgramBinaryUpload = value;
                 }
 
                 /// <summary>
@@ -1138,8 +1215,8 @@ namespace XREngine
                 [Description("If true, uncached shader programs are compiled and linked on a shared GL context thread to avoid main-thread stalls on drivers without GL_ARB_parallel_shader_compile.")]
                 public bool AsyncProgramCompilation
                 {
-                    get => _asyncProgramCompilation;
-                    set => SetField(ref _asyncProgramCompilation, value);
+                    get => OpenGL.ShaderLinking.AsyncProgramCompilation;
+                    set => OpenGL.ShaderLinking.AsyncProgramCompilation = value;
                 }
 
                 /// <summary>
@@ -1152,8 +1229,8 @@ namespace XREngine
                 [Description("Number of shared-context worker threads used to compile and link uncached OpenGL shader programs. Values above one require XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1. Clamped to [1, 16].")]
                 public int OpenGLProgramCompileLinkWorkerCount
                 {
-                    get => _openGLProgramCompileLinkWorkerCount;
-                    set => SetField(ref _openGLProgramCompileLinkWorkerCount, Math.Clamp(value, 1, 16));
+                    get => OpenGL.ShaderLinking.ProgramCompileLinkWorkerCount;
+                    set => OpenGL.ShaderLinking.ProgramCompileLinkWorkerCount = value;
                 }
 
                 /// <summary>
@@ -1164,8 +1241,8 @@ namespace XREngine
                 [Description("Maximum number of pending async OpenGL shader programs to poll/finalize per render frame.")]
                 public int MaxAsyncShaderProgramsPerFrame
                 {
-                    get => _maxAsyncShaderProgramsPerFrame;
-                    set => SetField(ref _maxAsyncShaderProgramsPerFrame, Math.Max(1, value));
+                    get => OpenGL.ShaderLinking.MaxAsyncShaderProgramsPerFrame;
+                    set => OpenGL.ShaderLinking.MaxAsyncShaderProgramsPerFrame = value;
                 }
 
                 /// <summary>
@@ -1180,8 +1257,8 @@ namespace XREngine
                 [Description("Selects how uncached OpenGL shader programs are compiled and linked. Auto prefers driver-parallel after the startup probe, then shared-context, then synchronous. Synchronous only affects source compile/link; async binary upload has its own toggle.")]
                 public EOpenGLShaderLinkStrategy OpenGLShaderLinkStrategy
                 {
-                    get => _openGLShaderLinkStrategy;
-                    set => SetField(ref _openGLShaderLinkStrategy, value);
+                    get => OpenGL.ShaderLinking.Strategy;
+                    set => OpenGL.ShaderLinking.Strategy = value;
                 }
 
                 /// <summary>
@@ -1194,8 +1271,8 @@ namespace XREngine
                 [Description("Requested worker-thread count for GL_ARB/KHR_parallel_shader_compile. Default is conservative; use -1 for the driver maximum, 0 for no driver worker threads, or a positive explicit count.")]
                 public int OpenGLShaderCompilerThreadCount
                 {
-                    get => _openGLShaderCompilerThreadCount;
-                    set => SetField(ref _openGLShaderCompilerThreadCount, Math.Max(-1, value));
+                    get => OpenGL.ShaderLinking.DriverCompilerThreadCount;
+                    set => OpenGL.ShaderLinking.DriverCompilerThreadCount = value;
                 }
 
                 /// <summary>
@@ -1206,8 +1283,8 @@ namespace XREngine
                 [Description("If true, startup performs a tiny GL_ARB/KHR_parallel_shader_compile smoke test before using the explicit DriverParallel link path.")]
                 public bool OpenGLParallelShaderCompileProbeEnabled
                 {
-                    get => _openGLParallelShaderCompileProbeEnabled;
-                    set => SetField(ref _openGLParallelShaderCompileProbeEnabled, value);
+                    get => OpenGL.ShaderLinking.DriverParallelProbeEnabled;
+                    set => OpenGL.ShaderLinking.DriverParallelProbeEnabled = value;
                 }
 
                 /// <summary>
@@ -1217,8 +1294,8 @@ namespace XREngine
                 [Description("Maximum time in milliseconds spent polling the startup driver-parallel shader-link probe.")]
                 public int OpenGLParallelShaderCompileProbeTimeoutMs
                 {
-                    get => _openGLParallelShaderCompileProbeTimeoutMs;
-                    set => SetField(ref _openGLParallelShaderCompileProbeTimeoutMs, Math.Max(0, value));
+                    get => OpenGL.ShaderLinking.DriverParallelProbeTimeoutMs;
+                    set => OpenGL.ShaderLinking.DriverParallelProbeTimeoutMs = value;
                 }
 
                 /// <summary>
@@ -1320,8 +1397,8 @@ namespace XREngine
                 [Description("If true, eligible 2D OpenGL textures generate mipmaps with a detail-preserving compute shader instead of glGenerateTextureMipmap. Unsupported formats and non-2D paths fall back to standard GL mip generation.")]
                 public bool UseDetailPreservingComputeMipmaps
                 {
-                    get => _useDetailPreservingComputeMipmaps;
-                    set => SetField(ref _useDetailPreservingComputeMipmaps, value);
+                    get => OpenGL.TextureUpload.UseDetailPreservingComputeMipmaps;
+                    set => OpenGL.TextureUpload.UseDetailPreservingComputeMipmaps = value;
                 }
 
                 /// <summary>
@@ -1433,15 +1510,8 @@ namespace XREngine
                 [Description("Selects the Vulkan GPU-driven runtime profile used to gate feature policy. Auto maps Debug builds to DevParity and non-Debug builds to ShippingFast.")]
                 public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile
                 {
-                    get => _vulkanGpuDrivenProfile;
-                    set => SetField(ref _vulkanGpuDrivenProfile, value,
-                        null,
-                        _ =>
-                        {
-                            Rendering.ApplyGpuRenderDispatchPreference();
-                            Rendering.ApplyGpuBvhPreference();
-                            Rendering.LogVulkanFeatureProfileFingerprint();
-                        });
+                    get => Vulkan.GpuDriven.Profile;
+                    set => Vulkan.GpuDriven.Profile = value;
                 }
 
                 /// <summary>
@@ -1452,10 +1522,8 @@ namespace XREngine
                 [Description("Selects Vulkan queue overlap policy for queue-family ownership transitions. Auto resolves from active profile and runtime metrics.")]
                 public EVulkanQueueOverlapMode VulkanQueueOverlapMode
                 {
-                    get => _vulkanQueueOverlapMode;
-                    set => SetField(ref _vulkanQueueOverlapMode, value,
-                        null,
-                        _ => Rendering.LogVulkanFeatureProfileFingerprint());
+                    get => Vulkan.Synchronization.QueueOverlapMode;
+                    set => Vulkan.Synchronization.QueueOverlapMode = value;
                 }
 
                 /// <summary>
@@ -1465,10 +1533,8 @@ namespace XREngine
                 [Description("Enables Vulkan descriptor indexing for large runtime descriptor arrays when supported.")]
                 public bool EnableVulkanDescriptorIndexing
                 {
-                    get => _enableVulkanDescriptorIndexing;
-                    set => SetField(ref _enableVulkanDescriptorIndexing, value,
-                        null,
-                        _ => Rendering.LogVulkanFeatureProfileFingerprint());
+                    get => Vulkan.Descriptors.EnableDescriptorIndexing;
+                    set => Vulkan.Descriptors.EnableDescriptorIndexing = value;
                 }
 
                 /// <summary>
@@ -1478,8 +1544,8 @@ namespace XREngine
                 [Description("Enables global material-table population path for GPU-driven rendering.")]
                 public bool EnableVulkanBindlessMaterialTable
                 {
-                    get => _enableVulkanBindlessMaterialTable;
-                    set => SetField(ref _enableVulkanBindlessMaterialTable, value);
+                    get => Vulkan.Descriptors.EnableBindlessMaterialTable;
+                    set => Vulkan.Descriptors.EnableBindlessMaterialTable = value;
                 }
 
                 /// <summary>
@@ -1490,10 +1556,8 @@ namespace XREngine
                 [Description("Selects Vulkan bindless material-table policy. Auto is conservative, Required fails visibly when unsupported, Diagnostics adds capability logging.")]
                 public EVulkanBindlessMaterialMode VulkanBindlessMaterialMode
                 {
-                    get => _vulkanBindlessMaterialMode;
-                    set => SetField(ref _vulkanBindlessMaterialMode, value,
-                        null,
-                        _ => Rendering.LogVulkanFeatureProfileFingerprint());
+                    get => Vulkan.Descriptors.BindlessMaterialMode;
+                    set => Vulkan.Descriptors.BindlessMaterialMode = value;
                 }
 
                 /// <summary>
@@ -1503,8 +1567,8 @@ namespace XREngine
                 [Description("Validates descriptor contract tiers against reflected shader bindings.")]
                 public bool ValidateVulkanDescriptorContracts
                 {
-                    get => _validateVulkanDescriptorContracts;
-                    set => SetField(ref _validateVulkanDescriptorContracts, value);
+                    get => Vulkan.Descriptors.ValidateContracts;
+                    set => Vulkan.Descriptors.ValidateContracts = value;
                 }
 
                 /// <summary>
@@ -1514,8 +1578,19 @@ namespace XREngine
                 [Description("Selects optional Vulkan geometry fetch strategy. Prototype path must remain opt-in until validated.")]
                 public EVulkanGeometryFetchMode VulkanGeometryFetchMode
                 {
-                    get => _vulkanGeometryFetchMode;
-                    set => SetField(ref _vulkanGeometryFetchMode, value);
+                    get => Vulkan.GpuDriven.GeometryFetchMode;
+                    set => Vulkan.GpuDriven.GeometryFetchMode = value;
+                }
+
+                /// <summary>
+                /// Selects whether Vulkan render targets use dynamic rendering or legacy render passes.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Selects whether Vulkan render targets use dynamic rendering or legacy render passes. XRE_VK_RENDER_TARGET_MODE overrides this at runtime.")]
+                public EVulkanRenderTargetMode VulkanRenderTargetMode
+                {
+                    get => Vulkan.TargetMode.RenderTargetMode;
+                    set => Vulkan.TargetMode.RenderTargetMode = value;
                 }
 
                 /// <summary>
@@ -2099,7 +2174,6 @@ namespace XREngine
                     set => SetField(ref _physicsGpuMemorySettings, value);
                 }
 
-                private VulkanRobustnessSettings _vulkanRobustnessSettings = new();
                 private PhysicsVisualizeSettings _physicsVisualizeSettings = new();
                 /// <summary>
                 /// If true, physics visualization will be enabled for debugging purposes.
@@ -2122,8 +2196,8 @@ namespace XREngine
                 [Description("Controls staged Vulkan backend migrations for allocator, synchronization, and descriptor update paths.")]
                 public VulkanRobustnessSettings VulkanRobustnessSettings
                 {
-                    get => _vulkanRobustnessSettings;
-                    set => SetField(ref _vulkanRobustnessSettings, value ?? new VulkanRobustnessSettings());
+                    get => Vulkan.Robustness;
+                    set => Vulkan.Robustness = value ?? new VulkanRobustnessSettings();
                 }
                 /// </summary>
                 [Category("Performance")]

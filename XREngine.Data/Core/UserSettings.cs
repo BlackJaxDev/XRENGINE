@@ -19,6 +19,7 @@ namespace XREngine
         public UserSettings()
         {
             // Note: base class OverrideableSettingsAssetBase already calls TrackOverrideableSettings()
+            _rendering.PropertyChanged += HandleRenderingSubSettingsChanged;
         }
 
         public UserSettings DeepClone()
@@ -41,6 +42,28 @@ namespace XREngine
                 MarkDirty();
         }
 
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+
+            if (propName == nameof(Rendering))
+            {
+                if (prev is UserRenderingOverrides previous)
+                    previous.PropertyChanged -= HandleRenderingSubSettingsChanged;
+
+                if (field is UserRenderingOverrides current)
+                    current.PropertyChanged += HandleRenderingSubSettingsChanged;
+            }
+        }
+
+        private void HandleRenderingSubSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            OnPropertyChanged(e.PropertyName, e.PreviousValue, e.NewValue);
+
+            if (!IsDirty)
+                MarkDirty();
+        }
+
         private EWindowState _windowState = EWindowState.Windowed;
         private EVSyncMode _vSyncMode = EVSyncMode.Adaptive;
         private EEngineQuality _textureQuality = EEngineQuality.Highest;
@@ -51,6 +74,7 @@ namespace XREngine
         private ERenderLibrary _renderLibrary = ERenderLibrary.OpenGL;
         private EAudioLibrary _audioLibrary = EAudioLibrary.OpenAL;
         private EPhysicsLibrary _physicsLibrary = EPhysicsLibrary.PhysX;
+        private UserRenderingOverrides _rendering = new();
 
         private IVector2 _windowedResolution = new(1920, 1080);
         private bool _disableAudioOnDefocus = false;
@@ -91,11 +115,27 @@ namespace XREngine
             set => SetField(ref _soundQuality, value);
         }
         [Category("Libraries")]
-        [Description("Preferred rendering backend. The engine may fall back if unavailable.")]
+        [Description("Preferred rendering backend. Fallback behavior is controlled by the rendering fallback policy.")]
+        public ERenderLibrary PreferredRenderBackend
+        {
+            get => _renderLibrary;
+            set => SetField(ref _renderLibrary, value);
+        }
+
+        [Category("Libraries")]
+        [Description("Compatibility alias for PreferredRenderBackend.")]
         public ERenderLibrary RenderLibrary
         {
             get => _renderLibrary;
             set => SetField(ref _renderLibrary, value);
+        }
+
+        [Category("Rendering")]
+        [Description("User-owned grouped rendering preferences and override policy.")]
+        public UserRenderingOverrides Rendering
+        {
+            get => _rendering;
+            set => SetField(ref _rendering, value ?? new UserRenderingOverrides());
         }
         [Category("Libraries")]
         [Description("Preferred audio backend. The engine may fall back if unavailable.")]
@@ -364,6 +404,18 @@ namespace XREngine
         {
             get => _zeroReadbackMaterialDrawPathOverride;
             set => SetField(ref _zeroReadbackMaterialDrawPathOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for render backend fallback behavior during startup.
+        /// Takes precedence over project and engine defaults when HasOverride is true.
+        /// </summary>
+        [Category("Rendering Overrides")]
+        [Description("User override for render backend fallback behavior during startup.")]
+        public OverrideableSetting<RenderBackendFallbackPolicy> RenderBackendFallbackPolicyOverride
+        {
+            get => Rendering.Common.RenderBackendFallbackPolicyOverride;
+            set => Rendering.Common.RenderBackendFallbackPolicyOverride = value ?? new();
         }
 
         /// <summary>

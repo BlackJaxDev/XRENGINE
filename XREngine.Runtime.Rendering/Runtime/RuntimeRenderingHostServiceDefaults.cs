@@ -46,6 +46,7 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool ValidateVulkanDescriptorContracts = true;
     public const EVulkanBindlessMaterialMode VulkanBindlessMaterialMode = EVulkanBindlessMaterialMode.Auto;
     public const EVulkanGeometryFetchMode VulkanGeometryFetchMode = EVulkanGeometryFetchMode.Atlas;
+    public const EVulkanRenderTargetMode VulkanRenderTargetMode = EVulkanRenderTargetMode.Auto;
     public const EVulkanGpuDrivenProfile VulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Auto;
     public const EVulkanQueueOverlapMode VulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
 

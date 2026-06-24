@@ -38,7 +38,7 @@ public sealed class VkDataBufferParityContractTests
     [Test]
     public void VkDataBuffer_SourceContracts_CoverGenerationMappingAndReadiness()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkDataBuffer.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
 
         source.ShouldContain("public override bool IsGenerated => _vkBuffer.HasValue");
         source.ShouldNotContain("public override bool IsGenerated { get; }");
@@ -55,8 +55,8 @@ public sealed class VkDataBufferParityContractTests
     [Test]
     public void VkDataBuffer_SourceContracts_EventSubscriptionSymmetryMatchesOpenGl()
     {
-        string glSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Buffers/GLDataBuffer.cs");
-        string vkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkDataBuffer.cs");
+        string glSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Buffers/GLDataBuffer.cs");
+        string vkSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
         string[] eventBindings =
         [
             "PushDataRequested",
@@ -86,7 +86,7 @@ public sealed class VkDataBufferParityContractTests
     [Test]
     public void VkDataBuffer_SourceContracts_CoverMemoryFlagsFlushGrowthAndDiagnostics()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkDataBuffer.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
 
         source.ShouldContain("private static MemoryPropertyFlags ResolveMemoryProperties(XRDataBuffer data)");
         source.ShouldContain("MemoryPropertyFlags.HostCachedBit");
@@ -108,15 +108,15 @@ public sealed class VkDataBufferParityContractTests
     [Test]
     public void VkDataBuffer_SourceContracts_CoverBindingAndVulkanNativePaths()
     {
-        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkDataBuffer.cs");
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
         string rendererProgramSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Resources/Shaders/XRRenderProgram.cs");
-        string addressSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanSceneDatabaseAddresses.cs");
-        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
-        string cleanupSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Cleanup.cs");
+        string addressSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanSceneDatabaseAddresses.cs");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+        string cleanupSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Cleanup.cs");
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
-        string glBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Buffers/GLDataBuffer.cs");
-        string barrierPlannerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanBarrierPlanner.cs");
-        string retirementSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.ResourceRetirement.cs");
+        string glBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Buffers/GLDataBuffer.cs");
+        string barrierPlannerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanBarrierPlanner.cs");
+        string retirementSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
 
         bufferSource.ShouldContain("program.TryResolveShaderStorageBufferBinding(blockName, out uint binding)");
         bufferSource.ShouldContain("program.TryResolveUniformBlockBinding(blockName, out binding)");
@@ -177,10 +177,10 @@ public sealed class VkDataBufferParityContractTests
     [Test]
     public void VkDataBuffer_SourceContracts_CoverSteadyStateCountersAndZeroReadbackTelemetry()
     {
-        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkDataBuffer.cs");
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
         string runtimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs");
         string telemetrySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Buffers/XRBufferWriteTelemetry.cs");
-        string stagingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanStagingManager.cs");
+        string stagingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanStagingManager.cs");
 
         bufferSource.ShouldContain("private readonly VulkanStagingManager _stagingManager = new();");
         bufferSource.ShouldContain("_lastUploadRoute = ResolveHostVisibleUploadRoute(_lastMemProps) + \"SubData\";");

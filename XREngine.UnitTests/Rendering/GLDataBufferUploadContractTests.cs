@@ -11,7 +11,7 @@ public sealed class GLDataBufferUploadContractTests
     [Test]
     public void PushSubData_ReturnsWhenGrowthTriggersQueuedFullUpload()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Buffers/GLDataBuffer.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Buffers/GLDataBuffer.cs");
 
         source.ShouldContain("if (_hasPendingUpload)");
         source.ShouldContain("return;");

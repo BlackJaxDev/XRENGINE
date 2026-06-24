@@ -1,4 +1,5 @@
 using MemoryPack;
+using Newtonsoft.Json;
 using System.ComponentModel;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
@@ -53,6 +54,9 @@ namespace XREngine
         private int _submeshDetailTabIndex = 0;
         private EditorThemeSettings _theme = new();
         private EditorDebugOptions _debug = new();
+        private EditorViewportPreferences? _viewport;
+        private EditorSelectionPreferences? _selection;
+        private EditorDiagnosticsPreferences? _diagnostics;
         private bool _mcpServerEnabled = false;
         private int _mcpServerPort = 5467;
         private bool _mcpServerRequireAuth = false;
@@ -113,8 +117,30 @@ namespace XREngine
         public EditorDebugOptions Debug
         {
             get => _debug;
-            set => SetField(ref _debug, value ?? new EditorDebugOptions());
+            set
+            {
+                if (SetField(ref _debug, value ?? new EditorDebugOptions()))
+                    _diagnostics = null;
+            }
         }
+
+        [JsonIgnore]
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public EditorViewportPreferences Viewport
+            => _viewport ??= new EditorViewportPreferences(this);
+
+        [JsonIgnore]
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public EditorSelectionPreferences Selection
+            => _selection ??= new EditorSelectionPreferences(this);
+
+        [JsonIgnore]
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public EditorDiagnosticsPreferences Diagnostics
+            => _diagnostics ??= new EditorDiagnosticsPreferences(Debug);
 
         /// <summary>
         /// Controls how the main world viewport is presented when Dear ImGui is active.
@@ -755,6 +781,8 @@ namespace XREngine
 
                 if (field is EditorDebugOptions current)
                     current.PropertyChanged += HandleSubSettingsChanged;
+
+                _diagnostics = null;
             }
         }
 
@@ -810,13 +838,8 @@ namespace XREngine
 
             Theme.CopyFrom(source.Theme);
             Debug.CopyFrom(source.Debug);
-            ViewportPresentationMode = source.ViewportPresentationMode;
-            ScenePanelResizeDebounceMs = source.ScenePanelResizeDebounceMs;
-            InteractiveResizeStrategy = source.InteractiveResizeStrategy;
-            HoverOutlineEnabled = source.HoverOutlineEnabled;
-            SelectionOutlineEnabled = source.SelectionOutlineEnabled;
-            HoverOutlineColor = source.HoverOutlineColor;
-            SelectionOutlineColor = source.SelectionOutlineColor;
+            Viewport.CopyFrom(source.Viewport);
+            Selection.CopyFrom(source.Selection);
             ConfirmBeforeEnteringPlayMode = source.ConfirmBeforeEnteringPlayMode;
             ConfirmBeforeExitingPlayMode = source.ConfirmBeforeExitingPlayMode;
             McpServerEnabled = source.McpServerEnabled;
@@ -879,27 +902,9 @@ namespace XREngine
 
             Theme.ApplyOverrides(overrides.Theme);
             Debug.ApplyOverrides(overrides.Debug);
-
-            if (overrides.ViewportPresentationModeOverride is { HasOverride: true } vpOverride)
-                ViewportPresentationMode = vpOverride.Value;
-
-            if (overrides.ScenePanelResizeDebounceMsOverride is { HasOverride: true } debounceOverride)
-                ScenePanelResizeDebounceMs = Math.Max(0, debounceOverride.Value);
-
-            if (overrides.InteractiveResizeStrategyOverride is { HasOverride: true } interactiveResizeOverride)
-                InteractiveResizeStrategy = interactiveResizeOverride.Value;
-
-            if (overrides.HoverOutlineEnabledOverride is { HasOverride: true } hoverOutlineEnabledOverride)
-                HoverOutlineEnabled = hoverOutlineEnabledOverride.Value;
-
-            if (overrides.SelectionOutlineEnabledOverride is { HasOverride: true } selectionOutlineEnabledOverride)
-                SelectionOutlineEnabled = selectionOutlineEnabledOverride.Value;
-
-            if (overrides.HoverOutlineColorOverride is { HasOverride: true } hoverOutlineColorOverride)
-                HoverOutlineColor = hoverOutlineColorOverride.Value;
-
-            if (overrides.SelectionOutlineColorOverride is { HasOverride: true } selectionOutlineColorOverride)
-                SelectionOutlineColor = selectionOutlineColorOverride.Value;
+            Viewport.ApplyOverrides(overrides.Viewport);
+            Selection.ApplyOverrides(overrides.Selection);
+            Diagnostics.ApplyOverrides(overrides.Diagnostics);
 
             if (overrides.ConfirmBeforeEnteringPlayModeOverride is { HasOverride: true } confirmEnterOverride)
                 ConfirmBeforeEnteringPlayMode = confirmEnterOverride.Value;
@@ -2061,8 +2066,8 @@ namespace XREngine
 
         [Category("Diagnostics")]
         [DisplayName("Compute Skinning Prepass Diagnostics")]
-        [Description("Compute skinning pre-pass diagnostics: per-dispatch GPU output/palette readbacks ([SkinReadback], [SkinPaletteGpu]), settle/seed/residency traces ([SkinSettle], [SkinResidency]), and bone-palette order verification. Heavy (blocking GPU readbacks each dispatch) — diagnostic only. Defaults on while the skinned-mesh residency investigation is open. Seed env: XRE_SKINNING_PREPASS_DIAG=0 disables.")]
-        [DefaultValue(true)]
+        [Description("Compute skinning pre-pass diagnostics: per-dispatch GPU output/palette readbacks ([SkinReadback], [SkinPaletteGpu]), settle/seed/residency traces ([SkinSettle], [SkinResidency]), and bone-palette order verification. Heavy (blocking GPU readbacks each dispatch) - diagnostic only. Seed env: XRE_SKINNING_PREPASS_DIAG=1.")]
+        [DefaultValue(false)]
         public bool SkinningPrepassDiag
         {
             get => _skinningPrepassDiag;
@@ -2327,8 +2332,8 @@ namespace XREngine
 
         [Category("Diagnostics (Vulkan)")]
         [DisplayName("Texture Upload Prep Worker")]
-        [Description("Request worker-side Vulkan upload preparation once the thread-safe upload context is available. Current builds log and use budgeted render-thread compatibility prep. Seed env: XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER.")]
-        [DefaultValue(false)]
+        [Description("Run Vulkan imported-texture upload preparation on the worker/upload context when available; set XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER=0 to use the budgeted render-thread compatibility drain.")]
+        [DefaultValue(true)]
         public bool VkTextureUploadPrepWorker
         {
             get => _vkTextureUploadPrepWorker;

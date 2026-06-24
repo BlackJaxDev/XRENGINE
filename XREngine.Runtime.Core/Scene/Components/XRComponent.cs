@@ -97,7 +97,16 @@ namespace XREngine.Components
         /// <param name="component"></param>
         /// <returns></returns>
         public bool TryGetSiblingComponent<T>(out T? component) where T : XRComponent
-            => SceneNode.TryGetComponent<T>(out component) && component != this;
+        {
+            var node = _sceneNode;
+            if (node is null || !node.TryGetComponent<T>(out component) || ReferenceEquals(component, this))
+            {
+                component = null;
+                return false;
+            }
+
+            return true;
+        }
         /// <summary>
         /// Retrieves a component also located on the same parent scene node.
         /// </summary>
@@ -107,8 +116,8 @@ namespace XREngine.Components
         {
             if (TryGetSiblingComponent(out T? comp))
                 return comp;
-            if (createIfNotExist)
-                return SceneNode.AddComponent<T>();
+            if (createIfNotExist && _sceneNode is not null)
+                return _sceneNode.AddComponent<T>();
             return null;
         }
         /// <summary>
@@ -117,7 +126,12 @@ namespace XREngine.Components
         /// <typeparam name="T"></typeparam>
         /// <returns></returns>
         public IEnumerable<T> GetSiblingComponents<T>() where T : XRComponent
-            => SceneNode.GetComponents<T>().Where(x => x != this);
+        {
+            var node = _sceneNode;
+            return node is null
+                ? Enumerable.Empty<T>()
+                : node.GetComponents<T>().Where(x => !ReferenceEquals(x, this));
+        }
 
         internal void ConstructionSetSceneNode(SceneNode node)
         {

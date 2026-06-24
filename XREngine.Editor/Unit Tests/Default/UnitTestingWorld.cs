@@ -89,29 +89,57 @@ public static partial class EditorUnitTests
         if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) || requiresDesktopVrWindow)
             s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresDesktopVrWindow;
         s.VrMirrorComposeFromEyeTextures = !requiresDesktopVrWindow;
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
+
+        bool groupedRenderingSpecified = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));
+        if (groupedRenderingSpecified)
+        {
+            UnitTestingOpenGLShaderLinkingSettings linkSettings = runtimeSettings.Rendering.OpenGL.ShaderLinking;
+            s.AllowShaderPipelines = runtimeSettings.Rendering.OpenGL.AllowProgramPipelines;
+            s.AllowBinaryProgramCaching = linkSettings.AllowBinaryProgramCaching;
+            s.AsyncProgramBinaryUpload = linkSettings.AsyncProgramBinaryUpload;
+            s.AsyncProgramCompilation = linkSettings.AsyncProgramCompilation;
+            s.OpenGLProgramCompileLinkWorkerCount = linkSettings.ProgramCompileLinkWorkerCount;
+            s.MaxAsyncShaderProgramsPerFrame = linkSettings.MaxAsyncShaderProgramsPerFrame;
+            s.OpenGLShaderLinkStrategy = linkSettings.Strategy;
+            s.OpenGLShaderCompilerThreadCount = linkSettings.DriverCompilerThreadCount;
+            s.OpenGLParallelShaderCompileProbeEnabled = linkSettings.DriverParallelProbeEnabled;
+            s.OpenGLParallelShaderCompileProbeTimeoutMs = linkSettings.DriverParallelProbeTimeoutMs;
+            s.VulkanRenderTargetMode = runtimeSettings.Rendering.Vulkan.RenderTargetMode;
+            s.Vulkan.Startup.FallbackPolicy = runtimeSettings.Rendering.BackendFallbackPolicy;
+        }
+        else if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
+        {
             s.AllowShaderPipelines = Toggles.AllowShaderPipelines;
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowBinaryProgramCaching)))
-            s.AllowBinaryProgramCaching = Toggles.AllowBinaryProgramCaching;
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AsyncProgramBinaryUpload)))
-            s.AsyncProgramBinaryUpload = Toggles.AsyncProgramBinaryUpload;
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AsyncProgramCompilation)))
-            s.AsyncProgramCompilation = Toggles.AsyncProgramCompilation;
+        }
+
+        if (!groupedRenderingSpecified)
+        {
+            if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowBinaryProgramCaching)))
+                s.AllowBinaryProgramCaching = Toggles.AllowBinaryProgramCaching;
+            if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AsyncProgramBinaryUpload)))
+                s.AsyncProgramBinaryUpload = Toggles.AsyncProgramBinaryUpload;
+            if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AsyncProgramCompilation)))
+                s.AsyncProgramCompilation = Toggles.AsyncProgramCompilation;
+        }
+
         if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowSkinning)))
             s.AllowSkinning = Toggles.AllowSkinning;
         Debug.Out($"[UnitTestingWorld] Applied render toggles AllowSkinning={s.AllowSkinning} AllowShaderPipelines={s.AllowShaderPipelines}");
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLProgramCompileLinkWorkerCount)))
-            s.OpenGLProgramCompileLinkWorkerCount = Toggles.OpenGLProgramCompileLinkWorkerCount;
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.MaxAsyncShaderProgramsPerFrame)))
-            s.MaxAsyncShaderProgramsPerFrame = Toggles.MaxAsyncShaderProgramsPerFrame;
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLShaderLinkStrategy)))
-            s.OpenGLShaderLinkStrategy = Toggles.OpenGLShaderLinkStrategy;
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLShaderCompilerThreadCount)))
-            s.OpenGLShaderCompilerThreadCount = Toggles.OpenGLShaderCompilerThreadCount;
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLParallelShaderCompileProbeEnabled)))
-            s.OpenGLParallelShaderCompileProbeEnabled = Toggles.OpenGLParallelShaderCompileProbeEnabled;
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLParallelShaderCompileProbeTimeoutMs)))
-            s.OpenGLParallelShaderCompileProbeTimeoutMs = Toggles.OpenGLParallelShaderCompileProbeTimeoutMs;
+        if (!groupedRenderingSpecified)
+        {
+            if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLProgramCompileLinkWorkerCount)))
+                s.OpenGLProgramCompileLinkWorkerCount = Toggles.OpenGLProgramCompileLinkWorkerCount;
+            if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.MaxAsyncShaderProgramsPerFrame)))
+                s.MaxAsyncShaderProgramsPerFrame = Toggles.MaxAsyncShaderProgramsPerFrame;
+            if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLShaderLinkStrategy)))
+                s.OpenGLShaderLinkStrategy = Toggles.OpenGLShaderLinkStrategy;
+            if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLShaderCompilerThreadCount)))
+                s.OpenGLShaderCompilerThreadCount = Toggles.OpenGLShaderCompilerThreadCount;
+            if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLParallelShaderCompileProbeEnabled)))
+                s.OpenGLParallelShaderCompileProbeEnabled = Toggles.OpenGLParallelShaderCompileProbeEnabled;
+            if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLParallelShaderCompileProbeTimeoutMs)))
+                s.OpenGLParallelShaderCompileProbeTimeoutMs = Toggles.OpenGLParallelShaderCompileProbeTimeoutMs;
+        }
         if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.SinglePassStereoVR)))
             s.RenderVRSinglePassStereo = Toggles.SinglePassStereoVR;
         if (Toggles.RenderPhysicsDebug)

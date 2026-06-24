@@ -28,7 +28,7 @@ public sealed class DebugVisualizerSourceContractTests
     [Test]
     public void OpenGlRenderPath_PreparesDynamicRenderDataEveryDrawAfterBuffersAreBound()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Rendering.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Rendering.cs").Replace("\r\n", "\n");
 
         AssertContainsInOrder(
             source,
@@ -42,7 +42,7 @@ public sealed class DebugVisualizerSourceContractTests
     [Test]
     public void OpenGlUploadQueue_PredictiveSkipCannotPreventFirstChunkProgress()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Types/Buffers/GLUploadQueue.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Resources/Uploads/GLUploadQueue.cs").Replace("\r\n", "\n");
 
         AssertContainsInOrder(
             source,

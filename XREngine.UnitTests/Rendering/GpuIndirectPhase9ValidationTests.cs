@@ -116,7 +116,7 @@ public sealed class GpuIndirectPhase9ValidationTests
     [Test]
     public void VulkanNonCount_DefaultPath_DoesNotUsePerDrawLoopAntiPattern()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
 
         source.ShouldContain("Api!.CmdDrawIndexedIndirect(");
         source.ShouldContain("usedLoopFallback: false");

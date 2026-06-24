@@ -122,7 +122,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     [Test]
     public void VulkanUpscaleBridgeSidecar_LocksSharedImageFormatsForMvp()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeSidecar.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeSidecar.cs").Replace("\r\n", "\n");
         source.ShouldContain("private const int FramesInFlight = 2;");
         source.ShouldContain("EPixelInternalFormat.Rgba16f,");
         source.ShouldContain("EPixelInternalFormat.Depth24Stencil8,");
@@ -200,7 +200,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         vendorSource.ShouldContain("in hudlessImage");
         vendorSource.ShouldContain("NVIDIA DLSS frame generation requires a HUD-less color buffer matching the backbuffer.");
 
-        string interopSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanStreamlineInterop.cs").Replace("\r\n", "\n");
+        string interopSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanRenderer.StreamlineInterop.cs").Replace("\r\n", "\n");
         interopSource.ShouldContain("internal readonly record struct VulkanStreamlineImage");
         interopSource.ShouldContain("GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source");
         interopSource.ShouldContain("DeviceMemory memory = source.DescriptorMemory;");
@@ -209,7 +209,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         interopSource.ShouldContain("internal void EnqueueDlssFrameGeneration(");
         interopSource.ShouldContain("EnqueueFrameOp(new DlssFrameGenerationOp(");
 
-        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.Dlss.cs").Replace("\r\n", "\n");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanRenderer.CommandBuffers.Dlss.cs").Replace("\r\n", "\n");
         commandBufferSource.ShouldContain("private void RecordDlssUpscaleOp(CommandBuffer commandBuffer, DlssUpscaleOp op)");
         commandBufferSource.ShouldContain("TransitionStreamlineImageToGeneral(commandBuffer, op.SourceColor)");
         commandBufferSource.ShouldContain("NvidiaDlssManager.Native.TryRecordNativeVulkanUpscale(");
@@ -219,7 +219,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         commandBufferSource.ShouldContain("NvidiaDlssManager.Native.TryRecordNativeVulkanFrameGeneration(");
         commandBufferSource.ShouldContain("Debug.RenderingError($\"Requested NVIDIA DLSS frame generation failed during Vulkan command recording");
 
-        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs").Replace("\r\n", "\n");
+        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs").Replace("\r\n", "\n");
         meshRendererSource.ShouldContain("internal sealed record DlssUpscaleOp(");
         meshRendererSource.ShouldContain("internal sealed record DlssFrameGenerationOp(");
         meshRendererSource.ShouldContain("DlssUpscaleOp dlssUpscale => dlssUpscale with { PassIndex = validatedPassIndex },");
@@ -251,7 +251,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         streamlineSource.ShouldContain("TryAcquireProxyNextImage");
         streamlineSource.ShouldContain("TryQueueProxyPresent");
 
-        string swapchainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/SwapChain.cs").Replace("\r\n", "\n");
+        string swapchainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs").Replace("\r\n", "\n");
         swapchainSource.ShouldContain("DlssFrameGenerationHdrSurfacePreferences");
         swapchainSource.ShouldContain("DisableStreamlineFrameGenerationBeforeSwapchainMutation");
         swapchainSource.ShouldContain("NvidiaDlssManager.Native.TryDisableFrameGeneration");
@@ -319,14 +319,14 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     [Test]
     public void BridgeLifetimeAndFallbackContracts_ArePresent()
     {
-        string probeSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeProbe.cs").Replace("\r\n", "\n");
+        string probeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeProbe.cs").Replace("\r\n", "\n");
         probeSource.ShouldContain("\"VK_KHR_external_memory\"");
         probeSource.ShouldContain("\"VK_KHR_external_semaphore\"");
         probeSource.ShouldContain("\"VK_KHR_external_memory_win32\"");
         probeSource.ShouldContain("\"VK_KHR_external_semaphore_win32\"");
         probeSource.ShouldContain("ProbeFailureReason = selected.SupportsBridgeImport");
 
-        string bridgeSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridge.cs").Replace("\r\n", "\n");
+        string bridgeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridge.cs").Replace("\r\n", "\n");
         bridgeSource.ShouldContain("_viewport.Resized += HandleViewportResized;");
         bridgeSource.ShouldContain("_viewport.InternalResolutionResized += HandleInternalResolutionResized;");
         bridgeSource.ShouldContain("private void HandleViewportResized(XRViewport _)\n        => MarkNeedsRecreate(ViewportResizeReason);");
@@ -338,7 +338,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         bridgeSource.ShouldContain("string.Equals(recreateReason, \"output HDR changed\", StringComparison.Ordinal)");
         bridgeSource.ShouldContain("_sidecar.RecreateFrameSlots(renderer, frameResources, SanitizeLabel(DescribeViewport()))");
 
-        string sidecarSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeSidecar.cs").Replace("\r\n", "\n");
+        string sidecarSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeSidecar.cs").Replace("\r\n", "\n");
         sidecarSource.ShouldContain("public VulkanUpscaleBridgeFrameSlot[] RecreateFrameSlots(OpenGLRenderer renderer, VulkanUpscaleBridgeFrameResources frameResources, string viewportTag)");
         sidecarSource.ShouldContain("ResetVendorSessionsForFrameResourceRecreate();");
         sidecarSource.ShouldContain("_dlssSession?.ResetResources();");
@@ -372,7 +372,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     [Test]
     public void SparseTextureInitialPromotions_UseSynchronousExposurePath()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.SparseStreaming.Async.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.SparseStreaming.Async.cs").Replace("\r\n", "\n");
 
         source.ShouldContain("bool hasPreviousCommit = previousCommittedBaseMipLevel != int.MaxValue;");
         source.ShouldContain("bool isDemotion = hasPreviousCommit && committedBaseMipLevel > previousCommittedBaseMipLevel;");
@@ -407,7 +407,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     [Test]
     public void OpenGlRenderer_LoadsBridgeInteropBeforeFirstCapabilitySnapshot()
     {
-        string rendererSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs").Replace("\r\n", "\n");
+        string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs").Replace("\r\n", "\n");
 
         int extMemoryIndex = rendererSource.IndexOf("EXTMemoryObject = ESApi.TryGetExtension<ExtMemoryObject>(out var ext) ? ext : null;", StringComparison.Ordinal);
         int extSemaphoreWin32Index = rendererSource.IndexOf("EXTSemaphoreWin32 = ESApi.TryGetExtension<ExtSemaphoreWin32>(out var ext4) ? ext4 : null;", StringComparison.Ordinal);
@@ -430,11 +430,11 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         textureSource.ShouldContain("public void SetOpenGlExternalMemoryImport(nint handle, ulong size, string? label = null, uint mipLevels = 1)");
         textureSource.ShouldContain("OpenGlExternalMemoryImportMipLevels = Math.Max(1u, mipLevels);");
 
-        string storageSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.Storage.cs").Replace("\r\n", "\n");
+        string storageSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.Storage.cs").Replace("\r\n", "\n");
         storageSource.ShouldContain("uint importedLevels = Math.Max(1u, Data.OpenGlExternalMemoryImportMipLevels);");
         storageSource.ShouldContain("levels = importedLevels;");
 
-        string bridgeSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeSidecar.cs").Replace("\r\n", "\n");
+        string bridgeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeSidecar.cs").Replace("\r\n", "\n");
         bridgeSource.ShouldContain("texture.SetOpenGlExternalMemoryImport(glHandle, memoryRequirements.Size, name, mipLevels: 1);");
     }
 
@@ -497,7 +497,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         dlssSource.ShouldContain("MarkTerminalBridgeFailure(failureReason);");
         dlssSource.ShouldContain("private static readonly StreamlineStructType FeatureRequirementsStructType");
 
-        string bridgeSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/VulkanUpscaleBridgeSidecar.cs").Replace("\r\n", "\n");
+        string bridgeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeSidecar.cs").Replace("\r\n", "\n");
         bridgeSource.ShouldContain("NvidiaDlssManager.Native.TryGetRequiredVulkanRequirements(");
         bridgeSource.ShouldContain("minApiVersion = DetermineMinimumApiVersionForRequestedFeatureSets(deviceFeatures12, deviceFeatures13);");
         bridgeSource.ShouldContain("ResolveStreamlineQueueConfiguration(");

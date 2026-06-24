@@ -25,6 +25,91 @@ This document is the execution companion to Phase 11 in the Vulkan GPU-driven un
 
 ## Top-Level Rendering Taxonomy
 
+## Backend renderer folder taxonomy
+
+OpenGL and Vulkan backend files now use a shared responsibility vocabulary under
+`XREngine.Runtime.Rendering/Rendering/API/Rendering/<Backend>/`. Namespaces
+intentionally remain stable as `XREngine.Rendering.OpenGL` and
+`XREngine.Rendering.Vulkan`; this reorganization is a path move and split, not a
+namespace migration.
+
+Common backend folders:
+
+- `Bootstrap/` - context/API creation, instance/device setup, extension probes,
+  startup validation, and compatibility setup.
+- `Frame/` - frame lifecycle, swapchain/present or frame-adjacent timing,
+  synchronization, fences, stats, and retirement.
+- `Commands/` - command buffers, draw submission, blits, readbacks, indirect
+  draw, state application, command-chain scheduling, and dirty tracking.
+- `RenderGraph/` - backend render-graph compilation, pass planning, barriers,
+  resource planning, and graph refresh policy. Vulkan uses this today; OpenGL
+  does not have backend-local graph planning yet.
+- `Resources/` - backend resource allocation, staging/uploads, buffers,
+  textures, framebuffers, memory, and non-wrapper resource orchestration.
+- `Descriptors/` - Vulkan descriptors and OpenGL binding-equivalent policy such
+  as texture, uniform, sampler, image, and bindless binding helpers.
+- `Pipelines/` - pipeline/program caches, compile queues, prewarm databases,
+  render target modes, and shader-link backend selection.
+- `Shaders/` - compiler/linker-facing source helpers, source compatibility,
+  reflection, rewrite/fixup passes, and shader artifact caches.
+- `Features/` - optional backend features such as bindless, meshlets,
+  raytracing, sparse textures, streaming, RTX IO, luminance, and upscaling.
+- `UI/` - backend ImGui and editor UI renderer integration.
+- `BackendObjects/` - API wrappers around engine resources.
+- `Types/` - small backend-specific value types, enums, conversion helpers, and
+  interop structs.
+
+`BackendObjects` is intentionally explicit. It replaces ambiguous `Objects/` and
+old OpenGL `Types/` wrapper folders while preserving the no-standalone-backend
+`XRMesh` rule below: `GLMeshRenderer` and `VkMeshRenderer` own mesh draw
+readiness, mesh data invalidation, buffer collection, and draw submission, while
+`GLDataBuffer` and `VkDataBuffer` own backend buffer upload/readiness state.
+
+Path changes should be reviewed as move-only diffs before semantic refactors.
+Large-file splits should stay behavior-neutral except for access or partial-class
+adjustments required by the split.
+
+### Backend old-to-new map
+
+| Old Path | New Path |
+|---|---|
+| `Vulkan/Init.cs` | `Vulkan/Bootstrap/VulkanRenderer.Initialization.cs` |
+| `Vulkan/Extensions.cs` | `Vulkan/Bootstrap/VulkanExtensions.cs` |
+| `Vulkan/PhysicalDevice.cs` | `Vulkan/Bootstrap/VulkanRenderer.PhysicalDevice.cs` |
+| `Vulkan/Validation.cs` | `Vulkan/Bootstrap/VulkanRenderer.Validation.cs` |
+| `Vulkan/Objects/*Device/Instance/Surface*.cs` | `Vulkan/Bootstrap/VulkanRenderer.*.cs` |
+| `Vulkan/Drawing.Core.cs` | `Vulkan/Frame/VulkanRenderer.FrameLoop.cs` |
+| `Vulkan/SwapChain.cs` | `Vulkan/Frame/VulkanRenderer.Swapchain.cs` |
+| `Vulkan/VulkanSynchronization.cs` | `Vulkan/Frame/VulkanRenderer.Synchronization.cs` |
+| `Vulkan/Objects/CommandBuffers.cs` | `Vulkan/Commands/VulkanRenderer.CommandBuffer*.cs` |
+| `Vulkan/VulkanCommandChain*.cs` | `Vulkan/Commands/VulkanCommandChain*.cs` |
+| `Vulkan/VulkanRenderer.State.cs` | `Vulkan/Commands/VulkanRenderer.StateTracking.cs`, `Vulkan/Commands/VulkanRenderer.RenderStateMutation.cs`, `Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs`, `Vulkan/Resources/VulkanRenderer.ResourceRegistration.cs` |
+| `Vulkan/VulkanRenderGraphCompiler.cs` | `Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs` |
+| `Vulkan/VulkanBarrierPlanner.cs` | `Vulkan/RenderGraph/VulkanBarrierPlanner.cs` |
+| `Vulkan/VulkanResourcePlanner.cs` | `Vulkan/RenderGraph/VulkanResourcePlanner.cs` |
+| `Vulkan/VulkanResourceAllocator.cs` | `Vulkan/Resources/VulkanResourceAllocator.cs` |
+| `Vulkan/VulkanStagingManager.cs` | `Vulkan/Resources/Uploads/VulkanStagingManager.cs` |
+| `Vulkan/Memory/*` | `Vulkan/Resources/Memory/*` |
+| `Vulkan/VulkanDescriptor*.cs` | `Vulkan/Descriptors/VulkanDescriptor*.cs` |
+| `Vulkan/VulkanShaderTools.cs` | `Vulkan/Shaders/VulkanShaderAutoUniforms.cs`, `Vulkan/Shaders/VulkanShaderCompiler.cs`, `Vulkan/Shaders/VulkanShaderReflection.cs`, `Vulkan/Shaders/VulkanShaderSourceFixups.cs`, `Vulkan/Shaders/VulkanShaderTransformFeedback.cs`, `Vulkan/Shaders/VulkanShaderTypes.cs` |
+| `Vulkan/VulkanPipeline*.cs` | `Vulkan/Pipelines/VulkanPipeline*.cs` |
+| `Vulkan/VulkanUpscaleBridge*.cs` | `Vulkan/Features/Upscaling/VulkanUpscaleBridge*.cs` |
+| `Vulkan/Objects/Types/*` | `Vulkan/BackendObjects/*` or `Vulkan/Types/*` |
+| `OpenGL/OpenGLRenderer.cs` | `OpenGL/Bootstrap/OpenGLRenderer.cs` |
+| `OpenGL/OpenGLRenderer.DebugTracking.cs` | `OpenGL/Frame/OpenGLRenderer.DebugTracking.cs` |
+| `OpenGL/OpenGLRenderer.DrawSubmission.cs` | `OpenGL/Commands/OpenGLRenderer.DrawSubmission.cs` |
+| `OpenGL/OpenGLRenderer.TextureBindings.cs` | `OpenGL/Descriptors/OpenGLRenderer.TextureBindings.cs` |
+| `OpenGL/OpenGLRenderer.AsyncPrograms.cs` | `OpenGL/Pipelines/OpenGLRenderer.AsyncPrograms.cs` |
+| `OpenGL/OpenGLShaderLinkBackendSelector.cs` | `OpenGL/Pipelines/OpenGLShaderLinkBackendSelector.cs` |
+| `OpenGL/OpenGLRenderer.ImGui*.cs` | `OpenGL/UI/OpenGLRenderer.ImGui*.cs` |
+| `OpenGL/OpenGLRenderer.Luminance.cs` | `OpenGL/Features/Luminance/OpenGLRenderer.Luminance*.cs` |
+| `OpenGL/Types/Buffers/*` | `OpenGL/BackendObjects/Buffers/*` or `OpenGL/Resources/Uploads/*` |
+| `OpenGL/Types/Textures/*` | `OpenGL/BackendObjects/Textures/*` and `OpenGL/BackendObjects/Samplers/*` |
+| `OpenGL/Types/Render Targets/*` | `OpenGL/BackendObjects/Framebuffers/*` |
+| `OpenGL/Types/Mesh Renderer/*` | `OpenGL/BackendObjects/MeshRendering/*` |
+| `OpenGL/Types/Meshes/GLRenderProgram.Linking.cs` | `OpenGL/BackendObjects/Programs/GLRenderProgram.Link*.cs`, `GLRenderProgram.CompileInputs.cs`, `GLRenderProgram.AsyncResults.cs`, `GLRenderProgram.HazardDetection.cs`, `GLRenderProgram.BinaryCacheInteraction.cs` |
+| `OpenGL/Enums/*` | `OpenGL/Types/*` |
+
 ## 1) Mesh rendering path folders
 
 Target path split:

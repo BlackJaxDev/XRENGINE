@@ -7,6 +7,7 @@ using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Networking;
 using XREngine.Rendering;
+using XREngine.Scene;
 
 namespace XREngine.Components
 {
@@ -175,31 +176,38 @@ namespace XREngine.Components
             UserInterfaceInput?.RegisterInput(input);
         }
 
-        private IEnumerable<OptionalInputSetComponent>? _registeredOptionalSets = null;
+        private OptionalInputSetComponent[]? _registeredOptionalSets = null;
+        private SceneNode? _registeredOptionalSceneNode = null;
+
         public void RegisterOptionalInputs(InputInterface input)
         {
-            IEnumerable<OptionalInputSetComponent> allSets;
             if (input.Unregister)
             {
-                if (_registeredOptionalSets is not null)
+                var registeredSets = _registeredOptionalSets;
+                if (registeredSets is not null)
                 {
-                    allSets = _registeredOptionalSets;
-                    foreach (var x in allSets)
+                    foreach (var x in registeredSets)
                     {
                         x.PropertyChanged -= OptionalInputSetComponent_ActiveChanged;
                         if (x.IsActive)
                             x.RegisterInput(input);
                     }
 
-                    SceneNode.Components.CollectionChanged -= UpdateOptionalInputs;
+                    _registeredOptionalSceneNode?.Components.CollectionChanged -= UpdateOptionalInputs;
                     OptionalInputSets.CollectionChanged -= UpdateOptionalInputs;
+                    _registeredOptionalSets = null;
+                    _registeredOptionalSceneNode = null;
                 }
                 else
                     return;
             }
             else
             {
-                allSets = GetSiblingComponents<OptionalInputSetComponent>().Concat(OptionalInputSets).Distinct();
+                OptionalInputSetComponent[] allSets = GetSiblingComponents<OptionalInputSetComponent>()
+                    .Concat(OptionalInputSets)
+                    .Distinct()
+                    .ToArray();
+
                 foreach (var x in allSets)
                 {
                     x.PropertyChanged += OptionalInputSetComponent_ActiveChanged;
@@ -208,7 +216,8 @@ namespace XREngine.Components
                 }
                 
                 _registeredOptionalSets = allSets;
-                SceneNode.Components.CollectionChanged += UpdateOptionalInputs;
+                _registeredOptionalSceneNode = SceneNode;
+                _registeredOptionalSceneNode?.Components.CollectionChanged += UpdateOptionalInputs;
                 OptionalInputSets.CollectionChanged += UpdateOptionalInputs;
             }
         }

@@ -1,12 +1,13 @@
 # Backend Renderer Folder Organization Todo
 
-Status: Draft.
+Status: Implemented.
 
 Created: 2026-06-17.
 
 Owner: Rendering.
 
-Target branch: `renderer-backend-folder-organization`.
+Target branch: not created per explicit task instruction; work stayed on the
+current checkout.
 
 ## Objective
 
@@ -149,7 +150,7 @@ Initial move-only targets:
 | `Vulkan/Objects/Surface.cs` | `Vulkan/Bootstrap/VulkanRenderer.Surface.cs` |
 | `Vulkan/Objects/LogicalDevice.cs` | `Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs` |
 | `Vulkan/Objects/CommandPool.cs` | `Vulkan/Commands/VulkanRenderer.CommandPool.cs` |
-| `Vulkan/Objects/CommandBuffers.cs` | `Vulkan/Commands/VulkanRenderer.CommandBuffers.cs` |
+| `Vulkan/Objects/CommandBuffers.cs` | `Vulkan/Commands/VulkanRenderer.CommandBuffer*.cs`, `VulkanRenderer.SecondaryCommandBuffers.cs`, `VulkanRenderer.OneTimeSubmit.cs`, and frame-op diagnostics/signature files |
 | `Vulkan/Objects/CommandBuffers.Dlss.cs` | `Vulkan/Features/Upscaling/VulkanRenderer.CommandBuffers.Dlss.cs` |
 | `Vulkan/Drawing.Core.cs` | `Vulkan/Frame/VulkanRenderer.FrameLoop.cs` |
 | `Vulkan/Drawing.ResourceRetirement.cs` | `Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs` |
@@ -186,7 +187,7 @@ Initial move-only targets:
 | `Vulkan/VulkanComputeDescriptors.cs` | `Vulkan/Descriptors/VulkanRenderer.ComputeDescriptors.cs` |
 | `Vulkan/VulkanBindlessMaterialDescriptors.cs` | `Vulkan/Descriptors/VulkanBindlessMaterialDescriptors.cs` |
 | `Vulkan/VulkanImmutableSamplers.cs` | `Vulkan/Descriptors/VulkanRenderer.ImmutableSamplers.cs` |
-| `Vulkan/VulkanShaderTools.cs` | `Vulkan/Shaders/VulkanShaderTools.cs` initially, then split |
+| `Vulkan/VulkanShaderTools.cs` | `Vulkan/Shaders/VulkanShaderTypes.cs`, `VulkanShaderAutoUniforms.cs`, `VulkanShaderSourceFixups.cs`, `VulkanShaderTransformFeedback.cs`, `VulkanShaderCompiler.cs`, and `VulkanShaderReflection.cs` |
 | `Vulkan/VulkanShaderArtifactCache.cs` | `Vulkan/Shaders/VulkanShaderArtifactCache.cs` |
 | `Vulkan/Objects/DescriptorPool.cs` | `Vulkan/Descriptors/VulkanRenderer.DescriptorPool.cs` |
 | `Vulkan/Objects/DescriptorSets.cs` | `Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs` |
@@ -287,13 +288,13 @@ Initial move-only targets:
 | `OpenGL/OpenGLRenderer.ParallelShaderCompile.cs` | `OpenGL/Pipelines/OpenGLRenderer.ParallelShaderCompile.cs` |
 | `OpenGL/OpenGLRenderer.ProgramPool.cs` | `OpenGL/Pipelines/OpenGLRenderer.ProgramPool.cs` |
 | `OpenGL/OpenGLShaderLinkBackendSelector.cs` | `OpenGL/Pipelines/OpenGLShaderLinkBackendSelector.cs` |
-| `OpenGL/OpenGLRenderer.Luminance.cs` | `OpenGL/Features/Luminance/OpenGLRenderer.Luminance.cs` |
+| `OpenGL/OpenGLRenderer.Luminance.cs` | `OpenGL/Features/Luminance/OpenGLRenderer.Luminance*.cs` |
 | `OpenGL/OpenGLRenderer.Meshlets.cs` | `OpenGL/Features/Meshlets/OpenGLRenderer.Meshlets.cs` |
 | `OpenGL/OpenGLRenderer.SparseTextures.cs` | `OpenGL/Features/SparseTextures/OpenGLRenderer.SparseTextures.cs` |
 | `OpenGL/OpenGLRenderer.DetailPreservingMipmaps.cs` | `OpenGL/Features/SparseTextures/OpenGLRenderer.DetailPreservingMipmaps.cs` |
 | `OpenGL/OpenGLRenderer.TextureStreamingCacheCook.cs` | `OpenGL/Features/Streaming/OpenGLRenderer.TextureStreamingCacheCook.cs` |
 | `OpenGL/OpenGLRenderer.ImGui.cs` | `OpenGL/UI/OpenGLRenderer.ImGui.cs` |
-| `OpenGL/OpenGLRenderer.ImGuiViewports.cs` | `OpenGL/UI/OpenGLRenderer.ImGuiViewports.cs` |
+| `OpenGL/OpenGLRenderer.ImGuiViewports.cs` | `OpenGL/UI/OpenGLRenderer.ImGuiViewport*.cs` |
 | `OpenGL/Types/Buffers/*` | `OpenGL/BackendObjects/Buffers/*` |
 | `OpenGL/Types/Textures/*` | `OpenGL/BackendObjects/Textures/*` |
 | `OpenGL/Types/Render Targets/*` | `OpenGL/BackendObjects/Framebuffers/*` |
@@ -337,19 +338,19 @@ Initial move-only targets:
 
 ## Phase 0 - Baseline Audit And Branch
 
-- [ ] Create the dedicated branch `renderer-backend-folder-organization`.
-- [ ] Confirm no in-flight renderer behavior work is sharing the same files, or
+- [x] Dedicated branch intentionally skipped per explicit task instruction.
+- [x] Confirm no in-flight renderer behavior work is sharing the same files, or
   coordinate merge order before moving large hot files.
-- [ ] Capture current file inventory for both backend folders with `rg --files`.
-- [ ] Capture current large-file list for both backend folders.
-- [ ] Confirm all `.csproj`, `.props`, `.targets`, scripts, and docs that
+- [x] Capture current file inventory for both backend folders with `rg --files`.
+- [x] Capture current large-file list for both backend folders.
+- [x] Confirm all `.csproj`, `.props`, `.targets`, scripts, and docs that
   reference explicit backend paths.
-- [ ] Note explicit project file entries before moving:
+- [x] Note explicit project file entries before moving:
   - `Compile Remove="Rendering\API\Rendering\Vulkan\VulkanRaytracing.cs"`
   - `None Include="Rendering\API\Rendering\Vulkan\VulkanRaytracing.cs"`
-- [ ] Decide whether the move is one PR per backend or one combined PR. Prefer
+- [x] Decide whether the move is one PR per backend or one combined PR. Prefer
   one combined move-only PR if the taxonomy must stay mirrored.
-- [ ] Run a baseline build before moving files:
+- [x] Run a baseline build before moving files:
 
   ```powershell
   dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
@@ -357,92 +358,92 @@ Initial move-only targets:
 
 ## Phase 1 - Add Folder Contract Documentation
 
-- [ ] Add `README.md` files to the new Vulkan top-level folders explaining
+- [x] Add `README.md` files to the new Vulkan top-level folders explaining
   ownership and examples.
-- [ ] Add `README.md` files to the new OpenGL top-level folders explaining
+- [x] Add `README.md` files to the new OpenGL top-level folders explaining
   ownership and examples.
-- [ ] Update `docs/architecture/rendering/code-map.md` with this backend
+- [x] Update `docs/architecture/rendering/code-map.md` with this backend
   taxonomy.
-- [ ] Add an old-to-new backend folder mapping table to
+- [x] Add an old-to-new backend folder mapping table to
   `docs/architecture/rendering/code-map.md`.
-- [ ] Document that namespaces intentionally remain unchanged during the first
+- [x] Document that namespaces intentionally remain unchanged during the first
   move-only pass.
-- [ ] Document that path changes should be reviewed as move-only diffs before
+- [x] Document that path changes should be reviewed as move-only diffs before
   any semantic refactor.
 
 ## Phase 2 - Vulkan Move-Only Reorganization
 
-- [ ] Create the Vulkan target folder tree.
-- [ ] Move Vulkan bootstrap files into `Vulkan/Bootstrap/`.
-- [ ] Move Vulkan frame-loop, swapchain, sync, timing, and retirement files into
+- [x] Create the Vulkan target folder tree.
+- [x] Move Vulkan bootstrap files into `Vulkan/Bootstrap/`.
+- [x] Move Vulkan frame-loop, swapchain, sync, timing, and retirement files into
   `Vulkan/Frame/`.
-- [ ] Move command recording, blit, readback, indirect draw, command pool, and
+- [x] Move command recording, blit, readback, indirect draw, command pool, and
   render-state files into `Vulkan/Commands/`.
-- [ ] Move render-graph compiler, barrier planner, and resource planner files
+- [x] Move render-graph compiler, barrier planner, and resource planner files
   into `Vulkan/RenderGraph/`.
-- [ ] Move allocator, staging, dynamic uniform ring, scene database, placeholder
+- [x] Move allocator, staging, dynamic uniform ring, scene database, placeholder
   texture, memory, framebuffer, and texture resource files into
   `Vulkan/Resources/`.
-- [ ] Move descriptor layout, descriptor pool, update template, contract,
+- [x] Move descriptor layout, descriptor pool, update template, contract,
   immutable sampler, and bindless material descriptor files into
   `Vulkan/Descriptors/`.
-- [ ] Move pipeline cache, compile queue, prewarm DB, render-pass, graphics
+- [x] Move pipeline cache, compile queue, prewarm DB, render-pass, graphics
   pipeline, render target mode, and GPL cache files into `Vulkan/Pipelines/`.
-- [ ] Move shader tooling and shader artifact cache files into
+- [x] Move shader tooling and shader artifact cache files into
   `Vulkan/Shaders/`.
-- [ ] Move auto-exposure, meshlet, raytracing, RTX IO, streaming, Streamline,
+- [x] Move auto-exposure, meshlet, raytracing, RTX IO, streaming, Streamline,
   and upscale bridge files into `Vulkan/Features/`.
-- [ ] Move ImGui backend into `Vulkan/UI/`.
-- [ ] Move Vulkan API wrapper files out of `Objects/Types/` into
+- [x] Move ImGui backend into `Vulkan/UI/`.
+- [x] Move Vulkan API wrapper files out of `Objects/Types/` into
   `Vulkan/BackendObjects/`.
-- [ ] Move remaining small enums/interop structs into `Vulkan/Types/`.
-- [ ] Update `XREngine.Runtime.Rendering.csproj` entries for
+- [x] Move remaining small enums/interop structs into `Vulkan/Types/`.
+- [x] Update `XREngine.Runtime.Rendering.csproj` entries for
   `VulkanRaytracing.cs` after it moves.
-- [ ] Build after the move-only pass.
-- [ ] Fix path-sensitive doc links only where required by the build or current
+- [x] Build after the move-only pass.
+- [x] Fix path-sensitive doc links only where required by the build or current
   developer docs.
 
 ## Phase 3 - OpenGL Move-Only Reorganization
 
-- [ ] Create the OpenGL target folder tree.
-- [ ] Move OpenGL startup/context/debug initialization files into
+- [x] Create the OpenGL target folder tree.
+- [x] Move OpenGL startup/context/debug initialization files into
   `OpenGL/Bootstrap/`.
-- [ ] Move frame-adjacent debug tracking, fences, and GPU stats readback into
+- [x] Move frame-adjacent debug tracking, fences, and GPU stats readback into
   `OpenGL/Frame/`.
-- [ ] Move draw submission, blit, readback capture, render parameters,
+- [x] Move draw submission, blit, readback capture, render parameters,
   clip-space, and mesh generation queue files into `OpenGL/Commands/`.
-- [ ] Move framebuffer renderer partials and framebuffer wrappers into
+- [x] Move framebuffer renderer partials and framebuffer wrappers into
   `OpenGL/Resources/Framebuffers/` or `OpenGL/BackendObjects/Framebuffers/`
   according to whether the file is renderer orchestration or an object wrapper.
-- [ ] Move GL data buffers, upload queues, and buffer views into
+- [x] Move GL data buffers, upload queues, and buffer views into
   `OpenGL/BackendObjects/Buffers/` or `OpenGL/Resources/Uploads/` according to
   ownership.
-- [ ] Move texture wrappers into `OpenGL/BackendObjects/Textures/`.
-- [ ] Move sampler wrappers into `OpenGL/BackendObjects/Samplers/` if split
+- [x] Move texture wrappers into `OpenGL/BackendObjects/Textures/`.
+- [x] Move sampler wrappers into `OpenGL/BackendObjects/Samplers/` if split
   from texture wrappers later.
-- [ ] Move query wrappers into `OpenGL/BackendObjects/Queries/`.
-- [ ] Move mesh renderer files from `Types/Mesh Renderer/` to
+- [x] Move query wrappers into `OpenGL/BackendObjects/Queries/`.
+- [x] Move mesh renderer files from `Types/Mesh Renderer/` to
   `OpenGL/BackendObjects/MeshRendering/`.
-- [ ] Move material, shader, render program, and render program pipeline wrappers
+- [x] Move material, shader, render program, and render program pipeline wrappers
   from `Types/Meshes/` to `OpenGL/BackendObjects/Programs/` and
   `OpenGL/BackendObjects/Materials/`.
-- [ ] Move shader source compatibility and attribute layout resolver files into
+- [x] Move shader source compatibility and attribute layout resolver files into
   `OpenGL/Shaders/` if they are not tightly owned by `GLRenderProgram`.
-- [ ] Move program compile/link queues, program pool, shader link backend
+- [x] Move program compile/link queues, program pool, shader link backend
   selector, and shader lifecycle diagnostics into `OpenGL/Pipelines/`.
-- [ ] Move bindless, meshlet, sparse texture, texture streaming, and
+- [x] Move bindless, meshlet, sparse texture, texture streaming, and
   detail-preserving mipmap files into `OpenGL/Features/`.
-- [ ] Move ImGui files into `OpenGL/UI/`.
-- [ ] Move existing `OpenGL/Enums/*` into `OpenGL/Types/`.
-- [ ] Remove the old folders with spaces after all files are moved.
-- [ ] Build after the OpenGL move-only pass.
-- [ ] Update current OpenGL developer docs that link to moved files.
+- [x] Move ImGui files into `OpenGL/UI/`.
+- [x] Move existing `OpenGL/Enums/*` into `OpenGL/Types/`.
+- [x] Remove the old folders with spaces after all files are moved.
+- [x] Build after the OpenGL move-only pass.
+- [x] Update current OpenGL developer docs that link to moved files.
 
 ## Phase 4 - Split Large Vulkan Files
 
 Do this after move-only validation so line-level diffs remain reviewable.
 
-- [ ] Split `Vulkan/Commands/VulkanRenderer.CommandBuffers.cs` into focused
+- [x] Split `Vulkan/Commands/VulkanRenderer.CommandBuffers.cs` into focused
   partial files:
   - `VulkanRenderer.CommandBufferState.cs`
   - `VulkanRenderer.CommandBufferAllocation.cs`
@@ -451,17 +452,17 @@ Do this after move-only validation so line-level diffs remain reviewable.
   - `VulkanRenderer.OneTimeSubmit.cs`
   - `VulkanRenderer.FrameOpSignatures.cs`
   - `VulkanRenderer.FrameOpDiagnostics.cs`
-- [ ] Keep frame-op signature code close to the current
+- [x] Keep frame-op signature code close to the current
   `vulkan-frame-loop-performance-todo.md` work so future command-buffer cache
   changes are easy to locate.
-- [ ] Split `Vulkan/Shaders/VulkanShaderTools.cs` into:
+- [x] Split `Vulkan/Shaders/VulkanShaderTools.cs` into:
   - `VulkanShaderAutoUniforms.cs`
   - `VulkanShaderCompiler.cs`
   - `VulkanShaderReflection.cs`
   - `VulkanShaderTransformFeedback.cs`
   - `VulkanShaderSourceFixups.cs`
   - shared records in `VulkanShaderTypes.cs` if useful.
-- [ ] Split `Vulkan/Commands` or `Vulkan/RenderGraph`
+- [x] Split `Vulkan/Commands` or `Vulkan/RenderGraph`
   `VulkanRenderer.State.cs` responsibilities:
   - state tracker fields and getters
   - render-state mutation
@@ -469,49 +470,50 @@ Do this after move-only validation so line-level diffs remain reviewable.
   - command-buffer dirty reason tracking
   - queue-overlap policy and diagnostics
   - framebuffer/resource registration helpers
-- [ ] Split `Vulkan/Resources/VulkanResourceAllocator.cs` if resource allocator
-  review remains difficult:
+- [x] Reviewed `Vulkan/Resources/VulkanResourceAllocator.cs`; no split was
+  needed after the command-buffer, shader-tooling, and state splits made the
+  backend easier to navigate:
   - image alias planning
   - buffer alias planning
   - physical image group allocation
   - physical buffer group allocation
   - usage inference
   - diagnostics.
-- [ ] Rebuild after each large-file split.
-- [ ] Prefer no logic changes during these splits except trivial access
+- [x] Rebuild after each large-file split.
+- [x] Prefer no logic changes during these splits except trivial access
   modifier adjustments needed by partial files.
 
 ## Phase 5 - Split Large OpenGL Files
 
 Do this after OpenGL move-only validation.
 
-- [ ] Split `OpenGL/BackendObjects/Programs/GLRenderProgram.Linking.cs` into
+- [x] Split `OpenGL/BackendObjects/Programs/GLRenderProgram.Linking.cs` into
   link orchestration, compile input preparation, binary cache interaction,
   async result consumption, hazard detection, and diagnostics files.
-- [ ] Keep the developer guide
+- [x] Keep the developer guide
   `docs/developer-guides/rendering/opengl-program-linking.md` in sync with the
   new file names.
-- [ ] Split `OpenGL/UI/OpenGLRenderer.ImGuiViewports.cs` into:
+- [x] Split `OpenGL/UI/OpenGLRenderer.ImGuiViewports.cs` into:
   - platform viewport lifecycle
   - GL context handling
   - render target setup
   - draw data submission
   - diagnostics.
-- [ ] Split `OpenGL/Features/Luminance/OpenGLRenderer.Luminance.cs` into:
+- [x] Split `OpenGL/Features/Luminance/OpenGLRenderer.Luminance.cs` into:
   - luminance resources
   - compute/downsample dispatch
   - readback
   - diagnostics.
-- [ ] Review `GLDataBuffer.cs`, `GLTexture2D.Upload.cs`, and
+- [x] Review `GLDataBuffer.cs`, `GLTexture2D.Upload.cs`, and
   `GLMeshRenderer.Shaders.cs` for future splits only if follow-up work is
   touching those areas.
-- [ ] Rebuild after each large-file split.
-- [ ] Keep OpenGL program-linking behavior and async compile behavior unchanged
+- [x] Rebuild after each large-file split.
+- [x] Keep OpenGL program-linking behavior and async compile behavior unchanged
   during the split.
 
 ## Phase 6 - Normalize Backend Object Wrappers
 
-- [ ] Ensure OpenGL and Vulkan wrapper folder names align:
+- [x] Ensure OpenGL and Vulkan wrapper folder names align:
   - `BackendObjects/Buffers`
   - `BackendObjects/Textures`
   - `BackendObjects/Framebuffers`
@@ -520,46 +522,56 @@ Do this after OpenGL move-only validation.
   - `BackendObjects/Programs`
   - `BackendObjects/Queries`
   - `BackendObjects/Samplers`
-- [ ] Keep the existing no-standalone-backend-`XRMesh` rule from
+- [x] Keep the existing no-standalone-backend-`XRMesh` rule from
   `docs/architecture/rendering/code-map.md`.
-- [ ] Confirm `GLMeshRenderer` and `VkMeshRenderer` remain the owners of mesh
+- [x] Confirm `GLMeshRenderer` and `VkMeshRenderer` remain the owners of mesh
   draw readiness, mesh data invalidation, buffer collection, and draw
   submission.
-- [ ] Confirm `GLDataBuffer` and `VkDataBuffer` remain the owners of backend
+- [x] Confirm `GLDataBuffer` and `VkDataBuffer` remain the owners of backend
   buffer upload/readiness state.
-- [ ] Do not force exact file parity between OpenGL and Vulkan when the APIs
+- [x] Do not force exact file parity between OpenGL and Vulkan when the APIs
   have real lifecycle differences.
-- [ ] Add small folder README notes where parity is intentionally asymmetric.
+- [x] Add small folder README notes where parity is intentionally asymmetric.
 
 ## Phase 7 - Docs And Link Updates
 
-- [ ] Update `docs/architecture/rendering/vulkan-renderer.md` source inventory
+- [x] Update `docs/architecture/rendering/vulkan-renderer.md` source inventory
   and folder map.
-- [ ] Update `docs/architecture/rendering/opengl-renderer.md` source inventory
+- [x] Update `docs/architecture/rendering/opengl-renderer.md` source inventory
   and folder map.
-- [ ] Update `docs/architecture/rendering/code-map.md` old-to-new mapping table.
-- [ ] Update `docs/developer-guides/rendering/opengl-program-linking.md` for
+- [x] Update `docs/architecture/rendering/code-map.md` old-to-new mapping table.
+- [x] Update `docs/developer-guides/rendering/opengl-program-linking.md` for
   moved OpenGL program files.
-- [ ] Update `docs/developer-guides/rendering/vulkan-upscale-bridge.md` for
+- [x] Update `docs/developer-guides/rendering/vulkan-upscale-bridge.md` for
   moved upscale bridge files.
-- [ ] Update active TODOs that reference backend paths, especially:
-  - `docs/work/todo/rendering/vulkan-frame-loop-performance-todo.md`
+- [x] Update active TODOs that reference backend paths. The referenced
+  frame-loop and resource-lifecycle TODOs were already under `COMPLETED/`, so
+  the active existing rendering TODOs were updated instead:
+  - `docs/work/todo/COMPLETED/vulkan-frame-loop-performance-todo.md`
   - `docs/work/todo/rendering/vulkan-dynamic-rendering-migration-todo.md`
   - `docs/work/todo/rendering/resolved-shader-source-optimization-todo.md`
-  - `docs/work/todo/rendering/render-pipeline-resource-lifecycle-todo.md`
+  - `docs/work/todo/COMPLETED/render-pipeline-resource-lifecycle-todo.md`
   - `docs/work/todo/rendering/render-settings-api-separation-refactor-todo.md`
-- [ ] Leave completed historical TODOs alone unless stale links block current
+  - `docs/work/todo/rendering/vulkan-deferred-and-probe-gi-fixes-todo.md`
+  - `docs/work/todo/rendering/vulkan-fossilize-integration-todo.md`
+  - `docs/work/todo/rendering/vulkan-restir-radiance-cache-gi-todo.md`
+  - `docs/work/todo/rendering/gpu/openvr-vrclient-gpu-handoff-todo.md`
+- [x] Leave completed historical TODOs alone unless stale links block current
   work.
-- [ ] Regenerate any docs that depend on source path inventories if a generator
-  exists.
+- [x] Regenerate any docs that depend on source path inventories if a generator
+  exists. No generator was found for the renderer source inventories; docs were
+  updated directly.
 
 ## Phase 8 - Validation
 
-- [ ] Build runtime rendering:
+- [x] Build runtime rendering:
 
   ```powershell
   dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
   ```
+
+  Passed after the move/split work with 0 warnings and 0 errors. Log:
+  `Build/_AgentValidation/20260623-211941-backend-renderer-folders/logs/final-runtime-rendering-build.log`.
 
 - [ ] Build editor:
 
@@ -567,37 +579,62 @@ Do this after OpenGL move-only validation.
   dotnet build .\XREngine.Editor\XREngine.Editor.csproj
   ```
 
+  Attempted. Blocked by unrelated existing settings refactor errors in
+  `XRENGINE/Settings/EditorPreferences.cs`: missing
+  `EditorViewportPreferences`, `EditorSelectionPreferences`, and
+  `EditorDiagnosticsPreferences`. Log:
+  `Build/_AgentValidation/20260623-211941-backend-renderer-folders/logs/final-editor-build.log`.
+
 - [ ] Run targeted tests that cover backend wrapper/resource contracts.
-- [ ] Run OpenGL editor startup smoke test if available locally.
-- [ ] Run Vulkan editor startup smoke test if available locally.
+  Attempted via `dotnet build .\XREngine.UnitTests\XREngine.UnitTests.csproj`
+  before test execution; blocked by the same unrelated
+  `EditorPreferences.cs` missing-type errors. Log:
+  `Build/_AgentValidation/20260623-211941-backend-renderer-folders/logs/final-unit-tests-build.log`.
+- [ ] Run OpenGL editor startup smoke test if available locally. Blocked by
+  editor build failure above.
+- [ ] Run Vulkan editor startup smoke test if available locally. Blocked by
+  editor build failure above.
 - [ ] For Vulkan move/split phases, run the narrow Vulkan resource lifecycle or
-  frame-loop tests that cover touched files.
+  frame-loop tests that cover touched files. Blocked by unit-test build failure
+  above.
 - [ ] For OpenGL move/split phases, run shader-linking and program-cache tests
-  if available.
-- [ ] Inspect build warnings. New code should not introduce warnings.
-- [ ] If warnings exist before the move, record them as pre-existing and ensure
-  the reorg did not add new ones.
+  if available. Blocked by unit-test build failure above.
+- [x] Inspect build warnings. New code should not introduce warnings. The
+  successful runtime-rendering build emitted 0 warnings; broader editor/test
+  validation was blocked by unrelated compile errors before warning inspection
+  could complete.
+- [x] If warnings exist before the move, record them as pre-existing and ensure
+  the reorg did not add new ones. No warnings were emitted by the successful
+  runtime-rendering validation build.
 
 ## Phase 9 - Cleanup
 
-- [ ] Delete empty old folders after all references are updated:
+- [x] Delete empty old folders after all references are updated:
   - `Vulkan/Objects/`
   - `Vulkan/Objects/Types/`
   - `OpenGL/Types/Mesh Renderer/`
   - `OpenGL/Types/Render Targets/`
   - any other empty transitional folders.
-- [ ] Remove temporary path mapping notes once the new structure has stabilized.
-- [ ] Confirm IDE tabs and solution explorer show sensible folder grouping.
-- [ ] Confirm `rg --files` under each backend shows the expected taxonomy.
-- [ ] Merge the branch back into `main` after completion and validation.
+- [x] Remove temporary path mapping notes once the new structure has stabilized;
+  the durable old-to-new mapping remains in `docs/architecture/rendering/code-map.md`.
+- [x] Confirm folder grouping through CLI taxonomy inventory; IDE visual
+  confirmation was not available in this agent session.
+- [x] Confirm `rg --files` under each backend shows the expected taxonomy.
+- [x] Branch merge intentionally skipped because no branch was created per
+  explicit task instruction.
 
 ## Review Strategy
 
-- [ ] Prefer one move-only commit for Vulkan.
-- [ ] Prefer one move-only commit for OpenGL.
-- [ ] Prefer separate commits for large-file splits.
-- [ ] Prefer separate commits for docs/link updates if they are noisy.
-- [ ] In PR description, include:
+- [x] Move-only commit slicing noted as preferred review guidance; not applied
+  because this task did not request commits.
+- [x] OpenGL move-only commit slicing noted as preferred review guidance; not
+  applied because this task did not request commits.
+- [x] Large-file split commit slicing noted as preferred review guidance; not
+  applied because this task did not request commits.
+- [x] Docs/link commit slicing noted as preferred review guidance; not applied
+  because this task did not request commits.
+- [x] PR description guidance preserved for any future PR; no PR was opened in
+  this task:
   - what moved
   - why the backend taxonomy was chosen
   - what did not change behaviorally
@@ -606,15 +643,24 @@ Do this after OpenGL move-only validation.
 
 ## Open Questions
 
-- [ ] Should `VulkanRenderer.State.cs` live under `Commands/`,
+- [x] Should `VulkanRenderer.State.cs` live under `Commands/`,
   `RenderGraph/`, or be split across both? Current contents span render-state,
   resource planning, command-buffer invalidation, and queue-overlap policy.
-- [ ] Should OpenGL `GLRenderProgram*` wrappers live fully under
+  Decided: split by responsibility across `Commands/`, `RenderGraph/`, and
+  `Resources/`.
+- [x] Should OpenGL `GLRenderProgram*` wrappers live fully under
   `BackendObjects/Programs/`, or should source compatibility and link strategy
-  helpers move into `Shaders/` and `Pipelines/`?
-- [ ] Should OpenGL `Luminance` be treated as a feature, a readback path, or a
-  render-pipeline support utility?
-- [ ] Should `BackendObjects` be named `Objects` after cleanup, or is the
-  explicit name useful enough to avoid returning to ambiguity?
-- [ ] Should backend folder README files be kept permanently, or replaced by the
-  architecture docs once contributors have adjusted?
+  helpers move into `Shaders/` and `Pipelines/`? Decided: wrappers live under
+  `BackendObjects/Programs/`; source compatibility moved to `Shaders/`, and
+  link/queue strategy moved to `Pipelines/`.
+- [x] Should OpenGL `Luminance` be treated as a feature, a readback path, or a
+  render-pipeline support utility? Decided: it is a backend feature under
+  `OpenGL/Features/Luminance/`, split into resources, dispatch, readback, and
+  diagnostics.
+- [x] Should `BackendObjects` be named `Objects` after cleanup, or is the
+  explicit name useful enough to avoid returning to ambiguity? Decided:
+  `BackendObjects` stays to avoid returning to the old ambiguous `Objects/`
+  bucket.
+- [x] Should backend folder README files be kept permanently, or replaced by the
+  architecture docs once contributors have adjusted? Decided: keep the README
+  files as local folder contracts, with architecture docs as the broader map.

@@ -11,8 +11,8 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void RenderTargetMode_HasEnvironmentOverrideAndVisibleUnsupportedDynamicFailure()
     {
-        string modeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderTargetMode.cs");
-        string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/LogicalDevice.cs");
+        string modeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
+        string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
 
         modeSource.ShouldContain("XRE_VK_RENDER_TARGET_MODE");
         modeSource.ShouldContain("VulkanRenderTargetMode.Auto");
@@ -26,9 +26,9 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void DynamicCommandRecording_UsesDynamicRenderingAndKeepsLegacyCallsModeGated()
     {
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
-        string frameBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/FrameBuffers.cs");
-        string renderPasses = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/RenderPasses.cs");
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string frameBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Framebuffers/VulkanRenderer.SwapchainFramebuffers.cs");
+        string renderPasses = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderer.RenderPasses.cs");
 
         commandBuffers.ShouldContain("UseDynamicRenderingRenderTargets &&");
         commandBuffers.ShouldContain("Api!.CmdBeginRendering(commandBuffer, &renderingInfo);");
@@ -44,7 +44,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void DynamicRenderingAttachmentTransitions_UseLayoutCompatibleStageAccessMasks()
     {
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
 
         commandBuffers.ShouldContain("NormalizeFboAttachmentLayout(");
         commandBuffers.ShouldContain("ImageLayout.ColorAttachmentOptimal => ImageLayout.DepthStencilAttachmentOptimal");
@@ -60,8 +60,8 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void DynamicRenderingDepthAttachments_NormalizeFormatRoleAspectAndGraphLayouts()
     {
-        string frameBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkFrameBuffer.cs");
-        string blit = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Blit.cs");
+        string frameBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
+        string blit = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
 
         frameBuffer.ShouldContain("ResolveAttachmentRole(attachment, source.AspectMask, source.Format)");
         frameBuffer.ShouldContain("NormalizeAttachmentAspectMask(source.DescriptorFormat, source.DescriptorAspect)");
@@ -76,7 +76,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void RetiredImageResources_AreDeduplicatedBeforeDestroy()
     {
-        string retirementSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.ResourceRetirement.cs");
+        string retirementSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
 
         retirementSource.ShouldContain("private readonly HashSet<ulong>[] _retiredImageHandles");
         retirementSource.ShouldContain("private readonly HashSet<ulong>[] _retiredImageMemoryHandles");
@@ -101,10 +101,10 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void DynamicPipelines_AreKeyedByAttachmentFormatSignatureWithoutRenderPassHandles()
     {
-        string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
-        string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
-        string prewarm = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanPipelinePrewarmDatabase.cs");
-        string modeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderTargetMode.cs");
+        string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+        string prewarm = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs");
+        string modeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
 
         meshRenderer.ShouldContain("DynamicRenderingFormatSignature DynamicRenderingFormats");
         meshPipeline.ShouldContain("useDynamicRendering ? 0UL : renderPass.Handle");
@@ -120,8 +120,8 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void GraphicsPipelineLibraryExtension_EnablesRequiredKhrDependency()
     {
-        string extensionsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Extensions.cs");
-        string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/LogicalDevice.cs");
+        string extensionsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+        string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
 
         extensionsSource.ShouldContain("\"VK_KHR_pipeline_library\"");
         extensionsSource.ShouldContain("\"VK_EXT_graphics_pipeline_library\"");
@@ -134,8 +134,8 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void GraphicsPipelineLibraryKeys_AreSubsetScopedAndPendingLinksAreNotLoggedAsFailures()
     {
-        string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
-        string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
+        string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
 
         meshRenderer.ShouldContain("internal readonly record struct GraphicsPipelineLibraryKey(");
         meshRenderer.ShouldContain("GraphicsPipelineLibrarySubset Subset,");
@@ -163,7 +163,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void DynamicRenderingDepthOnlyPasses_CreatePipelinesInsteadOfSkippingDraws()
     {
-        string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
+        string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
 
         meshPipeline.ShouldContain("ResolveAttachmentCompatibleDrawState(");
         meshPipeline.ShouldContain("colorAttachmentCount == 0");
@@ -182,7 +182,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void GeneratedProgramIdentity_UsesStableShaderAndVariantIdentityInsteadOfMaterialRevision()
     {
-        string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
+        string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
 
         meshPipeline.ShouldContain("BuildShaderIdentityList(material, generatedVertexIdentity)");
         meshPipeline.ShouldContain("material.ActiveUberVariant.VariantHash.ToString(\"X16\")");
@@ -194,8 +194,8 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void SynchronousDepthReadback_UsesBoundFramebufferBeforeSwapchainFallback()
     {
-        string readback = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Readback.cs");
-        string blit = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.Blit.cs");
+        string readback = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Readback.cs");
+        string blit = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
 
         int getDepthIndex = readback.IndexOf("public override float GetDepth(int x, int y)", StringComparison.Ordinal);
         int boundFramebufferIndex = readback.IndexOf("_boundReadFrameBuffer is not null", getDepthIndex, StringComparison.Ordinal);
@@ -230,10 +230,10 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void CommonPushConstants_AreVisibleToGeometryShaders()
     {
-        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
-        string renderProgram = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs");
-        string programPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgramPipeline.cs");
-        string meshDrawing = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string renderProgram = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
+        string programPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgramPipeline.cs");
+        string meshDrawing = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
 
         commandBuffers.ShouldContain("internal const ShaderStageFlags CommonPushConstantStageFlags");
         commandBuffers.ShouldContain("ShaderStageFlags.GeometryBit |");
@@ -249,7 +249,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
     {
         string viewportCommand = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/ViewportRenderCommand.cs");
         string quadBlit = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderQuadToFBO.cs");
-        string frameBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkFrameBuffer.cs");
+        string frameBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
         string bindFbo = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/State/VPRC_BindFBOByName.cs");
 
         viewportCommand.ShouldContain("MakeFboStencilResource(target.Name)");
@@ -273,8 +273,8 @@ public sealed class VulkanDynamicRenderingMigrationTests
     [Test]
     public void ReadOnlyDepthStencilCompatibility_DoesNotStripGizmoStencilWritesFromMergedPasses()
     {
-        string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Pipeline.cs");
-        string frameBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/VkFrameBuffer.cs");
+        string meshPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+        string frameBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
 
         string passUsesReadOnly = SliceMethod(meshPipeline, "private static bool PassUsesReadOnlyDepthStencil(");
         passUsesReadOnly.ShouldContain("bool hasDepthStencilWriteUsage = false;");

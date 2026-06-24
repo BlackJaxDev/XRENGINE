@@ -13,9 +13,9 @@ Design sources:
 - [Fossilize license](https://github.com/ValveSoftware/Fossilize/blob/master/LICENSE)
 - [Vulkan Frame Loop Performance TODO](vulkan-frame-loop-performance-todo.md)
 - [Vulkan ReSTIR Radiance Cache GI TODO](vulkan-restir-radiance-cache-gi-todo.md)
-- [Vulkan Pipeline Cache](../../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanPipelineCache.cs)
-- [Vulkan Pipeline Prewarm Database](../../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanPipelinePrewarmDatabase.cs)
-- [Vulkan Shader Artifact Cache](../../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanShaderArtifactCache.cs)
+- [Vulkan Pipeline Cache](../../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCache.cs)
+- [Vulkan Pipeline Prewarm Database](../../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs)
+- [Vulkan Shader Artifact Cache](../../../../XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderArtifactCache.cs)
 
 ## Goal
 

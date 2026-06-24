@@ -203,7 +203,7 @@ void accumulateSkinInfluence(
     inout vec4 skinnedPosition,
     inout float accumulatedWeight)
 {
-    if (boneIndex == 0u || weight <= 0.0 || boneIndex >= skinPaletteCount)
+    if (weight <= 0.0 || boneIndex >= skinPaletteCount)
         return;
 
     uint paletteIndex = skinPaletteBase + boneIndex;

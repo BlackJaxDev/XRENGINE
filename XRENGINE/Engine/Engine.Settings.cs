@@ -523,6 +523,11 @@ namespace XREngine
                 Rendering.LogVulkanFeatureProfileFingerprint();
             }
             h[nameof(GameStartupSettings.VulkanGpuDrivenProfileOverride)] = ApplyVulkanProfileSettings;
+            h[nameof(GameStartupSettings.VulkanRenderTargetModeOverride)] = ApplyVulkanProfileSettings;
+            h[nameof(GameStartupSettings.RenderBackendFallbackPolicyOverride)] = ApplyVulkanProfileSettings;
+            h[nameof(UserSettings.RenderBackendFallbackPolicyOverride)] = ApplyVulkanProfileSettings;
+            h[nameof(UserSettings.PreferredRenderBackend)] = ApplyVulkanProfileSettings;
+            h[nameof(UserSettings.RenderLibrary)] = ApplyVulkanProfileSettings;
 
             // ── NVIDIA DLSS ──
             h[nameof(UserSettings.EnableNvidiaDlssOverride)] = Rendering.ApplyNvidiaDlssPreference;

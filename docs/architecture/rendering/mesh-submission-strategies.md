@@ -55,7 +55,12 @@ When either meshlet strategy is forced on unsupported hardware, the resolver cho
 | `MaterialTable` | Readback-assisted diagnostic path. Uses active material buckets with a shared deferred material-table shader instead of per-material shader programs. The OpenGL path reads material constants from `MaterialTable`; unsupported/non-deferred passes fall back to the per-material tier path. |
 | `BindlessMaterialTable` | Readback-assisted diagnostic path. Same as `MaterialTable`, but texture sampling is backend-specific: OpenGL requires `GL_ARB_bindless_texture` and `GL_ARB_gpu_shader_int64` and samples resident handles through `MaterialTextureHandleTable`; Vulkan requires descriptor indexing plus the global material texture descriptor table and samples `XR_BindlessMaterialTextures[nonuniformEXT(index)]`. Requested bindless paths log a visible warning or fail in Required mode when the active backend cannot satisfy the contract. |
 
-Vulkan bindless material modes are controlled by `Engine.Rendering.Settings.VulkanBindlessMaterialMode` or `XRE_VULKAN_BINDLESS_MATERIAL_MODE` with `Auto`, `Disabled`, `Required`, and `Diagnostics`. Startup logs report `Capability.BindlessMaterialTextures` with the resolved mode, tier, descriptor capacity, table readiness, shader readiness, draw-path readiness, and the reason when unavailable.
+`Engine.EffectiveSettings.VulkanGpuDrivenProfile` resolves from the grouped
+default `Engine.Rendering.Settings.Vulkan.GpuDriven.Profile` plus project
+overrides. The flat `Engine.Rendering.Settings.VulkanGpuDrivenProfile` property
+remains a compatibility alias.
+
+Vulkan bindless material modes are controlled by `Engine.Rendering.Settings.Vulkan.Descriptors.BindlessMaterialMode` or `XRE_VULKAN_BINDLESS_MATERIAL_MODE` with `Auto`, `Disabled`, `Required`, and `Diagnostics`. Startup logs report `Capability.BindlessMaterialTextures` with the resolved mode, tier, descriptor capacity, table readiness, shader readiness, draw-path readiness, and the reason when unavailable.
 
 Meshlet strategies always promote the per-pass draw path to `MaterialTable` unless `BindlessMaterialTable` was explicitly selected. Direct meshlet shading does not have a per-material bucket shader path, so `FullBucketScan` and `ActiveBucketList` remain traditional-indirect options only.
 

@@ -348,6 +348,8 @@ public static partial class EditorImGuiUI
         {
             nameof(Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath)
                 => TryResolveEnvironmentEnumSource<EZeroReadbackMaterialDrawPath>("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH", out source),
+            nameof(Engine.EffectiveSettings.VulkanRenderTargetMode)
+                => TryResolveEnvironmentEnumSource<EVulkanRenderTargetMode>("XRE_VK_RENDER_TARGET_MODE", out source),
             nameof(Engine.EffectiveSettings.ForceMeshSubmissionStrategy)
                 => TryResolveMeshSubmissionStrategyEnvironmentSource(out source),
             _ => NoEnvironmentSource(out source),
@@ -401,6 +403,7 @@ public static partial class EditorImGuiUI
         => settingName is
             nameof(Engine.EffectiveSettings.VSync) or
             nameof(Engine.EffectiveSettings.GlobalIlluminationMode) or
+            nameof(Engine.EffectiveSettings.PreferredRenderBackend) or
             nameof(Engine.EffectiveSettings.AudioTransport) or
             nameof(Engine.EffectiveSettings.AudioEffects) or
             nameof(Engine.EffectiveSettings.AudioArchitectureV2) or
@@ -486,14 +489,24 @@ public static partial class EditorImGuiUI
             nameof(Engine.EffectiveSettings.FixedFramesPerSecond) => "Performance",
 
             nameof(Engine.EffectiveSettings.AllowShaderPipelines) or
+            nameof(Engine.EffectiveSettings.UseDetailPreservingComputeMipmaps) => "OpenGL",
+
+            nameof(Engine.EffectiveSettings.VulkanGpuDrivenProfile) or
+            nameof(Engine.EffectiveSettings.EnableVulkanDescriptorIndexing) or
+            nameof(Engine.EffectiveSettings.EnableVulkanBindlessMaterialTable) or
+            nameof(Engine.EffectiveSettings.VulkanBindlessMaterialMode) or
+            nameof(Engine.EffectiveSettings.ValidateVulkanDescriptorContracts) or
+            nameof(Engine.EffectiveSettings.VulkanGeometryFetchMode) or
+            nameof(Engine.EffectiveSettings.VulkanQueueOverlapMode) or
+            nameof(Engine.EffectiveSettings.VulkanRenderTargetMode) => "Vulkan",
+
             nameof(Engine.EffectiveSettings.AllowSkinning) or
             nameof(Engine.EffectiveSettings.UseIntegerWeightingIds) or
             nameof(Engine.EffectiveSettings.RecalcChildMatricesLoopType) or
             nameof(Engine.EffectiveSettings.SkinnedBoundsRecomputePolicy) or
             nameof(Engine.EffectiveSettings.AllowInitialSkinnedBoundsBuildWhenNever) or
             nameof(Engine.EffectiveSettings.CalculateSkinningInComputeShader) or
-            nameof(Engine.EffectiveSettings.CalculateBlendshapesInComputeShader) or
-            nameof(Engine.EffectiveSettings.UseDetailPreservingComputeMipmaps) => "Technical",
+            nameof(Engine.EffectiveSettings.CalculateBlendshapesInComputeShader) => "Technical",
 
             nameof(Engine.EffectiveSettings.TransformReplicationKeyframeIntervalSec) or
             nameof(Engine.EffectiveSettings.TimeBetweenReplications) => "Networking",
@@ -504,6 +517,10 @@ public static partial class EditorImGuiUI
             nameof(Engine.EffectiveSettings.AudioEffects) or
             nameof(Engine.EffectiveSettings.AudioArchitectureV2) or
             nameof(Engine.EffectiveSettings.AudioSampleRate) => "Audio",
+
+            nameof(Engine.EffectiveSettings.PreferredRenderBackend) or
+            nameof(Engine.EffectiveSettings.RenderBackendFallbackPolicy) or
+            nameof(Engine.EffectiveSettings.RenderSnapshot) => "Rendering",
 
             _ => "Rendering",
         };
@@ -516,15 +533,16 @@ public static partial class EditorImGuiUI
         {
             "Threading" => 0,
             "Rendering" => 1,
-            "Performance" => 2,
-            "Technical" => 3,
-            "Networking" => 4,
-            "Debug" => 5,
-            "Audio" => 6,
-            "GPU Rendering" => 7,
-            "Vulkan" => 8,
-            "VR" => 9,
-            "Physics" => 10,
+            "OpenGL" => 2,
+            "Vulkan" => 3,
+            "Performance" => 4,
+            "Technical" => 5,
+            "Networking" => 6,
+            "Debug" => 7,
+            "Audio" => 8,
+            "GPU Rendering" => 9,
+            "VR" => 10,
+            "Physics" => 11,
             _ => 20,
         };
 
