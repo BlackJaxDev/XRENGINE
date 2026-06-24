@@ -485,10 +485,9 @@ public static class EditorPlayModeController
                 continue;
             }
 
-            // IMPORTANT: Ensure input devices are connected BEFORE setting ControlledPawn.
-            // When ControlledPawn is set, RegisterController() calls Input.TryRegisterInput() which
-            // will fail if no devices are connected. UpdateDevices re-acquires devices from the window.
-            localPlayer.Input.UpdateDevices(ensuredViewport.Window?.Input, Engine.VRState.Actions);
+            // IMPORTANT: Ensure snapshot input devices are connected BEFORE setting ControlledPawn.
+            // When ControlledPawn is set, RegisterController() calls Input.TryRegisterInput().
+            localPlayer.RefreshViewportInputBinding();
             Debug.Out($"[EditorPlayModeController] Updated input devices for player {playerIndex} before pawn possession");
 
             localPlayer.ControlledPawn = resolvedPawn;

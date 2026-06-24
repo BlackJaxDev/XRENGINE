@@ -432,6 +432,23 @@ namespace XREngine.Rendering.Vulkan
                 Stopwatch.GetElapsedTime(last) >= InteractiveSwapchainRecreateMinInterval;
         }
 
+        private bool CanPresentMismatchedSwapchainExtent(
+            uint liveSurfaceWidth,
+            uint liveSurfaceHeight,
+            uint swapchainWidth,
+            uint swapchainHeight)
+        {
+            _ = liveSurfaceWidth;
+            _ = liveSurfaceHeight;
+            _ = swapchainWidth;
+            _ = swapchainHeight;
+
+            // Keep the normal Windows Vulkan contract strict until
+            // VkSwapchainPresentScalingCreateInfoKHR support is queried,
+            // configured, and validated end-to-end for this backend.
+            return false;
+        }
+
         protected override void WindowRenderCallback(double delta)
         {
             if (_deviceLost)
@@ -503,6 +520,13 @@ namespace XREngine.Rendering.Vulkan
             bool surfaceMatchesSwapchain = liveSurfaceValid &&
                 liveSurfaceWidth == swapChainExtent.Width &&
                 liveSurfaceHeight == swapChainExtent.Height;
+            bool canPresentMismatchedSwapchainExtent = liveSurfaceValid &&
+                !surfaceMatchesSwapchain &&
+                CanPresentMismatchedSwapchainExtent(
+                    liveSurfaceWidth,
+                    liveSurfaceHeight,
+                    swapChainExtent.Width,
+                    swapChainExtent.Height);
 
             if (liveSurfaceValid && !surfaceMatchesSwapchain)
             {
@@ -601,7 +625,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            if (_frameBufferInvalidated || !surfaceMatchesSwapchain)
+            if (_frameBufferInvalidated || (!surfaceMatchesSwapchain && !canPresentMismatchedSwapchainExtent))
             {
                 _ = TryWaitCurrentFrameSlotAndDrainRetiredResources(interactiveResize, "Swapchain resize/recreate pending");
                 DrainSkippedResizeFrameOps(

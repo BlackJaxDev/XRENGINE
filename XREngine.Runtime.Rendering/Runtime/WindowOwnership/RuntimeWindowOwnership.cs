@@ -1,4 +1,6 @@
 using Silk.NET.Maths;
+using System.Threading;
+using XREngine.Input.Devices;
 
 namespace XREngine.Rendering;
 
@@ -104,6 +106,10 @@ public readonly record struct WindowEventSnapshot(
     public bool IsClosingOrDisposed => IsCloseRequested || IsDisposed || IsDisposing;
 }
 
+public readonly record struct WindowKeyTransition(EKey Key, bool IsDown);
+
+public readonly record struct WindowMouseButtonTransition(EMouseButton Button, bool IsDown);
+
 public readonly record struct WindowInputSnapshot(
     ulong Sequence,
     int KeyboardCount,
@@ -122,12 +128,213 @@ public readonly record struct WindowInputSnapshot(
     uint MouseDownTransitionCount,
     uint MouseUpTransitionCount,
     uint TextInputCount,
+    WindowKeyTransition[] KeyTransitions,
+    EKey[] PressedKeys,
+    WindowMouseButtonTransition[] MouseButtonTransitions,
+    EMouseButton[] PressedMouseButtons,
+    char[] TextInputCharacters,
     long TimestampTicks,
     int PublicationThreadId)
 {
     public bool HasKeyboard => KeyboardCount > 0;
     public bool HasMouse => MouseCount > 0;
     public bool HasGamepad => GamepadCount > 0;
+    public ReadOnlySpan<WindowKeyTransition> KeyTransitionSpan => KeyTransitions ?? Array.Empty<WindowKeyTransition>();
+    public ReadOnlySpan<EKey> PressedKeySpan => PressedKeys ?? Array.Empty<EKey>();
+    public ReadOnlySpan<WindowMouseButtonTransition> MouseButtonTransitionSpan => MouseButtonTransitions ?? Array.Empty<WindowMouseButtonTransition>();
+    public ReadOnlySpan<EMouseButton> PressedMouseButtonSpan => PressedMouseButtons ?? Array.Empty<EMouseButton>();
+    public ReadOnlySpan<char> TextInputCharacterSpan => TextInputCharacters ?? Array.Empty<char>();
+}
+
+public sealed class WindowInputSnapshotAccumulator
+{
+    private readonly object _sync = new();
+    private long _sequence;
+    private WindowInputSnapshot _latest;
+    private readonly List<WindowKeyTransition> _keyTransitions = new(32);
+    private readonly HashSet<EKey> _pressedKeys = [];
+    private readonly List<WindowMouseButtonTransition> _mouseButtonTransitions = new(16);
+    private readonly HashSet<EMouseButton> _pressedMouseButtons = [];
+    private readonly List<char> _textInputCharacters = new(16);
+    private int _keyDownTransitionCount;
+    private int _keyUpTransitionCount;
+    private int _mouseDownTransitionCount;
+    private int _mouseUpTransitionCount;
+    private int _textInputCount;
+    private bool _hasLastPointerPosition;
+    private float _lastPointerX;
+    private float _lastPointerY;
+    private float _pointerDeltaX;
+    private float _pointerDeltaY;
+    private float _scrollDeltaX;
+    private float _scrollDeltaY;
+
+    public WindowInputSnapshot Latest
+    {
+        get
+        {
+            lock (_sync)
+                return _latest;
+        }
+    }
+
+    public void RecordKeyDown()
+        => RecordKeyDown(EKey.Unknown);
+
+    public void RecordKeyDown(EKey key)
+    {
+        Interlocked.Increment(ref _keyDownTransitionCount);
+        lock (_sync)
+        {
+            if (key != EKey.Unknown)
+                _pressedKeys.Add(key);
+
+            _keyTransitions.Add(new WindowKeyTransition(key, true));
+        }
+    }
+
+    public void RecordKeyUp()
+        => RecordKeyUp(EKey.Unknown);
+
+    public void RecordKeyUp(EKey key)
+    {
+        Interlocked.Increment(ref _keyUpTransitionCount);
+        lock (_sync)
+        {
+            if (key != EKey.Unknown)
+                _pressedKeys.Remove(key);
+
+            _keyTransitions.Add(new WindowKeyTransition(key, false));
+        }
+    }
+
+    public void RecordTextInput()
+        => RecordTextInput('\0');
+
+    public void RecordTextInput(char character)
+    {
+        Interlocked.Increment(ref _textInputCount);
+        lock (_sync)
+        {
+            if (character != '\0')
+                _textInputCharacters.Add(character);
+        }
+    }
+
+    public void RecordMouseDown()
+        => RecordMouseDown(EMouseButton.LeftClick);
+
+    public void RecordMouseDown(EMouseButton button)
+    {
+        Interlocked.Increment(ref _mouseDownTransitionCount);
+        lock (_sync)
+        {
+            _pressedMouseButtons.Add(button);
+            _mouseButtonTransitions.Add(new WindowMouseButtonTransition(button, true));
+        }
+    }
+
+    public void RecordMouseUp()
+        => RecordMouseUp(EMouseButton.LeftClick);
+
+    public void RecordMouseUp(EMouseButton button)
+    {
+        Interlocked.Increment(ref _mouseUpTransitionCount);
+        lock (_sync)
+        {
+            _pressedMouseButtons.Remove(button);
+            _mouseButtonTransitions.Add(new WindowMouseButtonTransition(button, false));
+        }
+    }
+
+    public void PrimePointerPosition(float x, float y)
+    {
+        lock (_sync)
+        {
+            _lastPointerX = x;
+            _lastPointerY = y;
+            _hasLastPointerPosition = true;
+        }
+    }
+
+    public void RecordPointerPosition(float x, float y)
+    {
+        lock (_sync)
+        {
+            if (_hasLastPointerPosition)
+            {
+                _pointerDeltaX += x - _lastPointerX;
+                _pointerDeltaY += y - _lastPointerY;
+            }
+            else
+            {
+                _hasLastPointerPosition = true;
+            }
+
+            _lastPointerX = x;
+            _lastPointerY = y;
+        }
+    }
+
+    public void RecordScroll(float x, float y)
+    {
+        lock (_sync)
+        {
+            _scrollDeltaX += x;
+            _scrollDeltaY += y;
+        }
+    }
+
+    public WindowInputSnapshot Publish(
+        int keyboardCount,
+        int mouseCount,
+        int gamepadCount,
+        bool isFocused,
+        bool isMouseCaptured)
+    {
+        ulong sequence = (ulong)Interlocked.Increment(ref _sequence);
+        WindowInputSnapshot snapshot;
+
+        lock (_sync)
+        {
+            snapshot = new WindowInputSnapshot(
+                sequence,
+                keyboardCount,
+                mouseCount,
+                gamepadCount,
+                isFocused,
+                isMouseCaptured,
+                _lastPointerX,
+                _lastPointerY,
+                _pointerDeltaX,
+                _pointerDeltaY,
+                _scrollDeltaX,
+                _scrollDeltaY,
+                (uint)Math.Max(0, Volatile.Read(ref _keyDownTransitionCount)),
+                (uint)Math.Max(0, Volatile.Read(ref _keyUpTransitionCount)),
+                (uint)Math.Max(0, Volatile.Read(ref _mouseDownTransitionCount)),
+                (uint)Math.Max(0, Volatile.Read(ref _mouseUpTransitionCount)),
+                (uint)Math.Max(0, Volatile.Read(ref _textInputCount)),
+                _keyTransitions.Count == 0 ? [] : [.. _keyTransitions],
+                _pressedKeys.Count == 0 ? [] : [.. _pressedKeys],
+                _mouseButtonTransitions.Count == 0 ? [] : [.. _mouseButtonTransitions],
+                _pressedMouseButtons.Count == 0 ? [] : [.. _pressedMouseButtons],
+                _textInputCharacters.Count == 0 ? [] : [.. _textInputCharacters],
+                System.Diagnostics.Stopwatch.GetTimestamp(),
+                Environment.CurrentManagedThreadId);
+
+            _keyTransitions.Clear();
+            _mouseButtonTransitions.Clear();
+            _textInputCharacters.Clear();
+            _pointerDeltaX = 0.0f;
+            _pointerDeltaY = 0.0f;
+            _scrollDeltaX = 0.0f;
+            _scrollDeltaY = 0.0f;
+            _latest = snapshot;
+        }
+
+        return snapshot;
+    }
 }
 
 public readonly record struct WindowMailboxDiagnostics(
@@ -352,28 +559,36 @@ public sealed class WindowResizeController
         lock (_sync)
         {
             Vector2D<int> valid = EnsurePositive(extent);
-            _fullInternalGeneration++;
-            if (ExtentMatches(_extents.PendingFullInternalExtent, valid))
-            {
-                _pendingFullInternalGeneration = 0;
-                _extents = _extents with
-                {
-                    FullInternalExtent = valid,
-                    PendingFullInternalExtent = default,
-                    FullInternalGeneration = _fullInternalGeneration,
-                    PendingFullInternalGeneration = 0,
-                };
-            }
-            else
-            {
-                _extents = _extents with
-                {
-                    FullInternalExtent = valid,
-                    FullInternalGeneration = _fullInternalGeneration,
-                };
-            }
-            UpdateOutputScaleNoLock();
+            CommitFullInternalExtentNoLock(valid);
             return _extents;
+        }
+    }
+
+    public bool TryCommitPendingFullInternalExtent(
+        ulong pendingGeneration,
+        Vector2D<int> extent,
+        out WindowResizeExtents extents)
+    {
+        lock (_sync)
+        {
+            extents = _extents;
+            if (pendingGeneration == 0 ||
+                pendingGeneration != _pendingFullInternalGeneration)
+            {
+                return false;
+            }
+
+            Vector2D<int> valid = EnsurePositive(extent);
+            if (valid.X <= 0 ||
+                valid.Y <= 0 ||
+                !ExtentMatches(_extents.PendingFullInternalExtent, valid))
+            {
+                return false;
+            }
+
+            CommitFullInternalExtentNoLock(valid);
+            extents = _extents;
+            return true;
         }
     }
 
@@ -477,6 +692,32 @@ public sealed class WindowResizeController
     {
         lock (_sync)
             return generation != 0 && generation != _pendingFullInternalGeneration;
+    }
+
+    private void CommitFullInternalExtentNoLock(Vector2D<int> valid)
+    {
+        _fullInternalGeneration++;
+        if (ExtentMatches(_extents.PendingFullInternalExtent, valid))
+        {
+            _pendingFullInternalGeneration = 0;
+            _extents = _extents with
+            {
+                FullInternalExtent = valid,
+                PendingFullInternalExtent = default,
+                FullInternalGeneration = _fullInternalGeneration,
+                PendingFullInternalGeneration = 0,
+            };
+        }
+        else
+        {
+            _extents = _extents with
+            {
+                FullInternalExtent = valid,
+                FullInternalGeneration = _fullInternalGeneration,
+            };
+        }
+
+        UpdateOutputScaleNoLock();
     }
 
     private static bool ExtentMatches(Vector2D<int> current, Vector2D<int> expected)

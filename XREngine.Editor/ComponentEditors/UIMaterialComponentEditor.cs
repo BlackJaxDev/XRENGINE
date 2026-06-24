@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Editor.Services;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
@@ -166,7 +167,10 @@ public sealed class UIMaterialComponentEditor : IXRComponentEditor
 
         if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
         {
-            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            IntPtr textureId = EditorRenderThread.Invoke(
+                () => vkRenderer.RegisterImGuiTexture(texture),
+                "UIMaterialComponentEditor.RegisterVulkanPreviewTexture",
+                RenderThreadJobKind.TextureUpload);
             if (textureId == IntPtr.Zero)
             {
                 failureReason = "Texture not uploaded to GPU.";
@@ -187,12 +191,24 @@ public sealed class UIMaterialComponentEditor : IXRComponentEditor
         switch (texture)
         {
             case XRTexture2D tex2D:
-                return TryGetTextureHandle(renderer.GenericToAPI<GLTexture2D>(tex2D), out handle, out failureReason);
+                return TryGetTextureHandle(
+                    EditorRenderThread.Invoke(
+                        () => renderer.GenericToAPI<GLTexture2D>(tex2D),
+                        "UIMaterialComponentEditor.ResolveOpenGLPreviewTexture2D",
+                        RenderThreadJobKind.TextureUpload),
+                    out handle,
+                    out failureReason);
             case XRTextureCubeView cubeView when cubeView.View2D:
                 float extent = MathF.Max(1.0f, cubeView.ViewedTexture.Extent);
                 pixelSize = new Vector2(extent, extent);
                 displaySize = GetPreviewSize(pixelSize);
-                return TryGetTextureHandle(renderer.GenericToAPI<GLTextureView>(cubeView), out handle, out failureReason);
+                return TryGetTextureHandle(
+                    EditorRenderThread.Invoke(
+                        () => renderer.GenericToAPI<GLTextureView>(cubeView),
+                        "UIMaterialComponentEditor.ResolveOpenGLPreviewCubeView",
+                        RenderThreadJobKind.TextureUpload),
+                    out handle,
+                    out failureReason);
             default:
                 failureReason = $"{texture.GetType().Name} preview not supported.";
                 return false;

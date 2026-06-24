@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Numerics;
 using ImGuiNET;
 using XREngine.Data.Rendering;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials.Textures;
 using XREngine.Rendering.OpenGL;
@@ -313,7 +314,10 @@ public static class GLObjectEditors
         switch (target)
         {
             case XRTexture2D tex2D:
-                var apiTex = renderer.GenericToAPI<GLTexture2D>(tex2D);
+                var apiTex = EditorRenderThread.Invoke(
+                    () => renderer.GenericToAPI<GLTexture2D>(tex2D),
+                    "GLObjectEditors.ResolveOpenGLAttachmentTexture",
+                    RenderThreadJobKind.TextureUpload);
                 if (apiTex is not null)
                 {
                     bindingId = apiTex.BindingId;
@@ -321,7 +325,10 @@ public static class GLObjectEditors
                 }
                 break;
             case XRRenderBuffer rb:
-                var apiRb = renderer.GenericToAPI<GLRenderBuffer>(rb);
+                var apiRb = EditorRenderThread.Invoke(
+                    () => renderer.GenericToAPI<GLRenderBuffer>(rb),
+                    "GLObjectEditors.ResolveOpenGLAttachmentRenderBuffer",
+                    RenderThreadJobKind.Framebuffer);
                 if (apiRb is not null)
                 {
                     bindingId = apiRb.BindingId;
@@ -1079,7 +1086,7 @@ public static class GLObjectEditors
         ImGui.TableSetColumnIndex(0);
         ImGui.TextUnformatted("Renderer");
         ImGui.TableSetColumnIndex(1);
-        var windowTitle = glObject.Renderer?.XRWindow?.Window?.Title;
+        var windowTitle = glObject.Renderer?.XRWindow?.WindowTitle;
         ImGui.TextUnformatted(string.IsNullOrWhiteSpace(windowTitle) ? "<Unknown>" : windowTitle);
 
         ImGui.EndTable();

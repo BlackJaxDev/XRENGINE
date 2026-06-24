@@ -20,6 +20,7 @@ using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
+using XREngine.Runtime.InputIntegration;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -2375,7 +2376,8 @@ public static partial class EditorImGuiUI
                 var ensuredViewport = window.EnsureControllerRegistered(mainPlayer, autoSizeAllViewports: false);
                 if (ensuredViewport is not null)
                 {
-                    (mainPlayer.InputDevice as LocalInputInterface)?.UpdateDevices(ensuredViewport.Window?.Input, Engine.VRState.Actions);
+                    if (mainPlayer is LocalPlayerController localPlayer)
+                        localPlayer.RefreshViewportInputBinding();
                 }
             }
 

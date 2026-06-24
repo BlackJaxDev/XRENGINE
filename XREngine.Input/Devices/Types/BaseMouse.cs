@@ -56,6 +56,12 @@ namespace XREngine.Input.Devices
 
         public bool GetButtonState(EMouseButton button, EButtonInputType type)
             => FindOrCacheButton(button)?.GetState(type) ?? false;
+        protected void TickCursorState(float x, float y)
+            => _cursor.Tick(x, y);
+        protected void TickScrollState(float delta)
+            => _wheel.Tick(delta);
+        protected void TickMouseButtonState(EMouseButton button, bool isPressed, float delta)
+            => _buttonStates[(int)button]?.Tick(isPressed, delta);
     }
     public enum EMouseButton
     {

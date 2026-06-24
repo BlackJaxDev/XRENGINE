@@ -1,6 +1,7 @@
 using System.Collections;
 using System.IO;
 using System.Numerics;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
@@ -401,6 +402,42 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void EnqueueRenderThreadTask(Action task, string reason, RenderThreadJobKind renderThreadKind)
         => Engine.EnqueueRenderThreadTask(task, reason, renderThreadKind);
+
+    public T InvokeRenderThreadTask<T>(
+        Func<T> task,
+        string reason,
+        RenderThreadJobKind renderThreadKind = RenderThreadJobKind.Unknown)
+    {
+        if (Engine.IsRenderThread)
+            return task();
+
+        T? result = default;
+        ExceptionDispatchInfo? exception = null;
+        using ManualResetEventSlim completed = new(false);
+
+        Engine.EnqueueRenderThreadTask(
+            () =>
+            {
+                try
+                {
+                    result = task();
+                }
+                catch (Exception ex)
+                {
+                    exception = ExceptionDispatchInfo.Capture(ex);
+                }
+                finally
+                {
+                    completed.Set();
+                }
+            },
+            reason,
+            renderThreadKind);
+
+        completed.Wait();
+        exception?.Throw();
+        return result!;
+    }
 
     public void EnqueueAppThreadTask(Action task)
         => Engine.EnqueueAppThreadTask(task);

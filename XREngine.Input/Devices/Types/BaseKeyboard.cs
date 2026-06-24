@@ -75,6 +75,8 @@
             => GetKeyState(key, EButtonInputType.Pressed);
         public bool Released(EKey key)
             => GetKeyState(key, EButtonInputType.Released);
+        protected void TickKeyState(EKey key, bool isPressed, float delta)
+            => _buttonStates[(int)key]?.Tick(isPressed, delta);
     }
     public enum EKey
     {

@@ -15,6 +15,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
+using XREngine.Editor.Services;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
@@ -1358,7 +1359,10 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
         if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
         {
-            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            IntPtr textureId = EditorRenderThread.Invoke(
+                () => vkRenderer.RegisterImGuiTexture(texture),
+                "ModelComponentEditor.RegisterVulkanPreviewTexture",
+                RenderThreadJobKind.TextureUpload);
             if (textureId == IntPtr.Zero)
             {
                 failureReason = "Texture not uploaded";
@@ -1379,7 +1383,10 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         switch (texture)
         {
             case XRTexture2D tex2D:
-                var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
+                var apiTexture = EditorRenderThread.Invoke(
+                    () => renderer.GenericToAPI<GLTexture2D>(tex2D),
+                    "ModelComponentEditor.ResolveOpenGLPreviewTexture2D",
+                    RenderThreadJobKind.TextureUpload);
                 if (apiTexture is null)
                 {
                     failureReason = "Texture not uploaded";

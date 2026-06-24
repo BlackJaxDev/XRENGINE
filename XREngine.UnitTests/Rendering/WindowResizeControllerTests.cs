@@ -3,7 +3,9 @@ using System.IO;
 using NUnit.Framework;
 using Shouldly;
 using Silk.NET.Maths;
+using XREngine.Input.Devices;
 using XREngine.Rendering;
+using XREngine.Runtime.InputIntegration;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -182,6 +184,34 @@ public sealed class WindowResizeControllerTests
     }
 
     [Test]
+    public void TryCommitPendingFullInternalExtent_RequiresCurrentPendingGeneration()
+    {
+        WindowResizeController controller = new();
+        controller.SetAllRenderExtents(new Vector2D<int>(800, 600));
+        WindowResizeExtents requested = controller.RequestFullInternalExtent(
+            new Vector2D<int>(1000, 700),
+            force: true,
+            timestampTicks: 1,
+            out bool accepted);
+
+        accepted.ShouldBeTrue();
+        controller.TryCommitPendingFullInternalExtent(
+            requested.PendingFullInternalGeneration + 1,
+            requested.PendingFullInternalExtent,
+            out WindowResizeExtents staleCommit).ShouldBeFalse();
+        staleCommit.PendingFullInternalGeneration.ShouldBe(requested.PendingFullInternalGeneration);
+
+        controller.TryCommitPendingFullInternalExtent(
+            requested.PendingFullInternalGeneration,
+            requested.PendingFullInternalExtent,
+            out WindowResizeExtents committed).ShouldBeTrue();
+
+        committed.FullInternalExtent.ShouldBe(new Vector2D<int>(1000, 700));
+        committed.PendingFullInternalExtent.ShouldBe(default);
+        committed.PendingFullInternalGeneration.ShouldBe(0UL);
+    }
+
+    [Test]
     public void OutputScale_ReportsExactUpscaleAndLetterboxModes()
     {
         WindowResizeController controller = new();
@@ -196,6 +226,144 @@ public sealed class WindowResizeControllerTests
 
         controller.SetPresentationAndOutputExtent(new Vector2D<int>(1600, 900));
         controller.OutputScale.Mode.ShouldBe(WindowOutputScaleMode.Pillarbox);
+    }
+
+    [Test]
+    public void WindowInputSnapshotAccumulator_PublishesOrderedTransitionsAndResetsDeltas()
+    {
+        WindowInputSnapshotAccumulator accumulator = new();
+
+        accumulator.RecordKeyDown(EKey.W);
+        accumulator.RecordTextInput('w');
+        accumulator.RecordMouseDown(EMouseButton.LeftClick);
+        accumulator.PrimePointerPosition(10.0f, 20.0f);
+        accumulator.RecordPointerPosition(13.0f, 25.0f);
+        accumulator.RecordPointerPosition(20.0f, 30.0f);
+        accumulator.RecordScroll(1.5f, -2.0f);
+        accumulator.RecordKeyUp(EKey.W);
+        accumulator.RecordMouseUp(EMouseButton.LeftClick);
+
+        WindowInputSnapshot first = accumulator.Publish(
+            keyboardCount: 1,
+            mouseCount: 1,
+            gamepadCount: 0,
+            isFocused: true,
+            isMouseCaptured: false);
+
+        first.Sequence.ShouldBe(1UL);
+        first.KeyboardCount.ShouldBe(1);
+        first.MouseCount.ShouldBe(1);
+        first.IsFocused.ShouldBeTrue();
+        first.PointerX.ShouldBe(20.0f);
+        first.PointerY.ShouldBe(30.0f);
+        first.PointerDeltaX.ShouldBe(10.0f);
+        first.PointerDeltaY.ShouldBe(10.0f);
+        first.ScrollDeltaX.ShouldBe(1.5f);
+        first.ScrollDeltaY.ShouldBe(-2.0f);
+        first.KeyDownTransitionCount.ShouldBe(1U);
+        first.KeyUpTransitionCount.ShouldBe(1U);
+        first.MouseDownTransitionCount.ShouldBe(1U);
+        first.MouseUpTransitionCount.ShouldBe(1U);
+        first.TextInputCount.ShouldBe(1U);
+        first.KeyTransitions.ShouldBe(new[]
+        {
+            new WindowKeyTransition(EKey.W, true),
+            new WindowKeyTransition(EKey.W, false),
+        });
+        first.PressedKeys.ShouldBeEmpty();
+        first.TextInputCharacters.ShouldBe(new[] { 'w' });
+        first.MouseButtonTransitions.ShouldBe(new[]
+        {
+            new WindowMouseButtonTransition(EMouseButton.LeftClick, true),
+            new WindowMouseButtonTransition(EMouseButton.LeftClick, false),
+        });
+        first.PressedMouseButtons.ShouldBeEmpty();
+        accumulator.Latest.ShouldBe(first);
+
+        WindowInputSnapshot second = accumulator.Publish(
+            keyboardCount: 1,
+            mouseCount: 1,
+            gamepadCount: 0,
+            isFocused: true,
+            isMouseCaptured: false);
+
+        second.Sequence.ShouldBe(2UL);
+        second.PointerX.ShouldBe(20.0f);
+        second.PointerY.ShouldBe(30.0f);
+        second.PointerDeltaX.ShouldBe(0.0f);
+        second.PointerDeltaY.ShouldBe(0.0f);
+        second.ScrollDeltaX.ShouldBe(0.0f);
+        second.ScrollDeltaY.ShouldBe(0.0f);
+        second.KeyDownTransitionCount.ShouldBe(1U);
+        second.KeyUpTransitionCount.ShouldBe(1U);
+        second.MouseDownTransitionCount.ShouldBe(1U);
+        second.MouseUpTransitionCount.ShouldBe(1U);
+        second.TextInputCount.ShouldBe(1U);
+        second.KeyTransitions.ShouldBeEmpty();
+        second.PressedKeys.ShouldBeEmpty();
+        second.TextInputCharacters.ShouldBeEmpty();
+        second.MouseButtonTransitions.ShouldBeEmpty();
+        second.PressedMouseButtons.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void WindowInputSnapshotAccumulator_FirstPointerMovePrimesPositionWithoutDelta()
+    {
+        WindowInputSnapshotAccumulator accumulator = new();
+
+        accumulator.RecordPointerPosition(4.0f, 5.0f);
+
+        WindowInputSnapshot snapshot = accumulator.Publish(
+            keyboardCount: 0,
+            mouseCount: 1,
+            gamepadCount: 0,
+            isFocused: false,
+            isMouseCaptured: true);
+
+        snapshot.Sequence.ShouldBe(1UL);
+        snapshot.HasMouse.ShouldBeTrue();
+        snapshot.IsMouseCaptured.ShouldBeTrue();
+        snapshot.PointerX.ShouldBe(4.0f);
+        snapshot.PointerY.ShouldBe(5.0f);
+        snapshot.PointerDeltaX.ShouldBe(0.0f);
+        snapshot.PointerDeltaY.ShouldBe(0.0f);
+    }
+
+    [Test]
+    public void WindowSnapshotKeyboard_ReplaysPressedSnapshotIntoRegisteredKeyState()
+    {
+        WindowSnapshotKeyboard keyboard = new(0);
+        bool? latestPressedState = null;
+        keyboard.RegisterKeyPressed(EKey.W, pressed => latestPressedState = pressed, unregister: false);
+
+        WindowInputSnapshotAccumulator accumulator = new();
+        accumulator.RecordKeyDown(EKey.W);
+        WindowInputSnapshot downSnapshot = accumulator.Publish(
+            keyboardCount: 1,
+            mouseCount: 0,
+            gamepadCount: 0,
+            isFocused: true,
+            isMouseCaptured: false);
+
+        keyboard.ApplySnapshot(downSnapshot);
+        keyboard.TickStates(1.0f / 60.0f);
+
+        latestPressedState.ShouldBe(true);
+        keyboard.GetKeyState(EKey.W, EButtonInputType.Pressed).ShouldBeTrue();
+
+        accumulator.RecordKeyUp(EKey.W);
+        WindowInputSnapshot upSnapshot = accumulator.Publish(
+            keyboardCount: 1,
+            mouseCount: 0,
+            gamepadCount: 0,
+            isFocused: true,
+            isMouseCaptured: false);
+
+        keyboard.ApplySnapshot(upSnapshot);
+        keyboard.TickStates(1.0f / 60.0f);
+
+        latestPressedState.ShouldBe(false);
+        keyboard.GetKeyState(EKey.W, EButtonInputType.Released).ShouldBeTrue();
     }
 
     private static WindowSurfaceSnapshot CreateSnapshot(ulong sequence, int width, int height)

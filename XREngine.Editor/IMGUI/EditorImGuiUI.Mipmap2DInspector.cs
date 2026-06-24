@@ -2,6 +2,7 @@ using System;
 using System.Numerics;
 using ImGuiNET;
 using XREngine.Data.Rendering;
+using XREngine.Editor.Services;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
@@ -99,7 +100,10 @@ public static partial class EditorImGuiUI
             return;
         }
 
-        GLTexture2D? apiTexture = renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) as GLTexture2D;
+        GLTexture2D? apiTexture = EditorRenderThread.Invoke(
+            () => renderer.GetOrCreateAPIRenderObject(texture, generateNow: true),
+            "Mipmap2DInspector.ResolveOpenGLPreviewTexture",
+            RenderThreadJobKind.TextureUpload) as GLTexture2D;
         if (apiTexture is null)
         {
             ImGui.TextDisabled("Preview texture not available.");

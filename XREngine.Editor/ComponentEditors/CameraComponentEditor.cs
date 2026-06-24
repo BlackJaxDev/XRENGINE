@@ -11,6 +11,7 @@ using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.PostProcessing;
@@ -319,7 +320,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
                     var vp = boundViewports[i];
                     tooltip += $"  [{i}] {vp.Region.Width}x{vp.Region.Height}";
                     if (vp.Window is not null)
-                        tooltip += $" (Window: {vp.Window.Window.Title ?? "untitled"})";
+                        tooltip += $" (Window: {vp.Window.WindowTitle})";
                     tooltip += "\n";
                 }
                 ImGui.SetTooltip(tooltip.TrimEnd());
@@ -2272,7 +2273,10 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
         {
-            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            IntPtr textureId = EditorRenderThread.Invoke(
+                () => vkRenderer.RegisterImGuiTexture(texture),
+                "CameraComponentEditor.RegisterVulkanPreviewTexture",
+                RenderThreadJobKind.TextureUpload);
             if (textureId == IntPtr.Zero)
             {
                 failure = "Texture has not been uploaded to the GPU yet.";
@@ -2292,8 +2296,14 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         IGLTexture? glTexture = texture switch
         {
-            XRTexture2D texture2D => renderer.GenericToAPI<GLTexture2D>(texture2D),
-            XRTexture2DArrayView textureArrayView => renderer.GenericToAPI<GLTextureView>(textureArrayView),
+            XRTexture2D texture2D => EditorRenderThread.Invoke(
+                () => renderer.GenericToAPI<GLTexture2D>(texture2D),
+                "CameraComponentEditor.ResolveOpenGLPreviewTexture2D",
+                RenderThreadJobKind.TextureUpload),
+            XRTexture2DArrayView textureArrayView => EditorRenderThread.Invoke(
+                () => renderer.GenericToAPI<GLTextureView>(textureArrayView),
+                "CameraComponentEditor.ResolveOpenGLPreviewTextureView",
+                RenderThreadJobKind.TextureUpload),
             _ => null,
         };
 

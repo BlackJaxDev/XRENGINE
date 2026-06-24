@@ -331,6 +331,9 @@ public static class RuntimeRenderingHostServices
         public void EnqueueRenderThreadTask(Action task, string reason, RenderThreadJobKind renderThreadKind)
             => task();
 
+        public T InvokeRenderThreadTask<T>(Func<T> task, string reason, RenderThreadJobKind renderThreadKind = RenderThreadJobKind.Unknown)
+            => task();
+
         public void EnqueueAppThreadTask(Action task)
             => task();
 

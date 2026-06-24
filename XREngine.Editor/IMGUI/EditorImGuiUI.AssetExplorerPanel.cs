@@ -14,6 +14,7 @@ using XREngine;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Diagnostics;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
@@ -3322,7 +3323,10 @@ public static partial class EditorImGuiUI
             if (renderer is null)
                 return false;
 
-            var apiTexture = renderer.GenericToAPI<GLTexture2D>(texture);
+            var apiTexture = EditorRenderThread.Invoke(
+                () => renderer.GenericToAPI<GLTexture2D>(texture),
+                "AssetExplorer.ResolveOpenGLPreviewTexture",
+                RenderThreadJobKind.TextureUpload);
             if (apiTexture is null)
                 return false;
 

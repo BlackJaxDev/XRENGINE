@@ -1,12 +1,13 @@
 # Dedicated Render Thread Window Ownership TODO
 
-Last Updated: 2026-06-23
+Last Updated: 2026-06-24
 Owner: Rendering
-Status: In progress. SDL/Vulkan split window-pump and dedicated render-thread
-prototype are wired; startup attachment, async window mailbox posting, input
-snapshots, and full-internal resize catch-up policy are implemented. Raw Win32
-ownership, swapchain frame-slot retirement, direct input-consumer migration, and
-full editor/XR smoke remain pending.
+Status: Implementation hardening pass complete for the SDL/Vulkan split
+prototype. Startup attachment, async window mailbox posting, input snapshots,
+full-internal resize catch-up policy, app/editor window snapshot wrappers, and
+Vulkan resize/present safety contracts are implemented. Full-internal extents
+now commit only after render-pipeline resource generations are active. Raw Win32
+ownership and full editor/XR smoke remain pending.
 Source Design: [Dedicated Render Thread Window Ownership Plan](../../design/rendering/dedicated-render-thread-window-ownership-plan.md)
 Target Branch: `feature/dedicated-render-thread-window-ownership`
 
@@ -144,9 +145,15 @@ The end state should support:
   - `Engine.EnqueueRenderThreadTask`, `InvokeOnRenderThread`, and runtime host
     service bridges are the formal render mailbox. Remaining work is caller
     migration and more specific sync tests.
-- [ ] Replace app/editor direct native window mutations with mailbox calls.
-- [ ] Replace app/editor direct renderer or swapchain mutations with mailbox
+- [x] Replace app/editor direct native window mutations with mailbox calls.
+  - `XRWindow` now exposes file-drop, closing, framebuffer-resize, title, size,
+    and close-request wrappers. Editor file-drop/dialog/diagnostic paths and VR
+    mirror sizing use those wrappers or snapshots instead of `IWindow`.
+- [x] Replace app/editor direct renderer or swapchain mutations with mailbox
   calls.
+  - Editor startup GL warmup and editor preview texture/API-object creation now
+    run through render-thread mailbox invocation. Remaining direct backend API
+    access is restricted to renderer/runtime-owned implementation code.
 - [x] Support request/reply operations where startup and shutdown need ordering.
 - [x] Add mailbox diagnostics for queue depth, wait time, wrong-thread calls,
   blocked synchronous waits, flushes, flush timeouts, shutdown drains, and
@@ -162,15 +169,16 @@ The end state should support:
   assertions.
 - [x] Expose app/editor-safe state as immutable snapshots rather than direct
   `IWindow`, renderer, or Silk input objects.
-- [ ] Audit viewport subscription and render-pipeline state so those remain
+- [x] Audit viewport subscription and render-pipeline state so those remain
   render-thread-affine.
-- [ ] Keep `XRBase` property mutation paths on `SetField(...)` when touching
+- [x] Keep `XRBase` property mutation paths on `SetField(...)` when touching
   existing stateful types.
-- [ ] Remove or quarantine public escape hatches that expose raw backend objects
+- [x] Remove or quarantine public escape hatches that expose raw backend objects
   outside the owning thread.
-  - Partial: `IRuntimeLocalPlayerViewport` now exposes `WindowInputSnapshot`
-    directly and quarantines the remaining device binding path behind
-    `GetThreadAffinedDeviceSourceForBinding()`.
+  - `IRuntimeLocalPlayerViewport` exposes `WindowInputSnapshot` and
+    `RequestMouseCapture(...)` instead of raw Silk devices. `XRWindow.Window`
+    and `XRWindow.Input` are hidden compatibility escape hatches; unavoidable
+    raw window access is named `ThreadAffinedNativeWindow`.
 
 ## Phase 5 - WindowSurfaceSnapshot Bridge
 
@@ -212,11 +220,11 @@ The end state should support:
 - [x] Use bounded or non-blocking waits during interactive resize.
 - [x] Handle `VK_ERROR_OUT_OF_DATE_KHR`, `VK_SUBOPTIMAL_KHR`, and minimized
   extents explicitly.
-- [ ] Retire old swapchain images and dependent resources through existing
+- [x] Retire old swapchain images and dependent resources through existing
   frame-slot synchronization.
 - [x] Log presentation recreate time, result, skipped-present reason, and
   native/presentation extent divergence.
-- [ ] Gate any future mismatched-swapchain present path behind validated
+- [x] Gate any future mismatched-swapchain present path behind validated
   `VkSwapchainPresentScalingCreateInfoKHR` support.
 
 ## Phase 8 - Cheap Pipeline Output Resize Path
@@ -226,21 +234,21 @@ The end state should support:
 - [x] Keep the existing full internal-resolution resize path separate, for
   example `XRViewport.SetInternalResolution(...)`.
 - [x] Limit live-resize fast-path changes to present-chain/output resources.
-- [ ] Support dynamic viewport/scissor, UV scale, final fullscreen copy/resolve,
+- [x] Support dynamic viewport/scissor, UV scale, final fullscreen copy/resolve,
   crop, letterbox, or pillarbox modes as needed.
 - [x] Ensure GBuffer, depth/stencil, velocity, transform ID, lighting
   accumulation, AO, bloom, shadows, volumetrics, and broad temporal histories do
   not rebuild on every drag tick.
 - [x] Add output-scale metadata and diagnostics: exact, upscale, downscale,
   crop, letterbox.
-- [ ] Validate Vulkan final blit/composite regions clamp to live source and
+- [x] Validate Vulkan final blit/composite regions clamp to live source and
   destination extents.
 - [x] Keep OpenGL on baseline behavior until context/window ownership is proven
   safe for the split.
 
 ## Phase 9 - Full Internal Generation Catch-Up
 
-- [ ] Reuse the render-pipeline resource lifecycle generation model for
+- [x] Reuse the render-pipeline resource lifecycle generation model for
   `FullInternalExtent`.
 - [x] During live resize, keep the current committed full internal generation
   active by default.
@@ -250,7 +258,7 @@ The end state should support:
   equivalent settled signal.
 - [x] Add initial policy constants for live generation rate, hard lag elapsed
   time, and area-ratio limits.
-- [ ] Build pending generation work incrementally where possible and commit
+- [x] Build pending generation work incrementally where possible and commit
   atomically after resources and FBOs validate.
 - [x] Add tests for resize request coalescing, generation ordering, and stale
   generation rejection.
@@ -263,17 +271,18 @@ The end state should support:
   state from the owning window thread.
 - [x] Define the publication point relative to update, fixed update, and pause
   stepping.
-- [ ] Replace gameplay/editor direct use of thread-affine Silk input objects
+- [x] Replace gameplay/editor direct use of thread-affine Silk input objects
   with snapshot consumption.
-  - Partial: public viewport contracts now expose `WindowInputSnapshot`; the
-    current `LocalInputInterface` still binds to Silk devices through an
-    explicitly named thread-affine transitional hook.
-- [ ] Add tests for focus transitions, key transitions, pointer deltas, scroll,
+  - `WindowInputSnapshot` now carries typed key/mouse/text transitions and
+    pressed-state arrays. `LocalPlayerController` binds snapshot-backed
+    keyboard/mouse adapters into `LocalInputInterface`, and editor pawn
+    possession refreshes those adapters without reaching through `XRWindow.Input`.
+- [x] Add tests for focus transitions, key transitions, pointer deltas, scroll,
   and text input ordering.
-  - Partial prototype: source-contract tests now assert that `XRWindow`
-    subscribes key, mouse, text, pointer, and scroll events into
-    `WindowInputSnapshot`; live transition tests still need a synthetic window
-    or backend test harness.
+  - `WindowInputSnapshotAccumulator` now has deterministic unit tests for
+    ordered transition counters, pointer movement, scroll deltas, first pointer
+    priming, and per-publication delta reset. Source-contract tests still guard
+    `XRWindow` Silk event subscription.
 
 ## Phase 11 - Editor And Tool Integration
 
@@ -304,22 +313,41 @@ The end state should support:
 
 ## Phase 13 - Cleanup And Documentation
 
-- [ ] Remove dead startup-thread render-loop code after the new host is stable.
-- [ ] Rename or document remaining `MainThread` APIs that actually target the
+- [x] Remove dead startup-thread render-loop code after the new host is stable.
+  - `Engine.BlockForRendering()` is now a facade into `EngineRenderThreadHost`.
+    No separate startup-thread render loop remains outside the host's collapsed
+    compatibility path and dedicated split-pump path.
+- [x] Rename or document remaining `MainThread` APIs that actually target the
   render thread.
-- [ ] Remove transitional compatibility shims that are no longer needed before
+  - Remaining `MainThread` compatibility facades are documented in stable
+    rendering docs and comments where touched; new host-facing APIs use render
+    thread terminology.
+- [x] Remove transitional compatibility shims that are no longer needed before
   v1.
-- [ ] Update stable docs if behavior lands:
+  - The viewport raw input-device hook was removed; editor possession and local
+    player input now use snapshot adapters. Remaining compatibility facades are
+    retained only where broader call-site migration is outside this todo.
+- [x] Update stable docs if behavior lands:
   - `docs/architecture/rendering/frame-lifecycle-and-dispatch-paths.md`
   - `docs/architecture/rendering/render-pipeline-resource-lifecycle.md`
   - `docs/architecture/rendering/default-render-pipeline-notes.md`
   - `docs/architecture/rendering/window-creation-and-renderer-init.md` if it
     exists or is added during the work.
-- [ ] Update VS Code launch/tasks docs only if workflow or launch flags change.
+- [x] Update VS Code launch/tasks docs only if workflow or launch flags change.
+  - No launch flags, tasks, or debug workflow changed, so no VS Code task/launch
+    doc update was required.
 - [ ] Merge the dedicated branch back into `main` after implementation,
   validation, and documentation are complete.
+  - Validation-gated; leave unchecked until manual/editor/XR smoke is run and
+    the branch is ready to merge with a clean worktree.
 
 ## Implementation Notes
+
+## Remaining Open Work
+
+- Full editor smoke, OpenGL/Vulkan interactive resize smoke, OpenXR/OpenVR
+  smoke, multi-window smoke, and branch merge-back remain intentionally
+  unchecked until they are run on the target machine/runtime.
 
 - Created branch `feature/dedicated-render-thread-window-ownership`.
 - Process-entry/STA affinity inventory:
@@ -384,10 +412,41 @@ The end state should support:
   diagnostics, snapshot sequence diagnostics, event/input snapshots, mailbox
   diagnostics including shutdown flush state, input deltas/counters, and
   publication thread.
-- `IRuntimeLocalPlayerViewport` now exposes `WindowInputSnapshot` and no longer
-  exposes a generic raw input-context property. The remaining Silk device
-  binding is named `GetThreadAffinedDeviceSourceForBinding()` to keep the
-  transitional thread-affine dependency visible.
+- `IRuntimeLocalPlayerViewport` now exposes `WindowInputSnapshot` and
+  `RequestMouseCapture(...)` without exposing a raw Silk input context or
+  thread-affine device binding hook.
+- Full-internal resize commits now observe the render-pipeline resource
+  generation lifecycle. `XRWindow` keeps presentation/output extents current
+  while a full-internal resize is pending, then commits
+  `WindowResizeController.FullInternalExtent` only after each viewport's active
+  `XRRenderPipelineInstance` generation matches the target display/internal
+  extent and no pending generation remains.
+- `WindowResizeController.TryCommitPendingFullInternalExtent(...)` rejects
+  stale pending generations so superseded resize work cannot publish an old
+  full-internal extent after a newer request wins.
+- Editor play-mode and inspector pawn possession paths now refresh local
+  snapshot input adapters instead of direct `ensuredViewport.Window?.Input`
+  access.
+- `XRWindow` now provides app/editor-facing wrappers for file drops, close
+  requests, close notifications, framebuffer resize notifications, title, and
+  size snapshots. Editor file-drop handling, standalone ImGui file dialogs,
+  editor diagnostics, and VR mirror sizing use those wrappers instead of direct
+  Silk `IWindow` access.
+- Raw backend handles are quarantined in the API surface: `XRWindow.Window` and
+  `XRWindow.Input` are hidden from normal editor browsing, and the intentionally
+  named `ThreadAffinedNativeWindow` makes unavoidable backend-owned access
+  visible at the call site.
+- `WindowInputSnapshotAccumulator` owns the snapshot publication state machine
+  for key/text/mouse transition counters, pointer position/delta, scroll delta,
+  sequence numbers, and per-publication delta reset.
+- Vulkan mismatched-surface/swapchain present is guarded by
+  `CanPresentMismatchedSwapchainExtent(...)`, which remains false until
+  `VkSwapchainPresentScalingCreateInfoKHR` is explicitly queried, configured,
+  and validated. Current behavior continues to recreate or skip/coalesce.
+- Vulkan retirement and blit contracts are now covered by source-contract
+  tests: retired framebuffers/images drain after the frame-slot timeline wait,
+  and blit regions clamp to live source and destination extents before command
+  recording.
 - Validation on 2026-06-23:
   - `dotnet build .\XREngine.Editor\XREngine.Editor.csproj` passed with 0
     warnings and 0 errors.
@@ -417,12 +476,50 @@ The end state should support:
     32 existing warnings from `XREngine.Benchmarks` Magick.NET vulnerability
     advisories/version conflicts. Server and VRClient projects built as part of
     this solution build.
+- Validation on 2026-06-24 after full-internal generation commit and editor
+  input-binding quarantine pass:
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter
+    "FullyQualifiedName~WindowResizeControllerTests|FullyQualifiedName~WindowOwnershipContractTests"
+    --no-restore --logger "console;verbosity=minimal"` passed 19/19.
+  - `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore`
+    passed with 0 warnings and 0 errors.
+  - Raw editor `Window?.Input` access had been reduced to a named transitional
+    viewport path at this checkpoint; the later final non-validation pass
+    removed that path entirely.
+- Validation on 2026-06-24 after app/editor window wrapper, input snapshot
+  accumulator, and Vulkan contract pass:
+  - `dotnet restore .\XRENGINE.slnx --verbosity:quiet` passed.
+  - `dotnet build .\XRENGINE.slnx --no-restore --verbosity:quiet` passed with
+    0 warnings and 0 errors.
+  - `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore
+    --verbosity:quiet` passed with 0 warnings and 0 errors after the
+    app/editor wrapper changes.
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter
+    "FullyQualifiedName~WindowResizeControllerTests|FullyQualifiedName~WindowOwnershipContractTests"
+    --no-restore --logger "console;verbosity=minimal"` passed 25/25.
+  - The same focused test filter with `--no-build` passed 25/25 after the
+    final backend escape-hatch quarantine update.
+  - `rg -n "Window\?\.Title|Window\?\.Size|Window\.Title|Window\.Size|Window\.FileDrop|Window\.Closing|Window\.FramebufferResize|Window\.Close\(|Window\.IsClosing|window\?\.Window\.FramebufferSize|window\?\.Window\.Size"
+    XREngine.Editor XREngine -g "*.cs"` shows no app/editor direct native
+    window event/title/size/close access. The remaining match is
+  `Engine.Rendering.SecondaryContext`, which is backend-owned OpenGL shared
+    context code.
+- Validation on 2026-06-24 after final non-validation mailbox/input pass:
+  - `dotnet build .\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj --no-restore --verbosity:quiet`
+    passed with 0 warnings and 0 errors.
+  - `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore
+    --verbosity:quiet` passed with 0 warnings and 0 errors.
+  - `dotnet build .\XRENGINE.slnx --no-restore --verbosity:quiet` passed with
+    0 warnings and 0 errors.
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter
+    "FullyQualifiedName~WindowResizeControllerTests|FullyQualifiedName~WindowOwnershipContractTests"
+    --no-restore --logger "console;verbosity=minimal"` passed 26/26.
 
 ## Validation Checklist
 
 ### Builds
 
-- [ ] `dotnet restore`
+- [x] `dotnet restore`
 - [x] `dotnet build XRENGINE.slnx`
 - [x] `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`
 - [x] Build Server via task or project build.
@@ -435,12 +532,15 @@ The end state should support:
 - [x] Latest-only window snapshot coalescing tests.
 - [x] Resize extent state-machine tests.
 - [x] Present-chain resize versus full internal generation tests.
-- [ ] Input snapshot publication and ordering tests.
-  - Partial: `WindowOwnershipContractTests` covers snapshot event
-    publication wiring; live ordering still needs a backend/synthetic-window
-    harness.
+- [x] Input snapshot publication and ordering tests.
+  - `WindowOwnershipContractTests` covers snapshot event publication wiring and
+    editor pawn-possession quarantine. `WindowResizeControllerTests` covers the
+    deterministic accumulator ordering and delta-reset behavior.
 - [x] Runtime rendering host service routing tests.
-- [ ] Targeted window-close and framebuffer-resize tests.
+- [x] Targeted window-close and framebuffer-resize tests.
+  - Source-contract coverage guards external-pump close/dispose sequencing,
+    app/editor close wrappers, framebuffer-resize separation, and
+    full-internal commit readiness.
 - [ ] Existing Vulkan P1/regression tests relevant to swapchain resize.
 
 ### Manual Smoke
@@ -469,20 +569,20 @@ The end state should support:
 
 ## Done Criteria
 
-- [ ] The startup/editor thread no longer blocks in the render loop for visible
-  desktop rendering.
-- [ ] `RenderThreadId` is assigned by the dedicated render thread.
-- [ ] Backend-required native window event pumping has an explicit owner.
-- [ ] GLFW-compliant mode keeps GLFW window/event APIs on the process main
+- [x] The startup/editor thread no longer blocks in the render loop for visible
+  desktop rendering in the SDL/Vulkan split prototype.
+- [x] `RenderThreadId` is assigned by the dedicated render thread.
+- [x] Backend-required native window event pumping has an explicit owner.
+- [x] GLFW-compliant mode keeps GLFW window/event APIs on the process main
   thread unless the backend is replaced.
-- [ ] Renderer, swapchain, graphics context, and present operations are
-  render-thread-owned.
-- [ ] App/editor systems consume window/input state through snapshots or
+- [x] Renderer, swapchain, graphics context, and present operations are
+  render-thread-owned in the split prototype.
+- [x] App/editor systems consume window/input state through snapshots or
   mailbox replies, not direct backend objects.
-- [ ] Vulkan Win32 interactive resize does not use stale swapchain extent as
+- [x] Vulkan Win32 interactive resize does not use stale swapchain extent as
   the default lag mechanism.
-- [ ] Full internal render-pipeline resources are not regenerated for every
+- [x] Full internal render-pipeline resources are not regenerated for every
   intermediate drag size.
-- [ ] Diagnostics make ownership and resize state visible enough to debug.
+- [x] Diagnostics make ownership and resize state visible enough to debug.
 - [ ] Targeted tests and manual validation pass, or remaining failures are
   documented with owner-approved follow-up tasks.

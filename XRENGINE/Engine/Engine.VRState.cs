@@ -523,7 +523,7 @@ namespace XREngine
                 if (rW == 0u || rH == 0u)
                 {
                     var window = Renderer?.XRWindow;
-                    var fb = window?.Window.FramebufferSize;
+                    var fb = window?.EffectiveFramebufferSize;
                     if (fb.HasValue && fb.Value.X > 0 && fb.Value.Y > 0)
                     {
                         rW = (uint)fb.Value.X;
@@ -531,7 +531,7 @@ namespace XREngine
                         return true;
                     }
 
-                    var size = window?.Window.Size;
+                    var size = window?.WindowSizeSnapshot;
                     if (size.HasValue && size.Value.X > 0 && size.Value.Y > 0)
                     {
                         rW = (uint)size.Value.X;

@@ -73,8 +73,8 @@ public static class ImGuiFileBrowser
         public XRWorld? World { get; set; }
         public XRViewport? Viewport { get; set; }
         public Action? RenderHandler { get; set; }
-        public Action? WindowClosingHandler { get; set; }
-        public Action<Silk.NET.Maths.Vector2D<int>>? FramebufferResizeHandler { get; set; }
+        public Action<XRWindow>? WindowClosingHandler { get; set; }
+        public Action<XRWindow, Silk.NET.Maths.Vector2D<int>>? FramebufferResizeHandler { get; set; }
         public bool IsCompleting { get; set; }
         public bool NeedsFocusOnFirstFrame { get; set; } = true;
         public bool PendingCloseRequested { get; set; }
@@ -225,11 +225,11 @@ public static class ImGuiFileBrowser
             EnsureWorldInstanceIsRunning(window);
 
             state.RenderHandler = () => RenderStandaloneDialog(state);
-            state.WindowClosingHandler = () => OnWindowClosing(state);
-            state.FramebufferResizeHandler = (size) => OnFramebufferResize(state, size);
+            state.WindowClosingHandler = _ => OnWindowClosing(state);
+            state.FramebufferResizeHandler = (_, size) => OnFramebufferResize(state, size);
             window.RenderViewportsCallback += state.RenderHandler;
-            window.Window.Closing += state.WindowClosingHandler;
-            window.Window.FramebufferResize += state.FramebufferResizeHandler;
+            window.ClosingRequested += state.WindowClosingHandler;
+            window.FramebufferResized += state.FramebufferResizeHandler;
         }
         catch (Exception ex)
         {
@@ -770,17 +770,7 @@ public static class ImGuiFileBrowser
         Engine.EnqueueMainThreadTask(() =>
         {
             var xrWindow = state.Window;
-            if (xrWindow?.Window is { } silkWindow && !silkWindow.IsClosing)
-            {
-                try
-                {
-                    silkWindow.Close();
-                }
-                catch
-                {
-                    // ignored
-                }
-            }
+            xrWindow?.RequestClose();
         });
 
         return true;
@@ -835,9 +825,9 @@ public static class ImGuiFileBrowser
         if (state.RenderHandler is not null)
             window.RenderViewportsCallback -= state.RenderHandler;
         if (state.WindowClosingHandler is not null)
-            window.Window.Closing -= state.WindowClosingHandler;
+            window.ClosingRequested -= state.WindowClosingHandler;
         if (state.FramebufferResizeHandler is not null)
-            window.Window.FramebufferResize -= state.FramebufferResizeHandler;
+            window.FramebufferResized -= state.FramebufferResizeHandler;
 
         if (state.Viewport is not null && window.Viewports.Contains(state.Viewport))
         {

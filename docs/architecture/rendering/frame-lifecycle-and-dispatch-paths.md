@@ -85,6 +85,29 @@ More concretely:
 
 This is why `CollectVisible`, `SwapBuffers`, and `Render` should be treated as hot-path rendering phases, not as generic convenience ticks for unrelated work.
 
+## Window, Render, And Input Ownership
+
+Window ownership is now explicit:
+
+- The app/update thread owns gameplay and editor decisions.
+- The window thread owns native Silk.NET window/event/input callbacks.
+- The render thread owns renderer state, graphics context work, swapchain/present
+  work, GPU resource wrapper creation, and renderer-specific readback setup.
+
+Code outside backend-owned paths should not reach through `XRWindow.Window` or
+`XRWindow.Input`. `XRWindow` publishes app/editor-safe wrappers for common
+window events and immutable snapshots for window surface, close/focus, and
+input state. The local player viewport contract exposes `WindowInputSnapshot`;
+gameplay/editor possession binds snapshot-backed keyboard and mouse adapters
+instead of Silk input devices. Cursor capture requests flow back through the
+viewport/window wrapper instead of mutating the live Silk mouse object.
+
+Use `IRuntimeRenderingHostServices.EnqueueWindowThreadTask` or
+`InvokeWindowThreadTask<T>` for native window operations that require the window
+owner. Use `EnqueueRenderThreadTask` or `InvokeRenderThreadTask<T>` for
+GPU-affine work that needs a result, such as editor preview texture handles or
+readback helper setup.
+
 ## End-to-End Frame Lifecycle
 
 ### 1. Update and PostUpdate

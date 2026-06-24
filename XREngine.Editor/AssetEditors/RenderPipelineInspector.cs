@@ -13,6 +13,7 @@ using Silk.NET.OpenGL;
 using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Core.Files;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Pipelines.Commands;
@@ -679,7 +680,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return true;
         }
 
-        AbstractRenderAPIObject? apiRenderObject = renderer.GetOrCreateAPIRenderObject(texture);
+        AbstractRenderAPIObject? apiRenderObject = EditorRenderThread.Invoke(
+            () => renderer.GetOrCreateAPIRenderObject(texture),
+            "RenderPipelineInspector.ResolveOpenGLReadbackTexture",
+            RenderThreadJobKind.Readback);
         if (apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
         {
             callback(false, null, 0, 0, "Texture not uploaded.");
@@ -1812,7 +1816,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
         if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
         {
-            IntPtr textureId = vkRenderer.RegisterImGuiTexture(previewTexture);
+            IntPtr textureId = EditorRenderThread.Invoke(
+                () => vkRenderer.RegisterImGuiTexture(previewTexture),
+                "RenderPipelineInspector.RegisterVulkanPreviewTexture",
+                RenderThreadJobKind.TextureUpload);
             if (textureId == IntPtr.Zero)
             {
                 failure = "Texture not uploaded";
@@ -1831,7 +1838,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
         previewTexture = GetIsolatedOpenGlPreviewTexture(previewTexture, mipLevel, layerIndex, channel);
 
-        var apiRenderObject = renderer.GetOrCreateAPIRenderObject(previewTexture);
+        var apiRenderObject = EditorRenderThread.Invoke(
+            () => renderer.GetOrCreateAPIRenderObject(previewTexture),
+            "RenderPipelineInspector.ResolveOpenGLPreviewTexture",
+            RenderThreadJobKind.TextureUpload);
         if (apiRenderObject is not IGLTexture || apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
         {
             failure = "Texture not uploaded";

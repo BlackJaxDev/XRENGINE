@@ -232,6 +232,31 @@ Step by step:
 
 The renderer is chosen by inspecting the **actual** `ContextAPI` from the initialized window, not from `ERenderLibrary` directly. This makes the Vulkan-to-OpenGL fallback in `CreateWindow()` work transparently — if the retry creates an OpenGL context, the pattern match will create an `OpenGLRenderer`.
 
+### Backend Escape Hatches And Safe Access
+
+`XRWindow.ThreadAffinedNativeWindow` is the explicitly named Silk.NET native
+window handle for backend-owned code. The compatibility `XRWindow.Window` and
+`XRWindow.Input` members remain hidden from normal editor/app discovery; new
+gameplay and editor code should use:
+
+- `FileDropped`, `ClosingRequested`, `FramebufferResized`, `RequestClose()`,
+  `RequestMouseCapture(bool)`, `WindowTitle`, and `WindowSizeSnapshot` for
+  common window interactions.
+- `LatestWindowSurfaceSnapshot`, `LatestWindowEventSnapshot`, and
+  `LatestWindowInputSnapshot` for state consumption.
+- `IRuntimeRenderingHostServices.EnqueueWindowThreadTask` /
+  `InvokeWindowThreadTask<T>` for native window mutations.
+- `IRuntimeRenderingHostServices.EnqueueRenderThreadTask` /
+  `InvokeRenderThreadTask<T>` for renderer, swapchain, GPU-resource, preview,
+  and readback work.
+
+Local player input is bound from `IRuntimeLocalPlayerViewport.InputSnapshot`.
+Snapshot-backed keyboard and mouse adapters feed the existing
+`LocalInputInterface` registration model without exposing Silk input devices to
+gameplay or editor possession code. Mouse capture/hide requests are sent through
+`IRuntimeLocalPlayerViewport.RequestMouseCapture(...)`, preserving native
+window-thread ownership.
+
 ### Renderer Constructor Side Effects
 
 - **`OpenGLRenderer`**: The constructor calls `GetAPI()` → `GL.GetApi(Window.GLContext)` → `InitGL(api)`, which queries GPU info, enumerates extensions, enables multisampling, sets up debug callbacks, and reads the binary shader cache. All OpenGL state setup happens here.

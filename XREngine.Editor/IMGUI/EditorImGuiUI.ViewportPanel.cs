@@ -5,6 +5,7 @@ using System.Numerics;
 using XREngine;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Picking;
@@ -84,7 +85,10 @@ public static partial class EditorImGuiUI
         bool flipTextureY = false;
         if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
         {
-            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            IntPtr textureId = EditorRenderThread.Invoke(
+                () => vkRenderer.RegisterImGuiTexture(texture),
+                "ViewportPanel.RegisterVulkanScenePanelTexture",
+                RenderThreadJobKind.TextureUpload);
             if (textureId == IntPtr.Zero)
             {
                 if (!_scenePanelVulkanTextureFailedLogged)
@@ -105,7 +109,10 @@ public static partial class EditorImGuiUI
         }
         else if (AbstractRenderer.Current is OpenGLRenderer renderer)
         {
-            var glTexture = renderer.GenericToAPI<GLTexture2D>(texture);
+            var glTexture = EditorRenderThread.Invoke(
+                () => renderer.GenericToAPI<GLTexture2D>(texture),
+                "ViewportPanel.ResolveOpenGLScenePanelTexture",
+                RenderThreadJobKind.TextureUpload);
             if (glTexture is null || glTexture.BindingId == 0 || glTexture.BindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
                 return;
 

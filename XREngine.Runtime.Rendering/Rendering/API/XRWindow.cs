@@ -4,6 +4,7 @@ using Silk.NET.Core.Contexts;
 using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Windowing;
+using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Core;
@@ -11,6 +12,8 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Input;
+using XREngine.Input.Devices;
+using XREngine.Input.Devices.Glfw;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
@@ -71,6 +74,9 @@ namespace XREngine.Rendering
 
         public static event Action<XRWindow, bool>? AnyWindowFocusChanged;
         public event Action<XRWindow, bool>? FocusChanged;
+        public event Action<XRWindow, string[]>? FileDropped;
+        public event Action<XRWindow>? ClosingRequested;
+        public event Action<XRWindow, Vector2D<int>>? FramebufferResized;
         public event Action? RenderViewportsCallback;
         public event Action? PostRenderViewportsCallback;
 
@@ -113,27 +119,13 @@ namespace XREngine.Rendering
         private int _renderOwnerThreadId;
         private long _windowSurfaceSnapshotSequence;
         private long _windowEventSnapshotSequence;
-        private long _windowInputSnapshotSequence;
         private readonly object _windowEventSnapshotSync = new();
-        private readonly object _windowInputSnapshotSync = new();
         private WindowEventSnapshot _latestWindowEventSnapshot;
-        private WindowInputSnapshot _latestWindowInputSnapshot;
+        private readonly WindowInputSnapshotAccumulator _inputSnapshotAccumulator = new();
         private readonly WindowResizeController _resizeController = new();
         private readonly HashSet<IKeyboard> _inputSnapshotKeyboards = [];
         private readonly HashSet<IMouse> _inputSnapshotMice = [];
         private long _pendingFullInternalResizeGeneration;
-        private int _inputKeyDownTransitionCount;
-        private int _inputKeyUpTransitionCount;
-        private int _inputMouseDownTransitionCount;
-        private int _inputMouseUpTransitionCount;
-        private int _inputTextInputCount;
-        private int _hasLastPointerPosition;
-        private float _lastPointerX;
-        private float _lastPointerY;
-        private float _pointerDeltaX;
-        private float _pointerDeltaY;
-        private float _scrollDeltaX;
-        private float _scrollDeltaY;
         private RuntimeWindowBackendKind _windowBackendKind = RuntimeWindowBackendKind.Unknown;
         private RuntimeWindowBackendOwnershipInfo _windowBackendOwnership =
             RuntimeWindowBackendOwnershipInfo.ForBackend(RuntimeWindowBackendKind.Unknown);
@@ -153,15 +145,29 @@ namespace XREngine.Rendering
         #region Properties
 
         /// <summary>
-        /// Silk.NET window instance.
+        /// Thread-affined Silk.NET window instance. Prefer snapshots, mailbox
+        /// helpers, or explicit XRWindow wrapper APIs outside backend-owned code.
         /// </summary>
-        public IWindow Window { get; }
+        public IWindow ThreadAffinedNativeWindow { get; }
+
+        /// <summary>
+        /// Compatibility escape hatch for backend-owned code while ownership
+        /// migration continues. Prefer <see cref="ThreadAffinedNativeWindow"/>
+        /// when raw access is unavoidable and named at the call site.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
+        public IWindow Window => ThreadAffinedNativeWindow;
 
         /// <summary>
         /// Interface to render a scene for this window using the requested graphics API.
         /// </summary>
         public AbstractRenderer Renderer => _renderer;
 
+        /// <summary>
+        /// Thread-affined Silk.NET input context. Gameplay and editor code should
+        /// consume <see cref="LatestWindowInputSnapshot"/>.
+        /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public IInputContext? Input { get; private set; }
 
         public IRuntimeRenderWorld? TargetWorldInstance
@@ -191,6 +197,8 @@ namespace XREngine.Rendering
 
         public string ActualWindowingBackendName => ResolveActualWindowingBackendName();
 
+        public string WindowTitle => Window?.Title ?? string.Empty;
+
         public int NativeWindowThreadId => _nativeWindowThreadId;
 
         public int RenderOwnerThreadId => Volatile.Read(ref _renderOwnerThreadId);
@@ -214,8 +222,7 @@ namespace XREngine.Rendering
         {
             get
             {
-                lock (_windowInputSnapshotSync)
-                    return _latestWindowInputSnapshot;
+                return _inputSnapshotAccumulator.Latest;
             }
         }
 
@@ -251,6 +258,8 @@ namespace XREngine.Rendering
                 return GetCurrentWindowSize();
             }
         }
+
+        public Vector2D<int> WindowSizeSnapshot => EffectiveWindowSize;
 
         public EventList<XRViewport> Viewports => _viewports;
 
@@ -380,6 +389,47 @@ namespace XREngine.Rendering
                 RequestCloseOnRenderThread,
                 $"Viewport.CloseWindow[{GetHashCode()}]",
                 RenderThreadJobKind.RequiresGraphicsContext);
+        }
+
+        public void RequestMouseCapture(bool captured)
+        {
+            if (_isDisposed || _isDisposing)
+                return;
+
+            string reason = captured
+                ? $"XRWindow.CaptureMouse[{GetHashCode()}]"
+                : $"XRWindow.ReleaseMouse[{GetHashCode()}]";
+
+            if (IsNativeEventPumpExternallyOwned)
+            {
+                RuntimeRenderingHostServices.Current.EnqueueWindowThreadTask(
+                    this,
+                    () => SetMouseCaptureOnWindowThread(captured),
+                    reason);
+                return;
+            }
+
+            if (RuntimeEngine.IsRenderThread)
+            {
+                SetMouseCaptureOnWindowThread(captured);
+                return;
+            }
+
+            RuntimeEngine.EnqueueRenderThreadTask(
+                () => SetMouseCaptureOnWindowThread(captured),
+                reason,
+                RenderThreadJobKind.RequiresGraphicsContext);
+        }
+
+        private void SetMouseCaptureOnWindowThread(bool captured)
+        {
+            IInputContext? input = Input;
+            if (input is null || input.Mice.Count == 0)
+                return;
+
+            input.Mice[0].Cursor.CursorMode = captured
+                ? CursorMode.Disabled
+                : CursorMode.Normal;
         }
 
         public void AttachExternalNativeEventPump(int pumpThreadId, string reason)
@@ -597,7 +647,7 @@ namespace XREngine.Rendering
                 _nativeWindowThreadId);
 
             ApplyWindowingBackendPreference(interactiveResizeStrategy);
-            Window = Silk.NET.Windowing.Window.Create(options);
+            ThreadAffinedNativeWindow = Silk.NET.Windowing.Window.Create(options);
             UseNativeTitleBar = useNativeTitleBar;
             WindowVSyncRequested = windowVSyncRequested;
             _windowInitializationProbe = new WindowInitializationProbe(options.Title ?? string.Empty, options.API.API, useNativeTitleBar);
@@ -947,51 +997,13 @@ namespace XREngine.Rendering
             int gamepadCount = input?.Gamepads.Count ?? 0;
             bool isFocused = IsFocused;
             bool isMouseCaptured = ResolveMouseCaptured(input);
-            float pointerX;
-            float pointerY;
-            float pointerDeltaX;
-            float pointerDeltaY;
-            float scrollDeltaX;
-            float scrollDeltaY;
 
-            lock (_windowInputSnapshotSync)
-            {
-                pointerX = _lastPointerX;
-                pointerY = _lastPointerY;
-                pointerDeltaX = _pointerDeltaX;
-                pointerDeltaY = _pointerDeltaY;
-                scrollDeltaX = _scrollDeltaX;
-                scrollDeltaY = _scrollDeltaY;
-                _pointerDeltaX = 0.0f;
-                _pointerDeltaY = 0.0f;
-                _scrollDeltaX = 0.0f;
-                _scrollDeltaY = 0.0f;
-            }
-
-            ulong sequence = (ulong)Interlocked.Increment(ref _windowInputSnapshotSequence);
-            var snapshot = new WindowInputSnapshot(
-                sequence,
+            _ = _inputSnapshotAccumulator.Publish(
                 keyboardCount,
                 mouseCount,
                 gamepadCount,
                 isFocused,
-                isMouseCaptured,
-                pointerX,
-                pointerY,
-                pointerDeltaX,
-                pointerDeltaY,
-                scrollDeltaX,
-                scrollDeltaY,
-                (uint)Math.Max(0, Volatile.Read(ref _inputKeyDownTransitionCount)),
-                (uint)Math.Max(0, Volatile.Read(ref _inputKeyUpTransitionCount)),
-                (uint)Math.Max(0, Volatile.Read(ref _inputMouseDownTransitionCount)),
-                (uint)Math.Max(0, Volatile.Read(ref _inputMouseUpTransitionCount)),
-                (uint)Math.Max(0, Volatile.Read(ref _inputTextInputCount)),
-                System.Diagnostics.Stopwatch.GetTimestamp(),
-                Environment.CurrentManagedThreadId);
-
-            lock (_windowInputSnapshotSync)
-                _latestWindowInputSnapshot = snapshot;
+                isMouseCaptured);
         }
 
         private static bool ResolveMouseCaptured(IInputContext? input)
@@ -1070,6 +1082,71 @@ namespace XREngine.Rendering
             WindowResizeExtents extents = _resizeController.SetAllRenderExtents(extent);
             InteractiveResizeDiagnostics.RecordResizeExtents(extents);
             InteractiveResizeDiagnostics.RecordOutputScale(_resizeController.OutputScale);
+        }
+
+        private void TryCommitPendingFullInternalResizeAfterRender(string reason)
+        {
+            WindowResizeExtents extents = _resizeController.Extents;
+            Vector2D<int> pending = extents.PendingFullInternalExtent;
+            ulong pendingGeneration = extents.PendingFullInternalGeneration;
+            if (pendingGeneration == 0 || pending.X <= 0 || pending.Y <= 0)
+                return;
+
+            if (!AreFullInternalResizeResourcesReady(pending))
+                return;
+
+            if (!_resizeController.TryCommitPendingFullInternalExtent(
+                    pendingGeneration,
+                    pending,
+                    out WindowResizeExtents committedExtents))
+            {
+                return;
+            }
+
+            InteractiveResizeDiagnostics.RecordResizeExtents(committedExtents);
+            InteractiveResizeDiagnostics.RecordOutputScale(_resizeController.OutputScale);
+
+            Debug.Rendering(
+                "[XRWindow] Full-internal resize committed after render resources became active. hash={0} size={1}x{2} generation={3} reason={4}.",
+                GetHashCode(),
+                pending.X,
+                pending.Y,
+                pendingGeneration,
+                reason);
+        }
+
+        private bool AreFullInternalResizeResourcesReady(Vector2D<int> pending)
+        {
+            foreach (XRViewport viewport in Viewports)
+            {
+                if (viewport.InternalWidth != pending.X ||
+                    viewport.InternalHeight != pending.Y)
+                {
+                    return false;
+                }
+
+                var pipelineInstance = viewport.RenderPipelineInstance;
+                if (pipelineInstance.PendingGeneration is not null)
+                    return false;
+
+                var activeGeneration = pipelineInstance.ActiveGeneration;
+                if (activeGeneration is null)
+                    continue;
+
+                int expectedDisplayWidth = Math.Max(1, viewport.Width);
+                int expectedDisplayHeight = Math.Max(1, viewport.Height);
+                uint expectedInternalWidth = (uint)pending.X;
+                uint expectedInternalHeight = (uint)pending.Y;
+                if (activeGeneration.Key.DisplayWidth != (uint)expectedDisplayWidth ||
+                    activeGeneration.Key.DisplayHeight != (uint)expectedDisplayHeight ||
+                    activeGeneration.Key.InternalWidth != expectedInternalWidth ||
+                    activeGeneration.Key.InternalHeight != expectedInternalHeight)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static bool ExtentMatches(Vector2D<int> current, Vector2D<int> expected)
@@ -1173,6 +1250,7 @@ namespace XREngine.Rendering
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.InteractiveResize.DoRender"))
                     Window.DoRender();
 
+                TryCommitPendingFullInternalResizeAfterRender("interactive-resize-render");
                 InteractiveResizeDiagnostics.RecordInteractiveRender(reason);
             }
             catch (Exception ex)
@@ -1794,6 +1872,8 @@ namespace XREngine.Rendering
 
         private void Window_Closing()
         {
+            ClosingRequested?.Invoke(this);
+
             Debug.Out(
                 "[XRWindow] Closing requested hash={0} disposing={1} disposed={2} viewports={3}",
                 GetHashCode(),
@@ -1976,6 +2056,8 @@ namespace XREngine.Rendering
 
         private void FramebufferResizeCallback(Vector2D<int> obj)
         {
+            FramebufferResized?.Invoke(this, obj);
+
             if (Volatile.Read(ref _interactiveResizeInProgress) != 0)
             {
                 if (_interactiveResizeStrategy.Kind == EInteractiveWindowResizeStrategy.Win32ModalLoopTimer)
@@ -2045,7 +2127,7 @@ namespace XREngine.Rendering
 
                 UpdateEffectiveFramebufferSize(obj);
                 PublishWindowSurfaceSnapshot(obj, EffectiveWindowSize, IsInteractiveResizeInProgress);
-                RecordAllRenderExtents(obj);
+                RecordPresentationAndOutputExtent(obj);
 
                 Debug.RenderingEvery(
                     $"XRWindow.FramebufferResize.Apply.{GetHashCode()}",
@@ -2149,12 +2231,7 @@ namespace XREngine.Rendering
             mouse.MouseMove += InputSnapshot_MouseMove;
             mouse.Scroll += InputSnapshot_Scroll;
 
-            lock (_windowInputSnapshotSync)
-            {
-                _lastPointerX = mouse.Position.X;
-                _lastPointerY = mouse.Position.Y;
-                _hasLastPointerPosition = 1;
-            }
+            _inputSnapshotAccumulator.PrimePointerPosition(mouse.Position.X, mouse.Position.Y);
         }
 
         private void UnsubscribeInputSnapshotMouse(IMouse mouse)
@@ -2169,45 +2246,48 @@ namespace XREngine.Rendering
         }
 
         private void InputSnapshot_KeyDown(IKeyboard keyboard, Key key, int scanCode)
-            => Interlocked.Increment(ref _inputKeyDownTransitionCount);
+            => _inputSnapshotAccumulator.RecordKeyDown(GlfwKeyboard.Conv(key));
 
         private void InputSnapshot_KeyUp(IKeyboard keyboard, Key key, int scanCode)
-            => Interlocked.Increment(ref _inputKeyUpTransitionCount);
+            => _inputSnapshotAccumulator.RecordKeyUp(GlfwKeyboard.Conv(key));
 
         private void InputSnapshot_KeyChar(IKeyboard keyboard, char character)
-            => Interlocked.Increment(ref _inputTextInputCount);
+            => _inputSnapshotAccumulator.RecordTextInput(character);
 
         private void InputSnapshot_MouseDown(IMouse mouse, MouseButton button)
-            => Interlocked.Increment(ref _inputMouseDownTransitionCount);
-
-        private void InputSnapshot_MouseUp(IMouse mouse, MouseButton button)
-            => Interlocked.Increment(ref _inputMouseUpTransitionCount);
-
-        private void InputSnapshot_MouseMove(IMouse mouse, Vector2 position)
         {
-            lock (_windowInputSnapshotSync)
-            {
-                if (_hasLastPointerPosition != 0)
-                {
-                    _pointerDeltaX += position.X - _lastPointerX;
-                    _pointerDeltaY += position.Y - _lastPointerY;
-                }
-                else
-                {
-                    _hasLastPointerPosition = 1;
-                }
-
-                _lastPointerX = position.X;
-                _lastPointerY = position.Y;
-            }
+            if (TryMapMouseButton(button, out EMouseButton engineButton))
+                _inputSnapshotAccumulator.RecordMouseDown(engineButton);
         }
 
-        private void InputSnapshot_Scroll(IMouse mouse, ScrollWheel wheel)
+        private void InputSnapshot_MouseUp(IMouse mouse, MouseButton button)
         {
-            lock (_windowInputSnapshotSync)
+            if (TryMapMouseButton(button, out EMouseButton engineButton))
+                _inputSnapshotAccumulator.RecordMouseUp(engineButton);
+        }
+
+        private void InputSnapshot_MouseMove(IMouse mouse, Vector2 position)
+            => _inputSnapshotAccumulator.RecordPointerPosition(position.X, position.Y);
+
+        private void InputSnapshot_Scroll(IMouse mouse, ScrollWheel wheel)
+            => _inputSnapshotAccumulator.RecordScroll(wheel.X, wheel.Y);
+
+        private static bool TryMapMouseButton(MouseButton button, out EMouseButton engineButton)
+        {
+            switch (button)
             {
-                _scrollDeltaX += wheel.X;
-                _scrollDeltaY += wheel.Y;
+                case MouseButton.Left:
+                    engineButton = EMouseButton.LeftClick;
+                    return true;
+                case MouseButton.Right:
+                    engineButton = EMouseButton.RightClick;
+                    return true;
+                case MouseButton.Middle:
+                    engineButton = EMouseButton.MiddleClick;
+                    return true;
+                default:
+                    engineButton = default;
+                    return false;
             }
         }
 
@@ -2222,6 +2302,7 @@ namespace XREngine.Rendering
                 return;
 
             w.FramebufferResize += FramebufferResizeCallback;
+            w.FileDrop += OnFileDropped;
             w.Render += RenderCallback;
             w.FocusChanged += OnFocusChanged;
             w.Closing += Window_Closing;
@@ -2243,6 +2324,7 @@ namespace XREngine.Rendering
                 _interactiveResizeStrategy.Uninstall();
 
             w.FramebufferResize -= FramebufferResizeCallback;
+            w.FileDrop -= OnFileDropped;
             w.Render -= RenderCallback;
             w.FocusChanged -= OnFocusChanged;
             w.Closing -= Window_Closing;
@@ -2253,6 +2335,9 @@ namespace XREngine.Rendering
             RuntimeEngine.PlayMode.PostEnterPlay -= OnPlayModeTransition;
             RuntimeEngine.PlayMode.PreExitPlay -= OnPlayModeTransition;
         }
+
+        private void OnFileDropped(string[] paths)
+            => FileDropped?.Invoke(this, paths);
 
         private void OnPlayModeTransition()
         {
@@ -2357,6 +2442,8 @@ namespace XREngine.Rendering
                     WarnIfNotNativeWindowThread("Window.DoEvents.EndTick");
                     Window.DoEvents();
                 }
+
+                PublishWindowInputSnapshot();
             }
         }
 
@@ -2382,6 +2469,7 @@ namespace XREngine.Rendering
                 using var eventsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.DoEvents");
                 WarnIfNotNativeWindowThread("Window.DoEvents.RenderFrame");
                 Window.DoEvents();
+                PublishWindowInputSnapshot();
             }
             RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.DoEvents", phaseStart);
 
@@ -2422,6 +2510,13 @@ namespace XREngine.Rendering
                 Window.DoRender();
             }
             RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.DoRender", phaseStart);
+
+            if (_isDisposed || _isDisposing)
+                return;
+
+            phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            TryCommitPendingFullInternalResizeAfterRender("render-frame");
+            RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.CommitPendingFullInternalResize", phaseStart);
 
             if (_isDisposed || _isDisposing)
                 return;

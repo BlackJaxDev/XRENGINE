@@ -795,6 +795,11 @@ public interface IRuntimeRenderingHostServices
     void EnqueueRenderThreadTask(Action task, string reason, RenderThreadJobKind renderThreadKind);
 
     /// <summary>
+    /// Invokes work on the host render thread and returns its result.
+    /// </summary>
+    T InvokeRenderThreadTask<T>(Func<T> task, string reason, RenderThreadJobKind renderThreadKind = RenderThreadJobKind.Unknown);
+
+    /// <summary>
     /// Queues work for execution on the host application/update thread. Use this for
     /// non-GPU work (scene/editor/networking) so it does not stall the render thread.
     /// </summary>

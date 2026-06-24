@@ -449,7 +449,7 @@ public static partial class EditorImGuiUI
     {
         try
         {
-            string? title = window.Window?.Title;
+            string? title = window.WindowTitle;
             if (!string.IsNullOrWhiteSpace(title))
                 return title;
         }
