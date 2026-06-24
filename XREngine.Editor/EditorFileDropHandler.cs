@@ -29,7 +29,7 @@ internal static class EditorFileDropHandler
     {
         try
         {
-            window.Window.FileDrop += paths => HandleFileDrop(window, paths);
+            window.FileDropped += HandleFileDrop;
         }
         catch (Exception ex)
         {

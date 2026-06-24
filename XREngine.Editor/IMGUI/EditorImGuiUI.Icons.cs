@@ -6,6 +6,7 @@ using SixLabors.ImageSharp.PixelFormats;
 using SkiaSharp;
 using Svg.Skia;
 using XREngine.Data.Rendering;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
@@ -174,7 +175,10 @@ public static partial class EditorImGuiUI
 
         if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
         {
-            var apiTexture = glRenderer.GenericToAPI<GLTexture2D>(texture);
+            var apiTexture = EditorRenderThread.Invoke(
+                () => glRenderer.GenericToAPI<GLTexture2D>(texture),
+                "EditorIcons.ResolveOpenGLIconTexture",
+                RenderThreadJobKind.TextureUpload);
             if (apiTexture is null)
                 return false;
 
@@ -208,7 +212,10 @@ public static partial class EditorImGuiUI
 
         if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
         {
-            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            IntPtr textureId = EditorRenderThread.Invoke(
+                () => vkRenderer.RegisterImGuiTexture(texture),
+                "EditorIcons.RegisterVulkanIconTexture",
+                RenderThreadJobKind.TextureUpload);
             if (textureId == IntPtr.Zero)
                 return false;
 

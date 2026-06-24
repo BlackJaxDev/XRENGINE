@@ -126,7 +126,9 @@ public static partial class InspectorPropertyEditors
         AddInfoLabel(card, $"Binding ID: {bindingIdText}");
         AddInfoLabel(card, $"Generated: {FormatBool(glObject.IsGenerated)}");
 
-        var rendererTitle = glObject.Renderer.XRWindow.Window?.Title ?? "Unknown Window";
+        var rendererTitle = glObject.Renderer.XRWindow.WindowTitle;
+        if (string.IsNullOrWhiteSpace(rendererTitle))
+            rendererTitle = "Unknown Window";
         AddInfoLabel(card, $"Renderer: {rendererTitle}");
 
         var data = (glObject as IRenderAPIObject)?.Data;

@@ -7,6 +7,7 @@ using ImGuiNET;
 using XREngine;
 using XREngine.Core.Files;
 using XREngine.Data.Rendering;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
@@ -198,7 +199,10 @@ public sealed class XRTexture2DInspector : IXRAssetInspector
 
         if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
         {
-            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            IntPtr textureId = EditorRenderThread.Invoke(
+                () => vkRenderer.RegisterImGuiTexture(texture),
+                "XRTexture2DInspector.RegisterVulkanPreviewTexture",
+                RenderThreadJobKind.TextureUpload);
             if (textureId == IntPtr.Zero)
             {
                 failureReason = "Texture not uploaded";
@@ -210,7 +214,10 @@ public sealed class XRTexture2DInspector : IXRAssetInspector
 
         if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
         {
-            var apiTexture = glRenderer.GetOrCreateAPIRenderObject(texture, generateNow: true) as GLTexture2D;
+            var apiTexture = EditorRenderThread.Invoke(
+                () => glRenderer.GetOrCreateAPIRenderObject(texture, generateNow: true),
+                "XRTexture2DInspector.ResolveOpenGLPreviewTexture",
+                RenderThreadJobKind.TextureUpload) as GLTexture2D;
             if (apiTexture is null)
             {
                 failureReason = "Texture not uploaded";

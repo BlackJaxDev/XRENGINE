@@ -570,3 +570,21 @@ Keep the full-overdraw pass mono-only (`!Stereo`) and after post-process resourc
 `DLAA` is a first-class AA mode in the default render pipeline. It requests the existing NVIDIA DLSS vendor path at native internal resolution, bypasses the in-engine FXAA/SMAA/TSR post-AA chain, and fails visibly when the DLSS runtime or compatible NVIDIA path is unavailable.
 
 `MFAA` is not exposed as a selectable engine AA mode. NVIDIA MFAA is a driver-side enhancement for MSAA rather than an OpenGL/Vulkan render-pipeline pass the engine can require. Use `MSAA` in XRENGINE and enable MFAA in the NVIDIA driver when testing that path; do not label plain MSAA as MFAA in engine diagnostics.
+
+---
+
+## 28. Editor Preview GPU Handles
+
+**Rule:** Editor preview and debug UI code must resolve renderer-specific texture
+handles through the render-thread invocation service.
+
+Texture/material/model/light/scene-panel previews may still branch on OpenGL
+versus Vulkan because ImGui needs backend-specific texture handles. The
+GPU-affine work inside those branches must use `EditorRenderThread.Invoke(...)`,
+which forwards to `IRuntimeRenderingHostServices.InvokeRenderThreadTask<T>`.
+That includes Vulkan `RegisterImGuiTexture(...)` calls and OpenGL
+`GetOrCreateAPIRenderObject(...)` / `GenericToAPI<T>(...)` wrapper creation.
+
+Pure inspection of an already-resolved wrapper may stay local when the caller is
+already on the render thread, but new preview/readback helpers should keep the
+renderer mutation/readback setup behind the same service boundary.

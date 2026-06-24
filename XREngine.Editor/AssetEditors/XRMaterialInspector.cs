@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Editor;
 using XREngine.Data.Rendering;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
@@ -1530,7 +1531,10 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
 
         if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
         {
-            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            IntPtr textureId = EditorRenderThread.Invoke(
+                () => vkRenderer.RegisterImGuiTexture(texture),
+                "XRMaterialInspector.RegisterVulkanPreviewTexture",
+                RenderThreadJobKind.TextureUpload);
             if (textureId == IntPtr.Zero)
             {
                 failureReason = "Texture not uploaded";
@@ -1549,7 +1553,10 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
                 return false;
             }
 
-            var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
+            var apiTexture = EditorRenderThread.Invoke(
+                () => renderer.GenericToAPI<GLTexture2D>(tex2D),
+                "XRMaterialInspector.ResolveOpenGLPreviewTexture",
+                RenderThreadJobKind.TextureUpload);
             if (apiTexture is null)
             {
                 failureReason = "Texture not uploaded";

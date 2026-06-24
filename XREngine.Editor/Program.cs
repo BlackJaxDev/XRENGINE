@@ -637,16 +637,22 @@ internal class Program
 
         s_startupWindow = window;
 
-        if (window.Renderer is OpenGLRenderer glRenderer)
-        {
-            glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(
-                StartupMeshGenerationBudgetMs,
-                StartupMeshGenerationNormalRendererCap,
-                StartupMeshGenerationPriorityRendererCap);
-            glRenderer.UploadQueue.BoostBudgetUntilDrained(StartupUploadBudgetMs);
-            WriteBootstrapTrace(
-                $"Enabled GL startup warmup budgets: mesh={StartupMeshGenerationBudgetMs:F0}ms/{StartupMeshGenerationNormalRendererCap} normal renderers, upload={StartupUploadBudgetMs:F0}ms.");
-        }
+        Engine.EnqueueRenderThreadTask(
+            () =>
+            {
+                if (window.Renderer is not OpenGLRenderer glRenderer)
+                    return;
+
+                glRenderer.MeshGenerationQueue.BoostBudgetUntilDrained(
+                    StartupMeshGenerationBudgetMs,
+                    StartupMeshGenerationNormalRendererCap,
+                    StartupMeshGenerationPriorityRendererCap);
+                glRenderer.UploadQueue.BoostBudgetUntilDrained(StartupUploadBudgetMs);
+                WriteBootstrapTrace(
+                    $"Enabled GL startup warmup budgets: mesh={StartupMeshGenerationBudgetMs:F0}ms/{StartupMeshGenerationNormalRendererCap} normal renderers, upload={StartupUploadBudgetMs:F0}ms.");
+            },
+            "Editor.StartupWarmupBudgets",
+            RenderThreadJobKind.RequiresGraphicsContext);
 
         window.PostRenderViewportsCallback += OnStartupPostRenderViewports;
     }

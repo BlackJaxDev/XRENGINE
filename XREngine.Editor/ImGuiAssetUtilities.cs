@@ -14,6 +14,7 @@ using XREngine;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Diagnostics;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.OpenGL;
@@ -906,7 +907,10 @@ internal static class ImGuiAssetUtilities
 
         if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
         {
-            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            IntPtr textureId = EditorRenderThread.Invoke(
+                () => vkRenderer.RegisterImGuiTexture(texture),
+                "ImGuiAssetUtilities.RegisterVulkanPreviewTexture",
+                RenderThreadJobKind.TextureUpload);
             if (textureId == IntPtr.Zero)
             {
                 failureReason = "Texture not uploaded";
@@ -917,7 +921,10 @@ internal static class ImGuiAssetUtilities
         }
         else if (TryGetOpenGLRenderer() is OpenGLRenderer renderer)
         {
-            var apiTexture = renderer.GenericToAPI<GLTexture2D>(texture);
+            var apiTexture = EditorRenderThread.Invoke(
+                () => renderer.GenericToAPI<GLTexture2D>(texture),
+                "ImGuiAssetUtilities.ResolveOpenGLPreviewTexture",
+                RenderThreadJobKind.TextureUpload);
             if (apiTexture is null)
             {
                 failureReason = "Texture not uploaded";

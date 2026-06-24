@@ -173,8 +173,8 @@ namespace XREngine.Rendering
         WindowInputSnapshot IRuntimeLocalPlayerViewport.InputSnapshot
             => Window?.LatestWindowInputSnapshot ?? default;
 
-        object? IRuntimeLocalPlayerViewport.GetThreadAffinedDeviceSourceForBinding()
-            => Window?.Input;
+        void IRuntimeLocalPlayerViewport.RequestMouseCapture(bool captured)
+            => Window?.RequestMouseCapture(captured);
 
         /// <summary>
         /// Optional override for the world instance to render.

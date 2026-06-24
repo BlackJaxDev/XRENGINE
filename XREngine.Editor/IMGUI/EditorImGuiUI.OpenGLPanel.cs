@@ -161,7 +161,7 @@ public static partial class EditorImGuiUI
                 string windowTitle;
                 try
                 {
-                    windowTitle = window.Window?.Title ?? string.Empty;
+                    windowTitle = window.WindowTitle;
                 }
                 catch
                 {

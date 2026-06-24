@@ -9,6 +9,7 @@ using XREngine.Components.Lights;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.Lightmapping;
 using XREngine.Rendering.OpenGL;
@@ -1543,7 +1544,10 @@ internal static class LightComponentEditorShared
 
         if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
         {
-            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            IntPtr textureId = EditorRenderThread.Invoke(
+                () => vkRenderer.RegisterImGuiTexture(texture),
+                "LightComponentEditor.RegisterVulkanPreviewTexture",
+                RenderThreadJobKind.TextureUpload);
             if (textureId == IntPtr.Zero)
             {
                 failureReason = "Texture not uploaded to GPU.";
@@ -1564,14 +1568,20 @@ internal static class LightComponentEditorShared
         switch (texture)
         {
             case XRTexture2D tex2D:
-                var glTexture2D = renderer.GenericToAPI<GLTexture2D>(tex2D);
+                var glTexture2D = EditorRenderThread.Invoke(
+                    () => renderer.GenericToAPI<GLTexture2D>(tex2D),
+                    "LightComponentEditor.ResolveOpenGLPreviewTexture2D",
+                    RenderThreadJobKind.TextureUpload);
                 if (!TryGetTextureHandle(renderer, glTexture2D, out handle, out uint tex2DBinding, out failureReason))
                     return false;
 
                 ApplySingleChannelPreviewSwizzle(renderer, tex2D.SizedInternalFormat, glTexture2D, tex2DBinding);
                 return true;
             case XRTexture2DView tex2DView:
-                var glTexture2DView = renderer.GenericToAPI<GLTextureView>(tex2DView);
+                var glTexture2DView = EditorRenderThread.Invoke(
+                    () => renderer.GenericToAPI<GLTextureView>(tex2DView),
+                    "LightComponentEditor.ResolveOpenGLPreviewTexture2DView",
+                    RenderThreadJobKind.TextureUpload);
                 if (!TryGetTextureHandle(renderer, glTexture2DView, out handle, out uint tex2DViewBinding, out failureReason))
                     return false;
 
@@ -1581,7 +1591,10 @@ internal static class LightComponentEditorShared
             case XRTexture2DArrayView tex2DArrayView:
                 pixelSize = new Vector2(MathF.Max(1.0f, tex2DArrayView.Width), MathF.Max(1.0f, tex2DArrayView.Height));
                 displaySize = GetPreviewSize(pixelSize);
-                var glTexture2DArrayView = renderer.GenericToAPI<GLTextureView>(tex2DArrayView);
+                var glTexture2DArrayView = EditorRenderThread.Invoke(
+                    () => renderer.GenericToAPI<GLTextureView>(tex2DArrayView),
+                    "LightComponentEditor.ResolveOpenGLPreviewTexture2DArrayView",
+                    RenderThreadJobKind.TextureUpload);
                 if (!TryGetTextureHandle(renderer, glTexture2DArrayView, out handle, out uint tex2DArrayViewBinding, out failureReason))
                     return false;
 
@@ -1592,7 +1605,10 @@ internal static class LightComponentEditorShared
                 float extent = MathF.Max(1.0f, cubeView.ViewedTexture.Extent);
                 pixelSize = new Vector2(extent, extent);
                 displaySize = GetPreviewSize(pixelSize);
-                var glTextureView = renderer.GenericToAPI<GLTextureView>(cubeView);
+                var glTextureView = EditorRenderThread.Invoke(
+                    () => renderer.GenericToAPI<GLTextureView>(cubeView),
+                    "LightComponentEditor.ResolveOpenGLPreviewCubeView",
+                    RenderThreadJobKind.TextureUpload);
                 if (!TryGetTextureHandle(renderer, glTextureView, out handle, out uint cubeViewBinding, out failureReason))
                     return false;
 

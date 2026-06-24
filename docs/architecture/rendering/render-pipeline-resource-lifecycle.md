@@ -88,6 +88,14 @@ callback from Silk's repaint path while `DoEvents()` is inside that modal loop.
 The workaround is window-pump level and remains renderer-independent: OpenGL
 and Vulkan still use their normal render and present paths.
 
+`XRWindow` tracks resize with separate native, presentation/output, and full
+internal extents. Interactive resize may update presentation/output extents
+without immediately rebuilding the full internal render graph. A pending full
+internal generation is committed only after the matching viewport internal
+resolution and render-pipeline generation are active; stale pending generations
+are rejected. This keeps live window borders responsive while avoiding a
+partially committed registry or stale exact-size diagnostics.
+
 ## Default Pipeline Coverage
 
 `DefaultRenderPipeline` declares the stable mono desktop core graph resources:

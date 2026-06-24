@@ -6,6 +6,7 @@ using XREngine;
 using XREngine.Components;
 using XREngine.Input;
 using XREngine.Input.Devices;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
@@ -343,10 +344,12 @@ public static partial class EditorImGuiUI
                     foreach (var window in windows)
                     {
                         var mailbox = Engine.WindowThreadMailboxDiagnostics;
-                        string windowTitle = window.Window?.Title ?? "<unnamed window>";
+                        string windowTitle = string.IsNullOrWhiteSpace(window.WindowTitle)
+                            ? "<unnamed window>"
+                            : window.WindowTitle;
                         if (ImGui.TreeNode($"[W] {windowTitle}##Window{window.GetHashCode()}"))
                         {
-                            var size = window.Window?.Size ?? new Silk.NET.Maths.Vector2D<int>(0, 0);
+                            var size = window.WindowSizeSnapshot;
                             ImGui.Text($"Size: {size.X}x{size.Y}");
                             ImGui.Text($"Interactive Resize: {window.InteractiveResizeStrategy} ({window.ActualWindowingBackendName})");
                             ImGui.Text($"Ownership: windowThread={window.NativeWindowThreadId} renderOwner={window.RenderOwnerThreadId} backend={window.WindowBackendKind}");
@@ -523,7 +526,10 @@ public static partial class EditorImGuiUI
 
             if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
             {
-                IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+                IntPtr textureId = EditorRenderThread.Invoke(
+                    () => vkRenderer.RegisterImGuiTexture(texture),
+                    "StatePanel.RegisterVulkanPreviewTexture",
+                    RenderThreadJobKind.TextureUpload);
                 if (textureId == IntPtr.Zero)
                 {
                     failureReason = "Texture not uploaded";
@@ -539,7 +545,10 @@ public static partial class EditorImGuiUI
                 switch (texture)
                 {
                     case XRTexture2D tex2D:
-                        var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
+                        var apiTexture = EditorRenderThread.Invoke(
+                            () => renderer.GenericToAPI<GLTexture2D>(tex2D),
+                            "StatePanel.ResolveOpenGLPreviewTexture2D",
+                            RenderThreadJobKind.TextureUpload);
                         if (apiTexture is null)
                         {
                             failureReason = "Texture not uploaded";

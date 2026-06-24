@@ -195,9 +195,30 @@ namespace XREngine.Input.Devices
             GetDevices(input, vrActions);
             TryRegisterInput();
         }
+
+        public void UpdateDevices(
+            BaseKeyboard? keyboard,
+            BaseMouse? mouse,
+            BaseGamePad? gamepad,
+            Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>>? vrActions)
+        {
+            TryUnregisterInput();
+            AttachInterfaceToDevices(false);
+            Keyboard = keyboard;
+            Mouse = mouse;
+            Gamepad = gamepad;
+            OpenVRActions = vrActions;
+            AttachInterfaceToDevices(true);
+            TryRegisterInput();
+        }
+
         private void GetDevices(IInputContext? context, Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>>? vrActions)
         {
             AttachInterfaceToDevices(false);
+            Gamepad = null;
+            Keyboard = null;
+            Mouse = null;
+            OpenVRActions = vrActions;
 
             if (context is null)
                 return;
@@ -224,8 +245,6 @@ namespace XREngine.Input.Devices
 
             if (mice.Count > 0 && _localPlayerIndex == 0)
                 Mouse = new GlfwMouse(mice[0]);
-
-            OpenVRActions = vrActions;
 
             AttachInterfaceToDevices(true);
         }

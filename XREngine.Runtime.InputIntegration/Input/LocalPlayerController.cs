@@ -2,7 +2,6 @@
 using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
-using Silk.NET.Input;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Runtime.InputIntegration
@@ -19,6 +18,9 @@ namespace XREngine.Runtime.InputIntegration
             get => _index;
             internal set => SetField(ref _index, value);
         }
+
+        private readonly WindowSnapshotKeyboard _snapshotKeyboard = new(0);
+        private readonly WindowSnapshotMouse _snapshotMouse = new(0);
 
         private IRuntimeLocalPlayerViewport? _viewport = null;
         [YamlIgnore]
@@ -81,6 +83,11 @@ namespace XREngine.Runtime.InputIntegration
             switch (propName)
             {
                 case nameof(Viewport):
+                    if (prev is IRuntimeLocalPlayerViewport previousViewport)
+                        previousViewport.RequestMouseCapture(false);
+
+                    UpdateViewportCamera();
+                    break;
                 case nameof(ControlledPawn):
                 case nameof(Input):
                     UpdateViewportCamera();
@@ -101,15 +108,59 @@ namespace XREngine.Runtime.InputIntegration
             {
                 System.Diagnostics.Debug.WriteLine($"[LocalPlayerController] UpdateViewportCamera: VP={_viewport.GetHashCode()} Pawn={_controlledPawn?.Name ?? "<null>"}");
                 _viewport.RefreshControlledPawnCamera(_controlledPawn);
-                Input.UpdateDevices(_viewport.GetThreadAffinedDeviceSourceForBinding() as IInputContext, RuntimeVrInputServices.Actions);
+                RefreshViewportInputBinding();
             }
             else
             {
                 // Viewport not yet assigned — this is normal during early startup
                 // when possession happens before window/viewport creation. The camera
                 // will be bound once the Viewport property is set.
-                Input.UpdateDevices(null, RuntimeVrInputServices.Actions);
+                _snapshotMouse.SetCaptureRequest(null);
+                Input.UpdateDevices(
+                    keyboard: null,
+                    mouse: null,
+                    gamepad: null,
+                    RuntimeVrInputServices.Actions);
             }
+        }
+
+        public void RefreshViewportInputBinding()
+        {
+            if (_viewport is null)
+            {
+                _snapshotMouse.SetCaptureRequest(null);
+                Input.UpdateDevices(
+                    keyboard: null,
+                    mouse: null,
+                    gamepad: null,
+                    RuntimeVrInputServices.Actions);
+                return;
+            }
+
+            ApplyLatestInputSnapshot();
+            bool keyboardAndMousePlayer = _index == ELocalPlayerIndex.One;
+            _snapshotMouse.SetCaptureRequest(captured => _viewport?.RequestMouseCapture(captured));
+
+            if (keyboardAndMousePlayer)
+                _viewport.RequestMouseCapture(_snapshotMouse.HideCursor);
+            else
+                _viewport.RequestMouseCapture(false);
+
+            Input.UpdateDevices(
+                keyboardAndMousePlayer ? _snapshotKeyboard : null,
+                keyboardAndMousePlayer ? _snapshotMouse : null,
+                gamepad: null,
+                RuntimeVrInputServices.Actions);
+        }
+
+        private void ApplyLatestInputSnapshot()
+        {
+            if (_viewport is null || _index != ELocalPlayerIndex.One)
+                return;
+
+            WindowInputSnapshot snapshot = _viewport.InputSnapshot;
+            _snapshotKeyboard.ApplySnapshot(snapshot);
+            _snapshotMouse.ApplySnapshot(snapshot);
         }
 
         /// <summary>
@@ -127,6 +178,8 @@ namespace XREngine.Runtime.InputIntegration
         {
             if (Input is not LocalInputInterface localInput)
                 return;
+
+            ApplyLatestInputSnapshot();
 
             if (isUIInputCaptured)
             {
@@ -151,6 +204,7 @@ namespace XREngine.Runtime.InputIntegration
         {
             base.OnDestroying();
             RuntimeVrInputServices.ActionsChanged -= OnActionsChanged;
+            _snapshotMouse.SetCaptureRequest(null);
             Viewport = null;
         }
     }

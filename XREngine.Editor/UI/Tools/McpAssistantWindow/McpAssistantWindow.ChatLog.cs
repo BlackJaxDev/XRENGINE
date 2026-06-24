@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Editor.Mcp;
+using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
@@ -463,13 +464,19 @@ public sealed partial class McpAssistantWindow
                 {
                     if (renderer is VulkanRenderer vkRenderer)
                     {
-                        IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+                        IntPtr textureId = EditorRenderThread.Invoke(
+                            () => vkRenderer.RegisterImGuiTexture(texture),
+                            "McpAssistantWindow.RegisterVulkanPreviewTexture",
+                            RenderThreadJobKind.TextureUpload);
                         if (textureId != IntPtr.Zero)
                             handle = (nint)textureId;
                     }
                     else if (renderer is OpenGLRenderer glRenderer)
                     {
-                        var apiTexture = glRenderer.GenericToAPI<GLTexture2D>(texture);
+                        var apiTexture = EditorRenderThread.Invoke(
+                            () => glRenderer.GenericToAPI<GLTexture2D>(texture),
+                            "McpAssistantWindow.ResolveOpenGLPreviewTexture",
+                            RenderThreadJobKind.TextureUpload);
                         if (apiTexture is not null)
                         {
                             uint binding = apiTexture.BindingId;
