@@ -662,8 +662,25 @@ public sealed class VulkanP0ValidationTests
         unitTestingUi.ShouldContain("text.RenderCommand2D.ZIndex = int.MaxValue;");
         unitTestingUi.ShouldContain("text.OutlineColor = new ColorF4(0.0f, 0.0f, 0.0f, 1.0f);");
         unitTestingUi.ShouldContain("text.OutlineThickness = 2.0f;");
+        unitTestingUi.ShouldContain("text.OutlineAffectsSpacing = true;");
         unitTestingUi.ShouldContain("textTransform.Width = FpsOverlayWidth;");
         unitTestingUi.ShouldContain("textTransform.Height = FpsOverlayHeight;");
+
+        string textComponent = ReadWorkspaceFile("XREngine/Scene/Components/UI/Text/UITextComponent.cs");
+        textComponent.ShouldContain("public bool OutlineAffectsSpacing");
+        textComponent.ShouldContain("float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;");
+        textComponent.ShouldContain("float glyphSpacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);");
+        textComponent.ShouldContain("DefaultLineSpacing + outlineSpacing");
+        textComponent.ShouldContain("private float ResolveLayoutSpacingForOutputPixels(float outputSpacing)");
+        textComponent.ShouldContain("return outputSpacing * layoutEmSize / resolvedFontSize;");
+        textComponent.ShouldContain("case nameof(OutlineAffectsSpacing):");
+
+        string textRenderable = ReadWorkspaceFile("XREngine/Scene/Components/UI/Text/UIText.cs");
+        textRenderable.ShouldContain("public bool OutlineAffectsSpacing");
+        textRenderable.ShouldContain("float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;");
+        textRenderable.ShouldContain("float glyphSpacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);");
+        textRenderable.ShouldContain("DefaultLineSpacing + outlineSpacing");
+        textRenderable.ShouldContain("private float ResolveLayoutSpacingForOutputPixels(float outputSpacing)");
 
         string fontGlyphSet = ReadWorkspaceFile("XRENGINE/Core/FontGlyphSet.cs");
         fontGlyphSet.ShouldNotContain("LoadDefaultUIMonospaceFontBitmap");
@@ -678,6 +695,37 @@ public sealed class VulkanP0ValidationTests
         batchedVertexShader.ShouldContain("glyphMin -= expand * glyphDirection;");
         batchedVertexShader.ShouldContain("glyphSize += expand * 2.0 * glyphDirection;");
         batchedVertexShader.ShouldContain("FragUV0 = mix(uvMin, uvMax, corner);");
+
+        string textVertexShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/Text.vs");
+        textVertexShader.ShouldContain("uniform vec4 OutlineColor;");
+        textVertexShader.ShouldContain("uniform float OutlineThickness;");
+        textVertexShader.ShouldContain("OutlineThickness > 0.0 && OutlineColor.a > 0.0");
+        textVertexShader.ShouldContain("vec2 glyphDirection = vec2(");
+        textVertexShader.ShouldContain("glyphSize.y < 0.0 ? -1.0 : 1.0");
+        textVertexShader.ShouldContain("glyphMin -= expand * glyphDirection;");
+        textVertexShader.ShouldContain("glyphSize += expand * 2.0 * glyphDirection;");
+        textVertexShader.ShouldContain("FragUV0 = mix(uvMin, uvMax, corner);");
+
+        string textRotatableVertexShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/TextRotatable.vs");
+        textRotatableVertexShader.ShouldContain("uniform vec4 OutlineColor;");
+        textRotatableVertexShader.ShouldContain("uniform float OutlineThickness;");
+        textRotatableVertexShader.ShouldContain("OutlineThickness > 0.0 && OutlineColor.a > 0.0");
+        textRotatableVertexShader.ShouldContain("glyphSize += expand * 2.0 * glyphDirection;");
+        textRotatableVertexShader.ShouldContain("FragUV0 = mix(uvMin, uvMax, corner);");
+
+        string textStereoVertexShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/TextStereo.vs");
+        textStereoVertexShader.ShouldContain("uniform vec4 OutlineColor;");
+        textStereoVertexShader.ShouldContain("uniform float OutlineThickness;");
+        textStereoVertexShader.ShouldContain("OutlineThickness > 0.0 && OutlineColor.a > 0.0");
+        textStereoVertexShader.ShouldContain("glyphSize += expand * 2.0 * glyphDirection;");
+        textStereoVertexShader.ShouldContain("FragUV0 = mix(uvMin, uvMax, corner);");
+
+        string textRotatableStereoVertexShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/TextRotatableStereo.vs");
+        textRotatableStereoVertexShader.ShouldContain("uniform vec4 OutlineColor;");
+        textRotatableStereoVertexShader.ShouldContain("uniform float OutlineThickness;");
+        textRotatableStereoVertexShader.ShouldContain("OutlineThickness > 0.0 && OutlineColor.a > 0.0");
+        textRotatableStereoVertexShader.ShouldContain("glyphSize += expand * 2.0 * glyphDirection;");
+        textRotatableStereoVertexShader.ShouldContain("FragUV0 = mix(uvMin, uvMax, corner);");
 
         string batchedStereoMv2VertexShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/UITextBatchedStereoMV2.vs");
         batchedStereoMv2VertexShader.ShouldContain("uniform int TextRenderLayer_VTX;");
@@ -694,12 +742,20 @@ public sealed class VulkanP0ValidationTests
         batchedFragmentShader.ShouldContain("TextRenderLayer == TextRenderLayerFill");
         batchedFragmentShader.ShouldContain("vec2 uvDx = dFdx(FragUV0);");
         batchedFragmentShader.ShouldContain("vec2 uvDy = dFdy(FragUV0);");
+        batchedFragmentShader.ShouldContain("const float StrokeDiagonal = 0.70710678118;");
+        batchedFragmentShader.ShouldContain("const float StrokeDirA = 0.92387953251;");
+        batchedFragmentShader.ShouldContain("const float StrokeDirB = 0.38268343236;");
+        batchedFragmentShader.ShouldContain("float SampleStrokeRing(vec2 uv, vec2 uvDx, vec2 uvDy, float ringRadius)");
+        batchedFragmentShader.ShouldContain("ringRadius * StrokeDiagonal");
+        batchedFragmentShader.ShouldContain("ringRadius * StrokeDirA");
+        batchedFragmentShader.ShouldContain("ringRadius * StrokeDirB");
         batchedFragmentShader.ShouldContain("uvDx * sampleOffset.x + uvDy * sampleOffset.y");
-        batchedFragmentShader.ShouldContain("distanceSquared <= radiusSquared");
-        batchedFragmentShader.ShouldContain("const float FillCoverageGuard = 0.02;");
-        batchedFragmentShader.ShouldContain("float OutsideGlyphMask(float fill)");
-        batchedFragmentShader.ShouldContain("smoothstep(0.0, FillCoverageGuard, fill)");
-        batchedFragmentShader.ShouldContain("outlineMask = stroke * OutsideGlyphMask(fill);");
+        batchedFragmentShader.ShouldNotContain("distanceSquared <= radiusSquared");
+        batchedFragmentShader.ShouldContain("const float StrokeFillFadeStart = 0.25;");
+        batchedFragmentShader.ShouldContain("const float StrokeFillFadeEnd = 0.85;");
+        batchedFragmentShader.ShouldContain("float StrokeVisibilityMask(float fill)");
+        batchedFragmentShader.ShouldContain("smoothstep(StrokeFillFadeStart, StrokeFillFadeEnd, fill)");
+        batchedFragmentShader.ShouldContain("outlineMask = stroke * StrokeVisibilityMask(fill);");
 
         string batchCollector = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/UI/UIBatchCollector.cs");
         batchCollector.ShouldContain("private const string TextRenderLayerUniformName = \"TextRenderLayer\";");
