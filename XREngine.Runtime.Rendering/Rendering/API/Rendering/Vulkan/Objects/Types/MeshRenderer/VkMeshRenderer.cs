@@ -55,6 +55,8 @@ public unsafe partial class VulkanRenderer
 
     internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw, FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
 
+    internal readonly record struct VulkanFrameDrawStats(int DrawCalls, int MultiDrawCalls, int TrianglesRendered);
+
     internal sealed record BlitOp(
         int PassIndex,
         XRFrameBuffer? InFbo,
@@ -170,9 +172,51 @@ public unsafe partial class VulkanRenderer
     internal void EnqueueFrameOp(FrameOp op)
     {
         FrameOp validatedOp = EnsureValidFrameOpPassIndex(op);
+        PublishFrameOpDrawStats(validatedOp);
         using (_frameOpsLock.EnterScope())
             _frameOps.Add(validatedOp);
     }
+
+    private static void PublishFrameOpDrawStats(FrameOp op)
+    {
+        if (op.PassIndex == int.MinValue)
+            return;
+
+        switch (op)
+        {
+            case MeshDrawOp meshDraw:
+                PublishFrameDrawStats(meshDraw.Draw.Renderer.EstimateFrameDrawStats(meshDraw.Draw));
+                break;
+            case IndirectDrawOp indirectDraw:
+                PublishFrameDrawStats(new VulkanFrameDrawStats(
+                    SaturateToInt(indirectDraw.DrawCount),
+                    MultiDrawCalls: indirectDraw.DrawCount > 0u ? 1 : 0,
+                    TrianglesRendered: 0));
+                break;
+            case MeshTaskDispatchIndirectCountOp meshTaskDispatch:
+                PublishFrameDrawStats(new VulkanFrameDrawStats(
+                    SaturateToInt(meshTaskDispatch.MaxDrawCount),
+                    MultiDrawCalls: meshTaskDispatch.MaxDrawCount > 0u ? 1 : 0,
+                    TrianglesRendered: 0));
+                break;
+        }
+    }
+
+    private static void PublishFrameDrawStats(VulkanFrameDrawStats stats)
+    {
+        if (stats.DrawCalls > 0)
+            RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls(stats.DrawCalls);
+        if (stats.MultiDrawCalls > 0)
+            RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls(stats.MultiDrawCalls);
+        if (stats.TrianglesRendered > 0)
+            RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered(stats.TrianglesRendered);
+    }
+
+    private static int SaturateToInt(uint value)
+        => value > int.MaxValue ? int.MaxValue : (int)value;
+
+    private static int SaturateToInt(ulong value)
+        => value > int.MaxValue ? int.MaxValue : (int)value;
 
     private FrameOp EnsureValidFrameOpPassIndex(FrameOp op)
     {
@@ -307,6 +351,7 @@ public unsafe partial class VulkanRenderer
                     hash.Add((int)meshDraw.Draw.BillboardMode);
                     hash.Add(meshDraw.Draw.IsStereoPass);
                     hash.Add(meshDraw.Draw.UseUnjitteredProjection);
+                    hash.Add(meshDraw.Draw.PreparedProgramIdentity);
                     HashProgramBindingSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot);
                     break;
                 case BlitOp blit:
@@ -714,10 +759,12 @@ public unsafe partial class VulkanRenderer
         Matrix4x4 InverseViewMatrix,
         Matrix4x4 ProjectionMatrix,
         Matrix4x4 InverseProjectionMatrix,
+        Matrix4x4 ViewProjectionMatrix,
         Matrix4x4 RightEyeViewMatrix,
         Matrix4x4 RightEyeInverseViewMatrix,
         Matrix4x4 RightEyeProjectionMatrix,
         Matrix4x4 RightEyeInverseProjectionMatrix,
+        Matrix4x4 RightEyeViewProjectionMatrix,
         Vector3 CameraPosition,
         Vector3 CameraForward,
         Vector3 CameraUp,
@@ -730,6 +777,8 @@ public unsafe partial class VulkanRenderer
         int RenderAreaWidth,
         int RenderAreaHeight,
         LayeredShadowUniformState ShadowUniformState,
+        VkRenderProgram? PreparedProgram,
+        string? PreparedProgramIdentity,
         ComputeDispatchSnapshot? ProgramBindingSnapshot);
 
     private static bool ViewportEquals(in Viewport a, in Viewport b)
@@ -752,7 +801,7 @@ public unsafe partial class VulkanRenderer
         private XRDataBuffer? _cachedPrecombinedBlendshapePositionsBuffer;
         private XRDataBuffer? _cachedPrecombinedBlendshapeNormalsBuffer;
         private XRDataBuffer? _cachedPrecombinedBlendshapeTangentsBuffer;
-        private ulong _cachedSkinnedOutputVersion;
+        private bool _cachedHasValidPrecombinedBlendshapeDeltas;
         private VkDataBuffer? _triangleIndexBuffer;
         private VkDataBuffer? _lineIndexBuffer;
         private VkDataBuffer? _pointIndexBuffer;
@@ -838,6 +887,64 @@ public unsafe partial class VulkanRenderer
             ColorComponentFlags ColorWriteMask,
             uint ViewportScissorCount,
             bool NativeNegativeOneToOneDepth);
+
+        internal VulkanFrameDrawStats EstimateFrameDrawStats(in PendingMeshDraw draw)
+        {
+            bool skipLinePointDraws = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
+            uint instances = draw.Instances;
+            int drawCalls = 0;
+            int trianglesRendered = 0;
+
+            uint triangleIndexCount = _triangleIndexBuffer?.Data.ElementCount ?? 0u;
+            if (triangleIndexCount > 0u)
+            {
+                drawCalls++;
+                trianglesRendered = AddSaturated(
+                    trianglesRendered,
+                    EstimateTriangleCount(triangleIndexCount, instances));
+            }
+
+            if (!skipLinePointDraws)
+            {
+                if ((_lineIndexBuffer?.Data.ElementCount ?? 0u) > 0u)
+                    drawCalls++;
+                if ((_pointIndexBuffer?.Data.ElementCount ?? 0u) > 0u)
+                    drawCalls++;
+            }
+
+            if (drawCalls == 0 && Mesh is not null)
+            {
+                uint vertexCount = (uint)Math.Max(Mesh.VertexCount, 0);
+                PrimitiveTopology fallbackTopology = Mesh.Type switch
+                {
+                    EPrimitiveType.Points => PrimitiveTopology.PointList,
+                    EPrimitiveType.Lines => PrimitiveTopology.LineList,
+                    EPrimitiveType.LineStrip => PrimitiveTopology.LineStrip,
+                    EPrimitiveType.TriangleStrip => PrimitiveTopology.TriangleStrip,
+                    EPrimitiveType.TriangleFan => PrimitiveTopology.TriangleFan,
+                    EPrimitiveType.Patches => PrimitiveTopology.PatchList,
+                    _ => PrimitiveTopology.TriangleList,
+                };
+
+                if (vertexCount > 0u && (!skipLinePointDraws || IsTriangleClassTopology(fallbackTopology)))
+                {
+                    drawCalls = 1;
+                    if (IsTriangleClassTopology(fallbackTopology))
+                        trianglesRendered = EstimateTriangleCount(vertexCount, instances);
+                }
+            }
+
+            return new VulkanFrameDrawStats(drawCalls, MultiDrawCalls: 0, trianglesRendered);
+        }
+
+        private static int EstimateTriangleCount(uint vertexOrIndexCount, uint instances)
+            => SaturateToInt((ulong)(vertexOrIndexCount / 3u) * instances);
+
+        private static int AddSaturated(int current, int value)
+        {
+            long total = (long)current + value;
+            return total > int.MaxValue ? int.MaxValue : (int)total;
+        }
 
         internal sealed class GraphicsPipelineBuildRequest
         {
@@ -934,6 +1041,7 @@ public unsafe partial class VulkanRenderer
         private bool _pipelineUsesNativeDepthClipControl;
         private DescriptorPool _descriptorPool;
         private DescriptorSet[][]? _descriptorSets;
+        private DescriptorAllocation? _activeDescriptorAllocation;
         private readonly Dictionary<DescriptorAllocationKey, DescriptorAllocation> _descriptorAllocations = new();
         private bool _descriptorDirty = true;
         private ulong _descriptorSchemaFingerprint;
@@ -978,6 +1086,11 @@ public unsafe partial class VulkanRenderer
 
         private sealed class DescriptorAllocation
         {
+            public VkRenderProgram? Program;
+            public XRMaterial? Material;
+            public ulong MaterialBindingLayoutVersion;
+            public int DescriptorFrameSlotCount;
+            public int SetCount;
             public DescriptorPool Pool;
             public DescriptorSet[][] Sets = [];
             public ulong SchemaFingerprint;
@@ -1147,8 +1260,6 @@ public unsafe partial class VulkanRenderer
             if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null)
                 return;
 
-            EnsureRuntimeDeformationBuffersCurrent();
-
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             XRFrameBuffer? target = Renderer.GetCurrentDrawFrameBuffer();
 
@@ -1317,6 +1428,9 @@ public unsafe partial class VulkanRenderer
             Matrix4x4 inverseProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
                 ? snapshotCamera.InverseProjectionMatrixUnjittered
                 : snapshotCamera?.InverseProjectionMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 viewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
+                ? snapshotCamera.ViewProjectionMatrixUnjittered
+                : snapshotCamera?.ViewProjectionMatrix ?? Matrix4x4.Identity;
             Matrix4x4 rightEyeViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.InverseRenderMatrix ?? viewMatrixSnapshot;
             Matrix4x4 rightEyeInverseViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrixSnapshot;
             Matrix4x4 rightEyeProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
@@ -1325,6 +1439,9 @@ public unsafe partial class VulkanRenderer
             Matrix4x4 rightEyeInverseProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
                 ? snapshotRightEyeCamera.InverseProjectionMatrixUnjittered
                 : snapshotRightEyeCamera?.InverseProjectionMatrix ?? inverseProjectionMatrixSnapshot;
+            Matrix4x4 rightEyeViewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
+                ? snapshotRightEyeCamera.ViewProjectionMatrixUnjittered
+                : snapshotRightEyeCamera?.ViewProjectionMatrix ?? viewProjectionMatrixSnapshot;
             Vector3 cameraPositionSnapshot = snapshotCamera?.Transform.RenderTranslation ?? Vector3.Zero;
             Vector3 cameraForwardSnapshot = snapshotCamera?.Transform.RenderForward ?? Vector3.UnitZ;
             Vector3 cameraUpSnapshot = snapshotCamera?.Transform.RenderUp ?? Vector3.UnitY;
@@ -1397,10 +1514,12 @@ public unsafe partial class VulkanRenderer
                 inverseViewMatrixSnapshot,
                 projectionMatrixSnapshot,
                 inverseProjectionMatrixSnapshot,
+                viewProjectionMatrixSnapshot,
                 rightEyeViewMatrixSnapshot,
                 rightEyeInverseViewMatrixSnapshot,
                 rightEyeProjectionMatrixSnapshot,
                 rightEyeInverseProjectionMatrixSnapshot,
+                rightEyeViewProjectionMatrixSnapshot,
                 cameraPositionSnapshot,
                 cameraForwardSnapshot,
                 cameraUpSnapshot,
@@ -1408,6 +1527,8 @@ public unsafe partial class VulkanRenderer
                 renderAreaWidthSnapshot,
                 renderAreaHeightSnapshot,
                 shadowUniformState,
+                _program,
+                _activeProgramIdentity,
                 programBindingSnapshot);
 
             FrameOpContext context = Renderer.CaptureFrameOpContext();
@@ -1420,18 +1541,28 @@ public unsafe partial class VulkanRenderer
 
         private ComputeDispatchSnapshot? CaptureProgramBindingSnapshot(XRMaterial material, in LayeredShadowUniformState shadowUniformState)
         {
-            if (!MeshRenderer.CaptureUniformsOnRender || !MeshRenderer.HasSettingUniformsHandlers)
+            if (_program is not { Data: { } programData } program)
                 return null;
 
-            if (_program is not { Data: { } programData } program)
+            bool captureUniforms = MeshRenderer.CaptureUniformsOnRender;
+            bool mayNeedDescriptorResourceSnapshot =
+                program.DescriptorBindings.Count != 0 &&
+                program.DescriptorSetLayouts.Count != 0;
+            if (!captureUniforms && !mayNeedDescriptorResourceSnapshot)
                 return null;
 
             VulkanFixedFunctionStateSnapshot stateSnapshot = Renderer.CaptureFixedFunctionState();
             try
             {
                 Renderer.SetMaterialUniforms(material, programData, shadowUniformState);
-                MeshRenderer.OnSettingUniforms(programData, programData);
+                if (MeshRenderer.HasSettingUniformsHandlers)
+                    MeshRenderer.OnSettingUniforms(programData, programData);
+                else
+                    RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(programData);
                 MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, shadowUniformState);
+                if (!captureUniforms && !program.HasBoundDescriptorResources())
+                    return null;
+
                 ComputeDispatchSnapshot snapshot = program.CaptureComputeSnapshot();
                 LogGizmoBindingSnapshot(material, snapshot, "capture");
                 return snapshot;

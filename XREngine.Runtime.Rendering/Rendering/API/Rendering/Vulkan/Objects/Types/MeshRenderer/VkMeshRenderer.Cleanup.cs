@@ -124,6 +124,7 @@ public unsafe partial class VulkanRenderer
 			if (!activePoolReleased && _descriptorPool.Handle != 0)
 				ReleaseDescriptorPool(_descriptorPool, destroyPoolImmediately);
 
+			_activeDescriptorAllocation = null;
 			_descriptorSets = null;
 
 			_descriptorSchemaFingerprint = 0;

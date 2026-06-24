@@ -1198,6 +1198,20 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
+                if (!source.TryEnsureDescriptorReadyForUse($"material descriptor '{binding.Name}'"))
+                {
+                    imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
+                    if (imageInfo.ImageView.Handle != 0)
+                    {
+                        WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' is not ready for Vulkan descriptor use on binding '{binding.Name}'. Using placeholder.");
+                        RecordDescriptorFallback(binding);
+                        return true;
+                    }
+
+                    WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' is not ready for Vulkan descriptor use on binding '{binding.Name}'.");
+                    return false;
+                }
+
                 bool requiresSampledUsage = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or DescriptorType.Sampler or DescriptorType.InputAttachment;
                 if (requiresSampledUsage && (source.DescriptorUsage & ImageUsageFlags.SampledBit) == 0)
                 {

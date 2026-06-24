@@ -17,6 +17,7 @@ public unsafe partial class VulkanRenderer
         uint DescriptorMipLevels => 1u;
         uint DescriptorArrayLayers => 1u;
         bool IsDescriptorReady => true;
+        bool TryEnsureDescriptorReadyForUse(string reason) => IsDescriptorReady;
 
         /// <summary>
         /// Returns the most recently tracked <see cref="ImageLayout"/> for the backing VkImage.

@@ -405,7 +405,7 @@ public static partial class Engine
                 capture_file = FrameStatsFileName,
                 schema = "xrengine.profile_capture.render_stats.v2",
                 schema_version = ProfileCaptureSchemaVersion,
-                fields_note = "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are OpenGL timestamp-query snapshots when ready.",
+                fields_note = "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready.",
                 run = metadata,
             };
 

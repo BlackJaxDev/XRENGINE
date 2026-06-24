@@ -450,6 +450,12 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        internal bool HasBoundDescriptorResources()
+        {
+            lock (_bindingLock)
+                return _samplersByName.Count != 0 || _buffersByBinding.Count != 0;
+        }
+
         private void Uniform(string name, Matrix4x4 value) => SetUniformValue(name, EShaderVarType._mat4, value);
         private void Uniform(string name, Quaternion value) => SetUniformValue(name, EShaderVarType._vec4, new Vector4(value.X, value.Y, value.Z, value.W));
         private void Uniform(string name, Matrix4x4[] value) => SetUniformValue(name, EShaderVarType._mat4, value.ToArray(), true);
@@ -2293,6 +2299,16 @@ public unsafe partial class VulkanRenderer
 
             if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
                 return false;
+
+            if (!source.TryEnsureDescriptorReadyForUse($"compute descriptor '{binding.Name}'"))
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Descriptor.TextureNotReady.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Skipping descriptor bind for texture '{0}' because its Vulkan descriptor source is not ready.",
+                    texture.Name ?? texture.GetDescribingName());
+                return false;
+            }
 
             if (requiresSampledUsage && (source.DescriptorUsage & ImageUsageFlags.SampledBit) == 0)
             {

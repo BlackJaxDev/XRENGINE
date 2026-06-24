@@ -18,6 +18,8 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     internal sealed class VulkanRenderGraphCompiler
     {
+        private const string ScreenSpaceUiPassName = "VPRC_RenderScreenSpaceUI";
+        private const string RenderUiBatchedPassNamePrefix = "RenderUIBatched_";
         private readonly List<SecondaryRecordingBucket> _secondaryRecordingBucketScratch = new(32);
 
         /// <summary>
@@ -271,6 +273,9 @@ public unsafe partial class VulkanRenderer
             if (op is TextureUploadFrameOp)
                 return int.MinValue;
 
+            if (TryResolveNestedScreenSpaceUiPassOrder(op, graph, out int screenSpaceUiOrder))
+                return screenSpaceUiOrder;
+
             if (graph.PassOrder.TryGetValue(op.PassIndex, out int graphOrder))
                 return graphOrder;
 
@@ -285,6 +290,44 @@ public unsafe partial class VulkanRenderer
             }
 
             return int.MaxValue;
+        }
+
+        private static bool TryResolveNestedScreenSpaceUiPassOrder(
+            FrameOp op,
+            VulkanCompiledRenderGraph graph,
+            out int passOrder)
+        {
+            passOrder = 0;
+
+            if (!OpTargetsSwapchain(op) || !IsNestedUiPipelineOp(op))
+                return false;
+
+            foreach (RenderPassMetadata pass in graph.OrderedPasses)
+            {
+                if (!string.Equals(pass.Name, ScreenSpaceUiPassName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                return graph.PassOrder.TryGetValue(pass.PassIndex, out passOrder);
+            }
+
+            return false;
+        }
+
+        private static bool IsNestedUiPipelineOp(FrameOp op)
+        {
+            if (op.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
+                return true;
+
+            if (op.Context.PassMetadata is null)
+                return false;
+
+            foreach (RenderPassMetadata pass in op.Context.PassMetadata)
+            {
+                if (pass.Name.StartsWith(RenderUiBatchedPassNamePrefix, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>

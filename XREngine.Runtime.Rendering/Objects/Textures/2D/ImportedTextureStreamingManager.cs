@@ -21,7 +21,7 @@ internal sealed class ImportedTextureStreamingManager
     private const int VisiblePromotionPinFrames = 180;
     private const int PromotionFadeFrames = 90;
     private const int RecentlyBoundFallbackFrames = 3;
-    private const long MaxPromotionBytesPerFrame = 12L * 1024L * 1024L;
+    private const long MaxPromotionBytesPerFrame = 32L * 1024L * 1024L;
     private const long MaxImportEraPromotionBytesPerFrame = 4L * 1024L * 1024L;
     private const uint BoundMaterialRelatedMinResidentMaxDimension = 512u;
     private const float BoundMaterialFallbackProjectedPixelSpan = 384.0f;
@@ -607,6 +607,9 @@ internal sealed class ImportedTextureStreamingManager
 
     private void UpdatePromotionFades(long frameId)
     {
+        if (!ShouldApplySamplerLodBiasPromotionFade())
+            return;
+
         WeakReference<ImportedTextureStreamingRecord>[] refs = _registry.GetRecordReferencesSnapshot();
         for (int i = 0; i < refs.Length; i++)
         {
@@ -807,7 +810,7 @@ internal sealed class ImportedTextureStreamingManager
 
                 if (queuedTransitions >= MaxResidentTransitionsPerFrame
                     || queuedPromotions >= MaxPromotionTransitionsPerFrame
-                    || queuedPromotionBytes + deltaBytes > MaxPromotionBytesPerFrame)
+                    || (queuedPromotions > 0 && queuedPromotionBytes + deltaBytes > MaxPromotionBytesPerFrame))
                 {
                     return false;
                 }
@@ -1465,7 +1468,7 @@ internal sealed class ImportedTextureStreamingManager
                         record.LastPressureDemotionFrameId = frameId;
                 }
 
-                if (texture is not null)
+                if (texture is not null && ShouldApplySamplerLodBiasPromotionFade())
                 {
                     float currentStreamingLodBias = Math.Max(0.0f, record.CurrentStreamingLodBias);
                     record.BaseLodBias = textureLodBias - currentStreamingLodBias;
@@ -1499,6 +1502,10 @@ internal sealed class ImportedTextureStreamingManager
                         targetLodBias = record.BaseLodBias;
                         shouldApplyLodBias = true;
                     }
+                }
+                else
+                {
+                    ClearPromotionFadeState(record);
                 }
             }
 
@@ -1568,6 +1575,9 @@ internal sealed class ImportedTextureStreamingManager
         record.PromotionFadeStartFrameId = long.MinValue;
         Volatile.Write(ref record.PromotionFadeEndFrameId, long.MinValue);
     }
+
+    private static bool ShouldApplySamplerLodBiasPromotionFade()
+        => RuntimeRenderingHostServices.Current.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan;
 
     private static bool NearlyEquals(float left, float right, float epsilon = 0.001f)
         => MathF.Abs(left - right) <= epsilon;

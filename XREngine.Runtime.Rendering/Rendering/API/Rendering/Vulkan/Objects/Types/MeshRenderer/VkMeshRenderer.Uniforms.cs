@@ -446,7 +446,8 @@ public unsafe partial class VulkanRenderer
 
 		private static bool IsMaterialAutoUniform(string name)
 			=> name is "BaseColor" or "Opacity" or "Specular" or "Roughness" or "Metallic" or "Emission" or "AlphaCutoff"
-			or "MatColor" or "LineWidth" or "ArrowHeadLengthPixels" or "ArrowHeadHalfWidthPixels";
+			or "MatColor" or "LineWidth" or "ArrowHeadLengthPixels" or "ArrowHeadHalfWidthPixels"
+			or "TextAtlasType" or "MsdfDistanceRange" or "MsdfDistanceRangeMiddle" or "MsdfFillBias" or "TextDebugMode" or "TextRenderLayer" or "TextRenderLayer_VTX";
 
 		private bool IsGizmoDiagnosticProgram()
 		{
@@ -754,7 +755,7 @@ public unsafe partial class VulkanRenderer
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.ViewProjectionMatrix):
-					value = viewMatrix * projMatrix;
+					value = draw.ViewProjectionMatrix;
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.ProjMatrix):
@@ -765,7 +766,7 @@ public unsafe partial class VulkanRenderer
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.LeftEyeViewProjectionMatrix):
-					value = viewMatrix * projMatrix;
+					value = draw.ViewProjectionMatrix;
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.LeftEyeInverseViewMatrix):
@@ -785,7 +786,7 @@ public unsafe partial class VulkanRenderer
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.RightEyeViewProjectionMatrix):
-					value = rightEyeViewMatrix * rightEyeProjMatrix;
+					value = draw.RightEyeViewProjectionMatrix;
 					type = EShaderVarType._mat4;
 					return true;
 				case nameof(EEngineUniform.LeftEyeProjMatrix):
@@ -1268,14 +1269,14 @@ public unsafe partial class VulkanRenderer
 				case nameof(EEngineUniform.InverseProjMatrix):
 					return UploadUniform(buffer, inverseProjMatrix);
 				case nameof(EEngineUniform.ViewProjectionMatrix):
-					return UploadUniform(buffer, viewMatrix * projMatrix);
+					return UploadUniform(buffer, draw.ViewProjectionMatrix);
 				case nameof(EEngineUniform.ProjMatrix):
 				case nameof(EEngineUniform.PrevProjMatrix):
 				case nameof(EEngineUniform.PrevLeftEyeProjMatrix):
 				case nameof(EEngineUniform.PrevRightEyeProjMatrix):
 					return UploadUniform(buffer, projMatrix);
 				case nameof(EEngineUniform.LeftEyeViewProjectionMatrix):
-					return UploadUniform(buffer, viewMatrix * projMatrix);
+					return UploadUniform(buffer, draw.ViewProjectionMatrix);
 				case nameof(EEngineUniform.LeftEyeInverseViewMatrix):
 					return UploadUniform(buffer, inverseViewMatrix);
 				case nameof(EEngineUniform.LeftEyeInverseProjMatrix):
@@ -1285,7 +1286,7 @@ public unsafe partial class VulkanRenderer
 				case nameof(EEngineUniform.RightEyeInverseProjMatrix):
 					return UploadUniform(buffer, rightEyeInverseProjMatrix);
 				case nameof(EEngineUniform.RightEyeViewProjectionMatrix):
-					return UploadUniform(buffer, rightEyeViewMatrix * rightEyeProjMatrix);
+					return UploadUniform(buffer, draw.RightEyeViewProjectionMatrix);
 				case nameof(EEngineUniform.LeftEyeProjMatrix):
 					return UploadUniform(buffer, projMatrix);
 				case nameof(EEngineUniform.RightEyeProjMatrix):

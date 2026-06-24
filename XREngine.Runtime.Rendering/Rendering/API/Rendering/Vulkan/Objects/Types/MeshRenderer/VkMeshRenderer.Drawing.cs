@@ -33,7 +33,7 @@ public unsafe partial class VulkanRenderer
 		/// Handles pipeline binding, vertex buffer binding, skinning/blendshape
 		/// data upload, and descriptor set binding.
 		/// </summary>
-		internal void RecordDraw(
+		internal bool RecordDraw(
 			CommandBuffer commandBuffer,
 			in PendingMeshDraw draw,
 			RenderPass renderPass,
@@ -47,11 +47,15 @@ public unsafe partial class VulkanRenderer
 			int drawUniformSlot)
 		{
 			var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
-			if (!TryPrepareForRendering(material, out string prepareReason))
+			string prepareReason;
+			bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
+				? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, drawUniformSlot, out prepareReason)
+				: TryPrepareForRendering(material, out prepareReason);
+			if (!preparedForRecord)
 			{
 				if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw)
 					Debug.MeshesWarning("[DrawTrace] {0}: skipped before command recording because preparation failed: {1} {2}", Mesh?.Name ?? "?", prepareReason, LastPrepareDetail);
-				return;
+				return false;
 			}
 
 			var drawCopy = draw; // struct copy required for capture in local function closures
@@ -73,7 +77,7 @@ public unsafe partial class VulkanRenderer
 
 			bool uniformsNotified = false;
 
-			bool DrawIndexed(VkDataBuffer? indexBuffer, IndexSize size, PrimitiveTopology topology, Action<uint> onStats)
+			bool DrawIndexed(VkDataBuffer? indexBuffer, IndexSize size, PrimitiveTopology topology)
 			{
 				if (indexBuffer?.BufferHandle is not { } indexHandle)
 				{
@@ -129,11 +133,15 @@ public unsafe partial class VulkanRenderer
 				PushPerDrawConstants(commandBuffer, material, drawCopy);
 
 				if (verboseTrace)
-					Debug.MeshesWarning("[DrawTrace] {0}: CmdDrawIndexed({1}) pass={2} target={3} dynRender={4} dsReadOnly={5} pipeline=0x{6:X} topology={7} cull={8} blend={9} depthTest={10} depthWrite={11} depthCmp={12} colorWrite={13} viewport=({14},{15},{16},{17}) scissor=({18},{19},{20},{21}) prog={22}",
+					Debug.MeshesWarning("[DrawTrace] {0}: CmdDrawIndexed({1}) pass={2} target={3} dynRender={4} dsReadOnly={5} pipeline=0x{6:X} topology={7} cull={8} blend={9} blendOps={10}/{11} blendFactors={12},{13},{14},{15} alphaToCoverage={16} depthTest={17} depthWrite={18} depthCmp={19} colorWrite={20} viewport=({21},{22},{23},{24}) scissor=({25},{26},{27},{28}) prog={29}",
 						Mesh?.Name ?? "?", indexCount,
 						passIndex, targetName, useDynamicRendering, depthStencilReadOnly,
 						pipeline.Handle, topology,
-						drawCopy.CullMode, drawCopy.BlendEnabled, drawCopy.DepthTestEnabled, drawCopy.DepthWriteEnabled, drawCopy.DepthCompareOp, drawCopy.ColorWriteMask,
+						drawCopy.CullMode, drawCopy.BlendEnabled,
+						drawCopy.ColorBlendOp, drawCopy.AlphaBlendOp,
+						drawCopy.SrcColorBlendFactor, drawCopy.DstColorBlendFactor, drawCopy.SrcAlphaBlendFactor, drawCopy.DstAlphaBlendFactor,
+						drawCopy.AlphaToCoverageEnabled,
+						drawCopy.DepthTestEnabled, drawCopy.DepthWriteEnabled, drawCopy.DepthCompareOp, drawCopy.ColorWriteMask,
 						drawCopy.Viewport.X, drawCopy.Viewport.Y, drawCopy.Viewport.Width, drawCopy.Viewport.Height,
 						drawCopy.Scissor.Offset.X, drawCopy.Scissor.Offset.Y, drawCopy.Scissor.Extent.Width, drawCopy.Scissor.Extent.Height,
 						_program?.Data?.Name ?? "?prog");
@@ -141,7 +149,6 @@ public unsafe partial class VulkanRenderer
 				Renderer.BindIndexBufferTracked(commandBuffer, indexHandle, 0, ToVkIndexType(size));
 				Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
 
-				onStats(indexCount);
 				return true;
 			}
 
@@ -149,13 +156,13 @@ public unsafe partial class VulkanRenderer
 			// The first successful draw sets 'drew = true' so we skip the non-indexed fallback.
 			bool drew = false;
 			if (_triangleIndexBuffer?.BufferHandle is { } triHandle && triHandle.Handle != 0)
-				drew |= DrawIndexed(_triangleIndexBuffer, _triangleIndexSize, PrimitiveTopology.TriangleList, count => RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered((int)(count / 3 * drawInstances)));
+				drew |= DrawIndexed(_triangleIndexBuffer, _triangleIndexSize, PrimitiveTopology.TriangleList);
 			if (!skipLinePointDraws)
 			{
 				if (_lineIndexBuffer?.BufferHandle is { } lineHandle && lineHandle.Handle != 0)
-					drew |= DrawIndexed(_lineIndexBuffer, _lineIndexSize, PrimitiveTopology.LineList, _ => { });
+					drew |= DrawIndexed(_lineIndexBuffer, _lineIndexSize, PrimitiveTopology.LineList);
 				if (_pointIndexBuffer?.BufferHandle is { } pointHandle && pointHandle.Handle != 0)
-					drew |= DrawIndexed(_pointIndexBuffer, _pointIndexSize, PrimitiveTopology.PointList, _ => { });
+					drew |= DrawIndexed(_pointIndexBuffer, _pointIndexSize, PrimitiveTopology.PointList);
 			}
 			else if ((_lineIndexBuffer?.BufferHandle?.Handle ?? 0UL) != 0UL || (_pointIndexBuffer?.BufferHandle?.Handle ?? 0UL) != 0UL)
 			{
@@ -190,7 +197,7 @@ public unsafe partial class VulkanRenderer
 						fallbackTopology,
 						Mesh?.Name ?? "<unnamed mesh>",
 						_geometryLayoutSignature.DebugSummary);
-					return;
+					return false;
 				}
 
 				if (vertexCount > 0 && EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
@@ -198,7 +205,7 @@ public unsafe partial class VulkanRenderer
 					Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
 					if (!BindVertexBuffersForCurrentPipeline(commandBuffer))
-						return;
+						return false;
 
 					if (!uniformsNotified && _program?.Data is { } programData)
 					{
@@ -207,9 +214,23 @@ public unsafe partial class VulkanRenderer
 					}
 
 					if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot))
-						return;
+						return false;
 
 					PushPerDrawConstants(commandBuffer, material, drawCopy);
+
+					if (verboseTrace)
+						Debug.MeshesWarning("[DrawTrace] {0}: CmdDraw({1}) pass={2} target={3} dynRender={4} dsReadOnly={5} pipeline=0x{6:X} topology={7} cull={8} blend={9} blendOps={10}/{11} blendFactors={12},{13},{14},{15} alphaToCoverage={16} depthTest={17} depthWrite={18} depthCmp={19} colorWrite={20} viewport=({21},{22},{23},{24}) scissor=({25},{26},{27},{28}) prog={29}",
+							Mesh?.Name ?? "?", vertexCount,
+							passIndex, targetName, useDynamicRendering, depthStencilReadOnly,
+							pipeline.Handle, fallbackTopology,
+							drawCopy.CullMode, drawCopy.BlendEnabled,
+							drawCopy.ColorBlendOp, drawCopy.AlphaBlendOp,
+							drawCopy.SrcColorBlendFactor, drawCopy.DstColorBlendFactor, drawCopy.SrcAlphaBlendFactor, drawCopy.DstAlphaBlendFactor,
+							drawCopy.AlphaToCoverageEnabled,
+							drawCopy.DepthTestEnabled, drawCopy.DepthWriteEnabled, drawCopy.DepthCompareOp, drawCopy.ColorWriteMask,
+							drawCopy.Viewport.X, drawCopy.Viewport.Y, drawCopy.Viewport.Width, drawCopy.Viewport.Height,
+							drawCopy.Scissor.Offset.X, drawCopy.Scissor.Offset.Y, drawCopy.Scissor.Extent.Width, drawCopy.Scissor.Extent.Height,
+							_program?.Data?.Name ?? "?prog");
 
 					if (BloomVulkanDiagnosticsEnabled && vertexCount <= 6u)
 					{
@@ -240,10 +261,11 @@ public unsafe partial class VulkanRenderer
 					}
 
 					Api!.CmdDraw(commandBuffer, vertexCount, drawInstances, 0, 0);
-					RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
-					RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered((int)(vertexCount / 3 * drawInstances));
+					drew = true;
 				}
 			}
+
+			return drew;
 		}
 
 		private void NotifyDrawUniforms(XRMaterial material, XRRenderProgram programData, in PendingMeshDraw draw)
@@ -375,16 +397,66 @@ public unsafe partial class VulkanRenderer
 		}
 
 		internal bool TryRefreshReusableCommandBufferFrameData(uint imageIndex, in PendingMeshDraw draw, int drawUniformSlot, bool refreshMaterialUniforms = true)
+			=> TryRefreshReusableCommandBufferFrameData(imageIndex, draw, drawUniformSlot, out _, refreshMaterialUniforms);
+
+		internal bool TryRefreshReusableCommandBufferFrameData(
+			uint imageIndex,
+			in PendingMeshDraw draw,
+			int drawUniformSlot,
+			out string reason,
+			bool refreshMaterialUniforms = true)
 		{
+			reason = "reusable";
 			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
-			if (!TryPrepareForRendering(material, out _))
+			if (draw.PreparedProgram is { } preparedProgram)
+			{
+				ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity);
+				EnsureRuntimeDeformationBuffersCurrent();
+			}
+			else if (!TryPrepareForRendering(material, out string prepareReason))
+			{
+				reason = $"prepare:{prepareReason}; {LastPrepareDetail}";
 				return false;
+			}
+
+			if (!IsActive)
+			{
+				reason = "inactive";
+				return false;
+			}
+
+			if (Data is null)
+			{
+				reason = "mesh data missing";
+				return false;
+			}
+
+			if (_program is null)
+			{
+				reason = "program missing";
+				return false;
+			}
+
+			if (_buffersDirty)
+			{
+				reason = "buffers dirty";
+				return false;
+			}
+
+			if (!AreCachedBuffersReadyForRendering(out string bufferDetail))
+			{
+				reason = $"buffers not ready: {bufferDetail}";
+				return false;
+			}
 
 			if (refreshMaterialUniforms && _program?.Data is { } programData)
 				NotifyDrawUniforms(material, programData, draw);
 
-			if (!CanReuseRecordedDescriptorSets(material, drawUniformSlot))
+			if (!CanReuseRecordedDescriptorSets(material, drawUniformSlot, draw.ProgramBindingSnapshot is not null, out string descriptorReason))
+			{
+				reason = $"descriptors {descriptorReason}; snapshot={(draw.ProgramBindingSnapshot is null ? "none" : "captured")} program='{_program?.Data?.Name ?? "<unnamed program>"}'";
 				return false;
+			}
 
 			int frameIndex = unchecked((int)Math.Min(imageIndex, int.MaxValue));
 			UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);

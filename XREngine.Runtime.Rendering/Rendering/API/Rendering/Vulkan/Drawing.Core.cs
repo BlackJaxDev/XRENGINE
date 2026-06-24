@@ -865,6 +865,8 @@ namespace XREngine.Rendering.Vulkan
             // 6. Record the scene command buffer. ImGui is recorded into a separate
             // per-frame overlay buffer below so cached scene primaries do not freeze UI.
             CommandBuffer submitCommandBuffer;
+            CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer;
+            int dynamicUiBatchTextOverlayOpCount;
             ImageLayout swapchainLayoutAfterScene;
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordCommandBuffer"))
@@ -875,6 +877,8 @@ namespace XREngine.Rendering.Vulkan
                     submitCommandBuffer = EnsureCommandBufferRecorded(
                         imageIndex,
                         preserveSwapchainForImGuiOverlay,
+                        out dynamicUiBatchTextSecondaryCommandBuffer,
+                        out dynamicUiBatchTextOverlayOpCount,
                         out swapchainLayoutAfterScene);
                 }
                 catch (Exception recordEx)
@@ -909,6 +913,8 @@ namespace XREngine.Rendering.Vulkan
 
             CommandBuffer imguiOverlayCommandBuffer = default;
             bool hasImGuiOverlayCommandBuffer = false;
+            CommandBuffer dynamicUiBatchTextOverlayCommandBuffer = default;
+            bool hasDynamicUiBatchTextOverlayCommandBuffer = false;
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordImGuiOverlay"))
             {
@@ -940,6 +946,52 @@ namespace XREngine.Rendering.Vulkan
             }
             recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
+            if (dynamicUiBatchTextOverlayOpCount > 0)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.DynamicUiText.LateOverlayDecision.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Dynamic UI text late-overlay decision: preserveForImGui={0} hasImGui={1} ops={2} secondary=0x{3:X}",
+                    preserveSwapchainForImGuiOverlay,
+                    hasImGuiOverlayCommandBuffer,
+                    dynamicUiBatchTextOverlayOpCount,
+                    dynamicUiBatchTextSecondaryCommandBuffer.Handle);
+            }
+
+            if (preserveSwapchainForImGuiOverlay &&
+                hasImGuiOverlayCommandBuffer &&
+                dynamicUiBatchTextOverlayOpCount > 0)
+            {
+                stageStartTimestamp = Stopwatch.GetTimestamp();
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordDynamicUiTextOverlay"))
+                {
+                    try
+                    {
+                        hasDynamicUiBatchTextOverlayCommandBuffer = TryRecordDynamicUiBatchTextOverlayCommandBuffer(
+                            imageIndex,
+                            dynamicUiBatchTextSecondaryCommandBuffer,
+                            dynamicUiBatchTextOverlayOpCount,
+                            ImageLayout.PresentSrcKhr,
+                            out dynamicUiBatchTextOverlayCommandBuffer);
+                    }
+                    catch (Exception overlayEx)
+                    {
+                        recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+                        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+                        Debug.VulkanWarningEvery(
+                            $"Vulkan.Frame.{GetHashCode()}.RecordDynamicUiTextOverlayFailed",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Dynamic UI text overlay command buffer recording failed. Scheduling swapchain recreate to recover. {0}",
+                            overlayEx.Message);
+
+                        RecreateSwapchainImmediately("Dynamic UI text overlay command buffer recording failed - recovering timeline/present state");
+                        throw;
+                    }
+                }
+                recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+            }
+
             // 5. Submit the command buffer with timeline sync.
             _graphicsTimelineValue = Math.Max(_graphicsTimelineValue + 1, _acquireTimelineValue + 1);
             ulong graphicsSignalValue = _graphicsTimelineValue;
@@ -948,11 +1000,13 @@ namespace XREngine.Rendering.Vulkan
             ulong* signalTimelineValues = stackalloc ulong[2] { graphicsSignalValue, 0UL };
             Semaphore* waitSemaphores = stackalloc Semaphore[1] { _graphicsTimelineSemaphore };
             var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
-            CommandBuffer* submitCommandBuffers = stackalloc CommandBuffer[2];
+            CommandBuffer* submitCommandBuffers = stackalloc CommandBuffer[3];
             submitCommandBuffers[0] = submitCommandBuffer;
             uint submitCommandBufferCount = 1;
             if (hasImGuiOverlayCommandBuffer && imguiOverlayCommandBuffer.Handle != 0)
                 submitCommandBuffers[submitCommandBufferCount++] = imguiOverlayCommandBuffer;
+            if (hasDynamicUiBatchTextOverlayCommandBuffer && dynamicUiBatchTextOverlayCommandBuffer.Handle != 0)
+                submitCommandBuffers[submitCommandBufferCount++] = dynamicUiBatchTextOverlayCommandBuffer;
             Semaphore presentSemaphore = presentBridgeSemaphores![imageIndex];
             Semaphore* signalSemaphores = stackalloc Semaphore[2] { _graphicsTimelineSemaphore, presentSemaphore };
 

@@ -13,7 +13,7 @@ public unsafe partial class VulkanRenderer
     private const uint VulkanGpuProfilerMaxScopesPerFrame = 512;
     private const uint VulkanGpuProfilerQueryCount = VulkanGpuProfilerMaxScopesPerFrame * 2;
     private const string VulkanGpuProfilerBackendName = "Vulkan";
-    private const bool EnableVulkanGpuProfilerCommandBufferInstrumentation = false;
+    private const bool EnableVulkanGpuProfilerCommandBufferInstrumentation = true;
     private const string VulkanGpuProfilerQuarantinedMessage =
         "Vulkan GPU pipeline command timing is quarantined because timestamp instrumentation must not mutate main render command buffers.";
 
@@ -518,6 +518,89 @@ public unsafe partial class VulkanRenderer
 
         _vulkanGpuProfilerSubmittedFrameIds[frameSlot] = RuntimeEngine.Rendering.State.RenderFrameId;
         _vulkanGpuProfilerQueryReady[frameSlot] = _vulkanGpuProfilerPendingScopes[frameSlot].Count > 0;
+    }
+
+    private void CaptureVulkanGpuProfilerVariantScopes(int frameSlot, CommandBufferCacheVariant variant)
+    {
+        if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled ||
+            !_vulkanGpuProfilerEnabled ||
+            !RenderPipelineGpuProfiler.Instance.IsProfilingActive ||
+            _vulkanGpuProfilerPendingScopes is null ||
+            _vulkanGpuProfilerPendingQueryCounts is null ||
+            frameSlot < 0 ||
+            frameSlot >= _vulkanGpuProfilerPendingScopes.Length ||
+            frameSlot >= _vulkanGpuProfilerPendingQueryCounts.Length)
+        {
+            variant.GpuProfilerScopes = null;
+            variant.GpuProfilerQueryCount = 0;
+            return;
+        }
+
+        List<VulkanGpuProfilerPendingScope> scopes = _vulkanGpuProfilerPendingScopes[frameSlot];
+        int queryCount = _vulkanGpuProfilerPendingQueryCounts[frameSlot];
+        if (scopes.Count == 0 || queryCount <= 0)
+        {
+            variant.GpuProfilerScopes = [];
+            variant.GpuProfilerQueryCount = 0;
+            return;
+        }
+
+        variant.GpuProfilerScopes = scopes.ToArray();
+        variant.GpuProfilerQueryCount = queryCount;
+    }
+
+    private void PrepareVulkanGpuProfilerReusableSubmission(
+        int frameSlot,
+        CommandBufferCacheVariant variant,
+        bool profilingActive)
+    {
+        if (_vulkanGpuProfilerPendingScopes is not null &&
+            frameSlot >= 0 &&
+            frameSlot < _vulkanGpuProfilerPendingScopes.Length)
+        {
+            _vulkanGpuProfilerPendingScopes[frameSlot].Clear();
+        }
+
+        if (_vulkanGpuProfilerPendingQueryCounts is not null &&
+            frameSlot >= 0 &&
+            frameSlot < _vulkanGpuProfilerPendingQueryCounts.Length)
+        {
+            _vulkanGpuProfilerPendingQueryCounts[frameSlot] = 0;
+        }
+
+        if (_vulkanGpuProfilerSubmittedFrameIds is not null &&
+            frameSlot >= 0 &&
+            frameSlot < _vulkanGpuProfilerSubmittedFrameIds.Length)
+        {
+            _vulkanGpuProfilerSubmittedFrameIds[frameSlot] = 0UL;
+        }
+
+        if (_vulkanGpuProfilerQueryReady is not null &&
+            frameSlot >= 0 &&
+            frameSlot < _vulkanGpuProfilerQueryReady.Length)
+        {
+            _vulkanGpuProfilerQueryReady[frameSlot] = false;
+        }
+
+        if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled ||
+            !_vulkanGpuProfilerEnabled ||
+            !profilingActive ||
+            !variant.GpuProfilerActive ||
+            variant.GpuProfilerFrameSlot != frameSlot ||
+            variant.GpuProfilerScopes is not { Length: > 0 } scopes ||
+            variant.GpuProfilerQueryCount <= 0 ||
+            _vulkanGpuProfilerPendingScopes is null ||
+            _vulkanGpuProfilerPendingQueryCounts is null ||
+            frameSlot < 0 ||
+            frameSlot >= _vulkanGpuProfilerPendingScopes.Length ||
+            frameSlot >= _vulkanGpuProfilerPendingQueryCounts.Length)
+        {
+            return;
+        }
+
+        List<VulkanGpuProfilerPendingScope> pendingScopes = _vulkanGpuProfilerPendingScopes[frameSlot];
+        pendingScopes.AddRange(scopes);
+        _vulkanGpuProfilerPendingQueryCounts[frameSlot] = variant.GpuProfilerQueryCount;
     }
 
     private void SampleVulkanGpuProfilerQueries(int frameSlot)

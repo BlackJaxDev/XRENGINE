@@ -28,7 +28,13 @@ public sealed class UIBatchCollector : IDisposable
     private const string MsdfDistanceRangeMiddleUniformName = "MsdfDistanceRangeMiddle";
     private const string MsdfFillBiasUniformName = "MsdfFillBias";
     private const string TextDebugModeUniformName = "TextDebugMode";
+    private const string TextRenderLayerUniformName = "TextRenderLayer";
+    private const string TextRenderLayerVertexUniformName = "TextRenderLayer_VTX";
     private const int TextAtlasBitmap = 0;
+    private const int TextRenderLayerCombined = 0;
+    private const int TextRenderLayerOutline = 1;
+    private const int TextRenderLayerFill = 2;
+    private const uint TextInstanceVec4Count = 8;
     private static int s_textAddDiagCount;
     private static int s_textMarkerDiagCount;
     private static int s_textRenderDiagCount;
@@ -66,6 +72,8 @@ public sealed class UIBatchCollector : IDisposable
     {
         public Matrix4x4 WorldMatrix;
         public Vector4 TextColor;
+        public Vector4 OutlineColor;
+        public float OutlineThickness;
         public Vector4 UIXYWH;
         public int GlyphCount;
         public (Vector4 transform, Vector4 uvs)[] Glyphs;
@@ -82,6 +90,7 @@ public sealed class UIBatchCollector : IDisposable
         public float DistanceRangeMiddle;
         public float MsdfFillBias;
         public int DebugMode;
+        public bool HasOutline;
         public readonly List<TextEntry> Entries = [];
         public int TotalGlyphs;
 
@@ -93,6 +102,7 @@ public sealed class UIBatchCollector : IDisposable
             DistanceRangeMiddle = 0.5f;
             MsdfFillBias = 0.5f;
             DebugMode = 0;
+            HasOutline = false;
             Entries.Clear();
             TotalGlyphs = 0;
         }
@@ -275,7 +285,7 @@ public sealed class UIBatchCollector : IDisposable
         public XRMeshRenderer? Mesh;
         public XRDataBuffer<Vector4>? GlyphTransformsBuf;  // binding 0: vec4 per glyph
         public XRDataBuffer<Vector4>? GlyphTexCoordsBuf;   // binding 1: vec4 per glyph
-        public XRDataBuffer<Vector4>? TextInstanceBuf;      // binding 2: 6 × vec4 per text (mat4 rows + color + bounds)
+        public XRDataBuffer<Vector4>? TextInstanceBuf;      // binding 2: TextInstanceVec4Count × vec4 per text
         public XRDataBuffer<uint>? GlyphTextIndexBuf;       // binding 3: uint per glyph → text index
         public uint GlyphCapacity;
         public uint TextCapacity;
@@ -383,6 +393,8 @@ public sealed class UIBatchCollector : IDisposable
         XRTexture2D fontAtlas,
         in Matrix4x4 worldMatrix,
         in Vector4 textColor,
+        in Vector4 outlineColor,
+        float outlineThickness,
         in Vector4 uixywh,
         int atlasType,
         float distanceRange,
@@ -425,10 +437,13 @@ public sealed class UIBatchCollector : IDisposable
         {
             WorldMatrix = worldMatrix,
             TextColor = textColor,
+            OutlineColor = outlineColor,
+            OutlineThickness = outlineThickness,
             UIXYWH = uixywh,
             GlyphCount = glyphs.Length,
             Glyphs = glyphs
         });
+        batch.HasOutline |= outlineThickness > 0.0f && outlineColor.W > 0.0f;
         batch.TotalGlyphs += glyphs.Length;
 
         if (s_textAddDiagCount++ < 40)
@@ -710,6 +725,8 @@ public sealed class UIBatchCollector : IDisposable
             new ShaderFloat(0.5f, MsdfDistanceRangeMiddleUniformName),
             new ShaderFloat(0.5f, MsdfFillBiasUniformName),
             new ShaderInt(0, TextDebugModeUniformName),
+            new ShaderInt(TextRenderLayerCombined, TextRenderLayerUniformName),
+            new ShaderInt(TextRenderLayerCombined, TextRenderLayerVertexUniformName),
         ];
 
         var material = new XRMaterial(parameters, [fontAtlas], [vertexShader, stereoMv2VertexShader, stereoNvVertexShader, fragmentShader])
@@ -739,6 +756,7 @@ public sealed class UIBatchCollector : IDisposable
         if (gpu.Mesh.Mesh is not null)
             gpu.Mesh.Mesh.Name = "UIBatchTextQuadMesh";
         gpu.Mesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
+        gpu.Mesh.CaptureUniformsOnRender = true;
         DisableShaderPipelines(gpu.Mesh);
         gpu.Mesh.EnsureRenderPipelineVersionsCreated();
 
@@ -799,10 +817,10 @@ public sealed class UIBatchCollector : IDisposable
         };
         mesh.Buffers["GlyphTexCoordsBuffer"] = gpu.GlyphTexCoordsBuf;
 
-        // Text instance data: 6 vec4 per text (4 matrix rows + color + bounds)
+        // Text instance data: matrix rows + fill color + bounds + outline color + outline params.
         gpu.TextInstanceBuf = new XRDataBuffer<Vector4>(
             "TextInstanceBuffer", EBufferTarget.ShaderStorageBuffer,
-            gpu.TextCapacity * 6)
+            gpu.TextCapacity * TextInstanceVec4Count)
         {
             Usage = EBufferUsage.StreamDraw,
             BindingIndexOverride = 2,
@@ -980,6 +998,8 @@ public sealed class UIBatchCollector : IDisposable
         material?.SetFloat(MsdfDistanceRangeMiddleUniformName, batchData.DistanceRangeMiddle);
         material?.SetFloat(MsdfFillBiasUniformName, batchData.MsdfFillBias);
         material?.SetInt(TextDebugModeUniformName, batchData.DebugMode);
+        material?.SetInt(TextRenderLayerUniformName, TextRenderLayerCombined);
+        material?.SetInt(TextRenderLayerVertexUniformName, TextRenderLayerCombined);
 
         if (s_textRenderDiagCount++ < 40)
         {
@@ -1099,6 +1119,8 @@ public sealed class UIBatchCollector : IDisposable
         }
         finally
         {
+            material?.SetInt(TextRenderLayerUniformName, TextRenderLayerCombined);
+            material?.SetInt(TextRenderLayerVertexUniformName, TextRenderLayerCombined);
             DisableBatchCropping();
         }
     }
@@ -1174,7 +1196,7 @@ public sealed class UIBatchCollector : IDisposable
         if (textCount > gpu.TextCapacity)
         {
             gpu.TextCapacity = NextPowerOf2(textCount);
-            gpu.TextInstanceBuf!.Resize(gpu.TextCapacity * 6);
+            gpu.TextInstanceBuf!.Resize(gpu.TextCapacity * TextInstanceVec4Count);
             resized = true;
         }
         if (resized)
@@ -1182,7 +1204,9 @@ public sealed class UIBatchCollector : IDisposable
 
         bool fullUpload = gpu.NeedsPush;
         uint glyphElementCount = fullUpload ? gpu.GlyphCapacity : totalGlyphs;
-        uint textElementCount = fullUpload ? gpu.TextCapacity * 6u : textCount * 6u;
+        uint textElementCount = fullUpload
+            ? gpu.TextCapacity * TextInstanceVec4Count
+            : textCount * TextInstanceVec4Count;
         XRBufferWriter<Vector4> glyphTransformWriter = gpu.GlyphTransformsBuf!.Alloc<Vector4>(glyphElementCount);
         XRBufferWriter<Vector4> glyphUvWriter = gpu.GlyphTexCoordsBuf!.Alloc<Vector4>(glyphElementCount);
         XRBufferWriter<Vector4> textInstanceWriter = gpu.TextInstanceBuf!.Alloc<Vector4>(textElementCount);
@@ -1198,10 +1222,12 @@ public sealed class UIBatchCollector : IDisposable
         {
             ref readonly var entry = ref System.Runtime.InteropServices.CollectionsMarshal.AsSpan(batchData.Entries)[t];
 
-            // Write text instance data (6 vec4): matrix rows + color + bounds
+            // Write text instance data: matrix rows + color/bounds/outline metadata.
             WriteMatrix4x4(textInstances, ref textInstanceIndex, in entry.WorldMatrix);
             textInstances[textInstanceIndex++] = entry.TextColor;
             textInstances[textInstanceIndex++] = entry.UIXYWH;
+            textInstances[textInstanceIndex++] = entry.OutlineColor;
+            textInstances[textInstanceIndex++] = new Vector4(entry.OutlineThickness, 0.0f, 0.0f, 0.0f);
 
             // Write glyph data
             for (int g = 0; g < entry.GlyphCount; g++)

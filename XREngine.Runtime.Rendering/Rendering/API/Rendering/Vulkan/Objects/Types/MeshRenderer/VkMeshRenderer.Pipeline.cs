@@ -613,7 +613,9 @@ public unsafe partial class VulkanRenderer
 
 			RefreshClipDepthPipelinePolicy();
 
-			if (!EnsureProgram(material))
+			if (draw.PreparedProgram is { } preparedProgram)
+				ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity);
+			else if (!EnsureProgram(material))
 				return false;
 
 			bool pipelineInvalidated = _pipelineDirty;
