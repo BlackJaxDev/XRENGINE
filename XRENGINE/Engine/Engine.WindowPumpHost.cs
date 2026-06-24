@@ -13,7 +13,7 @@ internal enum EngineWindowPumpHostMode
 
 internal sealed class EngineWindowPumpHost : IDisposable
 {
-    private const string EnvironmentVariableName = "XRE_WINDOW_PUMP_HOST";
+    private const string EnvironmentVariableName = XREngineEnvironmentVariables.WindowPumpHost;
     private readonly object _windowsSync = new();
     private readonly List<XRWindow> _windows = [];
     private readonly List<XRWindow> _pumpSnapshot = [];

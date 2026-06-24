@@ -12,7 +12,7 @@ namespace XREngine.Data.Tools
     public static class CoACD
     {
         private const string NativeLibraryName = "lib_coacd";
-        private const string MaxConcurrentRunsEnvironmentVariable = "XRE_COACD_MAX_CONCURRENT_RUNS";
+        private const string MaxConcurrentRunsEnvironmentVariable = XREngineEnvironmentVariables.CoacdMaxConcurrentRuns;
         private static readonly int s_maxConcurrentRuns = ResolveMaxConcurrentRuns();
         private static readonly SemaphoreSlim s_nativeRunGate = new(s_maxConcurrentRuns, s_maxConcurrentRuns);
 

@@ -1,5 +1,6 @@
-﻿using Newtonsoft.Json;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
+using Newtonsoft.Json.Serialization;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -26,6 +27,7 @@ using XREngine.Editor.Mcp;
 using XREngine.Fbx;
 using XREngine.Native;
 using XREngine.Rendering;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.OpenGL;
@@ -142,10 +144,14 @@ internal class Program
 
         UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.Load(false);
         UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
+        UnitTestingWorldSettingsStore.ApplyVrLaunchOverrides(settings);
         UnitTestingWorldSettingsStore.ApplyAudioOverrides(settings);
+        WarnForMixedOpenXrSceneOnlyVr(settings);
         ConfigureFbxTraceLogging(settings);
         EditorUnitTests.SyncTogglesFromRuntime();
         BootstrapEditorHookRegistration.Register();
+        OpenXrSmokeRunController smokeRun = OpenXrSmokeRunController.Parse(args);
+        smokeRun.Configure(settings);
 
         // Retrieve the world, startup settings, and last game state to run the engine
         InitializeEditor(
@@ -189,6 +195,7 @@ internal class Program
         Engine.BeforeCreateWindows += BeforeWindowsCreated;
         try
         {
+            smokeRun.Install();
             WriteBootstrapTrace("Calling Engine.Run.");
             Engine.Run(startupSettings, gameState);
             WriteBootstrapTrace("Engine.Run returned normally.");
@@ -196,12 +203,323 @@ internal class Program
         catch (Exception ex)
         {
             WriteBootstrapTrace($"Engine.Run threw {ex.GetType().Name}: {ex.Message}");
-            throw;
+            smokeRun.RecordEngineRunException(ex);
+            if (!smokeRun.Enabled)
+                throw;
         }
         finally
         {
+            smokeRun.FinishAfterRun();
+            smokeRun.Dispose();
             WriteBootstrapTrace("Shutting down MCP host.");
             McpServerHost.Shutdown();
+        }
+    }
+
+    private static void WarnForMixedOpenXrSceneOnlyVr(UnitTestingWorldSettings settings)
+    {
+        if (!settings.VRPawn || !settings.UseOpenXR || !settings.SceneOnlyVRPawn)
+            return;
+
+        EngineDebug.LogWarning(
+            "[OpenXRSettings] UseOpenXR=true and SceneOnlyVRPawn=true. SceneOnlyVRPawn is a scene-only VR rig path; " +
+            "it does not emulate the OpenXR API. UseOpenXR still requests a real OpenXR runtime.");
+    }
+
+    private sealed class OpenXrSmokeRunController : IDisposable
+    {
+        private const int ExitSuccess = 0;
+        private const int ExitStartupFailure = 21;
+        private const int ExitFrameTimeout = 22;
+        private const int ExitSummaryFailure = 23;
+        private const int ExitTeardownFailure = 24;
+        private const int ExitEngineException = 25;
+        private const int DefaultTimeoutSeconds = 120;
+        private static readonly JsonSerializerSettings SmokeJsonSettings = new()
+        {
+            Formatting = Formatting.Indented,
+            ContractResolver = new CamelCasePropertyNamesContractResolver(),
+            Converters = [new StringEnumConverter()]
+        };
+
+        private readonly int _targetFrames;
+        private readonly TimeSpan _timeout;
+        private readonly string? _summaryPath;
+        private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
+        private readonly List<string> _failures = [];
+        private readonly List<string> _warnings = [];
+        private bool _installed;
+        private bool _targetReached;
+        private bool _sessionExitRequested;
+        private DateTimeOffset _sessionExitDeadlineUtc;
+        private bool _shutdownRequested;
+        private bool _finished;
+        private int _exitCode = ExitStartupFailure;
+
+        private OpenXrSmokeRunController(int targetFrames, TimeSpan timeout, string? summaryPath)
+        {
+            _targetFrames = targetFrames;
+            _timeout = timeout;
+            _summaryPath = summaryPath;
+        }
+
+        public bool Enabled => _targetFrames > 0;
+
+        public static OpenXrSmokeRunController Parse(string[] args)
+        {
+            int targetFrames = ReadIntOption(args, "--smoke-frames", XREngineEnvironmentVariables.OpenXrSmokeFrames, 0);
+            int timeoutSeconds = ReadIntOption(args, "--smoke-timeout-seconds", XREngineEnvironmentVariables.OpenXrSmokeTimeoutSeconds, DefaultTimeoutSeconds);
+            string? summaryPath = ReadStringOption(args, "--openxr-smoke-summary", XREngineEnvironmentVariables.OpenXrSmokeSummary)
+                ?? ReadStringOption(args, "--smoke-summary", XREngineEnvironmentVariables.SmokeSummary);
+
+            return new OpenXrSmokeRunController(
+                Math.Max(0, targetFrames),
+                TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds)),
+                summaryPath);
+        }
+
+        public void Configure(UnitTestingWorldSettings settings)
+        {
+            if (!Enabled)
+                return;
+
+            Environment.ExitCode = ExitStartupFailure;
+            if (!settings.VRPawn)
+                _failures.Add("OpenXR smoke requires UnitTestingWorldSettings.VRPawn=true.");
+            if (!settings.UseOpenXR)
+                _failures.Add("OpenXR smoke requires UnitTestingWorldSettings.UseOpenXR=true.");
+            if (settings.VR.Mode is not (UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR))
+                _failures.Add("OpenXR smoke requires UnitTestingWorldSettings.VR.Mode=MonadoOpenXR or OpenXR.");
+            if (settings.SceneOnlyVRPawn)
+                _warnings.Add("SceneOnlyVRPawn is scene-only and does not emulate OpenXR API calls; Lane 2 smoke should normally set it to false.");
+
+            EngineDebug.Out($"[OpenXRSmoke] Enabled targetFrames={_targetFrames}, timeout={_timeout.TotalSeconds:F0}s, summary='{_summaryPath ?? "<log directory>"}'.");
+        }
+
+        public void Install()
+        {
+            if (!Enabled || _installed)
+                return;
+
+            Engine.Time.Timer.UpdateFrame += Update;
+            _installed = true;
+        }
+
+        public void RecordEngineRunException(Exception ex)
+        {
+            if (!Enabled)
+                return;
+
+            _failures.Add($"Engine.Run threw {ex.GetType().Name}: {ex.Message}");
+            _exitCode = ExitEngineException;
+        }
+
+        public void FinishAfterRun()
+        {
+            if (!Enabled || _finished)
+                return;
+
+            _finished = true;
+            string? logDirectory = TryGetLogDirectory();
+            OpenXrSmokeSummary summary = Engine.VRState.OpenXRApi?.CreateSmokeSummary(logDirectory)
+                ?? new OpenXrSmokeSummary
+                {
+                    LogDirectory = logDirectory,
+                    RuntimeState = "<no OpenXR API>",
+                    SessionState = "<no OpenXR API>",
+                };
+
+            List<string> validationFailures = ValidateSummary(summary);
+            summary.Warnings = [.. summary.Warnings, .. _warnings];
+            summary.Failures = [.. summary.Failures, .. _failures, .. validationFailures];
+
+            int exitCode = ResolveExitCode(summary, validationFailures);
+            Environment.ExitCode = exitCode;
+
+            string path = ResolveSummaryPath(logDirectory);
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
+                File.WriteAllText(path, JsonConvert.SerializeObject(summary, SmokeJsonSettings));
+                EngineDebug.Out($"[OpenXRSmoke] Summary written to '{path}'. ExitCode={exitCode}.");
+            }
+            catch (Exception ex)
+            {
+                Environment.ExitCode = ExitSummaryFailure;
+                EngineDebug.LogWarning($"[OpenXRSmoke] Failed to write summary '{path}': {ex.Message}");
+            }
+        }
+
+        public void Dispose()
+        {
+            if (!_installed)
+                return;
+
+            Engine.Time.Timer.UpdateFrame -= Update;
+            _installed = false;
+        }
+
+        private void Update()
+        {
+            if (_shutdownRequested)
+                return;
+
+            if (_failures.Count > 0)
+            {
+                RequestShutdown(ExitStartupFailure, "Configuration failure.");
+                return;
+            }
+
+            OpenXRAPI? api = Engine.VRState.OpenXRApi;
+            if (api is not null && (_sessionExitRequested || api.SmokeSubmittedFrameCount >= _targetFrames))
+            {
+                _targetReached = true;
+                _exitCode = ExitSummaryFailure;
+                if (!_sessionExitRequested)
+                {
+                    _sessionExitRequested = true;
+                    _sessionExitDeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(2);
+                    api.RequestSmokeSessionExit();
+                    EngineDebug.Out($"[OpenXRSmoke] Target submitted frame count reached: {api.SmokeSubmittedFrameCount}/{_targetFrames}. Requested OpenXR session exit.");
+                    return;
+                }
+
+                if (!api.IsSessionRunning || DateTimeOffset.UtcNow >= _sessionExitDeadlineUtc)
+                {
+                    if (api.IsSessionRunning)
+                        _warnings.Add("OpenXR session was still marked running when the smoke drain window expired; engine teardown continued.");
+
+                    RequestShutdown(ExitSummaryFailure, $"OpenXR smoke drain complete. Submitted={api.SmokeSubmittedFrameCount}/{_targetFrames}.");
+                }
+                return;
+            }
+
+            if (_stopwatch.Elapsed <= _timeout)
+                return;
+
+            long submitted = api?.SmokeSubmittedFrameCount ?? 0;
+            _failures.Add($"Timed out after {_timeout.TotalSeconds:F0}s waiting for OpenXR smoke frames. Submitted={submitted}, Target={_targetFrames}.");
+            RequestShutdown(ExitFrameTimeout, "Timed out waiting for OpenXR smoke frames.");
+        }
+
+        private int ResolveExitCode(OpenXrSmokeSummary summary, List<string> validationFailures)
+        {
+            if (!_targetReached)
+                return _exitCode == ExitSuccess ? ExitStartupFailure : _exitCode;
+
+            if (!summary.TeardownCompleted)
+                return ExitTeardownFailure;
+
+            return validationFailures.Count == 0 && _failures.Count == 0 && summary.Failures.Length == 0
+                ? ExitSuccess
+                : ExitSummaryFailure;
+        }
+
+        private List<string> ValidateSummary(OpenXrSmokeSummary summary)
+        {
+            var failures = new List<string>();
+            if (!_targetReached)
+            {
+                failures.Add($"Engine exited before reaching OpenXR smoke target. Submitted={summary.SubmittedFrameCount}, Target={_targetFrames}.");
+                return failures;
+            }
+
+            if (summary.SchemaVersion != OpenXrSmokeSummary.CurrentSchemaVersion)
+                failures.Add($"Unexpected OpenXR smoke schemaVersion={summary.SchemaVersion}.");
+            if (!summary.InstanceCreated)
+                failures.Add("OpenXR instance was not created.");
+            if (!summary.SystemFound)
+                failures.Add("OpenXR system was not found.");
+            if (!summary.SessionCreated)
+                failures.Add("OpenXR graphics-bound session was not created.");
+            if (!summary.ReferenceSpaceCreated)
+                failures.Add("OpenXR reference space was not created.");
+            if (!summary.SwapchainsCreated || summary.Swapchains.Length < 2)
+                failures.Add($"Expected two OpenXR swapchains; observed {summary.Swapchains.Length}.");
+            if (summary.SubmittedFrameCount < _targetFrames)
+                failures.Add($"SubmittedFrameCount={summary.SubmittedFrameCount}, Target={_targetFrames}.");
+            if (summary.EndFrameFailureCount > 0)
+                failures.Add($"xrEndFrame failure count was {summary.EndFrameFailureCount}.");
+            if (summary.LocatedViewCount < 2)
+                failures.Add($"Expected at least two located OpenXR views; observed {summary.LocatedViewCount}.");
+            if (!summary.PredictedViewPoseCached)
+                failures.Add("Predicted OpenXR view pose cache was not updated.");
+            if (!summary.LateViewPoseCached)
+                failures.Add("Late OpenXR view pose cache was not updated.");
+            if (!summary.PredictedActionPoseCacheUpdated)
+                failures.Add("Predicted OpenXR action pose cache was not updated.");
+            if (!summary.LateActionPoseCacheUpdated)
+                failures.Add("Late OpenXR action pose cache was not updated.");
+            if (!HasTwoEyesAtLeast(summary.PerEyeAcquireCounts, _targetFrames))
+                failures.Add("Per-eye xrAcquireSwapchainImage counts did not reach target frames.");
+            if (!HasTwoEyesAtLeast(summary.PerEyeWaitCounts, _targetFrames))
+                failures.Add("Per-eye xrWaitSwapchainImage counts did not reach target frames.");
+            if (!HasTwoEyesAtLeast(summary.PerEyeReleaseCounts, _targetFrames))
+                failures.Add("Per-eye xrReleaseSwapchainImage counts did not reach target frames.");
+            if (!summary.TeardownCompleted)
+                failures.Add("OpenXR teardown did not complete before smoke summary was written.");
+            if (!summary.DesktopMirrorComposed)
+                failures.Add("OpenXR desktop mirror composition was not observed during the smoke run.");
+
+            return failures;
+        }
+
+        private static bool HasTwoEyesAtLeast(long[] counts, int targetFrames)
+            => counts.Length >= 2 && counts[0] >= targetFrames && counts[1] >= targetFrames;
+
+        private void RequestShutdown(int exitCode, string reason)
+        {
+            _shutdownRequested = true;
+            _exitCode = exitCode;
+            Environment.ExitCode = exitCode;
+            EngineDebug.Out($"[OpenXRSmoke] {reason} Requesting engine shutdown.");
+            Engine.ShutDown();
+        }
+
+        private string ResolveSummaryPath(string? logDirectory)
+        {
+            if (!string.IsNullOrWhiteSpace(_summaryPath))
+                return Path.GetFullPath(_summaryPath);
+
+            string directory = string.IsNullOrWhiteSpace(logDirectory)
+                ? Path.Combine(Environment.CurrentDirectory, "Build", "Logs")
+                : logDirectory;
+            return Path.Combine(directory, "openxr-smoke-summary.json");
+        }
+
+        private static string? TryGetLogDirectory()
+        {
+            try
+            {
+                return EngineDebug.EnsureLogRunDirectory();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static int ReadIntOption(string[] args, string optionName, string environmentName, int defaultValue)
+        {
+            string? raw = ReadStringOption(args, optionName, environmentName);
+            return int.TryParse(raw, out int value) ? value : defaultValue;
+        }
+
+        private static string? ReadStringOption(string[] args, string optionName, string environmentName)
+        {
+            for (int i = 0; i < args.Length; i++)
+            {
+                string arg = args[i];
+                if (string.Equals(arg, optionName, StringComparison.OrdinalIgnoreCase))
+                    return i + 1 < args.Length ? args[i + 1] : null;
+
+                string prefix = optionName + "=";
+                if (arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return arg[prefix.Length..];
+            }
+
+            string? raw = Environment.GetEnvironmentVariable(environmentName);
+            return string.IsNullOrWhiteSpace(raw) ? null : raw;
         }
     }
 
@@ -778,7 +1096,7 @@ internal class Program
         }
 
         // Check environment variable
-        string? worldModeEnv = Environment.GetEnvironmentVariable("XRE_WORLD_MODE");
+        string? worldModeEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WorldMode);
         if (!string.IsNullOrWhiteSpace(worldModeEnv) &&
             Enum.TryParse<EWorldMode>(worldModeEnv, true, out var mode))
         {
@@ -901,7 +1219,7 @@ internal class Program
 
         // Allow overriding the window title for multi-instance local testing.
         // Example: launch a 2nd client with XRE_WINDOW_TITLE="XRE Editor (Client 2)".
-        string? windowTitleOverride = Environment.GetEnvironmentVariable("XRE_WINDOW_TITLE");
+        string? windowTitleOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WindowTitle);
         if (!string.IsNullOrWhiteSpace(windowTitleOverride) && settings.StartupWindows.Count > 0)
         {
             settings.StartupWindows[0].WindowTitle = windowTitleOverride;
@@ -912,7 +1230,7 @@ internal class Program
         Engine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
 
         // Allow overriding networking mode via env var for quick local testing.
-        string? netOverride = Environment.GetEnvironmentVariable("XRE_NET_MODE");
+        string? netOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.NetMode);
         if (!string.IsNullOrWhiteSpace(netOverride) &&
             Enum.TryParse<ENetworkingType>(netOverride, true, out var mode))
         {
@@ -922,34 +1240,32 @@ internal class Program
 
         // Allow overriding UDP ports to support multi-instance local testing.
         // Example: launch a 2nd client with XRE_UDP_CLIENT_RECEIVE_PORT=5002.
-        if (TryGetIntEnv("XRE_UDP_CLIENT_RECEIVE_PORT", out int udpClientReceivePort))
+        if (TryGetIntEnv(XREngineEnvironmentVariables.UdpClientReceivePort, out int udpClientReceivePort))
         {
             settings.UdpClientRecievePort = udpClientReceivePort;
             EngineDebug.Log(ELogCategory.Networking, $"UDP client receive port overridden to {udpClientReceivePort} via XRE_UDP_CLIENT_RECEIVE_PORT.");
         }
-        if (TryGetIntEnv("XRE_UDP_SERVER_SEND_PORT", out int udpServerSendPort))
+        if (TryGetIntEnv(XREngineEnvironmentVariables.UdpServerSendPort, out int udpServerSendPort))
         {
             settings.UdpServerSendPort = udpServerSendPort;
             EngineDebug.Log(ELogCategory.Networking, $"UDP server send port overridden to {udpServerSendPort} via XRE_UDP_SERVER_SEND_PORT.");
         }
-        if (TryGetIntEnv("XRE_UDP_SERVER_BIND_PORT", out int udpServerBindPort))
+        if (TryGetIntEnv(XREngineEnvironmentVariables.UdpServerBindPort, out int udpServerBindPort))
         {
             settings.UdpServerBindPort = udpServerBindPort;
             EngineDebug.Log(ELogCategory.Networking, $"UDP server bind port overridden to {udpServerBindPort} via XRE_UDP_SERVER_BIND_PORT.");
         }
-        if (TryGetIntEnv("XRE_UDP_MULTICAST_PORT", out int udpMulticastPort))
+        if (TryGetIntEnv(XREngineEnvironmentVariables.UdpMulticastPort, out int udpMulticastPort))
         {
             settings.UdpMulticastPort = udpMulticastPort;
             EngineDebug.Log(ELogCategory.Networking, $"UDP multicast port overridden to {udpMulticastPort} via XRE_UDP_MULTICAST_PORT.");
         }
 
-        if (unitTestSettings.VRPawn && (!unitTestSettings.EmulatedVRPawn || unitTestSettings.PreviewVRStereoViews))
+        if (unitTestSettings.VRPawn && (!unitTestSettings.SceneOnlyVRPawn || unitTestSettings.PreviewVRStereoViews))
         {
             settings.RunVRInPlace = true;
             EditorVR.ApplyOpenVRSettings(settings);
-            settings.VRRuntime = unitTestSettings.UseOpenXR
-                ? EVRRuntime.OpenXR
-                : EVRRuntime.OpenVR;
+            settings.VRRuntime = unitTestSettings.UseOpenXR ? EVRRuntime.OpenXR : EVRRuntime.OpenVR;
         }
         else
         {
@@ -993,7 +1309,7 @@ internal class Program
 
     private static bool ResolveDebugOpaquePipelineSetting()
     {
-        string? forceDebugEnv = Environment.GetEnvironmentVariable("XRE_FORCE_DEBUG_OPAQUE_PIPELINE");
+        string? forceDebugEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceDebugOpaquePipeline);
         if (!string.IsNullOrWhiteSpace(forceDebugEnv))
         {
             bool forceDebug =
@@ -1574,8 +1890,8 @@ internal class Program
 
     private static void ConfigureMsBuildEnvironmentForHeadlessBuild()
     {
-        string? existingSdksPath = Environment.GetEnvironmentVariable("MSBuildSDKsPath");
-        string? existingMsbuildPath = Environment.GetEnvironmentVariable("MSBUILD_EXE_PATH");
+        string? existingSdksPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildSdksPath);
+        string? existingMsbuildPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildExePath);
         if (!string.IsNullOrWhiteSpace(existingSdksPath) &&
             Directory.Exists(existingSdksPath) &&
             !string.IsNullOrWhiteSpace(existingMsbuildPath) &&
@@ -1584,7 +1900,7 @@ internal class Program
             return;
         }
 
-        string? dotnetRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        string? dotnetRoot = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DotnetRoot);
         if (string.IsNullOrWhiteSpace(dotnetRoot))
         {
             string candidate = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
@@ -1608,16 +1924,16 @@ internal class Program
         if (!Directory.Exists(sdksPath) || !File.Exists(msbuildPath))
             return;
 
-        Environment.SetEnvironmentVariable("MSBuildSDKsPath", sdksPath);
-        Environment.SetEnvironmentVariable("MSBUILD_EXE_PATH", msbuildPath);
-        Environment.SetEnvironmentVariable("MSBuildExtensionsPath", selectedSdk);
-        Environment.SetEnvironmentVariable("MSBuildExtensionsPath32", selectedSdk);
-        Environment.SetEnvironmentVariable("MSBuildToolsPath", selectedSdk);
+        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildSdksPath, sdksPath);
+        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildExePath, msbuildPath);
+        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildExtensionsPath, selectedSdk);
+        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildExtensionsPath32, selectedSdk);
+        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildToolsPath, selectedSdk);
     }
 
     private static string? TryResolvePreferredSdkDirectory(string sdkRoot)
     {
-        string? explicitSdkVersion = Environment.GetEnvironmentVariable("DOTNET_SDK_VERSION");
+        string? explicitSdkVersion = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DotnetSdkVersion);
         if (!string.IsNullOrWhiteSpace(explicitSdkVersion))
         {
             string explicitPath = Path.Combine(sdkRoot, explicitSdkVersion);

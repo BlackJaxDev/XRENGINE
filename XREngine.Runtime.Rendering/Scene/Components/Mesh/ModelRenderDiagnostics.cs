@@ -425,7 +425,7 @@ internal static class ModelRenderDiagnostics
 
     private static string[] BuildPriorityTokens()
     {
-        string? env = System.Environment.GetEnvironmentVariable("XRE_MODEL_RENDER_DIAG_FILTER");
+        string? env = System.Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ModelRenderDiagFilter);
         if (string.IsNullOrWhiteSpace(env))
             return ["body"];
 

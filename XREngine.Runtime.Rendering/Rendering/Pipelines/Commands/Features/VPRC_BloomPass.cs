@@ -64,9 +64,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private const string BloomSourceSamplerName = "SourceTexture";
         private const string BloomCopyPassName = "Bloom_Copy_Mip0";
         private static readonly bool BloomDebugSolidOutput =
-            string.Equals(Environment.GetEnvironmentVariable("XRE_BLOOM_DEBUG_SOLID"), "1", StringComparison.OrdinalIgnoreCase);
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BloomDebugSolid), "1", StringComparison.OrdinalIgnoreCase);
         private static readonly bool BloomDiagEnabled =
-            string.Equals(Environment.GetEnvironmentVariable("XRE_BLOOM_DIAG"), "1", StringComparison.OrdinalIgnoreCase);
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BloomDiag), "1", StringComparison.OrdinalIgnoreCase);
 
         private static readonly string[] BloomDownsampleScopeNames =
         [

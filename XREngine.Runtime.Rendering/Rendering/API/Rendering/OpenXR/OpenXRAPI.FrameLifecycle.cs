@@ -176,6 +176,7 @@ public unsafe partial class OpenXRAPI
             if (acquireResult != Result.Success)
                 return false;
             acquired = true;
+            RecordSmokeEyeAcquire(viewIndex);
 
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Acquire => {acquireResult} imageIndex={imageIndex}");
@@ -192,6 +193,7 @@ public unsafe partial class OpenXRAPI
             var waitResult = CheckResult(Api.WaitSwapchainImage(_swapchains[viewIndex], in waitInfo), "xrWaitSwapchainImage");
             if (waitResult != Result.Success)
                 return false;
+            RecordSmokeEyeWait(viewIndex);
 
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Wait => {waitResult}");
@@ -248,6 +250,8 @@ public unsafe partial class OpenXRAPI
             {
                 var releaseInfo = new SwapchainImageReleaseInfo { Type = StructureType.SwapchainImageReleaseInfo };
                 var releaseResult = CheckResult(Api.ReleaseSwapchainImage(_swapchains[viewIndex], in releaseInfo), "xrReleaseSwapchainImage");
+                if (releaseResult == Result.Success)
+                    RecordSmokeEyeRelease(viewIndex);
                 if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                     Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Release => {releaseResult}");
             }

@@ -2,7 +2,7 @@ namespace XREngine.Rendering;
 
 public static class InteractiveWindowResizeStrategyUtility
 {
-    public const string EnvironmentVariableName = "XRE_INTERACTIVE_RESIZE_STRATEGY";
+    public const string EnvironmentVariableName = XREngineEnvironmentVariables.InteractiveResizeStrategy;
 
     public static bool TryParse(string? value, out EInteractiveWindowResizeStrategy strategy)
     {

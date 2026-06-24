@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -2065,7 +2065,7 @@ namespace XREngine.Rendering.Vulkan
                 bool executedInPrimary = false;
                 bool meshLabelActive = false;
                 CommandPool pool = chain.SecondaryCommandPool;
-                bool meshSecondaryNoOp = IsCommandChainFlagEnabled("XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP");
+                bool meshSecondaryNoOp = IsCommandChainFlagEnabled(XREngineEnvironmentVariables.VulkanCommandChainMeshSecondaryNoop);
 
                 CmdBeginLabel(commandBuffer, $"MeshCommandChainSecondary[{runCount}]");
                 meshLabelActive = true;

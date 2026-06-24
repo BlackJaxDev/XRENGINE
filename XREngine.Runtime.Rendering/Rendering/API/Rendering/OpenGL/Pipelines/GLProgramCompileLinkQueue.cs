@@ -52,25 +52,25 @@ namespace XREngine.Rendering.OpenGL
             private const string SharedContextAbandonedLinkMarker = "abandoned to keep the async link queue moving";
             private static readonly double WorkerCompletionHardAbandonMilliseconds = ResolveWorkerCompletionHardAbandonMilliseconds();
             private static readonly bool TraceShaderCompletionPollGlCalls = string.Equals(
-                Environment.GetEnvironmentVariable("XRE_TRACE_SHADER_COMPLETION_POLL_GLCALLS"),
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TraceShaderCompletionPollGlCalls),
                 "1",
                 StringComparison.Ordinal);
             private static readonly bool TraceShaderLinkQueueGateEvents = string.Equals(
-                Environment.GetEnvironmentVariable("XRE_TRACE_SHADER_LINK_QUEUE_GATES"),
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TraceShaderLinkQueueGates),
                 "1",
                 StringComparison.Ordinal);
             private static readonly bool DisableCompletionPollingForSharedContextWorkerPrograms = string.Equals(
-                Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_DISABLE_COMPLETION_POLLING"),
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SharedContextDisableCompletionPolling),
                 "1",
                 StringComparison.Ordinal);
             private static readonly bool SuppressParallelCompileForSingleStageWorkerPrograms =
                 string.Equals(
-                    Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL"),
+                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SharedContextHazardDisableParallel),
                     "1",
                     StringComparison.Ordinal);
             private static readonly bool DisableProgramLinkSerialization =
                 string.Equals(
-                    Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_DISABLE_LINK_SERIALIZATION"),
+                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SharedContextDisableLinkSerialization),
                     "1",
                     StringComparison.Ordinal);
 
@@ -140,7 +140,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static double ResolveWorkerCompletionHardAbandonMilliseconds()
             {
-                string? configured = Environment.GetEnvironmentVariable("XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS");
+                string? configured = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SharedContextLinkTimeoutMs);
                 if (double.TryParse(configured, NumberStyles.Float, CultureInfo.InvariantCulture, out double milliseconds) &&
                     milliseconds >= WorkerCompletionStuckFlushMilliseconds)
                 {

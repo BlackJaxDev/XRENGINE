@@ -131,7 +131,7 @@ slots without same-buffer overwrite hazards.
 
 Run setup:
 
-- [ ] Configure Unit Testing World `RenderAPI` for OpenGL.
+- [ ] Configure Unit Testing World `Rendering.RenderBackend` for OpenGL.
 - [ ] Enable upload-stage logging or equivalent buffer route diagnostics.
 - [ ] Exercise UI batching, text, particle buffers, GPUScene dynamic buffers,
   and any available persistent-ring candidate path.
@@ -157,7 +157,7 @@ slots under Vulkan without stale descriptor offsets or stale device addresses.
 
 Run setup:
 
-- [ ] Configure Unit Testing World `RenderAPI` for Vulkan.
+- [ ] Configure Unit Testing World `Rendering.RenderBackend` for Vulkan.
 - [ ] Enable Vulkan validation layers for correctness runs.
 - [ ] Exercise dynamic render submission, view-set buffers, skinning/blendshape
   updates, and UI/particle dynamic buffers.
@@ -183,7 +183,7 @@ device-local storage without requiring a caller-visible permanent CPU mirror.
 
 Run setup:
 
-- [ ] Configure Unit Testing World `RenderAPI` for Vulkan.
+- [ ] Configure Unit Testing World `Rendering.RenderBackend` for Vulkan.
 - [ ] Load at least one imported model or scene with static mesh/attribute
   buffers.
 - [ ] Exercise one GI setup or texture-buffer style upload path that uses the
@@ -209,7 +209,7 @@ invalidate host-visible readback memory.
 
 Run setup:
 
-- [ ] Configure Unit Testing World `RenderAPI` for Vulkan.
+- [ ] Configure Unit Testing World `Rendering.RenderBackend` for Vulkan.
 - [ ] Exercise physics chain readback or another explicit `GpuToCpuReadback`
   buffer.
 - [ ] Run one diagnostic readback path and one production zero-readback path.

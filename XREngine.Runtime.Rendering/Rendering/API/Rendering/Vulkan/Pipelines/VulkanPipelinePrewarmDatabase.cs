@@ -265,7 +265,7 @@ internal sealed class VulkanPipelinePrewarmFile
 
 public unsafe partial class VulkanRenderer
 {
-    private const string VulkanPipelinePrewarmCaptureEnvVar = "XRE_VK_PIPELINE_PREWARM_CAPTURE";
+    private const string VulkanPipelinePrewarmCaptureEnvVar = XREngineEnvironmentVariables.VulkanPipelinePrewarmCapture;
 
     private VulkanPipelinePrewarmDatabase? _pipelinePrewarmDatabase;
     private string? _pipelinePrewarmDatabaseFilePath;

@@ -125,7 +125,7 @@ namespace XREngine
 
                 private static bool IsGpuTimestampDenseModeEnabled()
                 {
-                    string? value = Environment.GetEnvironmentVariable("XRE_GPU_TIMESTAMP_DENSE");
+                    string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuTimestampDense);
                     if (string.IsNullOrWhiteSpace(value))
                         return false;
 

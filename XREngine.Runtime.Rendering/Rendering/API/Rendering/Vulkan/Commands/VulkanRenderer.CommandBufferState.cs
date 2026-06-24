@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -47,13 +47,13 @@ namespace XREngine.Rendering.Vulkan
         private int _parallelSecondaryIndirectRunThreshold = 4;
         private static readonly int FrameOpSignatureDiffLogLimit = ReadFrameOpSignatureDiffLogLimit();
         private static readonly bool FrameOpSignatureDiffDiagnosticsEnabled =
-            string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF"), "1", StringComparison.Ordinal);
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameOpSignatureDiff), "1", StringComparison.Ordinal);
         private static readonly bool FrameDataReuseDiagnosticsEnabled =
-            string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_FRAME_DATA_REUSE_DIAG"), "1", StringComparison.Ordinal);
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameDataReuseDiag), "1", StringComparison.Ordinal);
         private static readonly bool CommandRecordingDiagnosticsEnabled =
-            string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_RECORDING_DIAG"), "1", StringComparison.Ordinal);
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanRecordingDiag), "1", StringComparison.Ordinal);
         private static readonly bool CommandRecordingDetailProfilingEnabled =
-            string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_RECORDING_PROFILE_DETAIL"), "1", StringComparison.Ordinal);
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanRecordingProfileDetail), "1", StringComparison.Ordinal);
         private FrameOpSignatureDebugPart[][]? _commandBufferFrameOpSignatureDebugParts;
         private int _frameOpSignatureDiffLogCount;
         private string? _vulkanDiagnosticBaseWindowTitle;
@@ -85,7 +85,7 @@ namespace XREngine.Rendering.Vulkan
         private int _dynamicUiMeshDrawSlotCapacityHint = 1;
         private string? _lastReusableFrameDataRefreshFailureReason;
         private static readonly bool BloomVulkanDiagnosticsEnabled =
-            string.Equals(Environment.GetEnvironmentVariable("XRE_BLOOM_DIAG"), "1", StringComparison.Ordinal);
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BloomDiag), "1", StringComparison.Ordinal);
 
         private readonly record struct FrameOpFailureSnapshot(
             string OpType,

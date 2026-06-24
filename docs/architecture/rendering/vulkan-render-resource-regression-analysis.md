@@ -7,7 +7,7 @@ pipeline instance resource allocation/resizing and data-buffer writing work.
 
 Evidence came from:
 
-- `Assets/UnitTestingWorldSettings.jsonc`: `RenderAPI` is `Vulkan`, ImGui editor is enabled, procedural sky and Sponza are active.
+- `Assets/UnitTestingWorldSettings.jsonc`: `Rendering.RenderBackend` is `Vulkan`, ImGui editor is enabled, procedural sky and Sponza are active.
 - Latest run logs:
   `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-13_18-37-57_pid29020/`
 - Source paths under `XREngine.Runtime.Rendering/Rendering/Resources`,

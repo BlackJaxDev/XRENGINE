@@ -6,8 +6,8 @@ namespace XREngine;
 
 public static class RealtimeJoinHandoff
 {
-    public const string PayloadEnvironmentVariable = "XRE_REALTIME_JOIN_PAYLOAD";
-    public const string PayloadFileEnvironmentVariable = "XRE_REALTIME_JOIN_PAYLOAD_FILE";
+    public const string PayloadEnvironmentVariable = XREngineEnvironmentVariables.RealtimeJoinPayload;
+    public const string PayloadFileEnvironmentVariable = XREngineEnvironmentVariables.RealtimeJoinPayloadFile;
 
     public static string CurrentProtocolVersion { get; } = typeof(Engine).Assembly.GetName().Version?.ToString() ?? "dev";
 

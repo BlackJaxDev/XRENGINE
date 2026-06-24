@@ -132,9 +132,19 @@ public unsafe partial class OpenXRAPI
                 _swapchainImagesVK[i][j].Type = StructureType.SwapchainImageVulkan2Khr;
 
             Api.EnumerateSwapchainImages(_swapchains[i], imageCount, &imageCount, (SwapchainImageBaseHeader*)_swapchainImagesVK[i]);
+            _swapchainImageCounts[i] = imageCount;
+            RecordSmokeSwapchain(
+                "Vulkan",
+                i,
+                swapchainCreateInfo.Width,
+                swapchainCreateInfo.Height,
+                swapchainCreateInfo.Format,
+                swapchainCreateInfo.SampleCount,
+                imageCount);
 
             Console.WriteLine($"Created swapchain {i} with {imageCount} images ({swapchainCreateInfo.Width}x{swapchainCreateInfo.Height})");
         }
+        RecordSmokeSwapchainsCreated();
     }
 
 }

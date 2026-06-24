@@ -991,7 +991,7 @@ namespace XREngine
 
         private static int? ReadWorkerCountFromEnv()
         {
-            string? value = Environment.GetEnvironmentVariable("XR_JOB_WORKERS");
+            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.JobWorkers);
             if (string.IsNullOrWhiteSpace(value))
                 return null;
             return int.TryParse(value, out int parsed) && parsed > 0 ? parsed : null;
@@ -999,7 +999,7 @@ namespace XREngine
 
         private static int? ReadWorkerCapFromEnv()
         {
-            string? value = Environment.GetEnvironmentVariable("XR_JOB_WORKER_CAP");
+            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.JobWorkerCap);
             if (string.IsNullOrWhiteSpace(value))
                 return null;
             return int.TryParse(value, out int parsed) && parsed > 0 ? parsed : null;
@@ -1007,7 +1007,7 @@ namespace XREngine
 
         private static int? ReadQueueLimitFromEnv()
         {
-            string? value = Environment.GetEnvironmentVariable("XR_JOB_QUEUE_LIMIT");
+            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.JobQueueLimit);
             if (string.IsNullOrWhiteSpace(value))
                 return null;
             return int.TryParse(value, out int parsed) && parsed > 0 ? parsed : null;
@@ -1015,7 +1015,7 @@ namespace XREngine
 
         private static int? ReadQueueWarningThresholdFromEnv()
         {
-            string? value = Environment.GetEnvironmentVariable("XR_JOB_QUEUE_WARN");
+            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.JobQueueWarn);
             if (string.IsNullOrWhiteSpace(value))
                 return null;
             return int.TryParse(value, out int parsed) && parsed > 0 ? parsed : null;

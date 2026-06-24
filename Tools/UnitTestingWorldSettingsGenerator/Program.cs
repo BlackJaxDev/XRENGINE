@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using Newtonsoft.Json.Linq;
+using XREngine;
 using XREngine.Editor;
 
 var options = GeneratorOptions.Parse(args);
@@ -160,6 +161,7 @@ static class SourceMetadataParser
         var metadata = new SourceMetadata();
         ParseClass(source, "Settings", metadata);
         ParseClass(source, "ModelImportSettings", metadata);
+        ParseClass(source, "UnitTestingVrSettings", metadata);
         ParseClass(source, "YawPitchRollDegrees", metadata);
         ParseClass(source, "TranslationXYZ", metadata);
         ParseClass(source, "ProbeGridCounts", metadata);
@@ -887,7 +889,28 @@ static class SettingsDocumentGenerator
             }
         }
 
+        if (string.Equals(metadata.Name, "Settings", StringComparison.Ordinal))
+            MigrateLegacyRenderApiToGroupedRendering(generated, existing);
+
         return generated;
+    }
+
+    private static void MigrateLegacyRenderApiToGroupedRendering(JObject generated, JObject existing)
+    {
+        if (!existing.TryGetValue("RenderAPI", StringComparison.OrdinalIgnoreCase, out JToken? legacyRenderApi))
+            return;
+
+        string? renderBackend = NormalizeEnumName<ERenderLibrary>(legacyRenderApi);
+        if (string.IsNullOrWhiteSpace(renderBackend))
+            return;
+
+        if (generated["Rendering"] is not JObject rendering)
+        {
+            rendering = new JObject();
+            generated["Rendering"] = rendering;
+        }
+
+        rendering["RenderBackend"] = renderBackend;
     }
 
     private static string? TryMigrateLegacyModelPostImportFlags(JObject existing)
@@ -908,6 +931,32 @@ static class SettingsDocumentGenerator
         => existing.TryGetValue(propertyName, StringComparison.Ordinal, out JToken? value)
         && value.Type == JTokenType.Boolean
         && value.Value<bool>();
+
+    private static string? NormalizeEnumName<TEnum>(JToken? value)
+        where TEnum : struct, Enum
+    {
+        if (value is null)
+            return null;
+
+        if (value.Type == JTokenType.String)
+        {
+            string? text = value.Value<string>();
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+
+            return Enum.GetNames<TEnum>().FirstOrDefault(name => string.Equals(name, text, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (value.Type == JTokenType.Integer)
+        {
+            int rawValue = value.Value<int>();
+            return Enum.IsDefined(typeof(TEnum), rawValue)
+                ? Enum.GetName(typeof(TEnum), rawValue)
+                : null;
+        }
+
+        return null;
+    }
 
     private static JToken MergeValue(MemberMetadata member, JToken? generatedValue, JToken existingValue)
     {

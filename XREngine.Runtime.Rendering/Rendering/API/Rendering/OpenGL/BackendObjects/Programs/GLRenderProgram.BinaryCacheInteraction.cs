@@ -1,4 +1,4 @@
-﻿using XREngine.Extensions;
+using XREngine.Extensions;
 using Silk.NET.OpenGL;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -172,19 +172,19 @@ namespace XREngine.Rendering.OpenGL
             private const double SlowShaderLinkSourceDumpMilliseconds = 5000.0;
             private const double ShaderCompletionPollGlCallSlowLogMilliseconds = 1.0;
             private static readonly bool DumpSlowShaderSources = string.Equals(
-                Environment.GetEnvironmentVariable("XRE_DUMP_SLOW_SHADER_SOURCE"),
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DumpSlowShaderSource),
                 "1",
                 StringComparison.Ordinal);
             private static readonly bool TraceShaderCompletionPollGlCalls = string.Equals(
-                Environment.GetEnvironmentVariable("XRE_TRACE_SHADER_COMPLETION_POLL_GLCALLS"),
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TraceShaderCompletionPollGlCalls),
                 "1",
                 StringComparison.Ordinal);
             private static readonly bool AllowRenderThreadDriverParallelSourceLinks = string.Equals(
-                Environment.GetEnvironmentVariable("XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE"),
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AllowRenderThreadDriverParallelSource),
                 "1",
                 StringComparison.Ordinal);
             private static readonly bool SharedLinkedProgramReuseEnabled = string.Equals(
-                Environment.GetEnvironmentVariable("XRE_ENABLE_SHARED_LINKED_PROGRAM_REUSE"),
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EnableSharedLinkedProgramReuse),
                 "1",
                 StringComparison.Ordinal);
             private static readonly ProgramBinaryRetrievableHintMode BinaryRetrievableHintMode = ResolveBinaryRetrievableHintMode();
@@ -198,7 +198,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static ProgramBinaryRetrievableHintMode ResolveBinaryRetrievableHintMode()
             {
-                string? value = Environment.GetEnvironmentVariable("XRE_PROGRAM_BINARY_RETRIEVABLE_HINT");
+                string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProgramBinaryRetrievableHint);
                 if (string.IsNullOrWhiteSpace(value))
                     return ProgramBinaryRetrievableHintMode.SourceBuildOnly;
 

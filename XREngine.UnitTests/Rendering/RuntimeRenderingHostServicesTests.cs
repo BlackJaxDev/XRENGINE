@@ -45,15 +45,15 @@ public sealed class RuntimeRenderingHostServicesTests
     [NonParallelizable]
     public void EffectiveOcclusionSettings_UseRuntimeRenderingHostServices()
     {
-        string? previousMode = Environment.GetEnvironmentVariable("XRE_OCCLUSION_CULLING_MODE");
-        string? previousRetest = Environment.GetEnvironmentVariable("XRE_CPU_QUERY_OCCLUSION_RETEST_PERIOD_FRAMES");
-        string? previousSoc = Environment.GetEnvironmentVariable("XRE_CPU_SOC_OCCLUSION");
+        string? previousMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode);
+        string? previousRetest = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CpuQueryOcclusionRetestPeriodFrames);
+        string? previousSoc = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CpuSoftwareOcclusion);
 
         try
         {
-            Environment.SetEnvironmentVariable("XRE_OCCLUSION_CULLING_MODE", null);
-            Environment.SetEnvironmentVariable("XRE_CPU_QUERY_OCCLUSION_RETEST_PERIOD_FRAMES", null);
-            Environment.SetEnvironmentVariable("XRE_CPU_SOC_OCCLUSION", null);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode, null);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuQueryOcclusionRetestPeriodFrames, null);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSoftwareOcclusion, null);
 
             TestRuntimeRenderingHostServices services = new()
             {
@@ -85,9 +85,9 @@ public sealed class RuntimeRenderingHostServicesTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("XRE_OCCLUSION_CULLING_MODE", previousMode);
-            Environment.SetEnvironmentVariable("XRE_CPU_QUERY_OCCLUSION_RETEST_PERIOD_FRAMES", previousRetest);
-            Environment.SetEnvironmentVariable("XRE_CPU_SOC_OCCLUSION", previousSoc);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode, previousMode);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuQueryOcclusionRetestPeriodFrames, previousRetest);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSoftwareOcclusion, previousSoc);
         }
     }
 
@@ -95,11 +95,11 @@ public sealed class RuntimeRenderingHostServicesTests
     [NonParallelizable]
     public void EffectiveCpuSceneCullingStructure_UsesRuntimeRenderingHostServicesAndEnvOverride()
     {
-        string? previousStructure = Environment.GetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE");
+        string? previousStructure = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure);
 
         try
         {
-            Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", null);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, null);
             EffectiveSettingsEnvOverrides.ReloadForTests();
 
             RuntimeRenderingHostServices.Current = new TestRuntimeRenderingHostServices
@@ -109,13 +109,13 @@ public sealed class RuntimeRenderingHostServicesTests
 
             RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Bvh);
 
-            Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", "Octree");
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, "Octree");
             EffectiveSettingsEnvOverrides.ReloadForTests();
             RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Octree);
         }
         finally
         {
-            Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", previousStructure);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, previousStructure);
             EffectiveSettingsEnvOverrides.ReloadForTests();
         }
     }

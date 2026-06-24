@@ -249,7 +249,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static string[] BuildModelDrawDiagFilters()
             {
-                string? env = Environment.GetEnvironmentVariable("XRE_MODEL_DRAW_DIAG_FILTER");
+                string? env = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ModelDrawDiagFilter);
                 if (string.IsNullOrWhiteSpace(env))
                     return ModelDrawDiagDefaultFilters;
 

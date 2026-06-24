@@ -22,7 +22,7 @@ internal sealed class Win32ModalLoopTimerInteractiveResizeStrategy : Interactive
     private const uint DefaultTimerIntervalMs = 16;
     private const int OpenGlActiveSizingRenderHz = 60;
     private const int VulkanActiveSizingRenderHz = 60;
-    private const string TimerIntervalEnvironmentVariable = "XRE_WIN32_INTERACTIVE_RESIZE_TIMER_MS";
+    private const string TimerIntervalEnvironmentVariable = XREngineEnvironmentVariables.Win32InteractiveResizeTimerMs;
 
     private static readonly object s_hookSync = new();
     private static readonly Dictionary<IntPtr, IntPtr> s_originalWndProcs = [];

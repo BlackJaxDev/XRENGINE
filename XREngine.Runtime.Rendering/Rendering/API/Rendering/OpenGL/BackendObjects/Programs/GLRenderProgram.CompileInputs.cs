@@ -1,4 +1,4 @@
-﻿using XREngine.Extensions;
+using XREngine.Extensions;
 using Silk.NET.OpenGL;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -339,7 +339,7 @@ namespace XREngine.Rendering.OpenGL
             private static readonly ConcurrentDictionary<string, byte> AsyncBinaryUploadTimeoutCacheKeys = new(StringComparer.Ordinal);
             private const string SharedContextAbandonedLinkMarker = "abandoned to keep the async link queue moving";
             private static readonly bool AllowSynchronousSourceRetryAfterAsyncTimeout = string.Equals(
-                Environment.GetEnvironmentVariable("XRE_ALLOW_SYNC_SOURCE_RETRY_AFTER_ASYNC_TIMEOUT"),
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AllowSyncSourceRetryAfterAsyncTimeout),
                 "1",
                 StringComparison.Ordinal);
             private static bool IsAsyncBinaryUploadTimedOutCacheKey(string? cacheKey)

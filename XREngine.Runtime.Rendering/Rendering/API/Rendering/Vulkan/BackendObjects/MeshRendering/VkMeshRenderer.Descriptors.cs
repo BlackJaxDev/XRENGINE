@@ -29,11 +29,11 @@ public unsafe partial class VulkanRenderer
 		#region Descriptor Set Management
 
 		private static readonly bool DescriptorResourceFingerprintDiagnosticsEnabled =
-			string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_FRAME_DATA_REUSE_DIAG"), "1", StringComparison.Ordinal) ||
-			string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_DESCRIPTOR_FINGERPRINT_DIAG"), "1", StringComparison.Ordinal);
+			string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameDataReuseDiag), "1", StringComparison.Ordinal) ||
+			string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDescriptorFingerprintDiag), "1", StringComparison.Ordinal);
 
 		private static readonly bool MaterialBindingDiagnosticsEnabled =
-			string.Equals(Environment.GetEnvironmentVariable("XRE_VULKAN_MATERIAL_BINDING_DIAG"), "1", StringComparison.Ordinal);
+			string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanMaterialBindingDiag), "1", StringComparison.Ordinal);
 
 		/// <summary>
 		/// Ensures descriptor sets are allocated and written for all swapchain frames.

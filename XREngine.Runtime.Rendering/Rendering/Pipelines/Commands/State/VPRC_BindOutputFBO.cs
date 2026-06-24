@@ -39,7 +39,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Write);
 
             /*
-            //if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DEBUG_PRESENT_CLEAR")))
+            //if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugPresentClear)))
             {
                 Debug.RenderingEvery(
                     $"PresentDbg.BindOutputFBO.{RuntimeEngine.PlayMode.State}",

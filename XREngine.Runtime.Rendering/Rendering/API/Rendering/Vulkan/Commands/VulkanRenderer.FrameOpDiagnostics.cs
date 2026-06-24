@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -20,7 +20,7 @@ namespace XREngine.Rendering.Vulkan
 
         private static bool IsParallelSecondaryCommandBufferRecordingDisabled()
         {
-            string? value = Environment.GetEnvironmentVariable("XRE_VULKAN_DISABLE_PARALLEL_SECONDARY_RECORDING");
+            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDisableParallelSecondaryRecording);
             return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
@@ -28,7 +28,7 @@ namespace XREngine.Rendering.Vulkan
 
         private static int ReadFrameOpSignatureDiffLogLimit()
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF_LIMIT");
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameOpSignatureDiffLimit);
             return int.TryParse(raw, out int value) && value >= 0 ? value : 48;
         }
 

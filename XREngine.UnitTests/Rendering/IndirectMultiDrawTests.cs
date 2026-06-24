@@ -24,13 +24,13 @@ public class IndirectMultiDrawTests : GpuTestBase
     {
         get
         {
-            bool hide = IsTrue(Environment.GetEnvironmentVariable("XR_HIDE_TEST_WINDOWS")) ||
+            bool hide = IsTrue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.HideTestWindows)) ||
                         IsTrue(NUnit.Framework.TestContext.Parameters.Get("HideWindow", "false"));
             if (hide) return false;
 
             bool showParam = IsTrue(NUnit.Framework.TestContext.Parameters.Get("ShowWindow", "true"));
-            bool showEnv = IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_WINDOWS")) ||
-                           IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_GL_TEST"));
+            bool showEnv = IsTrue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShowTestWindows)) ||
+                           IsTrue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShowGlTest));
             return showParam || showEnv;
         }
     }
@@ -39,12 +39,12 @@ public class IndirectMultiDrawTests : GpuTestBase
     {
         get
         {
-            bool noBlock = IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_NO_BLOCK")) ||
+            bool noBlock = IsTrue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShowTestNoBlock)) ||
                            IsTrue(NUnit.Framework.TestContext.Parameters.Get("ShowWindowNoBlock", "false"));
             if (noBlock) return false;
 
             bool blockParam = IsTrue(NUnit.Framework.TestContext.Parameters.Get("ShowWindowBlock", "false"));
-            bool blockEnv = IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_BLOCK"));
+            bool blockEnv = IsTrue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShowTestBlock));
             return blockParam || blockEnv;
         }
     }
@@ -53,8 +53,8 @@ public class IndirectMultiDrawTests : GpuTestBase
     {
         get
         {
-            var env = Environment.GetEnvironmentVariable("XR_SHOW_TEST_WINDOW_MS")
-                      ?? Environment.GetEnvironmentVariable("XR_SHOW_GL_TEST_MS");
+            var env = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShowTestWindowMs)
+                      ?? Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShowGlTestMs);
             var param = NUnit.Framework.TestContext.Parameters.Get("ShowWindowMs", "10000");
             return int.TryParse(env, out var msEnv) ? msEnv : (int.TryParse(param, out var msParam) ? msParam : 10000);
         }

@@ -160,7 +160,7 @@ public partial class OpenGLRenderer
             return 1;
 
         if (string.Equals(
-            Environment.GetEnvironmentVariable("XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL"),
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EnableOpenGlCompileLinkWorkerPool),
             "1",
             StringComparison.Ordinal))
         {

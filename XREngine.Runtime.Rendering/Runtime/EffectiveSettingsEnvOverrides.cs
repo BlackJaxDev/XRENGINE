@@ -24,12 +24,12 @@ public static class EffectiveSettingsEnvOverrides
     {
         try
         {
-            CpuSceneCullingStructure = Read("XRE_CPU_SCENE_CULLING_STRUCTURE");
-            ZeroReadbackMaterialDrawPath = Read("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH");
-            ForceMeshSubmissionStrategy = Read("XRE_FORCE_MESH_SUBMISSION_STRATEGY");
-            OcclusionCullingMode = Read("XRE_OCCLUSION_CULLING_MODE");
-            CpuQueryOcclusionRetestPeriodFrames = Read("XRE_CPU_QUERY_OCCLUSION_RETEST_PERIOD_FRAMES");
-            CpuSocOcclusion = Read("XRE_CPU_SOC_OCCLUSION");
+            CpuSceneCullingStructure = Read(XREngineEnvironmentVariables.CpuSceneCullingStructure);
+            ZeroReadbackMaterialDrawPath = Read(XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath);
+            ForceMeshSubmissionStrategy = Read(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy);
+            OcclusionCullingMode = Read(XREngineEnvironmentVariables.OcclusionCullingMode);
+            CpuQueryOcclusionRetestPeriodFrames = Read(XREngineEnvironmentVariables.CpuQueryOcclusionRetestPeriodFrames);
+            CpuSocOcclusion = Read(XREngineEnvironmentVariables.CpuSoftwareOcclusion);
         }
         catch
         {
@@ -63,6 +63,6 @@ public static class EffectiveSettingsEnvOverrides
         if (string.IsNullOrWhiteSpace(raw))
             return null;
         // ForceMeshSubmissionStrategy parser handles its own trimming; everything else is trimmed here.
-        return name == "XRE_FORCE_MESH_SUBMISSION_STRATEGY" ? raw : raw.Trim();
+        return name == XREngineEnvironmentVariables.ForceMeshSubmissionStrategy ? raw : raw.Trim();
     }
 }

@@ -9,13 +9,13 @@ public static class WorldAssetIdentityProvider
 {
     public static WorldAssetIdentity Create(XRWorld? world, string fallbackBuildVersion)
     {
-        string worldId = GetOverride("XRE_WORLD_ID")
+        string worldId = GetOverride(XREngineEnvironmentVariables.WorldId)
             ?? (world?.ID.ToString("D") ?? "local-world");
-        string revisionId = GetOverride("XRE_WORLD_REVISION")
+        string revisionId = GetOverride(XREngineEnvironmentVariables.WorldRevision)
             ?? ResolveRevisionId(world);
-        string contentHash = GetOverride("XRE_WORLD_CONTENT_HASH")
+        string contentHash = GetOverride(XREngineEnvironmentVariables.WorldContentHash)
             ?? ComputeWorldHash(world);
-        string requiredBuildVersion = GetOverride("XRE_WORLD_REQUIRED_BUILD_VERSION")
+        string requiredBuildVersion = GetOverride(XREngineEnvironmentVariables.WorldRequiredBuildVersion)
             ?? fallbackBuildVersion;
 
         return new WorldAssetIdentity
@@ -23,7 +23,7 @@ public static class WorldAssetIdentityProvider
             WorldId = worldId,
             RevisionId = revisionId,
             ContentHash = contentHash,
-            AssetSchemaVersion = TryParsePositiveInt(GetOverride("XRE_WORLD_ASSET_SCHEMA_VERSION"), 1),
+            AssetSchemaVersion = TryParsePositiveInt(GetOverride(XREngineEnvironmentVariables.WorldAssetSchemaVersion), 1),
             RequiredBuildVersion = requiredBuildVersion,
             Metadata =
             {

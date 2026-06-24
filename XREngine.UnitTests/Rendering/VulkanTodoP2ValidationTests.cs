@@ -260,7 +260,7 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
         prewarmSource.ShouldContain("CurrentVersion");
         prewarmSource.ShouldContain("CreateGraphicsEntry");
         prewarmSource.ShouldContain("CreateComputeEntry");
-        prewarmSource.ShouldContain("XRE_VK_PIPELINE_PREWARM_CAPTURE");
+        prewarmSource.ShouldContain(XREngineEnvironmentVariables.VulkanPipelinePrewarmCapture);
         prewarmSource.ShouldContain("SaveVulkanPipelinePrewarmDatabase");
         pipelineCacheSource.ShouldContain("InitializeVulkanPipelinePrewarmDatabase(properties)");
         pipelineCacheSource.ShouldContain("SaveVulkanPipelinePrewarmDatabase()");

@@ -11,7 +11,7 @@ namespace XREngine
     {
         public static partial class Rendering
         {
-            public const string VulkanUpscaleBridgeEnvVar = "XRE_ENABLE_VULKAN_UPSCALE_BRIDGE";
+            public const string VulkanUpscaleBridgeEnvVar = XREngineEnvironmentVariables.EnableVulkanUpscaleBridge;
 
             private static readonly object _vulkanUpscaleBridgeSnapshotSync = new();
             private static readonly object _vulkanUpscaleBridgeRegistrySync = new();

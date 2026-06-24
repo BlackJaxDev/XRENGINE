@@ -13,6 +13,7 @@ public unsafe partial class OpenXRAPI
     internal void EnableRuntimeMonitoring()
     {
         _runtimeMonitoringEnabled = true;
+        ResetSmokeDiagnostics();
         SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
         _runtimeLossReason = OpenXrRuntimeLossReason.None;
         Interlocked.Exchange(ref _runtimeLossPending, 0);
@@ -188,6 +189,7 @@ public unsafe partial class OpenXRAPI
                 try
                 {
                     graphicsBinding.TryCreateSession(this, glRenderer);
+                    RecordSmokeSessionCreated(graphicsBinding.BackendName);
                     CreateReferenceSpace();
                     graphicsBinding.CreateSwapchains(this, glRenderer);
                     EnsureInputCreated();
@@ -212,6 +214,7 @@ public unsafe partial class OpenXRAPI
         try
         {
             graphicsBinding.TryCreateSession(this, renderer);
+            RecordSmokeSessionCreated(graphicsBinding.BackendName);
             CreateReferenceSpace();
             graphicsBinding.CreateSwapchains(this, renderer);
             EnsureInputCreated();
@@ -248,6 +251,7 @@ public unsafe partial class OpenXRAPI
 
         _runtimeState = next;
         Volatile.Write(ref _sessionRunning, next == OpenXrRuntimeState.SessionRunning ? 1 : 0);
+        RecordSmokeRuntimeState(next);
     }
 
     private static bool IsSessionRunningState(SessionState state)
@@ -284,6 +288,9 @@ public unsafe partial class OpenXRAPI
             MarkRuntimeLoss(OpenXrRuntimeLossReason.InstanceLostError);
         else if (result == Result.ErrorRuntimeFailure)
             MarkRuntimeLoss(OpenXrRuntimeLossReason.RuntimeUnavailable);
+
+        if (result != Result.Success)
+            RecordSmokeFailure($"{operation} returned {result}.");
 
         return result;
     }
@@ -337,5 +344,7 @@ public unsafe partial class OpenXRAPI
             _win32PerformanceCounterTimeExtension = null;
             Volatile.Write(ref _win32PerformanceCounterTimeExtensionChecked, 0);
         }
+
+        RecordSmokeTeardownCompleted();
     }
 }

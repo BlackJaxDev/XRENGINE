@@ -7,6 +7,7 @@ OpenXR timing/pipeline Round 1+2 (Phases 0-8 of the now-retired `openxr-timing-t
 Sibling test tracker: [openxr-timing-tests-todo.md](../../tests/openxr-timing-tests-todo.md).
 No-HMD runtime testing design: [OpenXR Monado Testing Pipeline](../../../design/VR/openxr-monado-testing-pipeline.md).
 Dedicated no-HMD runtime implementation tracker: [openxr-monado-testing-pipeline-todo.md](openxr-monado-testing-pipeline-todo.md).
+CI, hardware, and deterministic follow-ups: [openxr-monado-ci-hardware-followups-todo.md](openxr-monado-ci-hardware-followups-todo.md).
 
 ## Phase 6 — Compositor extensions (P3, gated on hardware metrics)
 
@@ -35,6 +36,7 @@ Acceptance: each extension lands behind a setting, default off; profiler shows l
 - [OpenXR Timing Tests TODO](../../tests/openxr-timing-tests-todo.md)
 - [OpenXR Monado Testing Pipeline](../../../design/VR/openxr-monado-testing-pipeline.md)
 - [OpenXR Monado Testing Pipeline TODO](openxr-monado-testing-pipeline-todo.md)
+- [OpenXR Monado CI And Hardware Follow-ups](openxr-monado-ci-hardware-followups-todo.md)
 - [OpenXR VR Rendering (architecture)](../../../architecture/rendering/openxr-vr-rendering.md)
 - [OpenXR Implementation Comparison (design)](../../../design/VR/openxr-implementation-comparison.md)
 - [OpenVR VRClient GPU Handoff TODO](../gpu/openvr-vrclient-gpu-handoff-todo.md)

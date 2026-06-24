@@ -40,7 +40,7 @@ public sealed class VulkanFullyBindlessMaterialTests
 
         profileSource.ShouldContain("enum EVulkanBindlessMaterialMode");
         profileSource.ShouldContain("enum EVulkanBindlessMaterialCapabilityTier");
-        profileSource.ShouldContain("XRE_VULKAN_BINDLESS_MATERIAL_MODE");
+        profileSource.ShouldContain(XREngineEnvironmentVariables.VulkanBindlessMaterialMode);
         profileSource.ShouldContain("VulkanBindlessMaterialCapability");
 
         tableSource.ShouldContain("TryGetOrCreateMaterialTextureDescriptorIndex");

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -60,7 +60,7 @@ public class GpuCullingPipelineTests
         return v.Equals("1") || v.Equals("true", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool ShowWindow => IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_WINDOWS"));
+    private static bool ShowWindow => IsTrue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShowTestWindows));
 
     #region Shader Loading Tests
 

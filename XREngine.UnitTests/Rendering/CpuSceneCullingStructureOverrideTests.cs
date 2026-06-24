@@ -18,11 +18,11 @@ public sealed class CpuSceneCullingStructureOverrideTests
     {
         var originalGameSettings = Engine.GameSettings;
         var originalStructure = Engine.Rendering.Settings.CpuSceneCullingStructure;
-        string? originalEnv = Environment.GetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE");
+        string? originalEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure);
 
         try
         {
-            Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", null);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, null);
             EffectiveSettingsEnvOverrides.ReloadForTests();
             Engine.GameSettings = new GameStartupSettings();
             Engine.Rendering.Settings.CpuSceneCullingStructure = ECpuSceneCullingStructure.Octree;
@@ -33,13 +33,13 @@ public sealed class CpuSceneCullingStructureOverrideTests
             Engine.Rendering.Settings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Octree);
             Engine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Bvh);
 
-            Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", "Octree");
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, "Octree");
             EffectiveSettingsEnvOverrides.ReloadForTests();
             Engine.EffectiveSettings.CpuSceneCullingStructure.ShouldBe(ECpuSceneCullingStructure.Octree);
         }
         finally
         {
-            Environment.SetEnvironmentVariable("XRE_CPU_SCENE_CULLING_STRUCTURE", originalEnv);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CpuSceneCullingStructure, originalEnv);
             EffectiveSettingsEnvOverrides.ReloadForTests();
             Engine.Rendering.Settings.CpuSceneCullingStructure = originalStructure;
             Engine.GameSettings = originalGameSettings;

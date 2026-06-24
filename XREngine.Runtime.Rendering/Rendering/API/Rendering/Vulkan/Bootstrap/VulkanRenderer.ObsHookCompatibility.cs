@@ -15,9 +15,9 @@ internal enum EVulkanObsHookPolicy
 public unsafe partial class VulkanRenderer
 {
     private const string ObsHookLayerName = "VK_LAYER_OBS_HOOK";
-    private const string ObsHookPolicyEnvVar = "XRE_VK_OBS_HOOK";
-    private const string ObsHookDisableEnvVar = "DISABLE_VULKAN_OBS_CAPTURE";
-    private const string VulkanLoaderLayersDisableEnvVar = "VK_LOADER_LAYERS_DISABLE";
+    private const string ObsHookPolicyEnvVar = XREngineEnvironmentVariables.VkObsHook;
+    private const string ObsHookDisableEnvVar = XREngineEnvironmentVariables.DisableVulkanObsCapture;
+    private const string VulkanLoaderLayersDisableEnvVar = XREngineEnvironmentVariables.VulkanLoaderLayersDisable;
     private const string ObsRequiredDeviceExtension = "VK_KHR_external_memory_win32";
 
     private EVulkanObsHookPolicy _obsHookPolicy = EVulkanObsHookPolicy.Auto;

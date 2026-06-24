@@ -71,7 +71,7 @@ public class GpuSceneBvhTests
         return v.Equals("1") || v.Equals("true", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool ShowWindow => IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_WINDOWS"));
+    private static bool ShowWindow => IsTrue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShowTestWindows));
 
     #region Test Data Structures
 

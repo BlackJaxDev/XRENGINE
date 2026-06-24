@@ -14,7 +14,7 @@ public sealed class VulkanDynamicRenderingMigrationTests
         string modeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
         string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
 
-        modeSource.ShouldContain("XRE_VK_RENDER_TARGET_MODE");
+        modeSource.ShouldContain(XREngineEnvironmentVariables.VkRenderTargetMode);
         modeSource.ShouldContain("VulkanRenderTargetMode.Auto");
         modeSource.ShouldContain("VulkanRenderTargetMode.DynamicRendering");
         modeSource.ShouldContain("VulkanRenderTargetMode.LegacyRenderPass");

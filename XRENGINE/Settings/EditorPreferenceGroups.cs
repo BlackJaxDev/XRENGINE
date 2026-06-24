@@ -164,24 +164,37 @@ public sealed class EditorDiagnosticsPreferences
 
 public sealed class EditorGeneralDiagnosticsPreferences(EditorDebugOptions owner)
 {
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.DebugModelRender)]
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.ModelRenderDiag)]
     public bool ModelRenderDiagnosticsEnabled
     {
         get => owner.ModelRenderDiagEnabled;
         set => owner.ModelRenderDiagEnabled = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.DirectionalShadowAudit)]
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.ShadowAudit)]
     public bool DirectionalShadowAudit
     {
         get => owner.DirectionalShadowAudit;
         set => owner.DirectionalShadowAudit = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.SkinningPrepassDiag)]
     public bool SkinningPrepassDiagnostics
     {
         get => owner.SkinningPrepassDiag;
         set => owner.SkinningPrepassDiag = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.ForceSkinnedUnbounded)]
+    public bool ForceSkinnedUnbounded
+    {
+        get => owner.ForceSkinnedUnbounded;
+        set => owner.ForceSkinnedUnbounded = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.SkinCullRejectDiag)]
     public bool SkinCullRejectDiagnostics
     {
         get => owner.SkinCullRejectDiag;
@@ -193,6 +206,7 @@ public sealed class EditorGeneralDiagnosticsPreferences(EditorDebugOptions owner
         ModelRenderDiagnosticsEnabled = source.ModelRenderDiagnosticsEnabled;
         DirectionalShadowAudit = source.DirectionalShadowAudit;
         SkinningPrepassDiagnostics = source.SkinningPrepassDiagnostics;
+        ForceSkinnedUnbounded = source.ForceSkinnedUnbounded;
         SkinCullRejectDiagnostics = source.SkinCullRejectDiagnostics;
     }
 
@@ -317,24 +331,56 @@ public sealed class EditorVisualizationDiagnosticsPreferences(EditorDebugOptions
 
 public sealed class EditorRenderPipelineDiagnosticsPreferences(EditorDebugOptions owner)
 {
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.DiagVendorUpscale)]
+    public bool VendorUpscaleDiagnostics
+    {
+        get => owner.DiagVendorUpscale;
+        set => owner.DiagVendorUpscale = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.DiagQuadBlit)]
+    public bool QuadBlitDiagnostics
+    {
+        get => owner.DiagQuadBlit;
+        set => owner.DiagQuadBlit = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.DiagPostProcess)]
+    public bool PostProcessDiagnostics
+    {
+        get => owner.DiagPostProcess;
+        set => owner.DiagPostProcess = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.DebugPresentClear)]
+    public bool DebugPresentClear
+    {
+        get => owner.DebugPresentClear;
+        set => owner.DebugPresentClear = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.DeferredDebug)]
     public int DeferredDebugView
     {
         get => owner.DeferredDebugView;
         set => owner.DeferredDebugView = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.DiagDeferredLighting)]
     public bool DiagDeferredLighting
     {
         get => owner.DiagDeferredLighting;
         set => owner.DiagDeferredLighting = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.ForceFullViewport)]
     public bool ForceFullViewport
     {
         get => owner.ForceFullViewport;
         set => owner.ForceFullViewport = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.ForceDebugOpaquePipeline)]
     public bool ForceDebugOpaquePipeline
     {
         get => owner.ForceDebugOpaquePipeline;
@@ -347,12 +393,14 @@ public sealed class EditorRenderPipelineDiagnosticsPreferences(EditorDebugOption
         set => owner.UseDebugOpaquePipeline = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.BypassVendorUpscale)]
     public bool BypassVendorUpscale
     {
         get => owner.BypassVendorUpscale;
         set => owner.BypassVendorUpscale = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.OutputSourceFbo)]
     public string? OutputSourceFboOverride
     {
         get => owner.OutputSourceFboOverride;
@@ -361,6 +409,10 @@ public sealed class EditorRenderPipelineDiagnosticsPreferences(EditorDebugOption
 
     public void CopyFrom(EditorRenderPipelineDiagnosticsPreferences source)
     {
+        VendorUpscaleDiagnostics = source.VendorUpscaleDiagnostics;
+        QuadBlitDiagnostics = source.QuadBlitDiagnostics;
+        PostProcessDiagnostics = source.PostProcessDiagnostics;
+        DebugPresentClear = source.DebugPresentClear;
         DeferredDebugView = source.DeferredDebugView;
         DiagDeferredLighting = source.DiagDeferredLighting;
         ForceFullViewport = source.ForceFullViewport;
@@ -379,12 +431,14 @@ public sealed class EditorRenderPipelineDiagnosticsPreferences(EditorDebugOption
 
 public sealed class EditorCullingDiagnosticsPreferences(EditorDebugOptions owner)
 {
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.HizCullTrace)]
     public bool HiZCullTrace
     {
         get => owner.HiZCullTrace;
         set => owner.HiZCullTrace = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.GpuHizDirtyBypass)]
     public bool GpuHiZDirtyBypass
     {
         get => owner.GpuHiZDirtyBypass;
@@ -440,6 +494,7 @@ public sealed class EditorCullingDiagnosticsPreferences(EditorDebugOptions owner
 
 public sealed class EditorExceptionDiagnosticsPreferences(EditorDebugOptions owner)
 {
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.FirstChanceExceptions)]
     public string? FirstChanceExceptionFilter
     {
         get => owner.FirstChanceExceptionFilter;
@@ -456,22 +511,60 @@ public sealed class EditorExceptionDiagnosticsPreferences(EditorDebugOptions own
 
 public sealed class EditorOpenGLDiagnosticsPreferences(EditorDebugOptions owner)
 {
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.GlDebug)]
     public bool DebugContext
     {
         get => owner.GLDebug;
         set => owner.GLDebug = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.GlSubmitTrace)]
     public int SubmitTraceLevel
     {
         get => owner.GLSubmitTraceLevel;
         set => owner.GLSubmitTraceLevel = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.CrashBreadcrumbs)]
     public bool CrashBreadcrumbs
     {
         get => owner.CrashBreadcrumbs;
         set => owner.CrashBreadcrumbs = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.PushSubDataBreakdown)]
+    public bool PushSubDataBreakdown
+    {
+        get => owner.PushSubDataBreakdown;
+        set => owner.PushSubDataBreakdown = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.PushSubDataTrace)]
+    public bool PushSubDataTrace
+    {
+        get => owner.PushSubDataTrace;
+        set => owner.PushSubDataTrace = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.DispatchTrace)]
+    public bool DispatchTrace
+    {
+        get => owner.DispatchTrace;
+        set => owner.DispatchTrace = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.DispatchFinish)]
+    public bool DispatchFinish
+    {
+        get => owner.DispatchFinish;
+        set => owner.DispatchFinish = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.UploadStageLogging)]
+    public bool UploadStageLogging
+    {
+        get => owner.UploadStageLogging;
+        set => owner.UploadStageLogging = value;
     }
 
     public void CopyFrom(EditorOpenGLDiagnosticsPreferences source)
@@ -479,6 +572,11 @@ public sealed class EditorOpenGLDiagnosticsPreferences(EditorDebugOptions owner)
         DebugContext = source.DebugContext;
         SubmitTraceLevel = source.SubmitTraceLevel;
         CrashBreadcrumbs = source.CrashBreadcrumbs;
+        PushSubDataBreakdown = source.PushSubDataBreakdown;
+        PushSubDataTrace = source.PushSubDataTrace;
+        DispatchTrace = source.DispatchTrace;
+        DispatchFinish = source.DispatchFinish;
+        UploadStageLogging = source.UploadStageLogging;
     }
 
     public void ApplyOverrides(EditorOpenGLDiagnosticsPreferenceOverrides overrides)
@@ -488,90 +586,119 @@ public sealed class EditorOpenGLDiagnosticsPreferences(EditorDebugOptions owner)
 
 public sealed class EditorVulkanDiagnosticsPreferences(EditorDebugOptions owner)
 {
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkEnableAutoUniformRewrite)]
     public bool AutoUniformRewrite
     {
         get => owner.VkEnableAutoUniformRewrite;
         set => owner.VkEnableAutoUniformRewrite = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkDumpShaderOnError)]
     public bool DumpShaderOnError
     {
         get => owner.VkDumpShaderOnError;
         set => owner.VkDumpShaderOnError = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.ShaderSourceOptimizer)]
+    public bool ShaderSourceOptimizer
+    {
+        get => owner.ShaderSourceOptimizerEnabled;
+        set => owner.ShaderSourceOptimizerEnabled = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkTracePipeCreate)]
     public bool TracePipelineCreation
     {
         get => owner.VkTracePipeCreate;
         set => owner.VkTracePipeCreate = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkTraceSwapDraw)]
     public bool TraceSwapchainDraws
     {
         get => owner.VkTraceSwapDraw;
         set => owner.VkTraceSwapDraw = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkTraceDraw)]
     public bool TraceAllDraws
     {
         get => owner.VkTraceDraw;
         set => owner.VkTraceDraw = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkSkipUiPipeline)]
     public bool SkipUiPipeline
     {
         get => owner.VkSkipUiPipeline;
         set => owner.VkSkipUiPipeline = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkSkipUiBatchText)]
+    public bool SkipUiBatchText
+    {
+        get => owner.VkSkipUiBatchText;
+        set => owner.VkSkipUiBatchText = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkForceSwapchainMagenta)]
     public bool ForceSwapchainMagenta
     {
         get => owner.VkForceSwapchainMagenta;
         set => owner.VkForceSwapchainMagenta = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkSkipImGui)]
     public bool SkipImGui
     {
         get => owner.VkSkipImGui;
         set => owner.VkSkipImGui = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanAsyncTextureUpload)]
     public bool AsyncTextureUpload
     {
         get => owner.VkAsyncTextureUpload;
         set => owner.VkAsyncTextureUpload = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanTextureUploadTransferQueue)]
     public bool TextureUploadTransferQueue
     {
         get => owner.VkTextureUploadTransferQueue;
         set => owner.VkTextureUploadTransferQueue = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanTextureUploadPrepWorker)]
     public bool TextureUploadPrepWorker
     {
         get => owner.VkTextureUploadPrepWorker;
         set => owner.VkTextureUploadPrepWorker = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanTextureUploadPrepBudgetMs)]
     public double TextureUploadPrepBudgetMilliseconds
     {
         get => owner.VkTextureUploadPrepBudgetMilliseconds;
         set => owner.VkTextureUploadPrepBudgetMilliseconds = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanTextureUploadTrace)]
     public bool TextureUploadTrace
     {
         get => owner.VkTextureUploadTrace;
         set => owner.VkTextureUploadTrace = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanProgressiveTextureUpload)]
     public bool ProgressiveTextureUpload
     {
         get => owner.VkProgressiveTextureUpload;
         set => owner.VkProgressiveTextureUpload = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze)]
     public bool ImportedTexturePreviewFreeze
     {
         get => owner.VkImportedTexturePreviewFreeze;
@@ -582,10 +709,12 @@ public sealed class EditorVulkanDiagnosticsPreferences(EditorDebugOptions owner)
     {
         AutoUniformRewrite = source.AutoUniformRewrite;
         DumpShaderOnError = source.DumpShaderOnError;
+        ShaderSourceOptimizer = source.ShaderSourceOptimizer;
         TracePipelineCreation = source.TracePipelineCreation;
         TraceSwapchainDraws = source.TraceSwapchainDraws;
         TraceAllDraws = source.TraceAllDraws;
         SkipUiPipeline = source.SkipUiPipeline;
+        SkipUiBatchText = source.SkipUiBatchText;
         ForceSwapchainMagenta = source.ForceSwapchainMagenta;
         SkipImGui = source.SkipImGui;
         AsyncTextureUpload = source.AsyncTextureUpload;

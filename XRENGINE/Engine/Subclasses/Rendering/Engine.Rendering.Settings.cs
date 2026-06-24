@@ -1,4 +1,4 @@
-﻿using MagicPhysX;
+using MagicPhysX;
 using MemoryPack;
 using System;
 using System.ComponentModel;
@@ -1629,7 +1629,7 @@ namespace XREngine
                         // Env override for perf measurement / bisecting regressions.
                         // Wins over both the serialized setting and the in-memory field.
                         EOcclusionCullingMode resolved = _gpuOcclusionCullingMode;
-                        string? raw = System.Environment.GetEnvironmentVariable("XRE_OCCLUSION_CULLING_MODE");
+                        string? raw = System.Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode);
                         if (!string.IsNullOrWhiteSpace(raw) &&
                             System.Enum.TryParse(raw.Trim(), ignoreCase: true, out EOcclusionCullingMode parsed))
                         {

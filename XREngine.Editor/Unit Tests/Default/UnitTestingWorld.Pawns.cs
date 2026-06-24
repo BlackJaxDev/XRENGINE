@@ -1,4 +1,4 @@
-using MagicPhysX;
+﻿using MagicPhysX;
 using System.Numerics;
 using XREngine.Audio;
 using XREngine.Components;
@@ -169,7 +169,7 @@ public static partial class EditorUnitTests
 
             var coll = AddTrackerCollectionNode(playspaceNode);
 
-            if (Toggles.EmulatedVRPawn)
+            if (Toggles.SceneOnlyVRPawn)
             {
                 var hmdDD = hmdTfm.SceneNode!.AddComponent<DebugDrawComponent>()!;
                 hmdDD.AddSphere(0.01f, Vector3.Zero, ColorF4.DarkRed, false);
@@ -227,7 +227,7 @@ public static partial class EditorUnitTests
             controllerTfm = controllerNode.SetTransform<VRControllerTransform>();
             controllerTfm.LeftHand = left;
 
-            if (Toggles.EmulatedVRPawn)
+            if (Toggles.SceneOnlyVRPawn)
             {
                 var debugComp = controllerNode.AddComponent<DebugDrawComponent>()!;
                 debugComp.AddSphere(0.01f, Vector3.Zero, ColorF4.Black, false);
@@ -587,7 +587,7 @@ public static partial class EditorUnitTests
 
                 input.IsMutedChanged += EndCalibration;
 
-                if (Toggles.EmulatedVRPawn)
+                if (Toggles.SceneOnlyVRPawn)
                 {
                     var playspaceNode = footNode.FirstChild!;
                     var trackerColl = playspaceNode.LastChild!.GetComponent<VRTrackerCollectionComponent>()!;

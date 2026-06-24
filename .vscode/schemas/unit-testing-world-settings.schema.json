@@ -42,14 +42,6 @@
       "type": "boolean",
       "description": "Adds the transform tool to the scene for testing dragging and rotating etc."
     },
-    "AllowEditingInVR": {
-      "type": "boolean",
-      "description": "Allows the user to edit the scene from desktop in VR."
-    },
-    "PreviewVRStereoViews": {
-      "type": "boolean",
-      "description": "Shows the VR left/right eye render targets side-by-side in a screenspace UI (requires VRPawn)."
-    },
     "VideoStreaming": {
       "type": "boolean",
       "description": "Adds a video streaming component to the scene for testing video streaming."
@@ -84,7 +76,7 @@
     },
     "Rendering": {
       "$ref": "#/definitions/UnitTestingRenderSettings",
-      "description": "Grouped render backend, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. When present, this grouped object takes precedence over the legacy flat render keys."
+      "description": "Grouped render backend, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. Legacy flat RenderAPI values are migrated here when settings are regenerated."
     },
     "RiveUI": {
       "type": "boolean",
@@ -97,6 +89,10 @@
     "StartInPlayModeWithoutTransitions": {
       "type": "boolean",
       "description": "Starts in play mode immediately without the edit->play transition."
+    },
+    "VR": {
+      "$ref": "#/definitions/UnitTestingVrSettings",
+      "description": "Grouped VR launch mode and VR-only editor preview settings."
     },
     "Skybox": {
       "type": "boolean",
@@ -224,18 +220,6 @@
     "LightProbeSinglePosition": {
       "$ref": "#/definitions/TranslationXYZ",
       "description": "World position for Single light-probe mode."
-    },
-    "VRPawn": {
-      "type": "boolean",
-      "description": "Enables VR input and pawn."
-    },
-    "UseOpenXR": {
-      "type": "boolean",
-      "description": "If true and VRPawn is enabled (and not emulated), initializes VR via OpenXR instead of OpenVR."
-    },
-    "EmulatedVRPawn": {
-      "type": "boolean",
-      "description": "Enables an emulated VR pawn for testing without a VR headset. All this does is disallow OpenVR from starting, VRPawn must still be enabled."
     },
     "Locomotion": {
       "type": "boolean",
@@ -497,11 +481,6 @@
     "RenderMeshBounds": {
       "type": "boolean",
       "description": "Enables or disables RenderMeshBounds."
-    },
-    "RenderAPI": {
-      "$ref": "#/definitions/ERenderLibrary",
-      "markdownDescription": "Supported values: `OpenGL`, `Vulkan`.",
-      "description": "Selects the RenderAPI enum value."
     },
     "CameraAntiAliasingModeOverride": {
       "oneOf": [
@@ -783,6 +762,43 @@
         "LegacyRenderPass"
       ],
       "markdownDescription": "Supported values: `Auto`, `DynamicRendering`, `LegacyRenderPass`."
+    },
+    "UnitTestingVrSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Mode": {
+          "$ref": "#/definitions/UnitTestingVrLaunchMode",
+          "description": "Selects the VR launch path: Desktop, Emulated scene-only VR, Monado-backed OpenXR, vendor OpenVR, or vendor OpenXR.",
+          "markdownDescription": "Supported values: `Desktop`, `Emulated`, `MonadoOpenXR`, `OpenVR`, `OpenXR`."
+        },
+        "PreviewStereoViews": {
+          "type": "boolean",
+          "description": "Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active."
+        },
+        "AllowDesktopEditing": {
+          "type": "boolean",
+          "description": "When a VR pawn is active, keeps a desktop editing camera/pawn available."
+        },
+        "OpenXrRuntimeJson": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes. Existing XR_RUNTIME_JSON environment values win. MonadoOpenXR auto-detects common Monado install/build locations when this is unset."
+        }
+      }
+    },
+    "UnitTestingVrLaunchMode": {
+      "type": "string",
+      "enum": [
+        "Desktop",
+        "Emulated",
+        "MonadoOpenXR",
+        "OpenVR",
+        "OpenXR"
+      ],
+      "markdownDescription": "Supported values: `Desktop`, `Emulated`, `MonadoOpenXR`, `OpenVR`, `OpenXR`."
     },
     "LightProbeMode": {
       "type": "string",

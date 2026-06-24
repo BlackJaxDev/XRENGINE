@@ -203,7 +203,7 @@ namespace XREngine.Rendering.Occlusion
 
         private static bool ReadEnvironmentEnabled()
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_CPU_SOC_OCCLUSION");
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CpuSoftwareOcclusion);
             if (string.IsNullOrWhiteSpace(raw))
                 return false;
 
