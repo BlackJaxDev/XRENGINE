@@ -40,6 +40,9 @@ namespace XREngine.Rendering.UI
         SolidGlyphQuads = 1,
         AtlasUv = 2,
         HardClipSpaceQuad = 3,
+        AtlasCoverage = 4,
+        InstanceColor = 5,
+        InstanceAlpha = 6,
     }
 
     /// <summary>
@@ -958,8 +961,7 @@ namespace XREngine.Rendering.UI
         public override bool SupportsBatchedRendering
             => !DisableBatching &&
                !ClipToBounds &&
-               !AnimatableTransforms &&
-               (OutlineThickness <= 0.0f || OutlineColor.A <= 0.0f);
+               !AnimatableTransforms;
 
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {
@@ -978,6 +980,7 @@ namespace XREngine.Rendering.UI
             var tfm = BoundableTransform;
             var worldMatrix = GetRenderWorldMatrix(tfm);
             var textColor = new Vector4(Color.R, Color.G, Color.B, Color.A);
+            var outlineColor = new Vector4(OutlineColor.R, OutlineColor.G, OutlineColor.B, OutlineColor.A);
             var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
             var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
 
@@ -988,6 +991,8 @@ namespace XREngine.Rendering.UI
                 atlas,
                 in worldMatrix,
                 in textColor,
+                in outlineColor,
+                OutlineThickness,
                 in bounds,
                 (int)font.AtlasType,
                 font.DistanceRange,

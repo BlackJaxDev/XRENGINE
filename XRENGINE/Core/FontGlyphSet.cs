@@ -480,6 +480,49 @@ namespace XREngine.Rendering
             return atlasTexture;
         }
 
+        private static XRTexture2D CreateBitmapAtlasTexture(string atlasPath)
+        {
+            using Image<Rgba32> atlasImage = Image.Load<Rgba32>(atlasPath);
+            byte[] coverage = ExtractAlphaCoverage(atlasImage);
+
+            var atlasTexture = new XRTexture2D(
+                (uint)atlasImage.Width,
+                (uint)atlasImage.Height,
+                EPixelInternalFormat.R8,
+                EPixelFormat.Red,
+                EPixelType.UnsignedByte,
+                allocateData: false)
+            {
+                FilePath = atlasPath,
+                OriginalPath = atlasPath,
+                Resizable = false,
+                AutoGenerateMipmaps = false,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                MinFilter = ETexMinFilter.LinearMipmapLinear,
+                MagFilter = ETexMagFilter.Linear,
+                SizedInternalFormat = ESizedInternalFormat.R8,
+            };
+
+            atlasTexture.Mipmaps = CreateBitmapCoverageMipmaps(coverage, atlasImage.Width, atlasImage.Height, preferCompressedYaml: true);
+            atlasTexture.SmallestAllowedMipmapLevel = Math.Max(0, atlasTexture.Mipmaps.Length - 1);
+
+            return atlasTexture;
+        }
+
+        private static byte[] ExtractAlphaCoverage(Image<Rgba32> atlasImage)
+        {
+            byte[] coverage = new byte[atlasImage.Width * atlasImage.Height];
+
+            for (int y = 0; y < atlasImage.Height; y++)
+            {
+                for (int x = 0; x < atlasImage.Width; x++)
+                    coverage[x + (y * atlasImage.Width)] = atlasImage[x, y].A;
+            }
+
+            return coverage;
+        }
+
         private static bool TryGetBounds(JsonElement element, string propertyName, out float left, out float top, out float right, out float bottom, bool topDown)
         {
             left = top = right = bottom = 0.0f;
@@ -706,12 +749,7 @@ namespace XREngine.Rendering
                 data.SaveTo(stream);
             }
 
-            Atlas = CreateAtlasTexture(
-                outputAtlasPath,
-                ESizedInternalFormat.R8,
-                ETexMinFilter.Linear,
-                ETexMagFilter.Linear,
-                autoGenerateMipmaps: false);
+            Atlas = CreateBitmapAtlasTexture(outputAtlasPath);
             ConfigureBitmapAtlasTexture(Atlas, outputAtlasPath);
 
             Glyphs = glyphInfos.ToDictionary(g => g.character, g => g.info);
@@ -1413,19 +1451,32 @@ namespace XREngine.Rendering
             if (atlas is null)
                 return;
 
-            bool changed = atlas.SizedInternalFormat != ESizedInternalFormat.R8
-                || atlas.MinFilter != ETexMinFilter.Linear
+            bool coverageDataChanged = NormalizeBitmapAtlasTextureData(atlas);
+            bool mipChainChanged = RebuildBitmapAtlasMipChain(atlas, force: coverageDataChanged);
+            int smallestAllowedMipmapLevel = Math.Max(0, atlas.Mipmaps.Length - 1);
+            bool changed = coverageDataChanged
+                || mipChainChanged
+                || atlas.SizedInternalFormat != ESizedInternalFormat.R8
+                || atlas.MinFilter != ETexMinFilter.LinearMipmapLinear
                 || atlas.MagFilter != ETexMagFilter.Linear
                 || atlas.AutoGenerateMipmaps
                 || atlas.LargestMipmapLevel != 0
-                || atlas.SmallestAllowedMipmapLevel != 0;
+                || atlas.SmallestAllowedMipmapLevel != smallestAllowedMipmapLevel;
 
             atlas.SizedInternalFormat = ESizedInternalFormat.R8;
-            atlas.MinFilter = ETexMinFilter.Linear;
+            atlas.MinFilter = ETexMinFilter.LinearMipmapLinear;
             atlas.MagFilter = ETexMagFilter.Linear;
             atlas.AutoGenerateMipmaps = false;
             atlas.LargestMipmapLevel = 0;
-            atlas.SmallestAllowedMipmapLevel = 0;
+            atlas.SmallestAllowedMipmapLevel = smallestAllowedMipmapLevel;
+
+            if (changed)
+            {
+                foreach (Mipmap2D mipmap in atlas.Mipmaps)
+                    mipmap.Invalidate();
+
+                atlas.PushData();
+            }
 
             if (changed)
             {
@@ -1434,6 +1485,217 @@ namespace XREngine.Rendering
                     $"Bitmap atlas texture normalized: path='{diagnosticPath ?? "<null>"}', size={atlas.Width}x{atlas.Height}, mips={atlas.Mipmaps?.Length ?? 0}, min={atlas.MinFilter}, autoMip={atlas.AutoGenerateMipmaps}, largest={atlas.LargestMipmapLevel}, smallest={atlas.SmallestAllowedMipmapLevel}");
             }
         }
+
+        internal static bool NormalizeBitmapAtlasTextureData(XRTexture2D atlas)
+        {
+            bool changed = false;
+            foreach (Mipmap2D mipmap in atlas.Mipmaps)
+                changed |= NormalizeBitmapAtlasMipmapData(mipmap);
+            return changed;
+        }
+
+        internal static bool RebuildBitmapAtlasMipChain(XRTexture2D atlas, bool force = false)
+        {
+            Mipmap2D[] mipmaps = atlas.Mipmaps;
+            if (mipmaps.Length == 0)
+                return false;
+
+            Mipmap2D baseMipmap = mipmaps[0];
+            if (!TryGetBitmapCoverageBytes(baseMipmap, out byte[] baseCoverage, out bool preferCompressedYaml))
+                return false;
+
+            int expectedMipCount = GetBitmapCoverageMipCount(baseMipmap.Width, baseMipmap.Height);
+            if (!force && IsBitmapCoverageMipChainValid(mipmaps, expectedMipCount, baseMipmap.Width, baseMipmap.Height))
+                return false;
+
+            atlas.Mipmaps = CreateBitmapCoverageMipmaps(baseCoverage, (int)baseMipmap.Width, (int)baseMipmap.Height, preferCompressedYaml);
+            return true;
+        }
+
+        private static bool IsBitmapCoverageMipChainValid(Mipmap2D[] mipmaps, int expectedMipCount, uint baseWidth, uint baseHeight)
+        {
+            if (mipmaps.Length != expectedMipCount)
+                return false;
+
+            for (int level = 0; level < mipmaps.Length; level++)
+            {
+                Mipmap2D mipmap = mipmaps[level];
+                uint expectedWidth = Math.Max(1u, baseWidth >> level);
+                uint expectedHeight = Math.Max(1u, baseHeight >> level);
+                if (mipmap.Width != expectedWidth || mipmap.Height != expectedHeight)
+                    return false;
+
+                if (!TryGetBitmapCoverageBytes(mipmap, out _, out _))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryGetBitmapCoverageBytes(Mipmap2D mipmap, out byte[] bytes, out bool preferCompressedYaml)
+        {
+            bytes = [];
+            preferCompressedYaml = mipmap.Data?.PreferCompressedYaml ?? false;
+            byte[]? sourceBytes = mipmap.Data?.GetBytes();
+            if (sourceBytes is null)
+                return false;
+
+            ulong expectedLength64 = (ulong)mipmap.Width * mipmap.Height;
+            if (expectedLength64 == 0 || expectedLength64 > int.MaxValue)
+                return false;
+
+            if (mipmap.InternalFormat != EPixelInternalFormat.R8 ||
+                mipmap.PixelFormat != EPixelFormat.Red ||
+                mipmap.PixelType != EPixelType.UnsignedByte ||
+                sourceBytes.Length != (int)expectedLength64)
+            {
+                return false;
+            }
+
+            bytes = sourceBytes;
+            return true;
+        }
+
+        private static int GetBitmapCoverageMipCount(uint width, uint height)
+            => Math.Max(1, XRTexture.GetSmallestMipmapLevel(width, height) + 1);
+
+        private static Mipmap2D[] CreateBitmapCoverageMipmaps(byte[] baseCoverage, int width, int height, bool preferCompressedYaml)
+        {
+            if (width <= 0 || height <= 0)
+                return [];
+
+            int mipCount = GetBitmapCoverageMipCount((uint)width, (uint)height);
+            Mipmap2D[] mipmaps = new Mipmap2D[mipCount];
+            byte[] coverage = baseCoverage;
+            int mipWidth = width;
+            int mipHeight = height;
+
+            for (int level = 0; level < mipmaps.Length; level++)
+            {
+                mipmaps[level] = new Mipmap2D(
+                    (uint)mipWidth,
+                    (uint)mipHeight,
+                    EPixelInternalFormat.R8,
+                    EPixelFormat.Red,
+                    EPixelType.UnsignedByte,
+                    allocateData: false)
+                {
+                    Data = new DataSource(coverage)
+                    {
+                        PreferCompressedYaml = preferCompressedYaml,
+                    },
+                };
+
+                if (level + 1 < mipmaps.Length)
+                    coverage = DownsampleBitmapCoverage(coverage, mipWidth, mipHeight, out mipWidth, out mipHeight);
+            }
+
+            return mipmaps;
+        }
+
+        private static byte[] DownsampleBitmapCoverage(byte[] source, int sourceWidth, int sourceHeight, out int nextWidth, out int nextHeight)
+        {
+            nextWidth = Math.Max(1, sourceWidth >> 1);
+            nextHeight = Math.Max(1, sourceHeight >> 1);
+            byte[] destination = new byte[nextWidth * nextHeight];
+
+            for (int y = 0; y < nextHeight; y++)
+            {
+                int sourceY0 = y * sourceHeight / nextHeight;
+                int sourceY1 = (y + 1) * sourceHeight / nextHeight;
+                for (int x = 0; x < nextWidth; x++)
+                {
+                    int sourceX0 = x * sourceWidth / nextWidth;
+                    int sourceX1 = (x + 1) * sourceWidth / nextWidth;
+                    int sum = 0;
+                    int count = 0;
+
+                    for (int sourceY = sourceY0; sourceY < sourceY1; sourceY++)
+                    {
+                        int rowOffset = sourceY * sourceWidth;
+                        for (int sourceX = sourceX0; sourceX < sourceX1; sourceX++)
+                        {
+                            sum += source[rowOffset + sourceX];
+                            count++;
+                        }
+                    }
+
+                    destination[x + (y * nextWidth)] = (byte)((sum + (count / 2)) / count);
+                }
+            }
+
+            return destination;
+        }
+
+        private static bool NormalizeBitmapAtlasMipmapData(Mipmap2D mipmap)
+        {
+            DataSource? sourceData = mipmap.Data;
+            byte[]? sourceBytes = sourceData?.GetBytes();
+            if (sourceBytes is null || sourceBytes.Length == 0)
+                return false;
+
+            ulong pixelCount64 = (ulong)mipmap.Width * mipmap.Height;
+            if (pixelCount64 == 0 || pixelCount64 > int.MaxValue)
+                return false;
+
+            int pixelCount = (int)pixelCount64;
+            if (mipmap.InternalFormat == EPixelInternalFormat.R8 &&
+                mipmap.PixelFormat == EPixelFormat.Red &&
+                mipmap.PixelType == EPixelType.UnsignedByte &&
+                sourceBytes.Length == pixelCount)
+            {
+                return false;
+            }
+
+            if (mipmap.PixelType != EPixelType.UnsignedByte)
+                return false;
+
+            int componentCount = GetBitmapCoverageSourceComponentCount(mipmap.PixelFormat);
+            if (componentCount <= 0)
+                return false;
+
+            int expectedSourceLength = pixelCount * componentCount;
+            if (sourceBytes.Length < expectedSourceLength)
+                return false;
+
+            byte[] coverage = new byte[pixelCount];
+            for (int i = 0; i < pixelCount; i++)
+                coverage[i] = ReadBitmapCoverageByte(sourceBytes, i * componentCount, mipmap.PixelFormat);
+
+            bool preferCompressedYaml = sourceData?.PreferCompressedYaml ?? false;
+            mipmap.InternalFormat = EPixelInternalFormat.R8;
+            mipmap.PixelFormat = EPixelFormat.Red;
+            mipmap.PixelType = EPixelType.UnsignedByte;
+            mipmap.Data = new DataSource(coverage) { PreferCompressedYaml = preferCompressedYaml };
+            return true;
+        }
+
+        private static int GetBitmapCoverageSourceComponentCount(EPixelFormat format)
+            => format switch
+            {
+                EPixelFormat.Rgba or EPixelFormat.Bgra or EPixelFormat.RgbaInteger or EPixelFormat.BgraInteger => 4,
+                EPixelFormat.Rgb or EPixelFormat.Bgr or EPixelFormat.RgbInteger or EPixelFormat.BgrInteger => 3,
+                EPixelFormat.LuminanceAlpha or EPixelFormat.Rg or EPixelFormat.RgInteger => 2,
+                EPixelFormat.Red or
+                EPixelFormat.Green or
+                EPixelFormat.Blue or
+                EPixelFormat.Alpha or
+                EPixelFormat.Luminance or
+                EPixelFormat.RedInteger or
+                EPixelFormat.GreenInteger or
+                EPixelFormat.BlueInteger or
+                EPixelFormat.AlphaInteger => 1,
+                _ => 0,
+            };
+
+        private static byte ReadBitmapCoverageByte(byte[] sourceBytes, int offset, EPixelFormat format)
+            => format switch
+            {
+                EPixelFormat.Rgba or EPixelFormat.Bgra or EPixelFormat.RgbaInteger or EPixelFormat.BgraInteger => sourceBytes[offset + 3],
+                EPixelFormat.LuminanceAlpha => sourceBytes[offset + 1],
+                EPixelFormat.Bgr or EPixelFormat.BgrInteger => sourceBytes[offset + 2],
+                _ => sourceBytes[offset],
+            };
 
         private static void ConfigureDistanceFieldAtlasTexture(XRTexture2D? atlas, EFontAtlasType atlasType, string? diagnosticPath)
         {

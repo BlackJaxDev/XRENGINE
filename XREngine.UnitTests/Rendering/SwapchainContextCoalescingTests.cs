@@ -541,6 +541,37 @@ public sealed class SwapchainContextCoalescingTests
     }
 
     [Test]
+    public void SortFrameOps_NestedUiLocalPassCollision_UsesScreenSpaceUiPassOrder()
+    {
+        const int sceneOnTopPass = 9;
+        const int finalSceneOutputPass = 100057;
+        const int screenSpaceUiPass = 100100;
+        const int uiLocalOnTopPass = 9;
+
+        var sceneMetadata = Metadata(
+            (sceneOnTopPass, "OnTopForward", []),
+            (finalSceneOutputPass, "RenderToWindow_FinalPostProcessOutputTexture", [sceneOnTopPass]),
+            (screenSpaceUiPass, "VPRC_RenderScreenSpaceUI", [finalSceneOutputPass]));
+        var uiMetadata = Metadata(
+            (uiLocalOnTopPass, "RenderUIBatched_9", []));
+
+        FrameOpContext sceneContext = CtxPipelineA with { PassMetadata = sceneMetadata };
+        FrameOpContext nestedUiContext = CtxPipelineB with { PassMetadata = uiMetadata };
+        var graph = new VulkanRenderGraphCompiler().Compile(sceneMetadata);
+
+        FrameOp[] ops =
+        [
+            SwapchainBlit(finalSceneOutputPass, sceneContext),
+            SwapchainDraw(uiLocalOnTopPass, nestedUiContext),
+        ];
+
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+
+        sorted.Select(op => op.PassIndex).ToArray().ShouldBe([finalSceneOutputPass, uiLocalOnTopPass]);
+        sorted[1].Context.ShouldBe(nestedUiContext);
+    }
+
+    [Test]
     public void EndToEnd_CoalesceThenSort_EliminatesContextChanges()
     {
         // This is the full regression scenario:
@@ -648,13 +679,12 @@ public sealed class SwapchainContextCoalescingTests
     #region Screen-space UI contracts
 
     [Test]
-    public void RenderUiBatched_PreservesParentSwapchainPass_ForNestedScreenSpaceUi()
+    public void RenderUiBatched_PushesLocalUiPass_ForNestedScreenSpaceUi()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderUIBatched.cs");
 
-        source.ShouldContain("preserveParentSwapchainPass");
-        source.ShouldContain("ActivePipelineInstance.RenderState.OutputFBO is null");
         source.ShouldContain("RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_renderPass)");
+        source.ShouldNotContain("preserveParentSwapchainPass");
     }
 
     [Test]

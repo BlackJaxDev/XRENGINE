@@ -120,6 +120,8 @@ Tool categories include Setup, Build, Editor, Repo, Docs, Reports, and Deps. `Ex
 
 All AI/LLM-generated outputs that are not intended to be committed must live under `Build/_AgentValidation/`. The folder is ignored by Git and should be treated as disposable local evidence, not durable project documentation.
 
+Keep `Build/_AgentValidation/` bounded. Before creating a new run root, delete old agent validation run subfolders as needed so there are no more than 10 immediate run subfolders under `Build/_AgentValidation/` at once. Preserve only active investigation output or evidence explicitly referenced by a durable `docs/work/` note; otherwise delete stale run folders instead of archiving them elsewhere in the repo.
+
 Use one run root per task or investigation:
 
 ```powershell

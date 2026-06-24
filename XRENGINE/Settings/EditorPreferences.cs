@@ -2474,7 +2474,7 @@ namespace XREngine
 
         [Category("Profiling")]
         [DisplayName("Enable GPU Render-Pipeline Profiling")]
-        [Description("When enabled, records GPU timestamp timings for render-pipeline commands on the OpenGL backend for the Profiler panel.")]
+        [Description("When enabled, records GPU timestamp timings for render-pipeline commands on supported backends for the Profiler panel.")]
         [DefaultValue(false)]
         public bool EnableGpuRenderPipelineProfiling
         {

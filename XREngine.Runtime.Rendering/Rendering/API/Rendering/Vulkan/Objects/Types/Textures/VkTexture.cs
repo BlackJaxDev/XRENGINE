@@ -46,7 +46,7 @@ public unsafe partial class VulkanRenderer
         /// Generic Vulkan texture readiness for descriptor use. Attachment/pass readiness
         /// is still owned by the render pass and framebuffer planner.
         /// </summary>
-        public virtual bool IsDescriptorReady => IsGenerated && !IsDescriptorDirty;
+        public virtual bool IsDescriptorReady => IsGenerated && !IsDescriptorDirty && !IsInvalidated && HasUploadedData;
 
         protected override void LinkData()
         {
@@ -273,6 +273,12 @@ public unsafe partial class VulkanRenderer
             }
 
             MarkDescriptorClean();
+        }
+
+        public virtual bool TryEnsureDescriptorReadyForUse(string reason)
+        {
+            EnsureDescriptorReadyForVulkanUse(reason);
+            return IsDescriptorReady;
         }
 
         protected virtual string? ResolveLogicalResourceName()

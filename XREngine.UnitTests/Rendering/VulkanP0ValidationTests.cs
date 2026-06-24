@@ -148,6 +148,7 @@ public sealed class VulkanP0ValidationTests
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
         string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanRenderer.State.cs");
         string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
+        string descriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Descriptors.cs");
         string registrySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Resources/RenderResourceRegistry.cs");
 
         commandBufferSource.ShouldContain("_commandBufferFrameOpSignatures");
@@ -165,6 +166,9 @@ public sealed class VulkanP0ValidationTests
         stateSource.ShouldContain("viewport?.InternalWidth");
         meshSource.ShouldContain("hash.Add(op.Context.ViewportIdentity)");
         meshSource.ShouldContain("hash.Add(blit.OutFbo?.GetHashCode() ?? 0)");
+        descriptorSource.ShouldContain("ComputeDescriptorResourceFingerprint(material, frameCount)");
+        descriptorSource.ShouldContain("allocation.ResourceFingerprint != resourceFingerprint");
+        descriptorSource.ShouldContain("active resource fingerprint");
     }
 
     [Test]
@@ -510,9 +514,12 @@ public sealed class VulkanP0ValidationTests
         string profileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/VulkanFeatureProfile.cs");
 
         imguiSource.ShouldContain("private CommandBuffer[]? _imguiOverlayCommandBuffers;");
-        imguiSource.ShouldContain("private bool TryRecordImGuiOverlayCommandBuffer(uint imageIndex, out CommandBuffer overlayCommandBuffer)");
+        imguiSource.ShouldContain("private bool TryRecordImGuiOverlayCommandBuffer(");
         imguiSource.ShouldContain("private void TransitionSwapchainImageForImGuiOverlay(");
         imguiSource.ShouldContain("private void RenderImGuiSnapshot(CommandBuffer commandBuffer, uint imageIndex, ImGuiFrameSnapshot drawData)");
+        imguiSource.ShouldNotContain("nativeUiOverlaySecondaryCommandBuffer");
+        imguiSource.ShouldNotContain("nativeUiOverlayOpCount");
+        imguiSource.ShouldNotContain("Api.CmdExecuteCommands(commandBuffer, 1, &nativeUiOverlaySecondaryCommandBuffer);");
 
         commandBufferSource.ShouldContain("_imguiOverlayCommandBuffers = new CommandBuffer[_commandBuffers.Length];");
         commandBufferSource.ShouldContain("Level = CommandBufferLevel.Primary");
@@ -521,7 +528,9 @@ public sealed class VulkanP0ValidationTests
         commandBufferSource.ShouldNotContain("RenderImGui(commandBuffer, imageIndex);");
 
         drawingSource.ShouldContain("Vulkan.FrameLifecycle.RecordImGuiOverlay");
-        drawingSource.ShouldContain("TryRecordImGuiOverlayCommandBuffer(imageIndex, out imguiOverlayCommandBuffer)");
+        drawingSource.ShouldNotContain("nativeUiOverlaySecondaryCommandBuffer");
+        drawingSource.ShouldNotContain("nativeUiOverlayOpCount");
+        drawingSource.ShouldContain("TryRecordImGuiOverlayCommandBuffer(");
         drawingSource.ShouldContain("submitCommandBuffers[submitCommandBufferCount++] = imguiOverlayCommandBuffer;");
         drawingSource.ShouldContain("CommandBufferCount = submitCommandBufferCount");
 
@@ -565,6 +574,124 @@ public sealed class VulkanP0ValidationTests
         textureView.ShouldContain("case nameof(XRTextureViewBase.MinFilter):");
 
         bloomPass.ShouldContain("MinFilter = ETexMinFilter.Linear,");
+    }
+
+    [Test]
+    public void BitmapFontAtlas_ExtractsAlphaCoverageIntoR8RedChannel()
+    {
+        string fontGlyphSet = ReadWorkspaceFile("XRENGINE/Core/FontGlyphSet.cs");
+
+        fontGlyphSet.ShouldContain("Atlas = CreateBitmapAtlasTexture(outputAtlasPath);");
+        fontGlyphSet.ShouldContain("private static XRTexture2D CreateBitmapAtlasTexture(string atlasPath)");
+        fontGlyphSet.ShouldContain("coverage[x + (y * atlasImage.Width)] = atlasImage[x, y].A;");
+        fontGlyphSet.ShouldContain("EPixelInternalFormat.R8");
+        fontGlyphSet.ShouldContain("EPixelFormat.Red");
+        fontGlyphSet.ShouldContain("EPixelType.UnsignedByte");
+        fontGlyphSet.ShouldContain("SizedInternalFormat = ESizedInternalFormat.R8");
+        fontGlyphSet.ShouldContain("MinFilter = ETexMinFilter.LinearMipmapLinear");
+        fontGlyphSet.ShouldContain("RebuildBitmapAtlasMipChain(atlas");
+        fontGlyphSet.ShouldContain("atlasTexture.SmallestAllowedMipmapLevel = Math.Max(0, atlasTexture.Mipmaps.Length - 1);");
+    }
+
+    [Test]
+    public void VulkanFrameDrawStats_PublishFromFrameOpsInsteadOfCommandRecording()
+    {
+        string vkMeshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.cs");
+        string vkMeshDrawing = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Drawing.cs");
+        string indirectDraw = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Drawing.IndirectDraw.cs");
+
+        vkMeshRenderer.ShouldContain("PublishFrameOpDrawStats(validatedOp);");
+        vkMeshRenderer.ShouldContain("EstimateFrameDrawStats(meshDraw.Draw)");
+        vkMeshRenderer.ShouldContain("RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls(stats.DrawCalls);");
+        vkMeshRenderer.ShouldContain("RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls(stats.MultiDrawCalls);");
+        vkMeshRenderer.ShouldContain("RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered(stats.TrianglesRendered);");
+        vkMeshRenderer.ShouldContain("EstimateTriangleCount(triangleIndexCount, instances)");
+
+        vkMeshDrawing.ShouldNotContain("RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();");
+        vkMeshDrawing.ShouldNotContain("RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered((int)(vertexCount / 3 * drawInstances));");
+        indirectDraw.ShouldNotContain("RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls((int)drawCount);");
+        indirectDraw.ShouldNotContain("RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls((int)maxDrawCount);");
+    }
+
+    [Test]
+    public void NativeFpsOverlay_UsesStableCompactMultilineLayout()
+    {
+        string unitTestingUi = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs");
+
+        unitTestingUi.ShouldContain("private const float FpsOverlayWidth");
+        unitTestingUi.ShouldContain("private const float FpsOverlayHeight");
+        unitTestingUi.ShouldContain("builder.Append(\"net:    rtt \");");
+        unitTestingUi.ShouldContain("builder.Append(\"\\nrender: \");");
+        unitTestingUi.ShouldContain("builder.Append(\"\\nloop:   update \");");
+        unitTestingUi.ShouldContain("builder.Append(\"ms | fixed \");");
+        unitTestingUi.ShouldContain("builder.Append(\"\\ndraw:   calls \");");
+        unitTestingUi.ShouldContain("builder.Append(\" | cpu fallback \");");
+        unitTestingUi.ShouldContain("FormatCompactRate(bytesPerSecond, 7)");
+        unitTestingUi.ShouldContain("FormatCompactCount(drawCalls, 5)");
+        unitTestingUi.ShouldContain("SceneNode textNode = new(parentNode) { Name = \"TestTextNode\" };");
+        unitTestingUi.ShouldNotContain("FpsOverlayBackground");
+        unitTestingUi.ShouldNotContain("TestTextStrokeNode");
+        unitTestingUi.ShouldNotContain("LoadDefaultUIMonospaceFontBitmap");
+        unitTestingUi.ShouldContain("text.Font = font;");
+        unitTestingUi.ShouldContain("text.FontSize = 26;");
+        unitTestingUi.ShouldContain("text.HorizontalAlignment = EHorizontalAlignment.Center;");
+        unitTestingUi.ShouldContain("text.VerticalAlignment = EVerticalAlignment.Center;");
+        unitTestingUi.ShouldContain("text.RenderCommand2D.ZIndex = int.MaxValue;");
+        unitTestingUi.ShouldContain("text.OutlineColor = new ColorF4(0.0f, 0.0f, 0.0f, 1.0f);");
+        unitTestingUi.ShouldContain("text.OutlineThickness = 2.0f;");
+        unitTestingUi.ShouldContain("textTransform.Width = FpsOverlayWidth;");
+        unitTestingUi.ShouldContain("textTransform.Height = FpsOverlayHeight;");
+
+        string fontGlyphSet = ReadWorkspaceFile("XRENGINE/Core/FontGlyphSet.cs");
+        fontGlyphSet.ShouldNotContain("LoadDefaultUIMonospaceFontBitmap");
+
+        string batchedVertexShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/UITextBatched.vs");
+        batchedVertexShader.ShouldContain("uniform int TextRenderLayer_VTX;");
+        batchedVertexShader.ShouldContain("const int TextRenderLayerFill = 2;");
+        batchedVertexShader.ShouldContain("TextRenderLayer_VTX != TextRenderLayerFill");
+        batchedVertexShader.ShouldContain("vec2 expand = vec2(outlineParams.x);");
+        batchedVertexShader.ShouldContain("vec2 glyphDirection = vec2(");
+        batchedVertexShader.ShouldContain("glyphSize.y < 0.0 ? -1.0 : 1.0");
+        batchedVertexShader.ShouldContain("glyphMin -= expand * glyphDirection;");
+        batchedVertexShader.ShouldContain("glyphSize += expand * 2.0 * glyphDirection;");
+        batchedVertexShader.ShouldContain("FragUV0 = mix(uvMin, uvMax, corner);");
+
+        string batchedStereoMv2VertexShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/UITextBatchedStereoMV2.vs");
+        batchedStereoMv2VertexShader.ShouldContain("uniform int TextRenderLayer_VTX;");
+        batchedStereoMv2VertexShader.ShouldContain("TextRenderLayer_VTX != TextRenderLayerFill");
+
+        string batchedStereoNvVertexShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/UITextBatchedStereoNV.vs");
+        batchedStereoNvVertexShader.ShouldContain("uniform int TextRenderLayer_VTX;");
+        batchedStereoNvVertexShader.ShouldContain("TextRenderLayer_VTX != TextRenderLayerFill");
+
+        string batchedFragmentShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/UITextBatched.fs");
+        batchedFragmentShader.ShouldContain("const int StrokeSampleRadius = 5;");
+        batchedFragmentShader.ShouldContain("uniform int TextRenderLayer;");
+        batchedFragmentShader.ShouldContain("TextRenderLayer == TextRenderLayerOutline");
+        batchedFragmentShader.ShouldContain("TextRenderLayer == TextRenderLayerFill");
+        batchedFragmentShader.ShouldContain("vec2 uvDx = dFdx(FragUV0);");
+        batchedFragmentShader.ShouldContain("vec2 uvDy = dFdy(FragUV0);");
+        batchedFragmentShader.ShouldContain("uvDx * sampleOffset.x + uvDy * sampleOffset.y");
+        batchedFragmentShader.ShouldContain("distanceSquared <= radiusSquared");
+        batchedFragmentShader.ShouldContain("const float FillCoverageGuard = 0.02;");
+        batchedFragmentShader.ShouldContain("float OutsideGlyphMask(float fill)");
+        batchedFragmentShader.ShouldContain("smoothstep(0.0, FillCoverageGuard, fill)");
+        batchedFragmentShader.ShouldContain("outlineMask = stroke * OutsideGlyphMask(fill);");
+
+        string batchCollector = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/UI/UIBatchCollector.cs");
+        batchCollector.ShouldContain("private const string TextRenderLayerUniformName = \"TextRenderLayer\";");
+        batchCollector.ShouldContain("private const string TextRenderLayerVertexUniformName = \"TextRenderLayer_VTX\";");
+        batchCollector.ShouldContain("TextRenderLayerCombined");
+        batchCollector.ShouldNotContain("RenderTextLayer(");
+        batchCollector.ShouldNotContain("UIBatchTextDrawOutline");
+        batchCollector.ShouldNotContain("UIBatchTextDrawFill");
+        batchCollector.ShouldContain("gpu.Mesh.CaptureUniformsOnRender = true;");
+
+        string vkMeshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/Types/MeshRenderer/VkMeshRenderer.Uniforms.cs");
+        vkMeshUniforms.ShouldContain("or \"TextDebugMode\" or \"TextRenderLayer\" or \"TextRenderLayer_VTX\"");
+
+        string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs");
+        commandBuffers.ShouldContain("TryRefreshReusableCommandBufferFrameData(imageIndex, dynamicUiBatchTextOps);");
     }
 
     #endregion

@@ -11,6 +11,9 @@ uniform vec4 TextColor;
 uniform vec4 OutlineColor;
 uniform float OutlineThickness;
 
+const int StrokeSampleRadius = 5;
+const float FillCoverageGuard = 0.02;
+
 // Sample atlas, returning 0 for UVs outside the current glyph's region
 // to prevent outline bleed from neighbouring packed glyphs.
 float SampleGlyph(vec2 uv)
@@ -20,27 +23,29 @@ float SampleGlyph(vec2 uv)
     return texture(Texture0, uv).r * mask;
 }
 
-float SampleStroke(vec2 uv, vec2 texelSize, float radius)
+float SampleStroke(vec2 uv, vec2 uvDx, vec2 uvDy, float radius)
 {
     float stroke = 0.0;
-    vec2 offset = texelSize * radius;
-    vec2 halfOffset = offset * 0.5;
+    float clampedRadius = clamp(radius, 0.0, float(StrokeSampleRadius));
+    float radiusSquared = clampedRadius * clampedRadius;
 
-    stroke = max(stroke, SampleGlyph(uv + vec2( offset.x, 0.0)));
-    stroke = max(stroke, SampleGlyph(uv + vec2(-offset.x, 0.0)));
-    stroke = max(stroke, SampleGlyph(uv + vec2(0.0,  offset.y)));
-    stroke = max(stroke, SampleGlyph(uv + vec2(0.0, -offset.y)));
-    stroke = max(stroke, SampleGlyph(uv + vec2( offset.x,  offset.y)));
-    stroke = max(stroke, SampleGlyph(uv + vec2(-offset.x,  offset.y)));
-    stroke = max(stroke, SampleGlyph(uv + vec2( offset.x, -offset.y)));
-    stroke = max(stroke, SampleGlyph(uv + vec2(-offset.x, -offset.y)));
-
-    stroke = max(stroke, SampleGlyph(uv + vec2( halfOffset.x, 0.0)));
-    stroke = max(stroke, SampleGlyph(uv + vec2(-halfOffset.x, 0.0)));
-    stroke = max(stroke, SampleGlyph(uv + vec2(0.0,  halfOffset.y)));
-    stroke = max(stroke, SampleGlyph(uv + vec2(0.0, -halfOffset.y)));
+    for (int y = -StrokeSampleRadius; y <= StrokeSampleRadius; y++)
+    {
+        for (int x = -StrokeSampleRadius; x <= StrokeSampleRadius; x++)
+        {
+            vec2 sampleOffset = vec2(float(x), float(y));
+            float distanceSquared = dot(sampleOffset, sampleOffset);
+            if (distanceSquared <= radiusSquared)
+                stroke = max(stroke, SampleGlyph(uv + uvDx * sampleOffset.x + uvDy * sampleOffset.y));
+        }
+    }
 
     return stroke;
+}
+
+float OutsideGlyphMask(float fill)
+{
+    return 1.0 - smoothstep(0.0, FillCoverageGuard, fill);
 }
 
 void main()
@@ -50,9 +55,10 @@ void main()
     float outlineMask = 0.0;
     if (OutlineThickness > 0.0 && OutlineColor.a > 0.0)
     {
-        vec2 texelSize = 1.0 / vec2(textureSize(Texture0, 0));
-        float stroke = SampleStroke(FragUV0, texelSize, OutlineThickness);
-        outlineMask = max(stroke - fill, 0.0);
+        vec2 uvDx = dFdx(FragUV0);
+        vec2 uvDy = dFdy(FragUV0);
+        float stroke = SampleStroke(FragUV0, uvDx, uvDy, OutlineThickness);
+        outlineMask = stroke * OutsideGlyphMask(fill);
     }
 
     float fillAlpha = TextColor.a * fill;

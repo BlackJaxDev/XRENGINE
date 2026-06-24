@@ -140,6 +140,17 @@ public unsafe partial class VulkanRenderer
             HasStencilComponent(depthFormat) ? depthFormat : Format.Undefined);
     }
 
+    private static DynamicRenderingFormatSignature CreateSwapchainColorOnlyDynamicRenderingFormatSignature(Format colorFormat)
+    {
+        Span<Format> colorFormats = stackalloc Format[1];
+        colorFormats[0] = colorFormat;
+
+        return new DynamicRenderingFormatSignature(
+            colorFormats,
+            Format.Undefined,
+            Format.Undefined);
+    }
+
     private static DynamicRenderingFormatSignature CreateDynamicRenderingFormatSignature(FrameBufferAttachmentSignature[] signatures)
     {
         int colorCount = 0;

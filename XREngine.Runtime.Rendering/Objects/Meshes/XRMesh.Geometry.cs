@@ -293,7 +293,7 @@ public partial class XRMesh
 
         // Cheap short-circuit: avoid spawning a Task just to discover there are no indices
         // (e.g. querying Points on a triangle-only mesh).
-        if (!HasAnyIndices(type))
+        if (!HasIndexData(type))
             return null;
 
         lock (_indexBufferLock)
@@ -322,7 +322,7 @@ public partial class XRMesh
         return null;
     }
 
-    private bool HasAnyIndices(EPrimitiveType type) => type switch
+    internal bool HasIndexData(EPrimitiveType type) => type switch
     {
         EPrimitiveType.Triangles => _triangles is { Count: > 0 },
         EPrimitiveType.Lines => _lines is { Count: > 0 },

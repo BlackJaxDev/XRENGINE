@@ -142,7 +142,7 @@ public unsafe partial class VulkanRenderer
 			_cachedPrecombinedBlendshapePositionsBuffer = MeshRenderer.PrecombinedBlendshapePositionsBuffer;
 			_cachedPrecombinedBlendshapeNormalsBuffer = MeshRenderer.PrecombinedBlendshapeNormalsBuffer;
 			_cachedPrecombinedBlendshapeTangentsBuffer = MeshRenderer.PrecombinedBlendshapeTangentsBuffer;
-			_cachedSkinnedOutputVersion = MeshRenderer.SkinnedOutputVersion;
+			_cachedHasValidPrecombinedBlendshapeDeltas = MeshRenderer.HasValidPrecombinedBlendshapeDeltas;
 		}
 
 		private bool RuntimeDeformationBufferReferencesChanged()
@@ -153,7 +153,7 @@ public unsafe partial class VulkanRenderer
 			|| !ReferenceEquals(_cachedPrecombinedBlendshapePositionsBuffer, MeshRenderer.PrecombinedBlendshapePositionsBuffer)
 			|| !ReferenceEquals(_cachedPrecombinedBlendshapeNormalsBuffer, MeshRenderer.PrecombinedBlendshapeNormalsBuffer)
 			|| !ReferenceEquals(_cachedPrecombinedBlendshapeTangentsBuffer, MeshRenderer.PrecombinedBlendshapeTangentsBuffer)
-			|| _cachedSkinnedOutputVersion != MeshRenderer.SkinnedOutputVersion;
+			|| _cachedHasValidPrecombinedBlendshapeDeltas != MeshRenderer.HasValidPrecombinedBlendshapeDeltas;
 
 		private void EnsureRuntimeDeformationBuffersCurrent()
 		{

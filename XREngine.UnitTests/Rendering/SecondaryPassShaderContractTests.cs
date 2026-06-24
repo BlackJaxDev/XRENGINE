@@ -42,6 +42,21 @@ public sealed class SecondaryPassShaderContractTests
     }
 
     [Test]
+    public void UITextBatched_DoesNotForceMagentaBeforeDebugMode()
+    {
+        string source = LoadShaderSource(Path.Combine("Common", "UITextBatched.fs"));
+        int mainIndex = source.IndexOf("void main()", StringComparison.Ordinal);
+        mainIndex.ShouldBeGreaterThanOrEqualTo(0);
+
+        int debugModeIndex = source.IndexOf("if (TextDebugMode == 1)", mainIndex, StringComparison.Ordinal);
+        debugModeIndex.ShouldBeGreaterThan(mainIndex);
+
+        string preDebugModeBody = source[mainIndex..debugModeIndex];
+        preDebugModeBody.ShouldNotContain("FragColor = vec4(1.0, 0.0, 1.0, 1.0);");
+        preDebugModeBody.ShouldNotContain("return;");
+    }
+
+    [Test]
     public void XRQuadFrameBuffer_AttachesFullscreenTriVertexShaderByDefault()
     {
         string source = ReadWorkspaceFile(Path.Combine(

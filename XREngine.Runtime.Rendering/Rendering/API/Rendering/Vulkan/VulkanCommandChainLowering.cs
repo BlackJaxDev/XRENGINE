@@ -1105,6 +1105,7 @@ public unsafe partial class VulkanRenderer
                 hash.Add(draw.Draw.DepthWriteEnabled);
                 hash.Add((int)draw.Draw.DepthCompareOp);
                 hash.Add(draw.Draw.ViewportScissorCount);
+                hash.Add(draw.Draw.PreparedProgramIdentity);
                 hash.Add(draw.Draw.ProgramBindingSnapshot is null ? 0UL : ComputeDispatchSnapshotSignature(draw.Draw.ProgramBindingSnapshot));
                 hash.Add(ComputeShadowCommandChainStructuralSignature(draw.Draw.ShadowUniformState));
                 break;

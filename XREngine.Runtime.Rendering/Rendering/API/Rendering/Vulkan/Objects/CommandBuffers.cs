@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,6 +28,7 @@ namespace XREngine.Rendering.Vulkan
         private CommandBuffer[]? _activeCommandBuffers;
         private List<CommandBufferCacheVariant>[]? _commandBufferVariants;
         private CommandBuffer[]? _dynamicUiBatchTextSecondaryCommandBuffers;
+        private CommandBuffer[]? _dynamicUiBatchTextOverlayCommandBuffers;
         private int[]? _dynamicUiBatchTextSecondaryOpCounts;
         private ulong[]? _dynamicUiBatchTextSecondarySignatures;
         private ulong[]? _commandBufferFrameOpSignatures;
@@ -81,6 +83,7 @@ namespace XREngine.Rendering.Vulkan
         private int _recordFboLayoutCapacityHint = 1;
         private int _refreshMeshDrawSlotCapacityHint = 1;
         private int _dynamicUiMeshDrawSlotCapacityHint = 1;
+        private string? _lastReusableFrameDataRefreshFailureReason;
         private static readonly bool BloomVulkanDiagnosticsEnabled =
             string.Equals(Environment.GetEnvironmentVariable("XRE_BLOOM_DIAG"), "1", StringComparison.Ordinal);
 
@@ -132,6 +135,8 @@ namespace XREngine.Rendering.Vulkan
             public ulong PlannerRevision { get; set; } = ulong.MaxValue;
             public bool GpuProfilerActive { get; set; }
             public int GpuProfilerFrameSlot { get; set; } = -1;
+            public VulkanGpuProfilerPendingScope[]? GpuProfilerScopes { get; set; }
+            public int GpuProfilerQueryCount { get; set; }
             public ulong LastUsedFrameId { get; set; }
             public FrameOpSignatureDebugPart[]? SignatureDebugParts { get; set; }
         }
@@ -935,6 +940,7 @@ namespace XREngine.Rendering.Vulkan
             DestroyCommandChainCaches();
             DestroyCommandBufferVariants();
             DestroyDynamicUiBatchTextSecondaryCommandBuffers();
+            DestroyDynamicUiBatchTextOverlayCommandBuffers();
             DestroyComputeDescriptorCaches();
             DestroyImGuiOverlayCommandBuffers();
 
@@ -946,6 +952,7 @@ namespace XREngine.Rendering.Vulkan
                 _commandBuffers = null;
                 _activeCommandBuffers = null;
                 _dynamicUiBatchTextSecondaryCommandBuffers = null;
+                _dynamicUiBatchTextOverlayCommandBuffers = null;
                 _imguiOverlayCommandBuffers = null;
                 _dynamicUiBatchTextSecondaryOpCounts = null;
                 _dynamicUiBatchTextSecondarySignatures = null;
@@ -966,6 +973,7 @@ namespace XREngine.Rendering.Vulkan
             _commandBuffers = null;
             _activeCommandBuffers = null;
             _dynamicUiBatchTextSecondaryCommandBuffers = null;
+            _dynamicUiBatchTextOverlayCommandBuffers = null;
             _imguiOverlayCommandBuffers = null;
             _dynamicUiBatchTextSecondaryOpCounts = null;
             _dynamicUiBatchTextSecondarySignatures = null;
@@ -1092,6 +1100,32 @@ namespace XREngine.Rendering.Vulkan
             _dynamicUiBatchTextSecondaryCommandBuffers = null;
             _dynamicUiBatchTextSecondaryOpCounts = null;
             _dynamicUiBatchTextSecondarySignatures = null;
+        }
+
+        private void DestroyDynamicUiBatchTextOverlayCommandBuffers()
+        {
+            if (_dynamicUiBatchTextOverlayCommandBuffers is null)
+                return;
+
+            if (_deviceLost)
+            {
+                foreach (CommandBuffer commandBuffer in _dynamicUiBatchTextOverlayCommandBuffers)
+                    RemoveCommandBufferBindState(commandBuffer);
+
+                _dynamicUiBatchTextOverlayCommandBuffers = null;
+                return;
+            }
+
+            fixed (CommandBuffer* commandBuffersPtr = _dynamicUiBatchTextOverlayCommandBuffers)
+            {
+                if (_dynamicUiBatchTextOverlayCommandBuffers.Length > 0)
+                    Api!.FreeCommandBuffers(device, commandPool, (uint)_dynamicUiBatchTextOverlayCommandBuffers.Length, commandBuffersPtr);
+            }
+
+            foreach (CommandBuffer commandBuffer in _dynamicUiBatchTextOverlayCommandBuffers)
+                RemoveCommandBufferBindState(commandBuffer);
+
+            _dynamicUiBatchTextOverlayCommandBuffers = null;
         }
 
         private void DestroyImGuiOverlayCommandBuffers()
@@ -1535,6 +1569,21 @@ namespace XREngine.Rendering.Vulkan
                     throw new Exception("Failed to allocate dynamic UI text secondary command buffers.");
             }
 
+            _dynamicUiBatchTextOverlayCommandBuffers = new CommandBuffer[_commandBuffers.Length];
+            CommandBufferAllocateInfo dynamicUiTextOverlayAllocInfo = new()
+            {
+                SType = StructureType.CommandBufferAllocateInfo,
+                CommandPool = commandPool,
+                Level = CommandBufferLevel.Primary,
+                CommandBufferCount = (uint)_dynamicUiBatchTextOverlayCommandBuffers.Length,
+            };
+
+            fixed (CommandBuffer* commandBuffersPtr = _dynamicUiBatchTextOverlayCommandBuffers)
+            {
+                if (Api!.AllocateCommandBuffers(device, ref dynamicUiTextOverlayAllocInfo, commandBuffersPtr) != Result.Success)
+                    throw new Exception("Failed to allocate dynamic UI text overlay command buffers.");
+            }
+
             _imguiOverlayCommandBuffers = new CommandBuffer[_commandBuffers.Length];
             CommandBufferAllocateInfo imguiOverlayAllocInfo = new()
             {
@@ -1561,8 +1610,10 @@ namespace XREngine.Rendering.Vulkan
         {
             if (_commandBuffers is null ||
                 _dynamicUiBatchTextSecondaryCommandBuffers is null ||
+                _dynamicUiBatchTextOverlayCommandBuffers is null ||
                 _imguiOverlayCommandBuffers is null ||
                 _commandBuffers.Length != _dynamicUiBatchTextSecondaryCommandBuffers.Length ||
+                _commandBuffers.Length != _dynamicUiBatchTextOverlayCommandBuffers.Length ||
                 _commandBuffers.Length != _imguiOverlayCommandBuffers.Length)
             {
                 _commandBufferVariants = null;
@@ -1577,6 +1628,7 @@ namespace XREngine.Rendering.Vulkan
                 uint imageIndex = unchecked((uint)i);
                 RegisterCommandBufferImageIndex(_commandBuffers[i], imageIndex);
                 RegisterCommandBufferImageIndex(_dynamicUiBatchTextSecondaryCommandBuffers[i], imageIndex);
+                RegisterCommandBufferImageIndex(_dynamicUiBatchTextOverlayCommandBuffers[i], imageIndex);
                 RegisterCommandBufferImageIndex(_imguiOverlayCommandBuffers[i], imageIndex);
                 _activeCommandBuffers[i] = _commandBuffers[i];
                 _commandBufferVariants[i] =
@@ -1598,8 +1650,10 @@ namespace XREngine.Rendering.Vulkan
             bool needsAllocation =
                 _commandBuffers is null ||
                 _commandBufferDirtyFlags is null ||
+                _dynamicUiBatchTextOverlayCommandBuffers is null ||
                 _imguiOverlayCommandBuffers is null ||
                 _commandBuffers.Length != swapChainFramebuffers.Length ||
+                _dynamicUiBatchTextOverlayCommandBuffers.Length != swapChainFramebuffers.Length ||
                 _imguiOverlayCommandBuffers.Length != swapChainFramebuffers.Length ||
                 _commandBufferDirtyFlags.Length != swapChainFramebuffers.Length;
 
@@ -1704,6 +1758,8 @@ namespace XREngine.Rendering.Vulkan
             evicted.PlannerRevision = ulong.MaxValue;
             evicted.GpuProfilerActive = false;
             evicted.GpuProfilerFrameSlot = -1;
+            evicted.GpuProfilerScopes = null;
+            evicted.GpuProfilerQueryCount = 0;
             evicted.SignatureDebugParts = null;
             RegisterCommandBufferImageIndex(evicted.PrimaryCommandBuffer, imageIndex);
             RegisterCommandBufferImageIndex(evicted.DynamicUiSecondaryCommandBuffer, imageIndex);
@@ -1793,9 +1849,13 @@ namespace XREngine.Rendering.Vulkan
         private CommandBuffer EnsureCommandBufferRecorded(
             uint imageIndex,
             bool preserveSwapchainForOverlay,
+            out CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer,
+            out int dynamicUiBatchTextOverlayOpCount,
             out ImageLayout swapchainLayoutAfterCommandBuffer)
         {
             _lastEnsureCommandBufferRecordedPrimary = false;
+            dynamicUiBatchTextSecondaryCommandBuffer = default;
+            dynamicUiBatchTextOverlayOpCount = 0;
             swapchainLayoutAfterCommandBuffer = ImageLayout.PresentSrcKhr;
 
             if (!TryEnsureCommandBuffersForSwapchain())
@@ -1901,6 +1961,8 @@ namespace XREngine.Rendering.Vulkan
                     dynamicUiBatchTextOps,
                     preserveSwapchainForOverlay,
                     out CommandBuffer reusableCommandBuffer,
+                    out dynamicUiBatchTextSecondaryCommandBuffer,
+                    out dynamicUiBatchTextOverlayOpCount,
                     out swapchainLayoutAfterCommandBuffer))
             {
                 return reusableCommandBuffer;
@@ -1968,12 +2030,6 @@ namespace XREngine.Rendering.Vulkan
                 if (gpuProfilerCommandBufferStateDirty)
                     profilerDirty = true;
 
-                if (!dirty && gpuPipelineProfilingActive)
-                {
-                    dirty = true;
-                    profilerDirty = true;
-                }
-
                 if (!dirty && !usingCommandChains && hasFrameOps && variant.FrameOpsSignature != frameOpsSignature)
                 {
                     LogFrameOpSignatureDiff(imageIndex, variant, frameOpsSignature, ops);
@@ -2039,10 +2095,13 @@ namespace XREngine.Rendering.Vulkan
             if (!dirty)
             {
                 bool refreshedReusableFrameData = true;
+                _lastReusableFrameDataRefreshFailureReason = null;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RefreshFrameData"))
                 {
                     refreshedReusableFrameData = !hasStaticFrameOps ||
                         TryRefreshReusableCommandBufferFrameData(imageIndex, ops);
+                    if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
+                        refreshedReusableFrameData = TryRefreshReusableCommandBufferFrameData(imageIndex, dynamicUiBatchTextOps);
                 }
 
                 if (!refreshedReusableFrameData)
@@ -2077,6 +2136,10 @@ namespace XREngine.Rendering.Vulkan
                         variant.PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
                         variant.LastUsedFrameId = VulkanFrameCounter;
                         SetActiveCommandBufferVariant(imageIndex, variant);
+                        PrepareVulkanGpuProfilerReusableSubmission(
+                            commandBufferImageSlot,
+                            variant,
+                            gpuPipelineProfilingActive);
                         UpdateVulkanGpuProfilerCommandBufferState(
                             imageIndex,
                             gpuPipelineProfilingActive,
@@ -2095,6 +2158,11 @@ namespace XREngine.Rendering.Vulkan
                                 primaryCommandBuffersReused: 1);
                         }
                         swapchainLayoutAfterCommandBuffer = variant.RecordedSwapchainFinalLayout;
+                        if (dynamicUiSecondaryReady)
+                        {
+                            dynamicUiBatchTextSecondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
+                            dynamicUiBatchTextOverlayOpCount = dynamicUiBatchTextOps.Length;
+                        }
                         return variant.PrimaryCommandBuffer;
                     }
                 }
@@ -2109,7 +2177,9 @@ namespace XREngine.Rendering.Vulkan
                         : profilerDirty
                             ? "profiler"
                             : frameDataDirty
-                                ? "frame-data"
+                                ? string.IsNullOrEmpty(_lastReusableFrameDataRefreshFailureReason)
+                                    ? "frame-data"
+                                    : $"frame-data:{_lastReusableFrameDataRefreshFailureReason}"
                                 : dynamicUiDirty
                                     ? "dynamic-ui"
                                     : commandChainPrimaryDirty
@@ -2135,11 +2205,11 @@ namespace XREngine.Rendering.Vulkan
 
             _lastEnsureCommandBufferRecordedPrimary = true;
             _isRecordingCommandBuffer = true;
+            bool recordedDynamicUiSecondaryReady = false;
             try
             {
-                bool dynamicUiSecondaryReady;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
-                    dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
+                    recordedDynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                         imageIndex,
                         variant,
                         dynamicUiBatchTextOps,
@@ -2151,7 +2221,7 @@ namespace XREngine.Rendering.Vulkan
                         variant.PrimaryCommandBuffer,
                         variant.DynamicUiSecondaryCommandBuffer,
                         ops,
-                        dynamicUiSecondaryReady ? dynamicUiBatchTextOps.Length : 0,
+                        recordedDynamicUiSecondaryReady && !preserveSwapchainForOverlay ? dynamicUiBatchTextOps.Length : 0,
                         commandChainSchedule,
                         preserveSwapchainForOverlay);
             }
@@ -2162,8 +2232,8 @@ namespace XREngine.Rendering.Vulkan
             _commandBufferDirtyFlags[imageIndex] = false;
             variant.Dirty = false;
             variant.FrameOpsSignature = frameOpsSignature;
-            variant.DynamicUiSignature = dynamicUiBatchTextSignature;
-            variant.DynamicUiOpCount = dynamicUiBatchTextOps.Length;
+            variant.DynamicUiSignature = recordedDynamicUiSecondaryReady ? dynamicUiBatchTextSignature : 0;
+            variant.DynamicUiOpCount = recordedDynamicUiSecondaryReady ? dynamicUiBatchTextOps.Length : 0;
             variant.PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
             variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
             variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
@@ -2174,6 +2244,7 @@ namespace XREngine.Rendering.Vulkan
             variant.PlannerRevision = plannerRevision;
             variant.GpuProfilerActive = gpuPipelineProfilingActive;
             variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
+            CaptureVulkanGpuProfilerVariantScopes(commandBufferImageSlot, variant);
             variant.LastUsedFrameId = VulkanFrameCounter;
             StoreFrameOpSignatureDebugParts(variant, ops);
             SetActiveCommandBufferVariant(imageIndex, variant);
@@ -2181,6 +2252,11 @@ namespace XREngine.Rendering.Vulkan
                 imageIndex,
                 gpuPipelineProfilingActive,
                 commandBufferImageSlot);
+            if (recordedDynamicUiSecondaryReady)
+            {
+                dynamicUiBatchTextSecondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
+                dynamicUiBatchTextOverlayOpCount = dynamicUiBatchTextOps.Length;
+            }
             return variant.PrimaryCommandBuffer;
         }
 
@@ -2196,9 +2272,13 @@ namespace XREngine.Rendering.Vulkan
             FrameOp[] dynamicUiBatchTextOps,
             bool preserveSwapchainForOverlay,
             out CommandBuffer commandBuffer,
+            out CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer,
+            out int dynamicUiBatchTextOverlayOpCount,
             out ImageLayout swapchainLayoutAfterCommandBuffer)
         {
             commandBuffer = default;
+            dynamicUiBatchTextSecondaryCommandBuffer = default;
+            dynamicUiBatchTextOverlayOpCount = 0;
             swapchainLayoutAfterCommandBuffer = ImageLayout.PresentSrcKhr;
             if (!CommandChainsEnabled ||
                 _commandBufferVariants is null ||
@@ -2247,8 +2327,12 @@ namespace XREngine.Rendering.Vulkan
 
                 bool refreshedReusableFrameData;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.FastReuse.RefreshFrameData"))
+                {
                     refreshedReusableFrameData = ops.Length == 0 ||
                         TryRefreshReusableCommandBufferFrameData(imageIndex, ops, refreshMaterialUniforms: false);
+                    if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
+                        refreshedReusableFrameData = TryRefreshReusableCommandBufferFrameData(imageIndex, dynamicUiBatchTextOps);
+                }
                 if (!refreshedReusableFrameData)
                     return false;
 
@@ -2271,6 +2355,10 @@ namespace XREngine.Rendering.Vulkan
                 variant.LastUsedFrameId = VulkanFrameCounter;
                 StoreFrameOpSignatureDebugParts(variant, ops);
                 SetActiveCommandBufferVariant(imageIndex, variant);
+                PrepareVulkanGpuProfilerReusableSubmission(
+                    commandBufferImageSlot,
+                    variant,
+                    gpuPipelineProfilingActive);
                 UpdateVulkanGpuProfilerCommandBufferState(
                     imageIndex,
                     gpuPipelineProfilingActive,
@@ -2286,6 +2374,11 @@ namespace XREngine.Rendering.Vulkan
                     dirtyReason: null);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(primaryCommandBuffersReused: 1);
                 commandBuffer = variant.PrimaryCommandBuffer;
+                if (dynamicUiSecondaryReady)
+                {
+                    dynamicUiBatchTextSecondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
+                    dynamicUiBatchTextOverlayOpCount = dynamicUiBatchTextOpCount;
+                }
                 swapchainLayoutAfterCommandBuffer = variant.RecordedSwapchainFinalLayout;
                 return true;
             }
@@ -2849,15 +2942,14 @@ namespace XREngine.Rendering.Vulkan
             if (ops.Length == 0)
                 return true;
 
-            ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
-
             Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _refreshMeshDrawSlotsByRendererScratch;
             meshDrawSlotsByRenderer.Clear();
             meshDrawSlotsByRenderer.EnsureCapacity(_refreshMeshDrawSlotCapacityHint);
             int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
             {
-                meshDrawSlotsByRenderer.TryGetValue(renderer, out int slot);
-                meshDrawSlotsByRenderer[renderer] = slot + 1;
+                ref int slotRef = ref CollectionsMarshal.GetValueRefOrAddDefault(meshDrawSlotsByRenderer, renderer, out _);
+                int slot = slotRef;
+                slotRef = slot + 1;
                 return slot;
             }
 
@@ -2869,8 +2961,10 @@ namespace XREngine.Rendering.Vulkan
                     case MeshDrawOp drawOp:
                     {
                         int drawUniformSlot = GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
-                        if (!drawOp.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(imageIndex, drawOp.Draw, drawUniformSlot, refreshMaterialUniforms))
+                        if (!drawOp.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(imageIndex, drawOp.Draw, drawUniformSlot, out string reason, refreshMaterialUniforms))
                         {
+                            _lastReusableFrameDataRefreshFailureReason =
+                                $"mesh op={i}/{ops.Length} mesh='{drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{(drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>"}' slot={drawUniformSlot}: {reason}";
                             if (FrameDataReuseDiagnosticsEnabled)
                             {
                                 Debug.VulkanEvery(
@@ -2883,7 +2977,7 @@ namespace XREngine.Rendering.Vulkan
                                     drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
                                     (drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>",
                                     drawUniformSlot,
-                                    drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(drawOp.Draw, drawUniformSlot));
+                                    reason);
                             }
                             return false;
                         }
@@ -2893,6 +2987,8 @@ namespace XREngine.Rendering.Vulkan
                     {
                         if (!computeOp.Program.TryRefreshReusableComputeDispatchFrameData(imageIndex, computeOp.Snapshot))
                         {
+                            _lastReusableFrameDataRefreshFailureReason =
+                                $"compute op={i}/{ops.Length} program='{computeOp.Program.Data?.Name ?? "<unnamed program>"}'";
                             if (FrameDataReuseDiagnosticsEnabled)
                             {
                                 Debug.VulkanEvery(
@@ -3159,7 +3255,20 @@ namespace XREngine.Rendering.Vulkan
 
             if (variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
                 variant.DynamicUiSecondaryRecorded)
+            {
+                if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
+                    XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.DynamicUiText.SecondaryReuse.{GetHashCode()}.{imageIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Reusing dynamic UI text secondary. image={0} ops={1} signature=0x{2:X}",
+                        imageIndex,
+                        variant.DynamicUiOpCount,
+                        dynamicUiBatchTextSignature);
+                }
                 return true;
+            }
 
             CommandBuffer secondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
             if (secondaryCommandBuffer.Handle == 0)
@@ -3218,8 +3327,8 @@ namespace XREngine.Rendering.Vulkan
                 ViewMask = 0,
                 ColorAttachmentCount = 1,
                 PColorAttachmentFormats = colorAttachmentFormats,
-                DepthAttachmentFormat = _swapchainDepthFormat,
-                StencilAttachmentFormat = HasStencilComponent(_swapchainDepthFormat) ? _swapchainDepthFormat : Format.Undefined,
+                DepthAttachmentFormat = Format.Undefined,
+                StencilAttachmentFormat = Format.Undefined,
                 RasterizationSamples = SampleCountFlags.Count1Bit
             };
 
@@ -3239,7 +3348,7 @@ namespace XREngine.Rendering.Vulkan
             ResetCommandBufferBindState(secondaryCommandBuffer);
 
             DynamicRenderingFormatSignature dynamicRenderingFormats = useDynamicRendering
-                ? CreateSwapchainDynamicRenderingFormatSignature(swapChainImageFormat, _swapchainDepthFormat)
+                ? CreateSwapchainColorOnlyDynamicRenderingFormatSignature(swapChainImageFormat)
                 : default;
 
             Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _dynamicUiMeshDrawSlotsByRendererScratch;
@@ -3249,11 +3358,13 @@ namespace XREngine.Rendering.Vulkan
             meshDrawSlotsByRenderer.Clear();
             int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
             {
-                meshDrawSlotsByRenderer.TryGetValue(renderer, out int slot);
-                meshDrawSlotsByRenderer[renderer] = slot + 1;
+                ref int slotRef = ref CollectionsMarshal.GetValueRefOrAddDefault(meshDrawSlotsByRenderer, renderer, out _);
+                int slot = slotRef;
+                slotRef = slot + 1;
                 return slot;
             }
 
+            int recordedDrawCount = 0;
             for (int i = 0; i < dynamicUiBatchTextOps.Length; i++)
             {
                 if (dynamicUiBatchTextOps[i] is not MeshDrawOp drawOp)
@@ -3287,7 +3398,8 @@ namespace XREngine.Rendering.Vulkan
                     Api!.CmdSetScissor(secondaryCommandBuffer, 0, 1, &scissor);
                 }
 
-                drawOp.Draw.Renderer.RecordDraw(
+                int drawUniformSlot = GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
+                bool recordedDraw = drawOp.Draw.Renderer.RecordDraw(
                     secondaryCommandBuffer,
                     drawOp.Draw,
                     inheritedRenderPass,
@@ -3298,11 +3410,59 @@ namespace XREngine.Rendering.Vulkan
                     depthStencilReadOnly: false,
                     drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
                     drawOp.Target?.Name ?? "<swapchain>",
-                    GetMeshDrawUniformSlot(drawOp.Draw.Renderer));
+                    drawUniformSlot);
+                if (recordedDraw)
+                {
+                    recordedDrawCount++;
+                    if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
+                        XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw)
+                    {
+                        Debug.VulkanEvery(
+                            $"Vulkan.DynamicUiText.DrawRecorded.{drawOp.Draw.Renderer.GetHashCode()}",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Dynamic UI text draw recorded. image={0} pass={1} mesh='{2}' slot={3} colors={4} depth={5} viewport=({6},{7},{8},{9}) scissor=({10},{11},{12},{13}) instances={14}",
+                            imageIndex,
+                            opPassIndex,
+                            drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
+                            drawUniformSlot,
+                            dynamicRenderingFormats.DescribeColorFormats(),
+                            dynamicRenderingFormats.DepthAttachmentFormat,
+                            drawOp.Draw.Viewport.X,
+                            drawOp.Draw.Viewport.Y,
+                            drawOp.Draw.Viewport.Width,
+                            drawOp.Draw.Viewport.Height,
+                            drawOp.Draw.Scissor.Offset.X,
+                            drawOp.Draw.Scissor.Offset.Y,
+                            drawOp.Draw.Scissor.Extent.Width,
+                            drawOp.Draw.Scissor.Extent.Height,
+                            drawOp.Draw.Instances);
+                    }
+                }
+                else
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.DynamicUiText.DrawNotRecorded.{drawOp.Draw.Renderer.GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Dynamic UI text draw emitted no commands. pass={0} mesh='{1}' material='{2}' reason={3}",
+                        opPassIndex,
+                        drawOp.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
+                        (drawOp.Draw.MaterialOverride ?? drawOp.Draw.Renderer.MeshRenderer.Material)?.Name ?? "<unnamed material>",
+                        drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(
+                            drawOp.Draw,
+                            drawUniformSlot));
+                }
             }
 
             if (Api!.EndCommandBuffer(secondaryCommandBuffer) != Result.Success)
                 throw new Exception("Failed to end dynamic UI text secondary command buffer.");
+
+            if (recordedDrawCount == 0)
+            {
+                variant.DynamicUiOpCount = 0;
+                variant.DynamicUiSignature = 0;
+                variant.DynamicUiSecondaryRecorded = false;
+                return false;
+            }
 
             variant.DynamicUiOpCount = dynamicUiBatchTextOps.Length;
             variant.DynamicUiSignature = dynamicUiBatchTextSignature;
@@ -3311,6 +3471,100 @@ namespace XREngine.Rendering.Vulkan
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: 1);
 
             _dynamicUiMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
+            return true;
+        }
+
+        private bool TryRecordDynamicUiBatchTextOverlayCommandBuffer(
+            uint imageIndex,
+            CommandBuffer secondaryCommandBuffer,
+            int dynamicUiBatchTextOpCount,
+            ImageLayout initialSwapchainLayout,
+            out CommandBuffer overlayCommandBuffer)
+        {
+            overlayCommandBuffer = default;
+            if (dynamicUiBatchTextOpCount <= 0 ||
+                secondaryCommandBuffer.Handle == 0 ||
+                _dynamicUiBatchTextOverlayCommandBuffers is null ||
+                imageIndex >= _dynamicUiBatchTextOverlayCommandBuffers.Length)
+            {
+                return false;
+            }
+
+            bool useDynamicRendering = UseDynamicRenderingRenderTargets &&
+                swapChainImageViews is not null &&
+                imageIndex < swapChainImageViews.Length;
+            if (!useDynamicRendering)
+                return false;
+
+            CommandBuffer commandBuffer = _dynamicUiBatchTextOverlayCommandBuffers[imageIndex];
+            Api!.ResetCommandBuffer(commandBuffer, 0);
+
+            CommandBufferBeginInfo beginInfo = new()
+            {
+                SType = StructureType.CommandBufferBeginInfo,
+                Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+            };
+
+            if (Api.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
+                throw new InvalidOperationException("Failed to begin dynamic UI text overlay command buffer.");
+
+            ResetCommandBufferBindState(commandBuffer);
+            CmdBeginLabel(commandBuffer, "DynamicUIBatchTextOverlay");
+
+            TransitionSwapchainImageForImGuiOverlay(
+                commandBuffer,
+                imageIndex,
+                initialSwapchainLayout,
+                ImageLayout.ColorAttachmentOptimal);
+
+            RenderingAttachmentInfo colorAttachment = new()
+            {
+                SType = StructureType.RenderingAttachmentInfo,
+                ImageView = swapChainImageViews![imageIndex],
+                ImageLayout = ImageLayout.ColorAttachmentOptimal,
+                LoadOp = AttachmentLoadOp.Load,
+                StoreOp = AttachmentStoreOp.Store,
+            };
+
+            RenderingInfo renderingInfo = new()
+            {
+                SType = StructureType.RenderingInfo,
+                Flags = RenderingFlags.ContentsSecondaryCommandBuffersBit,
+                RenderArea = new Rect2D
+                {
+                    Offset = new Offset2D(0, 0),
+                    Extent = swapChainExtent
+                },
+                LayerCount = 1,
+                ColorAttachmentCount = 1,
+                PColorAttachments = &colorAttachment,
+                PDepthAttachment = null,
+                PStencilAttachment = null,
+            };
+
+            Api.CmdBeginRendering(commandBuffer, &renderingInfo);
+            Api.CmdExecuteCommands(commandBuffer, 1, &secondaryCommandBuffer);
+            Api.CmdEndRendering(commandBuffer);
+
+            TransitionSwapchainImageForImGuiOverlay(
+                commandBuffer,
+                imageIndex,
+                ImageLayout.ColorAttachmentOptimal,
+                ImageLayout.PresentSrcKhr);
+
+            Debug.VulkanEvery(
+                $"Vulkan.DynamicUiText.LateOverlay.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Recorded dynamic UI text late overlay after ImGui. image={0} ops={1}",
+                imageIndex,
+                dynamicUiBatchTextOpCount);
+
+            CmdEndLabel(commandBuffer);
+
+            if (Api.EndCommandBuffer(commandBuffer) != Result.Success)
+                throw new InvalidOperationException("Failed to end dynamic UI text overlay command buffer.");
+
+            overlayCommandBuffer = commandBuffer;
             return true;
         }
 
@@ -3476,8 +3730,9 @@ namespace XREngine.Rendering.Vulkan
 
             int GetMeshDrawUniformSlot(VkMeshRenderer renderer)
             {
-                meshDrawSlotsByRenderer.TryGetValue(renderer, out int slot);
-                meshDrawSlotsByRenderer[renderer] = slot + 1;
+                ref int slotRef = ref CollectionsMarshal.GetValueRefOrAddDefault(meshDrawSlotsByRenderer, renderer, out _);
+                int slot = slotRef;
+                slotRef = slot + 1;
                 return slot;
             }
 

@@ -419,7 +419,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (!source.IsDescriptorReady)
+        if (!source.TryEnsureDescriptorReadyForUse($"bindless material texture '{semantic}'"))
         {
             reason = $"Texture '{texture.Name ?? "<unnamed>"}' descriptor is not ready for Vulkan sampling.";
             return false;

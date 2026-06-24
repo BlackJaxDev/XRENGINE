@@ -30,6 +30,9 @@ public static partial class EditorUnitTests
     public static partial class UserInterface
     {
         private static readonly bool DockFPSTopLeft = false;
+        private const float FpsOverlayWidth = 1000.0f;
+        private const float FpsOverlayHeight = 128.0f;
+        private const float FpsOverlayBottomMargin = 26.0f;
         private static readonly Queue<float> _fpsAvg = new();
         private static readonly StringBuilder _fpsTextBuilder = new(512);
         private static long _lastSampledRenderTimestampTicks = -1L;
@@ -77,59 +80,51 @@ public static partial class EditorUnitTests
             double cpuFrameMs = Engine.Rendering.Stats.Vulkan.VulkanFrameTotalMs;
             double gpuCmdMs = Engine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs;
             int fallbackEvents = Engine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents;
+            float networkingRttMs = 0.0f;
+            float packetsPerSecond = 0.0f;
+            int bytesPerSecond = 0;
+
+            var net = Engine.Networking;
+            if (net is not null)
+            {
+                networkingRttMs = net.AverageRoundTripTimeMs;
+                packetsPerSecond = net.PacketsPerSecond;
+                bytesPerSecond = net.BytesSentLastSecond;
+            }
 
             var builder = _fpsTextBuilder;
             builder.Clear();
-            builder.Append(averageHz.ToString("F0"));
-            builder.Append("hz");
-            builder.Append(" (");
-            builder.Append(renderMs.ToString("F2"));
-            builder.Append("ms)");
-            builder.Append("\nu ");
-            builder.Append(updateMs.ToString("F2"));
+            builder.Append("net:    rtt ");
+            AppendFixed(builder, networkingRttMs, "F1", 5);
+            builder.Append("ms | pkt ");
+            AppendFixed(builder, packetsPerSecond, "F1", 5);
+            builder.Append("/s | data ");
+            builder.Append(FormatCompactRate(bytesPerSecond, 7));
+
+            builder.Append("\nrender: ");
+            AppendFixed(builder, averageHz, "F0", 3);
+            builder.Append("hz ");
+            AppendFixed(builder, renderMs, "F2", 6);
+            builder.Append("ms | cpu ");
+            AppendFixed(builder, cpuFrameMs, "F2", 6);
+            builder.Append("ms | gpu ");
+            AppendFixed(builder, gpuCmdMs, "F2", 6);
             builder.Append("ms");
-            builder.Append("\nf ");
-            builder.Append(fixedMs.ToString("F2"));
+
+            builder.Append("\nloop:   update ");
+            AppendFixed(builder, updateMs, "F2", 6);
+            builder.Append("ms | fixed ");
+            AppendFixed(builder, fixedMs, "F2", 6);
             builder.Append("ms");
 
-            float networkingRttMs = 0.0f;
-            var net = Engine.Networking;
-            if (net is not null
-                && (net.PacketsPerSecond > 0.05f || net.BytesSentLastSecond > 0 || net.AverageRoundTripTimeMs > 0.05f))
-            {
-                networkingRttMs = net.AverageRoundTripTimeMs;
-                builder.Append("\nn ");
-                builder.Append(net.AverageRoundTripTimeMs.ToString("F1"));
-                builder.Append("ms");
-                builder.Append(" ");
-                builder.Append(net.PacketsPerSecond.ToString("F1"));
-                builder.Append("p/s");
-                builder.Append("\n");
-                builder.Append(net.DataPerSecondString);
-            }
-
-            builder.Append("\ndc ");
-            builder.Append(drawCalls.ToString("N0"));
-            builder.Append(" | md ");
-            builder.Append(multiDrawCalls.ToString("N0"));
-            builder.Append("\ntri ");
-            builder.Append(FormatCompactCount(trianglesRendered));
-
-            if (cpuFrameMs > 0.0 || gpuCmdMs > 0.0)
-            {
-                builder.Append("\nc ");
-                builder.Append(cpuFrameMs.ToString("F2"));
-                builder.Append("ms");
-                builder.Append(" | g ");
-                builder.Append(gpuCmdMs.ToString("F2"));
-                builder.Append("ms");
-            }
-
-            if (fallbackEvents > 0)
-            {
-                builder.Append("\nfb ");
-                builder.Append(fallbackEvents.ToString("N0"));
-            }
+            builder.Append("\ndraw:   calls ");
+            builder.Append(FormatCompactCount(drawCalls, 5));
+            builder.Append(" | multi ");
+            builder.Append(FormatCompactCount(multiDrawCalls, 5));
+            builder.Append(" | tris ");
+            builder.Append(FormatCompactCount(trianglesRendered, 6));
+            builder.Append(" | cpu fallback ");
+            builder.Append(FormatCompactCount(fallbackEvents, 3));
 
             var videoComp = _editorComponent?.SceneNode.FindFirstDescendantComponent<UIVideoComponent>();
             if (videoComp is not null)
@@ -148,7 +143,8 @@ public static partial class EditorUnitTests
                 builder.Append(')');
             }
 
-            t.Text = builder.ToString();
+            string fpsText = builder.ToString();
+            t.Text = fpsText;
             t.Color = ResolveFpsOverlayColor(renderMs, cpuFrameMs, gpuCmdMs, networkingRttMs, fallbackEvents);
         }
 
@@ -156,22 +152,48 @@ public static partial class EditorUnitTests
         {
             double primaryMs = Math.Max(renderMs, Math.Max(cpuFrameMs, gpuCmdMs));
             if (fallbackEvents > 0 || primaryMs >= 33.0 || rttMs >= 120.0f)
-                return new ColorF4(1.0f, 0.45f, 0.40f, 1.0f);
+                return new ColorF4(1.0f, 0.82f, 0.32f, 1.0f);
             if (primaryMs >= 20.0 || rttMs >= 60.0f)
-                return new ColorF4(1.0f, 0.78f, 0.30f, 1.0f);
+                return new ColorF4(1.0f, 0.92f, 0.48f, 1.0f);
             if (primaryMs >= 12.0 || rttMs >= 20.0f)
-                return new ColorF4(0.95f, 0.90f, 0.35f, 1.0f);
-            return new ColorF4(0.80f, 1.0f, 0.82f, 1.0f);
+                return new ColorF4(0.98f, 0.98f, 0.85f, 1.0f);
+            return new ColorF4(1.0f, 1.0f, 1.0f, 1.0f);
         }
 
         private static string FormatCompactCount(int value)
+            => FormatCompactCount(value, width: 0);
+
+        private static string FormatCompactCount(int value, int width)
         {
+            string formatted;
             if (value >= 1_000_000)
-                return $"{value / 1_000_000.0:F2}M";
-            if (value >= 1_000)
-                return $"{value / 1_000.0:F1}K";
-            return value.ToString("N0");
+                formatted = $"{value / 1_000_000.0:F2}M";
+            else if (value >= 1_000)
+                formatted = $"{value / 1_000.0:F1}K";
+            else
+                formatted = value.ToString("N0");
+
+            return width > 0 ? formatted.PadLeft(width) : formatted;
         }
+
+        private static string FormatCompactRate(int bytesPerSecond, int width)
+        {
+            string formatted;
+            if (bytesPerSecond >= 1_048_576)
+                formatted = $"{bytesPerSecond / 1_048_576.0:F1}MB/s";
+            else if (bytesPerSecond >= 1024)
+                formatted = $"{bytesPerSecond / 1024.0:F1}KB/s";
+            else
+                formatted = $"{bytesPerSecond}B/s";
+
+            return formatted.PadLeft(width);
+        }
+
+        private static void AppendFixed(StringBuilder builder, double value, string format, int width)
+            => builder.Append(value.ToString(format).PadLeft(width));
+
+        private static void AppendFixed(StringBuilder builder, float value, string format, int width)
+            => builder.Append(value.ToString(format).PadLeft(width));
 
         //Simple FPS counter in the bottom right for debugging.
         public static UITextComponent AddFPSText(FontGlyphSet? font, SceneNode parentNode)
@@ -180,81 +202,63 @@ public static partial class EditorUnitTests
             UITextComponent text = textNode.AddComponent<UITextComponent>()!;
             text.DisableBatching = false;
             text.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-            // [FpsTextDiag] Set to EBatchedTextDebugMode.HardClipSpaceQuad to render a solid
-            // cyan quad in clip space (bypasses model+vp math and SSBO indexing) for diagnosing
-            // batched-text shader/data issues.
-            text.BatchedDebugMode = EBatchedTextDebugMode.None;
+            text.BatchedDebugMode = ResolveFpsTextDebugMode();
             text.RenderCommand2D.ZIndex = int.MaxValue;
             text.Font = font;
-            text.FontSize = 22;
+            text.FontSize = 26;
             text.HorizontalAlignment = EHorizontalAlignment.Center;
+            text.VerticalAlignment = EVerticalAlignment.Center;
             text.WrapMode = FontGlyphSet.EWrapMode.None;
             text.HideOverflow = false;
+            text.OutlineColor = new ColorF4(0.0f, 0.0f, 0.0f, 1.0f);
+            text.OutlineThickness = 2.0f;
             text.RegisterAnimationTick<UITextComponent>(TickFPS);
             var textTransform = textNode.GetTransformAs<UIBoundableTransform>(true)!;
+            textTransform.Width = FpsOverlayWidth;
+            textTransform.Height = FpsOverlayHeight;
+            ConfigureFpsOverlayAnchor(textTransform);
+            return text;
+        }
+
+        private static void ConfigureFpsOverlayAnchor(UIBoundableTransform transform)
+        {
             if (DockFPSTopLeft)
             {
-                textTransform.MinAnchor = new Vector2(0.0f, 1.0f);
-                textTransform.MaxAnchor = new Vector2(0.0f, 1.0f);
-                textTransform.NormalizedPivot = new Vector2(0.0f, 1.0f);
+                transform.MinAnchor = new Vector2(0.0f, 1.0f);
+                transform.MaxAnchor = new Vector2(0.0f, 1.0f);
+                transform.NormalizedPivot = new Vector2(0.0f, 1.0f);
             }
             else
             {
-                textTransform.MinAnchor = new Vector2(0.5f, 0.0f);
-                textTransform.MaxAnchor = new Vector2(0.5f, 0.0f);
-                textTransform.NormalizedPivot = new Vector2(0.5f, 0.0f);
+                transform.MinAnchor = new Vector2(0.5f, 0.0f);
+                transform.MaxAnchor = new Vector2(0.5f, 0.0f);
+                transform.NormalizedPivot = new Vector2(0.5f, 0.0f);
             }
-            textTransform.Margins = new Vector4(0.0f, 10.0f, 0.0f, 10.0f);
-            textTransform.Scale = new Vector3(1.0f);
 
-            int preRenderDiagCount = 0;
-            int postRenderDiagCount = 0;
-            text.RenderCommand2D.PreRender += () =>
+            transform.Margins = new Vector4(0.0f, FpsOverlayBottomMargin, 0.0f, 10.0f);
+            transform.Scale = new Vector3(1.0f);
+        }
+
+        private static EBatchedTextDebugMode ResolveFpsTextDebugMode()
+        {
+            string? value = Environment.GetEnvironmentVariable("XRE_FPS_TEXT_BATCHED_DEBUG_MODE");
+            if (string.IsNullOrWhiteSpace(value))
+                return EBatchedTextDebugMode.None;
+
+            if (int.TryParse(value, out int numeric) &&
+                Enum.IsDefined(typeof(EBatchedTextDebugMode), numeric))
             {
-                if (preRenderDiagCount++ >= 20)
-                    return;
+                return (EBatchedTextDebugMode)numeric;
+            }
 
-                var world = text.RenderCommand2D.WorldMatrix;
-                var atlas = text.Font?.Atlas;
-                Debug.Log(
-                    ELogCategory.UI,
-                    "[FpsTextDiag] RenderCommand2D.PreRender #{0} instances={1} renderPass={2} zIndex={3} renderEnabled={4} mesh={5} material={6} actual=({7:F1},{8:F1}) bottomLeft=({9:F1},{10:F1}) worldT=({11:F1},{12:F1},{13:F1}) worldScale=({14:F2},{15:F2}) textLen={16} atlas=({17}x{18}, mips={19}, min={20}, autoMip={21})",
-                    preRenderDiagCount,
-                    text.RenderCommand2D.Instances,
-                    text.RenderCommand2D.RenderPass,
-                    text.RenderCommand2D.ZIndex,
-                    text.RenderCommand2D.RenderEnabled,
-                    text.RenderCommand2D.Mesh is not null,
-                    text.RenderCommand2D.Mesh?.Material is not null,
-                    textTransform.ActualWidth,
-                    textTransform.ActualHeight,
-                    textTransform.ActualLocalBottomLeftTranslation.X,
-                    textTransform.ActualLocalBottomLeftTranslation.Y,
-                    world.M41,
-                    world.M42,
-                    world.M43,
-                    world.M11,
-                    world.M22,
-                    text.Text?.Length ?? -1,
-                    atlas?.Width ?? 0,
-                    atlas?.Height ?? 0,
-                    atlas?.Mipmaps?.Length ?? 0,
-                    atlas?.MinFilter.ToString() ?? "<null>",
-                    atlas?.AutoGenerateMipmaps.ToString() ?? "<null>");
-            };
-            text.RenderCommand2D.PostRender += () =>
-            {
-                if (postRenderDiagCount++ >= 20)
-                    return;
+            if (Enum.TryParse(value, ignoreCase: true, out EBatchedTextDebugMode parsed))
+                return parsed;
 
-                Debug.Log(
-                    ELogCategory.UI,
-                    "[FpsTextDiag] RenderCommand2D.PostRender #{0} instances={1} renderPass={2}",
-                    postRenderDiagCount,
-                    text.RenderCommand2D.Instances,
-                    text.RenderCommand2D.RenderPass);
-            };
-            return text;
+            Debug.LogWarning(
+                ELogCategory.UI,
+                "[FpsTextDiag] Ignoring unknown XRE_FPS_TEXT_BATCHED_DEBUG_MODE='{0}'.",
+                value);
+            return EBatchedTextDebugMode.None;
         }
 
         public static void ShowMenu(UICanvasComponent canvas, bool screenSpace, TransformBase? parent)
