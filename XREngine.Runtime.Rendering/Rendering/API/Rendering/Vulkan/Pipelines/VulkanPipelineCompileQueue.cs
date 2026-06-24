@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private const string VulkanPipelineCompileWorkersEnvVar = "XRE_VK_PIPELINE_COMPILE_WORKERS";
+    private const string VulkanPipelineCompileWorkersEnvVar = XREngineEnvironmentVariables.VulkanPipelineCompileWorkers;
 
     private readonly ConcurrentDictionary<VkMeshRenderer.GraphicsPipelineCompileKey, VulkanGraphicsPipelineCompileJob> _vulkanGraphicsPipelineCompileJobs = new();
     private readonly Lock _vulkanGraphicsPipelineCompileJobsLock = new();

@@ -81,9 +81,9 @@ public static partial class Engine
         private const int MaxBufferedCharacters = 256 * 1024;
         private const double MaxRuntimeCaptureSeconds = 600.0;
 
-        private static readonly bool s_envCaptureEnabled = IsEnvFlagEnabled("XRE_PROFILE_CAPTURE");
+        private static readonly bool s_envCaptureEnabled = IsEnvFlagEnabled(XREngineEnvironmentVariables.ProfileCapture);
         private static readonly bool s_envAutoDumpGpuTimings =
-            s_envCaptureEnabled || IsEnvFlagEnabled("XRE_PROFILE_AUTO_DUMP");
+            s_envCaptureEnabled || IsEnvFlagEnabled(XREngineEnvironmentVariables.ProfileAutoDump);
         private static readonly object s_lock = new();
         private static readonly StringBuilder s_sampleBuffer = new(MaxBufferedCharacters);
         private static readonly StringBuilder s_lineBuilder = new(4096);
@@ -337,10 +337,10 @@ public static partial class Engine
             bool runtimeCapture = s_runtimeCaptureEnabled;
             string runLabel = runtimeCapture && !string.IsNullOrWhiteSpace(s_runtimeRunLabel)
                 ? s_runtimeRunLabel
-                : Environment.GetEnvironmentVariable("XRE_PROFILE_RUN_LABEL") ?? string.Empty;
+                : Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileRunLabel) ?? string.Empty;
 
-            string targetRefreshHzEnv = Environment.GetEnvironmentVariable("XRE_TARGET_REFRESH_HZ") ??
-                Environment.GetEnvironmentVariable("XRE_UPDATE_FPS") ??
+            string targetRefreshHzEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TargetRefreshHz) ??
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UpdateFps) ??
                 string.Empty;
             double? targetRefreshHz = TryParsePositiveDouble(targetRefreshHzEnv);
             double? xrFrameBudgetMs = targetRefreshHz is > 0.0 ? 1000.0 / targetRefreshHz.Value : null;
@@ -350,44 +350,44 @@ public static partial class Engine
                 SchemaVersion: ProfileCaptureSchemaVersion,
                 CaptureMode: runtimeCapture ? "runtime" : "launch",
                 RunLabel: runLabel,
-                WorldMode: Environment.GetEnvironmentVariable("XRE_WORLD_MODE") ?? string.Empty,
-                ForcedStrategy: Environment.GetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY") ?? string.Empty,
+                WorldMode: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WorldMode) ?? string.Empty,
+                ForcedStrategy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy) ?? string.Empty,
                 EffectiveStrategy: CaptureString(() => Engine.Rendering.ResolveMeshSubmissionStrategy().ToString()),
                 ZeroReadbackMaterialDrawPath: CaptureString(() => Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath.ToString()),
-                ZeroReadbackMaterialDrawPathEnv: Environment.GetEnvironmentVariable("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH") ?? string.Empty,
+                ZeroReadbackMaterialDrawPathEnv: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath) ?? string.Empty,
                 Backend: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveRenderBackend),
                 GpuName: CaptureString(() => RuntimeEngine.Rendering.State.OpenGLRendererName ?? RuntimeEngine.Rendering.State.VulkanDeviceName ?? string.Empty),
                 GpuVendor: CaptureString(() => RuntimeEngine.Rendering.State.OpenGLVendor ?? string.Empty),
-                GpuDeviceId: Environment.GetEnvironmentVariable("XRE_GPU_DEVICE_ID") ?? string.Empty,
-                Driver: Environment.GetEnvironmentVariable("XRE_GPU_DRIVER") ?? string.Empty,
-                Scene: Environment.GetEnvironmentVariable("XRE_PROFILE_SCENE") ?? string.Empty,
-                Camera: Environment.GetEnvironmentVariable("XRE_PROFILE_CAMERA") ?? string.Empty,
-                Lights: Environment.GetEnvironmentVariable("XRE_PROFILE_LIGHTS") ?? string.Empty,
-                Viewport: Environment.GetEnvironmentVariable("XRE_PROFILE_VIEWPORT") ?? string.Empty,
-                RenderScale: Environment.GetEnvironmentVariable("XRE_PROFILE_RENDER_SCALE") ??
+                GpuDeviceId: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuDeviceId) ?? string.Empty,
+                Driver: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuDriver) ?? string.Empty,
+                Scene: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileScene) ?? string.Empty,
+                Camera: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCamera) ?? string.Empty,
+                Lights: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileLights) ?? string.Empty,
+                Viewport: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileViewport) ?? string.Empty,
+                RenderScale: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileRenderScale) ??
                     CaptureString(() => Engine.Rendering.Settings.TsrRenderScale.ToString(CultureInfo.InvariantCulture)),
                 StereoMode: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveStereoMode),
                 ValidationLayersEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.ValidationLayersEnabled ? "true" : "false"),
                 DebugOutputEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.DebugOutputEnabled ? "true" : "false"),
                 DeferredDebugView: CaptureString(() => global::XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView.ToString(CultureInfo.InvariantCulture)),
-                DeferredDebugEnv: Environment.GetEnvironmentVariable("XRE_DEFERRED_DEBUG") ?? string.Empty,
-                ShaderCacheState: Environment.GetEnvironmentVariable("XRE_SHADER_CACHE_MODE") ?? string.Empty,
-                TextureCacheState: Environment.GetEnvironmentVariable("XRE_TEXTURE_CACHE_MODE") ?? string.Empty,
-                CacheMode: Environment.GetEnvironmentVariable("XRE_PROFILE_CACHE_MODE") ?? string.Empty,
-                GpuClockPolicy: Environment.GetEnvironmentVariable("XRE_GPU_CLOCK_POLICY") ?? string.Empty,
+                DeferredDebugEnv: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DeferredDebug) ?? string.Empty,
+                ShaderCacheState: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShaderCacheMode) ?? string.Empty,
+                TextureCacheState: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TextureCacheMode) ?? string.Empty,
+                CacheMode: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCacheMode) ?? string.Empty,
+                GpuClockPolicy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuClockPolicy) ?? string.Empty,
                 TargetRefreshHz: targetRefreshHz,
                 XrFrameBudgetMs: xrFrameBudgetMs,
-                BenchmarkPhase: Environment.GetEnvironmentVariable("XRE_PROFILE_PHASE") ?? string.Empty,
-                WarmupSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable("XRE_PROFILE_WARMUP_SEC")),
-                CaptureSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable("XRE_PROFILE_CAPTURE_SEC")),
+                BenchmarkPhase: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfilePhase) ?? string.Empty,
+                WarmupSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileWarmupSeconds)),
+                CaptureSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCaptureSeconds)),
                 BenchmarkEnvironmentValid: string.IsNullOrWhiteSpace(benchmarkErrors),
                 BenchmarkEnvironmentErrors: benchmarkErrors,
-                GpuTimestampDenseMode: IsEnvFlagEnabled("XRE_GPU_TIMESTAMP_DENSE"),
-                P3Logging: Environment.GetEnvironmentVariable("XRE_P3_LOGGING") ?? string.Empty,
-                BucketLoopDryRun: Environment.GetEnvironmentVariable("XRE_BUCKET_LOOP_DRY_RUN") ?? string.Empty,
-                SkipCommandSwapIfClean: Environment.GetEnvironmentVariable("XRE_SKIP_COMMAND_SWAP_IF_CLEAN") ?? string.Empty,
-                BucketLoopSkipEmpty: Environment.GetEnvironmentVariable("XRE_BUCKET_LOOP_SKIP_EMPTY") ?? string.Empty,
-                ForceSingleBucket: Environment.GetEnvironmentVariable("XRE_FORCE_SINGLE_BUCKET") ?? string.Empty,
+                GpuTimestampDenseMode: IsEnvFlagEnabled(XREngineEnvironmentVariables.GpuTimestampDense),
+                P3Logging: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.P3Logging) ?? string.Empty,
+                BucketLoopDryRun: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BucketLoopDryRun) ?? string.Empty,
+                SkipCommandSwapIfClean: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SkipCommandSwapIfClean) ?? string.Empty,
+                BucketLoopSkipEmpty: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BucketLoopSkipEmpty) ?? string.Empty,
+                ForceSingleBucket: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceSingleBucket) ?? string.Empty,
                 Configuration: CaptureString(() => Engine.GameSettings?.BuildSettings?.Configuration.ToString() ?? string.Empty),
                 CreatedUtc: DateTimeOffset.UtcNow,
                 ProcessId: Environment.ProcessId);
@@ -921,20 +921,20 @@ public static partial class Engine
         {
             List<string> errors = [];
 
-            ValidateEnvFlag(errors, "XRE_PROFILER_ENABLED");
-            ValidateEnvFlag(errors, "XRE_PROFILE_CAPTURE");
-            ValidateEnvFlag(errors, "XRE_PROFILE_AUTO_DUMP");
-            ValidateEnvFlag(errors, "XRE_P3_LOGGING");
-            ValidateEnvFlag(errors, "XRE_BUCKET_LOOP_DRY_RUN");
-            ValidateEnvFlag(errors, "XRE_SKIP_COMMAND_SWAP_IF_CLEAN");
-            ValidateEnvFlag(errors, "XRE_BUCKET_LOOP_SKIP_EMPTY");
-            ValidateEnvFlag(errors, "XRE_FORCE_SINGLE_BUCKET");
-            ValidateEnvFlag(errors, "XRE_HIZ_CULL_TRACE");
-            ValidateEnvFlag(errors, "XRE_GPU_TIMESTAMP_DENSE");
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.ProfilerEnabled);
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.ProfileCapture);
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.ProfileAutoDump);
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.P3Logging);
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.BucketLoopDryRun);
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.SkipCommandSwapIfClean);
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.BucketLoopSkipEmpty);
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.ForceSingleBucket);
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.HizCullTrace);
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.GpuTimestampDense);
 
             ValidateEnvEnum(
                 errors,
-                "XRE_FORCE_MESH_SUBMISSION_STRATEGY",
+                XREngineEnvironmentVariables.ForceMeshSubmissionStrategy,
                 "CpuDirect",
                 "GpuIndirectInstrumented",
                 "GpuIndirectZeroReadback",
@@ -942,20 +942,20 @@ public static partial class Engine
                 "GpuMeshletZeroReadback");
             ValidateEnvEnum(
                 errors,
-                "XRE_ZERO_READBACK_MATERIAL_DRAW_PATH",
+                XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath,
                 "FullBucketScan",
                 "ActiveBucketList",
                 "MaterialTable",
                 "BindlessMaterialTable");
-            ValidateEnvEnum(errors, "XRE_PROFILE_CACHE_MODE", "Cold", "Warm");
-            ValidateEnvEnum(errors, "XRE_SHADER_CACHE_MODE", "Cold", "Warm");
-            ValidateEnvEnum(errors, "XRE_TEXTURE_CACHE_MODE", "Cold", "Warm");
+            ValidateEnvEnum(errors, XREngineEnvironmentVariables.ProfileCacheMode, "Cold", "Warm");
+            ValidateEnvEnum(errors, XREngineEnvironmentVariables.ShaderCacheMode, "Cold", "Warm");
+            ValidateEnvEnum(errors, XREngineEnvironmentVariables.TextureCacheMode, "Cold", "Warm");
 
-            ValidateEnvPositiveDouble(errors, "XRE_TARGET_REFRESH_HZ");
-            ValidateEnvPositiveDouble(errors, "XRE_UPDATE_FPS");
-            ValidateEnvPositiveDouble(errors, "XRE_PROFILE_RENDER_SCALE");
-            ValidateEnvPositiveDouble(errors, "XRE_PROFILE_WARMUP_SEC");
-            ValidateEnvPositiveDouble(errors, "XRE_PROFILE_CAPTURE_SEC");
+            ValidateEnvPositiveDouble(errors, XREngineEnvironmentVariables.TargetRefreshHz);
+            ValidateEnvPositiveDouble(errors, XREngineEnvironmentVariables.UpdateFps);
+            ValidateEnvPositiveDouble(errors, XREngineEnvironmentVariables.ProfileRenderScale);
+            ValidateEnvPositiveDouble(errors, XREngineEnvironmentVariables.ProfileWarmupSeconds);
+            ValidateEnvPositiveDouble(errors, XREngineEnvironmentVariables.ProfileCaptureSeconds);
 
             return errors.Count == 0 ? string.Empty : string.Join("; ", errors);
         }

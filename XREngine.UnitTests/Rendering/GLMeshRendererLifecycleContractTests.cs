@@ -118,7 +118,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     {
         string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Pipelines/GLProgramCompileLinkQueue.cs");
 
-        queueSource.ShouldContain("XRE_SHARED_CONTEXT_DISABLE_LINK_SERIALIZATION");
+        queueSource.ShouldContain(XREngineEnvironmentVariables.SharedContextDisableLinkSerialization);
         queueSource.ShouldContain("private readonly SemaphoreSlim _programLinkGate;");
         queueSource.ShouldContain("LargeSourceLinkDeferralThresholdBytes");
         queueSource.ShouldContain("_programLinkGate.Wait();");
@@ -158,7 +158,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     {
         string linkSource = ReadGlRenderProgramLinkingSources();
 
-        linkSource.ShouldContain("XRE_ENABLE_SHARED_LINKED_PROGRAM_REUSE");
+        linkSource.ShouldContain(XREngineEnvironmentVariables.EnableSharedLinkedProgramReuse);
         linkSource.ShouldContain("private static readonly bool SharedLinkedProgramReuseEnabled");
         linkSource.ShouldContain("if (!SharedLinkedProgramReuseEnabled)");
         linkSource.ShouldContain("if (!SharedLinkedProgramReuseEnabled ||");
@@ -170,7 +170,7 @@ public sealed class GLMeshRendererLifecycleContractTests
         string linkSource = ReadGlRenderProgramLinkingSources();
         string selectorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Pipelines/OpenGLShaderLinkBackendSelector.cs");
 
-        linkSource.ShouldContain("XRE_ENABLE_LARGE_OPENGL_SOURCE_LINKS");
+        linkSource.ShouldContain(XREngineEnvironmentVariables.EnableLargeOpenGlSourceLinks);
         linkSource.ShouldContain("LargeSourceSourceLinkWatchdogThresholdBytes = 128 * 1024");
         linkSource.ShouldContain("ShouldBlockLargeSourceSourceLink(inputs)");
         linkSource.ShouldContain("BlockLargeSourceSourceLink: blockLargeSourceSourceLink");

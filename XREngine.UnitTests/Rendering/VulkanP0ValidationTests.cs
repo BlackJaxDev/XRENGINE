@@ -80,7 +80,7 @@ public sealed class VulkanP0ValidationTests
             source.ShouldContain("IsValidFinalOutputSourceFboOverride");
             source.ShouldContain("CreateOutputSourceOverrideCommands");
             source.ShouldContain("CreateStandardViewportFinalOutputCommands");
-            source.ShouldContain("XRE_OUTPUT_SOURCE_FBO");
+            source.ShouldContain(XREngineEnvironmentVariables.OutputSourceFbo);
             source.ShouldContain("Falling back to standard final output");
             source.ShouldContain("GetFBO<XRQuadFrameBuffer>(sourceFboName)");
             source.ShouldContain("TryGetFBO(sourceFboName, out XRFrameBuffer? fbo)");

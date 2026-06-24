@@ -101,6 +101,28 @@ public sealed class UnitTestingWorldModelImportSettingsTests
     }
 
     [Test]
+    public void ParseJsonc_LegacyRenderApiNormalizesToGroupedRenderingForWriteback()
+    {
+        const string json = """
+        {
+          "RenderAPI": "Vulkan"
+        }
+        """;
+
+        UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.ParseJsonc(json);
+
+        settings.RenderAPI.ShouldBe(ERenderLibrary.Vulkan);
+        settings.Rendering.RenderBackend.ShouldBe(ERenderLibrary.Vulkan);
+        settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderAPI)).ShouldBeTrue();
+        settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering)).ShouldBeFalse();
+
+        string serialized = JsonConvert.SerializeObject(settings);
+        serialized.ShouldContain("\"Rendering\"");
+        serialized.ShouldContain("\"RenderBackend\":1");
+        serialized.ShouldNotContain("\"RenderAPI\"");
+    }
+
+    [Test]
     public void ApplyStartupOverrides_AppliesExplicitVSyncOverride()
     {
         const string json = """

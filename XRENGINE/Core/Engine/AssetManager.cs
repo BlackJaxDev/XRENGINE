@@ -29,8 +29,8 @@ namespace XREngine
     {
         public const string AssetExtension = "asset";
         private const string ImportOptionsFileExtension = "import.yaml";
-        private const string EngineAssetsPathEnvVar = "XRE_ENGINE_ASSETS_PATH";
-        private const string GameAssetsPathEnvVar = "XRE_GAME_ASSETS_PATH";
+        private const string EngineAssetsPathEnvVar = XREngineEnvironmentVariables.EngineAssetsPath;
+        private const string GameAssetsPathEnvVar = XREngineEnvironmentVariables.GameAssetsPath;
         private static string? _publishedConfigArchivePath;
         private static string? _publishedGameContentArchivePath;
         private static string? _publishedEngineContentArchivePath;
@@ -580,7 +580,7 @@ namespace XREngine
             {
                 XRAsset UpdateIDDict(Guid existingID, XRAsset existingAsset)
                 {
-                    // Same reference re-registered — no-op, skip the warning.
+                    // Same reference re-registered ï¿½ no-op, skip the warning.
                     if (ReferenceEquals(existingAsset, asset))
                         return existingAsset;
 

@@ -215,10 +215,10 @@ public sealed partial class McpAssistantWindow
 
         if (ImGui.Button("Load Keys from ENV"))
         {
-            OpenAiApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? OpenAiApiKey;
-            AnthropicApiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? AnthropicApiKey;
-            GeminiApiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY") ?? GeminiApiKey;
-            GitHubModelsToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN") ?? GitHubModelsToken;
+            OpenAiApiKey = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenAiApiKey) ?? OpenAiApiKey;
+            AnthropicApiKey = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AnthropicApiKey) ?? AnthropicApiKey;
+            GeminiApiKey = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GeminiApiKey) ?? GeminiApiKey;
+            GitHubModelsToken = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GitHubToken) ?? GitHubModelsToken;
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Reads OPENAI_API_KEY, ANTHROPIC_API_KEY,\nGEMINI_API_KEY, and GITHUB_TOKEN\nenvironment variables.");

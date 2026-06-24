@@ -310,6 +310,8 @@ public unsafe partial class OpenXRAPI
 
             Result lastResult = Result.Success;
             bool created = false;
+            long createdFormat = 0;
+            uint createdSamples = 0;
 
             foreach (var format in GetPreferredFormats(formats))
             {
@@ -338,6 +340,8 @@ public unsafe partial class OpenXRAPI
                         if (lastResult == Result.Success)
                         {
                             Debug.Out($"OpenXR swapchain[{i}] created. Format=0x{format:X}, Samples={samples}, Usage={usage}, Size={width}x{height}");
+                            createdFormat = format;
+                            createdSamples = samples;
                             created = true;
                             break;
                         }
@@ -369,6 +373,7 @@ public unsafe partial class OpenXRAPI
                 swapchainImages[j].Type = StructureType.SwapchainImageOpenglKhr;
 
             Api.EnumerateSwapchainImages(_swapchains[i], imageCount, &imageCount, (SwapchainImageBaseHeader*)swapchainImages);
+            RecordSmokeSwapchain("OpenGL", i, width, height, createdFormat, createdSamples, imageCount);
 
             for (uint j = 0; j < imageCount; j++)
             {
@@ -387,6 +392,7 @@ public unsafe partial class OpenXRAPI
             Console.WriteLine($"Created swapchain {i} with {imageCount} images ({width}x{height})");
         }
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        RecordSmokeSwapchainsCreated();
     }
 
     private void RenderViewportsToSwapchain(uint textureHandle, uint viewIndex)
@@ -659,6 +665,7 @@ public unsafe partial class OpenXRAPI
                 ClearBufferMask.ColorBufferBit,
                 BlitFramebufferFilter.Linear);
 
+            RecordSmokeDesktopMirrorComposed();
             return true;
         }
         catch

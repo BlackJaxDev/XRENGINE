@@ -56,7 +56,7 @@ public readonly record struct VulkanBindlessMaterialCapability(
 /// </summary>
 public static class VulkanFeatureProfile
 {
-    public const string BindlessMaterialModeEnvVar = "XRE_VULKAN_BINDLESS_MATERIAL_MODE";
+    public const string BindlessMaterialModeEnvVar = XREngineEnvironmentVariables.VulkanBindlessMaterialMode;
 
     /// <summary>
     /// Returns <c>true</c> when the Vulkan renderer is the currently active backend

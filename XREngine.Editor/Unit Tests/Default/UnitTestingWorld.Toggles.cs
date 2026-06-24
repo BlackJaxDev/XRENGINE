@@ -97,6 +97,23 @@ public static partial class EditorUnitTests
         Realtime,
     }
 
+    public enum UnitTestingVrLaunchMode
+    {
+        Desktop,
+        Emulated,
+        MonadoOpenXR,
+        OpenVR,
+        OpenXR,
+    }
+
+    public class UnitTestingVrSettings
+    {
+        public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop; //Selects the VR launch path: Desktop, Emulated scene-only VR, Monado-backed OpenXR, vendor OpenVR, or vendor OpenXR.
+        public bool PreviewStereoViews { get; set; } = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active.
+        public bool AllowDesktopEditing { get; set; } = true; //When a VR pawn is active, keeps a desktop editing camera/pawn available.
+        public string? OpenXrRuntimeJson { get; set; } = null; //Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes. Existing XR_RUNTIME_JSON environment values win. MonadoOpenXR auto-detects common Monado install/build locations when this is unset.
+    }
+
     public class Settings
     {
         public UnitTestWorldKind WorldKind { get; set; } = UnitTestWorldKind.Default;
@@ -109,8 +126,6 @@ public static partial class EditorUnitTests
         public UnitTestEditorType EditorType { get; set; } = UnitTestEditorType.IMGUI; //Selects which editor UI pipeline to create for unit testing.
         public CameraUIDrawMode CameraUIDrawSpaceOnInit { get; set; } = CameraUIDrawMode.Screen; //Controls draw space and offscreen mode for unit testing camera UI.
         public bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
-        public bool AllowEditingInVR = true; //Allows the user to edit the scene from desktop in VR.
-        public bool PreviewVRStereoViews = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI (requires VRPawn).
         public bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.
         public bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
         public string? VideoStreamingUrl { get; set; } = null; //Stream URL used by the video streaming test component.
@@ -118,10 +133,17 @@ public static partial class EditorUnitTests
         public string UltralightWebViewUrl { get; set; } = "https://blackjaxvr.com"; //Page URL used by the Ultralight web view test component.
         public bool EnableProfilerLogging = true; //Enables Engine.Profiler frame logging even without Dear ImGui.
         public UnitTestFbxLogVerbosity FbxLogVerbosity { get; set; } = UnitTestFbxLogVerbosity.UseEnvironment; //Controls native FBX importer/exporter trace verbosity. UseEnvironment defers to XRE_FBX_LOG and routes enabled traces to the Assets log category.
-        public UnitTestingRenderSettings Rendering { get; set; } = new(); //Grouped render backend, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. When present, this grouped object takes precedence over the legacy flat render keys.
+        public UnitTestingRenderSettings Rendering { get; set; } = new(); //Grouped render backend, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. Legacy flat RenderAPI values are migrated here when settings are regenerated.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.
         public bool GPURenderDispatch = false; //Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls.
         public bool StartInPlayModeWithoutTransitions = false; //Starts in play mode immediately without the edit->play transition.
+
+        //VR
+        public UnitTestingVrSettings VR { get; set; } = new(); //Grouped VR launch mode and VR-only editor preview settings.
+        [JsonIgnore]
+        public bool AllowEditingInVR = true; //Legacy flat compatibility flag derived from VR.AllowDesktopEditing.
+        [JsonIgnore]
+        public bool PreviewVRStereoViews = false; //Legacy flat compatibility flag derived from VR.PreviewStereoViews.
 
         //Misc
         public bool Skybox = true; //Adds a skybox to the scene.
@@ -158,9 +180,12 @@ public static partial class EditorUnitTests
         public TranslationXYZ LightProbeSinglePosition { get; set; } = new() { X = 0.0f, Y = 1.25f, Z = -7.5f }; //World position for Single light-probe mode.
 
         //Pawns
-        public bool VRPawn = true; //Enables VR input and pawn.
-        public bool UseOpenXR = false; //If true and VRPawn is enabled (and not emulated), initializes VR via OpenXR instead of OpenVR.
-        public bool EmulatedVRPawn = true; //Enables an emulated VR pawn for testing without a VR headset. All this does is disallow OpenVR from starting, VRPawn must still be enabled.
+        [JsonIgnore]
+        public bool VRPawn = false; //Legacy flat compatibility flag derived from VR.Mode.
+        [JsonIgnore]
+        public bool UseOpenXR = false; //Legacy flat compatibility flag derived from VR.Mode.
+        [JsonIgnore]
+        public bool SceneOnlyVRPawn = false; //Legacy flat compatibility flag derived from VR.Mode.
         public bool Locomotion = true; //Enables the player to physically locomote in the world. Requires a physical floor.
         public bool ThirdPersonPawn = false; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
 
@@ -169,6 +194,36 @@ public static partial class EditorUnitTests
         /// If null, UnitTestingWorld will pick a safe default that places the capsule just above the floor.
         /// </summary>
         public float? CharacterControllerCapsuleTranslationY { get; set; }
+
+        [JsonProperty("AllowEditingInVR")]
+        private bool LegacyAllowEditingInVR
+        {
+            set => AllowEditingInVR = value;
+        }
+
+        [JsonProperty("PreviewVRStereoViews")]
+        private bool LegacyPreviewVRStereoViews
+        {
+            set => PreviewVRStereoViews = value;
+        }
+
+        [JsonProperty("VRPawn")]
+        private bool LegacyVRPawn
+        {
+            set => VRPawn = value;
+        }
+
+        [JsonProperty("UseOpenXR")]
+        private bool LegacyUseOpenXR
+        {
+            set => UseOpenXR = value;
+        }
+
+        [JsonProperty("SceneOnlyVRPawn")]
+        private bool LegacySceneOnlyVRPawn
+        {
+            set => SceneOnlyVRPawn = value;
+        }
 
         //Physics
         public bool PhysicsChain = true; //Adds a jiggle physics chain to the character pawn.
@@ -342,7 +397,15 @@ public static partial class EditorUnitTests
         public int OpenGLParallelShaderCompileProbeTimeoutMs { get; set; } = 25; //Maximum time spent polling the startup driver-parallel OpenGL shader-link probe.
         public bool RenderMeshBounds = true;
 
-        public ERenderLibrary RenderAPI = ERenderLibrary.OpenGL;
+        [JsonIgnore]
+        public ERenderLibrary RenderAPI = ERenderLibrary.OpenGL; //Legacy flat compatibility setting. Use Rendering.RenderBackend in generated JSONC.
+
+        [JsonProperty("RenderAPI")]
+        private ERenderLibrary LegacyRenderAPI
+        {
+            set => RenderAPI = value;
+        }
+
         public EAntiAliasingMode? CameraAntiAliasingModeOverride = null; //When set, forces this anti-aliasing mode on the constructed unit-testing main camera via the per-camera AntiAliasingModeOverride, bypassing the global/game-settings AA. Null leaves the camera on the global setting.
         public EPhysicsLibrary PhysicsAPI = EPhysicsLibrary.PhysX;
         public ELoopType RecalcChildMatricesType = ELoopType.Asynchronous;

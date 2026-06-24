@@ -733,7 +733,7 @@ public static class DirectStorageIO
 
     private static int ResolveTimeoutMilliseconds()
     {
-        string? envValue = Environment.GetEnvironmentVariable("XRE_DIRECTSTORAGE_TIMEOUT_MS");
+        string? envValue = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectStorageTimeoutMs);
         if (int.TryParse(envValue, out int configured) && configured > 0)
             return configured;
 
@@ -754,7 +754,7 @@ public static class DirectStorageIO
 
     private static RuntimeState DetectRuntime()
     {
-        string? overrideValue = Environment.GetEnvironmentVariable("XRE_DIRECTSTORAGE_ENABLED");
+        string? overrideValue = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectStorageEnabled);
         if (!string.IsNullOrWhiteSpace(overrideValue) &&
             (string.Equals(overrideValue, "0", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(overrideValue, "false", StringComparison.OrdinalIgnoreCase)))

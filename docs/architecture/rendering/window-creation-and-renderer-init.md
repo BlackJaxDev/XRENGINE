@@ -111,9 +111,11 @@ public ERenderLibrary PreferredRenderBackend { get; set; }
 public ERenderLibrary RenderLibrary { get; set; } // compatibility alias
 ```
 
-This value is set from startup configuration. Unit-testing world JSON prefers
-the grouped `Rendering.RenderBackend` property; the legacy top-level
-`RenderAPI` property is still honored when the grouped block is absent:
+This value is set from startup configuration. Unit-testing world JSON uses
+the grouped `Rendering.RenderBackend` property. The legacy top-level
+`RenderAPI` property is hidden from generated JSONC/schema output, but is still
+read from old files and migrated into the grouped setting on settings
+regeneration:
 
 ```csharp
 Rendering = new UnitTestingRenderSettings

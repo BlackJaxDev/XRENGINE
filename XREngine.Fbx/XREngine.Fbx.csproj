@@ -32,4 +32,8 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
+  </ItemGroup>
+
 </Project>

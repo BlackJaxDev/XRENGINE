@@ -173,7 +173,7 @@ internal static partial class RuntimeEngine
             }
         }
 
-        public static string VulkanUpscaleBridgeEnvVar => "XRE_ENABLE_VULKAN_UPSCALE_BRIDGE";
+        public static string VulkanUpscaleBridgeEnvVar => XREngineEnvironmentVariables.EnableVulkanUpscaleBridge;
         public static bool VulkanUpscaleBridgeRequested => IsEnvFlagEnabled(VulkanUpscaleBridgeEnvVar, defaultValue: true);
         public static VulkanUpscaleBridgeCapabilitySnapshot VulkanUpscaleBridgeSnapshot { get; } = new();
         public static bool VulkanUpscaleBridgeDx12InteropEnabled => false;

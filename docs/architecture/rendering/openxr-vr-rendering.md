@@ -68,6 +68,7 @@ The OpenXR integration is implemented as the `OpenXRAPI` partial class, split ac
 | `OpenXRAPI.Input.cs` | Action sets, hand/tracker poses, interaction profile bindings (503 lines) |
 | `OpenXRAPI.NativeLoader.cs` | Native DLL resolver: probes SteamVR, Oculus, registry paths (~170 lines) |
 | `OpenXRAPI.IPD.cs` | IPD measurement from eye view positions (40 lines) |
+| `OpenXRAPI.SmokeDiagnostics.cs` | Structured smoke summary for no-HMD OpenXR validation |
 | `XrGraphicsBindings.cs` | `IXrGraphicsBinding` interface + OpenGL/Vulkan implementations (109 lines) |
 
 ---
@@ -629,6 +630,49 @@ This is activated in `XRWindow.RenderCallback` when:
 - `Engine.VRState.IsInVR == true`
 - `Engine.Rendering.Settings.RenderWindowsWhileInVR == true`
 - `Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures == true`
+
+---
+
+## Monado Smoke Diagnostics
+
+The local no-HMD OpenXR smoke runner is `Tools/OpenXR/Run-OpenXrMonadoSmoke.ps1`.
+It selects Monado per process with `XR_RUNTIME_JSON`, runs an OpenXR loader
+preflight before editor startup, launches the Unit Testing World with
+`VR.Mode=MonadoOpenXR`, then exits through the editor's bounded
+`--smoke-frames N` path.
+
+`OpenXRAPI.SmokeDiagnostics.cs` records the summary consumed by the runner:
+
+- Runtime manifest path, runtime name/version, renderer, and enabled
+  extensions.
+- Reference space type, session-state transitions, and teardown completion.
+- Swapchain metadata, located view count, submitted frame count, no-layer
+  frames, and `xrEndFrame` failures.
+- Per-eye acquire/wait/release counts.
+- First predicted and late view/action pose cache updates.
+- First desktop mirror composition.
+- `perFrameAllocationsBytes`, currently zero unless a justified baseline is
+  recorded.
+
+A passing summary proves the instance, system, session, swapchain, view locate,
+frame submit, pose-cache, and desktop mirror milestones all happened. Missing
+required fields or failed milestones produce stable smoke exit codes:
+
+| Code | Meaning |
+|------|---------|
+| 0 | Smoke passed |
+| 21 | Startup or configuration failure |
+| 22 | Frame timeout |
+| 23 | Summary/assertion failure |
+| 24 | Teardown failure |
+| 25 | Engine exception |
+
+Lane naming:
+
+- Lane 1: scene-only VR through `VR.Mode=Emulated`; this does not emulate
+  OpenXR API calls.
+- Lane 2: Monado-backed OpenXR through `XR_RUNTIME_JSON`; this exercises the
+  real loader, runtime, session, swapchains, poses, and frame submission.
 
 ---
 

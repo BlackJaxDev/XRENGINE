@@ -42,10 +42,10 @@ public partial class OpenGLRenderer
     /// off (kept for parity with prior tooling).
     /// </summary>
     private static readonly bool s_enableSharedContextLinkQueueEnv =
-        string.Equals(Environment.GetEnvironmentVariable("XRE_ENABLE_SHARED_CONTEXT_LINK_QUEUE"), "1", StringComparison.Ordinal);
+        string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EnableSharedContextLinkQueue), "1", StringComparison.Ordinal);
 
     private static readonly bool s_disableSharedContextLinkQueueEnv =
-        string.Equals(Environment.GetEnvironmentVariable("XRE_DISABLE_SHARED_CONTEXT_LINK_QUEUE"), "1", StringComparison.Ordinal);
+        string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DisableSharedContextLinkQueue), "1", StringComparison.Ordinal);
 
     private static bool WantsSharedContextProgramCompileLinkQueue
     {

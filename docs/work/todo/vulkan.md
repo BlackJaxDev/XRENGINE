@@ -32,7 +32,7 @@ dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj
 dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -- --unit-testing
 ```
 
-For Unit Testing World validation, set `Assets/UnitTestingWorldSettings.jsonc` `RenderAPI` to `Vulkan`, or launch with settings that resolve the render API to Vulkan.
+For Unit Testing World validation, set `Assets/UnitTestingWorldSettings.jsonc` `Rendering.RenderBackend` to `Vulkan`, or launch with settings that resolve the render backend to Vulkan.
 
 Useful diagnostics:
 

@@ -95,7 +95,7 @@ public static class ImGuiFileBrowser
     private static readonly Dictionary<string, DialogState> _activeDialogs = new();
     private static readonly object _stateLock = new();
     private static readonly bool _allowStandaloneDialogs = false;
-        //!string.Equals(Environment.GetEnvironmentVariable("XR_DISABLE_IMGUI_FILE_DIALOGS"), "1", StringComparison.OrdinalIgnoreCase);
+        //!string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DisableImGuiFileDialogs), "1", StringComparison.OrdinalIgnoreCase);
     private static bool _standaloneDisabledNotified;
 
     /// <summary>

@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights;
@@ -44,7 +44,7 @@ public static partial class EditorUnitTests
         if (_emulatedVrStereoPreviewHooked)
             return;
 
-        if (!(Toggles.VRPawn && Toggles.EmulatedVRPawn && Toggles.PreviewVRStereoViews))
+        if (!(Toggles.VRPawn && Toggles.SceneOnlyVRPawn && Toggles.PreviewVRStereoViews))
             return;
 
         _emulatedVrStereoPreviewHooked = true;
@@ -57,7 +57,7 @@ public static partial class EditorUnitTests
     private static void OnWindowAddedForEmulatedVRStereoPreview(XRWindow window)
         => Engine.InvokeOnMainThread(
             () => Engine.VRState.InitRenderEmulated(window),
-            "UnitTestingWorld: Init emulated VR stereo",
+            "UnitTestingWorld: Init scene-only VR stereo",
             executeNowIfAlreadyMainThread: true);
 
     public static void ApplyRenderSettingsFromToggles()
@@ -147,7 +147,7 @@ public static partial class EditorUnitTests
 
         // Profiler frame logging is driven by EditorPreferences.Debug.EnableProfilerFrameLogging,
         // whose setter syncs Engine.Profiler.EnableFrameLogging automatically.
-        // Do not override it here — that would discard the user's saved preference.
+        // Do not override it here â€” that would discard the user's saved preference.
 
         EnsureEmulatedVRStereoPreviewRenderingHooked();
     }

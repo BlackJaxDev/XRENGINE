@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 
@@ -15,7 +15,7 @@ public static class BootstrapRenderSettings
             return;
 
         var settings = RuntimeBootstrapState.Settings;
-        if (!(settings.VRPawn && settings.EmulatedVRPawn && settings.PreviewVRStereoViews))
+        if (!(settings.VRPawn && settings.SceneOnlyVRPawn && settings.PreviewVRStereoViews))
             return;
 
         _emulatedVrStereoPreviewHooked = true;
@@ -28,7 +28,7 @@ public static class BootstrapRenderSettings
     private static void OnWindowAddedForEmulatedVRStereoPreview(XRWindow window)
         => Engine.InvokeOnMainThread(
             () => Engine.VRState.InitRenderEmulated(window),
-            "Bootstrap: Init emulated VR stereo",
+            "Bootstrap: Init scene-only VR stereo",
             executeNowIfAlreadyMainThread: true);
 
     public static void Apply()
@@ -83,7 +83,7 @@ public static class BootstrapRenderSettings
 
         // Profiler frame logging is driven by EditorPreferences.Debug.EnableProfilerFrameLogging,
         // whose setter syncs Engine.Profiler.EnableFrameLogging automatically.
-        // Do not override it here — that would discard the user's saved preference.
+        // Do not override it here â€” that would discard the user's saved preference.
 
         EnsureEmulatedVRStereoPreviewRenderingHooked();
     }

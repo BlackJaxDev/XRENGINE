@@ -355,7 +355,7 @@ namespace XREngine.Components.Scene.Mesh
             // Rebuild and register render infos from current meshes.
             RebuildRenderedObjectsFromMeshes();
 
-            //if (Environment.GetEnvironmentVariable("XRE_DEBUG_RENDER_DUMP") == "1")
+            //if (Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugRenderDump) == "1")
             {
                 Debug.RenderingEvery(
                     $"RenderableComponent.PostCooked.{GetHashCode()}",

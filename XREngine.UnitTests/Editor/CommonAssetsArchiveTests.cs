@@ -11,7 +11,7 @@ namespace XREngine.UnitTests.Editor;
 [TestFixture]
 public class CommonAssetsArchiveTests
 {
-    private const string ArchiveOutputEnvVar = "XRE_COOK_COMMONASSETS_ARCHIVE";
+    private const string ArchiveOutputEnvVar = XREngineEnvironmentVariables.CookCommonAssetsArchive;
 
     [Test]
     [Category("Slow")]

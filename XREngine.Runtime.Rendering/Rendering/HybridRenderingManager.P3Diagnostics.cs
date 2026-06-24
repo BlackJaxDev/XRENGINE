@@ -24,21 +24,21 @@ namespace XREngine.Rendering
         // -----------------------------------------------------------------
 
         /// <summary>Master switch for census + state-bind counter logging.</summary>
-        public static readonly bool LoggingEnabled = ReadFlag("XRE_P3_LOGGING");
+        public static readonly bool LoggingEnabled = ReadFlag(XREngineEnvironmentVariables.P3Logging);
 
         /// <summary>
         /// Run the slot/tier loop but skip the final <c>MultiDrawElementsIndirect[Count]</c>
         /// inside <c>DispatchRenderIndirectCountBucket</c>. If fps recovers near CpuDirect,
         /// GL/driver submission cost dominates (validates P3-A).
         /// </summary>
-        public static readonly bool BucketLoopDryRun = ReadFlag("XRE_BUCKET_LOOP_DRY_RUN");
+        public static readonly bool BucketLoopDryRun = ReadFlag(XREngineEnvironmentVariables.BucketLoopDryRun);
 
         /// <summary>
         /// Short-circuit <c>GPUScene.SwapCommandBuffers</c> when the command-content version
         /// has not changed since the last swap. Validates O-6 cheaply before committing the
         /// full version-stamp gate.
         /// </summary>
-        public static readonly bool SkipCommandSwapIfClean = ReadFlag("XRE_SKIP_COMMAND_SWAP_IF_CLEAN");
+        public static readonly bool SkipCommandSwapIfClean = ReadFlag(XREngineEnvironmentVariables.SkipCommandSwapIfClean);
 
         /// <summary>
         /// Skip the bucket-loop iteration when the CPU-side active-slot mask says the bucket
@@ -46,21 +46,21 @@ namespace XREngine.Rendering
         /// implementation phase. Reading the flag now lets the upcoming O-18 patch be a no-op
         /// to integrate.
         /// </summary>
-        public static readonly bool BucketLoopSkipEmpty = ReadFlag("XRE_BUCKET_LOOP_SKIP_EMPTY");
+        public static readonly bool BucketLoopSkipEmpty = ReadFlag(XREngineEnvironmentVariables.BucketLoopSkipEmpty);
 
         /// <summary>
         /// Force every (slot, tier) iteration to dispatch a single bucket index. Strictly for
         /// isolating per-bucket fan-out overhead from per-draw cost. Reserved for the
         /// implementation phase alongside O-18.
         /// </summary>
-        public static readonly bool ForceSingleBucket = ReadFlag("XRE_FORCE_SINGLE_BUCKET");
+        public static readonly bool ForceSingleBucket = ReadFlag(XREngineEnvironmentVariables.ForceSingleBucket);
 
         /// <summary>
         /// Diagnostic-only sync after each material-tier
         /// <c>MultiDrawElementsIndirectCount</c>. This intentionally destroys throughput, but
         /// turns asynchronous driver faults into a precise bucket breadcrumb.
         /// </summary>
-        public static readonly bool FinishAfterMultiDrawIndirectCount = ReadFlag("XRE_MDIC_GL_FINISH");
+        public static readonly bool FinishAfterMultiDrawIndirectCount = ReadFlag(XREngineEnvironmentVariables.MdicGlFinish);
 
         // -----------------------------------------------------------------
         // Per-frame counters (incremented from render thread).

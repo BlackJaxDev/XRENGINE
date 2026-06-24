@@ -239,22 +239,22 @@ public static class RenderDiagnosticsFlags
 
     private static void SeedFromEnvironment()
     {
-        HiZCullTrace = ReadBool("XRE_HIZ_CULL_TRACE");
-        DiagVendorUpscale = ReadBool("XRE_DIAG_VENDOR_UPSCALE");
-        DiagQuadBlit = ReadBool("XRE_DIAG_QUAD_BLIT");
-        DiagPostProcess = ReadBool("XRE_DIAG_POSTPROCESS");
-        DiagDeferredLighting = ReadBool("XRE_DIAG_DEFERRED_LIGHTING");
-        DebugPresentClear = ReadBool("XRE_DEBUG_PRESENT_CLEAR");
-        PushSubDataBreakdown = ReadBool("XRE_PUSHSUBDATA_BREAKDOWN");
-        PushSubDataTrace = ReadBool("XRE_PUSHSUBDATA_TRACE");
-        DispatchTrace = ReadBool("XRE_DISPATCH_TRACE");
-        DispatchFinish = ReadBool("XRE_DISPATCH_FINISH");
-        UploadStageLogging = ReadBool("XRE_UPLOAD_STAGE_LOGGING") || System.Diagnostics.Debugger.IsAttached;
-        CrashBreadcrumbs = ReadBool("XRE_CRASH_BREADCRUMBS");
+        HiZCullTrace = ReadBool(XREngineEnvironmentVariables.HizCullTrace);
+        DiagVendorUpscale = ReadBool(XREngineEnvironmentVariables.DiagVendorUpscale);
+        DiagQuadBlit = ReadBool(XREngineEnvironmentVariables.DiagQuadBlit);
+        DiagPostProcess = ReadBool(XREngineEnvironmentVariables.DiagPostProcess);
+        DiagDeferredLighting = ReadBool(XREngineEnvironmentVariables.DiagDeferredLighting);
+        DebugPresentClear = ReadBool(XREngineEnvironmentVariables.DebugPresentClear);
+        PushSubDataBreakdown = ReadBool(XREngineEnvironmentVariables.PushSubDataBreakdown);
+        PushSubDataTrace = ReadBool(XREngineEnvironmentVariables.PushSubDataTrace);
+        DispatchTrace = ReadBool(XREngineEnvironmentVariables.DispatchTrace);
+        DispatchFinish = ReadBool(XREngineEnvironmentVariables.DispatchFinish);
+        UploadStageLogging = ReadBool(XREngineEnvironmentVariables.UploadStageLogging) || System.Diagnostics.Debugger.IsAttached;
+        CrashBreadcrumbs = ReadBool(XREngineEnvironmentVariables.CrashBreadcrumbs);
 
         try
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_DEFERRED_DEBUG");
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DeferredDebug);
             if (!string.IsNullOrWhiteSpace(raw) && int.TryParse(raw, out int mode) && mode >= 0 && mode <= 14)
                 DeferredDebugView = mode;
         }
@@ -262,14 +262,14 @@ public static class RenderDiagnosticsFlags
         {
         }
 
-        bool modelDiagEnabled = ReadBool("XRE_DEBUG_MODEL_RENDER") || ReadBool("XRE_MODEL_RENDER_DIAG");
-        bool modelDiagDisabled = ReadBool("XRE_DEBUG_MODEL_RENDER_ZERO") || ReadBool("XRE_MODEL_RENDER_DIAG_ZERO");
+        bool modelDiagEnabled = ReadBool(XREngineEnvironmentVariables.DebugModelRender) || ReadBool(XREngineEnvironmentVariables.ModelRenderDiag);
+        bool modelDiagDisabled = ReadBool(XREngineEnvironmentVariables.DebugModelRenderZero) || ReadBool(XREngineEnvironmentVariables.ModelRenderDiagZero);
         // The legacy env-var contract was "set to 0 to disable"; preserve that by checking for the
         // exact literal "0".
         try
         {
-            string? a = Environment.GetEnvironmentVariable("XRE_DEBUG_MODEL_RENDER");
-            string? b = Environment.GetEnvironmentVariable("XRE_MODEL_RENDER_DIAG");
+            string? a = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugModelRender);
+            string? b = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ModelRenderDiag);
             if (string.Equals(a, "1", StringComparison.OrdinalIgnoreCase) || string.Equals(b, "1", StringComparison.OrdinalIgnoreCase))
                 modelDiagEnabled = true;
             if (string.Equals(a, "0", StringComparison.OrdinalIgnoreCase) || string.Equals(b, "0", StringComparison.OrdinalIgnoreCase))
@@ -279,18 +279,18 @@ public static class RenderDiagnosticsFlags
         {
         }
         ModelRenderDiagEnabled = modelDiagEnabled && !modelDiagDisabled;
-        DirectionalShadowAudit = ReadBool("XRE_DIRECTIONAL_SHADOW_AUDIT") || ReadBool("XRE_SHADOW_AUDIT");
-        ForceSkinnedUnbounded = ReadBool("XRE_FORCE_SKINNED_UNBOUNDED");
-        SkinCullRejectDiag = ReadBool("XRE_SKIN_CULL_REJECT_DIAG");
+        DirectionalShadowAudit = ReadBool(XREngineEnvironmentVariables.DirectionalShadowAudit) || ReadBool(XREngineEnvironmentVariables.ShadowAudit);
+        ForceSkinnedUnbounded = ReadBool(XREngineEnvironmentVariables.ForceSkinnedUnbounded);
+        SkinCullRejectDiag = ReadBool(XREngineEnvironmentVariables.SkinCullRejectDiag);
 
-        BypassVendorUpscale = ReadBool("XRE_BYPASS_VENDOR_UPSCALE");
-        GLDebug = ReadBool("XRE_GL_DEBUG");
-        ForceFullViewport = ReadBool("XRE_FORCE_FULL_VIEWPORT");
-        ForceDebugOpaquePipeline = ReadBool("XRE_FORCE_DEBUG_OPAQUE_PIPELINE");
+        BypassVendorUpscale = ReadBool(XREngineEnvironmentVariables.BypassVendorUpscale);
+        GLDebug = ReadBool(XREngineEnvironmentVariables.GlDebug);
+        ForceFullViewport = ReadBool(XREngineEnvironmentVariables.ForceFullViewport);
+        ForceDebugOpaquePipeline = ReadBool(XREngineEnvironmentVariables.ForceDebugOpaquePipeline);
 
         try
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_GPU_HIZ_DIRTY_BYPASS");
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuHizDirtyBypass);
             if (!string.IsNullOrEmpty(raw))
                 GpuHiZDirtyBypass = !(raw == "0" || raw.Equals("false", StringComparison.OrdinalIgnoreCase));
         }
@@ -300,7 +300,7 @@ public static class RenderDiagnosticsFlags
 
         try
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_OUTPUT_SOURCE_FBO");
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OutputSourceFbo);
             if (!string.IsNullOrWhiteSpace(raw))
                 OutputSourceFboOverride = raw.Trim();
         }
@@ -311,7 +311,7 @@ public static class RenderDiagnosticsFlags
         // VK_ENABLE_AUTO_UNIFORM_REWRITE legacy contract: default ON, env="0" disables.
         try
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_VK_ENABLE_AUTO_UNIFORM_REWRITE");
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VkEnableAutoUniformRewrite);
             if (string.Equals(raw, "0", StringComparison.Ordinal))
                 VkEnableAutoUniformRewrite = false;
         }
@@ -319,10 +319,10 @@ public static class RenderDiagnosticsFlags
         {
         }
 
-        VkDumpShaderOnError = ReadBool("XRE_VK_DUMP_SHADER_ON_ERROR");
+        VkDumpShaderOnError = ReadBool(XREngineEnvironmentVariables.VkDumpShaderOnError);
         try
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_SHADER_SOURCE_OPTIMIZER");
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShaderSourceOptimizer);
             if (string.Equals(raw, "0", StringComparison.Ordinal) ||
                 string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase))
             {
@@ -333,25 +333,25 @@ public static class RenderDiagnosticsFlags
         {
         }
 
-        VkTracePipeCreate = ReadBool("XRE_VK_TRACE_PIPECREATE");
-        VkTraceSwapDraw = ReadBool("XRE_VK_TRACE_SWAPDRAW");
-        VkTraceDraw = ReadBool("XRE_VK_TRACE_DRAW");
-        VkSkipUiPipeline = ReadBool("XRE_SKIP_UI_PIPELINE");
-        VkSkipUiBatchText = ReadBool("XRE_SKIP_UI_BATCH_TEXT");
-        VkForceSwapchainMagenta = ReadBool("XRE_FORCE_SWAPCHAIN_MAGENTA");
-        VkSkipImGui = ReadBool("XRE_SKIP_IMGUI");
-        VkAsyncTextureUpload = ReadBoolDefaultTrue("XRE_VULKAN_ASYNC_TEXTURE_UPLOAD");
-        VkTextureUploadTransferQueue = ReadBoolDefaultTrue("XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE");
-        VkTextureUploadPrepWorker = ReadBoolDefaultTrue("XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER");
-        VkTextureUploadTrace = ReadBool("XRE_VULKAN_TEXTURE_UPLOAD_TRACE");
-        VkProgressiveTextureUpload = ReadBool("XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD");
-        VkImportedTexturePreviewFreeze = ReadBool("XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE");
-        SetVkTextureUploadPrepBudgetMilliseconds(ReadDouble("XRE_VULKAN_TEXTURE_UPLOAD_PREP_BUDGET_MS", 0.5));
+        VkTracePipeCreate = ReadBool(XREngineEnvironmentVariables.VkTracePipeCreate);
+        VkTraceSwapDraw = ReadBool(XREngineEnvironmentVariables.VkTraceSwapDraw);
+        VkTraceDraw = ReadBool(XREngineEnvironmentVariables.VkTraceDraw);
+        VkSkipUiPipeline = ReadBool(XREngineEnvironmentVariables.VkSkipUiPipeline);
+        VkSkipUiBatchText = ReadBool(XREngineEnvironmentVariables.VkSkipUiBatchText);
+        VkForceSwapchainMagenta = ReadBool(XREngineEnvironmentVariables.VkForceSwapchainMagenta);
+        VkSkipImGui = ReadBool(XREngineEnvironmentVariables.VkSkipImGui);
+        VkAsyncTextureUpload = ReadBoolDefaultTrue(XREngineEnvironmentVariables.VulkanAsyncTextureUpload);
+        VkTextureUploadTransferQueue = ReadBoolDefaultTrue(XREngineEnvironmentVariables.VulkanTextureUploadTransferQueue);
+        VkTextureUploadPrepWorker = ReadBoolDefaultTrue(XREngineEnvironmentVariables.VulkanTextureUploadPrepWorker);
+        VkTextureUploadTrace = ReadBool(XREngineEnvironmentVariables.VulkanTextureUploadTrace);
+        VkProgressiveTextureUpload = ReadBool(XREngineEnvironmentVariables.VulkanProgressiveTextureUpload);
+        VkImportedTexturePreviewFreeze = ReadBool(XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze);
+        SetVkTextureUploadPrepBudgetMilliseconds(ReadDouble(XREngineEnvironmentVariables.VulkanTextureUploadPrepBudgetMs, 0.5));
 
         // SkinningPrepassDiag is deliberately opt-in; it performs blocking GPU readbacks.
         try
         {
-            string? raw = Environment.GetEnvironmentVariable("XRE_SKINNING_PREPASS_DIAG");
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SkinningPrepassDiag);
             if (string.Equals(raw, "1", StringComparison.Ordinal) ||
                 string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase))
             {
@@ -455,6 +455,7 @@ public static class RenderDiagnosticsFlags
     public static void SetVkTraceSwapDraw(bool value) => VkTraceSwapDraw = value;
     public static void SetVkTraceDraw(bool value) => VkTraceDraw = value;
     public static void SetVkSkipUiPipeline(bool value) => VkSkipUiPipeline = value;
+    public static void SetVkSkipUiBatchText(bool value) => VkSkipUiBatchText = value;
     public static void SetVkForceSwapchainMagenta(bool value) => VkForceSwapchainMagenta = value;
     public static void SetVkSkipImGui(bool value) => VkSkipImGui = value;
     public static void SetVkAsyncTextureUpload(bool value) => VkAsyncTextureUpload = value;

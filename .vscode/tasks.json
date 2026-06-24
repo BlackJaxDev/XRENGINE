@@ -1,4 +1,4 @@
-{
+﻿{
 	"version": "2.0.0",
 	"tasks": [
 		{
@@ -128,6 +128,55 @@
 			"dependsOn": "Build-Editor",
 			"presentation": {
 				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Start-Editor-UnitTesting-OpenXR-Monado-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=Default && set XRE_UNIT_TEST_RENDER_API=OpenGL && set XRE_UNIT_TEST_VR_MODE=MonadoOpenXR && set XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1 && set XRE_WINDOW_TITLE=XRE Editor (OpenXR Monado) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Test-OpenXR-Monado-Smoke",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\OpenXR\\Run-OpenXrMonadoSmoke.ps1"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Test-OpenXR-SceneOnlyVR-Smoke",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\OpenXR\\Run-OpenXrSceneOnlyVrSmoke.ps1"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
 			},
 			"problemMatcher": []
 		},

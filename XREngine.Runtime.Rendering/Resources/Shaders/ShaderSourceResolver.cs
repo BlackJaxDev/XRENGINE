@@ -42,7 +42,7 @@ internal static partial class ShaderSourceResolver
 
     // Default-disabled. See ExpandIncludesRecursive for rationale.
     private static readonly bool s_emitIncludeDceMarkers =
-        string.Equals(Environment.GetEnvironmentVariable("XRE_GLSL_DCE_INCLUDES"), "1", StringComparison.Ordinal);
+        string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GlslDceIncludes), "1", StringComparison.Ordinal);
 
     // Matches `#include "path"` or `#include <path>` optionally followed by whitespace and/or a `//` line comment.
     [GeneratedRegex(@"^\s*#\s*include\s+[""<](?<path>[^"">]+)["">]\s*(?://.*)?$", RegexOptions.Compiled | RegexOptions.Multiline)]

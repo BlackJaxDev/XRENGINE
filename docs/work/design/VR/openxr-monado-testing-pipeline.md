@@ -1,4 +1,4 @@
-# OpenXR Monado Testing Pipeline
+﻿# OpenXR Monado Testing Pipeline
 
 Last updated: 2026-05-20
 
@@ -10,10 +10,10 @@ Branch lifecycle: this work lives on a dedicated branch (for example `openxr-mon
 
 XREngine needs two complementary no-headset VR validation paths:
 
-1. The existing engine-side emulated VR path, which validates the VR pawn, transforms, stereo preview, editor UI, and scene wiring without entering the OpenXR API.
+1. The existing engine-side scene-only VR path, which validates the VR pawn, transforms, stereo preview, editor UI, and scene wiring without entering the OpenXR API.
 2. A new OpenXR API-driven no-headset path, using Monado's simulated HMD/controller runtime through the standard OpenXR loader.
 
-The existing `EmulatedVRPawn` path is still valuable as the fast inner loop. It should remain the default no-HMD workflow for scene and editor-pawn testing. Monado should become the repeatable "real OpenXR" smoke and regression lane: the engine creates an OpenXR instance, system, graphics-bound session, swapchains, reference spaces, actions, predicted/late poses, and frame submissions without requiring physical hardware.
+The existing `SceneOnlyVRPawn` path is still valuable as the fast inner loop. It should remain the default no-HMD workflow for scene and editor-pawn testing. Monado should become the repeatable "real OpenXR" smoke and regression lane: the engine creates an OpenXR instance, system, graphics-bound session, swapchains, reference spaces, actions, predicted/late poses, and frame submissions without requiring physical hardware.
 
 This document defines how those lanes fit together and what needs to be hardened before OpenXR changes can be trusted without a headset on the desk.
 
@@ -21,8 +21,8 @@ This document defines how those lanes fit together and what needs to be hardened
 
 The current unit-testing-world VR controls conflate two concepts that need to be separated operationally:
 
-- `EmulatedVRPawn` means "build a VR-shaped scene rig without requiring a VR runtime."
-- `UseOpenXR` means "route runtime startup through `Engine.VRState.InitializeOpenXR(...)`."
+- `VR.Mode=Emulated` means "build a VR-shaped scene rig without requiring a VR runtime."
+- `VR.Mode=MonadoOpenXR` means "route runtime startup through the OpenXR loader with Monado selected per process."
 
 Those are different test surfaces. The emulated rig catches scene/pawn regressions, but it does not execute `xrCreateInstance`, runtime discovery, graphics binding negotiation, swapchain acquire/wait/release, `xrLocateViews`, action sync, session state transitions, or `xrEndFrame`.
 
@@ -30,7 +30,7 @@ Hardware OpenXR testing catches those things, but it is slow, machine-dependent,
 
 ## Goals
 
-- Keep the existing non-API emulated VR path as a fast deterministic smoke path.
+- Keep the existing non-API scene-only VR path as a fast deterministic smoke path.
 - Add a Monado-backed OpenXR runtime smoke path that requires no physical HMD.
 - Select Monado per process via `XR_RUNTIME_JSON`, not by mutating the user's Windows active-runtime registry value.
 - Make OpenXR testing observable enough that a failed run answers "where did it fail?" without attaching a debugger.
@@ -50,7 +50,7 @@ Hardware OpenXR testing catches those things, but it is slow, machine-dependent,
 
 | Term | Meaning |
 |---|---|
-| Non-API emulated VR | Existing `EmulatedVRPawn` plus `Engine.VRState.InitRenderEmulated(...)`. Exercises engine VR scene/render-preview logic without OpenXR. |
+| Non-API scene-only VR | `VR.Mode=Emulated` plus `Engine.VRState.InitRenderEmulated(...)`. Exercises engine VR scene/render-preview logic without OpenXR. |
 | API-driven mock runtime | A real OpenXR runtime selected by the loader and backed by simulated devices. Monado is the first target. |
 | Hardware runtime lane | SteamVR, Oculus/Meta, WMR, or another end-user runtime with a physical or vendor-managed headset. |
 | Loader override | `XR_RUNTIME_JSON=<absolute runtime manifest path>`, scoped to a process or task. |
@@ -71,9 +71,10 @@ Monado is a suitable first mock runtime target because it is an open-source Open
 
 Relevant existing behavior:
 
-- `UnitTestingWorldSettings` exposes `VRPawn`, `UseOpenXR`, `EmulatedVRPawn`, and `PreviewVRStereoViews`.
-- Editor unit-testing startup sets `RunVRInPlace` when `VRPawn` is true and either the pawn is not emulated or stereo preview is requested.
-- `UseOpenXR` maps to `EVRRuntime.OpenXR`.
+- `UnitTestingWorldSettings` exposes grouped `VR.Mode`, `VR.PreviewStereoViews`, `VR.AllowDesktopEditing`, and `VR.OpenXrRuntimeJson`.
+- `VR.Mode=MonadoOpenXR` auto-detects a usable Monado runtime manifest when `VR.OpenXrRuntimeJson` and `XR_RUNTIME_JSON` are unset.
+- Editor unit-testing startup normalizes `VR.Mode` into the existing runtime flags before scene construction.
+- `VR.Mode=OpenXR` and `VR.Mode=MonadoOpenXR` map to `EVRRuntime.OpenXR`.
 - `Engine.InitializeVR(...)` calls `VRState.InitializeOpenXR(window)` when OpenXR is forced.
 - `OpenXRAPI.CreateInstance()` already honors `XR_RUNTIME_JSON` by preferring it over the Windows active-runtime registry path for diagnostics and SteamVR startup checks.
 - The non-API stereo preview path calls `Engine.VRState.InitRenderEmulated(window)`.
@@ -94,7 +95,7 @@ Use this table to pick the minimum lane that must pass for a given change. Highe
 
 A "runtime-specific quirk" means a fix gated on observed behavior of a vendor runtime; it must not be gated on runtime *name* unless the gating is diagnostics-only.
 
-Note on naming: `EmulatedVRPawn` is a misleading name because it suggests OpenXR-API emulation. Phase 2 should propose renaming it (for example to `SceneOnlyVRPawn` or `NoRuntimeVRPawn`). Per the repo's pre-v1 posture, this is the right time to break the name.
+Naming cleanup: the user-facing launch choice now lives in `VR.Mode`, so the settings file describes complete modes instead of asking users to compose several booleans.
 
 ## Test Lane Model
 
@@ -112,7 +113,7 @@ Examples:
 
 This lane should stay independent of Monado. It catches logic regressions before any process/run orchestration starts.
 
-### Lane 1: Non-API Emulated VR
+### Lane 1: Non-API Scene-only VR
 
 Purpose: Validate XREngine's own VR-shaped scene and editor path without OpenXR.
 
@@ -120,10 +121,12 @@ Recommended settings:
 
 ```jsonc
 {
-  "VRPawn": true,
-  "UseOpenXR": false,
-  "EmulatedVRPawn": true,
-  "PreviewVRStereoViews": true
+  "VR": {
+    "Mode": "Emulated",
+    "PreviewStereoViews": true,
+    "AllowDesktopEditing": true,
+    "OpenXrRuntimeJson": null
+  }
 }
 ```
 
@@ -146,14 +149,18 @@ Recommended settings:
 
 ```jsonc
 {
-  "VRPawn": true,
-  "UseOpenXR": true,
-  "EmulatedVRPawn": false,
-  "PreviewVRStereoViews": true
+  "VR": {
+    "Mode": "MonadoOpenXR",
+    "PreviewStereoViews": true,
+    "AllowDesktopEditing": true,
+    "OpenXrRuntimeJson": null
+  }
 }
 ```
 
-Required process environment:
+Set `OpenXrRuntimeJson` to an explicit `openxr_monado.json` path when auto-detection is not enough.
+
+Optional process environment:
 
 ```powershell
 $env:XR_RUNTIME_JSON = "C:\Path\To\Monado\openxr_monado.json"
@@ -309,39 +316,29 @@ Add tasks only after the scripts are stable:
 
 - `Start-Editor-UnitTesting-OpenXR-Monado-NoDebug`
 - `Test-OpenXR-Monado-Smoke`
-- `Test-OpenXR-EmulatedVR-Smoke`
+- `Test-OpenXR-SceneOnlyVR-Smoke`
 
 The tasks should compose the scripts rather than duplicating environment setup.
 
 ## Settings Design
 
-The first implementation can use process environment only:
+The implementation supports process environment and grouped settings:
 
 - `XR_RUNTIME_JSON`: standard OpenXR loader override.
 - `XRE_WORLD_MODE=UnitTesting`: existing world selector.
+- `VR.OpenXrRuntimeJson`: optional settings-level runtime manifest path. When this is `null` in `VR.Mode=MonadoOpenXR`, the loader searches `MONADO_RUNTIME_JSON`, `MONADO_INSTALL_DIR`, common Monado install paths, and repo-local Monado build/dependency paths.
 
-If repeated local use becomes clumsy, add XREngine-specific settings later:
+Important rules:
 
-```jsonc
-{
-  "OpenXrRuntimeJson": null,
-  "OpenXrExpectedRuntimeName": "Monado",
-  "OpenXrRequireMockRuntime": false,
-  "OpenXrSmokeFrameCount": 120
-}
-```
-
-Important rules if these settings are added:
-
-- The engine sets `XR_RUNTIME_JSON` from `OpenXrRuntimeJson` *only if the env var is not already set* in the current process. An explicit shell override always wins.
+- The engine sets `XR_RUNTIME_JSON` from `VR.OpenXrRuntimeJson` or auto-detected Monado runtime paths *only if the env var is not already set* in the current process. An explicit shell override always wins.
 - The env var is set before the first OpenXR loader call and is scoped to the current process. It is never persisted globally and never written to the Windows active-runtime registry.
 - If the settings type derives from `XRBase`, all property setters must use `SetField(...)` rather than direct backing-field assignment, per repo convention.
 
-### `EmulatedVRPawn` + `UseOpenXR` combination
+### Legacy `SceneOnlyVRPawn` + `UseOpenXR` combination
 
-When both `UseOpenXR=true` and `EmulatedVRPawn=true` are set, the engine must:
+When legacy flat settings have both `UseOpenXR=true` and `SceneOnlyVRPawn=true`, the engine must:
 
-- Log a single structured warning at startup explaining that `EmulatedVRPawn` is scene-only and does not emulate the OpenXR API.
+- Log a single structured warning at startup explaining that `SceneOnlyVRPawn` is scene-only and does not emulate the OpenXR API.
 - Continue startup. Do not fail. The combination is legitimate when a user wants Lane 2 with the stereo preview window enabled.
 - Not silently disable either flag.
 
@@ -385,12 +382,12 @@ The first version can parse existing logs. The better v1 shape is a dedicated sm
 
 ## Validation Criteria
 
-### Non-API Emulated VR Acceptance
+### Non-API Scene-only VR Acceptance
 
-- Unit Testing World launches with `VRPawn=true`, `EmulatedVRPawn=true`, and `PreviewVRStereoViews=true`.
+- Unit Testing World launches with `VR.Mode=Emulated` and `VR.PreviewStereoViews=true`.
 - Left and right emulated eye render targets are created.
 - HMD, controllers, and manual trackers are present in the scene.
-- Editor UI can attach to the emulated VR-shaped scene.
+- Editor UI can attach to the scene-only VR-shaped scene.
 - No OpenXR or OpenVR runtime startup is attempted.
 
 ### Monado OpenXR Acceptance
@@ -444,30 +441,30 @@ That is a real runtime project. Monado should absorb the generic runtime burden 
 
 ### Phase 0: Document And Name The Lanes
 
-- [ ] Create a dedicated branch for this work, for example `openxr-monado-testing-pipeline`.
-- [ ] Add this design doc.
-- [ ] Update related OpenXR trackers to link here.
-- [ ] Update unit-testing-world docs to clarify that `EmulatedVRPawn` is not OpenXR API emulation.
+- [x] Create a dedicated branch for this work, for example `openxr-monado-testing-pipeline`.
+- [x] Add this design doc.
+- [x] Update related OpenXR trackers to link here.
+- [x] Update unit-testing-world docs to clarify that `VR.Mode=Emulated` is not OpenXR API emulation.
 
 ### Phase 1: Local Monado Smoke
 
-- [ ] Add `Find-MonadoRuntime.ps1`.
-- [ ] Add a minimal `Run-OpenXrMonadoSmoke.ps1`.
-- [ ] Document manual setup and `XR_RUNTIME_JSON` usage.
-- [ ] Add a log assertion pass for instance/system/session/swapchain/frame markers.
+- [x] Add `Find-MonadoRuntime.ps1`.
+- [x] Add a minimal `Run-OpenXrMonadoSmoke.ps1`.
+- [x] Document manual setup and `XR_RUNTIME_JSON` usage.
+- [x] Add a summary assertion pass for instance/system/session/swapchain/frame markers.
 
 ### Phase 2: Settings And Launch Hygiene
 
-- [ ] Add a named Unit Testing World profile or task for Monado.
-- [ ] Add a structured-log warning when `UseOpenXR=true` and `EmulatedVRPawn=true` (log once at startup; do not fail; do not silently change either flag).
-- [ ] Propose renaming `EmulatedVRPawn` to a less misleading name (for example `SceneOnlyVRPawn`); execute the rename if approved, since v1 has not shipped.
-- [ ] Add `--smoke-frames N` / `XRE_SMOKE_FRAMES` bounded-run support with clean teardown and stable exit codes.
+- [x] Add a named Unit Testing World profile or task for Monado.
+- [x] Add grouped `VR.Mode` launch settings so users choose Desktop, Emulated, MonadoOpenXR, OpenVR, or OpenXR directly.
+- [x] Rename the no-runtime VR pawn setting to `SceneOnlyVRPawn` internally and expose the user-facing launch choice through `VR.Mode`.
+- [x] Add `--smoke-frames N` / `XRE_SMOKE_FRAMES` bounded-run support with clean teardown and stable exit codes.
 
 ### Phase 3: Diagnostics And Summary Output
 
-- [ ] Emit a structured OpenXR smoke summary.
-- [ ] Include runtime manifest, runtime name, renderer, extension list, session transitions, swapchain metadata, and submitted frame counts.
-- [ ] Teach the smoke runner to fail on missing summary fields.
+- [x] Emit a structured OpenXR smoke summary.
+- [x] Include runtime manifest, runtime name, renderer, extension list, session transitions, swapchain metadata, and submitted frame counts.
+- [x] Teach the smoke runner to fail on missing summary fields.
 
 ### Phase 4: CI Candidate
 
@@ -491,7 +488,7 @@ That is a real runtime project. Monado should absorb the generic runtime burden 
 | Simulated input may be static or limited. | Treat pose/action dynamics as optional until controlled automation is added. |
 | Runtime-specific fixes could accidentally target Monado behavior only. | Gate by capability, setting, or spec-visible result, not by runtime name unless diagnostics only. |
 | CI could become brittle if it downloads mutable Monado builds. | Pin artifacts/commits or keep Monado smoke local-only until dependency flow is approved. |
-| The existing `EmulatedVRPawn` name invites confusion. | Update docs, add the structured startup warning, and propose a rename in Phase 2 since v1 has not shipped. |
+| Multiple flat VR booleans invited confusing combinations. | Resolved by adding grouped `VR.Mode` values and deriving the internal booleans from the selected mode. |
 | Lane 2 results drift between developer machines because Monado builds vary. | Pin a specific Monado tag/commit hash in `docs/DEPENDENCIES.md` (or a planning addendum) before declaring Lane 2 stable, even when the binary is developer-supplied. |
 | Smoke runs hang or never exit, blocking CI promotion. | Make `--smoke-frames N` / `XRE_SMOKE_FRAMES` a Phase 2 prerequisite for any CI talk; runs without it are local-only. |
 

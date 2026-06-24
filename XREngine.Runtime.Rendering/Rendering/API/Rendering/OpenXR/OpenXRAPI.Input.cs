@@ -472,6 +472,8 @@ public unsafe partial class OpenXRAPI
                 }
             }
         }
+
+        RecordSmokeActionPoseCache(timing);
     }
 
     private void DestroyInput()

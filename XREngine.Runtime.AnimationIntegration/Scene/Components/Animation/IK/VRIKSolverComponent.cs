@@ -328,19 +328,19 @@ namespace XREngine.Components.Animation
 
         private void ApplyEnvironmentOverrides()
         {
-            if (TryGetUShortEnv("XRE_POSE_ENTITY_ID", out ushort poseEntityId) && poseEntityId > 0)
+            if (TryGetUShortEnv(XREngineEnvironmentVariables.PoseEntityId, out ushort poseEntityId) && poseEntityId > 0)
             {
                 PoseEntityId = poseEntityId;
                 Debug.Out($"VRIK pose entity id overridden to {poseEntityId} via XRE_POSE_ENTITY_ID.");
             }
 
-            if (TryGetBoolEnv("XRE_POSE_BROADCAST_ENABLED", out bool poseBroadcastEnabled))
+            if (TryGetBoolEnv(XREngineEnvironmentVariables.PoseBroadcastEnabled, out bool poseBroadcastEnabled))
             {
                 PoseBroadcastEnabled = poseBroadcastEnabled;
                 Debug.Out($"VRIK pose broadcast overridden to {poseBroadcastEnabled} via XRE_POSE_BROADCAST_ENABLED.");
             }
 
-            if (TryGetBoolEnv("XRE_POSE_RECEIVE_ENABLED", out bool poseReceiveEnabled))
+            if (TryGetBoolEnv(XREngineEnvironmentVariables.PoseReceiveEnabled, out bool poseReceiveEnabled))
             {
                 PoseReceiveEnabled = poseReceiveEnabled;
                 Debug.Out($"VRIK pose receive overridden to {poseReceiveEnabled} via XRE_POSE_RECEIVE_ENABLED.");

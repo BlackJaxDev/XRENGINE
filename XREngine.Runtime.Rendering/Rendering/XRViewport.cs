@@ -784,7 +784,7 @@ namespace XREngine.Rendering
 
             var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
             int beforeUpdatingCount = 0;
-            //if (Environment.GetEnvironmentVariable("XRE_DEBUG_RENDER_SUBMIT") == "1")
+            //if (Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugRenderSubmit) == "1")
                 beforeUpdatingCount = commandCollection.GetUpdatingCommandCount();
 
             world?.VisualScene?.CollectRenderedItems(
@@ -795,7 +795,7 @@ namespace XREngine.Rendering
                 collectionVolumeOverride,
                 collectMirrors);
 
-            //if (Environment.GetEnvironmentVariable("XRE_DEBUG_RENDER_SUBMIT") == "1")
+            //if (Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugRenderSubmit) == "1")
             {
                 int afterUpdatingCount = commandCollection.GetUpdatingCommandCount();
                 int delta = afterUpdatingCount - beforeUpdatingCount;

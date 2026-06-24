@@ -218,7 +218,7 @@ public static partial class EditorUnitTests
             UnitTestingWorldSettings runtimeSettings = RuntimeBootstrapState.Settings;
             ERenderLibrary renderBackend = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
                 ? runtimeSettings.Rendering.RenderBackend
-                : Toggles.RenderAPI;
+                : runtimeSettings.RenderAPI;
             uint shadowResolution = renderBackend == ERenderLibrary.Vulkan ? 1024u : 4096u;
             dirLightComp.SetShadowMapResolution(shadowResolution, shadowResolution);
             return dirLightComp;

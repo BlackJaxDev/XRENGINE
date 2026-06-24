@@ -242,7 +242,7 @@ public static partial class EditorUnitTests
 
         private static EBatchedTextDebugMode ResolveFpsTextDebugMode()
         {
-            string? value = Environment.GetEnvironmentVariable("XRE_FPS_TEXT_BATCHED_DEBUG_MODE");
+            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.FpsTextBatchedDebugMode);
             if (string.IsNullOrWhiteSpace(value))
                 return EBatchedTextDebugMode.None;
 

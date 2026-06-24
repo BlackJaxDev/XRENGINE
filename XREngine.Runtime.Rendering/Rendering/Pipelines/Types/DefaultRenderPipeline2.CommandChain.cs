@@ -1634,13 +1634,13 @@ public partial class DefaultRenderPipeline2
 
     private static int ResolveDefaultPipelineCaptureSkipFrames()
     {
-        string? raw = Environment.GetEnvironmentVariable("XRE_CAPTURE_DEFAULT_PIPELINE_SKIP_FRAMES");
+        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CaptureDefaultPipelineSkipFrames);
         return int.TryParse(raw, out int skipFrames) ? Math.Max(0, skipFrames) : 120;
     }
 
     private static bool ShouldCaptureDefaultPipelineFbos()
     {
-        string? raw = Environment.GetEnvironmentVariable("XRE_CAPTURE_DEFAULT_PIPELINE_FBO");
+        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CaptureDefaultPipelineFbo);
         return !string.IsNullOrWhiteSpace(raw) &&
             !string.Equals(raw, "0", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) &&

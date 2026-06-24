@@ -616,7 +616,7 @@ public sealed class SecondaryPassShaderContractTests
             "VkMeshRenderer.Descriptors.cs"));
 
         flags.ShouldContain("public static volatile bool DiagPostProcess;");
-        flags.ShouldContain("XRE_DIAG_POSTPROCESS");
+        flags.ShouldContain(XREngineEnvironmentVariables.DiagPostProcess);
         flags.ShouldContain("SetDiagPostProcess");
 
         postProcess.ShouldContain("if (RenderDiagnosticsFlags.DiagPostProcess)");

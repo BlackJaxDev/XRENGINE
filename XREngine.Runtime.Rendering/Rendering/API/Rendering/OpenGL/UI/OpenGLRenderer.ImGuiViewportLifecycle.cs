@@ -1,4 +1,4 @@
-﻿using ImGuiNET;
+using ImGuiNET;
 using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
@@ -52,7 +52,7 @@ namespace XREngine.Rendering.OpenGL
             private static readonly List<IInputContext> AbandonedShutdownInputContexts = [];
             private static readonly bool DisposeNativeViewportWindows =
                 string.Equals(
-                    Environment.GetEnvironmentVariable("XRE_IMGUI_VIEWPORT_DISPOSE_NATIVE"),
+                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ImGuiViewportDisposeNative),
                     "1",
                     StringComparison.Ordinal);
 

@@ -18,12 +18,12 @@ public static class ProfilerProtocol
     /// <summary>
     /// Environment variable that, when set to "1", enables the profiler sender.
     /// </summary>
-    public const string EnabledEnvVar = "XRE_PROFILER_ENABLED";
+    public const string EnabledEnvVar = XREngineEnvironmentVariables.ProfilerEnabled;
 
     /// <summary>
     /// Environment variable that overrides the default port.
     /// </summary>
-    public const string PortEnvVar = "XRE_PROFILER_PORT";
+    public const string PortEnvVar = XREngineEnvironmentVariables.ProfilerPort;
 
     /// <summary>
     /// Wire-level message type IDs. First byte of every datagram.

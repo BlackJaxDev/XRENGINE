@@ -1,4 +1,4 @@
-using MagicPhysX;
+﻿using MagicPhysX;
 using System.Numerics;
 using XREngine.Audio;
 using XREngine.Components;
@@ -153,7 +153,7 @@ public static class BootstrapPawnFactory
         controllerTfm = controllerNode.SetTransform<VRControllerTransform>();
         controllerTfm.LeftHand = left;
 
-        if (settings.EmulatedVRPawn)
+        if (settings.SceneOnlyVRPawn)
         {
             var debugComp = controllerNode.AddComponent<DebugDrawComponent>()!;
             debugComp.AddSphere(0.01f, Vector3.Zero, ColorF4.Black, false);

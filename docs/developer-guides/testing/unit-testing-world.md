@@ -1,4 +1,4 @@
-# Unit Testing World
+﻿# Unit Testing World
 
 The Unit Testing World is the main sandbox for validating engine changes inside the editor. It is driven by a JSONC settings file so you can switch test scenes, turn systems on and off, and adjust startup behavior without recompiling.
 
@@ -70,7 +70,8 @@ You do not need to understand every property up front. These are the ones that u
 
 - `WorldKind`: selects the test scene or scenario to build
 - `EditorType`: chooses the editor UI path used inside the test world
-- `VRPawn`, `UseOpenXR`, `EmulatedVRPawn`: control XR startup behavior
+- `Rendering.RenderBackend`: selects OpenGL or Vulkan for unit-test startup
+- `VR.Mode`: selects desktop, scene-only VR, Monado-backed OpenXR, OpenVR, or OpenXR startup
 - `AddPhysics`, `PhysicsBallCount`, `PhysicsChain`: enable physics-focused scenarios
 - `ModelsToImport`: imports test assets into the world at startup
 - `DynamicPointLightCount`, `DynamicSpotLightCount`, `DynamicLightSeed`: add repeatable animated local-light stress rigs
@@ -133,11 +134,64 @@ Set `InitializeAtmosphericScattering` to `true` to spawn a default `AtmosphericS
 
 ### Test XR startup
 
-Use:
+Use the grouped `VR` object to choose the launch mode explicitly:
 
-- `VRPawn: true`
-- `UseOpenXR: true` or `false`
-- `EmulatedVRPawn: true` if you want the VR pawn flow without requiring a headset session
+| `VR.Mode` | Behavior |
+|---|---|
+| `Desktop` | No VR pawn and no VR runtime startup. |
+| `Emulated` | Scene-only VR: builds the VR-shaped pawn and optional stereo preview without OpenVR/OpenXR runtime startup. |
+| `MonadoOpenXR` | Real OpenXR API path against a Monado runtime selected per process. |
+| `OpenVR` | OpenVR runtime path for SteamVR/OpenVR validation. |
+| `OpenXR` | OpenXR runtime path using the active loader/runtime configuration. |
+
+There are two no-headset VR lanes:
+
+Lane 1 is scene-only VR. It builds the VR-shaped pawn, transforms, and stereo preview without entering the OpenXR API:
+
+```jsonc
+{
+  "VR": {
+    "Mode": "Emulated",
+    "PreviewStereoViews": true,
+    "AllowDesktopEditing": true,
+    "OpenXrRuntimeJson": null
+  }
+}
+```
+
+Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runtime selected per process with `XR_RUNTIME_JSON`. You can leave `OpenXrRuntimeJson` as `null` to auto-detect common Monado install/build locations, or set it explicitly:
+
+```jsonc
+{
+  "VR": {
+    "Mode": "MonadoOpenXR",
+    "PreviewStereoViews": true,
+    "AllowDesktopEditing": true,
+    "OpenXrRuntimeJson": "C:\\path\\to\\openxr_monado.json"
+  }
+}
+```
+
+`VR.Mode=Emulated` is scene-only. It does not emulate OpenXR API calls, runtime state, swapchains, poses, or frame submission. `VR.Mode=MonadoOpenXR` uses the real OpenXR loader/API with Monado as the selected runtime. Existing `XR_RUNTIME_JSON` environment values win over `VR.OpenXrRuntimeJson`; when both are empty, the loader searches `MONADO_RUNTIME_JSON`, `MONADO_INSTALL_DIR`, common Monado install paths, and repo-local Monado build/dependency paths.
+
+Useful tasks:
+
+- `Start-Editor-UnitTesting-OpenXR-Monado-NoDebug`
+- `Test-OpenXR-Monado-Smoke`
+- `Test-OpenXR-SceneOnlyVR-Smoke`
+
+Command-line Monado smoke example:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Tools\OpenXR\Run-OpenXrMonadoSmoke.ps1 -RuntimeJson C:\path\to\openxr_monado.json -SmokeFrames 120
+```
+
+For script-driven launches, these process-scoped overrides select the lane without editing `Assets/UnitTestingWorldSettings.jsonc`:
+
+- `XRE_UNIT_TEST_VR_MODE=Desktop|Emulated|MonadoOpenXR|OpenVR|OpenXR`
+- `XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1`
+- `XRE_UNIT_TEST_OPENXR_RUNTIME_JSON=C:\path\to\openxr_monado.json`
+- `XRE_UNIT_TEST_RENDER_API=OpenGL|Vulkan` maps into `Rendering.RenderBackend`
 
 ### Test networking pose sync
 

@@ -210,6 +210,7 @@ public static partial class EditorImGuiUI
 
         private static readonly Vector4 DlssRuntimeWarningColor = new(1.0f, 0.16f, 0.16f, 1.0f);
         private static readonly Vector4 OverriddenSettingWarningColor = new(1.0f, 0.72f, 0.18f, 1.0f);
+        private static readonly Dictionary<string, string> EnvironmentVariablePreferenceStatus = new(StringComparer.Ordinal);
 
         private sealed record ActiveEditorPreferenceOverride(
             string SourceLabel,
@@ -4330,7 +4331,139 @@ public static partial class EditorImGuiUI
                 }
             }
 
+            DrawEnvironmentVariablePreferenceControls(property, currentValue, hasMixedValues);
+
             ImGui.PopID();
+        }
+
+        private static void DrawEnvironmentVariablePreferenceControls(MemberInfo member, object? currentValue, bool hasMixedValues)
+        {
+            EnvironmentVariablePreferenceAttribute[] attributes = member
+                .GetCustomAttributes<EnvironmentVariablePreferenceAttribute>(inherit: true)
+                .ToArray();
+            if (attributes.Length == 0)
+                return;
+
+            ImGui.Spacing();
+
+            for (int i = 0; i < attributes.Length; i++)
+            {
+                string name = attributes[i].Name;
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+
+                ImGui.PushID($"MachineEnv_{name}");
+                string? machineValue = null;
+                string? readError = null;
+                try
+                {
+                    machineValue = Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine);
+                }
+                catch (Exception ex)
+                {
+                    readError = ex.Message;
+                }
+
+                string status = readError is not null
+                    ? $"{name}: machine read failed"
+                    : machineValue is null
+                        ? $"{name}: machine unset"
+                        : $"{name}: machine set";
+                ImGui.TextDisabled(status);
+                if (ImGui.IsItemHovered())
+                {
+                    if (readError is not null)
+                        ImGui.SetTooltip(readError);
+                    else if (machineValue is not null)
+                        ImGui.SetTooltip(machineValue);
+                    else
+                        ImGui.SetTooltip("No machine-scope environment variable is set.");
+                }
+
+                string? valueToSet = null;
+                bool canSet = !hasMixedValues && TryFormatEnvironmentVariablePreferenceValue(currentValue, out valueToSet);
+                ImGui.SameLine();
+                using (new ImGuiDisabledScope(!canSet))
+                {
+                    if (ImGui.SmallButton("Set Machine") && canSet && valueToSet is not null)
+                    {
+                        try
+                        {
+                            Environment.SetEnvironmentVariable(name, valueToSet, EnvironmentVariableTarget.Machine);
+                            EnvironmentVariablePreferenceStatus[name] = $"Set machine {name}={valueToSet}.";
+                        }
+                        catch (Exception ex)
+                        {
+                            EnvironmentVariablePreferenceStatus[name] = $"Failed to set machine {name}: {ex.Message}";
+                        }
+                    }
+                    if (ImGui.IsItemHovered())
+                    {
+                        string tooltip = canSet && valueToSet is not null
+                            ? $"Set machine {name} to {valueToSet}."
+                            : "Current editor value cannot be written as an environment variable.";
+                        ImGui.SetTooltip(tooltip);
+                    }
+                }
+
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Clear Machine"))
+                {
+                    try
+                    {
+                        Environment.SetEnvironmentVariable(name, null, EnvironmentVariableTarget.Machine);
+                        EnvironmentVariablePreferenceStatus[name] = $"Cleared machine {name}.";
+                    }
+                    catch (Exception ex)
+                    {
+                        EnvironmentVariablePreferenceStatus[name] = $"Failed to clear machine {name}: {ex.Message}";
+                    }
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"Clear the machine-scope {name} environment variable.");
+
+                if (EnvironmentVariablePreferenceStatus.TryGetValue(name, out string? lastStatus))
+                    ImGui.TextWrapped(lastStatus);
+
+                ImGui.PopID();
+            }
+        }
+
+        private static bool TryFormatEnvironmentVariablePreferenceValue(object? value, out string? formatted)
+        {
+            formatted = null;
+            if (value is null)
+                return false;
+
+            if (value is bool boolValue)
+            {
+                formatted = boolValue ? "1" : "0";
+                return true;
+            }
+
+            if (value is string stringValue)
+            {
+                if (string.IsNullOrEmpty(stringValue))
+                    return false;
+
+                formatted = stringValue;
+                return true;
+            }
+
+            if (value is Enum enumValue)
+            {
+                formatted = enumValue.ToString();
+                return true;
+            }
+
+            if (value is IFormattable formattable)
+            {
+                formatted = formattable.ToString(null, CultureInfo.InvariantCulture);
+                return !string.IsNullOrEmpty(formatted);
+            }
+
+            formatted = value.ToString();
+            return !string.IsNullOrEmpty(formatted);
         }
 
         private static void DrawSimpleFieldRow(InspectorTargetSet targets, FieldInfo field, IReadOnlyList<object?> values, string displayName, string? description, bool valueRetrievalFailed, bool canWrite)

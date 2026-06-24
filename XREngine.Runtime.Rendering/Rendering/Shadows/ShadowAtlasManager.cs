@@ -557,7 +557,7 @@ public sealed class ShadowAtlasManager
 
     private static double ResolveSlowSolveWarningThresholdMilliseconds(ShadowAtlasManagerSettings settings)
     {
-        string? value = Environment.GetEnvironmentVariable("XRE_SHADOW_ATLAS_SOLVE_WARN_MS");
+        string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShadowAtlasSolveWarnMs);
         if (!string.IsNullOrWhiteSpace(value) &&
             double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double threshold) &&
             threshold > 0.0)

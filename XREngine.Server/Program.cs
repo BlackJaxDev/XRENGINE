@@ -29,15 +29,15 @@ namespace XREngine.Networking
         private const string EditorViewCameraName = "Editor View";
 
         private static readonly Guid _serverSessionId = ResolveConfiguredSessionId();
-        private static readonly string? _requiredSessionToken = GetOptionalEnvironmentValue("XRE_SESSION_TOKEN");
-        private static readonly string _udpMulticastGroup = GetOptionalEnvironmentValue("XRE_UDP_MULTICAST_GROUP") ?? "239.0.0.222";
-        private static readonly int _udpMulticastPort = GetOptionalIntEnvironmentValue("XRE_UDP_MULTICAST_PORT")
+        private static readonly string? _requiredSessionToken = GetOptionalEnvironmentValue(XREngineEnvironmentVariables.SessionToken);
+        private static readonly string _udpMulticastGroup = GetOptionalEnvironmentValue(XREngineEnvironmentVariables.UdpMulticastGroup) ?? "239.0.0.222";
+        private static readonly int _udpMulticastPort = GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpMulticastPort)
             ?? 5000;
-        private static readonly int _udpBindPort = GetOptionalIntEnvironmentValue("XRE_UDP_BIND_PORT")
-            ?? GetOptionalIntEnvironmentValue("XRE_UDP_SERVER_BIND_PORT")
+        private static readonly int _udpBindPort = GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpBindPort)
+            ?? GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpServerBindPort)
             ?? 5000;
-        private static readonly int _udpAdvertisedPort = GetOptionalIntEnvironmentValue("XRE_UDP_ADVERTISED_PORT")
-            ?? GetOptionalIntEnvironmentValue("XRE_UDP_SERVER_SEND_PORT")
+        private static readonly int _udpAdvertisedPort = GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpAdvertisedPort)
+            ?? GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpServerSendPort)
             ?? _udpBindPort;
 
         private static void Main(string[] args)
@@ -129,7 +129,7 @@ namespace XREngine.Networking
 
         private static Guid ResolveConfiguredSessionId()
         {
-            string? configured = GetOptionalEnvironmentValue("XRE_SESSION_ID");
+            string? configured = GetOptionalEnvironmentValue(XREngineEnvironmentVariables.SessionId);
             return Guid.TryParse(configured, out Guid sessionId)
                 ? sessionId
                 : Guid.NewGuid();

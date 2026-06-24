@@ -399,7 +399,7 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
 
     private static bool IsExecutableOnPath(string executable)
     {
-        string? path = Environment.GetEnvironmentVariable("PATH");
+        string? path = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
         if (string.IsNullOrWhiteSpace(path))
             return false;
 

@@ -17,7 +17,7 @@ public static class BootstrapNetworkingWorldProfiles
         settings.WorldKind = UnitTestWorldKind.NetworkingPose;
         settings.EditorType = UnitTestEditorType.Native;
         settings.VRPawn = true;
-        settings.EmulatedVRPawn = true;
+        settings.SceneOnlyVRPawn = true;
         settings.Locomotion = true;
         settings.AddCharacterIK = true;
         settings.AllowEditingInVR = true;
@@ -60,7 +60,7 @@ public static class BootstrapNetworkingWorldProfiles
 
     private static ENetworkingPoseRole ResolveNetworkingPoseRole()
     {
-        string? explicitRole = Environment.GetEnvironmentVariable("XRE_NETWORKING_POSE_ROLE");
+        string? explicitRole = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.NetworkingPoseRole);
         if (!string.IsNullOrWhiteSpace(explicitRole))
         {
             if (string.Equals(explicitRole, "server", StringComparison.OrdinalIgnoreCase))
@@ -75,11 +75,11 @@ public static class BootstrapNetworkingWorldProfiles
                 return ENetworkingPoseRole.ReceivingClient;
         }
 
-        string? netMode = Environment.GetEnvironmentVariable("XRE_NET_MODE");
+        string? netMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.NetMode);
         if (string.Equals(netMode, "Server", StringComparison.OrdinalIgnoreCase))
             return ENetworkingPoseRole.Server;
 
-        if (TryGetBoolEnv("XRE_POSE_BROADCAST_ENABLED", out bool broadcastEnabled) && broadcastEnabled)
+        if (TryGetBoolEnv(XREngineEnvironmentVariables.PoseBroadcastEnabled, out bool broadcastEnabled) && broadcastEnabled)
             return ENetworkingPoseRole.SendingClient;
 
         return ENetworkingPoseRole.ReceivingClient;

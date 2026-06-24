@@ -20,11 +20,11 @@ public static partial class EditorImGuiUI
         private static readonly InMemoryControlPlane _editorControlPlane = new();
         private static readonly string[] _controlPlaneWorldEnvironmentNames =
         [
-            "XRE_WORLD_ID",
-            "XRE_WORLD_REVISION",
-            "XRE_WORLD_CONTENT_HASH",
-            "XRE_WORLD_ASSET_SCHEMA_VERSION",
-            "XRE_WORLD_REQUIRED_BUILD_VERSION",
+            XREngineEnvironmentVariables.WorldId,
+            XREngineEnvironmentVariables.WorldRevision,
+            XREngineEnvironmentVariables.WorldContentHash,
+            XREngineEnvironmentVariables.WorldAssetSchemaVersion,
+            XREngineEnvironmentVariables.WorldRequiredBuildVersion,
         ];
 
         private static bool _netSettingsSeeded;
@@ -543,11 +543,11 @@ public static partial class EditorImGuiUI
                 static name => Environment.GetEnvironmentVariable(name),
                 StringComparer.Ordinal);
 
-            Environment.SetEnvironmentVariable("XRE_WORLD_ID", asset.WorldId);
-            Environment.SetEnvironmentVariable("XRE_WORLD_REVISION", asset.RevisionId);
-            Environment.SetEnvironmentVariable("XRE_WORLD_CONTENT_HASH", asset.ContentHash);
-            Environment.SetEnvironmentVariable("XRE_WORLD_ASSET_SCHEMA_VERSION", asset.AssetSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            Environment.SetEnvironmentVariable("XRE_WORLD_REQUIRED_BUILD_VERSION", asset.RequiredBuildVersion);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.WorldId, asset.WorldId);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.WorldRevision, asset.RevisionId);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.WorldContentHash, asset.ContentHash);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.WorldAssetSchemaVersion, asset.AssetSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.WorldRequiredBuildVersion, asset.RequiredBuildVersion);
         }
 
         private static void RestoreWorldAssetEnvironment()

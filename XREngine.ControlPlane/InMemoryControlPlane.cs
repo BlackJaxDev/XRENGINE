@@ -296,15 +296,15 @@ public sealed class InMemoryControlPlane(ControlPlaneOptions? options = null)
 
         return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["XRE_SESSION_ID"] = instance.SessionId.ToString("D"),
-            ["XRE_SESSION_TOKEN"] = instance.SessionToken,
-            ["XRE_WORLD_ID"] = instance.WorldAsset.WorldId,
-            ["XRE_WORLD_REVISION"] = instance.WorldAsset.RevisionId,
-            ["XRE_WORLD_CONTENT_HASH"] = instance.WorldAsset.ContentHash,
-            ["XRE_WORLD_ASSET_SCHEMA_VERSION"] = instance.WorldAsset.AssetSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["XRE_WORLD_REQUIRED_BUILD_VERSION"] = instance.WorldAsset.RequiredBuildVersion,
-            ["XRE_UDP_BIND_PORT"] = instance.Endpoint.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["XRE_UDP_ADVERTISED_PORT"] = instance.Endpoint.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            [XREngineEnvironmentVariables.SessionId] = instance.SessionId.ToString("D"),
+            [XREngineEnvironmentVariables.SessionToken] = instance.SessionToken,
+            [XREngineEnvironmentVariables.WorldId] = instance.WorldAsset.WorldId,
+            [XREngineEnvironmentVariables.WorldRevision] = instance.WorldAsset.RevisionId,
+            [XREngineEnvironmentVariables.WorldContentHash] = instance.WorldAsset.ContentHash,
+            [XREngineEnvironmentVariables.WorldAssetSchemaVersion] = instance.WorldAsset.AssetSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            [XREngineEnvironmentVariables.WorldRequiredBuildVersion] = instance.WorldAsset.RequiredBuildVersion,
+            [XREngineEnvironmentVariables.UdpBindPort] = instance.Endpoint.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            [XREngineEnvironmentVariables.UdpAdvertisedPort] = instance.Endpoint.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
     }
 
@@ -315,21 +315,21 @@ public sealed class InMemoryControlPlane(ControlPlaneOptions? options = null)
         string handoffJson = JsonSerializer.Serialize(payload, XreControlPlaneJsonContext.Default.RealtimeJoinHandoffPayload);
         var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["XRE_NET_MODE"] = "Client",
-            ["XRE_REALTIME_JOIN_PAYLOAD"] = handoffJson,
+            [XREngineEnvironmentVariables.NetMode] = "Client",
+            [XREngineEnvironmentVariables.RealtimeJoinPayload] = handoffJson,
         };
 
         if (payload.WorldAsset is not null)
         {
-            env["XRE_WORLD_ID"] = payload.WorldAsset.WorldId;
-            env["XRE_WORLD_REVISION"] = payload.WorldAsset.RevisionId;
-            env["XRE_WORLD_CONTENT_HASH"] = payload.WorldAsset.ContentHash;
-            env["XRE_WORLD_ASSET_SCHEMA_VERSION"] = payload.WorldAsset.AssetSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            env["XRE_WORLD_REQUIRED_BUILD_VERSION"] = payload.WorldAsset.RequiredBuildVersion;
+            env[XREngineEnvironmentVariables.WorldId] = payload.WorldAsset.WorldId;
+            env[XREngineEnvironmentVariables.WorldRevision] = payload.WorldAsset.RevisionId;
+            env[XREngineEnvironmentVariables.WorldContentHash] = payload.WorldAsset.ContentHash;
+            env[XREngineEnvironmentVariables.WorldAssetSchemaVersion] = payload.WorldAsset.AssetSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            env[XREngineEnvironmentVariables.WorldRequiredBuildVersion] = payload.WorldAsset.RequiredBuildVersion;
         }
 
         if (clientReceivePort is int port)
-            env["XRE_UDP_CLIENT_RECEIVE_PORT"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            env[XREngineEnvironmentVariables.UdpClientReceivePort] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         return env;
     }

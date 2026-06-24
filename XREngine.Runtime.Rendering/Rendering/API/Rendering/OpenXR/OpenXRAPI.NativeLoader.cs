@@ -116,7 +116,7 @@ public unsafe partial class OpenXRAPI
                 return true;
         }
 
-        var path = Environment.GetEnvironmentVariable("PATH");
+        var path = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
         if (!string.IsNullOrWhiteSpace(path))
         {
             foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))

@@ -50,6 +50,8 @@ Per-row checks:
 
 The detailed execution tracker now lives in
 [openxr-monado-testing-pipeline-todo.md](../rendering/vr/openxr-monado-testing-pipeline-todo.md).
+CI, hardware, and deterministic fault-injection follow-ups live in
+[openxr-monado-ci-hardware-followups-todo.md](../rendering/vr/openxr-monado-ci-hardware-followups-todo.md).
 Keep this section as the timing-tests cross-link so OpenXR test work continues
 to include the no-HMD runtime lane.
 
@@ -67,4 +69,5 @@ to include the no-HMD runtime lane.
 - [OpenXR VR Rendering (architecture)](../../../architecture/rendering/openxr-vr-rendering.md)
 - [OpenXR Monado Testing Pipeline](../../design/VR/openxr-monado-testing-pipeline.md)
 - [OpenXR Monado Testing Pipeline TODO](../rendering/vr/openxr-monado-testing-pipeline-todo.md)
+- [OpenXR Monado CI And Hardware Follow-ups](../rendering/vr/openxr-monado-ci-hardware-followups-todo.md)
 - [OpenXR Future Work TODO](../rendering/vr/openxr-future-work-todo.md)

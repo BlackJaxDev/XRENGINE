@@ -38,10 +38,10 @@ public sealed class ControlPlaneTests
         create.Value.SessionToken.ShouldNotBeNullOrWhiteSpace();
 
         ServerLaunchPlan serverLaunch = controlPlane.CreateServerLaunchPlan(create.Value.InstanceId);
-        serverLaunch.Environment["XRE_SESSION_ID"].ShouldBe(create.Value.SessionId.ToString("D"));
-        serverLaunch.Environment["XRE_SESSION_TOKEN"].ShouldBe(create.Value.SessionToken);
-        serverLaunch.Environment["XRE_WORLD_ID"].ShouldBe(create.Value.WorldAsset.WorldId);
-        serverLaunch.Environment["XRE_UDP_BIND_PORT"].ShouldBe("5010");
+        serverLaunch.Environment[XREngineEnvironmentVariables.SessionId].ShouldBe(create.Value.SessionId.ToString("D"));
+        serverLaunch.Environment[XREngineEnvironmentVariables.SessionToken].ShouldBe(create.Value.SessionToken);
+        serverLaunch.Environment[XREngineEnvironmentVariables.WorldId].ShouldBe(create.Value.WorldAsset.WorldId);
+        serverLaunch.Environment[XREngineEnvironmentVariables.UdpBindPort].ShouldBe("5010");
 
         ControlPlaneResult<JoinMultiplayerInstanceResult> join = controlPlane.JoinInstance(new JoinMultiplayerInstanceRequest
         {
@@ -59,8 +59,8 @@ public sealed class ControlPlaneTests
         join.Value.HandoffPayload.Endpoint!.Host.ShouldBe("127.0.0.1");
         join.Value.HandoffPayload.Endpoint.Port.ShouldBe(5010);
         join.Value.HandoffPayload.WorldAsset!.IsSameAssetAs(CreateWorldAsset()).ShouldBeTrue();
-        join.Value.ClientEnvironment["XRE_NET_MODE"].ShouldBe("Client");
-        join.Value.ClientEnvironment["XRE_UDP_CLIENT_RECEIVE_PORT"].ShouldBe("6010");
+        join.Value.ClientEnvironment[XREngineEnvironmentVariables.NetMode].ShouldBe("Client");
+        join.Value.ClientEnvironment[XREngineEnvironmentVariables.UdpClientReceivePort].ShouldBe("6010");
 
         RealtimeJoinHandoffPayload? payload = JsonSerializer.Deserialize(
             join.Value.HandoffJson,

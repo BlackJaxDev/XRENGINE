@@ -8,8 +8,8 @@ namespace XREngine.Components
     public abstract class FlyingCameraPawnBaseComponent : PawnComponent
     {
         protected static readonly bool CameraInputDiagnosticsEnabled =
-            string.Equals(Environment.GetEnvironmentVariable("XRE_DEBUG_CAMERA_INPUT"), "1", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(Environment.GetEnvironmentVariable("XRE_CAMERA_INPUT_DIAG"), "1", StringComparison.OrdinalIgnoreCase);
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugCameraInput), "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CameraInputDiag), "1", StringComparison.OrdinalIgnoreCase);
 
         protected float
             _incRight = 0.0f,

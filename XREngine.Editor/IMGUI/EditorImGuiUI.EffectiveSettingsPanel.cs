@@ -347,9 +347,9 @@ public static partial class EditorImGuiUI
         return settingName switch
         {
             nameof(Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath)
-                => TryResolveEnvironmentEnumSource<EZeroReadbackMaterialDrawPath>("XRE_ZERO_READBACK_MATERIAL_DRAW_PATH", out source),
+                => TryResolveEnvironmentEnumSource<EZeroReadbackMaterialDrawPath>(XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath, out source),
             nameof(Engine.EffectiveSettings.VulkanRenderTargetMode)
-                => TryResolveEnvironmentEnumSource<EVulkanRenderTargetMode>("XRE_VK_RENDER_TARGET_MODE", out source),
+                => TryResolveEnvironmentEnumSource<EVulkanRenderTargetMode>(XREngineEnvironmentVariables.VkRenderTargetMode, out source),
             nameof(Engine.EffectiveSettings.ForceMeshSubmissionStrategy)
                 => TryResolveMeshSubmissionStrategyEnvironmentSource(out source),
             _ => NoEnvironmentSource(out source),
@@ -359,7 +359,7 @@ public static partial class EditorImGuiUI
     private static bool TryResolveMeshSubmissionStrategyEnvironmentSource(out string source)
     {
         source = string.Empty;
-        string? raw = Environment.GetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY");
+        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy);
         if (!EMeshSubmissionStrategyExtensions.TryParseMeshSubmissionStrategy(raw, out _, out _))
             return false;
 

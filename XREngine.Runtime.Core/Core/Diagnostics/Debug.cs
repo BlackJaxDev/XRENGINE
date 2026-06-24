@@ -99,7 +99,7 @@ namespace XREngine
         /// and <see cref="ArgumentException"/> are always traced regardless of this filter.
         /// </summary>
         public static string? FirstChanceExceptionFilter { get; set; } =
-            Environment.GetEnvironmentVariable("XRE_FIRST_CHANCE_EXCEPTIONS");
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.FirstChanceExceptions);
 
         /// <summary>
         /// Raised when a new log entry is added to the in-engine console buffer.

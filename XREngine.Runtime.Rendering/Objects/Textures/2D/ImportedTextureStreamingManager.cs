@@ -32,7 +32,7 @@ internal sealed class ImportedTextureStreamingManager
     private const int TextureSummaryIntervalFrames = 60;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
     private const string VulkanImportedTextureStreamingTodoPath = "docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md";
-    private const string VulkanImportedTexturePreviewFreezeEnvVar = "XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE";
+    private const string VulkanImportedTexturePreviewFreezeEnvVar = XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze;
     private const string VulkanPreviewFreezeReason = "explicit Vulkan imported-texture preview freeze requested";
 
     /// <summary>

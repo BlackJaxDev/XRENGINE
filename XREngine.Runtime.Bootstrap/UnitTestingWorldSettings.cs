@@ -87,6 +87,28 @@ public enum LightProbeCaptureMode
     Realtime,
 }
 
+public enum UnitTestingVrLaunchMode
+{
+    Desktop,
+    Emulated,
+    MonadoOpenXR,
+    OpenVR,
+    OpenXR,
+}
+
+public class UnitTestingVrSettings
+{
+    public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop;
+    public bool PreviewStereoViews { get; set; } = false;
+    public bool AllowDesktopEditing { get; set; } = true;
+    /// <summary>
+    /// Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes.
+    /// Existing XR_RUNTIME_JSON environment values win. MonadoOpenXR auto-detects
+    /// common Monado install/build locations when this is unset.
+    /// </summary>
+    public string? OpenXrRuntimeJson { get; set; }
+}
+
 public class UnitTestingRenderSettings
 {
     public ERenderLibrary RenderBackend { get; set; } = ERenderLibrary.OpenGL;
@@ -139,8 +161,6 @@ public class UnitTestingWorldSettings
     public UnitTestEditorType EditorType { get; set; } = UnitTestEditorType.IMGUI;
     public CameraUIDrawMode CameraUIDrawSpaceOnInit { get; set; } = CameraUIDrawMode.Screen;
     public bool TransformTool = false;
-    public bool AllowEditingInVR = true;
-    public bool PreviewVRStereoViews = false;
     public bool VideoStreaming = false;
     public bool VideoStreamingAudio = false;
     public string? VideoStreamingUrl { get; set; } = null;
@@ -152,6 +172,12 @@ public class UnitTestingWorldSettings
     public bool RiveUI = false;
     public bool GPURenderDispatch = false;
     public bool StartInPlayModeWithoutTransitions = false;
+
+    public UnitTestingVrSettings VR { get; set; } = new();
+    [JsonIgnore]
+    public bool AllowEditingInVR = true;
+    [JsonIgnore]
+    public bool PreviewVRStereoViews = false;
 
     public bool Skybox = true;
     public bool ProceduralSky = false;
@@ -185,13 +211,46 @@ public class UnitTestingWorldSettings
     public TranslationXYZ LightProbeGridCenter { get; set; } = new() { X = 0.0f, Y = 50.0f, Z = 0.0f };
     public TranslationXYZ LightProbeSinglePosition { get; set; } = new() { X = 0.0f, Y = 1.25f, Z = -7.5f };
 
-    public bool VRPawn = true;
+    [JsonIgnore]
+    public bool VRPawn = false;
+    [JsonIgnore]
     public bool UseOpenXR = false;
-    public bool EmulatedVRPawn = true;
+    [JsonIgnore]
+    public bool SceneOnlyVRPawn = false;
     public bool Locomotion = true;
     public bool ThirdPersonPawn = false;
 
     public float? CharacterControllerCapsuleTranslationY { get; set; }
+
+    [JsonProperty("AllowEditingInVR")]
+    private bool LegacyAllowEditingInVR
+    {
+        set => AllowEditingInVR = value;
+    }
+
+    [JsonProperty("PreviewVRStereoViews")]
+    private bool LegacyPreviewVRStereoViews
+    {
+        set => PreviewVRStereoViews = value;
+    }
+
+    [JsonProperty("VRPawn")]
+    private bool LegacyVRPawn
+    {
+        set => VRPawn = value;
+    }
+
+    [JsonProperty("UseOpenXR")]
+    private bool LegacyUseOpenXR
+    {
+        set => UseOpenXR = value;
+    }
+
+    [JsonProperty("SceneOnlyVRPawn")]
+    private bool LegacySceneOnlyVRPawn
+    {
+        set => SceneOnlyVRPawn = value;
+    }
 
     public bool PhysicsChain = true;
     public bool AddPhysics = true;
@@ -345,7 +404,15 @@ public class UnitTestingWorldSettings
     public int OpenGLParallelShaderCompileProbeTimeoutMs { get; set; } = 25;
     public bool RenderMeshBounds = true;
 
+    [JsonIgnore]
     public ERenderLibrary RenderAPI = ERenderLibrary.OpenGL;
+
+    [JsonProperty("RenderAPI")]
+    private ERenderLibrary LegacyRenderAPI
+    {
+        set => RenderAPI = value;
+    }
+
     public EAntiAliasingMode? CameraAntiAliasingModeOverride = null;
     public EPhysicsLibrary PhysicsAPI = EPhysicsLibrary.PhysX;
     public ELoopType RecalcChildMatricesType = ELoopType.Asynchronous;

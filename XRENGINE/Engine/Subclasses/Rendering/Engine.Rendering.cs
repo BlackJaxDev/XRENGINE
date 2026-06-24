@@ -107,7 +107,7 @@ namespace XREngine
                 => new();
 
             public static bool UsePipelineV2
-                => Environment.GetEnvironmentVariable("XRE_USE_PIPELINE_V2") == "1";
+                => Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UsePipelineV2) == "1";
 
             public static RenderPipeline NewRenderPipeline()
                 => NewRenderPipeline(stereo: false);

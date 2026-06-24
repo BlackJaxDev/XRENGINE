@@ -1,4 +1,4 @@
-﻿using XREngine.Extensions;
+using XREngine.Extensions;
 using Silk.NET.OpenGL;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -1263,7 +1263,7 @@ namespace XREngine.Rendering.OpenGL
                     // Set XRE_SYNCSRC_HAZARD_DISABLE_PARALLEL=1 to opt back in to the
                     // suppression if the wedge ever surfaces on the render thread.
                     bool hazardSyncDisableParallel = string.Equals(
-                        Environment.GetEnvironmentVariable("XRE_SYNCSRC_HAZARD_DISABLE_PARALLEL"),
+                        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SyncSrcHazardDisableParallel),
                         "1",
                         StringComparison.Ordinal);
                     // Timeout recovery must not call glMaxShaderCompilerThreads* here:

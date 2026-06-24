@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json;
+using Newtonsoft.Json;
 using OpenVR.NET.Manifest;
 using System.Diagnostics;
 using System.Management;
@@ -171,7 +171,7 @@ namespace XREngine.VRClient
             };
 
             // Allow pairing the VRClient with a specific running game process (e.g., XREngine.Editor).
-            string? gameNameOverride = Environment.GetEnvironmentVariable("XRE_VRCLIENT_GAMENAME");
+            string? gameNameOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VrClientGameName);
             if (!string.IsNullOrWhiteSpace(gameNameOverride))
                 settings.GameName = gameNameOverride;
 

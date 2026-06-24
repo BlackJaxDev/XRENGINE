@@ -71,6 +71,7 @@ public unsafe partial class OpenXRAPI
         {
             throw new Exception($"Failed to get system: {result}");
         }
+        RecordSmokeSystemFound();
     }
 
     private void CreateReferenceSpace()
@@ -91,6 +92,7 @@ public unsafe partial class OpenXRAPI
             throw new Exception("Failed to create reference space");
 
         _appSpace = space;
+        RecordSmokeReferenceSpaceCreated(spaceCreateInfo.ReferenceSpaceType);
     }
 
     /// <summary>
@@ -202,6 +204,7 @@ public unsafe partial class OpenXRAPI
         long ticks = end - start;
         RuntimeEngine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency));
         RecordDeadlineStatus(frameEndInfo.DisplayTime, end, frameEndInfo.LayerCount);
+        RecordSmokeEndFrame(result, frameEndInfo.LayerCount);
         return result;
     }
 
@@ -236,6 +239,7 @@ public unsafe partial class OpenXRAPI
         if (!HandleLocatedViewState(viewState))
             return false;
 
+        RecordSmokeLocatedViews(viewCountOutput);
         StoreViewPosesToCache(timing);
         return true;
     }
@@ -366,6 +370,7 @@ public unsafe partial class OpenXRAPI
                 _openXrPredRightEyeFov = (rf.AngleLeft, rf.AngleRight, rf.AngleUp, rf.AngleDown);
             }
         }
+        RecordSmokeViewPoseCache(timing);
     }
 
     /// <summary>
@@ -404,6 +409,7 @@ public unsafe partial class OpenXRAPI
                     {
                         var stateChanged = (EventDataSessionStateChanged*)eventDataPtr;
                         _sessionState = stateChanged->State;
+                        RecordSmokeSessionState(_sessionState);
                         Debug.Out($"Session state changed to: {_sessionState}");
                         if (_sessionState == SessionState.Ready)
                         {

@@ -293,7 +293,7 @@ internal sealed class VulkanImportedTexturePendingUpload(
 /// </summary>
 internal sealed class VulkanTextureUploadService
 {
-    public const string EnableSynchronizedImportedTextureUploadsEnvVar = "XRE_VULKAN_TEXTURE_UPLOAD_SERVICE";
+    public const string EnableSynchronizedImportedTextureUploadsEnvVar = XREngineEnvironmentVariables.VulkanTextureUploadService;
     private const int MaxPreparedUploadsPerDrain = 1;
 
     private static int s_synchronizedImportedTextureStreamingAvailable = 1;

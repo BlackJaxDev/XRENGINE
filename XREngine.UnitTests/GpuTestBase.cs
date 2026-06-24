@@ -36,11 +36,11 @@ public abstract class GpuTestBase
 
     /// <summary>True when running in a headless CI environment.</summary>
     protected static bool IsHeadless =>
-        Environment.GetEnvironmentVariable("XR_HEADLESS_TEST") == "1" ||
-        Environment.GetEnvironmentVariable("CI") == "true";
+        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.HeadlessTest) == "1" ||
+        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ContinuousIntegration) == "true";
 
     /// <summary>True when the user explicitly asked for visible test windows.</summary>
-    protected static bool ShowWindow => IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_WINDOWS"))
+    protected static bool ShowWindow => IsTrue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShowTestWindows))
         || IsTrue(TestContext.Parameters.Get("ShowWindow"));
 
     /// <summary>Duration (ms) a visible window should stay open for visual inspection.
@@ -49,7 +49,7 @@ public abstract class GpuTestBase
     {
         get
         {
-            string? v = Environment.GetEnvironmentVariable("XR_SHOW_WINDOW_DURATION_MS")
+            string? v = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShowWindowDurationMs)
                         ?? TestContext.Parameters.Get("ShowWindowDurationMs");
             return int.TryParse(v, out int ms) && ms > 0 ? ms : 2_000;
         }

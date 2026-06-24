@@ -11,13 +11,13 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    internal const string CommandChainsEnvVar = "XRE_VULKAN_COMMAND_CHAINS";
-    internal const string CommandChainsSingleThreadEnvVar = "XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD";
-    internal const string CommandChainValidateEnvVar = "XRE_VULKAN_COMMAND_CHAIN_VALIDATE";
-    internal const string CommandChainTraceEnvVar = "XRE_VULKAN_COMMAND_CHAIN_TRACE";
-    internal const string DisableParallelChainRecordingEnvVar = "XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING";
-    internal const string ParallelPacketBuildEnvVar = "XRE_VULKAN_PARALLEL_PACKET_BUILD";
-    internal const string CommandChainMultiQueueEnvVar = "XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE";
+    internal const string CommandChainsEnvVar = XREngineEnvironmentVariables.VulkanCommandChains;
+    internal const string CommandChainsSingleThreadEnvVar = XREngineEnvironmentVariables.VulkanCommandChainsSingleThread;
+    internal const string CommandChainValidateEnvVar = XREngineEnvironmentVariables.VulkanCommandChainValidate;
+    internal const string CommandChainTraceEnvVar = XREngineEnvironmentVariables.VulkanCommandChainTrace;
+    internal const string DisableParallelChainRecordingEnvVar = XREngineEnvironmentVariables.VulkanDisableParallelChainRecording;
+    internal const string ParallelPacketBuildEnvVar = XREngineEnvironmentVariables.VulkanParallelPacketBuild;
+    internal const string CommandChainMultiQueueEnvVar = XREngineEnvironmentVariables.VulkanCommandChainMultiQueue;
     internal const int CommandChainLeftEyeViewIndex = 0;
     internal const int CommandChainRightEyeViewIndex = 1;
     internal const int CommandChainStereoMultiviewViewIndex = -1;

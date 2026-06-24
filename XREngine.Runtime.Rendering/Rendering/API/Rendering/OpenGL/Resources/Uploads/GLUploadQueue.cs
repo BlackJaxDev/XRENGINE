@@ -26,8 +26,8 @@ namespace XREngine.Rendering.OpenGL
             private const uint MaxUploadChunkBytes = 1024 * 1024;
             private const double MinimumFrameBudgetMs = 0.05;
             private const double DefaultHardFrameBudgetMs = 2.0;
-            private const string HardBudgetEnvVar = "XRE_UPLOAD_QUEUE_HARD_BUDGET_MS";
-            private const string ChunkLoggingEnvVar = "XRE_UPLOAD_QUEUE_CHUNK_LOGGING";
+            private const string HardBudgetEnvVar = XREngineEnvironmentVariables.UploadQueueHardBudgetMs;
+            private const string ChunkLoggingEnvVar = XREngineEnvironmentVariables.UploadQueueChunkLogging;
             private static readonly bool EnableChunkLogging = IsEnabledEnvironmentVariable(ChunkLoggingEnvVar);
 
             /// <summary>

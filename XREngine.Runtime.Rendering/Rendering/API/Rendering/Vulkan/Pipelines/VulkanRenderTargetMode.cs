@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    private const string VulkanRenderTargetModeEnvVar = "XRE_VK_RENDER_TARGET_MODE";
+    private const string VulkanRenderTargetModeEnvVar = XREngineEnvironmentVariables.VkRenderTargetMode;
 
     private EVulkanRenderTargetMode _requestedRenderTargetMode = EVulkanRenderTargetMode.Auto;
     private bool _useDynamicRenderingRenderTargets;

@@ -192,7 +192,7 @@ public sealed class RenderSettingsApiSeparationTests
         windows.ShouldContain("Vulkan initialization failed and render backend fallback is not permitted.");
         windows.ShouldContain("[StartupWindow] Ignoring render backend fallback policy");
 
-        mode.ShouldContain("XRE_VK_RENDER_TARGET_MODE");
+        mode.ShouldContain(XREngineEnvironmentVariables.VkRenderTargetMode);
         mode.ShouldContain("RuntimeEngine.EffectiveSettings.VulkanRenderTargetMode");
         mode.ShouldContain("dynamic rendering was explicitly requested");
 
