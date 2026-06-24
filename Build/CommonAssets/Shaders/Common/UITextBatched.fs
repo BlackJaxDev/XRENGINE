@@ -23,7 +23,11 @@ const int StrokeSampleRadius = 5;
 const int TextRenderLayerCombined = 0;
 const int TextRenderLayerOutline = 1;
 const int TextRenderLayerFill = 2;
-const float FillCoverageGuard = 0.02;
+const float StrokeFillFadeStart = 0.25;
+const float StrokeFillFadeEnd = 0.85;
+const float StrokeDiagonal = 0.70710678118;
+const float StrokeDirA = 0.92387953251;
+const float StrokeDirB = 0.38268343236;
 
 float Median(vec3 value)
 {
@@ -37,29 +41,63 @@ float SampleGlyph(vec2 uv)
     return texture(Texture0, uv).r * mask;
 }
 
-float SampleBitmapStroke(vec2 uv, vec2 uvDx, vec2 uvDy, float radius)
+float SampleStrokeAt(vec2 uv, vec2 uvDx, vec2 uvDy, vec2 sampleOffset)
+{
+    return SampleGlyph(uv + uvDx * sampleOffset.x + uvDy * sampleOffset.y);
+}
+
+float SampleStrokeRing(vec2 uv, vec2 uvDx, vec2 uvDy, float ringRadius)
 {
     float stroke = 0.0;
-    float clampedRadius = clamp(radius, 0.0, float(StrokeSampleRadius));
-    float radiusSquared = clampedRadius * clampedRadius;
 
-    for (int y = -StrokeSampleRadius; y <= StrokeSampleRadius; y++)
-    {
-        for (int x = -StrokeSampleRadius; x <= StrokeSampleRadius; x++)
-        {
-            vec2 sampleOffset = vec2(float(x), float(y));
-            float distanceSquared = dot(sampleOffset, sampleOffset);
-            if (distanceSquared <= radiusSquared)
-                stroke = max(stroke, SampleGlyph(uv + uvDx * sampleOffset.x + uvDy * sampleOffset.y));
-        }
-    }
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2( ringRadius, 0.0)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2(-ringRadius, 0.0)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2(0.0,  ringRadius)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2(0.0, -ringRadius)));
+
+    float diagonal = ringRadius * StrokeDiagonal;
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2( diagonal,  diagonal)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2(-diagonal,  diagonal)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2( diagonal, -diagonal)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2(-diagonal, -diagonal)));
+
+    float dirA = ringRadius * StrokeDirA;
+    float dirB = ringRadius * StrokeDirB;
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2( dirA,  dirB)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2(-dirA,  dirB)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2( dirA, -dirB)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2(-dirA, -dirB)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2( dirB,  dirA)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2(-dirB,  dirA)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2( dirB, -dirA)));
+    stroke = max(stroke, SampleStrokeAt(uv, uvDx, uvDy, vec2(-dirB, -dirA)));
 
     return stroke;
 }
 
-float OutsideGlyphMask(float fill)
+float SampleBitmapStroke(vec2 uv, vec2 uvDx, vec2 uvDy, float radius)
 {
-    return 1.0 - smoothstep(0.0, FillCoverageGuard, fill);
+    float clampedRadius = clamp(radius, 0.0, float(StrokeSampleRadius));
+    float stroke = SampleGlyph(uv);
+    int wholeSteps = int(floor(clampedRadius));
+
+    for (int stepIndex = 1; stepIndex <= StrokeSampleRadius; stepIndex++)
+    {
+        if (stepIndex > wholeSteps)
+            break;
+
+        stroke = max(stroke, SampleStrokeRing(uv, uvDx, uvDy, float(stepIndex)));
+    }
+
+    if (clampedRadius - float(wholeSteps) > 0.01)
+        stroke = max(stroke, SampleStrokeRing(uv, uvDx, uvDy, clampedRadius));
+
+    return stroke;
+}
+
+float StrokeVisibilityMask(float fill)
+{
+    return 1.0 - smoothstep(StrokeFillFadeStart, StrokeFillFadeEnd, fill);
 }
 
 float ScreenPxRange()
@@ -136,7 +174,7 @@ void main()
         vec2 uvDx = dFdx(FragUV0);
         vec2 uvDy = dFdy(FragUV0);
         float stroke = SampleBitmapStroke(FragUV0, uvDx, uvDy, outlineThickness);
-        outlineMask = stroke * OutsideGlyphMask(fill);
+        outlineMask = stroke * StrokeVisibilityMask(fill);
     }
 
     float fillAlpha = InstanceTextColor.a * fill;

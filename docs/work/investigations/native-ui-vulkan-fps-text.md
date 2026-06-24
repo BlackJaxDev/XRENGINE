@@ -183,3 +183,34 @@ Signed glyph expansion correction:
 - Bitmap glyph layout stores height as a negative signed size (`scaleY = -glyph.Size.Y * scale`). The outline vertex expansion was adding `+2 * thickness` to both size components, which shrank negative-height glyph quads vertically instead of expanding them.
 - The batched vertex shaders now expand along each component's sign: positive widths grow with `+2t`, negative heights grow with `-2t`, and the origin moves in the matching signed direction. UV expansion remains based on `abs(glyphSize)` so the original glyph-to-atlas slope stays stable.
 - With signed expansion fixed, batched bitmap text no longer needs the separate outline/fill draw path. It renders once in the combined shader path, so the outline is composited around the fill in one glyph draw instead of being drawn as a black underlay pass.
+
+Outline isotropy correction:
+
+- The bitmap stroke sampler used an integer disk kernel. That makes cardinal offsets reach the requested radius, but diagonal offsets land at shorter effective distances unless the next integer diagonal sample fits inside the disk.
+- `UITextBatched.fs` and `Text.fs` now sample stroke dilation as screen-space radial rings with 16 normalized directions. Diagonal and off-axis samples use normalized unit vectors, so the outline radius is much more even around slanted glyph edges while staying on the bitmap atlas path.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~VulkanP0ValidationTests.NativeFpsOverlay_UsesStableCompactMultilineLayout" --logger "console;verbosity=minimal" /m:1 /nodeReuse:false /p:UseSharedCompilation=false /p:OutDir="Build\_AgentValidation\20260624-1026-fps-outline-isotropy\temp-build\tests\"` passed 1/1.
+
+Bright-background edge support:
+
+- The previous outside-only outline mask removed black coverage as soon as bitmap fill coverage became non-zero. That kept interiors clean, but left the antialiased white edge blending directly into bright backgrounds.
+- The bitmap outline mask now fades out across the glyph edge instead: full stroke outside the glyph, dark support under low/medium antialias coverage, and no stroke under solid fill. This keeps the text as plain stroked glyphs without reintroducing a panel/background.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~VulkanP0ValidationTests.NativeFpsOverlay_UsesStableCompactMultilineLayout" --logger "console;verbosity=minimal" /m:1 /nodeReuse:false /p:UseSharedCompilation=false /p:OutDir="Build\_AgentValidation\20260624-1036-fps-outline-edge-support\temp-build\tests\"` passed 1/1.
+
+Non-batched outline parity:
+
+- Disabling batching still looked worse because `Text.vs` kept non-batched glyph quads tight to the original glyph rect. The fragment shader could sample the stroke, but pixels outside the original glyph quad were clipped before the fragment stage.
+- Non-batched text vertex shaders (`Text.vs`, rotatable, stereo, and rotatable stereo) now expand glyph quads and UVs by `OutlineThickness` using the same signed-size logic as `UITextBatched.vs`, while preserving original `GlyphUVBounds` for atlas-bleed protection.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~VulkanP0ValidationTests.NativeFpsOverlay_UsesStableCompactMultilineLayout" --logger "console;verbosity=minimal" /m:1 /nodeReuse:false /p:UseSharedCompilation=false /p:OutDir="Build\_AgentValidation\20260624-1050-text-outline-batching-parity\temp-build\tests\"` passed 1/1.
+- `glslangValidator -S vert -V -R` could not validate these shaders directly because their existing engine default uniforms are not declared as explicit Vulkan UBO bindings. That validation blocker predates this outline change.
+
+Outline spacing option:
+
+- `UITextComponent` and standalone `UIText` now expose `OutlineAffectsSpacing`. When enabled, layout adds horizontal glyph spacing equal to `OutlineThickness` and adds the same amount to line spacing.
+- The FPS debug overlay enables this setting so the black stroke has breathing room without changing the default behavior for other text.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~VulkanP0ValidationTests.NativeFpsOverlay_UsesStableCompactMultilineLayout" --logger "console;verbosity=minimal" /m:1 /nodeReuse:false /p:UseSharedCompilation=false /p:OutDir="Build\_AgentValidation\20260624-1110-text-outline-affects-spacing\temp-build\tests\"` passed 1/1.
+
+Outline spacing unit correction:
+
+- Horizontal glyph spacing in `FontGlyphSet.GetQuads` is applied in font layout units before scaling by `fontSize / LayoutEmSize`, while line spacing is already in final output units.
+- `OutlineAffectsSpacing` now converts the requested output-pixel spacing back into font layout units for horizontal spacing, so `OutlineThickness=2` contributes approximately two screen/layout pixels between glyph advances instead of being scaled down to a fraction of a pixel.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~VulkanP0ValidationTests.NativeFpsOverlay_UsesStableCompactMultilineLayout" --logger "console;verbosity=minimal" /m:1 /nodeReuse:false /p:UseSharedCompilation=false /p:OutDir="Build\_AgentValidation\20260624-1130-text-outline-spacing-units\temp-build\tests\"` passed 1/1.

@@ -212,6 +212,7 @@ public static partial class EditorUnitTests
             text.HideOverflow = false;
             text.OutlineColor = new ColorF4(0.0f, 0.0f, 0.0f, 1.0f);
             text.OutlineThickness = 2.0f;
+            text.OutlineAffectsSpacing = true;
             text.RegisterAnimationTick<UITextComponent>(TickFPS);
             var textTransform = textNode.GetTransformAs<UIBoundableTransform>(true)!;
             textTransform.Width = FpsOverlayWidth;

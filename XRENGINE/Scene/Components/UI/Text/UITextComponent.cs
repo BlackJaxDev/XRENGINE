@@ -72,6 +72,7 @@ namespace XREngine.Rendering.UI
         private const string MsdfDistanceRangeMiddleUniformName = "MsdfDistanceRangeMiddle";
         private const string MsdfFillBiasUniformName = "MsdfFillBias";
         private const float DefaultMsdfFillBias = 0.5f;
+        private const float DefaultLineSpacing = 2.0f;
 
         #endregion
 
@@ -288,6 +289,17 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _outlineThickness, MathF.Max(0.0f, value));
         }
 
+        private bool _outlineAffectsSpacing = false;
+
+        /// <summary>
+        /// When true, glyph layout reserves extra horizontal and vertical spacing equal to <see cref="OutlineThickness"/>.
+        /// </summary>
+        public bool OutlineAffectsSpacing
+        {
+            get => _outlineAffectsSpacing;
+            set => SetField(ref _outlineAffectsSpacing, value);
+        }
+
         private float _msdfFillBias = DefaultMsdfFillBias;
 
         /// <summary>
@@ -460,6 +472,14 @@ namespace XREngine.Rendering.UI
                             mat.SetFloat(OutlineThicknessUniformName, OutlineThickness);
                         else
                             UpdateText(true);
+
+                        if (OutlineAffectsSpacing)
+                            UpdateText(false);
+                    }
+                    break;
+                case nameof(OutlineAffectsSpacing):
+                    {
+                        UpdateText(false);
                     }
                     break;
                 case nameof(MsdfFillBias):
@@ -499,12 +519,24 @@ namespace XREngine.Rendering.UI
                         w = float.MaxValue;
                     if (h <= 0.0f)
                         h = float.MaxValue;
-                    Font.GetQuads(Text, _glyphs, FontSize, w, h, WrapMode, 0.0f, 2.0f);
+                    float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;
+                    float glyphSpacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
+                    Font.GetQuads(Text, _glyphs, FontSize, w, h, WrapMode, glyphSpacing, DefaultLineSpacing + outlineSpacing);
                     AlignQuads(tfm, w, h);
                     count = (uint)(_glyphs?.Count ?? 0);
                 }
                 ResizeGlyphCount(count, invalidateLayout);
             //});
+        }
+
+        private float ResolveLayoutSpacingForOutputPixels(float outputSpacing)
+        {
+            if (outputSpacing <= 0.0f)
+                return 0.0f;
+
+            float layoutEmSize = MathF.Max(Font?.LayoutEmSize ?? FontSize ?? 1.0f, 1e-6f);
+            float resolvedFontSize = MathF.Max(FontSize ?? layoutEmSize, 1e-6f);
+            return outputSpacing * layoutEmSize / resolvedFontSize;
         }
 
         private void AlignQuads(UIBoundableTransform tfm, float w, float h)

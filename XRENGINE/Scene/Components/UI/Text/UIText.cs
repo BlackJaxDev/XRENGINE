@@ -95,6 +95,7 @@ namespace XREngine.Rendering.UI
         private const string MsdfDistanceRangeMiddleUniformName = "MsdfDistanceRangeMiddle";
         private const string MsdfFillBiasUniformName = "MsdfFillBias";
         private const float DefaultMsdfFillBias = 0.5f;
+        private const float DefaultLineSpacing = 2.0f;
 
         private readonly List<(Vector4 transform, Vector4 uvs)> _glyphs = [];
         private XRDataBuffer<Vector4>? _uvsBuffer;
@@ -257,6 +258,14 @@ namespace XREngine.Rendering.UI
                             mat.SetFloat(OutlineThicknessUniformName, OutlineThickness);
                         else
                             UpdateText(true);
+
+                        if (OutlineAffectsSpacing)
+                            UpdateText(false);
+                    }
+                    break;
+                case nameof(OutlineAffectsSpacing):
+                    {
+                        UpdateText(false);
                     }
                     break;
                 case nameof(MsdfFillBias):
@@ -283,10 +292,22 @@ namespace XREngine.Rendering.UI
             uint count;
             lock (_glyphLock)
             {
-                Font.GetQuads(Text, _glyphs, FontSize, 0, 0, FontGlyphSet.EWrapMode.None, 0.0f, 2.0f);
+                float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;
+                float glyphSpacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
+                Font.GetQuads(Text, _glyphs, FontSize, 0, 0, FontGlyphSet.EWrapMode.None, glyphSpacing, DefaultLineSpacing + outlineSpacing);
                 count = (uint)(_glyphs?.Count ?? 0);
             }
             ResizeGlyphCount(count);
+        }
+
+        private float ResolveLayoutSpacingForOutputPixels(float outputSpacing)
+        {
+            if (outputSpacing <= 0.0f)
+                return 0.0f;
+
+            float layoutEmSize = MathF.Max(Font?.LayoutEmSize ?? FontSize ?? 1.0f, 1e-6f);
+            float resolvedFontSize = MathF.Max(FontSize ?? layoutEmSize, 1e-6f);
+            return outputSpacing * layoutEmSize / resolvedFontSize;
         }
 
         /// <summary>
@@ -368,6 +389,13 @@ namespace XREngine.Rendering.UI
         {
             get => _outlineThickness;
             set => SetField(ref _outlineThickness, MathF.Max(0.0f, value));
+        }
+
+        private bool _outlineAffectsSpacing = false;
+        public bool OutlineAffectsSpacing
+        {
+            get => _outlineAffectsSpacing;
+            set => SetField(ref _outlineAffectsSpacing, value);
         }
 
         private float _msdfFillBias = DefaultMsdfFillBias;

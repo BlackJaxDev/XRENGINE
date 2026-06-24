@@ -18,6 +18,8 @@ layout(std430, binding = 1) buffer GlyphTexCoordsBuffer
 uniform mat4 ModelMatrix;
 uniform mat4 LeftEyeViewProjectionMatrix_VTX;
 uniform mat4 RightEyeViewProjectionMatrix_VTX;
+uniform vec4 OutlineColor;
+uniform float OutlineThickness;
 
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
@@ -31,13 +33,31 @@ void main()
     vec4 uv = GlyphTexCoords[gl_InstanceID];
 	bool left = gl_ViewID_OVR == 0;
 	mat4 mvpMatrix = (left ? LeftEyeViewProjectionMatrix_VTX : RightEyeViewProjectionMatrix_VTX) * ModelMatrix;
-	
-	vec4 position = vec4((tfm.xy + (TexCoord0.xy * tfm.zw)), 0.0f, 1.0f);
+
+    vec2 corner = Position.xy;
+    vec2 glyphMin = tfm.xy;
+    vec2 glyphSize = tfm.zw;
+    vec2 uvMin = uv.xy;
+    vec2 uvMax = uv.zw;
+    if (OutlineThickness > 0.0 && OutlineColor.a > 0.0)
+    {
+        vec2 expand = vec2(OutlineThickness);
+        vec2 uvExpand = (uvMax - uvMin) * (expand / max(abs(glyphSize), vec2(1e-6)));
+        vec2 glyphDirection = vec2(
+            glyphSize.x < 0.0 ? -1.0 : 1.0,
+            glyphSize.y < 0.0 ? -1.0 : 1.0);
+        glyphMin -= expand * glyphDirection;
+        glyphSize += expand * 2.0 * glyphDirection;
+        uvMin -= uvExpand;
+        uvMax += uvExpand;
+    }
+
+	vec4 position = vec4((glyphMin + (corner * glyphSize)), 0.0f, 1.0f);
 	
 	FragPosLocal = position.xyz;
 	FragPos = (mvpMatrix * position).xyz;
 	gl_Position = mvpMatrix * position;
 	FragNorm = Normal;
-	FragUV0 = mix(uv.xy, uv.zw, Position.xy);
+	FragUV0 = mix(uvMin, uvMax, corner);
 	GlyphUVBounds = uv;
 }
