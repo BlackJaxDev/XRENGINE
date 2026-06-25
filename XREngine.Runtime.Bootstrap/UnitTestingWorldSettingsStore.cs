@@ -7,6 +7,8 @@ namespace XREngine.Runtime.Bootstrap;
 public static class UnitTestingWorldSettingsStore
 {
     public const string SettingsFileName = "UnitTestingWorldSettings.jsonc";
+    private const string MonadoServiceProcessName = "monado-service";
+    private const string MonadoServiceExeName = "monado-service.exe";
     private static readonly JsonSerializerSettings JsonSettings = new()
     {
         Formatting = Formatting.Indented,
@@ -287,7 +289,10 @@ public static class UnitTestingWorldSettingsStore
             settings.VR = CreateVrSettingsFromLegacyFields(settings);
 
         ApplyVrModeToFlatFields(settings);
+        ApplyMonadoRenderBackendCompatibility(settings);
         ApplyOpenXrRuntimeJson(settings);
+        ApplyOpenXrLoaderPath(settings);
+        ApplyMonadoServiceStartup(settings);
     }
 
     public static void ApplyAudioOverrides(UnitTestingWorldSettings settings)
@@ -424,6 +429,32 @@ public static class UnitTestingWorldSettingsStore
         settings.AllowEditingInVR = settings.VR.AllowDesktopEditing;
     }
 
+    private static void ApplyMonadoRenderBackendCompatibility(UnitTestingWorldSettings settings)
+    {
+        if (settings.VR.Mode != UnitTestingVrLaunchMode.MonadoOpenXR)
+            return;
+
+        if (!settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering)))
+            return;
+
+        if (settings.Rendering.RenderBackend != ERenderLibrary.Vulkan)
+            return;
+
+        string? renderApiEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderApi);
+        if (!string.IsNullOrWhiteSpace(renderApiEnv))
+        {
+            Debug.Out(
+                "[UnitTestingWorldSettings] VR.Mode=MonadoOpenXR with Rendering.RenderBackend=Vulkan was explicitly requested by XRE_UNIT_TEST_RENDER_API. " +
+                "This is a diagnostic lane only until the Vulkan renderer creates OpenXR-compatible instance/device extensions.");
+            return;
+        }
+
+        settings.Rendering.RenderBackend = ERenderLibrary.OpenGL;
+        Debug.Out(
+            "[UnitTestingWorldSettings] VR.Mode=MonadoOpenXR currently requires the OpenGL backend on Windows. " +
+            "Normalized Rendering.RenderBackend from Vulkan to OpenGL for this launch. Set XRE_UNIT_TEST_RENDER_API=Vulkan to intentionally test the unsupported Vulkan OpenXR path.");
+    }
+
     private static void ApplyOpenXrRuntimeJson(UnitTestingWorldSettings settings)
     {
         if (settings.VR.Mode is not (UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR))
@@ -468,6 +499,118 @@ public static class UnitTestingWorldSettingsStore
         Debug.Out($"[UnitTestingWorldSettings] Set process XR_RUNTIME_JSON from VR.OpenXrRuntimeJson: {resolvedRuntimeJson}");
     }
 
+    private static void ApplyOpenXrLoaderPath(UnitTestingWorldSettings settings)
+    {
+        if (settings.VR.Mode != UnitTestingVrLaunchMode.MonadoOpenXR)
+            return;
+
+        string? loaderPath = TryAutoDetectOpenXrLoader();
+        if (string.IsNullOrWhiteSpace(loaderPath))
+        {
+            Debug.Out("[UnitTestingWorldSettings] VR.Mode=MonadoOpenXR but openxr_loader.dll was not auto-detected. OpenXR startup will rely on the app directory and process PATH.");
+            return;
+        }
+
+        string? loaderDirectory = Path.GetDirectoryName(loaderPath);
+        if (string.IsNullOrWhiteSpace(loaderDirectory))
+            return;
+
+        PrependProcessPath(loaderDirectory);
+        Debug.Out($"[UnitTestingWorldSettings] Added OpenXR loader directory to process PATH: {loaderDirectory}");
+    }
+
+    private static void ApplyMonadoServiceStartup(UnitTestingWorldSettings settings)
+    {
+        if (settings.VR.Mode != UnitTestingVrLaunchMode.MonadoOpenXR)
+            return;
+
+        if (TryGetRunningMonadoService(out int existingPid, out string? existingPath))
+        {
+            Debug.Out($"[UnitTestingWorldSettings] Reusing running Monado service pid={existingPid} path='{existingPath ?? "<unknown>"}'.");
+            return;
+        }
+
+        string? runtimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        if (string.IsNullOrWhiteSpace(runtimeJson))
+            runtimeJson = settings.VR.OpenXrRuntimeJson;
+        if (string.IsNullOrWhiteSpace(runtimeJson))
+            runtimeJson = TryAutoDetectMonadoRuntimeJson();
+
+        if (string.IsNullOrWhiteSpace(runtimeJson))
+        {
+            Debug.Out("[UnitTestingWorldSettings] VR.Mode=MonadoOpenXR but no Monado runtime manifest was available for service startup.");
+            return;
+        }
+
+        if (!TryReadOpenXrRuntimeManifest(runtimeJson, out string resolvedRuntimeJson, out string? runtimeName, out string? runtimeLibraryPath, out string? manifestError))
+        {
+            Debug.Out($"[UnitTestingWorldSettings] Could not start Monado service because the OpenXR runtime manifest is invalid: {manifestError}");
+            return;
+        }
+
+        if (!LooksLikeMonadoRuntime(resolvedRuntimeJson, runtimeName))
+        {
+            Debug.Out($"[UnitTestingWorldSettings] VR.Mode=MonadoOpenXR selected, but active XR runtime '{runtimeName ?? "<unknown>"}' does not look like Monado. Service startup skipped.");
+            return;
+        }
+
+        string? servicePath = EnumerateMonadoServiceCandidates(resolvedRuntimeJson, runtimeLibraryPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(File.Exists);
+        if (string.IsNullOrWhiteSpace(servicePath))
+        {
+            Debug.Out($"[UnitTestingWorldSettings] Could not locate {MonadoServiceExeName} near Monado runtime manifest '{resolvedRuntimeJson}'. OpenXR startup may fail with ErrorRuntimeUnavailable.");
+            return;
+        }
+
+        string? serviceDirectory = Path.GetDirectoryName(servicePath);
+        string? runtimeLibraryDirectory = Path.GetDirectoryName(runtimeLibraryPath);
+        if (!string.IsNullOrWhiteSpace(runtimeLibraryDirectory))
+            PrependProcessPath(runtimeLibraryDirectory);
+        if (!string.IsNullOrWhiteSpace(serviceDirectory))
+            PrependProcessPath(serviceDirectory);
+
+        try
+        {
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = servicePath,
+                WorkingDirectory = serviceDirectory ?? Environment.CurrentDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            startInfo.Environment[XREngineEnvironmentVariables.XrRuntimeJson] = resolvedRuntimeJson;
+            startInfo.Environment[XREngineEnvironmentVariables.Path] = BuildProcessPathWithPrependedDirectories(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path),
+                runtimeLibraryDirectory,
+                serviceDirectory);
+
+            System.Diagnostics.Process? process = System.Diagnostics.Process.Start(startInfo);
+            if (process is null)
+            {
+                Debug.Out($"[UnitTestingWorldSettings] Failed to start Monado service from '{servicePath}': Process.Start returned null.");
+                return;
+            }
+
+            using (process)
+            {
+                process.WaitForExit(750);
+                if (process.HasExited)
+                {
+                    Debug.Out($"[UnitTestingWorldSettings] Monado service exited immediately with code {process.ExitCode}: {servicePath}");
+                    return;
+                }
+
+                Debug.Out($"[UnitTestingWorldSettings] Started Monado service pid={process.Id}: {servicePath}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.Out($"[UnitTestingWorldSettings] Failed to start Monado service from '{servicePath}': {ex.Message}");
+        }
+    }
+
     private static string? TryAutoDetectMonadoRuntimeJson()
     {
         List<string> manifestErrors = [];
@@ -506,7 +649,9 @@ public static class UnitTestingWorldSettingsStore
         if (!string.IsNullOrWhiteSpace(monadoInstallDir))
         {
             yield return ResolveSettingsPath(Path.Combine(monadoInstallDir, "share", "openxr", "1", "openxr_monado.json"));
+            yield return ResolveSettingsPath(Path.Combine(monadoInstallDir, "share", "openxr", "1", "openxr_monado-dev.json"));
             yield return ResolveSettingsPath(Path.Combine(monadoInstallDir, "openxr_monado.json"));
+            yield return ResolveSettingsPath(Path.Combine(monadoInstallDir, "openxr_monado-dev.json"));
             yield return ResolveSettingsPath(Path.Combine(monadoInstallDir, "bin", "openxr_monado.json"));
         }
 
@@ -514,20 +659,130 @@ public static class UnitTestingWorldSettingsStore
         if (!string.IsNullOrWhiteSpace(programFiles))
         {
             yield return ResolveSettingsPath(Path.Combine(programFiles, "Monado", "share", "openxr", "1", "openxr_monado.json"));
+            yield return ResolveSettingsPath(Path.Combine(programFiles, "Monado", "share", "openxr", "1", "openxr_monado-dev.json"));
             yield return ResolveSettingsPath(Path.Combine(programFiles, "Monado", "openxr_monado.json"));
+            yield return ResolveSettingsPath(Path.Combine(programFiles, "Monado", "openxr_monado-dev.json"));
         }
 
         string? programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
         if (!string.IsNullOrWhiteSpace(programFilesX86))
+        {
             yield return ResolveSettingsPath(Path.Combine(programFilesX86, "Monado", "share", "openxr", "1", "openxr_monado.json"));
+            yield return ResolveSettingsPath(Path.Combine(programFilesX86, "Monado", "share", "openxr", "1", "openxr_monado-dev.json"));
+        }
 
         string? localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (!string.IsNullOrWhiteSpace(localAppData))
+        {
             yield return ResolveSettingsPath(Path.Combine(localAppData, "Monado", "openxr_monado.json"));
+            yield return ResolveSettingsPath(Path.Combine(localAppData, "Monado", "openxr_monado-dev.json"));
+        }
 
-        yield return ResolveSettingsPath(Path.Combine("Build", "Submodules", "monado", "build", "openxr_monado.json"));
         yield return ResolveSettingsPath(Path.Combine("Build", "Deps", "Monado", "openxr_monado.json"));
+        yield return ResolveSettingsPath(Path.Combine("Build", "Deps", "Monado", "openxr_monado-dev.json"));
+        yield return ResolveSettingsPath(Path.Combine("Build", "Deps", "Monado", "share", "openxr", "1", "openxr_monado.json"));
+        yield return ResolveSettingsPath(Path.Combine("Build", "Deps", "Monado", "share", "openxr", "1", "openxr_monado-dev.json"));
+        yield return ResolveSettingsPath(Path.Combine("Build", "Submodules", "monado", "build", "openxr_monado.json"));
+        yield return ResolveSettingsPath(Path.Combine("Build", "Submodules", "monado", "build", "openxr_monado-dev.json"));
         yield return ResolveSettingsPath(Path.Combine("ThirdParty", "Monado", "openxr_monado.json"));
+        yield return ResolveSettingsPath(Path.Combine("ThirdParty", "Monado", "openxr_monado-dev.json"));
+    }
+
+    private static string? TryAutoDetectOpenXrLoader()
+    {
+        foreach (string candidate in EnumerateOpenXrLoaderCandidates().Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> EnumerateOpenXrLoaderCandidates()
+    {
+        string? monadoInstallDir = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MonadoInstallDir);
+        if (!string.IsNullOrWhiteSpace(monadoInstallDir))
+        {
+            yield return ResolveSettingsPath(Path.Combine(monadoInstallDir, "bin", "openxr_loader.dll"));
+            yield return ResolveSettingsPath(Path.Combine(monadoInstallDir, "openxr_loader.dll"));
+        }
+
+        yield return ResolveSettingsPath(Path.Combine("Build", "Dependencies", "vcpkg", "installed", "x64-windows", "bin", "openxr_loader.dll"));
+        yield return ResolveSettingsPath(Path.Combine("Build", "Submodules", "monado", "build", "vcpkg_installed", "x64-windows", "bin", "openxr_loader.dll"));
+        yield return ResolveSettingsPath(Path.Combine("Build", "Deps", "Monado", "bin", "openxr_loader.dll"));
+
+        string? programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        if (!string.IsNullOrWhiteSpace(programFiles))
+        {
+            yield return ResolveSettingsPath(Path.Combine(programFiles, "Monado", "bin", "openxr_loader.dll"));
+            yield return ResolveSettingsPath(Path.Combine(programFiles, "Monado", "openxr_loader.dll"));
+            yield return ResolveSettingsPath(Path.Combine(programFiles, "Oculus", "Support", "oculus-runtime", "openxr_loader.dll"));
+        }
+
+        string? programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        if (!string.IsNullOrWhiteSpace(programFilesX86))
+        {
+            yield return ResolveSettingsPath(Path.Combine(programFilesX86, "Monado", "bin", "openxr_loader.dll"));
+            yield return ResolveSettingsPath(Path.Combine(programFilesX86, "Monado", "openxr_loader.dll"));
+            yield return ResolveSettingsPath(Path.Combine(programFilesX86, "Steam", "steamapps", "common", "SteamVR", "bin", "win64", "openxr_loader.dll"));
+        }
+
+        string? path = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
+        if (string.IsNullOrWhiteSpace(path))
+            yield break;
+
+        foreach (string pathEntry in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string? candidate = TryResolveSettingsPath(Path.Combine(pathEntry, "openxr_loader.dll"));
+            if (!string.IsNullOrWhiteSpace(candidate))
+                yield return candidate;
+        }
+    }
+
+    private static void PrependProcessPath(string directory)
+    {
+        string resolvedDirectory = Path.GetFullPath(directory);
+        string? currentPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
+        List<string> entries = string.IsNullOrWhiteSpace(currentPath)
+            ? []
+            : currentPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+        if (entries.Any(entry => IsSameDirectory(entry, resolvedDirectory)))
+            return;
+
+        string updatedPath = entries.Count == 0
+            ? resolvedDirectory
+            : resolvedDirectory + Path.PathSeparator + string.Join(Path.PathSeparator, entries);
+        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.Path, updatedPath, EnvironmentVariableTarget.Process);
+    }
+
+    private static bool IsSameDirectory(string left, string right)
+    {
+        try
+        {
+            return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsPathUnderDirectory(string path, string directory)
+    {
+        try
+        {
+            string fullPath = Path.GetFullPath(path);
+            string fullDirectory = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return fullPath.Equals(fullDirectory, StringComparison.OrdinalIgnoreCase)
+                || fullPath.StartsWith(fullDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || fullPath.StartsWith(fullDirectory + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool TryValidateOpenXrRuntimeManifest(
@@ -536,8 +791,19 @@ public static class UnitTestingWorldSettingsStore
         out string? runtimeName,
         out string? error)
     {
+        return TryReadOpenXrRuntimeManifest(manifestPath, out resolvedManifestPath, out runtimeName, out _, out error);
+    }
+
+    private static bool TryReadOpenXrRuntimeManifest(
+        string manifestPath,
+        out string resolvedManifestPath,
+        out string? runtimeName,
+        out string? resolvedLibraryPath,
+        out string? error)
+    {
         resolvedManifestPath = ResolveSettingsPath(manifestPath);
         runtimeName = null;
+        resolvedLibraryPath = null;
         error = null;
 
         try
@@ -558,7 +824,7 @@ public static class UnitTestingWorldSettingsStore
                 return false;
             }
 
-            string resolvedLibraryPath = ResolveRuntimeLibraryPath(resolvedManifestPath, libraryPath);
+            resolvedLibraryPath = ResolveRuntimeLibraryPath(resolvedManifestPath, libraryPath);
             if (!File.Exists(resolvedLibraryPath))
             {
                 error = $"Resolved runtime library does not exist: {resolvedLibraryPath}";
@@ -572,6 +838,104 @@ public static class UnitTestingWorldSettingsStore
             error = ex.Message;
             return false;
         }
+    }
+
+    private static bool LooksLikeMonadoRuntime(string runtimeJson, string? runtimeName)
+        => (!string.IsNullOrWhiteSpace(runtimeName) && runtimeName.Contains("Monado", StringComparison.OrdinalIgnoreCase))
+        || Path.GetFileName(runtimeJson).Contains("monado", StringComparison.OrdinalIgnoreCase);
+
+    private static IEnumerable<string> EnumerateMonadoServiceCandidates(string runtimeJson, string? runtimeLibraryPath)
+    {
+        string? manifestDirectory = Path.GetDirectoryName(runtimeJson);
+        if (!string.IsNullOrWhiteSpace(manifestDirectory))
+        {
+            yield return Path.Combine(manifestDirectory, MonadoServiceExeName);
+            yield return Path.Combine(manifestDirectory, "bin", MonadoServiceExeName);
+        }
+
+        string? runtimeLibraryDirectory = string.IsNullOrWhiteSpace(runtimeLibraryPath) ? null : Path.GetDirectoryName(runtimeLibraryPath);
+        if (!string.IsNullOrWhiteSpace(runtimeLibraryDirectory))
+        {
+            yield return Path.Combine(runtimeLibraryDirectory, MonadoServiceExeName);
+
+            string? runtimeInstallDirectory = Path.GetDirectoryName(runtimeLibraryDirectory);
+            if (!string.IsNullOrWhiteSpace(runtimeInstallDirectory))
+                yield return Path.Combine(runtimeInstallDirectory, "bin", MonadoServiceExeName);
+        }
+
+        string stagedInstallRoot = ResolveSettingsPath(Path.Combine("Build", "Deps", "Monado"));
+        if (IsPathUnderDirectory(runtimeJson, stagedInstallRoot))
+            yield return Path.Combine(stagedInstallRoot, "bin", MonadoServiceExeName);
+
+        string buildRoot = ResolveSettingsPath(Path.Combine("Build", "Submodules", "monado", "build"));
+        if (IsPathUnderDirectory(runtimeJson, buildRoot))
+            yield return Path.Combine(buildRoot, "src", "xrt", "targets", "service", MonadoServiceExeName);
+    }
+
+    private static bool TryGetRunningMonadoService(out int pid, out string? processPath)
+    {
+        pid = 0;
+        processPath = null;
+
+        foreach (System.Diagnostics.Process process in System.Diagnostics.Process.GetProcessesByName(MonadoServiceProcessName))
+        {
+            using (process)
+            {
+                try
+                {
+                    if (process.HasExited)
+                        continue;
+
+                    pid = process.Id;
+                    processPath = TryGetProcessPath(process);
+                    return true;
+                }
+                catch
+                {
+                    // Process may exit between enumeration and inspection.
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static string? TryGetProcessPath(System.Diagnostics.Process process)
+    {
+        try
+        {
+            return process.MainModule?.FileName;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string BuildProcessPathWithPrependedDirectories(string? currentPath, params string?[] directories)
+    {
+        List<string> entries = string.IsNullOrWhiteSpace(currentPath)
+            ? []
+            : currentPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+        List<string> prepended = [];
+        foreach (string? directory in directories)
+        {
+            if (string.IsNullOrWhiteSpace(directory))
+                continue;
+
+            string resolvedDirectory = Path.GetFullPath(directory);
+            if (!prepended.Any(entry => IsSameDirectory(entry, resolvedDirectory)))
+                prepended.Add(resolvedDirectory);
+        }
+
+        foreach (string entry in entries)
+        {
+            if (!prepended.Any(prependedEntry => IsSameDirectory(prependedEntry, entry)))
+                prepended.Add(entry);
+        }
+
+        return string.Join(Path.PathSeparator, prepended);
     }
 
     private static string ResolveRuntimeLibraryPath(string manifestPath, string libraryPath)
@@ -591,6 +955,18 @@ public static class UnitTestingWorldSettingsStore
             return Path.GetFullPath(expanded);
 
         return Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, expanded));
+    }
+
+    private static string? TryResolveSettingsPath(string path)
+    {
+        try
+        {
+            return ResolveSettingsPath(path);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static void MarkJsonPropertySpecified(UnitTestingWorldSettings settings, string propertyName)

@@ -92,6 +92,9 @@ public unsafe partial class OpenXRAPI
     private uint _smokeLocatedViewCount;
 
     public long SmokeSubmittedFrameCount => Volatile.Read(ref _smokeSubmittedFrameCount);
+    public long SmokeNoLayerFrameCount => Volatile.Read(ref _smokeNoLayerFrameCount);
+    public long SmokeCompletedFrameCount => SmokeSubmittedFrameCount + SmokeNoLayerFrameCount;
+    public bool SmokeTeardownCompleted => Volatile.Read(ref _smokeTeardownCompleted) != 0;
 
     public OpenXrSmokeSummary CreateSmokeSummary(string? logDirectory = null)
     {

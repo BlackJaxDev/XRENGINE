@@ -559,6 +559,36 @@ namespace XREngine.Rendering
             }
         }
 
+        private XRCamera? ResolveActiveCameraWithPawnRefresh()
+        {
+            XRCamera? camera = ActiveCamera;
+            if (camera is not null)
+                return camera;
+
+            TryRefreshControlledPawnCamera();
+            return ActiveCamera;
+        }
+
+        private void TryRefreshControlledPawnCamera()
+        {
+            IPawnController? player = AssociatedPlayer;
+            if (player?.LocalPlayerIndex is ELocalPlayerIndex localPlayerIndex)
+            {
+                IPawnController? currentPlayer = RuntimeEngine.State.GetLocalPlayer(localPlayerIndex);
+                if (currentPlayer is not null && !ReferenceEquals(currentPlayer, player))
+                {
+                    AssociatedPlayer = currentPlayer;
+                    player = currentPlayer;
+                }
+            }
+
+            if ((player?.ControlledPawnComponent as IRuntimeInputControllablePawn)?.RuntimeCameraComponent is not CameraComponent cameraComponent)
+                return;
+
+            CameraComponent = cameraComponent;
+            EnsureViewportBoundToCamera();
+        }
+
         void IRuntimeLocalPlayerViewport.RefreshControlledPawnCamera(XRComponent? controlledPawnComponent)
         {
             CameraComponent = (controlledPawnComponent as IRuntimeInputControllablePawn)?.RuntimeCameraComponent as CameraComponent;
@@ -738,7 +768,7 @@ namespace XREngine.Rendering
                 AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
 */
 
-            XRCamera? camera = cameraOverride ?? ActiveCamera;
+            XRCamera? camera = cameraOverride ?? ResolveActiveCameraWithPawnRefresh();
             if (camera is null)
             {
                 Debug.RenderingWarningEvery(
@@ -1005,7 +1035,7 @@ namespace XREngine.Rendering
             if (ShouldSuspendPipelineWork(nameof(Render)))
                 return;
 
-            XRCamera? camera = cameraOverride ?? ActiveCamera;
+            XRCamera? camera = cameraOverride ?? ResolveActiveCameraWithPawnRefresh();
             if (camera is null)
             {
                 Debug.RenderingWarningEvery(

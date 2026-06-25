@@ -12,6 +12,7 @@ using XREngine.Timers;
 
 namespace XREngine.Components.Capture.Lights
 {
+    [CookedBinaryReflectionOnly]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.LightProbeComponentEditor")]
     public partial class LightProbeComponent : SceneCaptureComponent, IRenderable, IVertex
     {

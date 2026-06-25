@@ -59,17 +59,28 @@ else {
 
     if (-not [string]::IsNullOrWhiteSpace($env:MONADO_INSTALL_DIR)) {
         Add-Candidate -Candidates $candidates -Path (Join-Path $env:MONADO_INSTALL_DIR "share\openxr\1\openxr_monado.json")
+        Add-Candidate -Candidates $candidates -Path (Join-Path $env:MONADO_INSTALL_DIR "share\openxr\1\openxr_monado-dev.json")
         Add-Candidate -Candidates $candidates -Path (Join-Path $env:MONADO_INSTALL_DIR "openxr_monado.json")
+        Add-Candidate -Candidates $candidates -Path (Join-Path $env:MONADO_INSTALL_DIR "openxr_monado-dev.json")
         Add-Candidate -Candidates $candidates -Path (Join-Path $env:MONADO_INSTALL_DIR "bin\openxr_monado.json")
     }
 
     Add-Candidate -Candidates $candidates -Path "$env:ProgramFiles\Monado\share\openxr\1\openxr_monado.json"
+    Add-Candidate -Candidates $candidates -Path "$env:ProgramFiles\Monado\share\openxr\1\openxr_monado-dev.json"
     Add-Candidate -Candidates $candidates -Path "$env:ProgramFiles\Monado\openxr_monado.json"
+    Add-Candidate -Candidates $candidates -Path "$env:ProgramFiles\Monado\openxr_monado-dev.json"
     Add-Candidate -Candidates $candidates -Path "${env:ProgramFiles(x86)}\Monado\share\openxr\1\openxr_monado.json"
+    Add-Candidate -Candidates $candidates -Path "${env:ProgramFiles(x86)}\Monado\share\openxr\1\openxr_monado-dev.json"
     Add-Candidate -Candidates $candidates -Path "$env:LOCALAPPDATA\Monado\openxr_monado.json"
-    Add-Candidate -Candidates $candidates -Path "Build\Submodules\monado\build\openxr_monado.json"
+    Add-Candidate -Candidates $candidates -Path "$env:LOCALAPPDATA\Monado\openxr_monado-dev.json"
     Add-Candidate -Candidates $candidates -Path "Build\Deps\Monado\openxr_monado.json"
+    Add-Candidate -Candidates $candidates -Path "Build\Deps\Monado\openxr_monado-dev.json"
+    Add-Candidate -Candidates $candidates -Path "Build\Deps\Monado\share\openxr\1\openxr_monado.json"
+    Add-Candidate -Candidates $candidates -Path "Build\Deps\Monado\share\openxr\1\openxr_monado-dev.json"
+    Add-Candidate -Candidates $candidates -Path "Build\Submodules\monado\build\openxr_monado.json"
+    Add-Candidate -Candidates $candidates -Path "Build\Submodules\monado\build\openxr_monado-dev.json"
     Add-Candidate -Candidates $candidates -Path "ThirdParty\Monado\openxr_monado.json"
+    Add-Candidate -Candidates $candidates -Path "ThirdParty\Monado\openxr_monado-dev.json"
 }
 
 $uniqueCandidates = $candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
@@ -96,10 +107,16 @@ foreach ($candidate in $uniqueCandidates) {
             throw "Resolved runtime library does not exist: $resolvedLibraryPath"
         }
 
+        $runtimeVersion = ""
+        $apiVersionProperty = $manifest.runtime.PSObject.Properties["api_version"]
+        if ($null -ne $apiVersionProperty) {
+            $runtimeVersion = [string]$apiVersionProperty.Value
+        }
+
         [pscustomobject]@{
             RuntimeJson       = [System.IO.Path]::GetFullPath($candidate)
             RuntimeName       = [string]$manifest.runtime.name
-            RuntimeVersion    = [string]$manifest.runtime.api_version
+            RuntimeVersion    = $runtimeVersion
             LibraryPath       = $resolvedLibraryPath
             ManifestDirectory = Split-Path -Parent ([System.IO.Path]::GetFullPath($candidate))
         }
@@ -113,7 +130,7 @@ foreach ($candidate in $uniqueCandidates) {
 $message = @"
 Could not locate a usable Monado OpenXR runtime manifest.
 
-Pass -RuntimeJson <path-to-openxr_monado.json>, set XR_RUNTIME_JSON for this process, set MONADO_RUNTIME_JSON, or set MONADO_INSTALL_DIR.
+Pass -RuntimeJson <path-to-openxr_monado.json>, run Tools\OpenXR\Install-Monado.ps1, set XR_RUNTIME_JSON for this process, set MONADO_RUNTIME_JSON, or set MONADO_INSTALL_DIR.
 No registry values were read or written by this script.
 
 Candidates checked:

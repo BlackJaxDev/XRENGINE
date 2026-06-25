@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 using System.Reflection;
 using System.Threading.Tasks;
@@ -51,6 +52,33 @@ public sealed class LightProbeComponentYamlDeserializationTests : GpuTestBase
     }
 
     [Test]
+    public void CookedBinarySerializer_RoundTrips_SceneNodeWithLightProbe_WithoutMemoryPackProbeWarning()
+    {
+        ConcurrentDictionary<Type, byte> loggedFailures = GetLoggedMemoryPackSerializationFailures();
+        loggedFailures.Clear();
+
+        SceneNode original = new("LightProbeNode", new Transform());
+        LightProbeComponent probe = original.AddComponent<LightProbeComponent>()!;
+        probe.PreviewEnabled = true;
+        probe.PreviewDisplay = LightProbeComponent.ERenderPreview.Prefilter;
+        probe.InfluenceShape = LightProbeComponent.EInfluenceShape.Box;
+
+        byte[] bytes = CookedBinarySerializer.Serialize(original);
+        bytes.Length.ShouldBeGreaterThan(0);
+        loggedFailures.ContainsKey(typeof(LightProbeComponent)).ShouldBeFalse();
+
+        SceneNode? cloneNode = CookedBinarySerializer.Deserialize(typeof(SceneNode), bytes) as SceneNode;
+        cloneNode.ShouldNotBeNull();
+
+        LightProbeComponent? clone = cloneNode!.GetComponent<LightProbeComponent>();
+        clone.ShouldNotBeNull();
+        clone!.SceneNode.ShouldBeSameAs(cloneNode);
+        clone.PreviewEnabled.ShouldBeTrue();
+        clone.PreviewDisplay.ShouldBe(LightProbeComponent.ERenderPreview.Prefilter);
+        clone.InfluenceShape.ShouldBe(LightProbeComponent.EInfluenceShape.Box);
+    }
+
+    [Test]
     public void GridSpawnerApplyDefaults_DisabledPreview_DoesNotLoadPreviewShader()
     {
         ClearEngineShaderLoadTaskCache();
@@ -72,6 +100,15 @@ public sealed class LightProbeComponentYamlDeserializationTests : GpuTestBase
 
         probe.PreviewEnabled.ShouldBeFalse();
         probe.AutoShowPreviewOnSelect.ShouldBeTrue();
+    }
+
+    private static ConcurrentDictionary<Type, byte> GetLoggedMemoryPackSerializationFailures()
+    {
+        FieldInfo field = typeof(CookedBinarySerializer).GetField(
+            "LoggedMemoryPackSerializationFailures",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+
+        return (ConcurrentDictionary<Type, byte>)field.GetValue(null)!;
     }
 
     private static void ClearEngineShaderLoadTaskCache()

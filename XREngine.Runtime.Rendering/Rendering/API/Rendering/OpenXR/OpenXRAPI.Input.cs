@@ -172,8 +172,28 @@ public unsafe partial class OpenXRAPI
                 WriteUtf8Z(trackerPoseInfo.LocalizedActionName, 128, "Vive Tracker Pose");
 
                 var trackerResult = Api.CreateAction(_inputActionSet, in trackerPoseInfo, ref _trackerPoseAction);
-                if (trackerResult != Result.Success)
+                if (trackerResult == Result.ErrorPathUnsupported)
+                {
+                    Debug.Out("OpenXR: optional Vive tracker role paths are not supported by this runtime; tracker pose input is disabled for this session.");
+                    lock (_openXrPoseLock)
+                    {
+                        foreach (var rolePath in _trackerSubactionPaths.Keys)
+                            _openXrKnownTrackerPaths.Remove(rolePath);
+                    }
+                    _trackerSubactionPaths.Clear();
+                    _trackerPoseAction = default;
+                }
+                else if (trackerResult != Result.Success)
+                {
                     Debug.LogWarning($"xrCreateAction(tracker_pose) failed: {trackerResult}");
+                    lock (_openXrPoseLock)
+                    {
+                        foreach (var rolePath in _trackerSubactionPaths.Keys)
+                            _openXrKnownTrackerPaths.Remove(rolePath);
+                    }
+                    _trackerSubactionPaths.Clear();
+                    _trackerPoseAction = default;
+                }
             }
         }
     }

@@ -172,19 +172,36 @@ Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runt
 }
 ```
 
-`VR.Mode=Emulated` is scene-only. It does not emulate OpenXR API calls, runtime state, swapchains, poses, or frame submission. `VR.Mode=MonadoOpenXR` uses the real OpenXR loader/API with Monado as the selected runtime. Existing `XR_RUNTIME_JSON` environment values win over `VR.OpenXrRuntimeJson`; when both are empty, the loader searches `MONADO_RUNTIME_JSON`, `MONADO_INSTALL_DIR`, common Monado install paths, and repo-local Monado build/dependency paths.
+`VR.Mode=Emulated` is scene-only. It does not emulate OpenXR API calls, runtime state, swapchains, poses, or frame submission. `VR.Mode=MonadoOpenXR` uses the real OpenXR loader/API with Monado as the selected runtime. Existing `XR_RUNTIME_JSON` environment values win over `VR.OpenXrRuntimeJson`; when both are empty, startup searches `MONADO_RUNTIME_JSON`, `MONADO_INSTALL_DIR`, common Monado install paths, and repo-local Monado build/dependency paths. In Monado mode, startup also prepends the detected `openxr_loader.dll`, Monado runtime, and Monado service directories to the current process `PATH`, then starts `monado-service.exe` when it is not already running.
+
+On Windows, `VR.Mode=MonadoOpenXR` currently normalizes `Rendering.RenderBackend=Vulkan` to `OpenGL` unless `XRE_UNIT_TEST_RENDER_API=Vulkan` is explicitly set. The Vulkan lane is diagnostic only until the renderer creates the OpenXR-compatible Vulkan instance/device requested by `XR_KHR_vulkan_enable2`.
 
 Useful tasks:
 
+- `Install-Monado`
 - `Start-Editor-UnitTesting-OpenXR-Monado-NoDebug`
 - `Test-OpenXR-Monado-Smoke`
 - `Test-OpenXR-SceneOnlyVR-Smoke`
+
+Monado does not currently provide a generic Windows binary installer, so the repo tool builds and stages it from source:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Tools\OpenXR\Install-Monado.ps1 -InstallPrerequisites
+```
+
+The script clones Monado into `Build\Submodules\monado`, builds it with CMake/Ninja/vcpkg, installs/stages it under `Build\Deps\Monado`, writes `Build\Deps\Monado\monado-env.ps1`, ensures the Khronos `openxr_loader.dll` is available through vcpkg, and copies that loader into the current editor output when the output directory exists. It does not write the Windows OpenXR active-runtime registry key. `ExecTool` option 42 and the `Install-Monado` VS Code task pass `-InstallPrerequisites` automatically so CMake, Ninja, Python, or the Vulkan SDK can be installed through `winget`; Visual Studio 2022 Build Tools with the C++ workload is still required.
 
 Command-line Monado smoke example:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File Tools\OpenXR\Run-OpenXrMonadoSmoke.ps1 -RuntimeJson C:\path\to\openxr_monado.json -SmokeFrames 120
 ```
+
+On Monado's Windows no-HMD runtime, a passing smoke can complete OpenXR frames
+with `ShouldRender=false`; these are counted as no-layer `xrEndFrame` calls in
+the summary. After the summary is written, the runner treats it as the
+authoritative pass/fail result and may terminate a lingering editor process
+that has already finished the smoke contract.
 
 For script-driven launches, these process-scoped overrides select the lane without editing `Assets/UnitTestingWorldSettings.jsonc`:
 

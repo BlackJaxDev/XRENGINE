@@ -95,6 +95,8 @@ public sealed class OpenXrTimingPipelineContractTests
 
         input.ShouldContain("OpenXrActionSyncHandling == OpenXrActionSyncPolicy.PredictedAndLate");
         input.ShouldContain("_openXrActionsSyncedFrameNumber");
+        input.ShouldContain("Result.ErrorPathUnsupported");
+        input.ShouldContain("optional Vive tracker role paths are not supported");
         xrCalls.ShouldContain("ViewStateFlags.PositionValidBit");
         xrCalls.ShouldContain("RecordVrXrTrackingLossFrame");
     }
@@ -114,15 +116,26 @@ public sealed class OpenXrTimingPipelineContractTests
     public void MonadoSmokeTooling_UsesPerProcessRuntimeSelectionAndLoaderPreflight()
     {
         string finder = ReadWorkspaceFile("Tools/OpenXR/Find-MonadoRuntime.ps1");
+        string installer = ReadWorkspaceFile("Tools/OpenXR/Install-Monado.ps1");
         string service = ReadWorkspaceFile("Tools/OpenXR/Start-MonadoService.ps1");
         string runner = ReadWorkspaceFile("Tools/OpenXR/Run-OpenXrMonadoSmoke.ps1");
         string tasks = ReadWorkspaceFile(".vscode/tasks.json");
 
         finder.ShouldContain(XREngineEnvironmentVariables.XrRuntimeJson);
         finder.ShouldContain(XREngineEnvironmentVariables.MonadoRuntimeJson);
+        finder.ShouldContain("openxr_monado-dev.json");
         finder.ShouldContain("No registry values were read or written by this script.");
         finder.ShouldNotContain("Set-ItemProperty");
         finder.ShouldNotContain("New-ItemProperty");
+
+        installer.ShouldContain("https://gitlab.freedesktop.org/monado/monado.git");
+        installer.ShouldContain("https://github.com/microsoft/vcpkg.git");
+        installer.ShouldContain("XRT_FEATURE_SERVICE=ON");
+        installer.ShouldContain("openxr_loader.dll");
+        installer.ShouldContain(XREngineEnvironmentVariables.MonadoRuntimeJson);
+        installer.ShouldContain("SetUserEnvironment");
+        installer.ShouldNotContain("Set-ItemProperty");
+        installer.ShouldNotContain("New-ItemProperty");
 
         service.ShouldContain("ownedByRunner");
         service.ShouldContain("monado-service.exe");
@@ -139,6 +152,7 @@ public sealed class OpenXrTimingPipelineContractTests
         runner.ShouldContain("-FailOnOpenXrHotPathAllocations");
 
         tasks.ShouldContain("Start-Editor-UnitTesting-OpenXR-Monado-NoDebug");
+        tasks.ShouldContain("Install-Monado");
         tasks.ShouldContain("Test-OpenXR-Monado-Smoke");
         tasks.ShouldContain("Test-OpenXR-SceneOnlyVR-Smoke");
     }
@@ -150,19 +164,25 @@ public sealed class OpenXrTimingPipelineContractTests
         string diagnostics = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SmokeDiagnostics.cs");
         string xrCalls = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs");
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
+        string runtimeStateMachine = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs");
+        string vulkan = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
 
         program.ShouldContain("ExitStartupFailure = 21");
         program.ShouldContain("ExitFrameTimeout = 22");
         program.ShouldContain("ExitSummaryFailure = 23");
         program.ShouldContain("ExitTeardownFailure = 24");
         program.ShouldContain("--openxr-smoke-summary");
-        program.ShouldContain(XREngineEnvironmentVariables.OpenXrSmokeFrames);
+        program.ShouldContain(nameof(XREngineEnvironmentVariables.OpenXrSmokeFrames));
         program.ShouldContain("RequestSmokeSessionExit");
+        program.ShouldContain("CompletedOpenXrFrameCount");
+        program.ShouldContain("NoLayerFrameCount");
 
         diagnostics.ShouldContain("SchemaVersion");
         diagnostics.ShouldContain("RuntimeManifestPath");
         diagnostics.ShouldContain("EnabledExtensions");
         diagnostics.ShouldContain("SubmittedFrameCount");
+        diagnostics.ShouldContain("NoLayerFrameCount");
+        diagnostics.ShouldContain("SmokeCompletedFrameCount");
         diagnostics.ShouldContain("PerEyeAcquireCounts");
         diagnostics.ShouldContain("PredictedActionPoseCacheUpdated");
         diagnostics.ShouldContain("DesktopMirrorComposed");
@@ -174,6 +194,12 @@ public sealed class OpenXrTimingPipelineContractTests
         frameLifecycle.ShouldContain("RecordSmokeEyeAcquire");
         frameLifecycle.ShouldContain("RecordSmokeEyeWait");
         frameLifecycle.ShouldContain("RecordSmokeEyeRelease");
+        runtimeStateMachine.ShouldContain("_runtimeState != OpenXrRuntimeState.SessionRunning");
+        runtimeStateMachine.ShouldContain("state == SessionState.Ready");
+        runtimeStateMachine.ShouldContain("SetRuntimeState(OpenXrRuntimeState.RecreatePending);");
+        vulkan.ShouldContain("Failed to create Vulkan OpenXR session");
+        vulkan.ShouldContain("ErrorGraphicsDeviceInvalid");
+        vulkan.ShouldContain("runtime-required OpenXR Vulkan");
     }
 
     [Test]
@@ -182,18 +208,24 @@ public sealed class OpenXrTimingPipelineContractTests
         string store = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/UnitTestingWorldSettingsStore.cs");
         string program = ReadWorkspaceFile("XREngine.Editor/Program.cs");
         string settings = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/UnitTestingWorldSettings.cs");
+        string editorUnitTestingPawns = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Pawns.cs");
+        string engineState = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Engine.State.cs");
 
         store.ShouldContain("ApplyVrLaunchOverrides");
-        store.ShouldContain(XREngineEnvironmentVariables.UnitTestVrMode);
-        store.ShouldContain(XREngineEnvironmentVariables.UnitTestVrPawn);
-        store.ShouldContain(XREngineEnvironmentVariables.UnitTestUseOpenXr);
-        store.ShouldContain(XREngineEnvironmentVariables.UnitTestSceneOnlyVrPawn);
-        store.ShouldContain(XREngineEnvironmentVariables.UnitTestPreviewVrStereoViews);
-        store.ShouldContain(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson);
-        store.ShouldContain(XREngineEnvironmentVariables.UnitTestRenderApi);
+        store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestVrMode));
+        store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestVrPawn));
+        store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestUseOpenXr));
+        store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestSceneOnlyVrPawn));
+        store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestPreviewVrStereoViews));
+        store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson));
+        store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestRenderApi));
         store.ShouldContain("MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.Rendering))");
         store.ShouldContain("NormalizeVrSettings");
         store.ShouldContain("TryAutoDetectMonadoRuntimeJson");
+        store.ShouldContain("TryAutoDetectOpenXrLoader");
+        store.ShouldContain("ApplyMonadoServiceStartup");
+        store.ShouldContain("monado-service.exe");
+        store.ShouldContain("openxr_monado-dev.json");
 
         program.ShouldContain("VR.Mode=MonadoOpenXR or OpenXR");
 
@@ -201,6 +233,11 @@ public sealed class OpenXrTimingPipelineContractTests
         settings.ShouldContain("MonadoOpenXR");
         settings.ShouldContain("public bool UseOpenXR = false");
         settings.ShouldContain("public bool SceneOnlyVRPawn = false");
+
+        editorUnitTestingPawns.ShouldContain("pawnComp.CameraComponent = cameraComponent");
+        editorUnitTestingPawns.ShouldContain("Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();");
+        engineState.ShouldContain("XRComponent? controlledPawn = existing.ControlledPawnComponent");
+        engineState.ShouldContain("replacement.ControlledPawnComponent = controlledPawn");
     }
 
     [Test]
@@ -208,6 +245,7 @@ public sealed class OpenXrTimingPipelineContractTests
     public void UnitTestingWorld_VrModeNormalizesToRuntimeFlags()
     {
         string? previousRuntimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        string? previousPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
         try
         {
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, @"C:\existing\openxr_runtime.json");
@@ -233,6 +271,59 @@ public sealed class OpenXrTimingPipelineContractTests
         finally
         {
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, previousRuntimeJson);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.Path, previousPath);
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void UnitTestingWorld_MonadoModeNormalizesVulkanBackendToOpenGlUnlessEnvForcesIt()
+    {
+        string? previousRuntimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        string? previousRenderApi = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderApi);
+        string? previousPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, @"C:\existing\openxr_monado.json");
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderApi, null);
+
+            UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.ParseJsonc(
+                """
+                {
+                  "Rendering": {
+                    "RenderBackend": "Vulkan"
+                  },
+                  "VR": {
+                    "Mode": "MonadoOpenXR",
+                    "OpenXrRuntimeJson": null
+                  }
+                }
+                """);
+
+            settings.Rendering.RenderBackend.ShouldBe(ERenderLibrary.OpenGL);
+
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderApi, "Vulkan");
+            settings = UnitTestingWorldSettingsStore.ParseJsonc(
+                """
+                {
+                  "Rendering": {
+                    "RenderBackend": "Vulkan"
+                  },
+                  "VR": {
+                    "Mode": "MonadoOpenXR",
+                    "OpenXrRuntimeJson": null
+                  }
+                }
+                """);
+
+            settings.Rendering.RenderBackend.ShouldBe(ERenderLibrary.Vulkan);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, previousRuntimeJson);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderApi, previousRenderApi);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.Path, previousPath);
         }
     }
 
@@ -243,6 +334,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string? previousRuntimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
         string? previousMonadoRuntimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MonadoRuntimeJson);
         string? previousMonadoInstallDir = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MonadoInstallDir);
+        string? previousPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
         string tempRoot = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
 
         try
@@ -285,6 +377,68 @@ public sealed class OpenXrTimingPipelineContractTests
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, previousRuntimeJson);
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MonadoRuntimeJson, previousMonadoRuntimeJson);
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MonadoInstallDir, previousMonadoInstallDir);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.Path, previousPath);
+
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void UnitTestingWorld_MonadoModeAddsDetectedOpenXrLoaderToProcessPath()
+    {
+        string? previousRuntimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        string? previousMonadoRuntimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MonadoRuntimeJson);
+        string? previousMonadoInstallDir = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MonadoInstallDir);
+        string? previousPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
+        string tempRoot = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+
+        try
+        {
+            string binDir = Path.Combine(tempRoot, "bin");
+            Directory.CreateDirectory(binDir);
+            string manifestPath = Path.Combine(tempRoot, "openxr_monado.json");
+            string runtimeLibraryPath = Path.Combine(binDir, "openxr_monado.dll");
+            string loaderPath = Path.Combine(binDir, "openxr_loader.dll");
+            File.WriteAllText(runtimeLibraryPath, string.Empty);
+            File.WriteAllText(loaderPath, string.Empty);
+            File.WriteAllText(
+                manifestPath,
+                """
+                {
+                  "runtime": {
+                    "name": "Monado",
+                    "library_path": "bin/openxr_monado.dll"
+                  }
+                }
+                """);
+
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, null);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MonadoRuntimeJson, manifestPath);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MonadoInstallDir, tempRoot);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.Path, Environment.SystemDirectory);
+
+            _ = UnitTestingWorldSettingsStore.ParseJsonc(
+                """
+                {
+                  "VR": {
+                    "Mode": "MonadoOpenXR",
+                    "OpenXrRuntimeJson": null
+                  }
+                }
+                """);
+
+            string? updatedPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
+            updatedPath.ShouldNotBeNullOrWhiteSpace();
+            updatedPath!.Split(Path.PathSeparator)[0].ShouldBe(Path.GetFullPath(binDir));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, previousRuntimeJson);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MonadoRuntimeJson, previousMonadoRuntimeJson);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MonadoInstallDir, previousMonadoInstallDir);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.Path, previousPath);
 
             if (Directory.Exists(tempRoot))
                 Directory.Delete(tempRoot, recursive: true);

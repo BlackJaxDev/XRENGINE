@@ -390,6 +390,7 @@ public unsafe partial class OpenXRAPI
     private OpenXrRuntimeLossReason _runtimeLossReason = OpenXrRuntimeLossReason.None;
     private DateTime _nextProbeUtc = DateTime.MinValue;
     private TimeSpan _probeInterval = TimeSpan.FromSeconds(1.5);
+    private readonly TimeSpan _graphicsDeviceFailureProbeInterval = TimeSpan.FromMinutes(1);
     private int _runtimeLossPending;
     private int _sessionRunning;
     private bool _runtimeMonitoringEnabled;

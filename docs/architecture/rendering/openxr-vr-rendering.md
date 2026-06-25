@@ -654,6 +654,15 @@ preflight before editor startup, launches the Unit Testing World with
 - `perFrameAllocationsBytes`, currently zero unless a justified baseline is
   recorded.
 
+Monado's Windows no-HMD path can return `ShouldRender == false` while still
+advancing the OpenXR frame loop. In that case the engine submits valid
+`xrEndFrame` calls with no projection layers; the runner counts these as
+`noLayerFrameCount` and accepts them when no rendered layers were submitted.
+The runner treats the structured summary as the authoritative result once it is
+written. If the editor process lingers or returns the known post-summary native
+shutdown code after a passing summary, the runner terminates/ignores that
+post-summary process state and reports the smoke result from the summary.
+
 A passing summary proves the instance, system, session, swapchain, view locate,
 frame submit, pose-cache, and desktop mirror milestones all happened. Missing
 required fields or failed milestones produce stable smoke exit codes:

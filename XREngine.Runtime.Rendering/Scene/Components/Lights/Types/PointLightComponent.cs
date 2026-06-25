@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene.Transforms;
+using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -21,7 +22,7 @@ namespace XREngine.Components.Capture.Lights.Types
     [Category("Lighting")]
     [DisplayName("Point Light")]
     [Description("Emits omnidirectional light with optional shadow maps for local illumination.")]
-    public class PointLightComponent : LightComponent
+    public class PointLightComponent : LightComponent, IPostCookedBinaryDeserialize
     {
         public const int ShadowFaceCount = 6;
 
@@ -240,6 +241,8 @@ namespace XREngine.Components.Capture.Lights.Types
             if (_viewports.Length == ShadowFaceCount && _shadowCameras.Length == ShadowFaceCount)
                 return;
 
+            EnsureShadowCameras();
+
             uint resolution = ShadowMapResolutionWidth > ShadowMapResolutionHeight
                 ? ShadowMapResolutionWidth
                 : ShadowMapResolutionHeight;
@@ -247,19 +250,10 @@ namespace XREngine.Components.Capture.Lights.Types
                 resolution = 1024u;
 
             _viewports = new XRViewport[ShadowFaceCount].Fill(_ => CreateShadowViewport(resolution));
-            float farPlane = MathF.Max(_influenceVolume.Radius, _shadowNearPlaneDistance + 0.001f);
-            _shadowCameras = XRCubeFrameBuffer.GetCamerasPerFace(_shadowNearPlaneDistance, farPlane, true, _shadowCameraParentTransform);
-
-            if (SceneNode is not null && !SceneNode.IsTransformNull)
-                _shadowCameraParentTransform.Parent = Transform;
 
             for (int i = 0; i < _shadowCameras.Length; i++)
             {
                 XRCamera cam = _shadowCameras[i];
-                cam.CullingMask = DefaultLayers.EverythingExceptGizmos;
-                if (SceneNode is not null && !SceneNode.IsTransformNull)
-                    cam.Transform.Parent = _shadowCameraParentTransform;
-
                 _viewports[i].Camera = cam;
 
                 var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
@@ -277,6 +271,26 @@ namespace XREngine.Components.Capture.Lights.Types
                 _viewports[i].WorldInstanceOverride = IsActiveInHierarchy
                     ? WorldAs<XREngine.Rendering.IRuntimeRenderWorld>()
                     : null;
+            }
+        }
+
+        private void EnsureShadowCameras()
+        {
+            if (_shadowCameras.Length != ShadowFaceCount)
+            {
+                float farPlane = MathF.Max(_influenceVolume.Radius, _shadowNearPlaneDistance + 0.001f);
+                _shadowCameras = XRCubeFrameBuffer.GetCamerasPerFace(_shadowNearPlaneDistance, farPlane, true, _shadowCameraParentTransform);
+            }
+
+            if (SceneNode is not null && !SceneNode.IsTransformNull)
+                _shadowCameraParentTransform.Parent = Transform;
+
+            for (int i = 0; i < _shadowCameras.Length; i++)
+            {
+                XRCamera cam = _shadowCameras[i];
+                cam.CullingMask = DefaultLayers.EverythingExceptGizmos;
+                if (SceneNode is not null && !SceneNode.IsTransformNull)
+                    cam.Transform.Parent = _shadowCameraParentTransform;
             }
         }
 
@@ -775,6 +789,13 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private XRMaterial PointAtlasInstancedShadowMaterial
             => _pointAtlasInstancedShadowMaterial ??= CreatePointAtlasInstancedShadowMaterial();
+
+        void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
+        {
+            EnsureShadowCameras();
+            if (SceneNode is not null && !SceneNode.IsTransformNull)
+                SyncShadowCaptureTransforms();
+        }
 
         private XRMaterial CreateShadowAtlasMaterial()
         {

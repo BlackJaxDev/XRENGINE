@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using XREngine.Components;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Input;
@@ -240,7 +241,9 @@ namespace XREngine
                     if (desiredType.IsInstanceOfType(existing))
                         return existing;
 
-                    // Preserve viewport bindings when swapping controller types so input devices stay wired up.
+                    // Preserve runtime-only bindings when swapping controller types so input devices,
+                    // viewports, and already-constructed editor pawns stay wired up.
+                    XRComponent? controlledPawn = existing.ControlledPawnComponent;
                     var viewportsToReassign = _windows
                         .SelectMany(w => w.Viewports)
                         .Where(vp => vp.AssociatedPlayer == existing)
@@ -249,10 +252,13 @@ namespace XREngine
                     RemoveLocalPlayer(index);
 
                     var replacement = AddLocalPlayer(index, desiredType);
+                    if (controlledPawn is not null)
+                        replacement.ControlledPawnComponent = controlledPawn;
 
                     foreach (var viewport in viewportsToReassign)
                         viewport.AssociatedPlayer = replacement;
 
+                    replacement.OnPawnCameraChanged();
                     return replacement;
                 }
 

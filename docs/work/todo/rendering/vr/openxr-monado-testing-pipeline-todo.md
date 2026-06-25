@@ -112,6 +112,9 @@ Acceptance criteria:
 - [x] Add `Tools/OpenXR/Run-OpenXrMonadoSmoke.ps1`.
 - [x] Resolve `XR_RUNTIME_JSON`, set it only for the child process, and launch
   Unit Testing World through the editor.
+- [x] Add `Tools/OpenXR/Install-Monado.ps1` and the `Install-Monado` task so
+  Windows machines can clone, build, and stage Monado locally when no prebuilt
+  runtime is present.
 - [x] Run a loader preflight before editor startup:
   `xrEnumerateApiLayerProperties` and `xrEnumerateInstanceExtensionProperties`.
 - [x] Fail early when the selected renderer lacks the required OpenXR graphics
@@ -284,9 +287,8 @@ Acceptance criteria:
 - [x] `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`
 - [x] Relevant OpenXR contract tests under `XREngine.UnitTests`.
 - [x] Lane 1 Unit Testing World scene-only VR smoke.
-- [ ] Lane 2 `Run-OpenXrMonadoSmoke.ps1` OpenGL smoke with explicit
-  `XR_RUNTIME_JSON`; not run on 2026-06-24 because no usable Monado runtime
-  manifest was installed or discoverable on this machine.
+- [x] Lane 2 `Run-OpenXrMonadoSmoke.ps1` OpenGL smoke with Monado selected
+  through the process runtime manifest.
 - [x] `Tools/Reports/Find-NewAllocations.ps1 -FailOnOpenXrHotPathAllocations`
   after OpenXR hot-path changes; audit ran and still reports the existing 54
   OpenXR formatted logging candidates. The task diff adds no new
@@ -306,15 +308,18 @@ Acceptance criteria:
 - `dotnet build .\XREngine.Editor\XREngine.Editor.csproj -c Debug
   /property:GenerateFullPaths=true /consoleloggerparameters:NoSummary` passed
   with 0 warnings and 0 errors.
-- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj -c Debug
-  --filter FullyQualifiedName~XREngine.UnitTests.Rendering.OpenXrTimingPipelineContractTests`
-  passed: 12 tests.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj
+  --filter OpenXrTimingPipelineContractTests --no-restore` passed: 16 tests.
+- `Tools/OpenXR/Run-OpenXrMonadoSmoke.ps1 -NoBuild -Renderer OpenGL
+  -SmokeFrames 2 -TimeoutSeconds 45 -SkipAllocationAudit` passed with run root
+  `Build/_AgentValidation/20260624-164119-openxr-monado-smoke`.
+  The summary reported Monado, OpenGL, two no-layer OpenXR frames,
+  `teardownCompleted=true`, and no failures.
 - `Tools/OpenXR/Run-OpenXrSceneOnlyVrSmoke.ps1 -NoBuild -SmokeSeconds 3
   -TimeoutSeconds 20` passed with run root
   `Build/_AgentValidation/20260624-115700-openxr-scene-only-vr-smoke`.
-- `Tools/OpenXR/Find-MonadoRuntime.ps1` failed cleanly with setup guidance and
-  without reading or writing registry state because no Monado manifest was
-  found in the supported locations.
+- `Tools/OpenXR/Find-MonadoRuntime.ps1` locates the repo-staged Monado runtime
+  manifest without reading or writing registry state.
 - `Tools/Reports/Find-NewAllocations.ps1 -FailOnOpenXrHotPathAllocations`
   wrote `Build/_AgentValidation/openxr-monado-allocation-audit.md` and failed on
   the existing 54 OpenXR formatted logging candidates; this remains general
