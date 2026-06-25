@@ -147,6 +147,23 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Install-Monado",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\OpenXR\\Install-Monado.ps1",
+				"-InstallPrerequisites"
+			],
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Test-OpenXR-Monado-Smoke",
 			"type": "shell",
 			"command": "powershell",

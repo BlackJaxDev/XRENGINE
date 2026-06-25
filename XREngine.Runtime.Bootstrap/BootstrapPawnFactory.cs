@@ -265,6 +265,8 @@ public static class BootstrapPawnFactory
             pawnComp = BootstrapFlyableCameraFactory.CreateFlyableCameraPawn(cameraNode, !isServer) as PawnComponent
                 ?? throw new InvalidOperationException("Bootstrap flyable camera factory did not return a PawnComponent.");
             pawnComp.Name = "Desktop Camera Pawn (Flyable)";
+            if (cameraNode.GetComponent<CameraComponent>() is { } cameraComponent)
+                pawnComp.CameraComponent = cameraComponent;
             if (cameraNode.Parent is { } parent)
                 BootstrapEditorBridge.Current?.ConfigureEditorViewCamera(parent, cameraNode);
         }
@@ -272,9 +274,12 @@ public static class BootstrapPawnFactory
         {
             pawnComp = cameraNode.AddComponent<PawnComponent>()!;
             pawnComp.Name = "Desktop Camera Pawn";
+            if (cameraNode.GetComponent<CameraComponent>() is { } cameraComponent)
+                pawnComp.CameraComponent = cameraComponent;
         }
 
         pawnComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
+        Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();
         return pawnComp;
     }
 

@@ -59,6 +59,7 @@ call :AddTool "Deps" "Tools\Dependencies\Get-StreamlineSdk.ps1" "Download NVIDIA
 call :AddTool "Deps" "Tools\Dependencies\Get-Phonon.ps1" "Download Steam Audio (Phonon) native library"
 call :AddTool "Deps" "Tools\Dependencies\Get-UltralightResources.ps1" "Download Ultralight runtime resources (icudt67l.dat, cacert.pem)"
 call :AddTool "Deps" "Tools\Dependencies\Get-YtDlp.ps1" "Download yt-dlp for YouTube URL extraction"
+call :AddTool "Deps" "Tools\OpenXR\Install-Monado.ps1 -InstallPrerequisites" "Clone, build, and stage Monado for OpenXR no-HMD testing"
 call :AddRunAll "Deps"
 
 REM ── Handle arguments ──────────────────────────────────────────────────────
@@ -137,19 +138,12 @@ echo  Running: !CMD!
 echo  ============================================================
 echo.
 
-REM Route based on extension
-if /I "!CMD:~-4!"==".ps1" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "!CMD!"
-) else if /I "!CMD:~-4!"==".bat" (
-    call "!CMD!"
-) else (
-    echo  Unknown script type: !CMD!
-    exit /b 1
-)
+call :RunScriptCommand "!CMD!"
+set "TOOL_EXIT=!ERRORLEVEL!"
 
 echo.
 echo  ============================================================
-echo  Tool finished with exit code: %ERRORLEVEL%
+echo  Tool finished with exit code: !TOOL_EXIT!
 echo  ============================================================
 
 if "%~1"=="" (
@@ -171,13 +165,10 @@ for /L %%i in (1,1,%TOOL_COUNT%) do (
         echo  [%%i] !TOOL_%%i_DESC!
         echo  Running: !TOOL_%%i_CMD!
         echo  ------------------------------------------------------------
-        if /I "!TOOL_%%i_CMD:~-4!"==".ps1" (
-            powershell -NoProfile -ExecutionPolicy Bypass -File "!TOOL_%%i_CMD!"
-        ) else if /I "!TOOL_%%i_CMD:~-4!"==".bat" (
-            call "!TOOL_%%i_CMD!"
-        )
-        if !ERRORLEVEL! NEQ 0 set "ALL_FAIL=1"
-        echo  Finished with exit code: !ERRORLEVEL!
+        call :RunScriptCommand "!TOOL_%%i_CMD!"
+        set "TOOL_EXIT=!ERRORLEVEL!"
+        if !TOOL_EXIT! NEQ 0 set "ALL_FAIL=1"
+        echo  Finished with exit code: !TOOL_EXIT!
     )
 )
 echo.
@@ -222,12 +213,9 @@ for /L %%i in (1,1,%TOOL_COUNT%) do (
     if "!TOOL_%%i_CAT!"=="Deps" if not "!TOOL_%%i_CMD!"=="" if not "!TOOL_%%i_CMD!"=="__RUNALL__" (
         echo.
         echo  ^> !TOOL_%%i_DESC!
-        if /I "!TOOL_%%i_CMD:~-4!"==".ps1" (
-            powershell -NoProfile -ExecutionPolicy Bypass -File "!TOOL_%%i_CMD!"
-        ) else if /I "!TOOL_%%i_CMD:~-4!"==".bat" (
-            call "!TOOL_%%i_CMD!"
-        )
-        if !ERRORLEVEL! NEQ 0 (
+        call :RunScriptCommand "!TOOL_%%i_CMD!"
+        set "TOOL_EXIT=!ERRORLEVEL!"
+        if !TOOL_EXIT! NEQ 0 (
             echo  WARNING: !TOOL_%%i_DESC! reported errors.
             set "BOOT_FAIL=1"
         )
@@ -380,6 +368,33 @@ set "TOOL_%TOOL_COUNT%_CAT=Setup"
 set "TOOL_%TOOL_COUNT%_CMD=__BOOTSTRAP__"
 set "TOOL_%TOOL_COUNT%_DESC=*** Full Bootstrap (submodules + deps + settings + build + launch) ***"
 exit /b
+
+:RunScriptCommand
+set "TOOL_CMDLINE=%~1"
+set "SCRIPT_PATH="
+set "SCRIPT_ARGS="
+for /f "tokens=1,* delims= " %%A in ("!TOOL_CMDLINE!") do (
+    set "SCRIPT_PATH=%%~A"
+    set "SCRIPT_ARGS=%%~B"
+)
+
+if "!SCRIPT_PATH!"=="" (
+    echo  Empty tool command.
+    exit /b 1
+)
+
+if /I "!SCRIPT_PATH:~-4!"==".ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "!SCRIPT_PATH!" !SCRIPT_ARGS!
+    exit /b !ERRORLEVEL!
+)
+
+if /I "!SCRIPT_PATH:~-4!"==".bat" (
+    call "!SCRIPT_PATH!" !SCRIPT_ARGS!
+    exit /b !ERRORLEVEL!
+)
+
+echo  Unknown script type: !TOOL_CMDLINE!
+exit /b 1
 
 :End
 endlocal

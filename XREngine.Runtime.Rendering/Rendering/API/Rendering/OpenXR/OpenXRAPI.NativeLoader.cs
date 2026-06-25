@@ -103,9 +103,13 @@ public unsafe partial class OpenXRAPI
 
         var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var cwd = Environment.CurrentDirectory;
 
         string[] maybeDirs =
         [
+            Path.Combine(cwd, "Build", "Dependencies", "vcpkg", "installed", "x64-windows", "bin"),
+            Path.Combine(cwd, "Build", "Submodules", "monado", "build", "vcpkg_installed", "x64-windows", "bin"),
+            Path.Combine(cwd, "Build", "Deps", "Monado", "bin"),
             Path.Combine(pf86, "Steam", "steamapps", "common", "SteamVR", "bin", "win64"),
             Path.Combine(pf, "Oculus", "Support", "oculus-runtime"),
         ];

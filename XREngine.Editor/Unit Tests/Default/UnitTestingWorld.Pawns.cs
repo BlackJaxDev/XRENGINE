@@ -349,6 +349,8 @@ public static partial class EditorUnitTests
             {
                 pawnComp = cameraNode.AddComponent<EditorFlyingCameraPawnComponent>()!;
                 pawnComp!.Name = "Desktop Camera Pawn (Flyable)";
+                if (cameraNode.GetComponent<CameraComponent>() is { } cameraComponent)
+                    pawnComp.CameraComponent = cameraComponent;
                 if (cameraNode.Parent is { } parent)
                     ConfigureEditorViewCamera(parent, cameraNode);
             }
@@ -356,9 +358,12 @@ public static partial class EditorUnitTests
             {
                 pawnComp = cameraNode.AddComponent<PawnComponent>()!;
                 pawnComp!.Name = "Desktop Camera Pawn";
+                if (cameraNode.GetComponent<CameraComponent>() is { } cameraComponent)
+                    pawnComp.CameraComponent = cameraComponent;
             }
 
             pawnComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
+            Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();
             return pawnComp;
         }
 

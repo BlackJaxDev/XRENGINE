@@ -1,4 +1,5 @@
 using Silk.NET.OpenXR;
+using Silk.NET.Windowing;
 using System;
 using System.Threading;
 using XREngine.Rendering;
@@ -43,7 +44,7 @@ public unsafe partial class OpenXRAPI
         if (Window is null || Window.Renderer is null)
             return;
 
-        if (_instance.Handle != 0 && !_sessionBegun)
+        if (_instance.Handle != 0 && _runtimeState != OpenXrRuntimeState.SessionRunning)
             PollEvents();
 
         if (ConsumeRuntimeLoss(out var lossReason))
@@ -78,7 +79,7 @@ public unsafe partial class OpenXRAPI
                     SetRuntimeState(OpenXrRuntimeState.SessionStopping);
                 break;
             case OpenXrRuntimeState.SessionStopping:
-                TearDownSessionResources(false);
+                TearDownSessionResourcesOnOwningThread(false);
                 SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
                 break;
             case OpenXrRuntimeState.SessionLost:
@@ -126,7 +127,8 @@ public unsafe partial class OpenXRAPI
         {
             Debug.LogWarning($"OpenXR probe: system creation failed. {ex.Message}");
             ScheduleProbeRetry();
-            TearDownSessionResources(true);
+            TearDownSessionResourcesOnOwningThread(true);
+            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
         }
     }
 
@@ -142,8 +144,9 @@ public unsafe partial class OpenXRAPI
         if (selectedBinding is null)
         {
             Debug.LogWarning("OpenXR: no compatible graphics binding for the active renderer.");
-            ScheduleProbeRetry();
-            TearDownSessionResources(true);
+            ScheduleProbeRetry(_graphicsDeviceFailureProbeInterval);
+            TearDownSessionResourcesOnOwningThread(true);
+            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
             return;
         }
 
@@ -157,8 +160,9 @@ public unsafe partial class OpenXRAPI
         if (_graphicsBinding is null || !_graphicsBinding.IsCompatible(renderer))
         {
             Debug.LogWarning("OpenXR: no compatible graphics binding for the active renderer.");
-            ScheduleProbeRetry();
-            TearDownSessionResources(true);
+            ScheduleProbeRetry(_graphicsDeviceFailureProbeInterval);
+            TearDownSessionResourcesOnOwningThread(true);
+            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
             return;
         }
 
@@ -198,8 +202,9 @@ public unsafe partial class OpenXRAPI
                 catch (Exception ex)
                 {
                     Debug.LogWarning($"OpenXR OpenGL session init failed: {ex.Message}");
-                    ScheduleProbeRetry();
-                    TearDownSessionResources(true);
+                    ScheduleProbeRetry(GetSessionFailureRetryDelay(ex));
+                    TearDownSessionResourcesOnOwningThread(true);
+                    SetRuntimeState(OpenXrRuntimeState.RecreatePending);
                 }
             };
 
@@ -223,8 +228,9 @@ public unsafe partial class OpenXRAPI
         catch (Exception ex)
         {
             Debug.LogWarning($"OpenXR session init failed: {ex.Message}");
-            ScheduleProbeRetry();
-            TearDownSessionResources(true);
+            ScheduleProbeRetry(GetSessionFailureRetryDelay(ex));
+            TearDownSessionResourcesOnOwningThread(true);
+            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
         }
     }
 
@@ -235,14 +241,22 @@ public unsafe partial class OpenXRAPI
         bool destroyInstance = _runtimeLossReason == OpenXrRuntimeLossReason.InstanceLostError
             || _runtimeLossReason == OpenXrRuntimeLossReason.RuntimeUnavailable;
 
-        TearDownSessionResources(destroyInstance);
+        TearDownSessionResourcesOnOwningThread(destroyInstance);
         ScheduleProbeRetry();
         SetRuntimeState(destroyInstance ? OpenXrRuntimeState.RecreatePending : OpenXrRuntimeState.DesktopOnly);
         _runtimeLossReason = OpenXrRuntimeLossReason.None;
     }
 
+    private TimeSpan GetSessionFailureRetryDelay(Exception ex)
+        => ex is OpenXrGraphicsSessionException { Result: Result.ErrorGraphicsDeviceInvalid }
+            ? _graphicsDeviceFailureProbeInterval
+            : _probeInterval;
+
     private void ScheduleProbeRetry()
-        => _nextProbeUtc = DateTime.UtcNow + _probeInterval;
+        => ScheduleProbeRetry(_probeInterval);
+
+    private void ScheduleProbeRetry(TimeSpan delay)
+        => _nextProbeUtc = DateTime.UtcNow + delay;
 
     private void SetRuntimeState(OpenXrRuntimeState next)
     {
@@ -255,7 +269,8 @@ public unsafe partial class OpenXRAPI
     }
 
     private static bool IsSessionRunningState(SessionState state)
-        => state == SessionState.Synchronized
+        => state == SessionState.Ready
+        || state == SessionState.Synchronized
         || state == SessionState.Visible
         || state == SessionState.Focused;
 
@@ -293,6 +308,42 @@ public unsafe partial class OpenXRAPI
             RecordSmokeFailure($"{operation} returned {result}.");
 
         return result;
+    }
+
+    private void TearDownSessionResourcesOnOwningThread(bool destroyInstance)
+    {
+        if (_gl is not null && !RuntimeEngine.IsRenderThread)
+        {
+            RuntimeRenderingHostServices.Current.InvokeRenderThreadTask(
+                () =>
+                {
+                    TearDownSessionResourcesWithCurrentContext(destroyInstance);
+                    return true;
+                },
+                "OpenXR.OpenGL.TeardownSessionResources",
+                RenderThreadJobKind.RequiresGraphicsContext);
+            return;
+        }
+
+        TearDownSessionResourcesWithCurrentContext(destroyInstance);
+    }
+
+    private void TearDownSessionResourcesWithCurrentContext(bool destroyInstance)
+    {
+        if (_gl is not null && Window is not null && wglGetCurrentContext() == 0)
+        {
+            try
+            {
+                Window.Window.MakeCurrent();
+            }
+            catch (Exception ex)
+            {
+                RecordSmokeWarning($"OpenXR OpenGL teardown could not make the window context current: {ex.Message}");
+                Debug.LogWarning($"OpenXR OpenGL teardown could not make the window context current: {ex.Message}");
+            }
+        }
+
+        TearDownSessionResources(destroyInstance);
     }
 
     private void TearDownSessionResources(bool destroyInstance)

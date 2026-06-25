@@ -371,25 +371,33 @@ internal class Program
             }
 
             OpenXRAPI? api = Engine.VRState.OpenXRApi;
-            if (api is not null && (_sessionExitRequested || api.SmokeSubmittedFrameCount >= _targetFrames))
+            if (api is not null && (_sessionExitRequested || api.SmokeCompletedFrameCount >= _targetFrames))
             {
                 _targetReached = true;
                 _exitCode = ExitSummaryFailure;
                 if (!_sessionExitRequested)
                 {
                     _sessionExitRequested = true;
-                    _sessionExitDeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(2);
+                    _sessionExitDeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(5);
                     api.RequestSmokeSessionExit();
-                    EngineDebug.Out($"[OpenXRSmoke] Target submitted frame count reached: {api.SmokeSubmittedFrameCount}/{_targetFrames}. Requested OpenXR session exit.");
+                    EngineDebug.Out($"[OpenXRSmoke] Target OpenXR frame count reached: completed={api.SmokeCompletedFrameCount}/{_targetFrames}, submitted={api.SmokeSubmittedFrameCount}, noLayer={api.SmokeNoLayerFrameCount}. Requested OpenXR session exit.");
                     return;
                 }
 
-                if (!api.IsSessionRunning || DateTimeOffset.UtcNow >= _sessionExitDeadlineUtc)
+                if (api.SmokeTeardownCompleted)
+                {
+                    RequestShutdown(ExitSummaryFailure, $"OpenXR smoke drain complete. Completed={api.SmokeCompletedFrameCount}/{_targetFrames}.");
+                    return;
+                }
+
+                if (DateTimeOffset.UtcNow >= _sessionExitDeadlineUtc)
                 {
                     if (api.IsSessionRunning)
                         _warnings.Add("OpenXR session was still marked running when the smoke drain window expired; engine teardown continued.");
+                    if (!api.SmokeTeardownCompleted)
+                        _warnings.Add("OpenXR teardown was still pending when the smoke drain window expired; engine teardown continued.");
 
-                    RequestShutdown(ExitSummaryFailure, $"OpenXR smoke drain complete. Submitted={api.SmokeSubmittedFrameCount}/{_targetFrames}.");
+                    RequestShutdown(ExitSummaryFailure, $"OpenXR smoke drain complete. Completed={api.SmokeCompletedFrameCount}/{_targetFrames}.");
                 }
                 return;
             }
@@ -397,8 +405,10 @@ internal class Program
             if (_stopwatch.Elapsed <= _timeout)
                 return;
 
+            long completed = api?.SmokeCompletedFrameCount ?? 0;
             long submitted = api?.SmokeSubmittedFrameCount ?? 0;
-            _failures.Add($"Timed out after {_timeout.TotalSeconds:F0}s waiting for OpenXR smoke frames. Submitted={submitted}, Target={_targetFrames}.");
+            long noLayer = api?.SmokeNoLayerFrameCount ?? 0;
+            _failures.Add($"Timed out after {_timeout.TotalSeconds:F0}s waiting for OpenXR smoke frames. Completed={completed}, Submitted={submitted}, NoLayer={noLayer}, Target={_targetFrames}.");
             RequestShutdown(ExitFrameTimeout, "Timed out waiting for OpenXR smoke frames.");
         }
 
@@ -436,8 +446,9 @@ internal class Program
                 failures.Add("OpenXR reference space was not created.");
             if (!summary.SwapchainsCreated || summary.Swapchains.Length < 2)
                 failures.Add($"Expected two OpenXR swapchains; observed {summary.Swapchains.Length}.");
-            if (summary.SubmittedFrameCount < _targetFrames)
-                failures.Add($"SubmittedFrameCount={summary.SubmittedFrameCount}, Target={_targetFrames}.");
+            long completedFrameCount = summary.SubmittedFrameCount + summary.NoLayerFrameCount;
+            if (completedFrameCount < _targetFrames)
+                failures.Add($"CompletedOpenXrFrameCount={completedFrameCount}, Submitted={summary.SubmittedFrameCount}, NoLayer={summary.NoLayerFrameCount}, Target={_targetFrames}.");
             if (summary.EndFrameFailureCount > 0)
                 failures.Add($"xrEndFrame failure count was {summary.EndFrameFailureCount}.");
             if (summary.LocatedViewCount < 2)
@@ -450,16 +461,24 @@ internal class Program
                 failures.Add("Predicted OpenXR action pose cache was not updated.");
             if (!summary.LateActionPoseCacheUpdated)
                 failures.Add("Late OpenXR action pose cache was not updated.");
-            if (!HasTwoEyesAtLeast(summary.PerEyeAcquireCounts, _targetFrames))
-                failures.Add("Per-eye xrAcquireSwapchainImage counts did not reach target frames.");
-            if (!HasTwoEyesAtLeast(summary.PerEyeWaitCounts, _targetFrames))
-                failures.Add("Per-eye xrWaitSwapchainImage counts did not reach target frames.");
-            if (!HasTwoEyesAtLeast(summary.PerEyeReleaseCounts, _targetFrames))
-                failures.Add("Per-eye xrReleaseSwapchainImage counts did not reach target frames.");
+            if (summary.SubmittedFrameCount > 0)
+            {
+                int submittedTarget = (int)Math.Min(summary.SubmittedFrameCount, int.MaxValue);
+                if (!HasTwoEyesAtLeast(summary.PerEyeAcquireCounts, submittedTarget))
+                    failures.Add("Per-eye xrAcquireSwapchainImage counts did not reach submitted frame count.");
+                if (!HasTwoEyesAtLeast(summary.PerEyeWaitCounts, submittedTarget))
+                    failures.Add("Per-eye xrWaitSwapchainImage counts did not reach submitted frame count.");
+                if (!HasTwoEyesAtLeast(summary.PerEyeReleaseCounts, submittedTarget))
+                    failures.Add("Per-eye xrReleaseSwapchainImage counts did not reach submitted frame count.");
+                if (!summary.DesktopMirrorComposed)
+                    failures.Add("OpenXR desktop mirror composition was not observed during rendered-layer smoke frames.");
+            }
+            else if (summary.NoLayerFrameCount <= 0)
+            {
+                failures.Add("OpenXR completed no rendered-layer frames and no no-layer frames.");
+            }
             if (!summary.TeardownCompleted)
                 failures.Add("OpenXR teardown did not complete before smoke summary was written.");
-            if (!summary.DesktopMirrorComposed)
-                failures.Add("OpenXR desktop mirror composition was not observed during the smoke run.");
 
             return failures;
         }

@@ -386,10 +386,15 @@ public static partial class CookedBinarySerializer
             AddFixedLeaf(node, "marker", "marker", size: 1, valueDisplay: node.Marker);
             AddStringLeaf(node, "runtimeType", runtimeType.AssemblyQualifiedName ?? runtimeType.FullName ?? runtimeType.Name);
 
-            var payloadNode = BuildValueNode("payload", modelType, model, allowCustom: true);
+            var payloadNode = ExecuteWithMemoryPackSuppressed(
+                () => BuildValueNode("payload", modelType, model, allowCustom: true));
+            long actualPayloadSize = CalculateSize(model);
+            payloadNode.Size = actualPayloadSize;
+            payloadNode.SizeDescription = $"{actualPayloadSize} byte{(actualPayloadSize == 1 ? string.Empty : "s")}";
             payloadNode.Notes = string.IsNullOrWhiteSpace(payloadNode.Notes)
                 ? note
                 : payloadNode.Notes + "; " + note;
+            payloadNode.Notes += "; expanded for inspection, size reflects actual serialized payload";
             node.MutableChildren.Add(payloadNode);
         }
 

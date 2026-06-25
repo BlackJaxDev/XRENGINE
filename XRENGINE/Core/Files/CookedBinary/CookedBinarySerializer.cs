@@ -1828,8 +1828,9 @@ public static partial class CookedBinarySerializer
             return false;
         }
 
-        // Scene graph objects form parent/child cycles; avoid MemoryPack to prevent stack overflows.
-        if (runtimeType.IsAssignableTo(typeof(SceneNode)) || runtimeType.IsAssignableTo(typeof(TransformBase)))
+        // Scene graph objects and marked runtime types form owner/world/runtime-state cycles; serialize them through
+        // the cooked-binary reflection path instead of probing MemoryPack and falling back noisily.
+        if (ShouldUseReflectionObjectEncoding(runtimeType))
         {
             data = null;
             return false;
@@ -1855,6 +1856,16 @@ public static partial class CookedBinarySerializer
             return false;
         }
     }
+
+    private static bool ShouldUseReflectionObjectEncoding(Type runtimeType)
+        => ReflectionObjectEncodingTypeCache.GetOrAdd(
+            runtimeType,
+            static type =>
+                type.IsAssignableTo(typeof(SceneNode)) ||
+                type.IsAssignableTo(typeof(TransformBase)) ||
+                type.GetCustomAttribute<CookedBinaryReflectionOnlyAttribute>(inherit: true) is not null);
+
+    private static readonly ConcurrentDictionary<Type, bool> ReflectionObjectEncodingTypeCache = new();
 
     private static bool TryGetMemoryPackLength(object value, Type runtimeType, out int length)
     {

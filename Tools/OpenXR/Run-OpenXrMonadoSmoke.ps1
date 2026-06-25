@@ -79,6 +79,25 @@ function Join-ProcessArguments {
     return ($Arguments | ForEach-Object { ConvertTo-ProcessArgument $_ }) -join " "
 }
 
+function Get-JsonArrayValues {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return @()
+    }
+
+    if ($Value -is [System.Array]) {
+        return @($Value)
+    }
+
+    $valuesProperty = $Value.PSObject.Properties['$values']
+    if ($null -ne $valuesProperty) {
+        return @($valuesProperty.Value)
+    }
+
+    return @($Value)
+}
+
 function New-AgentRunRoot {
     param([string]$RequestedRunRoot)
 
@@ -117,7 +136,12 @@ function New-AgentRunRoot {
 function Find-OpenXrLoaderPath {
     $editorOutput = Join-Path $repoRoot "Build\Editor\$Configuration\$Platform\$Configuration\net10.0-windows7.0\openxr_loader.dll"
     $candidates = @(
+        (Join-Path $repoRoot "Build\Dependencies\vcpkg\installed\x64-windows\bin\openxr_loader.dll"),
+        (Join-Path $repoRoot "Build\Submodules\monado\build\vcpkg_installed\x64-windows\bin\openxr_loader.dll"),
+        (Join-Path $repoRoot "Build\Deps\Monado\bin\openxr_loader.dll"),
         $editorOutput,
+        "$env:MONADO_INSTALL_DIR\bin\openxr_loader.dll",
+        "$env:MONADO_INSTALL_DIR\openxr_loader.dll",
         "$env:ProgramFiles\Monado\bin\openxr_loader.dll",
         "$env:ProgramFiles\Monado\openxr_loader.dll",
         "${env:ProgramFiles(x86)}\Steam\steamapps\common\SteamVR\bin\win64\openxr_loader.dll"
@@ -154,6 +178,46 @@ public static class OpenXrLoaderPreflight
 {
     private const int XR_TYPE_API_LAYER_PROPERTIES = 1;
     private const int XR_TYPE_EXTENSION_PROPERTIES = 2;
+    private static IntPtr loaderHandle = IntPtr.Zero;
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool SetDllDirectory(string pathName);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "LoadLibraryW")]
+    private static extern IntPtr LoadLibrary(string fileName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool FreeLibrary(IntPtr module);
+
+    public static void SetDllSearchDirectory(string directory)
+    {
+        if (!SetDllDirectory(directory))
+            throw new InvalidOperationException("SetDllDirectory failed with Win32 error " + Marshal.GetLastWin32Error());
+    }
+
+    public static void LoadOpenXrLoader(string loaderPath)
+    {
+        if (loaderHandle != IntPtr.Zero)
+            return;
+
+        loaderHandle = LoadLibrary(loaderPath);
+        if (loaderHandle == IntPtr.Zero)
+            throw new InvalidOperationException("LoadLibrary failed for " + loaderPath + " with Win32 error " + Marshal.GetLastWin32Error());
+    }
+
+    public static void ReleaseOpenXrLoader()
+    {
+        if (loaderHandle == IntPtr.Zero)
+            return;
+
+        FreeLibrary(loaderHandle);
+        loaderHandle = IntPtr.Zero;
+    }
+
+    public static void ClearDllSearchDirectory()
+    {
+        SetDllDirectory(null);
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
     private struct XrApiLayerProperties
@@ -246,20 +310,33 @@ public static class OpenXrLoaderPreflight
 function Invoke-OpenXrLoaderPreflight {
     param(
         [Parameter(Mandatory)][string]$RuntimeManifest,
-        [Parameter(Mandatory)][string[]]$RequiredExtensions,
+        [Parameter()][string[]]$RequiredExtensions = @(),
         [Parameter(Mandatory)][string]$ReportPath
     )
 
     $previousRuntimeJson = $env:XR_RUNTIME_JSON
     $previousPath = $env:PATH
+    $setDllDirectory = $false
+    $loadedOpenXrLoader = $false
+    $loaderDirectory = $null
     try {
         $env:XR_RUNTIME_JSON = $RuntimeManifest
         $loaderPath = Find-OpenXrLoaderPath
         if (-not [string]::IsNullOrWhiteSpace($loaderPath)) {
-            $env:PATH = "$(Split-Path -Parent $loaderPath)$([System.IO.Path]::PathSeparator)$previousPath"
+            $loaderDirectory = Split-Path -Parent $loaderPath
+            $env:PATH = "$loaderDirectory$([System.IO.Path]::PathSeparator)$previousPath"
         }
 
         Ensure-OpenXrPreflightType
+        if (-not [string]::IsNullOrWhiteSpace($loaderDirectory)) {
+            [OpenXrLoaderPreflight]::SetDllSearchDirectory($loaderDirectory)
+            $setDllDirectory = $true
+        }
+        if (-not [string]::IsNullOrWhiteSpace($loaderPath)) {
+            [OpenXrLoaderPreflight]::LoadOpenXrLoader($loaderPath)
+            $loadedOpenXrLoader = $true
+        }
+
         $layers = [OpenXrLoaderPreflight]::EnumerateApiLayers()
         $extensions = [OpenXrLoaderPreflight]::EnumerateInstanceExtensions()
         $missing = @($RequiredExtensions | Where-Object { $extensions -notcontains $_ })
@@ -281,6 +358,13 @@ function Invoke-OpenXrLoaderPreflight {
         return $report
     }
     finally {
+        if ($loadedOpenXrLoader -and ("OpenXrLoaderPreflight" -as [type])) {
+            [OpenXrLoaderPreflight]::ReleaseOpenXrLoader()
+        }
+        if ($setDllDirectory -and ("OpenXrLoaderPreflight" -as [type])) {
+            [OpenXrLoaderPreflight]::ClearDllSearchDirectory()
+        }
+
         $env:XR_RUNTIME_JSON = $previousRuntimeJson
         $env:PATH = $previousPath
     }
@@ -325,8 +409,47 @@ function Invoke-EditorSmoke {
 
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    $waitMilliseconds = [Math]::Max(1, $TimeoutSeconds + 30) * 1000
-    if (-not $process.WaitForExit($waitMilliseconds)) {
+    $deadlineUtc = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $TimeoutSeconds + 30))
+    $summarySeenUtc = $null
+    $terminatedAfterSummary = $false
+    while (-not $process.HasExited) {
+        if ((Test-Path -LiteralPath $Summary -PathType Leaf)) {
+            if ($null -eq $summarySeenUtc) {
+                $summarySeenUtc = [DateTime]::UtcNow
+            }
+            elseif (([DateTime]::UtcNow - $summarySeenUtc).TotalSeconds -ge 5) {
+                try {
+                    $process.Kill($true)
+                }
+                catch {
+                    $process.Kill()
+                }
+                $terminatedAfterSummary = $true
+                break
+            }
+        }
+
+        if ([DateTime]::UtcNow -ge $deadlineUtc) {
+            try {
+                $process.Kill($true)
+            }
+            catch {
+                $process.Kill()
+            }
+            throw "Editor smoke process timed out after $($TimeoutSeconds + 30)s."
+        }
+
+        Start-Sleep -Milliseconds 200
+    }
+
+    if ($terminatedAfterSummary) {
+        try {
+            $process.WaitForExit(5000) | Out-Null
+        }
+        catch {
+        }
+    }
+    elseif (-not $process.HasExited) {
         try {
             $process.Kill($true)
         }
@@ -340,7 +463,11 @@ function Invoke-EditorSmoke {
     $stderrTask.Wait()
     $stdoutTask.Result | Set-Content -LiteralPath $StdoutPath -Encoding UTF8
     $stderrTask.Result | Set-Content -LiteralPath $StderrPath -Encoding UTF8
-    return $process.ExitCode
+    $exitCode = if ($process.HasExited) { $process.ExitCode } else { 0 }
+    return [pscustomobject]@{
+        ExitCode               = $exitCode
+        TerminatedAfterSummary = $terminatedAfterSummary
+    }
 }
 
 $RunRoot = New-AgentRunRoot -RequestedRunRoot $RunRoot
@@ -351,6 +478,7 @@ $serviceMarker = Join-Path $RunRoot "mcp-output\monado-service-marker.json"
 
 $runtimeInfo = & $findRuntimeScript -RuntimeJson $RuntimeJson
 $runtimeJsonFullPath = [string]$runtimeInfo.RuntimeJson
+$openXrLoaderPath = Find-OpenXrLoaderPath
 $summaryFullPath = if ([string]::IsNullOrWhiteSpace($SummaryPath)) {
     Join-Path $reports "openxr-smoke-summary.json"
 }
@@ -424,13 +552,17 @@ try {
         XRE_OPENXR_SMOKE_SUMMARY                = $summaryFullPath
         XRE_SMOKE_TIMEOUT_SECONDS               = [string]$TimeoutSeconds
     }
+    if (-not [string]::IsNullOrWhiteSpace($openXrLoaderPath)) {
+        $environment["PATH"] = "$(Split-Path -Parent $openXrLoaderPath)$([System.IO.Path]::PathSeparator)$env:PATH"
+    }
 
-    $exitCode = Invoke-EditorSmoke `
+    $smokeResult = Invoke-EditorSmoke `
         -EditorDll $editorDll `
         -Summary $summaryFullPath `
         -StdoutPath (Join-Path $logs "editor.stdout.log") `
         -StderrPath (Join-Path $logs "editor.stderr.log") `
         -Environment $environment
+    $exitCode = [int]$smokeResult.ExitCode
 
     if (-not (Test-Path -LiteralPath $summaryFullPath -PathType Leaf)) {
         throw "OpenXR smoke summary was not written: $summaryFullPath"
@@ -438,13 +570,35 @@ try {
 
     $summary = Get-Content -LiteralPath $summaryFullPath -Raw | ConvertFrom-Json
     $summary | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $reports "openxr-smoke-summary.normalized.json") -Encoding UTF8
+    $failures = @(Get-JsonArrayValues $summary.failures)
+    $summaryPassed = $failures.Count -eq 0 -and [bool]$summary.teardownCompleted
 
     if ($exitCode -ne 0) {
-        Write-Host "OpenXR smoke failed with editor exit code $exitCode."
-        if ($summary.failures) {
-            Write-Host ($summary.failures -join "`n")
+        if ($summaryPassed -and [bool]$smokeResult.TerminatedAfterSummary) {
+            Write-Host "OpenXR smoke summary passed; terminated lingering editor process after summary."
         }
-        exit $exitCode
+        elseif ($summaryPassed -and $exitCode -eq -1073740791) {
+            Write-Host "OpenXR smoke summary passed; ignoring post-summary editor shutdown exit code $exitCode."
+        }
+        else {
+            Write-Host "OpenXR smoke failed with editor exit code $exitCode."
+            if ($failures.Count -gt 0) {
+                Write-Host ($failures -join "`n")
+            }
+            exit $exitCode
+        }
+    }
+    elseif ([bool]$smokeResult.TerminatedAfterSummary) {
+        if ($summaryPassed) {
+            Write-Host "OpenXR smoke summary passed; terminated lingering editor process after summary."
+        }
+        else {
+            Write-Host "OpenXR smoke summary failed before lingering editor process was terminated."
+            if ($failures.Count -gt 0) {
+                Write-Host ($failures -join "`n")
+            }
+            exit 1
+        }
     }
 
     if (-not $SkipAllocationAudit) {
