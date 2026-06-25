@@ -237,6 +237,7 @@ namespace XREngine.Rendering.Vulkan
             evicted.DynamicUiSecondaryRecorded = false;
             evicted.PreserveSwapchainForOverlay = false;
             evicted.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
+            evicted.RecordedSwapchainWriteCount = 0;
             evicted.CommandChainScheduleSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupCount = -1;

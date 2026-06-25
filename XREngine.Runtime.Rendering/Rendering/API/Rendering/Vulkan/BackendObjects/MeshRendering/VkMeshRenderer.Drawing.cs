@@ -305,7 +305,12 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				sourceBuffer.EnsureReadyForRendering();
+				if (!sourceBuffer.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads))
+				{
+					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not ready.");
+					return false;
+				}
+
 				if (sourceBuffer.BufferHandle is not { } handle || handle.Handle == 0)
 				{
 					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not allocated.");
@@ -398,6 +403,74 @@ public unsafe partial class VulkanRenderer
 
 		internal bool TryRefreshReusableCommandBufferFrameData(uint imageIndex, in PendingMeshDraw draw, int drawUniformSlot, bool refreshMaterialUniforms = true)
 			=> TryRefreshReusableCommandBufferFrameData(imageIndex, draw, drawUniformSlot, out _, refreshMaterialUniforms);
+
+		internal bool TryPrewarmFrameDataForRecording(in PendingMeshDraw draw, int drawUniformSlot, out string reason)
+		{
+			reason = "Ready";
+			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+
+			if (!IsActive)
+				Generate();
+
+			if (!IsActive)
+			{
+				reason = "inactive";
+				return false;
+			}
+
+			if (Data is null)
+			{
+				reason = "mesh data missing";
+				return false;
+			}
+
+			if (ReferenceEquals(material, null))
+			{
+				reason = "material missing";
+				return false;
+			}
+
+			if (!ReferenceEquals(_lastPreparedMaterial, material))
+			{
+				_pipelineDirty = true;
+				_descriptorDirty = true;
+				_lastPreparedMaterial = material;
+			}
+
+			if (MeshRenderer.HasRenderDataPreparation)
+				MeshRenderer.OnPreparingRenderData();
+
+			if (draw.PreparedProgram is { } preparedProgram)
+				ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity);
+			else if (!EnsureProgram(material))
+			{
+				reason = "program pending";
+				return false;
+			}
+
+			EnsureRuntimeDeformationBuffersCurrent();
+			EnsureBuffers(ProgramUsesShaderGeneratedVertices());
+
+			if (!AreCachedBuffersReadyForRendering(out string bufferDetail))
+			{
+				reason = $"buffers not ready: {bufferDetail}";
+				return false;
+			}
+
+			ApplyScopedProgramBindingsForPreparation(material);
+			if (_program?.Data is { } programData)
+				NotifyDrawUniforms(material, programData, draw);
+
+			BuildVertexInputState();
+
+			if (!EnsureDescriptorSets(material, drawUniformSlot))
+			{
+				reason = $"descriptors pending; program='{_program?.Data?.Name ?? "<unnamed program>"}'";
+				return false;
+			}
+
+			return true;
+		}
 
 		internal bool TryRefreshReusableCommandBufferFrameData(
 			uint imageIndex,

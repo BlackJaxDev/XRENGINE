@@ -16,8 +16,11 @@ public unsafe partial class VulkanRenderer
         SampleCountFlags DescriptorSamples { get; }
         uint DescriptorMipLevels => 1u;
         uint DescriptorArrayLayers => 1u;
+        ulong DescriptorGeneration => 0UL;
         bool IsDescriptorReady => true;
         bool TryEnsureDescriptorReadyForUse(string reason) => IsDescriptorReady;
+        bool TryEnsureDescriptorReadyForUse(string reason, bool allowSynchronousUpload)
+            => allowSynchronousUpload ? TryEnsureDescriptorReadyForUse(reason) : IsDescriptorReady;
 
         /// <summary>
         /// Returns the most recently tracked <see cref="ImageLayout"/> for the backing VkImage.

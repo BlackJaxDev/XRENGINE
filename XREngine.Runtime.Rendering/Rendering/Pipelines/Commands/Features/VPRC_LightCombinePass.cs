@@ -23,11 +23,30 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// from sampler type mismatch on the default texture unit.
         /// </summary>
         private static XRTexture2DArray? _dummyShadowMapArray;
-        private static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= new XRTexture2DArray(
-            1, 1, 1,
-            EPixelInternalFormat.DepthComponent16,
-            EPixelFormat.DepthComponent,
-            EPixelType.Float);
+        private static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= CreateDummyShadowMapArray();
+
+        private static XRTexture2DArray CreateDummyShadowMapArray()
+        {
+            XRTexture2DArray texture = new(
+                1,
+                1,
+                1,
+                EPixelInternalFormat.DepthComponent16,
+                EPixelFormat.DepthComponent,
+                EPixelType.Float,
+                allocateData: true)
+            {
+                Name = "DummyShadowMapArray",
+                SamplerName = "ShadowMapArray",
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                AutoGenerateMipmaps = false,
+            };
+
+            return texture;
+        }
 
         private static XRTexture2D? _dummyShadowMap;
         private static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);

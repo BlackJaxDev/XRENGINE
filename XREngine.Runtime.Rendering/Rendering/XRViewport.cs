@@ -170,6 +170,12 @@ namespace XREngine.Rendering
         /// </summary>
         public XRWindow? Window { get; set; }
 
+        /// <summary>
+        /// True when this viewport renders into a runtime-owned external swapchain image
+        /// instead of presenting directly through <see cref="Window"/>.
+        /// </summary>
+        public bool RendersToExternalSwapchainTarget { get; set; }
+
         WindowInputSnapshot IRuntimeLocalPlayerViewport.InputSnapshot
             => Window?.LatestWindowInputSnapshot ?? default;
 
@@ -568,6 +574,9 @@ namespace XREngine.Rendering
             TryRefreshControlledPawnCamera();
             return ActiveCamera;
         }
+
+        internal XRCamera? ResolveActiveCameraForExternalRenderSource()
+            => ResolveActiveCameraWithPawnRefresh();
 
         private void TryRefreshControlledPawnCamera()
         {

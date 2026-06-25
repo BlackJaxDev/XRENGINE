@@ -839,6 +839,24 @@ namespace XREngine.Rendering.Vulkan
             height = Math.Clamp(requestedHeight, 1, availableHeight);
         }
 
+        private static bool IsPixelInsideExtent(int x, int y, Extent2D extent)
+            => x >= 0 &&
+               y >= 0 &&
+               extent.Width > 0 &&
+               extent.Height > 0 &&
+               (uint)x < extent.Width &&
+               (uint)y < extent.Height;
+
+        private static bool IsRegionInsideExtent(int x, int y, int width, int height, Extent2D extent)
+        {
+            if (x < 0 || y < 0 || width <= 0 || height <= 0 || extent.Width == 0 || extent.Height == 0)
+                return false;
+
+            long right = (long)x + width;
+            long bottom = (long)y + height;
+            return right <= extent.Width && bottom <= extent.Height;
+        }
+
         // =========== Color Pixel Reading ===========
 
         private bool TryReadColorPixel(in BlitImageInfo source, int x, int y, out ColorF4 color)
@@ -862,8 +880,12 @@ namespace XREngine.Rendering.Vulkan
 
             if (!source.IsValid || !source.AspectMask.HasFlag(ImageAspectFlags.ColorBit))
                 return false;
+            if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
+                return false;
+            if (!IsRegionInsideExtent(x, y, width, height, liveSource.Extent))
+                return false;
 
-            uint sourcePixelSize = GetColorFormatPixelSize(source.Format);
+            uint sourcePixelSize = GetColorFormatPixelSize(liveSource.Format);
             if (sourcePixelSize == 0)
                 return false;
 
@@ -874,17 +896,17 @@ namespace XREngine.Rendering.Vulkan
             {
                 using var scope = NewCommandScope();
 
-                ImageLayout preTransferLayout = source.PreferredLayout;
-                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(source);
+                ImageLayout preTransferLayout = liveSource.PreferredLayout;
+                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(liveSource);
 
                 TransitionForBlit(
                     scope.CommandBuffer,
-                    source,
+                    liveSource,
                     preTransferLayout,
                     ImageLayout.TransferSrcOptimal,
-                    source.AccessMask,
+                    liveSource.AccessMask,
                     AccessFlags.TransferReadBit,
-                    source.StageMask,
+                    liveSource.StageMask,
                     PipelineStageFlags.TransferBit);
 
                 BufferImageCopy copy = new()
@@ -895,9 +917,9 @@ namespace XREngine.Rendering.Vulkan
                     ImageSubresource = new ImageSubresourceLayers
                     {
                         AspectMask = ImageAspectFlags.ColorBit,
-                        MipLevel = source.MipLevel,
-                        BaseArrayLayer = source.BaseArrayLayer,
-                        LayerCount = source.LayerCount,
+                        MipLevel = liveSource.MipLevel,
+                        BaseArrayLayer = liveSource.BaseArrayLayer,
+                        LayerCount = liveSource.LayerCount,
                     },
                     ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
                     ImageExtent = new Extent3D { Width = (uint)width, Height = (uint)height, Depth = 1 }
@@ -905,7 +927,7 @@ namespace XREngine.Rendering.Vulkan
 
                 Api!.CmdCopyImageToBuffer(
                     scope.CommandBuffer,
-                    source.Image,
+                    liveSource.Image,
                     ImageLayout.TransferSrcOptimal,
                     stagingBuffer,
                     1,
@@ -913,13 +935,13 @@ namespace XREngine.Rendering.Vulkan
 
                 TransitionForBlit(
                     scope.CommandBuffer,
-                    source,
+                    liveSource,
                     ImageLayout.TransferSrcOptimal,
                     postTransferLayout,
                     AccessFlags.TransferReadBit,
-                    source.AccessMask,
+                    liveSource.AccessMask,
                     PipelineStageFlags.TransferBit,
-                    source.StageMask);
+                    liveSource.StageMask);
             }
             catch
             {
@@ -936,7 +958,7 @@ namespace XREngine.Rendering.Vulkan
             try
             {
                 rgbaPixels = new byte[width * height * 4];
-                return TryConvertColorPixelsToRgba8(mappedPtr, source.Format, width * height, rgbaPixels);
+                return TryConvertColorPixelsToRgba8(mappedPtr, liveSource.Format, width * height, rgbaPixels);
             }
             finally
             {
@@ -951,8 +973,12 @@ namespace XREngine.Rendering.Vulkan
 
             if (!source.IsValid || !source.AspectMask.HasFlag(ImageAspectFlags.ColorBit))
                 return false;
+            if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
+                return false;
+            if (!IsRegionInsideExtent(x, y, width, height, liveSource.Extent))
+                return false;
 
-            uint sourcePixelSize = GetColorFormatPixelSize(source.Format);
+            uint sourcePixelSize = GetColorFormatPixelSize(liveSource.Format);
             if (sourcePixelSize == 0)
                 return false;
 
@@ -963,17 +989,17 @@ namespace XREngine.Rendering.Vulkan
             {
                 using var scope = NewCommandScope();
 
-                ImageLayout preTransferLayout = source.PreferredLayout;
-                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(source);
+                ImageLayout preTransferLayout = liveSource.PreferredLayout;
+                ImageLayout postTransferLayout = ResolvePostTransferReadLayout(liveSource);
 
                 TransitionForBlit(
                     scope.CommandBuffer,
-                    source,
+                    liveSource,
                     preTransferLayout,
                     ImageLayout.TransferSrcOptimal,
-                    source.AccessMask,
+                    liveSource.AccessMask,
                     AccessFlags.TransferReadBit,
-                    source.StageMask,
+                    liveSource.StageMask,
                     PipelineStageFlags.TransferBit);
 
                 BufferImageCopy copy = new()
@@ -984,9 +1010,9 @@ namespace XREngine.Rendering.Vulkan
                     ImageSubresource = new ImageSubresourceLayers
                     {
                         AspectMask = ImageAspectFlags.ColorBit,
-                        MipLevel = source.MipLevel,
-                        BaseArrayLayer = source.BaseArrayLayer,
-                        LayerCount = source.LayerCount,
+                        MipLevel = liveSource.MipLevel,
+                        BaseArrayLayer = liveSource.BaseArrayLayer,
+                        LayerCount = liveSource.LayerCount,
                     },
                     ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
                     ImageExtent = new Extent3D { Width = (uint)width, Height = (uint)height, Depth = 1 }
@@ -994,7 +1020,7 @@ namespace XREngine.Rendering.Vulkan
 
                 Api!.CmdCopyImageToBuffer(
                     scope.CommandBuffer,
-                    source.Image,
+                    liveSource.Image,
                     ImageLayout.TransferSrcOptimal,
                     stagingBuffer,
                     1,
@@ -1002,13 +1028,13 @@ namespace XREngine.Rendering.Vulkan
 
                 TransitionForBlit(
                     scope.CommandBuffer,
-                    source,
+                    liveSource,
                     ImageLayout.TransferSrcOptimal,
                     postTransferLayout,
                     AccessFlags.TransferReadBit,
-                    source.AccessMask,
+                    liveSource.AccessMask,
                     PipelineStageFlags.TransferBit,
-                    source.StageMask);
+                    liveSource.StageMask);
             }
             catch
             {
@@ -1026,7 +1052,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 int pixelCount = width * height;
                 rgbaFloats = new float[pixelCount * 4];
-                return TryConvertColorPixelsToRgbaFloat(mappedPtr, source.Format, pixelCount, rgbaFloats);
+                return TryConvertColorPixelsToRgbaFloat(mappedPtr, liveSource.Format, pixelCount, rgbaFloats);
             }
             finally
             {
@@ -1044,6 +1070,8 @@ namespace XREngine.Rendering.Vulkan
             if (!source.IsValid || !source.AspectMask.HasFlag(ImageAspectFlags.DepthBit))
                 return false;
             if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
+                return false;
+            if (!IsRegionInsideExtent(x, y, width, height, liveSource.Extent))
                 return false;
 
             uint pixelSize = GetDepthFormatPixelSize(liveSource.Format);
@@ -1494,6 +1522,18 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
                 return false;
+            if (!IsPixelInsideExtent(x, y, liveSource.Extent))
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.Readback.DepthPixelOutOfBounds",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Depth pixel readback skipped: coordinate {0},{1} is outside live image extent {2}x{3}.",
+                    x,
+                    y,
+                    liveSource.Extent.Width,
+                    liveSource.Extent.Height);
+                return false;
+            }
 
             uint pixelSize = GetDepthFormatPixelSize(liveSource.Format);
             if (pixelSize == 0)
@@ -1586,6 +1626,15 @@ namespace XREngine.Rendering.Vulkan
             if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
             {
                 info = VulkanDepthReadbackDebugInfo.Failed("Could not resolve the live depth image handle.", x, y);
+                return false;
+            }
+
+            if (!IsPixelInsideExtent(x, y, liveSource.Extent))
+            {
+                info = VulkanDepthReadbackDebugInfo.Failed(
+                    $"Coordinate is outside live image extent {liveSource.Extent.Width}x{liveSource.Extent.Height}.",
+                    x,
+                    y);
                 return false;
             }
 
@@ -1694,6 +1743,18 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
                 return false;
+            if (!IsPixelInsideExtent(x, y, liveSource.Extent))
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.Readback.StencilPixelOutOfBounds",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Stencil pixel readback skipped: coordinate {0},{1} is outside live image extent {2}x{3}.",
+                    x,
+                    y,
+                    liveSource.Extent.Width,
+                    liveSource.Extent.Height);
+                return false;
+            }
 
             uint pixelSize = GetDepthFormatPixelSize(liveSource.Format);
             if (pixelSize == 0)

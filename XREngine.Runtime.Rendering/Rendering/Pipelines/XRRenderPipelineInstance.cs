@@ -416,8 +416,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         LastRenderingCamera = camera ?? stereoRightEyeCamera;
         LastWindowViewport = viewport;
         XRCamera? effectiveAntiAliasingCamera = camera ?? stereoRightEyeCamera;
-        EAntiAliasingMode effectiveAntiAliasingMode = effectiveAntiAliasingCamera?.AntiAliasingModeOverride
-            ?? hostServices.DefaultAntiAliasingMode;
+        EAntiAliasingMode effectiveAntiAliasingMode = ResolveEffectiveAntiAliasingMode(
+            effectiveAntiAliasingCamera,
+            hostServices);
         EffectiveOutputHDRThisFrame = camera?.OutputHDROverride
             ?? (camera is null ? stereoRightEyeCamera?.OutputHDROverride : null)
             ?? hostServices.DefaultOutputHDR;
@@ -449,7 +450,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         // Honor any internal resolution request from the pipeline before executing commands.
         if (viewport is not null)
         {
-            float? requestedScale = Pipeline.GetRequestedInternalResolutionForCamera(effectiveAntiAliasingCamera);
+            float? requestedScale = Pipeline.GetRequestedInternalResolutionForCamera(
+                effectiveAntiAliasingCamera,
+                effectiveAntiAliasingMode);
 
             // Avoid redundant resets: only touch the viewport when the requested scale changes.
             if (requestedScale.HasValue)
@@ -511,6 +514,33 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             }
         }
     }
+
+    private EAntiAliasingMode ResolveEffectiveAntiAliasingMode(
+        XRCamera? effectiveAntiAliasingCamera,
+        IRuntimeRenderingHostServices hostServices)
+    {
+        EAntiAliasingMode requestedMode = effectiveAntiAliasingCamera?.AntiAliasingModeOverride
+            ?? hostServices.DefaultAntiAliasingMode;
+
+        if (hostServices.CurrentRenderer is AbstractRenderer { IsRenderingExternalSwapchainTarget: true }
+            && IsHistoryBasedAntiAliasingMode(requestedMode))
+        {
+            Debug.RenderingEvery(
+                $"OpenXR.ExternalSwapchainTemporalAADisabled.{InstanceId}",
+                TimeSpan.FromSeconds(5),
+                "[OpenXR] Disabling history-based AA for external swapchain render. Requested={0} Camera={1}",
+                requestedMode,
+                effectiveAntiAliasingCamera?.Transform.SceneNode?.Name ?? "<null>");
+            return EAntiAliasingMode.None;
+        }
+
+        return requestedMode;
+    }
+
+    private static bool IsHistoryBasedAntiAliasingMode(EAntiAliasingMode mode)
+        => mode is EAntiAliasingMode.Taa
+            or EAntiAliasingMode.Tsr
+            or EAntiAliasingMode.Dlaa;
     
     //public void CollectVisible(VisualScene scene, XRCamera? camera, XRViewport viewport, XRFrameBuffer? targetFBO, bool shadowPass, UICanvasComponent? userInterface = null)
     //{
@@ -613,24 +643,26 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         int displayHeight,
         int internalWidth,
         int internalHeight,
-        string reason)
+        string reason,
+        bool force = false)
         => RequestResourceGeneration(
             BuildResourceGenerationKey(displayWidth, displayHeight, internalWidth, internalHeight),
-            reason);
+            reason,
+            force);
 
-    private bool RequestResourceGeneration(ResourceGenerationKey key, string reason)
+    private bool RequestResourceGeneration(ResourceGenerationKey key, string reason, bool force = false)
     {
-        RenderPipeline? pipeline = Pipeline;
+        RenderPipeline? pipeline = _pipeline;
         if (pipeline is null)
             return false;
 
-        if (ActiveGeneration?.Key == key)
+        if (!force && ActiveGeneration?.Key == key)
         {
             DiscardPendingGeneration($"Active generation already matches request: {reason}");
             return true;
         }
 
-        if (PendingGeneration?.Key == key)
+        if (!force && PendingGeneration?.Key == key)
             return true;
 
         RenderPipelineResourceLayout layout;
@@ -650,6 +682,21 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         if (layout.OrderedSpecs.Count == 0)
             return false;
+
+        if (ActiveGeneration?.Key == key && ActiveGeneration.Layout.IsStructurallyEquivalentTo(layout))
+        {
+            DiscardPendingGeneration($"Active generation layout already matches request: {reason}");
+            Debug.Rendering(
+                "[RenderResources] Generation request skipped because active layout already matches. Pipeline={0} Reason={1} Active={2} Resources={3}",
+                ProfilerKey,
+                reason,
+                ActiveGeneration.Key,
+                layout.OrderedSpecs.Count);
+            return true;
+        }
+
+        if (PendingGeneration?.Key == key && PendingGeneration.Layout.IsStructurallyEquivalentTo(layout))
+            return true;
 
         if (PendingGeneration is not null)
         {
@@ -767,7 +814,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         int internalWidth,
         int internalHeight)
     {
-        bool stereo = Pipeline switch
+        RenderPipeline? pipeline = _pipeline;
+
+        bool stereo = pipeline switch
         {
             DefaultRenderPipeline defaultPipeline => defaultPipeline.Stereo,
             DefaultRenderPipeline2 defaultPipeline2 => defaultPipeline2.Stereo,
@@ -790,14 +839,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ?? LastRenderingCamera?.MsaaSampleCountOverride
                 ?? RuntimeRenderingHostServices.Current.DefaultMsaaSampleCount);
 
-        ulong featureMask = Pipeline switch
+        ulong featureMask = pipeline switch
         {
             DefaultRenderPipeline defaultPipeline => defaultPipeline.BuildResourceFeatureMaskForGenerationKey(),
             _ => 0UL
         };
 
         return new ResourceGenerationKey(
-            Pipeline?.DebugName ?? DebugName,
+            pipeline?.DebugName ?? DebugName,
             (uint)Math.Max(1, displayWidth),
             (uint)Math.Max(1, displayHeight),
             (uint)Math.Max(1, internalWidth),
@@ -1083,7 +1132,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 Math.Max(1, viewport.Height),
                 Math.Max(1, viewport.InternalWidth),
                 Math.Max(1, viewport.InternalHeight),
-                "InvalidatePhysicalResources"))
+                "InvalidatePhysicalResources",
+                force: true))
         {
             return;
         }

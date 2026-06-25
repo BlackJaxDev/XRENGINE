@@ -100,9 +100,18 @@ public unsafe partial class VulkanRenderer
             get
             {
                 RefreshPhysicalGroupImageIfStale();
-                return base.IsDescriptorReady
+                bool descriptorHandlesReady =
+                    IsGenerated
+                    && !IsDescriptorDirty
                     && _view.Handle != 0
                     && (!CreateSampler || _sampler.Handle != 0);
+                if (!descriptorHandlesReady)
+                    return false;
+
+                if (_physicalGroup is not null || Data.FrameBufferAttachment.HasValue || Data.RequiresStorageUsage)
+                    return true;
+
+                return !IsInvalidated && HasUploadedData;
             }
         }
 
@@ -662,6 +671,11 @@ public unsafe partial class VulkanRenderer
 
             if (CreateSampler)
                 CreateSamplerInternal();
+            if (_physicalGroup is not null || Data.FrameBufferAttachment.HasValue || Data.RequiresStorageUsage)
+            {
+                HasUploadedData = true;
+                IsInvalidated = false;
+            }
             MarkDescriptorClean();
             return CacheObject(this);
         }
@@ -947,7 +961,9 @@ public unsafe partial class VulkanRenderer
             ResetAttachmentLayoutTracking();
             CreateImageView(default);
             _currentImageLayout = _physicalGroup.LastKnownLayout;
-            MarkDescriptorDirty();
+            HasUploadedData = true;
+            IsInvalidated = false;
+            MarkDescriptorPublished();
 
             // The physical group may have been transitioned to an initial layout during
             // allocation (see TransitionNewPhysicalImagesToInitialLayout). Adopt that
@@ -985,6 +1001,9 @@ public unsafe partial class VulkanRenderer
                     throw new Exception($"Failed to create Vulkan image for texture '{ResolveLogicalResourceName() ?? Data.Name ?? "<unnamed>"}'. Result={result}.");
                 }
             }
+
+            _currentImageLayout = ImageLayout.Undefined;
+            ResetAttachmentLayoutTracking();
 
             Api!.GetImageMemoryRequirements(Device, _image, out MemoryRequirements memRequirements);
 
@@ -1592,7 +1611,11 @@ public unsafe partial class VulkanRenderer
             ResetAttachmentLayoutTracking();
             MarkUploaded();
             if (!IsActive)
+            {
+                PreGenerated();
                 _bindingId = CacheObject(this);
+                PostGenerated();
+            }
 
             pendingUpload.DetachPublishedImageHandles();
             Renderer.MarkCommandBuffersDirty(
@@ -2320,6 +2343,10 @@ public unsafe partial class VulkanRenderer
 
             RefreshPhysicalGroupImageIfStale();
 
+            ImageLayout liveLayout = CurrentImageLayout;
+            if (liveLayout != oldLayout)
+                oldLayout = liveLayout;
+
             oldLayout = CoerceLayoutForUsage(oldLayout);
             newLayout = CoerceLayoutForUsage(newLayout);
             AssembleTransitionImageLayout(oldLayout, newLayout, out ImageMemoryBarrier barrier, out PipelineStageFlags src, out PipelineStageFlags dst);
@@ -2342,6 +2369,11 @@ public unsafe partial class VulkanRenderer
                 return requested;
 
             bool canSample = (Usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0;
+            bool isDepthOrStencil = (AspectFlags & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0 ||
+                VkFormatConversions.IsDepthStencilFormat(ResolvedFormat);
+            if (canSample && isDepthOrStencil)
+                return ImageLayout.DepthStencilReadOnlyOptimal;
+
             if (canSample)
                 return requested;
 
@@ -2525,8 +2557,9 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
-            if (_currentImageLayout != ImageLayout.TransferDstOptimal)
-                TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
+            ImageLayout currentLayout = CurrentImageLayout;
+            if (currentLayout != ImageLayout.TransferDstOptimal)
+                TransitionImageLayout(currentLayout, ImageLayout.TransferDstOptimal);
 
             BufferImageCopy region = new()
             {
@@ -2845,9 +2878,9 @@ public unsafe partial class VulkanRenderer
             }
 
             uint baseMip = (uint)Math.Clamp(level, 0, Math.Max((int)ResolvedMipLevels - 1, 0));
-            ImageLayout previousLayout = _currentImageLayout;
-            if (_currentImageLayout != ImageLayout.TransferDstOptimal)
-                TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
+            ImageLayout previousLayout = CurrentImageLayout;
+            if (previousLayout != ImageLayout.TransferDstOptimal)
+                TransitionImageLayout(previousLayout, ImageLayout.TransferDstOptimal);
 
             ImageSubresourceRange range = new()
             {
@@ -3284,8 +3317,12 @@ public unsafe partial class VulkanRenderer
 
             if (ResolvedMipLevels <= 1)
             {
-                if (_currentImageLayout != ImageLayout.ShaderReadOnlyOptimal)
-                    TransitionImageLayout(_currentImageLayout, ImageLayout.ShaderReadOnlyOptimal);
+                ImageLayout currentLayout = CurrentImageLayout;
+                if (currentLayout != ImageLayout.ShaderReadOnlyOptimal &&
+                    currentLayout != ImageLayout.DepthStencilReadOnlyOptimal)
+                {
+                    TransitionImageLayout(currentLayout, ImageLayout.ShaderReadOnlyOptimal);
+                }
                 return;
             }
 
@@ -3293,12 +3330,13 @@ public unsafe partial class VulkanRenderer
             if ((props.OptimalTilingFeatures & FormatFeatureFlags.SampledImageFilterLinearBit) == 0)
             {
                 Debug.VulkanWarning($"Texture format '{ResolvedFormat}' does not support linear blitting; skipping mipmap generation.");
-                TransitionImageLayout(_currentImageLayout, ImageLayout.ShaderReadOnlyOptimal);
+                TransitionImageLayout(CurrentImageLayout, ImageLayout.ShaderReadOnlyOptimal);
                 return;
             }
 
-            if (_currentImageLayout != ImageLayout.TransferDstOptimal)
-                TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
+            ImageLayout sourceLayout = CurrentImageLayout;
+            if (sourceLayout != ImageLayout.TransferDstOptimal)
+                TransitionImageLayout(sourceLayout, ImageLayout.TransferDstOptimal);
 
             using var scope = Renderer.NewCommandScope();
             CommandBuffer cmd = scope.CommandBuffer;

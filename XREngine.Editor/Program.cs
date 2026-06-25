@@ -470,7 +470,10 @@ internal class Program
                     failures.Add("Per-eye xrWaitSwapchainImage counts did not reach submitted frame count.");
                 if (!HasTwoEyesAtLeast(summary.PerEyeReleaseCounts, submittedTarget))
                     failures.Add("Per-eye xrReleaseSwapchainImage counts did not reach submitted frame count.");
-                if (!summary.DesktopMirrorComposed)
+                bool expectsDesktopMirrorComposition =
+                    Engine.Rendering.Settings.RenderWindowsWhileInVR &&
+                    Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures;
+                if (expectsDesktopMirrorComposition && !summary.DesktopMirrorComposed)
                     failures.Add("OpenXR desktop mirror composition was not observed during rendered-layer smoke frames.");
             }
             else if (summary.NoLayerFrameCount <= 0)
@@ -492,6 +495,7 @@ internal class Program
             _exitCode = exitCode;
             Environment.ExitCode = exitCode;
             EngineDebug.Out($"[OpenXRSmoke] {reason} Requesting engine shutdown.");
+            EditorImGuiUI.ForceAllowWindowCloseForShutdown();
             Engine.ShutDown();
         }
 

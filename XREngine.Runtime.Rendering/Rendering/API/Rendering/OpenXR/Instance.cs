@@ -11,15 +11,26 @@ using Microsoft.Win32;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
+using Debug = XREngine.Debug;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public unsafe partial class OpenXRAPI
 {
     private Instance _instance;
+    private bool _instanceOwnedByRenderer;
+    private bool _apiOwnedByRenderer;
 
     private void DestroyInstance()
-        => Api?.DestroyInstance(_instance);
+    {
+        if (_instance.Handle == 0)
+            return;
+
+        if (!_instanceOwnedByRenderer)
+            Api?.DestroyInstance(_instance);
+
+        _instanceOwnedByRenderer = false;
+    }
 
     private void CreateInstance()
     {
@@ -27,6 +38,34 @@ public unsafe partial class OpenXRAPI
 
         var appInfo = MakeAppInfo();
         var renderer = Window?.Renderer is VulkanRenderer ? ERenderer.Vulkan : ERenderer.OpenGL;
+
+        if (Window?.Renderer is VulkanRenderer vulkanRenderer &&
+            vulkanRenderer.TryGetOpenXrVulkanEnable2BootstrapInstance(
+                out XR rendererOwnedApi,
+                out Instance rendererOwnedInstance,
+                out string[] rendererOwnedExtensions))
+        {
+            if (!ReferenceEquals(Api, rendererOwnedApi))
+            {
+                if (!_apiOwnedByRenderer)
+                    Api.Dispose();
+
+                Api = rendererOwnedApi;
+            }
+
+            _instance = rendererOwnedInstance;
+            _instanceOwnedByRenderer = true;
+            _apiOwnedByRenderer = true;
+            RecordSmokeInstanceCreated(renderer.ToString(), rendererOwnedExtensions);
+            Debug.Vulkan("[OpenXR] Reusing renderer-owned XR_KHR_vulkan_enable2 instance for OpenXR session creation.");
+            return;
+        }
+
+        _instanceOwnedByRenderer = false;
+        if (_apiOwnedByRenderer)
+            Api = XR.GetApi();
+
+        _apiOwnedByRenderer = false;
         var requiredExtensions = GetRequiredExtensions(renderer);
 
         var availableExtensions = GetAvailableInstanceExtensions();

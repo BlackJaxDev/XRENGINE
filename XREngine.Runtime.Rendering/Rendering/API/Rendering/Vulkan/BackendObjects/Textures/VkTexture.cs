@@ -48,6 +48,21 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         public virtual bool IsDescriptorReady => IsGenerated && !IsDescriptorDirty && !IsInvalidated && HasUploadedData;
 
+        public override void Destroy()
+        {
+            if (IsActive)
+            {
+                base.Destroy();
+                return;
+            }
+
+            if (!IsGenerated)
+                return;
+
+            DeleteObjectInternal();
+            _bindingId = null;
+        }
+
         protected override void LinkData()
         {
             Data.AttachToFBORequested += AttachToFBO;
@@ -279,6 +294,14 @@ public unsafe partial class VulkanRenderer
         {
             EnsureDescriptorReadyForVulkanUse(reason);
             return IsDescriptorReady;
+        }
+
+        public virtual bool TryEnsureDescriptorReadyForUse(string reason, bool allowSynchronousUpload)
+        {
+            if (!allowSynchronousUpload)
+                return IsDescriptorReady;
+
+            return TryEnsureDescriptorReadyForUse(reason);
         }
 
         protected virtual string? ResolveLogicalResourceName()

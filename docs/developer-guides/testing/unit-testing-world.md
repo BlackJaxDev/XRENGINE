@@ -174,7 +174,7 @@ Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runt
 
 `VR.Mode=Emulated` is scene-only. It does not emulate OpenXR API calls, runtime state, swapchains, poses, or frame submission. `VR.Mode=MonadoOpenXR` uses the real OpenXR loader/API with Monado as the selected runtime. Existing `XR_RUNTIME_JSON` environment values win over `VR.OpenXrRuntimeJson`; when both are empty, startup searches `MONADO_RUNTIME_JSON`, `MONADO_INSTALL_DIR`, common Monado install paths, and repo-local Monado build/dependency paths. In Monado mode, startup also prepends the detected `openxr_loader.dll`, Monado runtime, and Monado service directories to the current process `PATH`, then starts `monado-service.exe` when it is not already running.
 
-On Windows, `VR.Mode=MonadoOpenXR` currently normalizes `Rendering.RenderBackend=Vulkan` to `OpenGL` unless `XRE_UNIT_TEST_RENDER_API=Vulkan` is explicitly set. The Vulkan lane is diagnostic only until the renderer creates the OpenXR-compatible Vulkan instance/device requested by `XR_KHR_vulkan_enable2`.
+On Windows, `VR.Mode=MonadoOpenXR` honors the requested `Rendering.RenderBackend`. The Vulkan path queries the selected OpenXR runtime before renderer creation and enables the Vulkan instance/device extensions required by the runtime, then renders each eye into the acquired OpenXR Vulkan swapchain image.
 
 Useful tasks:
 

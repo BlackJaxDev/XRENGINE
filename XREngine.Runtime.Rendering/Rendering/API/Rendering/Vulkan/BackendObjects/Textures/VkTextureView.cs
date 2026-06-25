@@ -27,6 +27,14 @@ namespace XREngine.Rendering.Vulkan
 
             public override VkObjectType Type => VkObjectType.Texture;
             public override bool IsGenerated => _view.Handle != 0 || _texelBufferView.Handle != 0;
+            public override bool IsDescriptorReady
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+                    return !IsDescriptorDirty && (_view.Handle != 0 || _texelBufferView.Handle != 0);
+                }
+            }
 
             internal ImageView View => _view;
             internal Sampler Sampler => _sampler;
@@ -226,6 +234,12 @@ namespace XREngine.Rendering.Vulkan
             protected override uint CreateObjectInternal()
             {
                 CreateView();
+                if (IsGenerated)
+                {
+                    HasUploadedData = true;
+                    IsInvalidated = false;
+                    MarkDescriptorClean();
+                }
                 return CacheObject(this);
             }
 
@@ -689,6 +703,9 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (_sampler.Handle == 0)
                         CreateSampler();
+                    HasUploadedData = true;
+                    IsInvalidated = false;
+                    MarkDescriptorClean();
                     return;
                 }
 
@@ -732,7 +749,12 @@ namespace XREngine.Rendering.Vulkan
                 if (_view.Handle != 0)
                     CreateSampler();
 
-                MarkDescriptorDirty();
+                if (_view.Handle != 0)
+                {
+                    HasUploadedData = true;
+                    IsInvalidated = false;
+                    MarkDescriptorPublished();
+                }
             }
 
             private ImageSubresourceRange ResolveViewSubresourceRange(IVkImageDescriptorSource source, ImageAspectFlags aspectMask)

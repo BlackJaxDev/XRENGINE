@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
@@ -121,7 +120,7 @@ namespace XREngine.Rendering.Vulkan
                         MarkDeviceLost();
 
                     Debug.VulkanWarning($"[Vulkan] One-shot QueueSubmit failed (result={submitResult}). Skipping command buffer free.");
-                    if (submitFence.Handle != 0)
+                    if (submitFence.Handle != 0 && submitResult != Result.ErrorDeviceLost)
                         Api!.DestroyFence(device, submitFence, null);
                     RemoveCommandBufferBindState(commandBuffer);
                     return;
@@ -148,7 +147,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            if (submitFence.Handle != 0)
+            if (submitFence.Handle != 0 && waitSucceeded)
                 Api!.DestroyFence(device, submitFence, null);
 
             if (!waitSucceeded)
@@ -177,13 +176,7 @@ namespace XREngine.Rendering.Vulkan
             if (useTransferQueue)
                 return transferQueue;
 
-            // Keep default graphics submission behavior unless OpenXR is actively running.
-            if (!HasSecondaryGraphicsQueue || !RuntimeEngine.VRState.IsOpenXRActive)
-                return graphicsQueue;
-
-            // Alternate between primary and secondary graphics queues.
-            int submitIndex = Interlocked.Increment(ref _oneTimeGraphicsSubmitCounter);
-            return (submitIndex & 1) == 0 ? secondaryGraphicsQueue : graphicsQueue;
+            return graphicsQueue;
         }
 
     }

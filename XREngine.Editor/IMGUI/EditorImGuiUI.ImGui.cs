@@ -209,6 +209,7 @@ public static partial class EditorImGuiUI
         private static bool _closePromptOpen;
         private static bool _closePromptRequested;
         private static bool _closePromptSaving;
+        private static bool _forceAllowWindowCloseForShutdown;
         private static string? _closePromptSaveError;
         private static XRWindow? _closePromptWindow;
         private static XRWindow? _closePromptBypassWindow;
@@ -275,6 +276,14 @@ public static partial class EditorImGuiUI
             Engine.Time.Timer.UpdateFrame += ProcessQueuedSceneEdits;
             Engine.Time.Timer.UpdateFrame += EnsureScenePanelWindowHooked;
             Selection.SelectionChanged += HandleSceneSelectionChanged;
+            Engine.WindowCloseRequested = HandleWindowCloseRequested;
+        }
+
+        internal static void ForceAllowWindowCloseForShutdown()
+        {
+            _forceAllowWindowCloseForShutdown = true;
+            ResetClosePromptState();
+            _closePromptBypassWindow = null;
             Engine.WindowCloseRequested = HandleWindowCloseRequested;
         }
 
@@ -819,6 +828,9 @@ public static partial class EditorImGuiUI
 
         private static Engine.WindowCloseRequestResult HandleWindowCloseRequested(XRWindow window)
         {
+            if (_forceAllowWindowCloseForShutdown)
+                return Engine.WindowCloseRequestResult.Allow;
+
             if (!Engine.IsEditor)
                 return Engine.WindowCloseRequestResult.Allow;
 

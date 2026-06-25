@@ -1886,10 +1886,14 @@ public unsafe partial class VulkanRenderer
         descriptorSampler = default;
         descriptorLayout = ImageLayout.ShaderReadOnlyOptimal;
 
-        if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
+        bool allowSynchronousTextureUpload = AllowSynchronousResourceUploads;
+        if (GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
             return false;
 
-        TryUploadImGuiTextureIfUninitialized(texture, ref source);
+        if (allowSynchronousTextureUpload)
+            TryUploadImGuiTextureIfUninitialized(texture, ref source);
+        else if (!source.IsDescriptorReady)
+            return false;
 
         descriptorView = ResolveImGuiDescriptorView(source);
         descriptorSampler = source.DescriptorSampler;

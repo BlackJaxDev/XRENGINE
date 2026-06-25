@@ -85,7 +85,17 @@ public static partial class EditorUnitTests
             s.RecalcChildMatricesLoopType = Toggles.RecalcChildMatricesType;
         if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.TickGroupedItemsInParallel)))
             s.TickGroupedItemsInParallel = Toggles.TickGroupedItemsInParallel;
-        bool requiresDesktopVrWindow = Toggles.VRPawn && (Toggles.AllowEditingInVR || Toggles.PreviewVRStereoViews);
+        bool groupedVrSpecified = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VR));
+        bool vrPawnRequested = groupedVrSpecified
+            ? runtimeSettings.VR.Mode != XREngine.Runtime.Bootstrap.UnitTestingVrLaunchMode.Desktop
+            : Toggles.VRPawn;
+        bool allowDesktopEditingInVr = groupedVrSpecified
+            ? runtimeSettings.VR.AllowDesktopEditing
+            : Toggles.AllowEditingInVR;
+        bool previewVrStereoViews = groupedVrSpecified
+            ? runtimeSettings.VR.PreviewStereoViews
+            : Toggles.PreviewVRStereoViews;
+        bool requiresDesktopVrWindow = vrPawnRequested && (allowDesktopEditingInVr || previewVrStereoViews);
         if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) || requiresDesktopVrWindow)
             s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresDesktopVrWindow;
         s.VrMirrorComposeFromEyeTextures = !requiresDesktopVrWindow;

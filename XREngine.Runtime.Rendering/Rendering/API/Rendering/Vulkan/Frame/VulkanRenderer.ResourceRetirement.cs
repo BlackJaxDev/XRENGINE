@@ -30,17 +30,12 @@ namespace XREngine.Rendering.Vulkan
         private readonly object _retiredResourceLock = new();
         private const int RetiredDescriptorPoolDrainLimitPerFrame = 8;
         private const int RetiredPipelineDrainLimitPerFrame = 8;
-        private const int RetiredFramebufferDrainLimitPerFrame = 16;
-        private const int RetiredBufferDrainLimitPerFrame = 64;
-        private const int RetiredImageDrainLimitPerFrame = 8;
+        private const int RetiredFramebufferDrainLimitPerFrame = 64;
+        private const int RetiredBufferDrainLimitPerFrame = 256;
+        private const int RetiredImageDrainLimitPerFrame = 64;
 
         private static int GetRetiredResourceDrainCount(int queuedCount, int maxItems)
-        {
-            if (queuedCount <= 0 || maxItems <= 0)
-                return 0;
-
-            return queuedCount <= maxItems ? queuedCount : maxItems;
-        }
+            => queuedCount <= 0 || maxItems <= 0 ? 0 : queuedCount <= maxItems ? queuedCount : maxItems;
 
         private void ReportRetiredResourceBacklog(string resourceKind, int frameSlot, int remaining)
         {
@@ -696,6 +691,25 @@ namespace XREngine.Rendering.Vulkan
                 DrainRetiredBuffers(int.MaxValue);
                 DrainRetiredFramebuffers(int.MaxValue);
                 DrainRetiredImages(int.MaxValue);
+            }
+            currentFrame = saved;
+        }
+
+        /// <summary>
+        /// Immediately destroys completed non-image resources across all frame slots.
+        /// Images stay on the normal frame-slot drain path because descriptors can
+        /// still carry old image handles until the next material/FBO refresh.
+        /// </summary>
+        internal void ForceFlushCompletedNonImageRetiredResources()
+        {
+            int saved = currentFrame;
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+            {
+                currentFrame = i;
+                DrainRetiredDescriptorPools(currentFrame, int.MaxValue);
+                DrainRetiredPipelines(int.MaxValue);
+                DrainRetiredBuffers(int.MaxValue);
+                DrainRetiredFramebuffers(int.MaxValue);
             }
             currentFrame = saved;
         }

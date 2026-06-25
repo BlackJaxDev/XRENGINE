@@ -709,6 +709,7 @@ namespace XREngine.Rendering.Vulkan
             private ulong ComputeResourceFingerprint(VkRenderProgram program)
             {
                 HashCode hash = new();
+                hash.Add(Renderer.ResourceAllocatorIdentity);
                 hash.Add(Data.Textures.Count);
                 for (int i = 0; i < Data.Textures.Count; i++)
                     AddTextureDescriptorResourceFingerprint(ref hash, Data.Textures[i]);
@@ -727,9 +728,12 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                object? apiObject = Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true);
+                bool allowSynchronousTextureUpload = Renderer.AllowSynchronousResourceUploads;
+                object? apiObject = Renderer.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload);
                 if (apiObject is IVkImageDescriptorSource imageSource)
                 {
+                    hash.Add(imageSource.IsDescriptorReady);
+                    hash.Add(imageSource.DescriptorGeneration);
                     hash.Add(imageSource.DescriptorImage.Handle);
                     hash.Add(imageSource.DescriptorView.Handle);
                     hash.Add(imageSource.DescriptorSampler.Handle);
@@ -1192,13 +1196,14 @@ namespace XREngine.Rendering.Vulkan
 
                 bool includeSampler = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;
 
-                if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
+                bool allowSynchronousTextureUpload = Renderer.AllowSynchronousResourceUploads;
+                if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
                 {
                     WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' does not have a Vulkan image wrapper.");
                     return false;
                 }
 
-                if (!source.TryEnsureDescriptorReadyForUse($"material descriptor '{binding.Name}'"))
+                if (!source.TryEnsureDescriptorReadyForUse($"material descriptor '{binding.Name}'", allowSynchronousTextureUpload))
                 {
                     imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
                     if (imageInfo.ImageView.Handle != 0)

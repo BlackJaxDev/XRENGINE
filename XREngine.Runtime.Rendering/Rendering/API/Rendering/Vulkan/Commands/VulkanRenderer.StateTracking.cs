@@ -23,7 +23,7 @@ public unsafe partial class VulkanRenderer
     private readonly VulkanStateTracker _state = new();
     private VulkanResourcePlanner _resourcePlanner = new();
     private VulkanResourceAllocator _resourceAllocator = new();
-    private readonly VulkanBarrierPlanner _barrierPlanner = new();
+    private VulkanBarrierPlanner _barrierPlanner = new();
     private VulkanCompiledRenderGraph _compiledRenderGraph = VulkanCompiledRenderGraph.Empty;
     private FrameOpContext? _lastActiveFrameOpContext;
     private ulong _resourcePlannerSignature = ulong.MaxValue;
@@ -49,6 +49,7 @@ public unsafe partial class VulkanRenderer
     internal VulkanResourcePlanner ResourcePlanner => _resourcePlanner;
     internal VulkanResourcePlan ResourcePlan => _resourcePlanner.CurrentPlan;
     internal VulkanResourceAllocator ResourceAllocator => _resourceAllocator;
+    internal int ResourceAllocatorIdentity => RuntimeHelpers.GetHashCode(_resourceAllocator);
     internal VulkanCompiledRenderGraph CompiledRenderGraph => _compiledRenderGraph;
     internal ulong ResourcePlannerRevision => _resourcePlannerRevision;
     private bool IsCommandChainResourcePlanFrozen => Volatile.Read(ref _commandChainFrozenPlanReaders) > 0;
@@ -113,6 +114,39 @@ public unsafe partial class VulkanRenderer
         public FrameOpRegistryCacheSource[] Sources { get; } = sources;
         public RenderResourceRegistry MergedRegistry { get; } = mergedRegistry;
         public ulong LastUsedFrameId { get; set; } = lastUsedFrameId;
+    }
+
+    private struct ResourcePlannerRuntimeState
+    {
+        public VulkanResourcePlanner ResourcePlanner;
+        public VulkanResourceAllocator ResourceAllocator;
+        public VulkanBarrierPlanner BarrierPlanner;
+        public VulkanCompiledRenderGraph CompiledRenderGraph;
+        public FrameOpContext? LastActiveFrameOpContext;
+        public ulong ResourcePlannerSignature;
+        public ulong ResourceAllocationSignature;
+        public ulong FailedResourcePlannerSignature;
+        public ulong FailedResourceAllocationSignature;
+        public long FailedResourceAllocationTimestamp;
+        public ResourcePlannerFastPathKey ResourcePlannerFastPathKey;
+        public bool HasResourcePlannerFastPathKey;
+        public BarrierPlanFastPathKey BarrierPlanFastPathKey;
+        public bool HasBarrierPlanFastPathKey;
+        public ResourcePlannerSignatureBreakdown ResourcePlannerSignatureBreakdown;
+        public ulong ResourcePlannerRevision;
+
+        public static ResourcePlannerRuntimeState CreateEmpty()
+            => new()
+            {
+                ResourcePlanner = new VulkanResourcePlanner(),
+                ResourceAllocator = new VulkanResourceAllocator(),
+                BarrierPlanner = new VulkanBarrierPlanner(),
+                CompiledRenderGraph = VulkanCompiledRenderGraph.Empty,
+                ResourcePlannerSignature = ulong.MaxValue,
+                ResourceAllocationSignature = ulong.MaxValue,
+                FailedResourcePlannerSignature = ulong.MaxValue,
+                FailedResourceAllocationSignature = ulong.MaxValue,
+            };
     }
 
     private readonly record struct ResourcePlannerSignatureBreakdown(
@@ -243,6 +277,47 @@ public unsafe partial class VulkanRenderer
             if (Interlocked.Decrement(ref _renderer._commandChainFrozenPlanReaders) == 0)
                 _renderer._commandChainFrozenResourcePlanRevision = 0;
         }
+    }
+
+    private ResourcePlannerRuntimeState CaptureResourcePlannerRuntimeState()
+        => new()
+        {
+            ResourcePlanner = _resourcePlanner,
+            ResourceAllocator = _resourceAllocator,
+            BarrierPlanner = _barrierPlanner,
+            CompiledRenderGraph = _compiledRenderGraph,
+            LastActiveFrameOpContext = _lastActiveFrameOpContext,
+            ResourcePlannerSignature = _resourcePlannerSignature,
+            ResourceAllocationSignature = _resourceAllocationSignature,
+            FailedResourcePlannerSignature = _failedResourcePlannerSignature,
+            FailedResourceAllocationSignature = _failedResourceAllocationSignature,
+            FailedResourceAllocationTimestamp = _failedResourceAllocationTimestamp,
+            ResourcePlannerFastPathKey = _resourcePlannerFastPathKey,
+            HasResourcePlannerFastPathKey = _hasResourcePlannerFastPathKey,
+            BarrierPlanFastPathKey = _barrierPlanFastPathKey,
+            HasBarrierPlanFastPathKey = _hasBarrierPlanFastPathKey,
+            ResourcePlannerSignatureBreakdown = _resourcePlannerSignatureBreakdown,
+            ResourcePlannerRevision = _resourcePlannerRevision,
+        };
+
+    private void RestoreResourcePlannerRuntimeState(in ResourcePlannerRuntimeState state)
+    {
+        _resourcePlanner = state.ResourcePlanner;
+        _resourceAllocator = state.ResourceAllocator;
+        _barrierPlanner = state.BarrierPlanner;
+        _compiledRenderGraph = state.CompiledRenderGraph;
+        _lastActiveFrameOpContext = state.LastActiveFrameOpContext;
+        _resourcePlannerSignature = state.ResourcePlannerSignature;
+        _resourceAllocationSignature = state.ResourceAllocationSignature;
+        _failedResourcePlannerSignature = state.FailedResourcePlannerSignature;
+        _failedResourceAllocationSignature = state.FailedResourceAllocationSignature;
+        _failedResourceAllocationTimestamp = state.FailedResourceAllocationTimestamp;
+        _resourcePlannerFastPathKey = state.ResourcePlannerFastPathKey;
+        _hasResourcePlannerFastPathKey = state.HasResourcePlannerFastPathKey;
+        _barrierPlanFastPathKey = state.BarrierPlanFastPathKey;
+        _hasBarrierPlanFastPathKey = state.HasBarrierPlanFastPathKey;
+        _resourcePlannerSignatureBreakdown = state.ResourcePlannerSignatureBreakdown;
+        _resourcePlannerRevision = state.ResourcePlannerRevision;
     }
 
     private readonly record struct PhysicalAllocationPlan(

@@ -1,6 +1,7 @@
 using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.EXT;
 using System.Runtime.InteropServices;
+using Debug = XREngine.Debug;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
@@ -50,15 +51,41 @@ public unsafe partial class OpenXRAPI
         if (!EnableValidationLayers)
             return;
 
-        if (!Api!.TryGetInstanceExtension(null, _instance, out _debugUtils) || _debugUtils is null)
+        try
+        {
+            if (!Api!.TryGetInstanceExtension(null, _instance, out _debugUtils) || _debugUtils is null)
+                return;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"OpenXR debug utils extension is unavailable; validation messenger disabled. Reason={ex.Message}");
+            _debugUtils = null;
             return;
+        }
 
         DebugUtilsMessengerCreateInfoEXT createInfo = new();
         PopulateDebugMessengerCreateInfo(ref createInfo);
 
         var d = new DebugUtilsMessengerEXT();
-        if (_debugUtils!.CreateDebugUtilsMessenger(_instance, &createInfo, &d) != Result.Success)
-            throw new Exception("Failed to set up OpenXR debug messenger.");
+        Result result;
+        try
+        {
+            result = _debugUtils!.CreateDebugUtilsMessenger(_instance, &createInfo, &d);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"OpenXR debug utils messenger could not be created; validation messenger disabled. Reason={ex.Message}");
+            _debugUtils = null;
+            return;
+        }
+
+        if (result != Result.Success)
+        {
+            Debug.LogWarning($"OpenXR debug utils messenger could not be created; validation messenger disabled. Result={result}");
+            _debugUtils = null;
+            return;
+        }
+
         _debugMessenger = d;
     }
     private bool CheckValidationLayerSupport()

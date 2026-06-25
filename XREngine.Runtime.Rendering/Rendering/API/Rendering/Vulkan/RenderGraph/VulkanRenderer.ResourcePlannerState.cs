@@ -208,6 +208,9 @@ public unsafe partial class VulkanRenderer
         if (ops.Length == 0)
         {
             FrameOpContext context = CaptureFrameOpContext();
+            if (context.ResourceRegistry is null && context.PassMetadata is null)
+                return context;
+
             UpdateResourcePlannerFromContext(context);
             return context;
         }

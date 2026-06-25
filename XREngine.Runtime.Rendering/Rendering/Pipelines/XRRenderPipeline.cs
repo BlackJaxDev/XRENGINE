@@ -220,7 +220,17 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         {
             XRRenderPipelineInstance instance = Instances[i];
             instance.MeshRenderCommands.SetRenderPasses(PassIndicesAndSorters, PassMetadata);
-            instance.DestroyCache();
+            XRViewport? viewport = instance.LastWindowViewport;
+            bool presentsDirectlyToWindow =
+                viewport is not null &&
+                viewport.Window?.Viewports.Contains(viewport) == true;
+            bool rendersToExternalSwapchain =
+                viewport?.RendersToExternalSwapchainTarget == true;
+
+            if (presentsDirectlyToWindow || rendersToExternalSwapchain)
+                instance.InvalidatePhysicalResources();
+            else
+                instance.DestroyCache();
         }
 
         if (!IsDirty)
@@ -455,6 +465,9 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// </summary>
     internal virtual float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
         => RequestedInternalResolution;
+
+    internal virtual float? GetRequestedInternalResolutionForCamera(XRCamera? camera, EAntiAliasingMode effectiveAntiAliasingMode)
+        => GetRequestedInternalResolutionForCamera(camera);
 
     /// <summary>
     /// Creates a texture used by PBR shading to light an opaque surface.

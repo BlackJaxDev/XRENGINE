@@ -5,6 +5,7 @@ using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Vulkan.Extensions.NV;
 using System.Text;
 using System.Runtime.CompilerServices;
+using XREngine.Rendering.API.Rendering.OpenXR;
 
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
@@ -13,6 +14,7 @@ public unsafe partial class VulkanRenderer
     private string[] _availableDeviceExtensions = Array.Empty<string>();
     private string[] _enabledDeviceExtensions = Array.Empty<string>();
     private Device device;
+    private bool _vulkanDeviceCreatedThroughOpenXr;
     private Queue graphicsQueue;
     private Queue secondaryGraphicsQueue;
     private Queue presentQueue;
@@ -646,6 +648,26 @@ public unsafe partial class VulkanRenderer
 
         // Build the list of extensions to enable (required + supported optional)
         var extensionsToEnable = new List<string>(deviceExtensions);
+        var openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
+        foreach (string requiredOpenXrExtension in openXrRequirements.DeviceExtensions)
+        {
+            if (string.IsNullOrWhiteSpace(requiredOpenXrExtension))
+                continue;
+
+            if (!availableExtensionSet.Contains(requiredOpenXrExtension))
+            {
+                throw new NotSupportedException(
+                    $"The active OpenXR runtime requires Vulkan device extension '{requiredOpenXrExtension}', " +
+                    "but the selected Vulkan physical device does not expose it.");
+            }
+
+            if (!extensionsToEnable.Contains(requiredOpenXrExtension, StringComparer.Ordinal))
+            {
+                extensionsToEnable.Add(requiredOpenXrExtension);
+                Debug.Vulkan($"[OpenXR] Enabling required Vulkan device extension: {requiredOpenXrExtension}");
+            }
+        }
+
         foreach (var optionalExt in optionalDeviceExtensions)
         {
             if (optionalExt == "VK_EXT_graphics_pipeline_library" &&
@@ -971,14 +993,10 @@ public unsafe partial class VulkanRenderer
             GeometryStreams = enableTransformFeedbackFeature && transformFeedbackGeometryStreamsSupported,
         };
 
-        bool useVulkan12FeatureEnable =
-            vulkan12PromotedToCore &&
-            (enableDrawIndirectCountFeature ||
-                (descriptorIndexingExtensionEnabled && supportedVulkan12Features.DescriptorIndexing) ||
-                enableTimelineSemaphoreFeature ||
-                enableBufferDeviceAddress ||
-                enableShaderOutputViewportIndexFeature ||
-                enableShaderOutputLayerFeature);
+        // Keep promoted feature structs separate. Mixing VkPhysicalDeviceVulkan12Features
+        // with the promoted per-feature structs is invalid and Monado rejects the device
+        // created from that pNext chain during xrCreateSession.
+        bool useVulkan12FeatureEnable = false;
 
         void* enabledFeaturesPNext = null;
         if (enableDescriptorIndexing && !useVulkan12FeatureEnable)
@@ -1097,9 +1115,33 @@ public unsafe partial class VulkanRenderer
         createInfo.EnabledLayerCount = 0;
         createInfo.PpEnabledLayerNames = null;
 
-        // Create the logical device
-        if (Api!.CreateDevice(_physicalDevice, in createInfo, null, out device) != Result.Success)
-            throw new Exception("Failed to create logical device.");
+        var getInstanceProcAddr = Api!.GetInstanceProcAddr(default, "vkGetInstanceProcAddr");
+        if (_openXrVulkanEnable2Context is not null)
+        {
+            if (_openXrVulkanEnable2Context.TryCreateVulkanDevice(
+                (nint)_physicalDevice.Handle,
+                &createInfo,
+                getInstanceProcAddr,
+                out nint openXrCreatedDeviceHandle,
+                out _,
+                out string? openXrCreateFailure))
+            {
+                device = new Device(openXrCreatedDeviceHandle);
+                _vulkanDeviceCreatedThroughOpenXr = true;
+            }
+            else
+            {
+                throw new Exception($"Failed to create Vulkan logical device through OpenXR: {openXrCreateFailure}");
+            }
+        }
+        else
+        {
+            // Create the logical device
+            if (Api.CreateDevice(_physicalDevice, in createInfo, null, out device) != Result.Success)
+                throw new Exception("Failed to create logical device.");
+
+            _vulkanDeviceCreatedThroughOpenXr = false;
+        }
 
         _supportsDescriptorIndexing = enableDescriptorIndexing;
         _supportsNvMemoryDecompression = enableNvMemoryDecompression;

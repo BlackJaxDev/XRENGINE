@@ -53,8 +53,7 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
-            TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
-
+            bool uploadedAny = false;
             uint arrayLayers = Math.Min((uint)layers.Length, ResolvedArrayLayers);
             for (uint layer = 0; layer < arrayLayers; layer++)
             {
@@ -75,6 +74,14 @@ public unsafe partial class VulkanRenderer
 
                     try
                     {
+                        if (!uploadedAny)
+                        {
+                            ImageLayout oldLayout = CurrentImageLayout;
+                            if (oldLayout != ImageLayout.TransferDstOptimal)
+                                TransitionImageLayout(oldLayout, ImageLayout.TransferDstOptimal);
+                            uploadedAny = true;
+                        }
+
                         Extent3D extent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1);
                         CopyBufferToImage(stagingBuffer, level, layer, 1, extent, (ulong)(mip.Data?.Length ?? 0));
                     }
@@ -84,6 +91,9 @@ public unsafe partial class VulkanRenderer
                     }
                 }
             }
+
+            if (!uploadedAny)
+                return;
 
             if (Data.AutoGenerateMipmaps && ResolvedMipLevels > 1)
                 GenerateMipmapsGPU();

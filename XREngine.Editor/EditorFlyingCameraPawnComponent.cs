@@ -1194,7 +1194,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
 
         if (NeedsDepthHit())
+        {
+            if (AbstractRenderer.Current?.IsRenderingExternalSwapchainTarget == true)
+                return;
+
             GetDepthHit(vp, GetCursorInternalCoordinatePosition(vp));
+        }
     }
 
     private void ApplyInput(XRViewport? vp)

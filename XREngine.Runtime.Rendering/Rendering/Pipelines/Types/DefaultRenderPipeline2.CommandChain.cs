@@ -2591,6 +2591,9 @@ public partial class DefaultRenderPipeline2
 
     private int EvaluateAmbientOcclusionMode()
     {
+        if (IsRenderingExternalSwapchainTarget())
+            return AmbientOcclusionDisabledMode;
+
         AmbientOcclusionSettings? aoSettings = ResolveAmbientOcclusionSettings();
         if (aoSettings is null || !aoSettings.Enabled)
             return AmbientOcclusionDisabledMode;

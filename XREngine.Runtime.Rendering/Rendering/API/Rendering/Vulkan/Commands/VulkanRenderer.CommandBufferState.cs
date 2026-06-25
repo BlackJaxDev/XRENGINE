@@ -38,7 +38,6 @@ namespace XREngine.Rendering.Vulkan
         private readonly object _oneTimeCommandPoolsLock = new();
         private readonly Dictionary<nint, OneTimeCommandOwner> _oneTimeCommandPools = new();
         private readonly object _oneTimeSubmitLock = new();
-        private int _oneTimeGraphicsSubmitCounter;
         private readonly object _commandBindStateLock = new();
         private readonly Dictionary<ulong, CommandBufferBindState> _commandBindStates = new();
         private readonly Dictionary<ulong, int> _commandBufferImageIndices = new();
@@ -128,7 +127,9 @@ namespace XREngine.Rendering.Vulkan
             public int DynamicUiOpCount { get; set; } = -1;
             public bool DynamicUiSecondaryRecorded { get; set; }
             public bool PreserveSwapchainForOverlay { get; set; }
+            public bool RecordedSwapchainImageEverPresented { get; set; }
             public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;
+            public int RecordedSwapchainWriteCount { get; set; }
             public ulong CommandChainScheduleSignature { get; set; } = ulong.MaxValue;
             public ulong CommandChainPrimaryGroupSignature { get; set; } = ulong.MaxValue;
             public int CommandChainPrimaryGroupCount { get; set; } = -1;
