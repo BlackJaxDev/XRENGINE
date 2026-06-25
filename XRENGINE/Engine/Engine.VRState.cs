@@ -49,6 +49,14 @@ namespace XREngine
             public static OpenXRAPI? OpenXRApi => _openXRApi;
             public static event Action<bool>? OpenXRSessionRunningChanged;
 
+            private static void SyncRuntimeVrState()
+            {
+                RuntimeEngine.VRState.IsInVR = IsInVR;
+                RuntimeEngine.VRState.IsOpenXRActive = IsOpenXRActive;
+                RuntimeEngine.VRState.OpenXRApi = IsOpenXRActive ? _openXRApi : null;
+                RuntimeEngine.VRState.ViewInformation = (_viewInformation.left, _viewInformation.right, _viewInformation.world, _viewInformation.HMDNode);
+            }
+
             private static VR? _openVRApi = null;
             public static VR OpenVRApi => _openVRApi ??= new VR();
 
@@ -343,6 +351,7 @@ namespace XREngine
 
                 _activeRuntime = VRRuntime.OpenXR;
                 IsInVR = true;
+                SyncRuntimeVrState();
                 InitRenderCallbacks(_openXRApi.Window);
             }
 
@@ -352,6 +361,7 @@ namespace XREngine
                     _activeRuntime = VRRuntime.None;
 
                 IsInVR = false;
+                SyncRuntimeVrState();
             }
 
             private static void DisableOpenVRRuntimeState()
@@ -422,6 +432,7 @@ namespace XREngine
                         CreateActions(actionManifest, vr);
                         Time.Timer.PreUpdateFrame += Update;
                         IsInVR = true;
+                        SyncRuntimeVrState();
                         return true;
                     }
                 });
@@ -1195,6 +1206,8 @@ namespace XREngine
                         _stereoCullingFrustum = null;
                         _combinedProjectionMatrix = Matrix4x4.Identity;
                     }
+
+                    SyncRuntimeVrState();
                 }
             }
 

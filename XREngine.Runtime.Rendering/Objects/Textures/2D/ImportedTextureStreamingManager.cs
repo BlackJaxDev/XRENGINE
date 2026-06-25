@@ -692,37 +692,44 @@ internal sealed class ImportedTextureStreamingManager
         // Recovery pass: detect and force-clear stuck pending transitions.
         // A pending transition is "stuck" when its async load / upload should have
         // completed but ClearPendingTransition was never called (e.g., a callback
-        // dropped after decode/upload work finished).
+        // dropped after decode/upload work finished). Visible or recently bound
+        // textures get per-record recovery even while unrelated uploads are still
+        // active, otherwise one stale upload backlog can pin everything at preview
+        // resolution indefinitely.
         bool anyDecodeActive = _tieredBackend.ActiveDecodeCount > 0
             || _tieredBackend.QueuedDecodeCount > 0
             || _sparseBackend.ActiveDecodeCount > 0
             || _sparseBackend.QueuedDecodeCount > 0;
         bool anyGpuUploadActive = _tieredBackend.ActiveGpuUploadCount > 0
             || _sparseBackend.ActiveGpuUploadCount > 0;
-        if (!anyDecodeActive && !anyGpuUploadActive)
+        bool globalStuckRecoveryAllowed = !anyDecodeActive && !anyGpuUploadActive;
+        for (int i = 0; i < snapshots.Count; i++)
         {
-            for (int i = 0; i < snapshots.Count; i++)
-            {
-                ImportedTextureStreamingSnapshot snapshot = snapshots[i];
-                if (snapshot.PendingMaxDimension == 0)
-                    continue;
+            ImportedTextureStreamingSnapshot snapshot = snapshots[i];
+            if (snapshot.PendingMaxDimension == 0)
+                continue;
 
-                long framesSincePending = snapshot.LastTransitionFrameId > 0
-                    ? frameId - snapshot.LastTransitionFrameId
-                    : frameId;
-                if (framesSincePending < StuckPendingTransitionFrameThreshold)
-                    continue;
+            long framesSincePending = snapshot.LastTransitionFrameId > 0
+                ? frameId - snapshot.LastTransitionFrameId
+                : frameId;
+            if (framesSincePending < StuckPendingTransitionFrameThreshold)
+                continue;
 
-                Debug.TexturesWarning(
-                    $"[TextureStreaming] Clearing stuck pending transition for '{snapshot.Record.FilePath}' "
-                    + $"(pending={snapshot.Record.PendingMaxDimension}, resident={snapshot.Record.ResidentMaxDimension}, "
-                    + $"staleFrames={framesSincePending})");
+            bool importantNow = snapshot.LastVisibleFrameId == frameId
+                || IsRecentlyBound(snapshot, frameId)
+                || snapshot.PendingMaxDimension > snapshot.ResidentMaxDimension;
+            if (!globalStuckRecoveryAllowed && !importantNow)
+                continue;
 
-                if (!_transitionQueue.TryForceClearStuckTransition(snapshot.Record, frameId, out CancellationTokenSource? pendingLoadCts))
-                    continue;
+            Debug.TexturesWarning(
+                $"[TextureStreaming] Clearing stuck pending transition for '{snapshot.Record.FilePath}' "
+                + $"(pending={snapshot.Record.PendingMaxDimension}, resident={snapshot.Record.ResidentMaxDimension}, "
+                + $"staleFrames={framesSincePending}, globalIdle={globalStuckRecoveryAllowed})");
 
-                CancelPendingLoad(pendingLoadCts);
-            }
+            if (!_transitionQueue.TryForceClearStuckTransition(snapshot.Record, frameId, out CancellationTokenSource? pendingLoadCts))
+                continue;
+
+            CancelPendingLoad(pendingLoadCts);
         }
 
         long trackedBudgetBytes = RuntimeRenderingHostServices.Current.TrackedVramBudgetBytes;

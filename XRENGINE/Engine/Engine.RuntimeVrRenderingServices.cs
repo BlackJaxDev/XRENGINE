@@ -3,6 +3,7 @@ using OpenVR.NET.Devices;
 using Valve.VR;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
+using XREngine.Data.Components.Scene;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
@@ -24,8 +25,29 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
         Engine.VRState.ViewInformation = (leftCamera, rightCamera, xrWorld, hmdNode);
     }
 
+    public bool TryEnsureHeadsetViewInformation(IRuntimeWorldContext? world, SceneNode? hmdNode, float nearPlane, float farPlane)
+        => TryPublishActiveHeadsetComponent(world, hmdNode, nearPlane, farPlane);
+
     public IRuntimeVrRenderModelHandle CreateRenderModelHandle(SceneNode node, string? childName = null)
         => new EngineRuntimeVrRenderModelHandle(node, childName);
+
+    private bool TryPublishActiveHeadsetComponent(IRuntimeWorldContext? world, SceneNode? hmdNode, float nearPlane, float farPlane)
+    {
+        var headset = VRHeadsetComponent.Instance;
+        if (headset is null || !headset.IsActiveInHierarchy)
+            return false;
+
+        if (hmdNode is not null && !ReferenceEquals(hmdNode, headset.SceneNode))
+            return false;
+
+        if (world is not null && headset.World is not null && !ReferenceEquals(world, headset.World))
+            return false;
+
+        headset.LeftEyeCamera.Near = headset.RightEyeCamera.Near = nearPlane;
+        headset.LeftEyeCamera.Far = headset.RightEyeCamera.Far = farPlane;
+        SetHeadsetViewInformation(headset.LeftEyeCamera, headset.RightEyeCamera, headset.World ?? world, headset.SceneNode);
+        return true;
+    }
 
     private sealed class EngineRuntimeVrEyeCamera : IRuntimeVrEyeCamera
     {

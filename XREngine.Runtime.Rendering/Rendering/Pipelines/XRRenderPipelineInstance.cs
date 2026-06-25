@@ -66,6 +66,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     public RenderCommandCollection MeshRenderCommands { get; } = new();
 
+    /// <summary>
+    /// Command collection currently bound to the render state. Viewports such as OpenXR stereo eyes can
+    /// provide a shared visibility collection while keeping separate pipeline instances/resources.
+    /// </summary>
+    public RenderCommandCollection ActiveMeshRenderCommands => RenderState.MeshRenderCommands ?? MeshRenderCommands;
+
     public RenderResourceRegistry Resources => _resourceBuildContext?.Generation.Registry
         ?? ActiveGeneration?.Registry
         ?? _legacyResources;

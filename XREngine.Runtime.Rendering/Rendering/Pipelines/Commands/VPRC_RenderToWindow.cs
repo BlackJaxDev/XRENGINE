@@ -152,7 +152,10 @@ void main()
         XRViewport? windowViewport = instance.RenderState.WindowViewport;
         bool isActiveWindowViewport = windowViewport?.Window?.Viewports.Contains(windowViewport) == true;
         bool isExternalSwapchainTarget = renderer.IsRenderingExternalSwapchainTarget;
-        if (windowViewport is not null && !isActiveWindowViewport && !isExternalSwapchainTarget)
+        bool useBoundOutputFbo =
+            instance.RenderState.OutputFBO is not null &&
+            (isExternalSwapchainTarget || windowViewport?.RendersToExternalSwapchainTarget == true);
+        if (windowViewport is not null && !isActiveWindowViewport && !isExternalSwapchainTarget && !useBoundOutputFbo)
         {
             Debug.RenderingWarningEvery(
                 $"RenderToWindow.SkipOffscreenPresent.{instance.GetHashCode()}",
@@ -166,10 +169,12 @@ void main()
             return;
         }
 
-        BoundingRectangle region = isExternalSwapchainTarget &&
+        BoundingRectangle region = useBoundOutputFbo
+            ? ResolveOutputFboRegion(instance)
+            : isExternalSwapchainTarget &&
                                    renderer.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion)
-            ? externalRegion
-            : ResolveTargetRegion(instance, targetWindow);
+                ? externalRegion
+                : ResolveTargetRegion(instance, targetWindow);
         if (region.Width <= 0 || region.Height <= 0)
         {
             Debug.RenderingWarningEvery(
@@ -184,8 +189,9 @@ void main()
             return;
         }
 
-        RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
-        if (!isExternalSwapchainTarget)
+        if (!useBoundOutputFbo)
+            RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
+        if (!isExternalSwapchainTarget && !useBoundOutputFbo)
             renderer.TrackWindowPresentSource(sourceTexture, ResolveSourceFrameBuffer(instance));
 
         using var areaScope = instance.RenderState.PushRenderArea(region);
@@ -262,6 +268,19 @@ void main()
 
         var framebufferSize = targetWindow.EffectiveFramebufferSize;
         return new BoundingRectangle(0, 0, framebufferSize.X, framebufferSize.Y);
+    }
+
+    private static BoundingRectangle ResolveOutputFboRegion(XRRenderPipelineInstance instance)
+    {
+        XRFrameBuffer? outputFbo = instance.RenderState.OutputFBO;
+        if (VPRC_RenderQuadToFBO.TryResolveDestinationRenderArea(outputFbo, out int width, out int height))
+            return new BoundingRectangle(0, 0, width, height);
+
+        BoundingRectangle current = instance.RenderState.CurrentRenderRegion;
+        if (current.Width > 0 && current.Height > 0)
+            return current;
+
+        return default;
     }
 
     private string GetSourceDisplayName()

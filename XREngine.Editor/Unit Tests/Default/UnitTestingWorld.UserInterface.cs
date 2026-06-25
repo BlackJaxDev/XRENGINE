@@ -41,11 +41,16 @@ public static partial class EditorUnitTests
         private static SceneNode? _vrStereoPreviewRoot;
         private static UIMaterialComponent? _vrStereoPreviewLeft;
         private static UIMaterialComponent? _vrStereoPreviewRight;
+        private static UIBoundableTransform? _vrStereoPreviewRootTransform;
+        private static UIBoundableTransform? _vrStereoPreviewLeftTransform;
+        private static UIBoundableTransform? _vrStereoPreviewRightTransform;
         private static bool _vrStereoPreviewLeftWasArray;
         private static bool _vrStereoPreviewRightWasArray;
         private static XRTexture? _vrStereoPreviewLastLeft;
         private static XRTexture? _vrStereoPreviewLastRight;
         private static bool _vrStereoPreviewRefreshHooked;
+        private static bool _vrStereoPreviewWasActive;
+        private static bool _vrStereoPreviewForceLayoutRefresh;
         private const float VRStereoPreviewEyeWidth = 300.0f;
         private const float VRStereoPreviewEyeHeight = 170.0f;
         private const float VRStereoPreviewGap = 8.0f;
@@ -472,13 +477,14 @@ public static partial class EditorUnitTests
             SceneNode previewRoot = new(rootCanvasNode) { Name = "VR Stereo Preview" };
             _vrStereoPreviewRoot = previewRoot;
             var previewTfm = previewRoot.SetTransform<UIBoundableTransform>();
+            _vrStereoPreviewRootTransform = previewTfm;
             previewTfm.MinAnchor = new Vector2(0.0f, 0.0f);
             previewTfm.MaxAnchor = new Vector2(1.0f, 1.0f);
             previewTfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
             previewTfm.Width = null;
             previewTfm.Height = null;
 
-            SceneNode leftNode = new(previewRoot) { Name = "Left Eye" };
+            SceneNode leftNode = new(previewRoot) { Name = "Left Eye Preview" };
             var leftTfm = leftNode.SetTransform<UIBoundableTransform>();
             leftTfm.MinAnchor = new Vector2(0.5f, 1.0f);
             leftTfm.MaxAnchor = new Vector2(0.5f, 1.0f);
@@ -486,8 +492,9 @@ public static partial class EditorUnitTests
             leftTfm.Width = VRStereoPreviewEyeWidth;
             leftTfm.Height = VRStereoPreviewEyeHeight;
             leftTfm.Margins = new Vector4(0.0f, 0.0f, VRStereoPreviewGap, VRStereoPreviewTopMargin);
+            _vrStereoPreviewLeftTransform = leftTfm;
 
-            SceneNode rightNode = new(previewRoot) { Name = "Right Eye" };
+            SceneNode rightNode = new(previewRoot) { Name = "Right Eye Preview" };
             var rightTfm = rightNode.SetTransform<UIBoundableTransform>();
             rightTfm.MinAnchor = new Vector2(0.5f, 1.0f);
             rightTfm.MaxAnchor = new Vector2(0.5f, 1.0f);
@@ -495,6 +502,7 @@ public static partial class EditorUnitTests
             rightTfm.Width = VRStereoPreviewEyeWidth;
             rightTfm.Height = VRStereoPreviewEyeHeight;
             rightTfm.Margins = new Vector4(VRStereoPreviewGap, 0.0f, 0.0f, VRStereoPreviewTopMargin);
+            _vrStereoPreviewRightTransform = rightTfm;
 
             var left = leftNode.AddComponent<UIMaterialComponent>()!;
             var right = rightNode.AddComponent<UIMaterialComponent>()!;
@@ -508,6 +516,8 @@ public static partial class EditorUnitTests
             _vrStereoPreviewRightWasArray = false;
             _vrStereoPreviewLastLeft = null;
             _vrStereoPreviewLastRight = null;
+            _vrStereoPreviewWasActive = false;
+            _vrStereoPreviewForceLayoutRefresh = true;
 
             // Hard gate: do not show unless VR pawn is enabled.
             if (!Toggles.VRPawn || !Toggles.PreviewVRStereoViews)
@@ -537,17 +547,31 @@ public static partial class EditorUnitTests
             if (!Toggles.VRPawn || !Toggles.PreviewVRStereoViews)
             {
                 _vrStereoPreviewRoot.IsActiveSelf = false;
+                _vrStereoPreviewWasActive = false;
                 return;
             }
 
             _vrStereoPreviewRoot.IsActiveSelf = true;
+            if (!_vrStereoPreviewWasActive)
+            {
+                _vrStereoPreviewWasActive = true;
+                _vrStereoPreviewForceLayoutRefresh = true;
+            }
 
             if (!TryResolveVRStereoPreviewTextures(out XRTexture? leftTex, out XRTexture? rightTex, out bool isArray))
             {
                 _vrStereoPreviewRoot.IsActiveSelf = false;
+                _vrStereoPreviewWasActive = false;
+                return;
+            }
+            if (leftTex is null || rightTex is null)
+            {
+                _vrStereoPreviewRoot.IsActiveSelf = false;
+                _vrStereoPreviewWasActive = false;
                 return;
             }
 
+            UpdateVRStereoPreviewAspect(leftTex, rightTex);
             ApplyPreviewTexture(_vrStereoPreviewLeft, leftTex, isArray, ref _vrStereoPreviewLeftWasArray, ref _vrStereoPreviewLastLeft);
             ApplyPreviewTexture(_vrStereoPreviewRight, rightTex, isArray, ref _vrStereoPreviewRightWasArray, ref _vrStereoPreviewLastRight);
         }
@@ -579,6 +603,54 @@ public static partial class EditorUnitTests
             return leftTex is not null && rightTex is not null;
         }
 
+        private static void UpdateVRStereoPreviewAspect(XRTexture leftTex, XRTexture rightTex)
+        {
+            if (_vrStereoPreviewLeftTransform is not null)
+                ApplyVRStereoPreviewAspect(_vrStereoPreviewLeftTransform, leftTex);
+            if (_vrStereoPreviewRightTransform is not null)
+                ApplyVRStereoPreviewAspect(_vrStereoPreviewRightTransform, rightTex);
+
+            if (_vrStereoPreviewForceLayoutRefresh)
+                InvalidateVRStereoPreviewLayout();
+        }
+
+        private static void ApplyVRStereoPreviewAspect(UIBoundableTransform transform, XRTexture texture)
+        {
+            Vector3 size = texture.WidthHeightDepth;
+            float textureWidth = size.X;
+            float textureHeight = size.Y;
+            if (textureWidth <= 0.0f || textureHeight <= 0.0f)
+            {
+                ApplyVRStereoPreviewSize(transform, VRStereoPreviewEyeWidth, VRStereoPreviewEyeHeight);
+                return;
+            }
+
+            float scale = MathF.Min(VRStereoPreviewEyeWidth / textureWidth, VRStereoPreviewEyeHeight / textureHeight);
+            if (!float.IsFinite(scale) || scale <= 0.0f)
+            {
+                ApplyVRStereoPreviewSize(transform, VRStereoPreviewEyeWidth, VRStereoPreviewEyeHeight);
+                return;
+            }
+
+            ApplyVRStereoPreviewSize(
+                transform,
+                MathF.Max(1.0f, textureWidth * scale),
+                MathF.Max(1.0f, textureHeight * scale));
+        }
+
+        private static void ApplyVRStereoPreviewSize(UIBoundableTransform transform, float width, float height)
+        {
+            if (FloatEquals(transform.Width, width) && FloatEquals(transform.Height, height))
+                return;
+
+            transform.Width = width;
+            transform.Height = height;
+            InvalidateVRStereoPreviewTransform(transform);
+        }
+
+        private static bool FloatEquals(float? current, float value)
+            => current.HasValue && MathF.Abs(current.Value - value) <= 0.01f;
+
         private static void ApplyPreviewTexture(
             UIMaterialComponent target,
             XRTexture? texture,
@@ -602,16 +674,38 @@ public static partial class EditorUnitTests
                 };
                 target.SetQuadMaterial(mat);
                 target.RenderCommand2D.ZIndex = VRStereoPreviewZIndex;
+                InvalidateVRStereoPreviewTransform(target.BoundableTransform);
                 wasArray = isArray;
                 lastTexture = texture;
+                _vrStereoPreviewForceLayoutRefresh = true;
                 return;
             }
 
             if (!ReferenceEquals(lastTexture, texture))
             {
                 target.Material.Textures[0] = texture;
+                InvalidateVRStereoPreviewTransform(target.BoundableTransform);
                 lastTexture = texture;
+                _vrStereoPreviewForceLayoutRefresh = true;
             }
+        }
+
+        private static void InvalidateVRStereoPreviewLayout()
+        {
+            InvalidateVRStereoPreviewTransform(_vrStereoPreviewRootTransform);
+            InvalidateVRStereoPreviewTransform(_vrStereoPreviewLeftTransform);
+            InvalidateVRStereoPreviewTransform(_vrStereoPreviewRightTransform);
+            _vrStereoPreviewForceLayoutRefresh = false;
+        }
+
+        private static void InvalidateVRStereoPreviewTransform(UIBoundableTransform? transform)
+        {
+            if (transform is null)
+                return;
+
+            transform.InvalidateLayout();
+            transform.InvalidateMeasure();
+            transform.InvalidateArrange();
         }
 
         public static void GameCSProjLoader_OnAssemblyUnloaded(string obj)

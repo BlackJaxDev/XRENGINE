@@ -75,6 +75,10 @@ namespace XREngine.Rendering.UI
         public static float MenuWidth { get; set; } = 160.0f;
         public static float FontSize { get; set; } = 12.0f;
         public static float ItemPadding { get; set; } = 6.0f;
+        private const int BackgroundZIndex = -30;
+        private const int ItemBackgroundZIndex = -20;
+        private const int SeparatorZIndex = -15;
+        private const int LabelZIndex = -10;
 
         private ContextMenuItem[] _items = [];
         private bool _isOpen;
@@ -95,11 +99,11 @@ namespace XREngine.Rendering.UI
         public event Action? Dismissed;
 
         /// <summary>
-        /// Shows the context menu at the given canvas-space position with the specified items.
+        /// Shows the context menu at the given parent-local top-left position with the specified items.
         /// </summary>
-        /// <param name="canvasPosition">Position in canvas coordinates (top-left of menu).</param>
+        /// <param name="parentLocalPosition">Position in parent-local coordinates (top-left of menu).</param>
         /// <param name="items">Menu items to display.</param>
-        public void Show(Vector2 canvasPosition, params ContextMenuItem[] items)
+        public void Show(Vector2 parentLocalPosition, params ContextMenuItem[] items)
         {
             Hide(); // Dismiss any existing menu first
 
@@ -118,14 +122,16 @@ namespace XREngine.Rendering.UI
             tfm.MaxAnchor = Vector2.Zero;
             tfm.NormalizedPivot = new Vector2(0.0f, 1.0f); // top-left pivot
             tfm.Width = MenuWidth;
-            tfm.Translation = canvasPosition;
             tfm.BlocksInputBehind = true;
+            tfm.Margins = Vector4.Zero;
+            tfm.Padding = Vector4.Zero;
 
             // Calculate total height
             float totalHeight = 0f;
             foreach (var item in items)
                 totalHeight += item.IsSeparator ? SeparatorHeight : ItemHeight;
             tfm.Height = totalHeight;
+            tfm.Translation = ClampMenuPosition(parentLocalPosition, MenuWidth, totalHeight);
 
             // Set render pass to ensure we draw on top
             var bgMat = SceneNode.GetComponent<UIMaterialComponent>();
@@ -141,9 +147,28 @@ namespace XREngine.Rendering.UI
             {
                 bgMat.Material?.SetVector4("MatColor", BackgroundColor);
             }
+            bgMat.RenderCommand2D.ZIndex = BackgroundZIndex;
 
             BuildMenuItems();
+            tfm.InvalidateLayout();
+            tfm.GetCanvasTransform()?.UpdateLayout();
             SubscribeForDismiss();
+        }
+
+        private Vector2 ClampMenuPosition(Vector2 position, float width, float height)
+        {
+            if (BoundableTransform.Parent is not UIBoundableTransform parent)
+                return position;
+
+            Vector2 parentSize = parent.ActualSize;
+            if (parentSize.X <= 0.0f || parentSize.Y <= 0.0f)
+                return position;
+
+            float maxX = MathF.Max(0.0f, parentSize.X - width);
+            float minY = MathF.Min(parentSize.Y, height);
+            return new Vector2(
+                Math.Clamp(position.X, 0.0f, maxX),
+                Math.Clamp(position.Y, minY, parentSize.Y));
         }
 
         /// <summary>
@@ -173,6 +198,12 @@ namespace XREngine.Rendering.UI
             listTfm.DisplayHorizontal = false;
             listTfm.ItemSpacing = 0;
             listTfm.Padding = new Vector4(0.0f);
+            listTfm.Margins = Vector4.Zero;
+            listTfm.MinAnchor = Vector2.Zero;
+            listTfm.MaxAnchor = Vector2.One;
+            listTfm.Translation = Vector2.Zero;
+            listTfm.Width = null;
+            listTfm.Height = null;
             listTfm.ItemAlignment = EListAlignment.TopOrLeft;
 
             foreach (var item in _items)
@@ -196,6 +227,7 @@ namespace XREngine.Rendering.UI
             mat.EnableTransparency();
             background.Material = mat;
             background.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+            background.RenderCommand2D.ZIndex = ItemBackgroundZIndex;
 
             var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
             buttonTfm.MinAnchor = new Vector2(0.0f, 0.0f);
@@ -230,6 +262,7 @@ namespace XREngine.Rendering.UI
             label.HorizontalAlignment = EHorizontalAlignment.Left;
             label.VerticalAlignment = EVerticalAlignment.Center;
             label.BoundableTransform.Margins = new Vector4(ItemPadding, 0.0f, ItemPadding, 0.0f);
+            label.RenderCommand2D.ZIndex = LabelZIndex;
         }
 
         private static void BuildSeparator(SceneNode parent)
@@ -252,6 +285,7 @@ namespace XREngine.Rendering.UI
             lineMat.EnableTransparency();
             line.Material = lineMat;
             line.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+            line.RenderCommand2D.ZIndex = SeparatorZIndex;
         }
 
         private void ClearMenuItems()

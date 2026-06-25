@@ -39,19 +39,20 @@ internal static class VPRC_RenderMeshesPassTraditional
         // RenderCPU machinery (CPU occlusion BeginPass, per-mesh skip
         // iteration, fallback warning budget) which is pure overhead when
         // the GPU is authoritative for mesh visibility.
+        RenderCommandCollection commands = activeInstance.ActiveMeshRenderCommands;
         using (RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.NonMeshPrefilter", ProfilerScopeKind.AlwaysOnHotPathLoop))
-            activeInstance.MeshRenderCommands.RenderCPUNonMeshAndExcluded(command.RenderPass);
+            commands.RenderCPUNonMeshAndExcluded(command.RenderPass);
 
         using (RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.Dispatch", ProfilerScopeKind.AlwaysOnHotPathLoop))
-            activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);
+            commands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);
 
-        if (activeInstance.MeshRenderCommands.TryGetGpuPass(command.RenderPass, out var gpuPass))
+        if (commands.TryGetGpuPass(command.RenderPass, out var gpuPass))
         {
             if (ShouldUseOpenGLZeroReadbackProgramWarmupFallback(command.MeshSubmissionStrategy, gpuPass))
             {
                 RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);
                 WarnZeroReadbackProgramWarmupFallback(command.RenderPass, gpuPass.ZeroReadbackProgramPendingCountThisFrame);
-                activeInstance.MeshRenderCommands.RenderCPUMeshOnly(command.RenderPass);
+                commands.RenderCPUMeshOnly(command.RenderPass);
                 return;
             }
 
@@ -65,7 +66,7 @@ internal static class VPRC_RenderMeshesPassTraditional
             {
                 RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);
                 WarnCpuSafetyNetFallback(command.RenderPass, shaderWarmupFallback);
-                activeInstance.MeshRenderCommands.RenderCPUMeshOnly(command.RenderPass);
+                commands.RenderCPUMeshOnly(command.RenderPass);
             }
             else
             {
@@ -93,7 +94,7 @@ internal static class VPRC_RenderMeshesPassTraditional
             ?? activeInstance.RenderState.RenderingCamera
             ?? activeInstance.LastSceneCamera
             ?? activeInstance.LastRenderingCamera;
-        activeInstance.MeshRenderCommands.RenderCPU(command.RenderPass, false, camera);
+        activeInstance.ActiveMeshRenderCommands.RenderCPU(command.RenderPass, false, camera);
     }
 
     private static void WarnMissingPipeline(string path, int renderPass)

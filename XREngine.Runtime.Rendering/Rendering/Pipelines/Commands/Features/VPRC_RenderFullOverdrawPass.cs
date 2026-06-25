@@ -53,7 +53,7 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
 
         for (int i = 0; i < RenderPasses.Length; i++)
         {
-            if (activeInstance.MeshRenderCommands.HasRenderingCommands(RenderPasses[i]))
+            if (activeInstance.ActiveMeshRenderCommands.HasRenderingCommands(RenderPasses[i]))
                 return true;
         }
 
@@ -72,7 +72,7 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
         if (material is null || RenderPasses.Length == 0)
             return;
 
-        var commands = ActivePipelineInstance.MeshRenderCommands;
+        var commands = ActivePipelineInstance.ActiveMeshRenderCommands;
         if (commands is null)
             return;
 

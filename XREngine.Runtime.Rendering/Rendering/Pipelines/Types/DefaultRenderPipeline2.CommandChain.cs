@@ -734,7 +734,7 @@ public partial class DefaultRenderPipeline2
                 x.BindingLocation = LightProbeGridIndexBufferBinding;
             }))
             using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
-                c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+                c.Add<VPRC_RenderQuadToFBO>().SetTargets(LightCombineFBOName, ForwardPassFBOName);
             AppendDiagnosticTextureCapture(c, "05b_LightCombine", DiffuseTextureName);
 
             //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
@@ -1686,7 +1686,7 @@ public partial class DefaultRenderPipeline2
         var cmds = new ViewportRenderCommandContainer(this);
         var presentChoice = cmds.Add<VPRC_IfElse>();
         presentChoice.Label = "FinalPresentPath";
-        presentChoice.ConditionEvaluator = ShouldUseDirectVulkanFinalPresent;
+        presentChoice.ConditionEvaluator = ShouldUseDirectFinalPresent;
         presentChoice.TrueCommands = CreateDirectWindowPresentCommands(sourceFboName);
         presentChoice.FalseCommands = CreateVendorUpscaleBlitCommands(sourceFboName, false);
         return cmds;
@@ -1708,6 +1708,9 @@ public partial class DefaultRenderPipeline2
 
     private static bool ShouldUseDirectVulkanFinalPresent()
         => AbstractRenderer.Current is XREngine.Rendering.Vulkan.VulkanRenderer && !RuntimeEnableVendorUpscale;
+
+    private static bool ShouldUseDirectFinalPresent()
+        => IsRenderingExternalSwapchainTarget() || ShouldUseDirectVulkanFinalPresent();
 
     private ViewportRenderCommandContainer CreateVendorUpscaleBlitCommands(string sourceFboName, bool forceFallback)
     {
@@ -2591,9 +2594,6 @@ public partial class DefaultRenderPipeline2
 
     private int EvaluateAmbientOcclusionMode()
     {
-        if (IsRenderingExternalSwapchainTarget())
-            return AmbientOcclusionDisabledMode;
-
         AmbientOcclusionSettings? aoSettings = ResolveAmbientOcclusionSettings();
         if (aoSettings is null || !aoSettings.Enabled)
             return AmbientOcclusionDisabledMode;

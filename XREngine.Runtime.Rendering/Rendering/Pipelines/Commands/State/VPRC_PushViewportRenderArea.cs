@@ -22,7 +22,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             BoundingRectangle res;
-            if (UseInternalResolution)
+            if (AbstractRenderer.Current?.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion) == true)
+            {
+                res = externalRegion;
+            }
+            else if (UseInternalResolution)
             {
                 res = vp.InternalResolutionRegion;
             }

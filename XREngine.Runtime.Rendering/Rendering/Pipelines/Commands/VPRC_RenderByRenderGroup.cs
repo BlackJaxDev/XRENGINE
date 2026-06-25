@@ -36,7 +36,7 @@ public class VPRC_RenderByRenderGroup : ViewportRenderCommand
             return;
 
         using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(RenderPass);
-        ActivePipelineInstance.MeshRenderCommands.RenderCPUFiltered(RenderPass, MatchesGroup);
+        ActivePipelineInstance.ActiveMeshRenderCommands.RenderCPUFiltered(RenderPass, MatchesGroup);
     }
 
     private bool MatchesGroup(RenderCommand command)

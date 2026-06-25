@@ -148,7 +148,7 @@ public partial class DefaultRenderPipeline
     }
 
     private static bool HasRenderPassCommands(int renderPass)
-        => CurrentRenderingPipeline?.MeshRenderCommands.HasRenderingCommands(renderPass) == true;
+        => CurrentRenderingPipeline?.ActiveMeshRenderCommands.HasRenderingCommands(renderPass) == true;
 
     private bool ShouldRunForwardDepthPrePass()
         => ForwardDepthPrePassEnabled
@@ -572,7 +572,7 @@ public partial class DefaultRenderPipeline
                 x.BindingLocation = DeferredLightProbeGridIndexBufferBinding;
             }))
             using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
-                c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+                c.Add<VPRC_RenderQuadToFBO>().SetTargets(LightCombineFBOName, ForwardPassFBOName);
             AppendDiagnosticTextureCapture(c, "05b_LightCombine", DiffuseTextureName);
 
             c.Add<VPRC_DepthTest>().Enable = true;

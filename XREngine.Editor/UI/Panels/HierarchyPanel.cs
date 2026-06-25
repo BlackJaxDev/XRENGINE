@@ -169,7 +169,9 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
             _contextMenu = menu;
         }
 
-        var pos = input?.CursorPositionWorld2D ?? Vector2.Zero;
+        Vector2 pos = input is not null
+            ? BoundableTransform.CanvasToLocal(input.CursorPositionWorld2D)
+            : Vector2.Zero;
 
         _contextMenu.Show(pos,
             new ContextMenuItem("Rename", () => BeginRename(_contextMenuTargetNode)),
@@ -229,7 +231,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 
         public SceneNode Node { get; set; } = node;
         public bool IsRoot => Node?.Parent is null;
-        public bool IsLeaf => (Node?.Transform?.Children?.Count ?? 0) <= 0;
+        public bool IsLeaf => Node is null || !HasSceneNodeChildren(Node);
         public bool Highlighted
         {
             get => _highlighted;

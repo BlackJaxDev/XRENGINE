@@ -33,7 +33,16 @@ namespace XREngine.Scene
         }
 
         private static bool ViewportPrefersCascadedDirectionalShadows(XRViewport viewport)
-            => viewport.CameraComponent is { DirectionalShadowRenderingMode: EDirectionalShadowRenderingMode.Cascaded };
+        {
+            if (viewport.CameraComponent is { } cameraComponent)
+                return cameraComponent.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded;
+
+            // OpenXR eye viewports render from standalone XRCamera instances, so they
+            // do not have a CameraComponent to carry the editor-facing shadow mode.
+            // Treat external swapchain scene cameras like normal runtime cameras and
+            // keep directional cascades enabled for them.
+            return viewport.RendersToExternalSwapchainTarget && viewport.ActiveCamera is not null;
+        }
 
         private bool HasActiveCascadedDirectionalShadowViewport()
         {
@@ -110,6 +119,19 @@ namespace XREngine.Scene
                 fallback ??= camera;
             }
 
+            if (RuntimeEngine.VRState.IsInVR)
+            {
+                if (RuntimeEngine.VRState.LeftEyeViewport is XRViewport leftEye)
+                    ConsiderViewport(leftEye);
+                if (RuntimeEngine.VRState.RightEyeViewport is XRViewport rightEye)
+                    ConsiderViewport(rightEye);
+
+                if (preferredCascaded is not null)
+                    return preferredCascaded;
+                if (cascadedFallback is not null)
+                    return cascadedFallback;
+            }
+
             foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
             {
                 ConsiderViewport(viewport);
@@ -117,13 +139,13 @@ namespace XREngine.Scene
                     return preferredCascaded;
             }
 
-            if (RuntimeEngine.VRState.LeftEyeViewport is XRViewport leftEye)
-                ConsiderViewport(leftEye);
+            if (RuntimeEngine.VRState.LeftEyeViewport is XRViewport vrLeftEye)
+                ConsiderViewport(vrLeftEye);
             if (preferredCascaded is not null)
                 return preferredCascaded;
 
-            if (RuntimeEngine.VRState.RightEyeViewport is XRViewport rightEye)
-                ConsiderViewport(rightEye);
+            if (RuntimeEngine.VRState.RightEyeViewport is XRViewport vrRightEye)
+                ConsiderViewport(vrRightEye);
 
             return preferredCascaded ?? cascadedFallback ?? preferredFallback ?? fallback;
         }

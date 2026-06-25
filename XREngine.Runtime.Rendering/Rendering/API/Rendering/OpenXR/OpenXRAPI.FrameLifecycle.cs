@@ -4,8 +4,10 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using XREngine;
+using XREngine.Data.Geometry;
 using XREngine.Input;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Vulkan;
 using Debug = XREngine.Debug;
 
@@ -207,18 +209,28 @@ public unsafe partial class OpenXRAPI
             SwapchainImageOpenGLKHR* swapchainImages = _swapchainImagesGL[viewIndex];
             if (gl is not null && swapchainFramebuffers is not null && swapchainImages != null)
             {
-                gl.BindFramebuffer(FramebufferTarget.Framebuffer, swapchainFramebuffers[imageIndex]);
-                gl.Viewport(0, 0, _viewConfigViews[viewIndex].RecommendedImageRectWidth, _viewConfigViews[viewIndex].RecommendedImageRectHeight);
+                if (imageIndex >= swapchainFramebuffers.Length)
+                    throw new InvalidOperationException($"OpenXR acquired swapchain image index {imageIndex}, but view {viewIndex} only has {swapchainFramebuffers.Length} OpenGL framebuffers.");
 
-                // Guard against GL state leakage between eyes (scissor/read buffers/masks are commonly left in a bad state
-                // by some passes and can make the second eye appear fully black).
-                gl.Disable(EnableCap.ScissorTest);
-                gl.ColorMask(true, true, true, true);
-                gl.DepthMask(true);
+                _openXrCurrentSwapchainFramebuffer = swapchainFramebuffers[imageIndex];
+                try
+                {
+                    gl.BindFramebuffer(FramebufferTarget.Framebuffer, _openXrCurrentSwapchainFramebuffer);
+                    gl.Viewport(0, 0, _viewConfigViews[viewIndex].RecommendedImageRectWidth, _viewConfigViews[viewIndex].RecommendedImageRectHeight);
 
-                renderCallback(swapchainImages[imageIndex].Image, viewIndex);
+                    // Guard against GL state leakage between eyes (scissor/read buffers/masks are commonly left in a bad state
+                    // by some passes and can make the second eye appear fully black).
+                    gl.Disable(EnableCap.ScissorTest);
+                    gl.ColorMask(true, true, true, true);
+                    gl.DepthMask(true);
 
-                gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                    renderCallback(swapchainImages[imageIndex].Image, viewIndex);
+                }
+                finally
+                {
+                    _openXrCurrentSwapchainFramebuffer = 0;
+                    gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                }
             }
             else if (Window?.Renderer is VulkanRenderer)
             {
@@ -585,43 +597,57 @@ public unsafe partial class OpenXRAPI
 
             _openXrCollectTimestamp = Stopwatch.GetTimestamp();
 
-            var sourceViewport = TryGetSourceViewport(out XRCamera? sourceCamera, out IRuntimeRenderWorld? sourceWorld);
+            var sourceViewport = TryGetSourceViewport(out XRCamera? sourceCamera, out _);
 
-            // Prefer the VRState-driven world/rig when it exists, regardless of runtime.
-            // The VRState rig (HMD + per-eye cameras) should be runtime-agnostic; its transforms/params decide
-            // whether to source tracking/FOV from OpenVR or OpenXR based on RuntimeEngine.VRState.ActiveRuntime.
+            // OpenXR eye rendering is strictly driven by the scene VR rig. If the rig has not published
+            // HMD-owned eye cameras, skip the frame instead of falling back to the desktop/editor camera.
             var vrInfo = RuntimeEngine.VRState.ViewInformation;
-            bool hasVrRig = RuntimeEngine.VRState.IsInVR &&
-                            (vrInfo.World is not null || vrInfo.HMDNode is not null);
-            bool canReuseVrStateEyeCameras = hasVrRig;
+            if (vrInfo.HMDNode is null || vrInfo.LeftEyeCamera is null || vrInfo.RightEyeCamera is null)
+            {
+                float nearPlane = sourceCamera?.Parameters.NearZ
+                                  ?? vrInfo.LeftEyeCamera?.Parameters.NearZ
+                                  ?? vrInfo.RightEyeCamera?.Parameters.NearZ
+                                  ?? _openXrFrameBaseCamera?.Parameters.NearZ
+                                  ?? 0.1f;
+                float farPlane = sourceCamera?.Parameters.FarZ
+                                 ?? vrInfo.LeftEyeCamera?.Parameters.FarZ
+                                 ?? vrInfo.RightEyeCamera?.Parameters.FarZ
+                                 ?? _openXrFrameBaseCamera?.Parameters.FarZ
+                                 ?? 100000.0f;
 
-            // Some editor/runtime setups don't have any Window.Viewports with a World/ActiveCamera while in VR
-            // (or the active viewports are UI-only). In that case, fall back to the VR rig's cameras/world.
-            var baseCamera = sourceCamera
-                             ?? vrInfo.LeftEyeCamera
-                             ?? vrInfo.RightEyeCamera
-                             ?? _openXrFrameBaseCamera;
+                if (RuntimeVrRenderingServices.TryEnsureHeadsetViewInformation(vrInfo.World, vrInfo.HMDNode, nearPlane, farPlane))
+                    vrInfo = RuntimeEngine.VRState.ViewInformation;
+            }
 
-            var world = (hasVrRig ? vrInfo.World : null)
-                        ?? sourceWorld
-                        ?? sourceViewport?.World
-                        ?? _openXrFrameWorld;
-
-            if (baseCamera is null || world is null)
+            if (!TryResolveRequiredOpenXrVrRig(
+                    out XRCamera? leftEyeCamera,
+                    out XRCamera? rightEyeCamera,
+                    out IRuntimeRenderWorld? world,
+                    out var rigLocomotionRoot,
+                    out string rigReason))
             {
                 Debug.RenderingWarningEvery(
-                    "OpenXR.CollectVisible.NoSourceCameraOrWorld",
+                    "OpenXR.CollectVisible.NoRequiredVrRig",
                     TimeSpan.FromSeconds(1),
-                    "[OpenXR] CollectVisible skipped: no source camera/world. SourceViewport={0} SourceCameraNull={1} VrWorldNull={2} CachedWorldNull={3}",
-                    sourceViewport?.Index.ToString() ?? "<none>",
-                    baseCamera is null,
-                    vrInfo.World is null,
-                    _openXrFrameWorld is null);
+                    "[OpenXR] CollectVisible skipped: {0}. No fallback eye cameras or editor roots are used.",
+                    rigReason);
                 return;
             }
 
+            var baseCamera = leftEyeCamera ?? rightEyeCamera;
+            if (baseCamera is null)
+            {
+                Debug.RenderingWarningEvery(
+                    "OpenXR.CollectVisible.NoRequiredBaseCamera",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] CollectVisible skipped: strict VR rig resolved without a usable camera.");
+                return;
+            }
+
+            IRuntimeRenderWorld resolvedWorld = world!;
             _openXrFrameBaseCamera = baseCamera;
-            _openXrFrameWorld = world;
+            _openXrFrameWorld = resolvedWorld;
+            var postProcessSourceCamera = sourceCamera ?? baseCamera;
 
             // IMPORTANT: RuntimeEngine.Rendering.State.RenderingWorld (and various pipeline passes) resolve the active
             // world through RenderState.WindowViewport.World. When we pass worldOverride into CollectVisible/Render,
@@ -629,27 +655,20 @@ public unsafe partial class OpenXRAPI
             _openXrLeftViewport?.WorldInstanceOverride = _openXrFrameWorld;
             _openXrRightViewport?.WorldInstanceOverride = _openXrFrameWorld;
 
-            if (canReuseVrStateEyeCameras)
-            {
-                if (vrInfo.LeftEyeCamera is not null)
-                    _openXrLeftEyeCamera = vrInfo.LeftEyeCamera;
-                if (vrInfo.RightEyeCamera is not null)
-                    _openXrRightEyeCamera = vrInfo.RightEyeCamera;
-            }
+            // Locomotion root maps OpenXR tracking space into the engine world. It must come from the
+            // HMD rig; null means the HMD itself is rooted at world origin.
+            _openXrLocomotionRoot = rigLocomotionRoot;
 
-            // Locomotion root maps the OpenXR tracking space into the engine world.
-            // When VRState is active, use its playspace/locomotion root. Otherwise, anchor to the base camera transform
-            // so the HMD view starts where the user/editor camera is.
-            _openXrLocomotionRoot = (hasVrRig ? vrInfo.HMDNode?.Transform.Parent : null) ?? _openXrFrameBaseCamera.Transform;
+            if (!EnsureOpenXrEyeCameras(_openXrFrameBaseCamera))
+                return;
 
-            EnsureOpenXrEyeCameras(_openXrFrameBaseCamera);
             EnsureOpenXrViewports(
                 _viewConfigViews[0].RecommendedImageRectWidth,
                 _viewConfigViews[0].RecommendedImageRectHeight);
 
             // OpenXR must not share render pipeline *instances* with the desktop viewport.
             // But it still needs a matching pipeline type/config to avoid missing lighting/post steps.
-            var sourcePipeline = sourceViewport?.RenderPipeline ?? _openXrFrameBaseCamera.RenderPipeline;
+            var sourcePipeline = sourceViewport?.RenderPipeline ?? postProcessSourceCamera.RenderPipeline;
             var desiredPipeline = GetOrCreateOpenXrPipeline(sourcePipeline);
 
             if (!ReferenceEquals(_openXrLeftViewport!.RenderPipeline, desiredPipeline))
@@ -657,19 +676,24 @@ public unsafe partial class OpenXRAPI
             if (!ReferenceEquals(_openXrRightViewport!.RenderPipeline, desiredPipeline))
                 _openXrRightViewport.RenderPipeline = desiredPipeline;
 
+            RenderCommandCollection sharedMeshCommands = EnsureOpenXrSharedMeshRenderCommands(desiredPipeline);
+            sharedMeshCommands.SetOwnerPipeline(_openXrLeftViewport.RenderPipelineInstance);
+            _openXrLeftViewport.MeshRenderCommandsOverride = sharedMeshCommands;
+            _openXrRightViewport.MeshRenderCommandsOverride = sharedMeshCommands;
+
             _openXrLeftEyeCamera!.RenderPipeline = desiredPipeline;
             _openXrRightEyeCamera!.RenderPipeline = desiredPipeline;
 
             // Copy post-process parameters from the base camera into the per-eye cameras, but keyed by the
             // respective pipelines (desktop source pipeline -> OpenXR desired pipeline). This keeps exposure/
             // tonemapping consistent without sharing the pipeline instance.
-            if (_openXrFrameBaseCamera is not null)
+            if (postProcessSourceCamera is not null)
             {
-                var postSourcePipeline = _openXrFrameBaseCamera.RenderPipeline ?? sourcePipeline;
+                var postSourcePipeline = postProcessSourceCamera.RenderPipeline ?? sourcePipeline;
                 if (postSourcePipeline is not null)
                 {
-                    CopyPostProcessState(postSourcePipeline, desiredPipeline, _openXrFrameBaseCamera, _openXrLeftEyeCamera);
-                    CopyPostProcessState(postSourcePipeline, desiredPipeline, _openXrFrameBaseCamera, _openXrRightEyeCamera);
+                    CopyPostProcessState(postSourcePipeline, desiredPipeline, postProcessSourceCamera, _openXrLeftEyeCamera);
+                    CopyPostProcessState(postSourcePipeline, desiredPipeline, postProcessSourceCamera, _openXrRightEyeCamera);
                 }
             }
 
@@ -686,38 +710,21 @@ public unsafe partial class OpenXRAPI
             long leftBuildTicks = 0;
             long rightBuildTicks = 0;
 
-            // Parallel buffer generation is only enabled on the Vulkan path.
-            if (_parallelRenderingEnabled && Window?.Renderer is VulkanRenderer)
-            {
-                RunOpenXrParallelCollectVisible(
-                    _openXrFrameWorld,
+            if (!CollectOpenXrStereoVisible(
+                    resolvedWorld,
                     _openXrLeftEyeCamera,
                     _openXrRightEyeCamera,
-                    out leftAdded,
-                    out rightAdded,
-                    out leftBuildTicks,
-                    out rightBuildTicks);
-            }
-            else
+                    sharedMeshCommands,
+                    out int sharedAdded,
+                    out long sharedBuildTicks))
             {
-                long leftStarted = Stopwatch.GetTimestamp();
-                _openXrLeftViewport!.CollectVisible(
-                    collectMirrors: true,
-                    worldOverride: _openXrFrameWorld,
-                    cameraOverride: _openXrLeftEyeCamera,
-                    allowScreenSpaceUICollectVisible: false);
-                leftAdded = _openXrLeftViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
-                leftBuildTicks = Stopwatch.GetTimestamp() - leftStarted;
-
-                long rightStarted = Stopwatch.GetTimestamp();
-                _openXrRightViewport!.CollectVisible(
-                    collectMirrors: true,
-                    worldOverride: _openXrFrameWorld,
-                    cameraOverride: _openXrRightEyeCamera,
-                    allowScreenSpaceUICollectVisible: false);
-                rightAdded = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
-                rightBuildTicks = Stopwatch.GetTimestamp() - rightStarted;
+                return;
             }
+
+            leftAdded = sharedAdded;
+            rightAdded = sharedAdded;
+            leftBuildTicks = sharedBuildTicks;
+            rightBuildTicks = sharedBuildTicks;
 
             RuntimeEngine.Rendering.Stats.Vr.RecordVrPerViewVisibleCounts(
                 (uint)Math.Max(0, leftAdded),
@@ -748,6 +755,81 @@ public unsafe partial class OpenXRAPI
         {
             Volatile.Write(ref _pendingXrFrameCollected, success ? 1 : 0);
         }
+    }
+
+    private bool CollectOpenXrStereoVisible(
+        IRuntimeRenderWorld world,
+        XRCamera leftCamera,
+        XRCamera rightCamera,
+        RenderCommandCollection sharedMeshCommands,
+        out int sharedAdded,
+        out long sharedBuildTicks)
+    {
+        sharedAdded = 0;
+        sharedBuildTicks = 0;
+
+        var hmdNode = RuntimeEngine.VRState.ViewInformation.HMDNode;
+        if (hmdNode is null)
+        {
+            Debug.RenderingWarningEvery(
+                "OpenXR.CollectVisible.NoHmdForStereoCull",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] CollectVisible skipped: no HMD node is available for combined stereo culling.");
+            return false;
+        }
+
+        if (_openXrLeftViewport is null)
+        {
+            Debug.RenderingWarningEvery(
+                "OpenXR.CollectVisible.NoLeftViewportForStereoCull",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] CollectVisible skipped: no left eye viewport is available for combined stereo culling.");
+            return false;
+        }
+
+        _openXrStereoCullProjections[0] = leftCamera.ProjectionMatrix;
+        _openXrStereoCullProjections[1] = rightCamera.ProjectionMatrix;
+        _openXrStereoCullViews[0] = leftCamera.Transform.InverseLocalMatrix;
+        _openXrStereoCullViews[1] = rightCamera.Transform.InverseLocalMatrix;
+
+        Matrix4x4 combinedProjection;
+        try
+        {
+            combinedProjection = ProjectionMatrixCombiner.CombineProjectionMatrices(
+                _openXrStereoCullProjections,
+                _openXrStereoCullViews);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex, "Failed to combine OpenXR stereo culling frusta.");
+            return false;
+        }
+
+        _openXrCombinedProjectionMatrix = combinedProjection;
+        if (!Matrix4x4.Invert(combinedProjection, out Matrix4x4 inverseCombinedProjection))
+        {
+            Debug.RenderingWarningEvery(
+                "OpenXR.CollectVisible.InvalidCombinedStereoProjection",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] CollectVisible skipped: combined stereo culling projection was not invertible.");
+            return false;
+        }
+
+        Frustum combinedLocalFrustum = new(inverseCombinedProjection);
+        IVolume combinedWorldFrustum = combinedLocalFrustum.TransformedBy(hmdNode.Transform.RenderMatrix);
+
+        long started = Stopwatch.GetTimestamp();
+        _openXrLeftViewport.CollectVisible(
+            collectMirrors: true,
+            worldOverride: world,
+            cameraOverride: leftCamera,
+            renderCommandsOverride: sharedMeshCommands,
+            allowScreenSpaceUICollectVisible: false,
+            collectionVolumeOverride: combinedWorldFrustum);
+        sharedBuildTicks = Stopwatch.GetTimestamp() - started;
+        sharedAdded = sharedMeshCommands.GetCommandsAddedCount();
+
+        return true;
     }
 
     private void EnsureOpenXrParallelCollectWorkers()
@@ -979,8 +1061,16 @@ public unsafe partial class OpenXRAPI
 
         _openXrSwapTimestamp = Stopwatch.GetTimestamp();
 
-        _openXrLeftViewport?.SwapBuffers(allowScreenSpaceUISwap: false);
-        _openXrRightViewport?.SwapBuffers(allowScreenSpaceUISwap: false);
+        if (_openXrSharedMeshRenderCommands is null)
+        {
+            Debug.RenderingWarningEvery(
+                "OpenXR.SwapBuffers.NoSharedMeshCommands",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] SwapBuffers skipped: combined stereo command collection was not created.");
+            return;
+        }
+
+        _openXrSharedMeshRenderCommands.SwapBuffers();
 
         Interlocked.Exchange(ref _framePrepared, 1);
 

@@ -109,8 +109,7 @@ public unsafe partial class OpenXRAPI
 
         if (supportsMultiQueue && projectAllowsParallel)
         {
-            Debug.Vulkan("Multiple graphics queues are supported - enabling parallel eye rendering");
-            _parallelRenderingEnabled = true;
+            Debug.Vulkan("Multiple graphics queues are supported; OpenXR uses combined stereo visibility collection and serial swapchain submission.");
         }
         else
         {
@@ -118,8 +117,6 @@ public unsafe partial class OpenXRAPI
                 Debug.Vulkan("OpenXR Vulkan parallel eye rendering disabled by game startup settings.");
             else
                 Debug.Vulkan("Multiple graphics queues not supported - using single queue rendering");
-
-            _parallelRenderingEnabled = false;
         }
 
         GraphicsBindingVulkanKHR vkBinding = default;

@@ -21,6 +21,7 @@ public interface IRuntimeVrRenderingServices
 {
     IRuntimeVrEyeCamera CreateEyeCamera(TransformBase transform, bool leftEye, float nearPlane, float farPlane);
     void SetHeadsetViewInformation(IRuntimeVrEyeCamera? leftEyeCamera, IRuntimeVrEyeCamera? rightEyeCamera, IRuntimeWorldContext? world, SceneNode? hmdNode);
+    bool TryEnsureHeadsetViewInformation(IRuntimeWorldContext? world, SceneNode? hmdNode, float nearPlane, float farPlane);
     IRuntimeVrRenderModelHandle CreateRenderModelHandle(SceneNode node, string? childName = null);
 }
 
@@ -41,6 +42,9 @@ public static class RuntimeVrRenderingServices
     public static void SetHeadsetViewInformation(IRuntimeVrEyeCamera? leftEyeCamera, IRuntimeVrEyeCamera? rightEyeCamera, IRuntimeWorldContext? world, SceneNode? hmdNode)
         => Current.SetHeadsetViewInformation(leftEyeCamera, rightEyeCamera, world, hmdNode);
 
+    public static bool TryEnsureHeadsetViewInformation(IRuntimeWorldContext? world, SceneNode? hmdNode, float nearPlane, float farPlane)
+        => Current.TryEnsureHeadsetViewInformation(world, hmdNode, nearPlane, farPlane);
+
     public static IRuntimeVrRenderModelHandle CreateRenderModelHandle(SceneNode node, string? childName = null)
         => Current.CreateRenderModelHandle(node, childName);
 
@@ -52,6 +56,9 @@ public static class RuntimeVrRenderingServices
         public void SetHeadsetViewInformation(IRuntimeVrEyeCamera? leftEyeCamera, IRuntimeVrEyeCamera? rightEyeCamera, IRuntimeWorldContext? world, SceneNode? hmdNode)
         {
         }
+
+        public bool TryEnsureHeadsetViewInformation(IRuntimeWorldContext? world, SceneNode? hmdNode, float nearPlane, float farPlane)
+            => false;
 
         public IRuntimeVrRenderModelHandle CreateRenderModelHandle(SceneNode node, string? childName = null)
             => new DefaultRuntimeVrRenderModelHandle();
