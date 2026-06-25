@@ -23,6 +23,33 @@ public unsafe partial class VulkanRenderer
     internal void EnqueueImportedTextureUpload(VulkanImportedTexturePendingUpload upload)
         => EnqueueFrameOp(new TextureUploadFrameOp(upload, CaptureFrameOpContextOrLastActive()));
 
+    private void CancelPendingImportedTextureUploadFrameOps(string reason)
+    {
+        FrameOp[] pendingOps = DrainFrameOps(out _);
+        int canceledUploads = 0;
+        for (int i = 0; i < pendingOps.Length; i++)
+        {
+            if (pendingOps[i] is not TextureUploadFrameOp uploadOp)
+                continue;
+
+            VulkanImportedTexturePendingUpload upload = uploadOp.Upload;
+            upload.Texture.ReleasePreparedImportedUploadResources(upload);
+            _textureUploadService.RecordState(
+                upload.Request,
+                VulkanTextureUploadGenerationState.Canceled,
+                reason);
+            InvokeTextureUploadCanceled(upload);
+            canceledUploads++;
+        }
+
+        if (canceledUploads > 0)
+        {
+            Debug.Vulkan(
+                "[Vulkan] Canceled {0} pending imported texture upload frame op(s) during renderer shutdown.",
+                canceledUploads);
+        }
+    }
+
     internal bool TryScheduleImportedTextureResidencyTransition(
         XRTexture2D texture,
         TextureStreamingResidentData residentData,

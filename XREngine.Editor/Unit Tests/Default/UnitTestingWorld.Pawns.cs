@@ -44,7 +44,16 @@ public static partial class EditorUnitTests
                         UserInterface.CreateEditorUI(characterPawnModelParentNode, pawn.CameraComponent, pawn);
                 }
                 else
+                {
                     CreateFlyingVRPawn(rootNode, setUI);
+                    if (Toggles.AllowEditingInVR || Toggles.AddCameraVRPickup)
+                    {
+                        SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
+                        var pawn = CreateDesktopCamera(cameraNode, isServer, Toggles.AllowEditingInVR && !Toggles.AddCameraVRPickup, Toggles.AddCameraVRPickup, false);
+                        if (setUI)
+                            UserInterface.CreateEditorUI(rootNode, camComp!, pawn);
+                    }
+                }
             }
             else if (Toggles.Locomotion)
                 characterPawnModelParentNode = CreateDesktopCharacterPawn(rootNode, setUI);

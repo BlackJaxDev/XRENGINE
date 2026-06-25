@@ -527,6 +527,7 @@ public unsafe partial class VulkanRenderer
 			AppendComponent(builder, "textures", ComputeMaterialTextureResourceFingerprint(material));
 			AppendComponent(builder, "engineUbo", ComputeEngineUniformResourceFingerprint());
 			AppendComponent(builder, "autoUbo", ComputeAutoUniformResourceFingerprint());
+			AppendComponent(builder, "resourceAllocator", unchecked((ulong)Renderer.ResourceAllocatorIdentity));
 			if (_program is not null)
 			{
 				AppendComponent(builder, "programSamplers", _program.ComputeSamplerResourceFingerprint());
@@ -581,6 +582,7 @@ public unsafe partial class VulkanRenderer
 		{
 			HashCode hash = new();
 			hash.Add(frameCount);
+			hash.Add(Renderer.ResourceAllocatorIdentity);
 
 			hash.Add(ComputeCachedBufferResourceFingerprintCore());
 
@@ -707,9 +709,12 @@ public unsafe partial class VulkanRenderer
 				return;
 			}
 
-			object? apiObject = Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true);
+			bool allowSynchronousTextureUpload = Renderer.AllowSynchronousResourceUploads;
+			object? apiObject = Renderer.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload);
 			if (apiObject is IVkImageDescriptorSource imageSource)
 			{
+				hash.Add(imageSource.IsDescriptorReady);
+				hash.Add(imageSource.DescriptorGeneration);
 				hash.Add(imageSource.DescriptorImage.Handle);
 				hash.Add(imageSource.DescriptorView.Handle);
 				hash.Add(imageSource.DescriptorSampler.Handle);
@@ -1174,7 +1179,16 @@ public unsafe partial class VulkanRenderer
 			if (buffer is null)
 				return TryResolveFallbackDescriptorBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo);
 
-			buffer.EnsureReadyForRendering();
+			bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
+			if (!buffer.TryEnsureReadyForRendering(allowSynchronousBufferUpload))
+			{
+				if (IsOptionalPipelineStorageBuffer(binding))
+					return TryResolveFallbackDescriptorBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo);
+
+				WarnOnce($"[BufferResolve] Buffer '{binding.Name}' resolved (set={binding.Set}, binding={binding.Binding}) but is not ready for Vulkan descriptor use (Length={buffer.Data.Length}, Target={buffer.Data.Target}).");
+				return false;
+			}
+
 			if (buffer.BufferHandle is not { } bufferHandle || bufferHandle.Handle == 0)
 			{
 				if (IsOptionalPipelineStorageBuffer(binding))
@@ -1187,6 +1201,15 @@ public unsafe partial class VulkanRenderer
 			ulong requestedRange = Math.Max((ulong)buffer.Data.Length, 1UL);
 			if (buffer.AllocatedByteSize < requestedRange)
 			{
+				if (!allowSynchronousBufferUpload)
+				{
+					if (IsOptionalPipelineStorageBuffer(binding))
+						return TryResolveFallbackDescriptorBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo);
+
+					WarnOnce($"[BufferResolve] Buffer '{binding.Name}' resolved (set={binding.Set}, binding={binding.Binding}) but allocation is too small and external swapchain rendering cannot upload it synchronously (Requested={requestedRange}, Allocated={buffer.AllocatedByteSize}, Target={buffer.Data.Target}).");
+					return false;
+				}
+
 				buffer.PushData();
 				bufferHandle = buffer.BufferHandle ?? default;
 			}
@@ -1231,7 +1254,8 @@ public unsafe partial class VulkanRenderer
 			}
 
 			Renderer.TrackBufferBinding(dataBuffer);
-			if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: true) is not VkDataBuffer vkBuffer)
+			bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
+			if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
 				return false;
 
 			buffer = vkBuffer;
@@ -1280,7 +1304,8 @@ public unsafe partial class VulkanRenderer
 				return false;
 
 			Renderer.TrackBufferBinding(dataBuffer);
-			if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: true) is not VkDataBuffer vkBuffer)
+			bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
+			if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
 				return false;
 
 			buffer = vkBuffer;
@@ -1425,14 +1450,15 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
+			bool allowSynchronousTextureUpload = Renderer.AllowSynchronousResourceUploads;
+			if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
 			{
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' is not a Vulkan texture.");
 				RecordDescriptorFailure(binding, "texture has no Vulkan descriptor source");
 				return false;
 			}
 
-			if (!source.TryEnsureDescriptorReadyForUse($"mesh material descriptor '{binding.Name}'"))
+			if (!source.TryEnsureDescriptorReadyForUse($"mesh material descriptor '{binding.Name}'", allowSynchronousTextureUpload))
 			{
 				imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
 				if (imageInfo.ImageView.Handle != 0)

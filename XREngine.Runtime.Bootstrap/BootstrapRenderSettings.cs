@@ -58,8 +58,11 @@ public static class BootstrapRenderSettings
             renderSettings.RecalcChildMatricesLoopType = settings.RecalcChildMatricesType;
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.TickGroupedItemsInParallel)))
             renderSettings.TickGroupedItemsInParallel = settings.TickGroupedItemsInParallel;
-        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)))
-            renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR;
+
+        bool requiresDesktopVrWindow = settings.VRPawn && (settings.AllowEditingInVR || settings.PreviewVRStereoViews);
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) || requiresDesktopVrWindow)
+            renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR || requiresDesktopVrWindow;
+        renderSettings.VrMirrorComposeFromEyeTextures = !requiresDesktopVrWindow;
 
         bool groupedRenderingSpecified = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));
         if (groupedRenderingSpecified)
@@ -77,7 +80,11 @@ public static class BootstrapRenderSettings
             renderSettings.AllowSkinning = settings.AllowSkinning;
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.SinglePassStereoVR)))
             renderSettings.RenderVRSinglePassStereo = settings.SinglePassStereoVR;
-        Debug.Out($"[BootstrapRenderSettings] Applied AllowSkinning={renderSettings.AllowSkinning} AllowShaderPipelines={renderSettings.AllowShaderPipelines}");
+        Debug.Out(
+            $"[BootstrapRenderSettings] Applied AllowSkinning={renderSettings.AllowSkinning} " +
+            $"AllowShaderPipelines={renderSettings.AllowShaderPipelines} " +
+            $"RenderWindowsWhileInVR={renderSettings.RenderWindowsWhileInVR} " +
+            $"VrMirrorComposeFromEyeTextures={renderSettings.VrMirrorComposeFromEyeTextures}");
         if (settings.RenderPhysicsDebug)
             renderSettings.PhysicsVisualizeSettings.SetAllTrue();
 

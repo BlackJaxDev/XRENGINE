@@ -13,6 +13,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene.Transforms;
 using Debug = XREngine.Debug;
 
@@ -611,6 +612,9 @@ public unsafe partial class OpenXRAPI
 
     internal bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
     {
+        if (Window?.Renderer is VulkanRenderer vulkanRenderer)
+            return TryRenderVulkanDesktopMirrorComposition(vulkanRenderer, targetWidth, targetHeight);
+
         if (_gl is null || Window?.Renderer is not OpenGLRenderer renderer)
             return false;
 
@@ -694,6 +698,60 @@ public unsafe partial class OpenXRAPI
         }
     }
 
+    private bool TryRenderVulkanDesktopMirrorComposition(VulkanRenderer renderer, uint targetWidth, uint targetHeight)
+    {
+        if (_viewportMirrorFbo is null || _viewportMirrorColor is null)
+            return false;
+
+        uint resolvedTargetWidth = Math.Max(1u, targetWidth);
+        uint resolvedTargetHeight = Math.Max(1u, targetHeight);
+        if (_viewportMirrorWidth == 0 || _viewportMirrorHeight == 0)
+            return false;
+
+        try
+        {
+            renderer.GetOrCreateAPIRenderObject(_viewportMirrorColor, generateNow: true);
+            if (_viewportMirrorDepth is not null)
+                renderer.GetOrCreateAPIRenderObject(_viewportMirrorDepth, generateNow: true);
+            renderer.GetOrCreateAPIRenderObject(_viewportMirrorFbo, generateNow: true);
+
+            XRRenderPipelineInstance? mirrorPipeline =
+                _openXrLeftViewport?.RenderPipelineInstance ??
+                _openXrRightViewport?.RenderPipelineInstance;
+            using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(mirrorPipeline);
+            using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.PostRender);
+            renderer.Blit(
+                _viewportMirrorFbo,
+                null,
+                0,
+                0,
+                _viewportMirrorWidth,
+                _viewportMirrorHeight,
+                0,
+                0,
+                resolvedTargetWidth,
+                resolvedTargetHeight,
+                EReadBufferMode.ColorAttachment0,
+                colorBit: true,
+                depthBit: false,
+                stencilBit: false,
+                linearFilter: true);
+            renderer.TrackWindowPresentSource(_viewportMirrorColor, _viewportMirrorFbo);
+
+            RecordSmokeDesktopMirrorComposed();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.DesktopMirrorCompositionFailed.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Vulkan desktop mirror composition failed: {0}",
+                ex.Message);
+            return false;
+        }
+    }
+
     private void EnsureOpenXrViewports(uint width, uint height)
     {
         _openXrLeftViewport ??= new XRViewport(Window)
@@ -701,14 +759,16 @@ public unsafe partial class OpenXRAPI
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
-            SetRenderPipelineFromCamera = false
+            SetRenderPipelineFromCamera = false,
+            RendersToExternalSwapchainTarget = true
         };
         _openXrRightViewport ??= new XRViewport(Window)
         {
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
-            SetRenderPipelineFromCamera = false
+            SetRenderPipelineFromCamera = false,
+            RendersToExternalSwapchainTarget = true
         };
 
         _openXrLeftViewport.Camera = _openXrLeftEyeCamera;
@@ -886,7 +946,7 @@ public unsafe partial class OpenXRAPI
         camera.Transform.SetRenderMatrix(eyeRender, recalcAllChildRenderMatrices: false);
     }
 
-    private void EnsureViewportMirrorTargets(OpenGLRenderer renderer, uint width, uint height)
+    private void EnsureViewportMirrorTargets(AbstractRenderer renderer, uint width, uint height)
     {
         width = Math.Max(1u, width);
         height = Math.Max(1u, height);
@@ -943,7 +1003,7 @@ public unsafe partial class OpenXRAPI
         renderer.GetOrCreateAPIRenderObject(_viewportMirrorFbo, generateNow: true);
     }
 
-    private void EnsureOpenXrPreviewTargets(OpenGLRenderer renderer, uint width, uint height)
+    private void EnsureOpenXrPreviewTargets(AbstractRenderer renderer, uint width, uint height)
     {
         width = Math.Max(1u, width);
         height = Math.Max(1u, height);

@@ -289,7 +289,6 @@ public static class UnitTestingWorldSettingsStore
             settings.VR = CreateVrSettingsFromLegacyFields(settings);
 
         ApplyVrModeToFlatFields(settings);
-        ApplyMonadoRenderBackendCompatibility(settings);
         ApplyOpenXrRuntimeJson(settings);
         ApplyOpenXrLoaderPath(settings);
         ApplyMonadoServiceStartup(settings);
@@ -427,32 +426,6 @@ public static class UnitTestingWorldSettingsStore
         settings.UseOpenXR = settings.VR.Mode is UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR;
         settings.PreviewVRStereoViews = settings.VR.PreviewStereoViews;
         settings.AllowEditingInVR = settings.VR.AllowDesktopEditing;
-    }
-
-    private static void ApplyMonadoRenderBackendCompatibility(UnitTestingWorldSettings settings)
-    {
-        if (settings.VR.Mode != UnitTestingVrLaunchMode.MonadoOpenXR)
-            return;
-
-        if (!settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering)))
-            return;
-
-        if (settings.Rendering.RenderBackend != ERenderLibrary.Vulkan)
-            return;
-
-        string? renderApiEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderApi);
-        if (!string.IsNullOrWhiteSpace(renderApiEnv))
-        {
-            Debug.Out(
-                "[UnitTestingWorldSettings] VR.Mode=MonadoOpenXR with Rendering.RenderBackend=Vulkan was explicitly requested by XRE_UNIT_TEST_RENDER_API. " +
-                "This is a diagnostic lane only until the Vulkan renderer creates OpenXR-compatible instance/device extensions.");
-            return;
-        }
-
-        settings.Rendering.RenderBackend = ERenderLibrary.OpenGL;
-        Debug.Out(
-            "[UnitTestingWorldSettings] VR.Mode=MonadoOpenXR currently requires the OpenGL backend on Windows. " +
-            "Normalized Rendering.RenderBackend from Vulkan to OpenGL for this launch. Set XRE_UNIT_TEST_RENDER_API=Vulkan to intentionally test the unsupported Vulkan OpenXR path.");
     }
 
     private static void ApplyOpenXrRuntimeJson(UnitTestingWorldSettings settings)

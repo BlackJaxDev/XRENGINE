@@ -1,6 +1,7 @@
 using Silk.NET.Vulkan;
 using System.Runtime.InteropServices;
 using XREngine;
+using XREngine.Rendering.API.Rendering.OpenXR;
 
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
@@ -23,18 +24,59 @@ public unsafe partial class VulkanRenderer
             Api!.EnumeratePhysicalDevices(instance, ref devicedCount, devicesPtr);
         }
 
+        nint openXrRequestedDeviceHandle;
+        string? openXrDeviceQueryFailure;
+        bool hasOpenXrRequestedDevice;
+        if (_openXrVulkanEnable2Context is not null)
+        {
+            hasOpenXrRequestedDevice = _openXrVulkanEnable2Context.TryGetRequestedVulkanPhysicalDevice(
+                (nint)instance.Handle,
+                out openXrRequestedDeviceHandle,
+                out openXrDeviceQueryFailure);
+        }
+        else
+        {
+            hasOpenXrRequestedDevice = OpenXRAPI.TryGetRequestedVulkanPhysicalDevice(
+                (nint)instance.Handle,
+                out openXrRequestedDeviceHandle,
+                out openXrDeviceQueryFailure);
+        }
+        if (!hasOpenXrRequestedDevice && !string.IsNullOrWhiteSpace(openXrDeviceQueryFailure))
+            throw new Exception($"Failed to query the OpenXR runtime-selected Vulkan physical device: {openXrDeviceQueryFailure}");
+
         foreach (var device in devices)
+        {
+            if (hasOpenXrRequestedDevice && (nint)device.Handle != openXrRequestedDeviceHandle)
+                continue;
+
             if (IsDeviceSuitable(device, out var indices))
             {
                 _physicalDevice = device;
                 _familyQueueIndicesCache = indices;
                 break;
             }
+        }
         
         if (_physicalDevice.Handle == 0)
+        {
+            if (hasOpenXrRequestedDevice)
+                throw new Exception($"The OpenXR runtime-selected Vulkan physical device 0x{(nuint)openXrRequestedDeviceHandle:X} is not suitable for this Vulkan renderer/window surface.");
+
             throw new Exception("Failed to find a suitable GPU for Vulkan.");
+        }
 
         Api!.GetPhysicalDeviceProperties(_physicalDevice, out var properties);
+        if (hasOpenXrRequestedDevice)
+        {
+            string deviceName = Silk.NET.Core.Native.SilkMarshal.PtrToString((nint)properties.DeviceName) ?? "<unknown>";
+            Debug.Vulkan(
+                "[OpenXR] Using runtime-selected Vulkan physical device: {0} vendor=0x{1:X} device=0x{2:X} handle=0x{3:X}",
+                deviceName,
+                properties.VendorID,
+                properties.DeviceID,
+                (nuint)_physicalDevice.Handle);
+        }
+
         _nonCoherentAtomSize = System.Math.Max(properties.Limits.NonCoherentAtomSize, 1UL);
         // NVIDIA PCI vendor ID.
         RuntimeEngine.Rendering.State.IsNVIDIA = properties.VendorID == 0x10DE;

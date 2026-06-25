@@ -285,10 +285,16 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
     {
         EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
+        return GetRequestedInternalResolutionForCamera(camera, mode);
+    }
+
+    internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera, EAntiAliasingMode effectiveAntiAliasingMode)
+    {
+        EAntiAliasingMode mode = effectiveAntiAliasingMode;
         if (mode == EAntiAliasingMode.Dlaa)
             return 1.0f;
 
-        if (TryResolveVendorInternalResolutionScale(out float vendorScale))
+        if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))
             return vendorScale;
 
         return mode == EAntiAliasingMode.Tsr
@@ -326,10 +332,17 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         => ResolveAntiAliasingMode() == EAntiAliasingMode.Msaa
         && ResolveEffectiveMsaaSampleCount() > 1u;
 
+    private static bool IsRenderingExternalSwapchainTarget()
+        => RuntimeRenderingHostServices.Current.CurrentRenderer is AbstractRenderer renderer
+        && renderer.IsRenderingExternalSwapchainTarget;
+
     private static bool RuntimeEnableVendorUpscale
     {
         get
         {
+            if (IsRenderingExternalSwapchainTarget())
+                return false;
+
             bool preferDlss = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot.DlssFirst;
             if (preferDlss && RuntimeRequestDlssVendorFeature)
                 return true;
@@ -3228,6 +3241,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private int EvaluateAmbientOcclusionMode()
     {
+        if (IsRenderingExternalSwapchainTarget())
+            return AmbientOcclusionDisabledMode;
+
         AmbientOcclusionSettings? aoSettings = ResolveAmbientOcclusionSettings();
         if (aoSettings is null || !aoSettings.Enabled)
             return AmbientOcclusionDisabledMode;

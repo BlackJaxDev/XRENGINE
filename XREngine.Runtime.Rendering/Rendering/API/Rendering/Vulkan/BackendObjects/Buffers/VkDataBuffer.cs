@@ -223,15 +223,27 @@ namespace XREngine.Rendering.Vulkan
             }
 
             internal void EnsureReadyForRendering()
+                => TryEnsureReadyForRendering(allowSynchronousUpload: true);
+
+            internal bool TryEnsureReadyForRendering(bool allowSynchronousUpload)
             {
                 if (!IsActive)
                 {
+                    if (!allowSynchronousUpload)
+                        return IsReadyForRendering;
+
                     Generate();
-                    return;
+                    return IsReadyForRendering;
                 }
 
-                if (!IsReadyForRendering)
-                    PushData();
+                if (IsReadyForRendering)
+                    return true;
+
+                if (!allowSynchronousUpload)
+                    return false;
+
+                PushData();
+                return IsReadyForRendering;
             }
 
             private XRBufferResolvedRoute ResolveBackendRoute()

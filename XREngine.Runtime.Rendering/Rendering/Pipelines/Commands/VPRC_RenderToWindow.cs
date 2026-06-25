@@ -151,7 +151,8 @@ void main()
 
         XRViewport? windowViewport = instance.RenderState.WindowViewport;
         bool isActiveWindowViewport = windowViewport?.Window?.Viewports.Contains(windowViewport) == true;
-        if (windowViewport is not null && !isActiveWindowViewport)
+        bool isExternalSwapchainTarget = renderer.IsRenderingExternalSwapchainTarget;
+        if (windowViewport is not null && !isActiveWindowViewport && !isExternalSwapchainTarget)
         {
             Debug.RenderingWarningEvery(
                 $"RenderToWindow.SkipOffscreenPresent.{instance.GetHashCode()}",
@@ -165,7 +166,10 @@ void main()
             return;
         }
 
-        BoundingRectangle region = ResolveTargetRegion(instance, targetWindow);
+        BoundingRectangle region = isExternalSwapchainTarget &&
+                                   renderer.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion)
+            ? externalRegion
+            : ResolveTargetRegion(instance, targetWindow);
         if (region.Width <= 0 || region.Height <= 0)
         {
             Debug.RenderingWarningEvery(
@@ -181,7 +185,9 @@ void main()
         }
 
         RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
-        renderer.TrackWindowPresentSource(sourceTexture, ResolveSourceFrameBuffer(instance));
+        if (!isExternalSwapchainTarget)
+            renderer.TrackWindowPresentSource(sourceTexture, ResolveSourceFrameBuffer(instance));
+
         using var areaScope = instance.RenderState.PushRenderArea(region);
         if (ClearColor || ClearDepth || ClearStencil)
             RuntimeEngine.Rendering.State.Clear(ClearColor, ClearDepth, ClearStencil);

@@ -2,15 +2,54 @@ using Silk.NET.Core;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using System.Runtime.InteropServices;
+using XREngine.Rendering.API.Rendering.OpenXR;
 
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private Instance instance;
+    private bool _vulkanInstanceCreatedThroughOpenXr;
+    private OpenXrVulkanEnable2BootstrapContext? _openXrVulkanEnable2Context;
     public Instance Instance => instance;
+    internal bool UsesOpenXrVulkanEnable2Creation => _vulkanInstanceCreatedThroughOpenXr && _vulkanDeviceCreatedThroughOpenXr;
+    internal bool TryGetOpenXrVulkanEnable2BootstrapInstance(
+        out Silk.NET.OpenXR.XR api,
+        out Silk.NET.OpenXR.Instance xrInstance,
+        out string[] enabledExtensions)
+    {
+        if (_openXrVulkanEnable2Context is not null)
+        {
+            api = _openXrVulkanEnable2Context.Api;
+            xrInstance = _openXrVulkanEnable2Context.XrInstance;
+            enabledExtensions = OpenXrVulkanEnable2BootstrapContext.EnabledExtensions;
+            return xrInstance.Handle != 0;
+        }
+
+        api = null!;
+        xrInstance = default;
+        enabledExtensions = [];
+        return false;
+    }
 
     private void DestroyInstance()
-        => Api!.DestroyInstance(instance, null);
+    {
+        if (instance.Handle != 0)
+        {
+            Api!.DestroyInstance(instance, null);
+            instance = default;
+        }
+
+        if (_deviceLost)
+        {
+            _openXrVulkanEnable2Context?.AbandonXrInstanceOnDispose(
+                string.IsNullOrWhiteSpace(_deviceLostReason)
+                    ? "Vulkan logical device lost"
+                    : _deviceLostReason);
+        }
+
+        _openXrVulkanEnable2Context?.Dispose();
+        _openXrVulkanEnable2Context = null;
+    }
 
     private void CreateInstance()
     {
@@ -57,8 +96,40 @@ public unsafe partial class VulkanRenderer
             createInfo.PNext = null;
         }
 
-        if (Api!.CreateInstance(ref createInfo, null, out instance) != Result.Success)
-            throw new Exception("failed to create instance!");
+        var getInstanceProcAddr = Api!.GetInstanceProcAddr(default, "vkGetInstanceProcAddr");
+        if (OpenXRAPI.TryCreateVulkanEnable2BootstrapContext(
+            out OpenXrVulkanEnable2BootstrapContext? openXrContext,
+            out string? openXrContextFailure))
+        {
+            if (openXrContext!.TryCreateVulkanInstance(
+                &createInfo,
+                getInstanceProcAddr,
+                out nint openXrCreatedInstanceHandle,
+                out _,
+                out string? openXrCreateFailure))
+            {
+                instance = new Instance(openXrCreatedInstanceHandle);
+                _openXrVulkanEnable2Context = openXrContext;
+                _vulkanInstanceCreatedThroughOpenXr = true;
+            }
+            else
+            {
+                openXrContext.Dispose();
+                throw new Exception($"Failed to create Vulkan instance through OpenXR: {openXrCreateFailure}");
+            }
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(openXrContextFailure))
+                throw new Exception($"Failed to create Vulkan OpenXR bootstrap context: {openXrContextFailure}");
+
+            Result createResult = Api.CreateInstance(ref createInfo, null, out instance);
+            if (createResult != Result.Success)
+                throw new Exception($"Failed to create Vulkan instance. Result={createResult}");
+
+            _openXrVulkanEnable2Context = null;
+            _vulkanInstanceCreatedThroughOpenXr = false;
+        }
         
         Marshal.FreeHGlobal((IntPtr)appInfo.PApplicationName);
         Marshal.FreeHGlobal((IntPtr)appInfo.PEngineName);

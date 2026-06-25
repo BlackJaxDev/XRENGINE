@@ -413,13 +413,14 @@ public unsafe partial class VulkanRenderer
         imageInfo = default;
         reason = string.Empty;
 
-        if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
+        bool allowSynchronousTextureUpload = AllowSynchronousResourceUploads;
+        if (GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
         {
             reason = $"Texture '{texture.Name ?? "<unnamed>"}' has no Vulkan image descriptor source.";
             return false;
         }
 
-        if (!source.TryEnsureDescriptorReadyForUse($"bindless material texture '{semantic}'"))
+        if (!source.TryEnsureDescriptorReadyForUse($"bindless material texture '{semantic}'", allowSynchronousTextureUpload))
         {
             reason = $"Texture '{texture.Name ?? "<unnamed>"}' descriptor is not ready for Vulkan sampling.";
             return false;

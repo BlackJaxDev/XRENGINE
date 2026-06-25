@@ -478,7 +478,23 @@ public static partial class EditorUnitTests
         public AtmosphericScatteringInitSettings AtmosphericScattering { get; set; } = new();
 
         public static Settings FromRuntime(UnitTestingWorldSettings settings)
-            => JsonConvert.DeserializeObject<Settings>(JsonConvert.SerializeObject(settings)) ?? new();
+        {
+            Settings result = JsonConvert.DeserializeObject<Settings>(JsonConvert.SerializeObject(settings)) ?? new();
+
+            // These compatibility fields are JsonIgnore on the runtime settings object.
+            // Preserve the normalized values explicitly so the editor-side unit-test code
+            // observes grouped VR settings after UnitTestingWorldSettingsStore.NormalizeVrSettings().
+            result.VRPawn = settings.VRPawn;
+            result.UseOpenXR = settings.UseOpenXR;
+            result.SceneOnlyVRPawn = settings.SceneOnlyVRPawn;
+            result.PreviewVRStereoViews = settings.PreviewVRStereoViews;
+            result.AllowEditingInVR = settings.AllowEditingInVR;
+            result.RenderAPI = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
+                ? settings.Rendering.RenderBackend
+                : settings.RenderAPI;
+
+            return result;
+        }
 
         public UnitTestingWorldSettings ToRuntimeSettings()
             => JsonConvert.DeserializeObject<UnitTestingWorldSettings>(JsonConvert.SerializeObject(this)) ?? new();

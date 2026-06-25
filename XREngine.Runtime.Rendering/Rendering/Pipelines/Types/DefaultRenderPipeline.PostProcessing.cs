@@ -1747,7 +1747,8 @@ public partial class DefaultRenderPipeline
     }
 
     private static bool DisableHistoryBasedVrEffects()
-        => RuntimeEngine.VRState.IsInVR && !RuntimeEngine.Rendering.Settings.RenderVRSinglePassStereo;
+        => IsRenderingExternalSwapchainTarget()
+        || (RuntimeEngine.VRState.IsInVR && !RuntimeEngine.Rendering.Settings.RenderVRSinglePassStereo);
 
     private static bool ShouldUseMotionBlur()
         => !IsLightProbePass
@@ -1777,6 +1778,7 @@ public partial class DefaultRenderPipeline
     private static bool ShouldUseBloom()
         => !IsLightProbePass
         && !RuntimeEngine.Rendering.State.IsSceneCapturePass
+        && !IsRenderingExternalSwapchainTarget()
         && GetBloomSettings() is not { Enabled: false };
 
     private static TSettings? GetSettings<TSettings>(PipelinePostProcessState? state) where TSettings : class

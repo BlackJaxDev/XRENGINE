@@ -526,6 +526,22 @@ namespace XREngine.Rendering
         public abstract void ClearColor(ColorF4 color);
         public abstract void SetReadBuffer(EReadBufferMode mode);
         public abstract void SetReadBuffer(XRFrameBuffer? fbo, EReadBufferMode mode);
+        /// <summary>
+        /// True while the renderer has redirected its active present target to a non-window swapchain image.
+        /// </summary>
+        public virtual bool IsRenderingExternalSwapchainTarget => false;
+
+        /// <summary>
+        /// True when descriptor and buffer resolution may perform blocking GPU uploads on the render thread.
+        /// External runtime swapchain submission can disable this while an acquired image is active.
+        /// </summary>
+        public virtual bool AllowSynchronousResourceUploads => !IsRenderingExternalSwapchainTarget;
+
+        public virtual bool TryGetExternalSwapchainTargetRegion(out BoundingRectangle region)
+        {
+            region = default;
+            return false;
+        }
         public virtual void TrackWindowPresentSource(XRTexture? colorTexture, XRFrameBuffer? sourceFrameBuffer) { }
         public abstract float GetDepth(int x, int y);
         public abstract void GetPixelAsync(int x, int y, bool withTransparency, Action<ColorF4> colorCallback);

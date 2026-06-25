@@ -5,6 +5,8 @@ using Silk.NET.Vulkan.Extensions.EXT;
 using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Vulkan.Extensions.NV;
 using System.Collections.Generic;
+using System.Linq;
+using XREngine.Rendering.API.Rendering.OpenXR;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -206,11 +208,16 @@ namespace XREngine.Rendering.Vulkan
         {
             var glfwExtensions = Window!.VkSurface!.GetRequiredExtensions(out var glfwExtensionCount);
             var extensions = SilkMarshal.PtrToStringArray((nint)glfwExtensions, (int)glfwExtensionCount);
+            var openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
+            if (openXrRequirements.InstanceExtensions.Length > 0)
+                extensions = [.. extensions, .. openXrRequirements.InstanceExtensions];
 
             if (EnableValidationLayers)
-                return [.. extensions, ExtDebugUtils.ExtensionName];
+                extensions = [.. extensions, ExtDebugUtils.ExtensionName];
 
-            return extensions;
+            return [.. extensions
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)];
         }
     }
 }

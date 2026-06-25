@@ -50,9 +50,11 @@ namespace XREngine.Rendering.Vulkan
             bool profilerDirty = false;
             bool frameDataDirty = false;
             bool dynamicUiDirty = false;
+            bool swapchainLifecycleDirty = false;
             bool commandChainPrimaryDirty = false;
             PrimaryCommandBufferDirtyReason commandChainPrimaryDirtyReason = PrimaryCommandBufferDirtyReason.None;
             int commandBufferImageSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+            bool swapchainImageEverPresentedAtRecord = IsSwapchainImageEverPresented(imageIndex);
             bool gpuPipelineProfilingActive =
                 IsVulkanGpuProfilerCommandBufferInstrumentationEnabled &&
                 RenderPipelineGpuProfiler.Instance.IsProfilingActive;
@@ -109,10 +111,31 @@ namespace XREngine.Rendering.Vulkan
             ulong plannerRevision;
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.ResourcePlan"))
             {
-                _ = hasStaticFrameOps
-                    ? PrepareResourcePlannerForFrameOps(ops)
-                    : PrepareResourcePlannerForFrameOps([]);
+                if (hasStaticFrameOps)
+                {
+                    _ = PrepareResourcePlannerForFrameOps(ops);
+                }
+                else if (dynamicUiBatchTextOps.Length > 0)
+                {
+                    _ = PrepareResourcePlannerForFrameOps(dynamicUiBatchTextOps);
+                }
+
                 plannerRevision = ResourcePlannerRevision;
+            }
+
+            if (!hasStaticFrameOps &&
+                dynamicUiBatchTextOps.Length == 0 &&
+                !preserveSwapchainForOverlay &&
+                TryReuseLastSwapchainWriterVariant(
+                    imageIndex,
+                    plannerRevision,
+                    swapchainImageEverPresentedAtRecord,
+                    gpuPipelineProfilingActive,
+                    commandBufferImageSlot,
+                    out CommandBuffer lastSwapchainWriterCommandBuffer,
+                    out swapchainLayoutAfterCommandBuffer))
+            {
+                return lastSwapchainWriterCommandBuffer;
             }
 
             if (!imageForcedDirty &&
@@ -128,6 +151,7 @@ namespace XREngine.Rendering.Vulkan
                     ops,
                     dynamicUiBatchTextOps,
                     preserveSwapchainForOverlay,
+                    swapchainImageEverPresentedAtRecord,
                     out CommandBuffer reusableCommandBuffer,
                     out dynamicUiBatchTextSecondaryCommandBuffer,
                     out dynamicUiBatchTextOverlayOpCount,
@@ -216,6 +240,12 @@ namespace XREngine.Rendering.Vulkan
                 {
                     dirty = true;
                     plannerDirty = true;
+                }
+
+                if (!dirty && variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresentedAtRecord)
+                {
+                    dirty = true;
+                    swapchainLifecycleDirty = true;
                 }
 
                 if (!dirty &&
@@ -348,11 +378,13 @@ namespace XREngine.Rendering.Vulkan
                                 ? string.IsNullOrEmpty(_lastReusableFrameDataRefreshFailureReason)
                                     ? "frame-data"
                                     : $"frame-data:{_lastReusableFrameDataRefreshFailureReason}"
-                                : dynamicUiDirty
-                                    ? "dynamic-ui"
-                                    : commandChainPrimaryDirty
-                                        ? $"command-chain-primary:{commandChainPrimaryDirtyReason}"
-                                        : "unknown";
+                    : dynamicUiDirty
+                        ? "dynamic-ui"
+                        : swapchainLifecycleDirty
+                            ? "swapchain-lifecycle"
+                        : commandChainPrimaryDirty
+                            ? $"command-chain-primary:{commandChainPrimaryDirtyReason}"
+                            : "unknown";
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
                 reusedClean: false,
@@ -374,6 +406,7 @@ namespace XREngine.Rendering.Vulkan
             _lastEnsureCommandBufferRecordedPrimary = true;
             _isRecordingCommandBuffer = true;
             bool recordedDynamicUiSecondaryReady = false;
+            int recordedSwapchainWriteCount = 0;
             try
             {
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
@@ -391,7 +424,8 @@ namespace XREngine.Rendering.Vulkan
                         ops,
                         recordedDynamicUiSecondaryReady && !preserveSwapchainForOverlay ? dynamicUiBatchTextOps.Length : 0,
                         commandChainSchedule,
-                        preserveSwapchainForOverlay);
+                        preserveSwapchainForOverlay,
+                        out recordedSwapchainWriteCount);
             }
             finally
             {
@@ -403,7 +437,9 @@ namespace XREngine.Rendering.Vulkan
             variant.DynamicUiSignature = recordedDynamicUiSecondaryReady ? dynamicUiBatchTextSignature : 0;
             variant.DynamicUiOpCount = recordedDynamicUiSecondaryReady ? dynamicUiBatchTextOps.Length : 0;
             variant.PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
+            variant.RecordedSwapchainImageEverPresented = swapchainImageEverPresentedAtRecord;
             variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
+            variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
             variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
             variant.CommandChainPrimaryGroupSignature = commandChainSchedule is null || commandChainCache is null
                 ? ulong.MaxValue
@@ -428,6 +464,72 @@ namespace XREngine.Rendering.Vulkan
             return variant.PrimaryCommandBuffer;
         }
 
+        private bool TryReuseLastSwapchainWriterVariant(
+            uint imageIndex,
+            ulong plannerRevision,
+            bool swapchainImageEverPresented,
+            bool gpuPipelineProfilingActive,
+            int commandBufferImageSlot,
+            out CommandBuffer commandBuffer,
+            out ImageLayout swapchainLayoutAfterCommandBuffer)
+        {
+            commandBuffer = default;
+            swapchainLayoutAfterCommandBuffer = ImageLayout.PresentSrcKhr;
+
+            if (_commandBufferVariants is null ||
+                imageIndex >= _commandBufferVariants.Length)
+            {
+                return false;
+            }
+
+            List<CommandBufferCacheVariant> variants = _commandBufferVariants[imageIndex];
+            CommandBufferCacheVariant? best = null;
+            for (int i = 0; i < variants.Count; i++)
+            {
+                CommandBufferCacheVariant variant = variants[i];
+                if (variant.RecordedSwapchainWriteCount <= 0 ||
+                    variant.RecordedSwapchainFinalLayout != ImageLayout.PresentSrcKhr ||
+                    variant.PlannerRevision != plannerRevision ||
+                    variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented ||
+                    variant.PreserveSwapchainForOverlay ||
+                    variant.PrimaryCommandBuffer.Handle == 0 ||
+                    IsCommandBufferVariantGpuProfilerStateDirty(variant, gpuPipelineProfilingActive, commandBufferImageSlot))
+                {
+                    continue;
+                }
+
+                if (best is null || variant.LastUsedFrameId > best.LastUsedFrameId)
+                    best = variant;
+            }
+
+            if (best is null)
+                return false;
+
+            best.LastUsedFrameId = VulkanFrameCounter;
+            SetActiveCommandBufferVariant(imageIndex, best);
+            PrepareVulkanGpuProfilerReusableSubmission(
+                commandBufferImageSlot,
+                best,
+                gpuPipelineProfilingActive);
+            UpdateVulkanGpuProfilerCommandBufferState(
+                imageIndex,
+                gpuPipelineProfilingActive,
+                commandBufferImageSlot);
+
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
+                reusedClean: true,
+                recorded: false,
+                forcedDirty: false,
+                frameOpSignatureDirty: false,
+                plannerDirty: false,
+                profilerDirty: false,
+                dirtyReason: null);
+
+            commandBuffer = best.PrimaryCommandBuffer;
+            swapchainLayoutAfterCommandBuffer = best.RecordedSwapchainFinalLayout;
+            return true;
+        }
+
         private bool TryReuseCleanCommandChainPrimaryVariant(
             uint imageIndex,
             ulong frameOpsSignature,
@@ -439,6 +541,7 @@ namespace XREngine.Rendering.Vulkan
             FrameOp[] ops,
             FrameOp[] dynamicUiBatchTextOps,
             bool preserveSwapchainForOverlay,
+            bool swapchainImageEverPresented,
             out CommandBuffer commandBuffer,
             out CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer,
             out int dynamicUiBatchTextOverlayOpCount,
@@ -487,6 +590,7 @@ namespace XREngine.Rendering.Vulkan
                     variant.FrameOpsSignature != frameOpsSignature ||
                     variant.PlannerRevision != plannerRevision ||
                     variant.PreserveSwapchainForOverlay != preserveSwapchainForOverlay ||
+                    variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented ||
                     (variant.DynamicUiOpCount > 0) != hasDynamicUiBatchTextOverlay ||
                     IsCommandBufferVariantGpuProfilerStateDirty(variant, gpuPipelineProfilingActive, commandBufferImageSlot))
                 {
@@ -679,6 +783,11 @@ namespace XREngine.Rendering.Vulkan
                 pair.Key.EnsureUniformDrawSlotCapacity(pair.Value);
         }
 
+        private bool IsSwapchainImageEverPresented(uint imageIndex)
+            => _swapchainImageEverPresented is not null &&
+               imageIndex < _swapchainImageEverPresented.Length &&
+               _swapchainImageEverPresented[imageIndex];
+
         private void RecordTextureUploadOp(CommandBuffer commandBuffer, VulkanImportedTexturePendingUpload upload)
         {
             VulkanImportedTextureUploadRequest request = upload.Request;
@@ -863,13 +972,17 @@ namespace XREngine.Rendering.Vulkan
             FrameOp[] ops,
             int dynamicUiBatchTextOpCount,
             CommandChainSchedule? commandChainSchedule,
-            bool preserveSwapchainForOverlay)
+            bool preserveSwapchainForOverlay,
+            out int recordedSwapchainWriteCount,
+            bool transitionSwapchainToPresent = true)
         {
+            recordedSwapchainWriteCount = 0;
             int droppedDrawOps = 0;
             int droppedComputeOps = 0;
             int droppedFrameOps = 0;
             FrameOpFailureSnapshot? firstFailure = null;
             int commandBufferImageSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+            bool imageWasEverPresentedAtRecordStart = IsSwapchainImageEverPresented(imageIndex);
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.ResetAndBegin"))
             {
@@ -1256,6 +1369,7 @@ namespace XREngine.Rendering.Vulkan
             // (e.g. CmdBlitImage to swapchain). If true, the first swapchain render
             // pass this frame must Load existing color instead of clearing.
             bool swapchainWrittenOutsideRenderPass = false;
+            int actualSwapchainWriteCount = 0;
 
             // Track per-FBO attachment layouts across render-pass restarts within
             // the current command buffer.  On first use the layouts are null
@@ -1268,7 +1382,41 @@ namespace XREngine.Rendering.Vulkan
             int swapchainPresentTransitions = 0;
             bool usedSwapchainDynamicRendering = false;
             bool swapchainInColorAttachmentLayout = false;
-            ImageLayout swapchainFinalLayout = ImageLayout.PresentSrcKhr;
+            ImageLayout swapchainFinalTargetLayout = transitionSwapchainToPresent
+                ? ImageLayout.PresentSrcKhr
+                : ImageLayout.ColorAttachmentOptimal;
+            ImageLayout swapchainFinalLayout = swapchainFinalTargetLayout;
+
+            ImageLayout ResolveCurrentSwapchainColorLayout()
+            {
+                if (swapchainInColorAttachmentLayout)
+                    return ImageLayout.ColorAttachmentOptimal;
+
+                return imageWasEverPresentedAtRecordStart
+                    ? ImageLayout.PresentSrcKhr
+                    : ImageLayout.Undefined;
+            }
+
+            static PipelineStageFlags ResolveSwapchainLayoutStage(ImageLayout layout)
+                => layout switch
+                {
+                    ImageLayout.Undefined => PipelineStageFlags.TopOfPipeBit,
+                    ImageLayout.ColorAttachmentOptimal => PipelineStageFlags.ColorAttachmentOutputBit,
+                    ImageLayout.TransferSrcOptimal or ImageLayout.TransferDstOptimal => PipelineStageFlags.TransferBit,
+                    ImageLayout.PresentSrcKhr => PipelineStageFlags.BottomOfPipeBit,
+                    _ => PipelineStageFlags.AllCommandsBit,
+                };
+
+            static AccessFlags ResolveSwapchainLayoutAccess(ImageLayout layout)
+                => layout switch
+                {
+                    ImageLayout.Undefined => 0,
+                    ImageLayout.ColorAttachmentOptimal => AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
+                    ImageLayout.TransferSrcOptimal => AccessFlags.TransferReadBit,
+                    ImageLayout.TransferDstOptimal => AccessFlags.TransferWriteBit,
+                    ImageLayout.PresentSrcKhr => 0,
+                    _ => AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                };
 
             void ApplyPipelineOverride(in FrameOpContext context)
             {
@@ -1281,13 +1429,20 @@ namespace XREngine.Rendering.Vulkan
                 if (!swapchainInColorAttachmentLayout || swapChainImages is null || imageIndex >= swapChainImages.Length)
                     return;
 
+                if (swapchainFinalTargetLayout == ImageLayout.ColorAttachmentOptimal)
+                {
+                    swapchainInColorAttachmentLayout = false;
+                    swapchainFinalLayout = ImageLayout.ColorAttachmentOptimal;
+                    return;
+                }
+
                 ImageMemoryBarrier presentBarrier = new()
                 {
                     SType = StructureType.ImageMemoryBarrier,
                     SrcAccessMask = AccessFlags.ColorAttachmentWriteBit,
                     DstAccessMask = 0,
                     OldLayout = ImageLayout.ColorAttachmentOptimal,
-                    NewLayout = ImageLayout.PresentSrcKhr,
+                    NewLayout = swapchainFinalTargetLayout,
                     SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                     DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
                     Image = swapChainImages[imageIndex],
@@ -1314,6 +1469,106 @@ namespace XREngine.Rendering.Vulkan
                     &presentBarrier);
                 swapchainPresentTransitions++;
                 swapchainInColorAttachmentLayout = false;
+                swapchainFinalLayout = swapchainFinalTargetLayout;
+            }
+
+            void EnsureSwapchainColorAttachmentLayoutForBlit()
+            {
+                if (swapChainImages is null || imageIndex >= swapChainImages.Length)
+                    return;
+
+                ImageLayout oldLayout = ResolveCurrentSwapchainColorLayout();
+                if (oldLayout == ImageLayout.ColorAttachmentOptimal)
+                {
+                    swapchainInColorAttachmentLayout = true;
+                    swapchainFinalLayout = ImageLayout.ColorAttachmentOptimal;
+                    return;
+                }
+
+                ImageMemoryBarrier colorBarrier = new()
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    SrcAccessMask = ResolveSwapchainLayoutAccess(oldLayout),
+                    DstAccessMask = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
+                    OldLayout = oldLayout,
+                    NewLayout = ImageLayout.ColorAttachmentOptimal,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Image = swapChainImages[imageIndex],
+                    SubresourceRange = new ImageSubresourceRange
+                    {
+                        AspectMask = ImageAspectFlags.ColorBit,
+                        BaseMipLevel = 0,
+                        LevelCount = 1,
+                        BaseArrayLayer = 0,
+                        LayerCount = 1
+                    }
+                };
+
+                CmdPipelineBarrierTracked(
+                    commandBuffer,
+                    ResolveSwapchainLayoutStage(oldLayout),
+                    PipelineStageFlags.ColorAttachmentOutputBit,
+                    0,
+                    0,
+                    null,
+                    0,
+                    null,
+                    1,
+                    &colorBarrier);
+
+                swapchainInColorAttachmentLayout = true;
+                swapchainFinalLayout = ImageLayout.ColorAttachmentOptimal;
+            }
+
+            void TransitionUnwrittenSwapchainToPresent()
+            {
+                if (!transitionSwapchainToPresent || swapChainImages is null || imageIndex >= swapChainImages.Length)
+                    return;
+
+                if (swapchainInColorAttachmentLayout)
+                {
+                    TransitionSwapchainToPresent();
+                    return;
+                }
+
+                if (imageWasEverPresentedAtRecordStart)
+                {
+                    swapchainFinalLayout = ImageLayout.PresentSrcKhr;
+                    return;
+                }
+
+                ImageMemoryBarrier presentBarrier = new()
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    SrcAccessMask = 0,
+                    DstAccessMask = 0,
+                    OldLayout = ImageLayout.Undefined,
+                    NewLayout = ImageLayout.PresentSrcKhr,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Image = swapChainImages[imageIndex],
+                    SubresourceRange = new ImageSubresourceRange
+                    {
+                        AspectMask = ImageAspectFlags.ColorBit,
+                        BaseMipLevel = 0,
+                        LevelCount = 1,
+                        BaseArrayLayer = 0,
+                        LayerCount = 1
+                    }
+                };
+
+                CmdPipelineBarrierTracked(
+                    commandBuffer,
+                    PipelineStageFlags.TopOfPipeBit,
+                    PipelineStageFlags.BottomOfPipeBit,
+                    0,
+                    0,
+                    null,
+                    0,
+                    null,
+                    1,
+                    &presentBarrier);
                 swapchainFinalLayout = ImageLayout.PresentSrcKhr;
             }
 
@@ -1412,15 +1667,7 @@ namespace XREngine.Rendering.Vulkan
                         // On the first frame for a given swapchain image, it starts in UNDEFINED.
                         // Re-entries within the same command buffer keep the image in color-attachment
                         // layout until the final close transitions it to PresentSrcKhr.
-                        bool imageEverPresented = _swapchainImageEverPresented is not null &&
-                            imageIndex < _swapchainImageEverPresented.Length &&
-                            _swapchainImageEverPresented[imageIndex];
-
-                        ImageLayout colorOldLayout = swapchainClearedThisFrame
-                            ? ImageLayout.ColorAttachmentOptimal
-                            : (swapchainWrittenOutsideRenderPass
-                                ? ImageLayout.ColorAttachmentOptimal
-                                : (imageEverPresented ? ImageLayout.PresentSrcKhr : ImageLayout.Undefined));
+                        ImageLayout colorOldLayout = ResolveCurrentSwapchainColorLayout();
 
                         // Preserve swapchain contents on re-entry so composited scene is not wiped.
                         AttachmentLoadOp colorLoadOp = (swapchainClearedThisFrame || swapchainWrittenOutsideRenderPass)
@@ -2241,15 +2488,7 @@ namespace XREngine.Rendering.Vulkan
 
                     if (useDynamicRendering)
                     {
-                        bool imageEverPresented = _swapchainImageEverPresented is not null &&
-                            imageIndex < _swapchainImageEverPresented.Length &&
-                            _swapchainImageEverPresented[imageIndex];
-
-                        ImageLayout colorOldLayout = swapchainClearedThisFrame
-                            ? ImageLayout.ColorAttachmentOptimal
-                            : (swapchainWrittenOutsideRenderPass
-                                ? ImageLayout.ColorAttachmentOptimal
-                                : (imageEverPresented ? ImageLayout.PresentSrcKhr : ImageLayout.Undefined));
+                        ImageLayout colorOldLayout = ResolveCurrentSwapchainColorLayout();
 
                         AttachmentLoadOp colorLoadOp = (swapchainClearedThisFrame || swapchainWrittenOutsideRenderPass)
                             ? AttachmentLoadOp.Load
@@ -2385,6 +2624,7 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     swapchainWriteCount++;
+                    actualSwapchainWriteCount++;
                     swapchainDrawWrites++;
                     overlaySwapchainWriters++;
                     MarkSwapchainDynamicUiWriter(
@@ -2731,11 +2971,21 @@ namespace XREngine.Rendering.Vulkan
                         {
                     case BlitOp blit:
                         EndActiveRenderPass();
+                        if (blit.ColorBit && (blit.InFbo is null || blit.OutFbo is null))
+                            EnsureSwapchainColorAttachmentLayoutForBlit();
                         CmdBeginLabel(commandBuffer, "Blit");
-                        RecordBlitOp(commandBuffer, imageIndex, blit);
+                        bool blitRecorded = RecordBlitOp(commandBuffer, imageIndex, blit);
                         CmdEndLabel(commandBuffer);
-                        if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
+                        if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit) && blitRecorded)
+                        {
                             swapchainWrittenOutsideRenderPass = true;
+                            if (blit.ColorBit)
+                            {
+                                swapchainInColorAttachmentLayout = true;
+                                swapchainFinalLayout = ImageLayout.ColorAttachmentOptimal;
+                            }
+                            actualSwapchainWriteCount++;
+                        }
                         break;
 
                     case ClearOp clear:
@@ -2770,19 +3020,24 @@ namespace XREngine.Rendering.Vulkan
                         // Skip explicit color clears on the swapchain after the first render pass.
                         // CmdClearAttachments would erase scene content composited by an earlier pipeline.
                         // Depth/stencil clears are still allowed since they don't affect composited color.
+                        bool clearRecorded = false;
                         if (clear.Target is null && swapchainClearedThisFrame && clear.ClearColor)
                         {
                             if (clear.ClearDepth || clear.ClearStencil)
                             {
                                 // Emit depth/stencil clear only â€” strip the color clear.
                                 RecordClearOp(commandBuffer, imageIndex, clear with { ClearColor = false }, activeRenderArea);
+                                clearRecorded = true;
                             }
                             // else: pure color clear on swapchain after first pass â†’ skip entirely
                         }
                         else
                         {
                             RecordClearOp(commandBuffer, imageIndex, clear, activeRenderArea);
+                            clearRecorded = true;
                         }
+                        if (clear.Target is null && clearRecorded)
+                            actualSwapchainWriteCount++;
                         break;
 
                     case TransformFeedbackOp transformFeedbackOp:
@@ -2812,6 +3067,8 @@ namespace XREngine.Rendering.Vulkan
                         }
 
                         RecordMeshDrawIntoCommandBuffer(commandBuffer, drawOp, opPassIndex);
+                        if (drawOp.Target is null)
+                            actualSwapchainWriteCount++;
                         break;
 
                     case IndirectDrawOp indirectOp:
@@ -2839,6 +3096,7 @@ namespace XREngine.Rendering.Vulkan
                                 usedParallel: false,
                                 opCount: 1);
                         }
+                        actualSwapchainWriteCount++;
                         break;
 
                     case MeshTaskDispatchIndirectCountOp meshTaskOp:
@@ -2851,6 +3109,7 @@ namespace XREngine.Rendering.Vulkan
                         CmdBeginLabel(commandBuffer, "MeshTaskDispatchIndirectCount");
                         RecordMeshTaskDispatchIndirectCountOp(commandBuffer, meshTaskOp);
                         CmdEndLabel(commandBuffer);
+                        actualSwapchainWriteCount++;
                         break;
 
                     case ComputeDispatchOp computeOp:
@@ -2939,30 +3198,46 @@ namespace XREngine.Rendering.Vulkan
                     passIndexLabelActive = false;
                 }
 
+                bool forceMagentaSwapchain = XREngine.Rendering.RenderDiagnosticsFlags.VkForceSwapchainMagenta;
+
                 ExecuteDynamicUiBatchTextOverlay();
 
-                // Always finish with a swapchain render pass so ImGui/debug overlay can present.
-                if (!renderPassActive || activeTarget is not null)
+                bool touchSwapchainForFinalOverlay =
+                    actualSwapchainWriteCount > 0 ||
+                    forceMagentaSwapchain;
+
+                if (touchSwapchainForFinalOverlay)
+                {
+                    // Finish with a swapchain render pass only when this command buffer has
+                    // actual swapchain work. Opening an otherwise-empty pass clears the
+                    // editor window to the clear color and hides the last valid frame.
+                    if (!renderPassActive || activeTarget is not null)
+                    {
+                        EndActiveRenderPass();
+                        BeginRenderPassForTarget(
+                            null,
+                            activePassIndex != int.MinValue ? activePassIndex : VulkanBarrierPlanner.SwapchainPassIndex,
+                            hasActiveContext ? activeContext : initialContext);
+                    }
+
+                    // For presentation we want deterministic full-surface state regardless of prior per-viewport scissor.
+                    // This also makes resize issues obvious (the clear should cover the entire swapchain extent).
+                    Viewport swapViewport = CreateVulkanViewport(swapChainExtent);
+
+                    Rect2D swapScissor = new()
+                    {
+                        Offset = new Offset2D(0, 0),
+                        Extent = swapChainExtent
+                    };
+
+                    Api!.CmdSetViewport(commandBuffer, 0, 1, &swapViewport);
+                    Api!.CmdSetScissor(commandBuffer, 0, 1, &swapScissor);
+                }
+                else
                 {
                     EndActiveRenderPass();
-                    BeginRenderPassForTarget(
-                        null,
-                        activePassIndex != int.MinValue ? activePassIndex : VulkanBarrierPlanner.SwapchainPassIndex,
-                        hasActiveContext ? activeContext : initialContext);
+                    TransitionUnwrittenSwapchainToPresent();
                 }
-
-                // For presentation we want deterministic full-surface state regardless of prior per-viewport scissor.
-                // This also makes resize issues obvious (the clear should cover the entire swapchain extent).
-                Viewport swapViewport = CreateVulkanViewport(swapChainExtent);
-
-                Rect2D swapScissor = new()
-                {
-                    Offset = new Offset2D(0, 0),
-                    Extent = swapChainExtent
-                };
-
-                Api!.CmdSetViewport(commandBuffer, 0, 1, &swapViewport);
-                Api!.CmdSetScissor(commandBuffer, 0, 1, &swapScissor);
 
                 bool hasSceneFrameWork = clearCount > 0 || drawCount > 0 || blitCount > 0 || computeCount > 0;
                 bool missingSceneSwapchainWriters = hasSceneFrameWork && sceneSwapchainWriters == 0;
@@ -2984,14 +3259,13 @@ namespace XREngine.Rendering.Vulkan
                     Debug.VulkanWarningEvery(
                         $"Vulkan.NoSwapchainWrites.{GetHashCode()}",
                         TimeSpan.FromSeconds(1),
-                        "[Vulkan] No swapchain write commands were recorded this frame (clears={0}, draws={1}, blits={2}, computes={3}). Presenting without debug triangle fallback.",
+                        "[Vulkan] No swapchain write commands were recorded this frame (clears={0}, draws={1}, blits={2}, computes={3}). Preserving acquired swapchain image contents when already initialised.",
                         clearCount,
                         drawCount,
                         blitCount,
                         computeCount);
                 }
 
-                bool forceMagentaSwapchain = XREngine.Rendering.RenderDiagnosticsFlags.VkForceSwapchainMagenta;
                 if (forceMagentaSwapchain)
                 {
                     ClearAttachment magentaAttachment = new()
@@ -3017,6 +3291,7 @@ namespace XREngine.Rendering.Vulkan
 
                     Api!.CmdClearAttachments(commandBuffer, 1, &magentaAttachment, 1, &clearRect);
                     swapchainWriteCount++;
+                    actualSwapchainWriteCount++;
                     swapchainClearWrites++;
                     forcedDiagnosticSwapchainWriters++;
                     MarkSwapchainStaticWriter("ForceMagenta", "forced debug clear", activePassIndex, ops.Length, hasActiveContext ? activeContext.PipelineIdentity : 0);
@@ -3096,7 +3371,7 @@ namespace XREngine.Rendering.Vulkan
 
                 EndActiveRenderPass(finalClose: true);
 
-                int expectedPresentTransitions = preserveSwapchainForOverlay ? 0 : 1;
+                int expectedPresentTransitions = preserveSwapchainForOverlay || !transitionSwapchainToPresent ? 0 : 1;
                 if (usedSwapchainDynamicRendering && swapchainPresentTransitions != expectedPresentTransitions)
                 {
                     Debug.VulkanWarningEvery(
@@ -3124,6 +3399,7 @@ namespace XREngine.Rendering.Vulkan
                 activePipelineOverrideScope = null;
             }
 
+            recordedSwapchainWriteCount = actualSwapchainWriteCount;
             return swapchainFinalLayout;
         }
 
@@ -3348,9 +3624,9 @@ namespace XREngine.Rendering.Vulkan
             return (int)value;
         }
 
-        private void RecordBlitOp(CommandBuffer commandBuffer, uint imageIndex, BlitOp op)
+        private bool RecordBlitOp(CommandBuffer commandBuffer, uint imageIndex, BlitOp op)
         {
-            void ExecuteSingleBlit(in BlitImageInfo source, in BlitImageInfo destination, Filter filter)
+            bool ExecuteSingleBlit(in BlitImageInfo source, in BlitImageInfo destination, Filter filter)
             {
                 if (!TryResolveLiveBlitImage(source, out BlitImageInfo resolvedSource) ||
                     !TryResolveLiveBlitImage(destination, out BlitImageInfo resolvedDestination))
@@ -3359,7 +3635,7 @@ namespace XREngine.Rendering.Vulkan
                         "Vulkan.Blit.UnresolvedLiveHandle",
                         TimeSpan.FromSeconds(1),
                         "[Vulkan] Blit skipped: source/destination image could not be resolved to a live handle.");
-                    return;
+                    return false;
                 }
 
                 // Validate image handles before issuing Vulkan commands.
@@ -3374,7 +3650,7 @@ namespace XREngine.Rendering.Vulkan
                         resolvedDestination.Image.Handle,
                         resolvedSource.Format,
                         resolvedDestination.Format);
-                    return;
+                    return false;
                 }
 
                 // Validate blit region dimensions â€” zero-sized regions can crash some drivers.
@@ -3385,7 +3661,7 @@ namespace XREngine.Rendering.Vulkan
                         TimeSpan.FromSeconds(1),
                         "[Vulkan] Blit skipped: zero-sized region. In={0}x{1} Out={2}x{3}",
                         op.InW, op.InH, op.OutW, op.OutH);
-                    return;
+                    return false;
                 }
 
                 if (!TryBuildImageBlit(
@@ -3417,7 +3693,7 @@ namespace XREngine.Rendering.Vulkan
                         op.OutH,
                         resolvedDestination.Extent.Width,
                         resolvedDestination.Extent.Height);
-                    return;
+                    return false;
                 }
 
                 // Derive post-blit target layouts.  PreferredLayout may be Undefined
@@ -3515,6 +3791,8 @@ namespace XREngine.Rendering.Vulkan
                     resolvedDestination.AccessMask,
                     PipelineStageFlags.TransferBit,
                     resolvedDestination.StageMask);
+
+                return true;
             }
 
             bool copiedAny = false;
@@ -3523,8 +3801,7 @@ namespace XREngine.Rendering.Vulkan
                 TryResolveBlitImage(op.InFbo, imageIndex, op.ReadBufferMode, wantColor: true, wantDepth: false, wantStencil: false, out var colorSource, isSource: true) &&
                 TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.ColorAttachment0, wantColor: true, wantDepth: false, wantStencil: false, out var colorDestination, isSource: false))
             {
-                ExecuteSingleBlit(colorSource, colorDestination, op.LinearFilter ? Filter.Linear : Filter.Nearest);
-                copiedAny = true;
+                copiedAny |= ExecuteSingleBlit(colorSource, colorDestination, op.LinearFilter ? Filter.Linear : Filter.Nearest);
             }
 
             if ((op.DepthBit || op.StencilBit) &&
@@ -3532,8 +3809,7 @@ namespace XREngine.Rendering.Vulkan
                 TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.None, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthDestination, isSource: false))
             {
                 // Vulkan only supports nearest filtering for depth/stencil blits.
-                ExecuteSingleBlit(depthSource, depthDestination, Filter.Nearest);
-                copiedAny = true;
+                copiedAny |= ExecuteSingleBlit(depthSource, depthDestination, Filter.Nearest);
             }
 
             if (!copiedAny)
@@ -3546,6 +3822,8 @@ namespace XREngine.Rendering.Vulkan
                     op.DepthBit,
                     op.StencilBit);
             }
+
+            return copiedAny;
         }
 
         private bool PlannerCoversIndirectBufferTransition(int passIndex, Silk.NET.Vulkan.Buffer indirectBuffer)
@@ -3765,14 +4043,16 @@ namespace XREngine.Rendering.Vulkan
             [NotNullWhen(true)] out VkDataBuffer? buffer)
         {
             buffer = null;
-            if (dataBuffer is null)
-                return false;
+			if (dataBuffer is null)
+				return false;
 
-            if (GetOrCreateAPIRenderObject(dataBuffer, generateNow: true) is VkDataBuffer vkBuffer)
-            {
-                buffer = vkBuffer;
-                return true;
-            }
+			bool allowSynchronousBufferUpload = AllowSynchronousResourceUploads;
+			if (GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is VkDataBuffer vkBuffer &&
+				vkBuffer.TryEnsureReadyForRendering(allowSynchronousBufferUpload))
+			{
+				buffer = vkBuffer;
+				return true;
+			}
 
             Debug.VulkanWarning($"Failed to resolve Vulkan transform feedback {role} buffer.");
             return false;

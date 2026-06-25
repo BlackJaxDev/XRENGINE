@@ -43,7 +43,16 @@ public static class BootstrapPawnFactory
                     BootstrapEditorBridge.Current?.CreateEditorUi(characterPawnModelParentNode, null, pawn);
             }
             else
+            {
                 CreateFlyingVRPawn(rootNode);
+                if (settings.AllowEditingInVR || settings.AddCameraVRPickup)
+                {
+                    SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
+                    var desktopPawn = CreateDesktopCamera(cameraNode, isServer, settings.AllowEditingInVR && !settings.AddCameraVRPickup, settings.AddCameraVRPickup, false);
+                    if (setUI)
+                        BootstrapEditorBridge.Current?.CreateEditorUi(rootNode, camComp, desktopPawn);
+                }
+            }
         }
         else if (settings.Locomotion)
             characterPawnModelParentNode = CreateDesktopCharacterPawn(rootNode, setUI);

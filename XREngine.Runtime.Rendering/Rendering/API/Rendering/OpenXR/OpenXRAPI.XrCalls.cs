@@ -12,6 +12,7 @@ public unsafe partial class OpenXRAPI
 {
     private KhrWin32ConvertPerformanceCounterTime? _win32PerformanceCounterTimeExtension;
     private int _win32PerformanceCounterTimeExtensionChecked;
+    private int _win32PerformanceCounterTimeExtensionUnavailableLogged;
 
     private void MarkOpenXrRenderThread()
     {
@@ -153,9 +154,23 @@ public unsafe partial class OpenXRAPI
             return false;
 
         long counter = performanceCounter;
-        var result = timeExtension.ConvertWin32PerformanceCounterToTime(_instance, ref counter, ref xrTime);
-        if (CheckResult(result, "xrConvertWin32PerformanceCounterToTimeKHR") != Result.Success)
+        Result result;
+        try
+        {
+            result = timeExtension.ConvertWin32PerformanceCounterToTime(_instance, ref counter, ref xrTime);
+        }
+        catch (Exception ex)
+        {
+            MarkWin32PerformanceCounterTimeUnavailable($"symbol load failed: {ex.Message}");
             return false;
+        }
+
+        if (CheckResult(result, "xrConvertWin32PerformanceCounterToTimeKHR") != Result.Success)
+        {
+            if (result == Result.ErrorFunctionUnsupported || result == Result.ErrorValidationFailure)
+                MarkWin32PerformanceCounterTimeUnavailable($"runtime returned {result}");
+            return false;
+        }
 
         return true;
     }
@@ -172,14 +187,35 @@ public unsafe partial class OpenXRAPI
         if (_instance.Handle == 0)
             return false;
 
-        if (Api.TryGetInstanceExtension<KhrWin32ConvertPerformanceCounterTime>(string.Empty, _instance, out timeExtension))
+        try
         {
-            _win32PerformanceCounterTimeExtension = timeExtension;
-            return true;
+            if (Api.TryGetInstanceExtension<KhrWin32ConvertPerformanceCounterTime>(string.Empty, _instance, out timeExtension))
+            {
+                _win32PerformanceCounterTimeExtension = timeExtension;
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            MarkWin32PerformanceCounterTimeUnavailable($"extension load failed: {ex.Message}");
+            return false;
         }
 
         Volatile.Write(ref _win32PerformanceCounterTimeExtensionChecked, 1);
         return false;
+    }
+
+    private void MarkWin32PerformanceCounterTimeUnavailable(string reason)
+    {
+        _win32PerformanceCounterTimeExtension = null;
+        Volatile.Write(ref _win32PerformanceCounterTimeExtensionChecked, 1);
+
+        if (Interlocked.Exchange(ref _win32PerformanceCounterTimeExtensionUnavailableLogged, 1) == 0)
+        {
+            Debug.LogWarning(
+                "OpenXR optional timing extension XR_KHR_win32_convert_performance_counter_time is unavailable; " +
+                $"predicted display lead-time/deadline diagnostics are disabled. Reason={reason}");
+        }
     }
 
     private void RecordDeadlineStatus(long displayTime, long submitEndCounter, uint submittedLayerCount)

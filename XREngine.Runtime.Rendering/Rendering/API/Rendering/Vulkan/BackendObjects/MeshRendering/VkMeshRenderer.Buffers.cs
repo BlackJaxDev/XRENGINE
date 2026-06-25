@@ -249,8 +249,9 @@ public unsafe partial class VulkanRenderer
 				Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
 			}
 
+			bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
 			foreach (var buffer in _bufferCache.Values)
-				buffer.EnsureReadyForRendering();
+				buffer.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 
 			if (skipIndexBuffers)
 			{
@@ -261,15 +262,15 @@ public unsafe partial class VulkanRenderer
 			{
 				var tri = GetIndexBufferForBinding(EPrimitiveType.Triangles, out _triangleIndexSize, _triangleIndexBuffer);
 				_triangleIndexBuffer = tri is not null ? Renderer.GenericToAPI<VkDataBuffer>(tri) : null;
-				_triangleIndexBuffer?.EnsureReadyForRendering();
+				_triangleIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 
 				var line = GetIndexBufferForBinding(EPrimitiveType.Lines, out _lineIndexSize, _lineIndexBuffer);
 				_lineIndexBuffer = line is not null ? Renderer.GenericToAPI<VkDataBuffer>(line) : null;
-				_lineIndexBuffer?.EnsureReadyForRendering();
+				_lineIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 
 				var point = GetIndexBufferForBinding(EPrimitiveType.Points, out _pointIndexSize, _pointIndexBuffer);
 				_pointIndexBuffer = point is not null ? Renderer.GenericToAPI<VkDataBuffer>(point) : null;
-				_pointIndexBuffer?.EnsureReadyForRendering();
+				_pointIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 				_indexBuffersSkippedForShaderGeneratedVertices = false;
 			}
 			else
@@ -333,7 +334,7 @@ public unsafe partial class VulkanRenderer
 			bool changed = !ReferenceEquals(_triangleIndexBuffer, buffer) || _triangleIndexSize != elementType;
 			_triangleIndexBuffer = buffer;
 			_triangleIndexSize = elementType;
-			_triangleIndexBuffer?.EnsureReadyForRendering();
+			_triangleIndexBuffer?.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads);
 			return changed;
 		}
 
@@ -390,7 +391,7 @@ public unsafe partial class VulkanRenderer
 			return false;
 		}
 
-		private static bool TryResolveIndexBinding(VkDataBuffer? buffer, IndexSize size, out VkBufferHandle handle, out IndexType indexType, out uint indexCount)
+		private bool TryResolveIndexBinding(VkDataBuffer? buffer, IndexSize size, out VkBufferHandle handle, out IndexType indexType, out uint indexCount)
 		{
 			handle = default;
 			indexType = IndexType.Uint32;
@@ -399,7 +400,8 @@ public unsafe partial class VulkanRenderer
 			if (!HasIndexData(buffer))
 				return false;
 
-			buffer!.EnsureReadyForRendering();
+			if (!buffer!.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads))
+				return false;
 			if (buffer.BufferHandle is not { } bufferHandle)
 				return false;
 

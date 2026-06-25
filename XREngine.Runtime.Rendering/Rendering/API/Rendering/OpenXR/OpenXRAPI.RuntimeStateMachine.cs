@@ -236,19 +236,35 @@ public unsafe partial class OpenXRAPI
 
     private void HandleRuntimeLoss()
     {
-        Debug.LogWarning($"OpenXR runtime loss detected: {_runtimeLossReason}");
+        OpenXrRuntimeLossReason lossReason = _runtimeLossReason;
+        Debug.LogWarning($"OpenXR runtime loss detected: {lossReason}");
 
-        bool destroyInstance = _runtimeLossReason == OpenXrRuntimeLossReason.InstanceLostError
-            || _runtimeLossReason == OpenXrRuntimeLossReason.RuntimeUnavailable;
+        bool stopMonitoring = lossReason == OpenXrRuntimeLossReason.SessionExiting
+            || lossReason == OpenXrRuntimeLossReason.ShutdownRequested;
+        bool destroyInstance = stopMonitoring
+            || lossReason == OpenXrRuntimeLossReason.InstanceLostError
+            || lossReason == OpenXrRuntimeLossReason.RuntimeUnavailable;
 
         TearDownSessionResourcesOnOwningThread(destroyInstance);
+        if (stopMonitoring)
+        {
+            _runtimeMonitoringEnabled = false;
+            SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
+            _runtimeLossReason = OpenXrRuntimeLossReason.None;
+            return;
+        }
+
         ScheduleProbeRetry();
         SetRuntimeState(destroyInstance ? OpenXrRuntimeState.RecreatePending : OpenXrRuntimeState.DesktopOnly);
         _runtimeLossReason = OpenXrRuntimeLossReason.None;
     }
 
     private TimeSpan GetSessionFailureRetryDelay(Exception ex)
-        => ex is OpenXrGraphicsSessionException { Result: Result.ErrorGraphicsDeviceInvalid }
+        => ex is OpenXrGraphicsSessionException
+            {
+                Result: Result.ErrorGraphicsDeviceInvalid
+                    or Result.ErrorValidationFailure
+            }
             ? _graphicsDeviceFailureProbeInterval
             : _probeInterval;
 

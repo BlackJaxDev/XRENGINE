@@ -2224,16 +2224,22 @@ public unsafe partial class VulkanRenderer
             out DescriptorBufferInfo bufferInfo)
         {
             bufferInfo = default;
-            if (Renderer.GetOrCreateAPIRenderObject(dataBuffer) is not VkDataBuffer vkBuffer)
+            bool allowSynchronousBufferUpload = Renderer.AllowSynchronousResourceUploads;
+            if (Renderer.GetOrCreateAPIRenderObject(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
                 return false;
 
-            vkBuffer.Generate();
+            if (!vkBuffer.TryEnsureReadyForRendering(allowSynchronousBufferUpload))
+                return false;
+
             if (vkBuffer.BufferHandle is not { } handle || handle.Handle == 0)
                 return false;
 
             ulong requestedRange = Math.Max((ulong)dataBuffer.Length, 1UL);
             if (vkBuffer.AllocatedByteSize < requestedRange)
             {
+                if (!allowSynchronousBufferUpload)
+                    return false;
+
                 vkBuffer.PushData();
                 handle = vkBuffer.BufferHandle ?? default;
             }
@@ -2311,10 +2317,11 @@ public unsafe partial class VulkanRenderer
             if (texture is null)
                 return false;
 
-            if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
+            bool allowSynchronousTextureUpload = Renderer.AllowSynchronousResourceUploads;
+            if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
                 return false;
 
-            if (!source.TryEnsureDescriptorReadyForUse($"compute descriptor '{binding.Name}'"))
+            if (!source.TryEnsureDescriptorReadyForUse($"compute descriptor '{binding.Name}'", allowSynchronousTextureUpload))
             {
                 Debug.VulkanWarningEvery(
                     $"Vulkan.Descriptor.TextureNotReady.{GetHashCode()}",

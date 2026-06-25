@@ -172,6 +172,9 @@ public unsafe partial class OpenXRAPI
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         try
         {
+            if (Window?.Renderer is VulkanRenderer)
+                PrewarmVulkanEyeResources(viewIndex);
+
             var acquireResult = CheckResult(Api.AcquireSwapchainImage(_swapchains[viewIndex], in acquireInfo, ref imageIndex), "xrAcquireSwapchainImage");
             if (acquireResult != Result.Success)
                 return false;
@@ -198,7 +201,7 @@ public unsafe partial class OpenXRAPI
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Wait => {waitResult}");
 
-            // Render to the texture (OpenGL path only)
+            // Render to the acquired swapchain image.
             GL? gl = _gl;
             uint[]? swapchainFramebuffers = _swapchainFramebuffers[viewIndex];
             SwapchainImageOpenGLKHR* swapchainImages = _swapchainImagesGL[viewIndex];
@@ -216,6 +219,16 @@ public unsafe partial class OpenXRAPI
                 renderCallback(swapchainImages[imageIndex].Image, viewIndex);
 
                 gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+            }
+            else if (Window?.Renderer is VulkanRenderer)
+            {
+                if (!TryRenderVulkanEye(viewIndex, imageIndex))
+                    return false;
+            }
+            else
+            {
+                Debug.LogWarning($"OpenXR RenderEye({viewIndex}) has no compatible graphics swapchain renderer.");
+                return false;
             }
 
             // Setup projection view (only if we successfully acquired+waited the swapchain image).
@@ -572,7 +585,7 @@ public unsafe partial class OpenXRAPI
 
             _openXrCollectTimestamp = Stopwatch.GetTimestamp();
 
-            var sourceViewport = TryGetSourceViewport();
+            var sourceViewport = TryGetSourceViewport(out XRCamera? sourceCamera, out IRuntimeRenderWorld? sourceWorld);
 
             // Prefer the VRState-driven world/rig when it exists, regardless of runtime.
             // The VRState rig (HMD + per-eye cameras) should be runtime-agnostic; its transforms/params decide
@@ -584,17 +597,28 @@ public unsafe partial class OpenXRAPI
 
             // Some editor/runtime setups don't have any Window.Viewports with a World/ActiveCamera while in VR
             // (or the active viewports are UI-only). In that case, fall back to the VR rig's cameras/world.
-            var baseCamera = sourceViewport?.ActiveCamera
+            var baseCamera = sourceCamera
                              ?? vrInfo.LeftEyeCamera
                              ?? vrInfo.RightEyeCamera
                              ?? _openXrFrameBaseCamera;
 
             var world = (hasVrRig ? vrInfo.World : null)
+                        ?? sourceWorld
                         ?? sourceViewport?.World
                         ?? _openXrFrameWorld;
 
             if (baseCamera is null || world is null)
+            {
+                Debug.RenderingWarningEvery(
+                    "OpenXR.CollectVisible.NoSourceCameraOrWorld",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] CollectVisible skipped: no source camera/world. SourceViewport={0} SourceCameraNull={1} VrWorldNull={2} CachedWorldNull={3}",
+                    sourceViewport?.Index.ToString() ?? "<none>",
+                    baseCamera is null,
+                    vrInfo.World is null,
+                    _openXrFrameWorld is null);
                 return;
+            }
 
             _openXrFrameBaseCamera = baseCamera;
             _openXrFrameWorld = world;

@@ -86,6 +86,7 @@ namespace XREngine.Rendering.Vulkan
                 DeviceWaitIdle();
 
             _textureUploadService.CancelAllQueuedWork(this, "Vulkan renderer shutdown");
+            CancelPendingImportedTextureUploadFrameOps("Vulkan renderer shutdown");
             DrainVulkanPipelineCompileQueueForShutdown();
             WaitForPendingReadbackTasks(TimeSpan.FromSeconds(6));
             DestroyComputeTransientResources();
@@ -96,6 +97,7 @@ namespace XREngine.Rendering.Vulkan
             DestroyDanglingDataBufferWrappers();
             DestroyDanglingFrameBufferWrappers();
             DestroyDanglingTextureWrappers();
+            DestroyCachedAPIRenderObjects();
             DestroyRemainingTrackedMeshUniformBuffers();
 
             // Drain all deferred-deletion queues now that the GPU is idle.
@@ -104,6 +106,7 @@ namespace XREngine.Rendering.Vulkan
             DestroyAutoExposureComputeResources();
             DestroyPlaceholderTexture();
             DisposeImGuiResources();
+            DestroyOpenXrRenderingResources();
             DestroyAllSwapChainObjects();
             // FBO render passes are NOT destroyed during swapchain recreation
             // (they are swapchain-independent). Clean them up here at full shutdown.
@@ -124,6 +127,7 @@ namespace XREngine.Rendering.Vulkan
             DestroyDanglingDataBufferWrappers();
             DestroyDanglingFrameBufferWrappers();
             DestroyDanglingTextureWrappers();
+            DestroyCachedAPIRenderObjects();
             DestroyRemainingTrackedMeshUniformBuffers();
             ForceFlushAllRetiredResources();
             DestroyRemainingTrackedBufferAllocations();
