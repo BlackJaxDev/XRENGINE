@@ -52,7 +52,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             for (int i = 0; i < RenderPasses.Length; i++)
             {
-                if (activeInstance.MeshRenderCommands.HasRenderingCommands(RenderPasses[i]))
+                if (activeInstance.ActiveMeshRenderCommands.HasRenderingCommands(RenderPasses[i]))
                     return true;
             }
 
@@ -104,7 +104,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             // Some custom material vertex shaders do not emit those varyings, which leaves the velocity pass blank.
             using var generatedVertexTicket = rs.PushForceGeneratedVertexProgram();
 
-            var commands = ActivePipelineInstance.MeshRenderCommands;
+            var commands = ActivePipelineInstance.ActiveMeshRenderCommands;
             if (commands is null)
             {
                 Debug.Rendering("[Velocity] Motion vectors pass skipped: no mesh render commands available.");

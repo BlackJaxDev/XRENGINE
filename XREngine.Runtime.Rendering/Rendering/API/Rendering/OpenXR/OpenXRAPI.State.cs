@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Threading;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
@@ -260,6 +261,10 @@ public unsafe partial class OpenXRAPI
     // Sharing a pipeline instance across viewports of different sizes can cause constant FBO/cache churn.
     // We therefore keep an OpenXR-owned pipeline instance (non-stereo) and never reuse the desktop's.
     private RenderPipeline? _openXrRenderPipeline;
+    private RenderCommandCollection? _openXrSharedMeshRenderCommands;
+    private readonly Matrix4x4[] _openXrStereoCullProjections = new Matrix4x4[2];
+    private readonly Matrix4x4[] _openXrStereoCullViews = new Matrix4x4[2];
+    private Matrix4x4 _openXrCombinedProjectionMatrix = Matrix4x4.Identity;
 
     private IRuntimeRenderWorld? _openXrFrameWorld;
     private XRCamera? _openXrFrameBaseCamera;
@@ -349,15 +354,11 @@ public unsafe partial class OpenXRAPI
     private uint _blitDrawFbo;
 
     private nint _blitFboHglrc;
+    private uint _openXrCurrentSwapchainFramebuffer;
 
     #endregion
 
-    #region Vulkan parallel rendering toggle
-
-    /// <summary>
-    /// Flag indicating if parallel rendering is enabled
-    /// </summary>
-    private bool _parallelRenderingEnabled = false;
+    #region Parallel collect worker state
 
     private readonly object _openXrParallelCollectDispatchLock = new();
     private Thread? _openXrLeftCollectWorker;
@@ -493,6 +494,13 @@ public unsafe partial class OpenXRAPI
         }
 
         return _openXrRenderPipeline;
+    }
+
+    private RenderCommandCollection EnsureOpenXrSharedMeshRenderCommands(RenderPipeline pipeline)
+    {
+        RenderCommandCollection commands = _openXrSharedMeshRenderCommands ??= new RenderCommandCollection();
+        commands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
+        return commands;
     }
 
     /// <summary>

@@ -21,7 +21,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             XRRenderPipelineInstance instance = ActivePipelineInstance;
             if (string.IsNullOrWhiteSpace(DestinationBufferName) ||
-                !instance.MeshRenderCommands.TryGetRenderingPassCommands(RenderPass, out IReadOnlyCollection<RenderCommand>? commands) ||
+                !instance.ActiveMeshRenderCommands.TryGetRenderingPassCommands(RenderPass, out IReadOnlyCollection<RenderCommand>? commands) ||
                 commands is null)
             {
                 return;

@@ -460,6 +460,9 @@ namespace XREngine.Rendering
 
         private static bool ShouldUseProgressiveRenderThreadUpload(RuntimeGraphicsApiKind backend, XRTexture2D texture)
         {
+            if (texture.PreferSynchronousGpuUpload)
+                return false;
+
             if (backend == RuntimeGraphicsApiKind.OpenGL)
                 return true;
 
@@ -1657,6 +1660,9 @@ namespace XREngine.Rendering
         [MemoryPackIgnore]
         private bool _runtimeManagedProgressiveFinalizePending;
 
+        [MemoryPackIgnore]
+        private bool _preferSynchronousGpuUpload;
+
         /// <summary>
         /// When >= 0, the progressive upload coroutine seeds this mip index first and holds
         /// TextureBaseLevel at this value until all mips are uploaded. Prevents the black flash
@@ -1687,6 +1693,18 @@ namespace XREngine.Rendering
         {
             get => _runtimeManagedProgressiveFinalizePending;
             set => _runtimeManagedProgressiveFinalizePending = value;
+        }
+
+        /// <summary>
+        /// True for textures that must be visually correct on their first sampled frame.
+        /// Font coverage atlases use this because sampling only their smallest mip turns
+        /// every glyph quad into a solid block.
+        /// </summary>
+        [MemoryPackIgnore]
+        public bool PreferSynchronousGpuUpload
+        {
+            get => _preferSynchronousGpuUpload;
+            set => SetField(ref _preferSynchronousGpuUpload, value);
         }
 
         public int TextureUploadValidationFailureCount

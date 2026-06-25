@@ -16,20 +16,21 @@ internal static class VPRC_RenderMeshesPassMeshlet
         if (activeInstance is null)
             return;
 
-        if (!activeInstance.MeshRenderCommands.TryGetGpuPass(command.RenderPass, out var gpuPass))
+        RenderCommandCollection commands = activeInstance.ActiveMeshRenderCommands;
+        if (!commands.TryGetGpuPass(command.RenderPass, out var gpuPass))
             return;
 
         bool previousValue = gpuPass.UseMeshletPipeline;
         gpuPass.UseMeshletPipeline = true;
         try
         {
-            activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);
+            commands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);
 
             if (ShouldUseOpenGLMeshletProgramWarmupFallback(command.MeshSubmissionStrategy, gpuPass))
             {
                 RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);
                 WarnMeshletProgramWarmupFallback(command.RenderPass, gpuPass.ZeroReadbackProgramPendingCountThisFrame);
-                activeInstance.MeshRenderCommands.RenderCPUMeshOnly(command.RenderPass);
+                commands.RenderCPUMeshOnly(command.RenderPass);
             }
         }
         finally

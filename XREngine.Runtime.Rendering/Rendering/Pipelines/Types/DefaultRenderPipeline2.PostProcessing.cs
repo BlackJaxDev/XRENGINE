@@ -1752,7 +1752,6 @@ public partial class DefaultRenderPipeline2
     private static bool ShouldUseMotionBlur()
         => !IsLightProbePass
         && !RuntimeEngine.Rendering.State.IsSceneCapturePass
-        && !DisableHistoryBasedVrEffects()
         && GetMotionBlurSettings() is { Enabled: true };
 
     private static DepthOfFieldSettings? GetDepthOfFieldSettings()
@@ -1777,7 +1776,6 @@ public partial class DefaultRenderPipeline2
     private static bool ShouldUseBloom()
         => !IsLightProbePass
         && !RuntimeEngine.Rendering.State.IsSceneCapturePass
-        && !IsRenderingExternalSwapchainTarget()
         && GetBloomSettings() is not { Enabled: false };
 
     private static TSettings? GetSettings<TSettings>(PipelinePostProcessState? state) where TSettings : class

@@ -74,7 +74,7 @@ public sealed class VPRC_RenderMeshletDebugDisplay : ViewportRenderCommand
         {
             foreach (int renderPass in RenderPasses)
             {
-                if (!activeInstance.MeshRenderCommands.HasRenderingCommands(renderPass))
+                if (!activeInstance.ActiveMeshRenderCommands.HasRenderingCommands(renderPass))
                     continue;
 
                 scene.GPUCommands.RenderMeshlets(

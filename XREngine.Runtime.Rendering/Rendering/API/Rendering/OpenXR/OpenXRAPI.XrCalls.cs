@@ -505,6 +505,11 @@ public unsafe partial class OpenXRAPI
         _deferredOpenGlInit = null;
 
         // Break viewport/camera links.
+        if (ReferenceEquals(RuntimeEngine.VRState.LeftEyeViewport, _openXrLeftViewport))
+            RuntimeEngine.VRState.LeftEyeViewport = null;
+        if (ReferenceEquals(RuntimeEngine.VRState.RightEyeViewport, _openXrRightViewport))
+            RuntimeEngine.VRState.RightEyeViewport = null;
+
         _openXrLeftViewport?.Camera = null;
         _openXrRightViewport?.Camera = null;
 

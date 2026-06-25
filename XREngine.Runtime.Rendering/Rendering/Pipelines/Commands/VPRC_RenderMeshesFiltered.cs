@@ -30,10 +30,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(RenderPass);
             var instance = ActivePipelineInstance;
 
+            var commands = instance.ActiveMeshRenderCommands;
             if (Filter is null)
-                instance.MeshRenderCommands.RenderCPU(RenderPass);
+                commands.RenderCPU(RenderPass);
             else
-                instance.MeshRenderCommands.RenderCPUFiltered(RenderPass, Filter);
+                commands.RenderCPUFiltered(RenderPass, Filter);
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

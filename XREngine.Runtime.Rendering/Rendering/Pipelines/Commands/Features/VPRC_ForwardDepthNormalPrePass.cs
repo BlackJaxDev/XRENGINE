@@ -42,7 +42,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             using var pipelineTicket = rs.PushForceShaderPipelines();
             using var generatedVertexTicket = rs.PushForceGeneratedVertexProgram();
 
-            var commands = ActivePipelineInstance.MeshRenderCommands;
+            var commands = ActivePipelineInstance.ActiveMeshRenderCommands;
             if (commands is null)
                 return;
 

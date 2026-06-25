@@ -9,6 +9,7 @@ using XREngine.Components.Lights;
 using XREngine.Scene;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Shadows;
+using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -57,8 +58,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         private static readonly Vector4[] _pointShadowAtlasUvScaleBias = new Vector4[PointLightComponent.ShadowFaceCount];
         private static readonly Vector4[] _pointShadowAtlasDepthParams = new Vector4[PointLightComponent.ShadowFaceCount];
         private const string DirectionalShadowAtlasName = "DirectionalShadowAtlas";
+        private const int DirectionalShadowAtlasUnit = 9;
         private const string PointShadowAtlasName = "PointShadowAtlas";
         private const string SpotShadowAtlasName = "SpotShadowAtlas";
+        private readonly ConditionalWeakTable<XRRenderPipelineInstance, LightRendererCache> _rendererCaches = new();
 
         public string AlbedoOpacityTexture { get; set; } = "AlbedoOpacityTexture";
         public string NormalTexture { get; set; } = "NormalTexture";
@@ -88,29 +91,46 @@ namespace XREngine.Rendering.Pipelines.Commands
             DepthViewTexture = depthViewTexture;
         }
 
-        private XRTexture? _albedoOpacityTextureCache = null;
-        private XRTexture? _normalTextureCache = null;
-        private XRTexture? _rmseTextureCache = null;
-        private XRTexture? _depthViewTextureCache = null;
+        private sealed class LightRendererCache
+        {
+            public XRTexture? AlbedoOpacityTexture;
+            public XRTexture? NormalTexture;
+            public XRTexture? RMSETexture;
+            public XRTexture? DepthViewTexture;
 
-        private XRTexture? _msaaAlbedoOpacityTextureCache = null;
-        private XRTexture? _msaaNormalTextureCache = null;
-        private XRTexture? _msaaRMSETextureCache = null;
-        private XRTexture? _msaaDepthViewTextureCache = null;
+            public XRTexture? MsaaAlbedoOpacityTexture;
+            public XRTexture? MsaaNormalTexture;
+            public XRTexture? MsaaRMSETexture;
+            public XRTexture? MsaaDepthViewTexture;
 
-        public XRMeshRenderer? PointLightRenderer { get; private set; }
-        public XRMeshRenderer? SpotLightRenderer { get; private set; }
-        public XRMeshRenderer? DirectionalLightRenderer { get; private set; }
+            public XRMeshRenderer? PointLightRenderer;
+            public XRMeshRenderer? SpotLightRenderer;
+            public XRMeshRenderer? DirectionalLightRenderer;
+
+            public XRMeshRenderer? MsaaSimplePointLightRenderer;
+            public XRMeshRenderer? MsaaSimpleSpotLightRenderer;
+            public XRMeshRenderer? MsaaSimpleDirectionalLightRenderer;
+
+            public XRMeshRenderer? MsaaComplexPointLightRenderer;
+            public XRMeshRenderer? MsaaComplexSpotLightRenderer;
+            public XRMeshRenderer? MsaaComplexDirectionalLightRenderer;
+        }
+
+        private LightRendererCache? _activeRendererCache;
+
+        public XRMeshRenderer? PointLightRenderer => _activeRendererCache?.PointLightRenderer;
+        public XRMeshRenderer? SpotLightRenderer => _activeRendererCache?.SpotLightRenderer;
+        public XRMeshRenderer? DirectionalLightRenderer => _activeRendererCache?.DirectionalLightRenderer;
 
         // MSAA deferred uses two lighting phases:
         // simple pixels use the resolved GBuffer once, complex pixels use the MSAA GBuffer per-sample.
-        public XRMeshRenderer? MsaaSimplePointLightRenderer { get; private set; }
-        public XRMeshRenderer? MsaaSimpleSpotLightRenderer { get; private set; }
-        public XRMeshRenderer? MsaaSimpleDirectionalLightRenderer { get; private set; }
+        public XRMeshRenderer? MsaaSimplePointLightRenderer => _activeRendererCache?.MsaaSimplePointLightRenderer;
+        public XRMeshRenderer? MsaaSimpleSpotLightRenderer => _activeRendererCache?.MsaaSimpleSpotLightRenderer;
+        public XRMeshRenderer? MsaaSimpleDirectionalLightRenderer => _activeRendererCache?.MsaaSimpleDirectionalLightRenderer;
 
-        public XRMeshRenderer? MsaaComplexPointLightRenderer { get; private set; }
-        public XRMeshRenderer? MsaaComplexSpotLightRenderer { get; private set; }
-        public XRMeshRenderer? MsaaComplexDirectionalLightRenderer { get; private set; }
+        public XRMeshRenderer? MsaaComplexPointLightRenderer => _activeRendererCache?.MsaaComplexPointLightRenderer;
+        public XRMeshRenderer? MsaaComplexSpotLightRenderer => _activeRendererCache?.MsaaComplexSpotLightRenderer;
+        public XRMeshRenderer? MsaaComplexDirectionalLightRenderer => _activeRendererCache?.MsaaComplexDirectionalLightRenderer;
 
         protected override void Execute()
         {
@@ -172,22 +192,23 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            if (_albedoOpacityTextureCache != albOpacTex ||
-                _normalTextureCache != normTex ||
-                _rmseTextureCache != rmseTex ||
-                _depthViewTextureCache != depthViewTex)
+            LightRendererCache rendererCache = GetRendererCache();
+            if (rendererCache.AlbedoOpacityTexture != albOpacTex ||
+                rendererCache.NormalTexture != normTex ||
+                rendererCache.RMSETexture != rmseTex ||
+                rendererCache.DepthViewTexture != depthViewTex)
             {
-                _albedoOpacityTextureCache = albOpacTex;
-                _normalTextureCache = normTex;
-                _rmseTextureCache = rmseTex;
-                _depthViewTextureCache = depthViewTex;
-                CreateLightRenderers(albOpacTex, normTex, rmseTex, depthViewTex);
+                rendererCache.AlbedoOpacityTexture = albOpacTex;
+                rendererCache.NormalTexture = normTex;
+                rendererCache.RMSETexture = rmseTex;
+                rendererCache.DepthViewTexture = depthViewTex;
+                CreateLightRenderers(rendererCache, albOpacTex, normTex, rmseTex, depthViewTex);
             }
 
             // Build MSAA renderers when MSAA deferred is active
             bool msaaActive = MsaaDeferred && DefaultRenderPipeline.RuntimeEnableMsaaDeferred;
-            if (msaaActive)
-                EnsureMsaaRenderers();
+            if (msaaActive && !EnsureMsaaRenderers(rendererCache))
+                msaaActive = false;
 
             var lights = world?.Lights;
             if (lights is null)
@@ -263,43 +284,52 @@ namespace XREngine.Rendering.Pipelines.Commands
             using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
             {
                 if (msaaActive)
-                    RenderLightsMsaaDeferred(lights);
+                    RenderLightsMsaaDeferred(lights, rendererCache);
                 else
-                    RenderLightsStandard(lights);
+                    RenderLightsStandard(lights, rendererCache);
             }
         }
 
-        private void RenderLightsStandard(Lights3DCollection lights)
+        private LightRendererCache GetRendererCache()
+        {
+            LightRendererCache cache = _rendererCaches.GetValue(
+                ActivePipelineInstance,
+                static _ => new LightRendererCache());
+            _activeRendererCache = cache;
+            return cache;
+        }
+
+        private void RenderLightsStandard(Lights3DCollection lights, LightRendererCache rendererCache)
         {
             // Index-based iteration avoids EventList ThreadSafe snapshot allocation.
             for (int i = 0; i < lights.DynamicPointLights.Count; i++)
-                RenderLight(PointLightRenderer!, lights.DynamicPointLights[i]);
+                RenderLight(rendererCache.PointLightRenderer!, lights.DynamicPointLights[i]);
             for (int i = 0; i < lights.DynamicSpotLights.Count; i++)
-                RenderLight(SpotLightRenderer!, lights.DynamicSpotLights[i]);
+                RenderLight(rendererCache.SpotLightRenderer!, lights.DynamicSpotLights[i]);
             for (int i = 0; i < lights.DynamicDirectionalLights.Count; i++)
-                RenderLight(DirectionalLightRenderer!, lights.DynamicDirectionalLights[i]);
+                RenderLight(rendererCache.DirectionalLightRenderer!, lights.DynamicDirectionalLights[i]);
         }
 
-        private void RenderLightsMsaaDeferred(Lights3DCollection lights)
+        private void RenderLightsMsaaDeferred(Lights3DCollection lights, LightRendererCache rendererCache)
         {
             // Index-based iteration avoids EventList ThreadSafe snapshot allocation.
             RuntimeEngine.Rendering.State.DisableSampleShading();
             for (int i = 0; i < lights.DynamicPointLights.Count; i++)
-                RenderLight(MsaaSimplePointLightRenderer!, lights.DynamicPointLights[i]);
+                RenderLight(rendererCache.MsaaSimplePointLightRenderer!, lights.DynamicPointLights[i]);
             for (int i = 0; i < lights.DynamicSpotLights.Count; i++)
-                RenderLight(MsaaSimpleSpotLightRenderer!, lights.DynamicSpotLights[i]);
+                RenderLight(rendererCache.MsaaSimpleSpotLightRenderer!, lights.DynamicSpotLights[i]);
             for (int i = 0; i < lights.DynamicDirectionalLights.Count; i++)
-                RenderLight(MsaaSimpleDirectionalLightRenderer!, lights.DynamicDirectionalLights[i]);
+                RenderLight(rendererCache.MsaaSimpleDirectionalLightRenderer!, lights.DynamicDirectionalLights[i]);
 
             RuntimeEngine.Rendering.State.EnableSampleShading(1.0f);
             try
             {
                 for (int i = 0; i < lights.DynamicPointLights.Count; i++)
-                    RenderLight(MsaaComplexPointLightRenderer!, lights.DynamicPointLights[i]);
+                    RenderLight(rendererCache.MsaaComplexPointLightRenderer!, lights.DynamicPointLights[i]);
                 for (int i = 0; i < lights.DynamicSpotLights.Count; i++)
-                    RenderLight(MsaaComplexSpotLightRenderer!, lights.DynamicSpotLights[i]);
+                    RenderLight(rendererCache.MsaaComplexSpotLightRenderer!, lights.DynamicSpotLights[i]);
                 for (int i = 0; i < lights.DynamicDirectionalLights.Count; i++)
-                    RenderLight(MsaaComplexDirectionalLightRenderer!, lights.DynamicDirectionalLights[i]);
+                    RenderLight(rendererCache.MsaaComplexDirectionalLightRenderer!, lights.DynamicDirectionalLights[i]);
             }
             finally
             {
@@ -379,9 +409,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ShadowMapFormatSelection directionalShadowFormat = directionalLight.ResolveShadowMapFormat(preferredStorageFormat: null);
                 XRTexture2DArray? directionalCascadeReceiverTexture = directionalLight.CascadedShadowReceiverTexture;
                 useDirectionalShadowAtlas = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding && directionalLight.CastsShadows;
-                var cameraComponent = ActivePipelineInstance.RenderState.WindowViewport?.CameraComponent;
+                bool viewportPrefersCascades = ActiveViewportPrefersCascadedDirectionalShadows();
                 useCascadedDirectionalShadows =
-                    cameraComponent?.DirectionalShadowRenderingMode == global::XREngine.Components.EDirectionalShadowRenderingMode.Cascaded &&
+                    viewportPrefersCascades &&
                     directionalLight.EnableCascadedShadows &&
                     (useDirectionalShadowAtlas || directionalCascadeReceiverTexture is not null) &&
                     directionalLight.ActiveCascadeCount > 0;
@@ -535,6 +565,18 @@ namespace XREngine.Rendering.Pipelines.Commands
                 materialProgram.Uniform("LightHasShadowMap", directionalHasShadowMap);
                 materialProgram.Sampler("ShadowMap", selectedShadowMap is XRTexture2D shadow2D ? shadow2D : DummyShadowMap, 4);
             }
+        }
+
+        private bool ActiveViewportPrefersCascadedDirectionalShadows()
+        {
+            XRViewport? viewport = ActivePipelineInstance.RenderState.WindowViewport;
+            if (viewport is null)
+                return false;
+
+            if (viewport.CameraComponent is { } cameraComponent)
+                return cameraComponent.DirectionalShadowRenderingMode == global::XREngine.Components.EDirectionalShadowRenderingMode.Cascaded;
+
+            return viewport.RendersToExternalSwapchainTarget && viewport.ActiveCamera is not null;
         }
 
         private static bool TryBindSpotAtlasShadow(
@@ -695,8 +737,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             bool useCascadedDirectionalShadows,
             out bool hasSampleableAtlasTile)
         {
-            const int directionalAtlasUnit = 30;
-
             var lights = ResolveLightsForLight(directionalLight);
             bool requested = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding &&
                 lights is not null &&
@@ -729,7 +769,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                         useCascadedDirectionalShadows ? directionalLight.ActiveCascadeCount : 1,
                         checked((int)Math.Max(1u, atlasTexture.Depth)));
             }
-            materialProgram.Sampler(DirectionalShadowAtlasName, atlasTexture ?? DummyShadowMapArray, directionalAtlasUnit);
+            materialProgram.Sampler(DirectionalShadowAtlasName, atlasTexture ?? DummyShadowMapArray, DirectionalShadowAtlasUnit);
 
             LogDeferredDirectionalShadowBinding(
                 directionalLight,
@@ -815,8 +855,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private static void BindDisabledDirectionalAtlasShadows(XRRenderProgram materialProgram)
         {
-            const int directionalAtlasUnit = 30;
-            materialProgram.Sampler(DirectionalShadowAtlasName, DummyShadowMapArray, directionalAtlasUnit);
+            materialProgram.Sampler(DirectionalShadowAtlasName, DummyShadowMapArray, DirectionalShadowAtlasUnit);
 
             Array.Clear(_directionalShadowAtlasPacked0);
             Array.Clear(_directionalShadowAtlasUvScaleBias);
@@ -828,6 +867,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private void CreateLightRenderers(
+            LightRendererCache cache,
             XRTexture albOpacTex,
             XRTexture normTex,
             XRTexture rmseTex,
@@ -855,74 +895,78 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             // Phase C: deferred-light combine renderers must be ready on the
             // first frame their pipeline pass runs; opt out of async default.
-            PointLightRenderer = new XRMeshRenderer(pointLightMesh, pointLightMat)
+            cache.PointLightRenderer = new XRMeshRenderer(pointLightMesh, pointLightMat)
             {
                 GenerateAsync = false,
                 CaptureUniformsOnRender = true,
             };
-            PointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            PrepareRenderPipelineLightRenderer(cache.PointLightRenderer);
+            cache.PointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            SpotLightRenderer = new XRMeshRenderer(spotLightMesh, spotLightMat)
+            cache.SpotLightRenderer = new XRMeshRenderer(spotLightMesh, spotLightMat)
             {
                 GenerateAsync = false,
                 CaptureUniformsOnRender = true,
             };
-            SpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            PrepareRenderPipelineLightRenderer(cache.SpotLightRenderer);
+            cache.SpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            DirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(dirLightMat);
-            DirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            cache.DirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(dirLightMat);
+            cache.DirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
             // Invalidate MSAA renderers since the simple phase depends on the resolved GBuffer.
-            MsaaSimplePointLightRenderer = null;
-            MsaaSimpleSpotLightRenderer = null;
-            MsaaSimpleDirectionalLightRenderer = null;
-            MsaaComplexPointLightRenderer = null;
-            MsaaComplexSpotLightRenderer = null;
-            MsaaComplexDirectionalLightRenderer = null;
+            cache.MsaaSimplePointLightRenderer = null;
+            cache.MsaaSimpleSpotLightRenderer = null;
+            cache.MsaaSimpleDirectionalLightRenderer = null;
+            cache.MsaaComplexPointLightRenderer = null;
+            cache.MsaaComplexSpotLightRenderer = null;
+            cache.MsaaComplexDirectionalLightRenderer = null;
         }
 
-        private void EnsureMsaaRenderers()
+        private bool EnsureMsaaRenderers(LightRendererCache cache)
         {
             var msaaAlbedoTex = ActivePipelineInstance.GetTexture<XRTexture>(MsaaAlbedoOpacityTexture);
             var msaaNormTex = ActivePipelineInstance.GetTexture<XRTexture>(MsaaNormalTexture);
             var msaaRmseTex = ActivePipelineInstance.GetTexture<XRTexture>(MsaaRMSETexture);
             var msaaDepthTex = ActivePipelineInstance.GetTexture<XRTexture>(MsaaDepthViewTexture);
             if (msaaAlbedoTex is null || msaaNormTex is null || msaaRmseTex is null || msaaDepthTex is null)
-                return;
+                return false;
 
-            if (_msaaAlbedoOpacityTextureCache == msaaAlbedoTex &&
-                _msaaNormalTextureCache == msaaNormTex &&
-                _msaaRMSETextureCache == msaaRmseTex &&
-                _msaaDepthViewTextureCache == msaaDepthTex &&
-                MsaaSimplePointLightRenderer is not null &&
-                MsaaComplexPointLightRenderer is not null)
-                return;
+            if (cache.MsaaAlbedoOpacityTexture == msaaAlbedoTex &&
+                cache.MsaaNormalTexture == msaaNormTex &&
+                cache.MsaaRMSETexture == msaaRmseTex &&
+                cache.MsaaDepthViewTexture == msaaDepthTex &&
+                cache.MsaaSimplePointLightRenderer is not null &&
+                cache.MsaaComplexPointLightRenderer is not null)
+                return true;
 
-            _msaaAlbedoOpacityTextureCache = msaaAlbedoTex;
-            _msaaNormalTextureCache = msaaNormTex;
-            _msaaRMSETextureCache = msaaRmseTex;
-            _msaaDepthViewTextureCache = msaaDepthTex;
+            cache.MsaaAlbedoOpacityTexture = msaaAlbedoTex;
+            cache.MsaaNormalTexture = msaaNormTex;
+            cache.MsaaRMSETexture = msaaRmseTex;
+            cache.MsaaDepthViewTexture = msaaDepthTex;
 
-            CreateMsaaLightRenderers();
+            CreateMsaaLightRenderers(cache);
+            return cache.MsaaSimplePointLightRenderer is not null &&
+                cache.MsaaComplexPointLightRenderer is not null;
         }
 
-        private void CreateMsaaLightRenderers()
+        private void CreateMsaaLightRenderers(LightRendererCache cache)
         {
-            if (_albedoOpacityTextureCache is null ||
-                _normalTextureCache is null ||
-                _rmseTextureCache is null ||
-                _depthViewTextureCache is null ||
-                _msaaAlbedoOpacityTextureCache is null ||
-                _msaaNormalTextureCache is null ||
-                _msaaRMSETextureCache is null ||
-                _msaaDepthViewTextureCache is null)
+            if (cache.AlbedoOpacityTexture is null ||
+                cache.NormalTexture is null ||
+                cache.RMSETexture is null ||
+                cache.DepthViewTexture is null ||
+                cache.MsaaAlbedoOpacityTexture is null ||
+                cache.MsaaNormalTexture is null ||
+                cache.MsaaRMSETexture is null ||
+                cache.MsaaDepthViewTexture is null)
             {
-                MsaaSimplePointLightRenderer = null;
-                MsaaSimpleSpotLightRenderer = null;
-                MsaaSimpleDirectionalLightRenderer = null;
-                MsaaComplexPointLightRenderer = null;
-                MsaaComplexSpotLightRenderer = null;
-                MsaaComplexDirectionalLightRenderer = null;
+                cache.MsaaSimplePointLightRenderer = null;
+                cache.MsaaSimpleSpotLightRenderer = null;
+                cache.MsaaSimpleDirectionalLightRenderer = null;
+                cache.MsaaComplexPointLightRenderer = null;
+                cache.MsaaComplexSpotLightRenderer = null;
+                cache.MsaaComplexDirectionalLightRenderer = null;
                 return;
             }
 
@@ -930,10 +974,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             XRTexture[] simpleLightRefs =
             [
-                _albedoOpacityTextureCache,
-                _normalTextureCache,
-                _rmseTextureCache,
-                _depthViewTextureCache,
+                cache.AlbedoOpacityTexture,
+                cache.NormalTexture,
+                cache.RMSETexture,
+                cache.DepthViewTexture,
             ];
 
             XRShader basePoint = XRShader.EngineShader(Path.Combine(SceneShaderPath, "DeferredLightingPoint.fs"), EShaderType.Fragment);
@@ -950,10 +994,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             XRTexture?[] msaaLightRefs =
             [
-                _msaaAlbedoOpacityTextureCache,
-                _msaaNormalTextureCache,
-                _msaaRMSETextureCache,
-                _msaaDepthViewTextureCache,
+                cache.MsaaAlbedoOpacityTexture,
+                cache.MsaaNormalTexture,
+                cache.MsaaRMSETexture,
+                cache.MsaaDepthViewTexture,
             ];
 
             XRMaterial msaaPointMat = new(msaaLightRefs, msaaPointShader) { RenderOptions = GetAdditiveParametersWithStencil(complexPixelStencilBit, EComparison.Equal), RenderPass = (int)EDefaultRenderPass.OpaqueForward };
@@ -965,39 +1009,43 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             // Phase C: MSAA combine renderers must be ready on the first
             // pipeline frame they run; opt out of async default.
-            MsaaSimplePointLightRenderer = new XRMeshRenderer(pointMesh, simplePointMat)
+            cache.MsaaSimplePointLightRenderer = new XRMeshRenderer(pointMesh, simplePointMat)
             {
                 GenerateAsync = false,
                 CaptureUniformsOnRender = true,
             };
-            MsaaSimplePointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            PrepareRenderPipelineLightRenderer(cache.MsaaSimplePointLightRenderer);
+            cache.MsaaSimplePointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            MsaaSimpleSpotLightRenderer = new XRMeshRenderer(spotMesh, simpleSpotMat)
+            cache.MsaaSimpleSpotLightRenderer = new XRMeshRenderer(spotMesh, simpleSpotMat)
             {
                 GenerateAsync = false,
                 CaptureUniformsOnRender = true,
             };
-            MsaaSimpleSpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            PrepareRenderPipelineLightRenderer(cache.MsaaSimpleSpotLightRenderer);
+            cache.MsaaSimpleSpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            MsaaSimpleDirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(simpleDirMat);
-            MsaaSimpleDirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            cache.MsaaSimpleDirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(simpleDirMat);
+            cache.MsaaSimpleDirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
 
-            MsaaComplexPointLightRenderer = new XRMeshRenderer(pointMesh, msaaPointMat)
+            cache.MsaaComplexPointLightRenderer = new XRMeshRenderer(pointMesh, msaaPointMat)
             {
                 GenerateAsync = false,
                 CaptureUniformsOnRender = true,
             };
-            MsaaComplexPointLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
+            PrepareRenderPipelineLightRenderer(cache.MsaaComplexPointLightRenderer);
+            cache.MsaaComplexPointLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
 
-            MsaaComplexSpotLightRenderer = new XRMeshRenderer(spotMesh, msaaSpotMat)
+            cache.MsaaComplexSpotLightRenderer = new XRMeshRenderer(spotMesh, msaaSpotMat)
             {
                 GenerateAsync = false,
                 CaptureUniformsOnRender = true,
             };
-            MsaaComplexSpotLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
+            PrepareRenderPipelineLightRenderer(cache.MsaaComplexSpotLightRenderer);
+            cache.MsaaComplexSpotLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
 
-            MsaaComplexDirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(msaaDirMat);
-            MsaaComplexDirectionalLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
+            cache.MsaaComplexDirectionalLightRenderer = CreateFullscreenDirectionalLightRenderer(msaaDirMat);
+            cache.MsaaComplexDirectionalLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
         }
 
         private static XRMaterial CreateFullscreenDirectionalLightMaterial(XRTexture?[] lightRefs, XRShader fragmentShader, RenderingParameters renderOptions)
@@ -1019,11 +1067,16 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 GenerateAsync = false,
                 CaptureUniformsOnRender = true,
-                GenerationPriority = EMeshGenerationPriority.RenderPipeline,
             };
+            PrepareRenderPipelineLightRenderer(renderer);
+            return renderer;
+        }
+
+        private static void PrepareRenderPipelineLightRenderer(XRMeshRenderer renderer)
+        {
+            renderer.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
             renderer.SetShaderPipelinesAllowedForAllVersions(false);
             renderer.EnsureRenderPipelineVersionsCreated();
-            return renderer;
         }
 
         private static XRMesh CreateFullscreenTriangle()

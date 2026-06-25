@@ -1,6 +1,7 @@
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Rendering;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Data.Components.Scene
@@ -8,12 +9,17 @@ namespace XREngine.Data.Components.Scene
     [RequireComponents(typeof(VRHeadsetTransform))]
     public class VRHeadsetComponent : XRComponent
     {
+        private const string LeftEyeNodeName = "Left Eye";
+        private const string RightEyeNodeName = "Right Eye";
+
         public static VRHeadsetComponent? Instance { get; private set; }
 
         protected VRHeadsetComponent() : base()
         {
-            _leftEyeTransform = new VREyeTransform(true, Transform);
-            _rightEyeTransform = new VREyeTransform(false, Transform);
+            _leftEyeNode = EnsureEyeNode(LeftEyeNodeName, true);
+            _rightEyeNode = EnsureEyeNode(RightEyeNodeName, false);
+            _leftEyeTransform = (VREyeTransform)_leftEyeNode.Transform;
+            _rightEyeTransform = (VREyeTransform)_rightEyeNode.Transform;
 
             _leftEyeCamera = new(() => RuntimeVrRenderingServices.CreateEyeCamera(_leftEyeTransform, true, _near, _far), true);
             _rightEyeCamera = new(() => RuntimeVrRenderingServices.CreateEyeCamera(_rightEyeTransform, false, _near, _far), true);
@@ -25,14 +31,23 @@ namespace XREngine.Data.Components.Scene
         protected override void OnTransformChanged()
         {
             base.OnTransformChanged();
-            _leftEyeTransform.Parent = Transform;
-            _rightEyeTransform.Parent = Transform;
+
+            if (_leftEyeTransform is null || _rightEyeTransform is null)
+                return;
+
+            ParentEyeTransformToHeadset(_leftEyeTransform);
+            ParentEyeTransformToHeadset(_rightEyeTransform);
+
+            if (_leftEyeCamera is not null && _rightEyeCamera is not null && IsActiveInHierarchy)
+                PublishHeadsetViewInformation();
         }
 
-        private readonly Lazy<IRuntimeVrEyeCamera> _leftEyeCamera;
-        private readonly Lazy<IRuntimeVrEyeCamera> _rightEyeCamera;
-        private readonly VREyeTransform _leftEyeTransform;
-        private readonly VREyeTransform _rightEyeTransform;
+        private Lazy<IRuntimeVrEyeCamera> _leftEyeCamera = null!;
+        private Lazy<IRuntimeVrEyeCamera> _rightEyeCamera = null!;
+        private SceneNode _leftEyeNode = null!;
+        private SceneNode _rightEyeNode = null!;
+        private VREyeTransform _leftEyeTransform = null!;
+        private VREyeTransform _rightEyeTransform = null!;
         private float _near = 0.1f;
         private float _far = 100000.0f;
 
@@ -68,7 +83,7 @@ namespace XREngine.Data.Components.Scene
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            RuntimeVrRenderingServices.SetHeadsetViewInformation(LeftEyeCamera, RightEyeCamera, World, SceneNode);
+            PublishHeadsetViewInformation();
             Instance = this;
         }
 
@@ -92,6 +107,49 @@ namespace XREngine.Data.Components.Scene
             }
 
             base.OnDestroying();
+        }
+
+        private void PublishHeadsetViewInformation()
+            => RuntimeVrRenderingServices.SetHeadsetViewInformation(LeftEyeCamera, RightEyeCamera, World, SceneNode);
+
+        private SceneNode EnsureEyeNode(string name, bool leftEye)
+        {
+            SceneNode? node = FindDirectChildNode(name);
+            if (node is null)
+                return new SceneNode(SceneNode, name, new VREyeTransform(leftEye));
+
+            if (node.Transform is not VREyeTransform eyeTransform)
+            {
+                eyeTransform = new VREyeTransform(leftEye);
+                node.SetTransform(eyeTransform);
+            }
+            else
+            {
+                eyeTransform.IsLeftEye = leftEye;
+            }
+
+            ParentEyeTransformToHeadset(eyeTransform);
+            return node;
+        }
+
+        private SceneNode? FindDirectChildNode(string name)
+        {
+            lock (Transform.Children)
+            {
+                foreach (TransformBase? child in Transform.Children)
+                {
+                    if (child?.SceneNode is SceneNode node && string.Equals(node.Name, name, StringComparison.Ordinal))
+                        return node;
+                }
+            }
+
+            return null;
+        }
+
+        private void ParentEyeTransformToHeadset(VREyeTransform transform)
+        {
+            if (!ReferenceEquals(transform.Parent, Transform))
+                transform.SetParent(Transform, preserveWorldTransform: false, EParentAssignmentMode.Immediate);
         }
     }
 }

@@ -199,7 +199,7 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
                 openXrApi.TryGetEyeLocalPose(leftEye, out Matrix4x4 eyeLocal) &&
                 Matrix4x4.Invert(headLocal, out Matrix4x4 inverseHead))
             {
-                pose = inverseHead * eyeLocal;
+                pose = eyeLocal * inverseHead;
                 return true;
             }
 

@@ -1469,6 +1469,7 @@ namespace XREngine.Rendering
             atlas.AutoGenerateMipmaps = false;
             atlas.LargestMipmapLevel = 0;
             atlas.SmallestAllowedMipmapLevel = smallestAllowedMipmapLevel;
+            atlas.PreferSynchronousGpuUpload = true;
 
             if (changed)
             {

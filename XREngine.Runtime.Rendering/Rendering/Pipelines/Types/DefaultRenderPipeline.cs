@@ -2260,7 +2260,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
                 // The fullscreen per-sample combine path can blank deferred content on some
                 // GL drivers, while this resolved path preserves visibility and still lets the
                 // skybox refill uncovered MSAA samples afterward.
-                c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+                c.Add<VPRC_RenderQuadToFBO>().SetTargets(LightCombineFBOName, ForwardPassFBOName);
 
                 //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
                 c.Add<VPRC_DepthTest>().Enable = true;
@@ -2663,7 +2663,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         var cmds = new ViewportRenderCommandContainer(this);
         var presentChoice = cmds.Add<VPRC_IfElse>();
         presentChoice.Label = "FinalPresentPath";
-        presentChoice.ConditionEvaluator = ShouldUseDirectVulkanFinalPresent;
+        presentChoice.ConditionEvaluator = ShouldUseDirectFinalPresent;
         presentChoice.TrueCommands = CreateDirectWindowPresentCommands(sourceFboName);
         presentChoice.FalseCommands = CreateVendorUpscaleBlitCommands(sourceFboName, false);
         return cmds;
@@ -2685,6 +2685,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private static bool ShouldUseDirectVulkanFinalPresent()
         => AbstractRenderer.Current is VulkanRenderer && !RuntimeEnableVendorUpscale;
+
+    private static bool ShouldUseDirectFinalPresent()
+        => IsRenderingExternalSwapchainTarget() || ShouldUseDirectVulkanFinalPresent();
 
     private ViewportRenderCommandContainer CreateVendorUpscaleBlitCommands(string sourceFboName, bool forceFallback)
     {
@@ -3047,6 +3050,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         var container = new ViewportRenderCommandContainer(this);
 
         container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            DepthOfFieldCopyFBOName,
+            CreateDepthOfFieldCopyFBO,
+            GetDesiredFBOSizeInternal);
+
+        container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             DepthOfFieldFBOName,
             CreateDepthOfFieldFBO,
             GetDesiredFBOSizeInternal);
@@ -3241,9 +3249,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private int EvaluateAmbientOcclusionMode()
     {
-        if (IsRenderingExternalSwapchainTarget())
-            return AmbientOcclusionDisabledMode;
-
         AmbientOcclusionSettings? aoSettings = ResolveAmbientOcclusionSettings();
         if (aoSettings is null || !aoSettings.Enabled)
             return AmbientOcclusionDisabledMode;

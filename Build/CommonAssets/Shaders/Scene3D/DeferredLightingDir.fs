@@ -28,7 +28,7 @@ layout(binding = 3) uniform sampler2D DepthView; //Depth
 #endif
 uniform sampler2D ShadowMap; //Directional Shadow Map
 uniform sampler2DArray ShadowMapArray; //Directional Cascaded Shadow Map
-layout(binding = 30) uniform sampler2DArray DirectionalShadowAtlas;
+layout(binding = 9) uniform sampler2DArray DirectionalShadowAtlas;
 uniform bool UseCascadedDirectionalShadows = false;
 uniform bool LightHasShadowMap = true;
 uniform bool EnableCascadedShadows = true;

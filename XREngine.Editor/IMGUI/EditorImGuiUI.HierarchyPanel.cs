@@ -66,6 +66,21 @@ public static partial class EditorImGuiUI
         return label;
     }
 
+    private static int GetSceneNodeChildCount(SceneNode node)
+    {
+        if (node.Transform?.Children is not { } children)
+            return 0;
+
+        int count = 0;
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i]?.SceneNode is SceneNode childNode && !ReferenceEquals(childNode, node))
+                count++;
+        }
+
+        return count;
+    }
+
     private static void DrawHierarchyPanel()
     {
         if (!_showHierarchy)
@@ -263,8 +278,7 @@ public static partial class EditorImGuiUI
 
     private static void DrawSceneNodeTree(SceneNode node, XRWorldInstance world, XRScene? owningScene, int depth = 0)
     {
-        var transform = node.Transform;
-        int childCount = transform.Children.Count;
+        int childCount = GetSceneNodeChildCount(node);
         string nodeLabel = GetOrCreateNodeLabel(node, childCount);
         // Auto-collapse large-fanout subtrees at any depth (was previously root-only).
         // Two-Sponza ZeroReadback (2026-05-11) measured `UI.DrawWorldHierarchyTab` = 756ms / frame
@@ -300,14 +314,14 @@ public static partial class EditorImGuiUI
 
         if (childCount > 0 && nodeOpen)
         {
-            // Iterate children by index to avoid ToArray() allocation per node per frame.
-            var children = transform.Children;
+            var children = node.Transform.Children;
             int count = children.Count;
             for (int i = 0; i < count; i++)
             {
-                if (children[i]?.SceneNode is SceneNode childNode)
+                if (children[i]?.SceneNode is SceneNode childNode && !ReferenceEquals(childNode, node))
                     DrawSceneNodeTree(childNode, world, owningScene, depth + 1);
             }
+
             ImGui.TableSetColumnIndex(0);
             ImGui.TreePop();
         }
@@ -451,6 +465,7 @@ public static partial class EditorImGuiUI
         }
         ImGui.OpenPopupOnItemClick("Context", ImGuiPopupFlags.MouseButtonRight);
 
+        ImGui.SetNextWindowViewport(ImGui.GetWindowViewport().ID);
         if (ImGui.BeginPopup("Context"))
         {
             if (ImGui.MenuItem("Rename"))
@@ -582,7 +597,7 @@ public static partial class EditorImGuiUI
 
     private static void HandleHierarchyArrowBranchNavigation(SceneNode node, bool isLeft)
     {
-        int childCount = node.Transform.Children.Count;
+        int childCount = GetSceneNodeChildCount(node);
         bool isRoot = node.Transform.Parent is null;
         bool autoCollapseLargeRoot = childCount >= LargeHierarchyRootAutoCollapseChildCount
             && !_expandedLargeHierarchyRootsScratch.Contains(node);
@@ -616,7 +631,7 @@ public static partial class EditorImGuiUI
         var children = node.Transform.Children;
         for (int i = 0; i < children.Count; i++)
         {
-            if (children[i]?.SceneNode is SceneNode child)
+            if (children[i]?.SceneNode is SceneNode child && !ReferenceEquals(child, node))
             {
                 TrySetHierarchySelection(child);
                 break;
@@ -668,8 +683,7 @@ public static partial class EditorImGuiUI
 
         output.Add(node);
 
-        var children = node.Transform.Children;
-        int childCount = children.Count;
+        int childCount = GetSceneNodeChildCount(node);
         if (childCount == 0)
             return;
 
@@ -678,8 +692,12 @@ public static partial class EditorImGuiUI
         if (!IsHierarchyNodeExpanded(node, childCount, depth, autoCollapseLargeRoot))
             return;
 
-        for (int i = 0; i < childCount; i++)
-            AddVisibleHierarchyNodes(children[i]?.SceneNode, depth + 1, output);
+        var children = node.Transform.Children;
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i]?.SceneNode is SceneNode child && !ReferenceEquals(child, node))
+                AddVisibleHierarchyNodes(child, depth + 1, output);
+        }
     }
 
     private static bool IsHierarchyNodeExpanded(SceneNode node, int childCount, int depth, bool autoCollapseLargeRoot)
@@ -748,7 +766,7 @@ public static partial class EditorImGuiUI
         if (node is null)
             return;
 
-        int childCount = node.Transform.Children.Count;
+        int childCount = GetSceneNodeChildCount(node);
         if (childCount == 0)
             return;
 
@@ -759,7 +777,10 @@ public static partial class EditorImGuiUI
 
         var children = node.Transform.Children;
         for (int i = 0; i < children.Count; i++)
-            SetHierarchyNodeExpandedRecursive(children[i]?.SceneNode, expanded);
+        {
+            if (children[i]?.SceneNode is SceneNode child && !ReferenceEquals(child, node))
+                SetHierarchyNodeExpandedRecursive(child, expanded);
+        }
     }
 
     private static IReadOnlyList<SceneNode> GetHierarchyDuplicateTargets(SceneNode clickedNode)

@@ -91,13 +91,14 @@ namespace XREngine.Rendering.Pipelines.Commands
                 using var overrideTicket = ActivePipelineInstance.RenderState.PushOverrideMaterial(voxelizationMaterial);
                 // Request shader pipeline mode when enabled; combined mode builds an override-specific program.
                 using var pipelineTicket = ActivePipelineInstance.RenderState.PushForceShaderPipelines();
+                var commands = ActivePipelineInstance.ActiveMeshRenderCommands;
                 
                 foreach (int renderPass in RenderPasses)
                 {
                     if (_gpuDispatch)
-                        ActivePipelineInstance.MeshRenderCommands.RenderGPU(renderPass);
+                        commands.RenderGPU(renderPass);
                     else
-                        ActivePipelineInstance.MeshRenderCommands.RenderCPU(renderPass);
+                        commands.RenderCPU(renderPass);
                 }
             }
             finally

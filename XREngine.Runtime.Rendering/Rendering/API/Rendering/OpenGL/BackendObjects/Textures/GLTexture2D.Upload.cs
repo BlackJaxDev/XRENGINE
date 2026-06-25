@@ -108,7 +108,7 @@ public partial class GLTexture2D
                     if (data is not null)
                         totalBytes += data.Length;
                 }
-                hasBulkMipData = totalBytes >= ProgressivePushDataThresholdBytes;
+                hasBulkMipData = totalBytes >= ProgressivePushDataThresholdBytes && !Data.PreferSynchronousGpuUpload;
             }
 
             if (hasBulkMipData)
