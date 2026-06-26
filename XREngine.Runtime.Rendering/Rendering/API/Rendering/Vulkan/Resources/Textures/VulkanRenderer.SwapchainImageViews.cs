@@ -8,8 +8,16 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyImageViews()
     {
-        foreach (var imageView in swapChainImageViews!)
-            Api!.DestroyImageView(device, imageView, null);
+        if (swapChainImageViews is null)
+            return;
+
+        foreach (var imageView in swapChainImageViews)
+        {
+            if (imageView.Handle != 0)
+                Api!.DestroyImageView(device, imageView, null);
+        }
+
+        swapChainImageViews = null;
     }
 
     private void CreateImageViews()

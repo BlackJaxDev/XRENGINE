@@ -1496,6 +1496,8 @@ namespace XREngine.Rendering
                 waitForGpu,
                 reason);
 
+            TryPrepareOpenXrForRendererTeardown(renderer, reason);
+
             if (waitForGpu)
                 TryRendererCleanupStep(renderer, reason, "WaitForGpu", renderer.WaitForGpu);
 
@@ -1506,6 +1508,23 @@ namespace XREngine.Rendering
                 "DestroyObjectsForRenderer",
                 () => RuntimeRenderingHostServices.Current.DestroyObjectsForRenderer(renderer));
             TryRendererCleanupStep(renderer, reason, "CleanUp", renderer.CleanUp);
+        }
+
+        private void TryPrepareOpenXrForRendererTeardown(AbstractRenderer renderer, string reason)
+        {
+            try
+            {
+                RuntimeEngine.VRState.OpenXRApi?.PrepareRendererDeviceTeardown(renderer, reason);
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingWarning(
+                    "[XRWindow] OpenXR pre-renderer-teardown step failed. Window={0} RendererType={1} Reason={2} Error={3}",
+                    GetHashCode(),
+                    renderer.GetType().Name,
+                    reason,
+                    ex);
+            }
         }
 
         private void TryRendererCleanupStep(AbstractRenderer renderer, string reason, string step, Action action)

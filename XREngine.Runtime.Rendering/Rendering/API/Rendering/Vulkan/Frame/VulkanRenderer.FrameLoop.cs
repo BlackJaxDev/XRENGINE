@@ -680,6 +680,7 @@ namespace XREngine.Rendering.Vulkan
                 DrainRetiredBuffers();
                 DrainRetiredFramebuffers();
                 DrainRetiredImages();
+                DrainCompletedRecordedTextureUploadPublications();
             }
             drainRetiredResourcesTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
@@ -1078,6 +1079,9 @@ namespace XREngine.Rendering.Vulkan
 
             if (submitResult != Result.Success)
             {
+                if (submitResult != Result.ErrorDeviceLost)
+                    CancelRecordedTextureUploadSubmitBatch($"graphics frame submit failed with {submitResult}");
+
                 if (submitResult == Result.ErrorDeviceLost)
                     throw CreateDeviceLostException("Draw QueueSubmit", submitResult);
 
@@ -1089,6 +1093,7 @@ namespace XREngine.Rendering.Vulkan
             _frameSlotTimelineValues[currentFrame] = graphicsSignalValue;
             if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
                 _swapchainImageTimelineValues[imageIndex] = graphicsSignalValue;
+            QueueRecordedTextureUploadsForTimeline(graphicsSignalValue, "graphics frame");
 
             // Trim idle staging buffers so the pool does not grow unbounded.
             stageStartTimestamp = Stopwatch.GetTimestamp();

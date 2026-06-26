@@ -14,6 +14,19 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
+        private readonly struct PendingRecordedTextureUploadPublication(
+            VulkanImportedTexturePendingUpload upload,
+            ulong timelineValue,
+            string uploadSource)
+        {
+            public VulkanImportedTexturePendingUpload Upload { get; } = upload;
+            public ulong TimelineValue { get; } = timelineValue;
+            public string UploadSource { get; } = uploadSource;
+        }
+
+        private readonly List<VulkanImportedTexturePendingUpload> _recordedTextureUploadsForSubmit = new();
+        private readonly List<PendingRecordedTextureUploadPublication> _pendingRecordedTextureUploadPublications = new();
+
         private CommandBuffer EnsureCommandBufferRecorded(
             uint imageIndex,
             bool preserveSwapchainForOverlay,
@@ -409,6 +422,8 @@ namespace XREngine.Rendering.Vulkan
             int recordedSwapchainWriteCount = 0;
             try
             {
+                BeginRecordedTextureUploadSubmitBatch();
+
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
                     recordedDynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                         imageIndex,
@@ -426,6 +441,11 @@ namespace XREngine.Rendering.Vulkan
                         commandChainSchedule,
                         preserveSwapchainForOverlay,
                         out recordedSwapchainWriteCount);
+            }
+            catch
+            {
+                CancelRecordedTextureUploadSubmitBatch("command buffer recording failed before upload submit");
+                throw;
             }
             finally
             {
@@ -892,6 +912,134 @@ namespace XREngine.Rendering.Vulkan
                 request,
                 VulkanTextureUploadGenerationState.Uploaded,
                 $"recorded {upload.StagingResources.Length} mip copies");
+            _textureUploadService.RecordState(
+                request,
+                VulkanTextureUploadGenerationState.DescriptorPublishPending,
+                $"publicationToken={upload.PublicationToken}; waiting for recorded command buffer completion");
+
+            QueueRecordedTextureUploadForSubmit(upload);
+        }
+
+        private void BeginRecordedTextureUploadSubmitBatch()
+            => _recordedTextureUploadsForSubmit.Clear();
+
+        private void QueueRecordedTextureUploadForSubmit(VulkanImportedTexturePendingUpload upload)
+            => _recordedTextureUploadsForSubmit.Add(upload);
+
+        private void QueueRecordedTextureUploadsForTimeline(ulong timelineValue, string uploadSource)
+        {
+            if (_recordedTextureUploadsForSubmit.Count == 0)
+                return;
+
+            for (int i = 0; i < _recordedTextureUploadsForSubmit.Count; i++)
+            {
+                _pendingRecordedTextureUploadPublications.Add(
+                    new PendingRecordedTextureUploadPublication(
+                        _recordedTextureUploadsForSubmit[i],
+                        timelineValue,
+                        uploadSource));
+            }
+
+            _recordedTextureUploadsForSubmit.Clear();
+        }
+
+        private void PublishRecordedTextureUploadsAfterCompletedSubmit(string uploadSource)
+        {
+            if (_recordedTextureUploadsForSubmit.Count == 0)
+                return;
+
+            for (int i = 0; i < _recordedTextureUploadsForSubmit.Count; i++)
+                PublishRecordedTextureUploadAfterGpuCompletion(_recordedTextureUploadsForSubmit[i], uploadSource);
+
+            _recordedTextureUploadsForSubmit.Clear();
+        }
+
+        private void CancelRecordedTextureUploadSubmitBatch(string reason)
+        {
+            if (_recordedTextureUploadsForSubmit.Count == 0)
+                return;
+
+            for (int i = 0; i < _recordedTextureUploadsForSubmit.Count; i++)
+                CancelRecordedTextureUpload(_recordedTextureUploadsForSubmit[i], reason);
+
+            _recordedTextureUploadsForSubmit.Clear();
+        }
+
+        private void CancelRecordedTextureUploadPublications(string reason)
+        {
+            CancelRecordedTextureUploadSubmitBatch(reason);
+
+            if (_pendingRecordedTextureUploadPublications.Count == 0)
+                return;
+
+            for (int i = 0; i < _pendingRecordedTextureUploadPublications.Count; i++)
+                CancelRecordedTextureUpload(_pendingRecordedTextureUploadPublications[i].Upload, reason);
+
+            _pendingRecordedTextureUploadPublications.Clear();
+        }
+
+        private void DrainCompletedRecordedTextureUploadPublications()
+        {
+            if (_pendingRecordedTextureUploadPublications.Count == 0 || IsDeviceLost)
+                return;
+
+            for (int i = _pendingRecordedTextureUploadPublications.Count - 1; i >= 0; i--)
+            {
+                PendingRecordedTextureUploadPublication pending = _pendingRecordedTextureUploadPublications[i];
+                bool completed;
+                try
+                {
+                    completed = HasTimelineValueCompleted(_graphicsTimelineSemaphore, pending.TimelineValue);
+                }
+                catch (InvalidOperationException)
+                {
+                    return;
+                }
+
+                if (!completed)
+                    continue;
+
+                _pendingRecordedTextureUploadPublications.RemoveAt(i);
+                PublishRecordedTextureUploadAfterGpuCompletion(pending.Upload, pending.UploadSource);
+            }
+        }
+
+        private void CancelRecordedTextureUpload(
+            VulkanImportedTexturePendingUpload upload,
+            string reason)
+        {
+            VulkanImportedTextureUploadRequest request = upload.Request;
+            _textureUploadService.RecordState(
+                request,
+                VulkanTextureUploadGenerationState.Canceled,
+                reason);
+
+            if (!IsDeviceLost)
+                upload.Texture.ReleasePreparedImportedUploadResources(upload);
+
+            InvokeTextureUploadCanceled(upload);
+        }
+
+        private void PublishRecordedTextureUploadAfterGpuCompletion(
+            VulkanImportedTexturePendingUpload upload,
+            string uploadSource)
+        {
+            VulkanImportedTextureUploadRequest request = upload.Request;
+            if (!upload.ShouldPublish())
+            {
+                upload.Texture.ReleasePreparedImportedUploadResources(upload);
+                _textureUploadService.RecordState(
+                    request,
+                    VulkanTextureUploadGenerationState.Canceled,
+                    $"request became stale before {uploadSource} descriptor publication");
+                InvokeTextureUploadCanceled(upload);
+                return;
+            }
+
+            _textureUploadService.RecordState(
+                request,
+                VulkanTextureUploadGenerationState.Uploaded,
+                $"{uploadSource} recorded upload completed");
             _textureUploadService.RecordState(
                 request,
                 VulkanTextureUploadGenerationState.DescriptorPublishPending,
