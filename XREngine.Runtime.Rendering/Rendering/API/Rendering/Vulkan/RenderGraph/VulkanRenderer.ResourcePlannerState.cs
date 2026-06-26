@@ -274,6 +274,9 @@ public unsafe partial class VulkanRenderer
         if (XRWindow.IsInteractiveResizeInProgress)
             return ApplyInteractiveResizePlannerFreeze(context);
 
+        if (IsRenderingExternalSwapchainTarget)
+            return context;
+
         FrameOpContext live = CaptureFrameOpContextOrLastActive();
         bool refreshExtents =
             ReferenceEquals(context.PipelineInstance, live.PipelineInstance) ||

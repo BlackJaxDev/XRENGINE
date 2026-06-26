@@ -92,7 +92,8 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            WaitForSubmittedFrameSlotsAndDrainRetiredResources();
+            DrainRetiredResourcesIfSubmittedFrameSlotsCompleted();
+            DrainCompletedRecordedTextureUploadPublications();
 
             openXrImageView = GetOrCreateOpenXrSwapchainImageView(image, format);
             OpenXrDepthTarget depthTarget = GetOrCreateOpenXrDepthTarget(extent);
@@ -120,7 +121,7 @@ public unsafe partial class VulkanRenderer
             {
                 emitFrameOps();
 
-                FrameOp[] ops = DrainFrameOps(out _);
+                FrameOp[] ops = DrainFrameOpsExcludingTextureUploads(out _);
                 drainedFrameOps = true;
                 ops = FilterDiagnosticSkippedFrameOps(ops);
                 if (ops.Length == 0)
@@ -141,6 +142,7 @@ public unsafe partial class VulkanRenderer
                 _isRecordingCommandBuffer = true;
                 try
                 {
+                    BeginRecordedTextureUploadSubmitBatch();
                     _ = RecordCommandBuffer(
                         imageIndex: 0,
                         commandBuffer,
@@ -152,6 +154,11 @@ public unsafe partial class VulkanRenderer
                         recordedSwapchainWriteCount: out _,
                         transitionSwapchainToPresent: false);
                 }
+                catch
+                {
+                    CancelRecordedTextureUploadSubmitBatch("OpenXR eye command buffer recording failed before upload submit");
+                    throw;
+                }
                 finally
                 {
                     _isRecordingCommandBuffer = false;
@@ -159,9 +166,16 @@ public unsafe partial class VulkanRenderer
 
                 bool submitted = SubmitAndWaitOpenXrCommandBuffer(commandBuffer, out bool commandBufferCompleted);
                 if (!commandBufferCompleted)
+                {
                     commandBufferAllocated = false;
+                    if (!IsDeviceLost)
+                        CancelRecordedTextureUploadSubmitBatch("OpenXR eye command buffer did not complete");
+                }
                 if (submitted)
+                {
+                    PublishRecordedTextureUploadsAfterCompletedSubmit("OpenXR eye");
                     ForceFlushCompletedNonImageRetiredResources();
+                }
 
                 return submitted;
             }
@@ -169,7 +183,7 @@ public unsafe partial class VulkanRenderer
         catch (Exception ex)
         {
             if (!drainedFrameOps)
-                _ = DrainFrameOps(out _);
+                _ = DrainFrameOpsExcludingTextureUploads(out _);
 
             Debug.VulkanWarningEvery(
                 $"OpenXR.Vulkan.RenderEyeFailed.{GetHashCode()}",
@@ -356,7 +370,7 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            WaitForSubmittedFrameSlotsAndDrainRetiredResources();
+            DrainRetiredResourcesIfSubmittedFrameSlotsCompleted();
 
             OpenXrDepthTarget depthTarget = GetOrCreateOpenXrDepthTarget(extent);
 
@@ -383,7 +397,7 @@ public unsafe partial class VulkanRenderer
             {
                 emitFrameOps();
 
-                FrameOp[] ops = DrainFrameOps(out _);
+                FrameOp[] ops = DrainFrameOpsExcludingTextureUploads(out _);
                 ops = FilterDiagnosticSkippedFrameOps(ops);
                 if (ops.Length == 0)
                     return;
@@ -395,7 +409,7 @@ public unsafe partial class VulkanRenderer
         }
         catch (Exception ex)
         {
-            _ = DrainFrameOps(out _);
+            _ = DrainFrameOpsExcludingTextureUploads(out _);
             Debug.VulkanWarningEvery(
                 $"OpenXR.Vulkan.PrewarmEyeFailed.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
@@ -698,19 +712,34 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private void WaitForSubmittedFrameSlotsAndDrainRetiredResources()
+    private void DrainRetiredResourcesIfSubmittedFrameSlotsCompleted()
     {
         if (_frameSlotTimelineValues is null)
+        {
+            DrainCompletedRecordedTextureUploadPublications();
             return;
+        }
 
         for (int i = 0; i < _frameSlotTimelineValues.Length; i++)
         {
             ulong value = _frameSlotTimelineValues[i];
-            if (value != 0)
-                WaitForTimelineValue(_graphicsTimelineSemaphore, value);
+            if (value == 0)
+                continue;
+
+            if (HasTimelineValueCompleted(_graphicsTimelineSemaphore, value))
+                continue;
+
+            Debug.VulkanEvery(
+                $"OpenXR.Vulkan.PendingFrameSlotDrainSkipped.{GetHashCode()}.{i}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Vulkan skipped retired-resource drain before eye rendering because frame slot {0} is still pending at timeline value {1}.",
+                i,
+                value);
+            return;
         }
 
         ForceFlushCompletedNonImageRetiredResources();
+        DrainCompletedRecordedTextureUploadPublications();
     }
 
     private ImageView GetOrCreateOpenXrSwapchainImageView(Image image, Format format)

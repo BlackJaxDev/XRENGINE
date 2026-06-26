@@ -111,3 +111,37 @@ Current interpretation:
 
 - With `AllowDesktopEditing=true`, the desktop window should remain the editor view while Monado receives the XR eye views.
 - With `AllowDesktopEditing=false`, the desktop window mirrors the XR eye output by design. If the user wants the desktop editor while VR is running, leave `AllowDesktopEditing=true`.
+
+## 2026-06-25 Render-Thread Runtime Follow-up
+
+The user reported a fresh Vulkan run that initially rendered, then lost the device:
+
+- Source log directory: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-25_16-04-58_pid36108`.
+- First hard failure: `[Vulkan] Logical device lost. Reason=WaitSemaphores for timeline value 34 returned ErrorDeviceLost`.
+- Stack: `WaitForSubmittedFrameSlotsAndDrainRetiredResources` during `PrewarmOpenXrEyeSwapchainResources` before OpenXR eye rendering.
+- After runtime loss, the update thread recreated/destroyed OpenXR Vulkan session resources while the render thread was still using the same `VkDevice`.
+- Validation fallout included `vkGetDeviceQueue`, `vkCreateCommandPool`, `vkCreateSemaphore`, `vkImportSemaphoreWin32HandleKHR`, `vkCreateImage`, memory allocation, and bind calls reporting the same `VkDevice` being used from multiple threads.
+- Renderer cleanup then hit a partial-init `NullReferenceException` in `DestroyImageViews`.
+
+Fixes applied:
+
+- Marshaled Vulkan OpenXR runtime-state transitions and teardown to the render thread when the session is not running or runtime loss is pending.
+- Skipped OpenXR Vulkan session creation when the active renderer has already marked its device lost, so recovery does not try to create new swapchains on a dead device.
+- Replaced the blocking desktop-frame-slot timeline wait before OpenXR eye prewarm/render with a nonblocking completed-slot drain. Eye rendering no longer waits on an unrelated desktop present slot.
+- Made Vulkan swapchain image-view destruction null/handle safe for failed or partial renderer initialization.
+
+Validation:
+
+- `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`: passed with 0 warnings, 0 errors.
+- Direct Vulkan/Monado editor smoke ran for roughly 35 seconds, then was closed:
+  - log directory: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-25_16-24-19_pid38560`
+  - `OpenXR Vulkan swapchain[0]` and `[1]` were created at `896x1007`.
+  - `xrBeginSession: Success` and `Session began successfully` were logged.
+  - Desktop Vulkan frames submitted and presented successfully through the run.
+  - Log scan found no `VK_ERROR_DEVICE_LOST`, `ErrorDeviceLost`, `THREADING ERROR`, `vkQueueSubmit`, `submit_image_barrier`, runtime-loss, or Vulkan cleanup `NullReferenceException` signatures.
+- Remaining first-chance exception text in the smoke was the handled optional OpenXR debug-utils symbol load failure (`ErrorFunctionUnsupported`), followed by validation messenger disabled diagnostics.
+
+Next check:
+
+- Run a longer Vulkan/Monado soak with the editor left open past the previous failure window.
+- If device loss returns, capture the first new `Logical device lost` reason and stack before the recovery fallout, because the old blocking eye-prewarm wait and cross-thread session recreation paths are now removed.

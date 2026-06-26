@@ -266,6 +266,68 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    internal FrameOp[] DrainFrameOpsExcludingTextureUploads(out ulong signature)
+    {
+        using (_frameOpsLock.EnterScope())
+        {
+            if (_frameOps.Count == 0)
+            {
+                signature = 0;
+                return Array.Empty<FrameOp>();
+            }
+
+            int opCount = _frameOps.Count;
+            int uploadCount = 0;
+            for (int i = 0; i < opCount; i++)
+            {
+                if (_frameOps[i] is TextureUploadFrameOp)
+                    uploadCount++;
+            }
+
+            if (uploadCount == 0)
+            {
+                if (_drainedFrameOpsBuffer.Length != opCount)
+                    _drainedFrameOpsBuffer = new FrameOp[opCount];
+
+                _frameOps.CopyTo(_drainedFrameOpsBuffer);
+                _frameOps.Clear();
+                signature = ComputeFrameOpsSignature(_drainedFrameOpsBuffer);
+                return _drainedFrameOpsBuffer;
+            }
+
+            int drainedCount = opCount - uploadCount;
+            if (drainedCount == 0)
+            {
+                signature = 0;
+                return Array.Empty<FrameOp>();
+            }
+
+            if (_drainedFrameOpsBuffer.Length != drainedCount)
+                _drainedFrameOpsBuffer = new FrameOp[drainedCount];
+
+            int drainedIndex = 0;
+            int retainedIndex = 0;
+            for (int i = 0; i < opCount; i++)
+            {
+                FrameOp op = _frameOps[i];
+                if (op is TextureUploadFrameOp)
+                {
+                    _frameOps[retainedIndex++] = op;
+                }
+                else
+                {
+                    _drainedFrameOpsBuffer[drainedIndex++] = op;
+                }
+            }
+
+            if (retainedIndex < _frameOps.Count)
+                _frameOps.RemoveRange(retainedIndex, _frameOps.Count - retainedIndex);
+
+            signature = ComputeFrameOpsSignature(_drainedFrameOpsBuffer);
+            return _drainedFrameOpsBuffer;
+        }
+    }
+
     private static ulong ComputeFrameOpsSignature(FrameOp[] ops)
     {
         FrameOpSignatureHasher hash = new();

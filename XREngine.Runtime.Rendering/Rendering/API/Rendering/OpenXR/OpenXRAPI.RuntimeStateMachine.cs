@@ -36,6 +36,33 @@ public unsafe partial class OpenXRAPI
         MarkRuntimeLoss(OpenXrRuntimeLossReason.ShutdownRequested);
     }
 
+    internal void PrepareRendererDeviceTeardown(AbstractRenderer renderer, string reason)
+    {
+        if (renderer is not VulkanRenderer && renderer is not OpenGLRenderer)
+            return;
+
+        if (_session.Handle == 0 &&
+            _instance.Handle == 0 &&
+            _graphicsBinding is null &&
+            !_instanceOwnedByRenderer)
+        {
+            return;
+        }
+
+        Debug.LogWarning($"OpenXR tearing down graphics session before renderer device teardown. Renderer={renderer.GetType().Name} Reason={reason}");
+        _sessionBegun = false;
+        Volatile.Write(ref _pendingXrFrame, 0);
+        Volatile.Write(ref _pendingXrFrameCollected, 0);
+        Volatile.Write(ref _framePrepared, 0);
+        Volatile.Write(ref _frameSkipRender, 0);
+
+        bool destroyInstance = renderer is VulkanRenderer || _instanceOwnedByRenderer;
+        TearDownSessionResourcesOnOwningThread(destroyInstance);
+
+        ScheduleProbeRetry(_graphicsDeviceFailureProbeInterval);
+        SetRuntimeState(_runtimeMonitoringEnabled ? OpenXrRuntimeState.RecreatePending : OpenXrRuntimeState.DesktopOnly);
+    }
+
     internal void UpdateRuntimeState()
     {
         if (!_runtimeMonitoringEnabled)
@@ -43,6 +70,21 @@ public unsafe partial class OpenXRAPI
 
         if (Window is null || Window.Renderer is null)
             return;
+
+        if (Window.Renderer is VulkanRenderer &&
+            !RuntimeEngine.IsRenderThread &&
+            RequiresVulkanRuntimeStateRenderThread())
+        {
+            RuntimeRenderingHostServices.Current.InvokeRenderThreadTask(
+                () =>
+                {
+                    UpdateRuntimeState();
+                    return true;
+                },
+                "OpenXR.Vulkan.UpdateRuntimeState",
+                RenderThreadJobKind.RequiresGraphicsContext);
+            return;
+        }
 
         if (_instance.Handle != 0 && _runtimeState != OpenXrRuntimeState.SessionRunning)
             PollEvents();
@@ -92,6 +134,10 @@ public unsafe partial class OpenXRAPI
         }
     }
 
+    private bool RequiresVulkanRuntimeStateRenderThread()
+        => _runtimeState != OpenXrRuntimeState.SessionRunning ||
+           Volatile.Read(ref _runtimeLossPending) != 0;
+
     private void TryProbeRuntime()
     {
         if (DateTime.UtcNow < _nextProbeUtc)
@@ -134,6 +180,15 @@ public unsafe partial class OpenXRAPI
 
     private void TryCreateSessionAndSwapchains(AbstractRenderer renderer)
     {
+        if (renderer.IsDeviceLost)
+        {
+            Debug.LogWarning("OpenXR session init skipped because the active renderer device is lost.");
+            ScheduleProbeRetry(_graphicsDeviceFailureProbeInterval);
+            TearDownSessionResourcesOnOwningThread(true);
+            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            return;
+        }
+
         IXrGraphicsBinding? selectedBinding = renderer switch
         {
             VulkanRenderer => new VulkanXrGraphicsBinding(),
@@ -328,6 +383,19 @@ public unsafe partial class OpenXRAPI
 
     private void TearDownSessionResourcesOnOwningThread(bool destroyInstance)
     {
+        if (Window?.Renderer is VulkanRenderer && !RuntimeEngine.IsRenderThread)
+        {
+            RuntimeRenderingHostServices.Current.InvokeRenderThreadTask(
+                () =>
+                {
+                    TearDownSessionResourcesWithCurrentContext(destroyInstance);
+                    return true;
+                },
+                "OpenXR.Vulkan.TeardownSessionResources",
+                RenderThreadJobKind.RequiresGraphicsContext);
+            return;
+        }
+
         if (_gl is not null && !RuntimeEngine.IsRenderThread)
         {
             RuntimeRenderingHostServices.Current.InvokeRenderThreadTask(

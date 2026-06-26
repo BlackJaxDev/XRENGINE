@@ -87,6 +87,7 @@ namespace XREngine.Rendering.Vulkan
 
             _textureUploadService.CancelAllQueuedWork(this, "Vulkan renderer shutdown");
             CancelPendingImportedTextureUploadFrameOps("Vulkan renderer shutdown");
+            CancelRecordedTextureUploadPublications("Vulkan renderer shutdown");
             DrainVulkanPipelineCompileQueueForShutdown();
             WaitForPendingReadbackTasks(TimeSpan.FromSeconds(6));
             DestroyComputeTransientResources();
