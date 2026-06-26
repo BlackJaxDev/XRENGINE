@@ -1279,6 +1279,11 @@ public interface IRuntimeRenderingHostServices
     bool RenderWindowsWhileInVR { get; }
 
     /// <summary>
+    /// Gets whether the OpenXR Vulkan path may use parallel eye rendering/recording when supported.
+    /// </summary>
+    bool EnableOpenXrVulkanParallelRendering { get; }
+
+    /// <summary>
     /// Gets whether VR rendering should configure a foveated multi-view view set.
     /// </summary>
     bool EnableVrFoveatedViewSet { get; }

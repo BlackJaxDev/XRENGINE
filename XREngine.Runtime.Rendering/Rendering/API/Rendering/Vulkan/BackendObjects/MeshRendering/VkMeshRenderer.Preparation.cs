@@ -79,6 +79,7 @@ public unsafe partial class VulkanRenderer
 			XRMaterial material,
 			VkRenderProgram preparedProgram,
 			string? preparedProgramIdentity,
+			ComputeDispatchSnapshot? programBindingSnapshot,
 			int drawUniformSlot,
 			out string reason)
 		{
@@ -114,6 +115,8 @@ public unsafe partial class VulkanRenderer
 				return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
 
 			ApplyScopedProgramBindingsForPreparation(material);
+			if (programBindingSnapshot is not null)
+				_program?.ApplyBindingSnapshot(programBindingSnapshot);
 			BuildVertexInputState();
 
 			if (!EnsureDescriptorSets(material, drawUniformSlot))
@@ -121,6 +124,63 @@ public unsafe partial class VulkanRenderer
 
 			string layoutSummary = _geometryLayoutSignature.DebugSummary;
 			return SetPrepareResult(true, "Ready", $"buffers=Ready; program={_program?.Data?.Name ?? "<unnamed>"}; descriptors=Ready; pipeline=DeferredUntilPass; layout={layoutSummary}", out reason);
+		}
+
+		private bool TryReuseCapturedProgramForIndirectDrawSnapshot(
+			XRMaterial material,
+			VkRenderProgram preparedProgram,
+			string? preparedProgramIdentity,
+			ComputeDispatchSnapshot? programBindingSnapshot,
+			int drawUniformSlot,
+			out string reason)
+		{
+			reason = "Ready";
+
+			if (!IsActive)
+				Generate();
+
+			if (!IsActive)
+				return SetPrepareResult(false, "GenerateFailed", "Vulkan mesh renderer wrapper is not active.", out reason);
+
+			if (Data is null)
+				return SetPrepareResult(false, "DataMissing", "XRMeshRenderer.BaseVersion data is null.", out reason);
+
+			if (ReferenceEquals(material, null))
+				return SetPrepareResult(false, "MaterialMissing", "No material could be resolved for this draw.", out reason);
+
+			if (!ReferenceEquals(_lastPreparedMaterial, material))
+			{
+				_pipelineDirty = true;
+				_descriptorDirty = true;
+				_lastPreparedMaterial = material;
+			}
+
+			if (MeshRenderer.HasRenderDataPreparation)
+				MeshRenderer.OnPreparingRenderData();
+
+			ActivateCapturedProgram(material, preparedProgram, preparedProgramIdentity);
+			EnsureRuntimeDeformationBuffersCurrent();
+			EnsureBuffers(ProgramUsesShaderGeneratedVertices());
+
+			if (!AreCachedBuffersReadyForRendering(out string bufferDetail))
+				return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
+
+			ApplyScopedProgramBindingsForPreparation(material);
+			if (programBindingSnapshot is not null)
+				_program?.ApplyBindingSnapshot(programBindingSnapshot);
+			BuildVertexInputState();
+
+			if (!CanReuseRecordedDescriptorSets(material, drawUniformSlot, programBindingSnapshot is not null, out string descriptorReason))
+			{
+				return SetPrepareResult(
+					false,
+					"DescriptorsPending",
+					$"Descriptor sets are not prewarmed for the captured indirect draw layout: {descriptorReason}",
+					out reason);
+			}
+
+			string layoutSummary = _geometryLayoutSignature.DebugSummary;
+			return SetPrepareResult(true, "Ready", $"buffers=Ready; program={_program?.Data?.Name ?? "<unnamed>"}; descriptors=Reused; pipeline=DeferredUntilPass; layout={layoutSummary}", out reason);
 		}
 
 		private void ActivateCapturedProgram(XRMaterial material, VkRenderProgram preparedProgram, string? preparedProgramIdentity)
@@ -172,6 +232,7 @@ public unsafe partial class VulkanRenderer
 			if (_program?.Data is not { } program)
 				return;
 
+			_program.ClearBindings();
 			RuntimeEngine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
 
 			EUniformRequirements reqs =
@@ -254,15 +315,9 @@ public unsafe partial class VulkanRenderer
 
 		private bool SetPrepareResult(bool ready, string result, string detail, out string reason)
 		{
-			string previousResult = _lastPrepareResult;
 			_lastPrepareResult = result;
 			_lastPrepareDetail = detail;
 			reason = result;
-
-			if (!string.Equals(previousResult, result, StringComparison.Ordinal))
-			{
-				Renderer.MarkCommandBuffersDirty();
-			}
 
 			if (!ready)
 			{

@@ -9,7 +9,6 @@ TextureSlowTransitionMilliseconds: 8
 TextureSlowQueueWaitMilliseconds: 100
 TextureUploadFrameBudgetMilliseconds: 2
 EnableZeroReadbackMaterialScatter: true
-ForceMeshSubmissionStrategy: CpuDirect
 OutputVerbosity: Verbose
 UseIntegerWeightingIds: true
 TransformReplicationKeyframeIntervalSec: 5

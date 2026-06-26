@@ -176,33 +176,33 @@ namespace XREngine.Rendering.Commands
         {
             Dbg("GenerateShaders start","Lifecycle");
 
-            _cullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderCulling.comp", EShaderType.Compute));
-            _buildKeysComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildKeys.comp", EShaderType.Compute));
+            _cullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderCulling.comp", EShaderType.Compute)) { Name = "GPURenderCulling" };
+            _buildKeysComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildKeys.comp", EShaderType.Compute)) { Name = "GPURenderBuildKeys" };
 #if XRE_DEBUG_BATCH_RANGE_READBACK
-            _buildGpuBatchesComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildBatches.comp", EShaderType.Compute));
+            _buildGpuBatchesComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildBatches.comp", EShaderType.Compute)) { Name = "GPURenderBuildBatches" };
 #endif
-            _materialScatterComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderMaterialScatter.comp", EShaderType.Compute));
-            _buildActiveMaterialBucketsComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildActiveMaterialBuckets.comp", EShaderType.Compute));
-            _classifyTransparencyComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderClassifyTransparencyDomains.comp", EShaderType.Compute));
-            _lodSelectComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderLODSelect.comp", EShaderType.Compute));
+            _materialScatterComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderMaterialScatter.comp", EShaderType.Compute)) { Name = "GPURenderMaterialScatter" };
+            _buildActiveMaterialBucketsComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildActiveMaterialBuckets.comp", EShaderType.Compute)) { Name = "GPURenderBuildActiveMaterialBuckets" };
+            _classifyTransparencyComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderClassifyTransparencyDomains.comp", EShaderType.Compute)) { Name = "GPURenderClassifyTransparencyDomains" };
+            _lodSelectComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderLODSelect.comp", EShaderType.Compute)) { Name = "GPURenderLODSelect" };
             //RadixIndexSortComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Sorting/GPURenderRadixIndexSort.comp", EShaderType.Compute));
-            _indirectRenderTaskShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderIndirect.comp", EShaderType.Compute));
-            _buildHotCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildHotCommands.comp", EShaderType.Compute));
-            _resetCountersComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderResetCounters.comp", EShaderType.Compute));
-            _expandMeshletsComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderExpandMeshlets.comp", EShaderType.Compute));
-            _clearUIntsComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderClearUInts.comp", EShaderType.Compute));
-            _extractSoAComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderExtractSoA.comp", EShaderType.Compute));
-            _soACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderCullingSoA.comp", EShaderType.Compute));
+            _indirectRenderTaskShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderIndirect.comp", EShaderType.Compute)) { Name = "GPURenderIndirect" };
+            _buildHotCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildHotCommands.comp", EShaderType.Compute)) { Name = "GPURenderBuildHotCommands" };
+            _resetCountersComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderResetCounters.comp", EShaderType.Compute)) { Name = "GPURenderResetCounters" };
+            _expandMeshletsComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderExpandMeshlets.comp", EShaderType.Compute)) { Name = "GPURenderExpandMeshlets" };
+            _clearUIntsComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderClearUInts.comp", EShaderType.Compute)) { Name = "GPURenderClearUInts" };
+            _extractSoAComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderExtractSoA.comp", EShaderType.Compute)) { Name = "GPURenderExtractSoA" };
+            _soACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderCullingSoA.comp", EShaderType.Compute)) { Name = "GPURenderCullingSoA" };
             //HiZSoACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderHiZSoACulling.comp", EShaderType.Compute));
             //_gatherProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Debug/GPURenderGather.comp", EShaderType.Compute));
-            _copyCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderCopyCommands.comp", EShaderType.Compute));
-            _bvhFrustumCullProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Scene3D/RenderPipeline/bvh_frustum_cull.comp", EShaderType.Compute));
+            _copyCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderCopyCommands.comp", EShaderType.Compute)) { Name = "GPURenderCopyCommands" };
+            _bvhFrustumCullProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Scene3D/RenderPipeline/bvh_frustum_cull.comp", EShaderType.Compute)) { Name = "BvhFrustumCull" };
 
             // Phase 3: Hi-Z occlusion pyramid + refinement
-            _hiZInitProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Occlusion/GPURenderHiZInit.comp", EShaderType.Compute));
-            _hiZGenProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Occlusion/HiZGen.comp", EShaderType.Compute));
-            _hiZOcclusionProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Occlusion/GPURenderOcclusionHiZ.comp", EShaderType.Compute));
-            _copyCount3Program = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderCopyCount3.comp", EShaderType.Compute));
+            _hiZInitProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Occlusion/GPURenderHiZInit.comp", EShaderType.Compute)) { Name = "GPURenderHiZInit" };
+            _hiZGenProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Occlusion/HiZGen.comp", EShaderType.Compute)) { Name = "HiZGen" };
+            _hiZOcclusionProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Occlusion/GPURenderOcclusionHiZ.comp", EShaderType.Compute)) { Name = "GPURenderOcclusionHiZ" };
+            _copyCount3Program = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderCopyCount3.comp", EShaderType.Compute)) { Name = "GPURenderCopyCount3" };
 
             Dbg("GenerateShaders complete","Lifecycle");
         }
@@ -450,6 +450,8 @@ namespace XREngine.Rendering.Commands
             _cullingOverflowNeedsMap = EnsureFlagBuffer(ref _cullingOverflowFlagBuffer, "CullingOverflowFlag");
             _indirectOverflowNeedsMap = EnsureFlagBuffer(ref _indirectOverflowFlagBuffer, "IndirectOverflowFlag");
             _cullingOverflowNeedsMap |= EnsureFlagBuffer(ref _occlusionOverflowFlagBuffer, "OcclusionOverflowFlag");
+            _truncationNeedsMap |= EnsureFlagBuffer(ref _truncationFlagBuffer, "IndirectTruncationFlag");
+            EnsureFlagBuffer(ref _overflowDebugBuffer, "OverflowDebug");
 
             if (_sortedCommandBuffer is null || _sortedCommandBuffer.ElementCount != capacity)
             {
@@ -637,7 +639,10 @@ namespace XREngine.Rendering.Commands
 
             if (buffer is not null)
             {
-                bool invalidLayout = buffer.ElementCount != elementCount || buffer.ComponentType != EComponentType.UInt || buffer.ComponentCount != componentCount;
+                bool invalidLayout = buffer.Target != EBufferTarget.DrawIndirectBuffer ||
+                    buffer.ElementCount != elementCount ||
+                    buffer.ComponentType != EComponentType.UInt ||
+                    buffer.ComponentCount != componentCount;
                 bool missingStorage = (buffer.StorageFlags & requiredStorage) != requiredStorage;
                 bool missingRange = (buffer.RangeFlags & requiredRange) != requiredRange;
 
@@ -654,7 +659,7 @@ namespace XREngine.Rendering.Commands
             {
                 // Persistent+Coherent MUST be set before Generate() because OpenGL
                 // requires GL_MAP_PERSISTENT_BIT at glBufferStorage allocation time.
-                buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, EComponentType.UInt, componentCount, false, true)
+                buffer = new XRDataBuffer(name, EBufferTarget.DrawIndirectBuffer, elementCount, EComponentType.UInt, componentCount, false, true)
                 {
                     Usage = EBufferUsage.DynamicCopy,
                     DisposeOnPush = false,
@@ -948,10 +953,10 @@ namespace XREngine.Rendering.Commands
         private void EnsureGpuDrivenBatchingBuffers(uint capacity)
         {
             EnsureSortKeyBuffer(capacity);
+            EnsureBatchCountBuffer();
 #if XRE_DEBUG_BATCH_RANGE_READBACK
             EnsureSortScratchBuffer(capacity);
             EnsureBatchRangeBuffer(capacity);
-            EnsureBatchCountBuffer();
             EnsureMaterialAggregationBuffer(1u);
 #endif
             EnsureInstanceDataBuffers(capacity);
@@ -991,13 +996,14 @@ namespace XREngine.Rendering.Commands
             }
 
             if (_materialTierDrawCountBuffer is null ||
+                _materialTierDrawCountBuffer.Target != EBufferTarget.DrawIndirectBuffer ||
                 _materialTierDrawCountBuffer.ComponentType != EComponentType.UInt ||
                 _materialTierDrawCountBuffer.ComponentCount != 1u)
             {
                 _materialTierDrawCountBuffer?.Destroy();
                 _materialTierDrawCountBuffer = new XRDataBuffer(
                     "MaterialTierDrawCounts",
-                    EBufferTarget.ShaderStorageBuffer,
+                    EBufferTarget.DrawIndirectBuffer,
                     bucketCount,
                     EComponentType.UInt,
                     1u,

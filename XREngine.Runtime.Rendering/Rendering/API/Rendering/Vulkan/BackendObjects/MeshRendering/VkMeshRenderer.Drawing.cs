@@ -7,6 +7,7 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 using System;
+using System.Buffers;
 using System.Numerics;
 
 using Silk.NET.Vulkan;
@@ -17,6 +18,8 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
+
+using VkBufferHandle = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -49,7 +52,7 @@ public unsafe partial class VulkanRenderer
 			var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 			string prepareReason;
 			bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
-				? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, drawUniformSlot, out prepareReason)
+				? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.ProgramBindingSnapshot, drawUniformSlot, out prepareReason)
 				: TryPrepareForRendering(material, out prepareReason);
 			if (!preparedForRecord)
 			{
@@ -268,6 +271,286 @@ public unsafe partial class VulkanRenderer
 			return drew;
 		}
 
+		internal bool RecordIndirectDrawState(
+			CommandBuffer commandBuffer,
+			in PendingMeshDraw draw,
+			RenderPass renderPass,
+			bool useDynamicRendering,
+			DynamicRenderingFormatSignature dynamicRenderingFormats,
+			int passIndex,
+			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+			bool depthStencilReadOnly,
+			string pipelineName,
+			string targetName,
+			int drawUniformSlot,
+			out IndexType indexType)
+		{
+			indexType = IndexType.Uint32;
+			var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+            bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
+                ? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.ProgramBindingSnapshot, drawUniformSlot, out global::System.String prepareReason)
+                : TryPrepareForRendering(material, out prepareReason);
+            if (!preparedForRecord)
+			{
+				Debug.VulkanWarningEvery(
+					$"Vulkan.IndirectDraw.PrepareSkip.{MeshRenderer.Name ?? "IndirectRenderer"}.{prepareReason}",
+					TimeSpan.FromSeconds(2),
+					"[Vulkan] Skipping indirect draw because atlas renderer preparation failed: {0}. {1}",
+					prepareReason,
+					LastPrepareDetail);
+				return false;
+			}
+
+			if (!TryResolveIndexBinding(_triangleIndexBuffer, _triangleIndexSize, out VkBufferHandle indexHandle, out indexType, out uint indexCount) ||
+				indexCount == 0)
+			{
+				Debug.VulkanWarningEvery(
+					$"Vulkan.IndirectDraw.IndexMissing.{MeshRenderer.Name ?? "IndirectRenderer"}",
+					TimeSpan.FromSeconds(2),
+					"[Vulkan] Skipping indirect draw because the atlas triangle index buffer is not ready.");
+				return false;
+			}
+
+			if (!EnsurePipeline(material, PrimitiveTopology.TriangleList, draw, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
+				return false;
+
+			Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
+
+			if (!BindVertexBuffersForCurrentPipeline(commandBuffer))
+				return false;
+
+			if (_program?.Data is { } programData)
+				NotifyDrawUniforms(material, programData, draw);
+
+			if (!BindDescriptorsIfAvailable(commandBuffer, material, draw, drawUniformSlot))
+				return false;
+
+			PushPerDrawConstants(commandBuffer, material, draw);
+			Renderer.BindIndexBufferTracked(commandBuffer, indexHandle, 0, indexType);
+			return true;
+		}
+
+		internal readonly record struct IndirectDrawRecordingState(
+			VkRenderProgram Program,
+			Pipeline Pipeline,
+			PipelineLayout PipelineLayout,
+			DescriptorSet[]? DescriptorSets,
+			VkBufferHandle[]? VertexBuffers,
+			uint[]? VertexBindings,
+			int VertexBufferCount,
+			VkBufferHandle IndexBuffer,
+			IndexType IndexType,
+			MeshDrawPushConstants PushConstants);
+
+		internal bool TryPrepareIndirectDrawRecordingState(
+			uint imageIndex,
+			in PendingMeshDraw draw,
+			RenderPass renderPass,
+			bool useDynamicRendering,
+			DynamicRenderingFormatSignature dynamicRenderingFormats,
+			int passIndex,
+			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+			bool depthStencilReadOnly,
+			string pipelineName,
+			int drawUniformSlot,
+			out IndirectDrawRecordingState recordingState,
+			out string reason)
+		{
+			recordingState = default;
+			reason = "Ready";
+
+            var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+            bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
+				? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.ProgramBindingSnapshot, drawUniformSlot, out reason)
+				: TryPrepareForRendering(material, out reason);
+			if (!preparedForRecord)
+				return false;
+
+			if (!TryResolveIndexBinding(_triangleIndexBuffer, _triangleIndexSize, out VkBufferHandle indexHandle, out IndexType indexType, out uint indexCount) ||
+				indexCount == 0)
+			{
+				reason = "atlas triangle index buffer is not ready";
+				return false;
+			}
+
+			if (!EnsurePipeline(material, PrimitiveTopology.TriangleList, draw, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
+			{
+				reason = "pipeline pending";
+				return false;
+			}
+
+			if (_program is not { } program)
+			{
+				reason = "program missing after pipeline preparation";
+				return false;
+			}
+
+			if (!TryRentVertexBufferSnapshot(out Silk.NET.Vulkan.Buffer[]? vertexBuffers, out global::System.UInt32[]? vertexBindings, out int vertexBufferCount, out reason))
+				return false;
+
+			try
+			{
+				if (program.Data is { } programData)
+					NotifyDrawUniforms(material, programData, draw);
+
+				DescriptorSet[]? descriptorSets = null;
+				bool requiresDescriptors = program.DescriptorSetLayouts.Count > 0 && program.DescriptorBindings.Count > 0;
+				if (requiresDescriptors)
+				{
+					if (!EnsureDescriptorSets(material, drawUniformSlot))
+					{
+						reason = "descriptor sets pending";
+						ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
+						vertexBuffers = null;
+						vertexBindings = null;
+						return false;
+					}
+
+					if (_descriptorSets is null || _descriptorSets.Length == 0)
+					{
+						reason = "descriptor set array is empty";
+						ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
+						vertexBuffers = null;
+						vertexBindings = null;
+						return false;
+					}
+
+					int frameIndex = imageIndex > int.MaxValue ? int.MaxValue : (int)imageIndex;
+					int descriptorSlotIndex = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, _descriptorSets.Length);
+					UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
+					UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);
+
+					descriptorSets = _descriptorSets[descriptorSlotIndex];
+					if (descriptorSets.Length == 0)
+					{
+						reason = $"descriptor set array at imageIndex {frameIndex}, drawSlot {drawUniformSlot} is empty";
+						ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
+						vertexBuffers = null;
+						vertexBindings = null;
+						return false;
+					}
+				}
+
+				recordingState = new IndirectDrawRecordingState(
+					program,
+					pipeline,
+					program.PipelineLayout,
+					descriptorSets,
+					vertexBuffers,
+					vertexBindings,
+					vertexBufferCount,
+					indexHandle,
+					indexType,
+					CreatePerDrawPushConstants(material, draw));
+
+				vertexBuffers = null;
+				vertexBindings = null;
+				return true;
+			}
+			finally
+			{
+				if (vertexBuffers is not null || vertexBindings is not null)
+					ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
+			}
+		}
+
+		internal bool RecordPreparedIndirectDrawState(CommandBuffer commandBuffer, in IndirectDrawRecordingState recordingState)
+		{
+			if (recordingState.Pipeline.Handle == 0 ||
+				recordingState.PipelineLayout.Handle == 0 ||
+				recordingState.Program is null)
+				return false;
+
+			Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, recordingState.Pipeline);
+
+			if (recordingState.VertexBufferCount > 0)
+			{
+				if (recordingState.VertexBuffers is null || recordingState.VertexBindings is null)
+					return false;
+
+				for (int i = 0; i < recordingState.VertexBufferCount; i++)
+					Renderer.BindVertexBufferTracked(commandBuffer, recordingState.VertexBindings[i], recordingState.VertexBuffers[i], 0);
+			}
+
+			if (recordingState.DescriptorSets is { Length: > 0 } descriptorSets)
+				Renderer.BindDescriptorSetsTracked(commandBuffer, PipelineBindPoint.Graphics, recordingState.PipelineLayout, 0, descriptorSets);
+
+			Renderer.PushConstantsTracked(
+				commandBuffer,
+				recordingState.PipelineLayout,
+				CommonPushConstantStageFlags,
+				0,
+				recordingState.PushConstants);
+
+			Renderer.BindIndexBufferTracked(commandBuffer, recordingState.IndexBuffer, 0, recordingState.IndexType);
+			return true;
+		}
+
+		internal static void ReturnIndirectDrawRecordingStateBuffers(in IndirectDrawRecordingState recordingState)
+			=> ReturnRentedVertexBufferSnapshot(recordingState.VertexBuffers, recordingState.VertexBindings);
+
+		private bool TryRentVertexBufferSnapshot(
+			out VkBufferHandle[]? vertexBuffers,
+			out uint[]? vertexBindings,
+			out int vertexBufferCount,
+			out string reason)
+		{
+			vertexBufferCount = _vertexBindings.Length;
+			reason = "Ready";
+			vertexBuffers = null;
+			vertexBindings = null;
+
+			if (vertexBufferCount == 0)
+				return true;
+
+			vertexBuffers = ArrayPool<VkBufferHandle>.Shared.Rent(vertexBufferCount);
+			vertexBindings = ArrayPool<uint>.Shared.Rent(vertexBufferCount);
+
+			for (int i = 0; i < vertexBufferCount; i++)
+			{
+				VertexInputBindingDescription binding = _vertexBindings[i];
+				if (!_vertexBuffersByBinding.TryGetValue(binding.Binding, out VkDataBuffer? sourceBuffer))
+				{
+					reason = $"vertex binding {binding.Binding} has no backing buffer";
+					ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
+					vertexBuffers = null;
+					vertexBindings = null;
+					return false;
+				}
+
+				if (!sourceBuffer.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads))
+				{
+					reason = $"vertex binding {binding.Binding} buffer is not ready";
+					ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
+					vertexBuffers = null;
+					vertexBindings = null;
+					return false;
+				}
+
+				if (sourceBuffer.BufferHandle is not { } handle || handle.Handle == 0)
+				{
+					reason = $"vertex binding {binding.Binding} buffer is not allocated";
+					ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
+					vertexBuffers = null;
+					vertexBindings = null;
+					return false;
+				}
+
+				vertexBindings[i] = binding.Binding;
+				vertexBuffers[i] = handle;
+			}
+
+			return true;
+		}
+
+		private static void ReturnRentedVertexBufferSnapshot(VkBufferHandle[]? vertexBuffers, uint[]? vertexBindings)
+		{
+			if (vertexBuffers is not null)
+				ArrayPool<VkBufferHandle>.Shared.Return(vertexBuffers, clearArray: true);
+			if (vertexBindings is not null)
+				ArrayPool<uint>.Shared.Return(vertexBindings, clearArray: true);
+		}
+
 		private void NotifyDrawUniforms(XRMaterial material, XRRenderProgram programData, in PendingMeshDraw draw)
 		{
 			if (draw.ProgramBindingSnapshot is { } snapshot && _program is not null)
@@ -277,6 +560,7 @@ public unsafe partial class VulkanRenderer
 				return;
 			}
 
+			_program?.ClearBindings();
 			Renderer.SetMaterialUniforms(material, programData, draw.ShadowUniformState);
 			MeshRenderer.OnSettingUniforms(programData, programData);
 			MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, draw.ShadowUniformState);
@@ -549,45 +833,33 @@ public unsafe partial class VulkanRenderer
 				: reason;
 		}
 
-		private readonly struct MeshDrawPushConstants
-		{
-			public readonly uint MaterialIdentity;
-			public readonly uint InstanceCount;
-			public readonly uint BillboardMode;
-			public readonly uint DebugFlags;
-
-			public MeshDrawPushConstants(uint materialIdentity, uint instanceCount, uint billboardMode, uint debugFlags)
-			{
-				MaterialIdentity = materialIdentity;
-				InstanceCount = instanceCount;
-				BillboardMode = billboardMode;
-				DebugFlags = debugFlags;
-			}
-		}
-
-		private void PushPerDrawConstants(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw)
+        private void PushPerDrawConstants(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw)
 		{
 			if (_program is null)
 				return;
 
-			uint debugFlags = 0;
-			if (draw.IsStereoPass)
-				debugFlags |= 1u;
-			if (draw.UseUnjitteredProjection)
-				debugFlags |= 2u;
-
-			MeshDrawPushConstants constants = new(
-				unchecked((uint)(material.GetHashCode() & int.MaxValue)),
-				draw.Instances,
-				(uint)draw.BillboardMode,
-				debugFlags);
-
+			MeshDrawPushConstants constants = CreatePerDrawPushConstants(material, draw);
 			Renderer.PushConstantsTracked(
 				commandBuffer,
 				_program.PipelineLayout,
 				CommonPushConstantStageFlags,
 				0,
 				constants);
+		}
+
+		private static MeshDrawPushConstants CreatePerDrawPushConstants(XRMaterial material, in PendingMeshDraw draw)
+		{
+			uint debugFlags = 0;
+			if (draw.IsStereoPass)
+				debugFlags |= 1u;
+			if (draw.UseUnjitteredProjection)
+				debugFlags |= 2u;
+
+			return new MeshDrawPushConstants(
+				unchecked((uint)(material.GetHashCode() & int.MaxValue)),
+				draw.Instances,
+				(uint)draw.BillboardMode,
+				debugFlags);
 		}
 
 		/// <summary>

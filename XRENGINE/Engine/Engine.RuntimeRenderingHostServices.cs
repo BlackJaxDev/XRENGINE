@@ -1124,6 +1124,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool ForceFullViewport => XREngine.Rendering.RenderDiagnosticsFlags.ForceFullViewport;
 
     public bool RenderWindowsWhileInVR => Engine.Rendering.Settings.RenderWindowsWhileInVR;
+    public bool EnableOpenXrVulkanParallelRendering
+        => Engine.GameSettings is not IVRGameStartupSettings vrSettings || vrSettings.EnableOpenXrVulkanParallelRendering;
     public bool EnableVrFoveatedViewSet => Engine.Rendering.Settings.EnableVrFoveatedViewSet;
     public bool IsInVR => Engine.VRState.IsInVR;
     public bool IsOpenXRActive => Engine.VRState.IsOpenXRActive;

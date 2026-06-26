@@ -434,16 +434,30 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> GetTimeStateAsync(McpToolContext context)
         {
             var timer = Engine.Time.Timer;
+            static double TicksToMilliseconds(long ticks)
+                => ticks <= 0L ? 0.0 : ticks * 1000.0 / XREngine.Timers.EngineTimer.StopwatchTickFrequency;
+
             var data = new
             {
                 isRunning = timer.IsRunning,
                 isPaused = timer.Paused,
                 elapsedTime = Engine.ElapsedTime,
+                elapsedTicks = Engine.ElapsedTicks,
                 delta = Engine.Delta,
+                deltaMs = Engine.Delta * 1000.0,
                 undilatedDelta = Engine.UndilatedDelta,
                 smoothedDelta = Engine.SmoothedDelta,
                 smoothedUndilatedDelta = Engine.SmoothedUndilatedDelta,
                 fixedDelta = Engine.FixedDelta,
+                renderDelta = timer.Render.Delta,
+                renderDeltaMs = timer.Render.Delta * 1000.0,
+                renderElapsedMs = TicksToMilliseconds(timer.Render.ElapsedTicks),
+                collectDelta = timer.Collect.Delta,
+                collectDeltaMs = timer.Collect.Delta * 1000.0,
+                collectElapsedMs = TicksToMilliseconds(timer.Collect.ElapsedTicks),
+                updateDelta = timer.Update.Delta,
+                updateDeltaMs = timer.Update.Delta * 1000.0,
+                updateElapsedMs = TicksToMilliseconds(timer.Update.ElapsedTicks),
                 targetRenderHz = timer.TargetRenderFrequency,
                 targetUpdateHz = timer.TargetUpdateFrequency,
                 fixedUpdateHz = timer.FixedUpdateFrequency,

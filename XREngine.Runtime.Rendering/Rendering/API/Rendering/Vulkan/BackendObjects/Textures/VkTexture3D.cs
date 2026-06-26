@@ -26,8 +26,6 @@ public unsafe partial class VulkanRenderer
 
         protected override void PushTextureData()
         {
-            Generate();
-
             Mipmap3D[] mipmaps = Data.Mipmaps;
             if (mipmaps is null || mipmaps.Length == 0)
             {
@@ -35,9 +33,13 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
+            RecreateImageForFullTextureDataUpload("full 3D texture data upload");
+            Generate();
             TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
 
-            uint levelCount = Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
+            uint levelCount = Data.AutoGenerateMipmaps
+                ? 1u
+                : Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
             for (uint level = 0; level < levelCount; level++)
             {
                 Mipmap3D? mip = mipmaps[level];

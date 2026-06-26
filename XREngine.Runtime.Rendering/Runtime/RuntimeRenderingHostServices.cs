@@ -983,6 +983,7 @@ public static class RuntimeRenderingHostServices
         #region VR and desktop mirror
 
         public bool RenderWindowsWhileInVR => RuntimeRenderingHostServiceDefaults.RenderWindowsWhileInVR;
+        public bool EnableOpenXrVulkanParallelRendering => RuntimeRenderingHostServiceDefaults.EnableOpenXrVulkanParallelRendering;
         public bool EnableVrFoveatedViewSet => RuntimeRenderingHostServiceDefaults.EnableVrFoveatedViewSet;
         public bool IsInVR => RuntimeRenderingHostServiceDefaults.IsInVR;
         public bool IsOpenXRActive => RuntimeRenderingHostServiceDefaults.IsOpenXRActive;
@@ -1010,7 +1011,7 @@ public static class RuntimeRenderingHostServices
         public float OpenXrCollectVisibleFrustumPaddingDegrees => RuntimeRenderingHostServiceDefaults.OpenXrCollectVisibleFrustumPaddingDegrees;
         public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
         public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy => OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
-        public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => OpenXRAPI.OpenXrRenderPacingMode.PostRenderCallback;
+        public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
 
         public void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
         {

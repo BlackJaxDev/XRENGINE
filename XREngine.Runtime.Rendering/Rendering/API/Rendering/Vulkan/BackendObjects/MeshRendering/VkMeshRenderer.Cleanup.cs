@@ -17,66 +17,50 @@ public unsafe partial class VulkanRenderer
 {
 	public partial class VkMeshRenderer
 	{
-			#region Resource Cleanup
+		#region Resource Cleanup
 
-			/// <summary>
-			/// Destroys per-frame engine uniform buffers. If <paramref name="singleName"/> is
-			/// provided, only that buffer set is destroyed; otherwise all are cleared.
-			/// </summary>
-			private void DestroyEngineUniformBuffers(string? singleName = null)
+		/// <summary>
+		/// Destroys per-frame engine uniform buffers. If <paramref name="singleName"/> is
+		/// provided, only that buffer set is destroyed; otherwise all are cleared.
+		/// </summary>
+		private void DestroyEngineUniformBuffers(string? singleName = null)
+		{
+			if (singleName is not null)
 			{
-				if (singleName is not null)
-				{
-					if (_engineUniformBuffers.TryGetValue(singleName, out EngineUniformBuffer[]? toDestroy))
-					{
-						foreach (EngineUniformBuffer buf in toDestroy)
-						{
-							DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
-						}
-					}
-
-					_engineUniformBuffers.Remove(singleName);
-					return;
-				}
-
-				foreach (EngineUniformBuffer[] buffers in _engineUniformBuffers.Values)
-				{
-					foreach (EngineUniformBuffer buf in buffers)
-					{
+				if (_engineUniformBuffers.TryGetValue(singleName, out EngineUniformBuffer[]? toDestroy))
+					foreach (EngineUniformBuffer buf in toDestroy)
 						DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
-					}
-				}
 
-				_engineUniformBuffers.Clear();
+				_engineUniformBuffers.Remove(singleName);
+				return;
 			}
 
-			/// <summary>
-			/// Destroys per-frame auto uniform buffers. If <paramref name="singleName"/> is
-			/// provided, only that buffer set is destroyed; otherwise all are cleared.
-			/// </summary>
-			private void DestroyAutoUniformBuffers(string? singleName = null)
+			foreach (EngineUniformBuffer[] buffers in _engineUniformBuffers.Values)
+				foreach (EngineUniformBuffer buf in buffers)
+					DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
+
+			_engineUniformBuffers.Clear();
+		}
+
+		/// <summary>
+		/// Destroys per-frame auto uniform buffers. If <paramref name="singleName"/> is
+		/// provided, only that buffer set is destroyed; otherwise all are cleared.
+		/// </summary>
+		private void DestroyAutoUniformBuffers(string? singleName = null)
+		{
+			if (singleName is not null)
 			{
-				if (singleName is not null)
-				{
-					if (_autoUniformBuffers.TryGetValue(singleName, out AutoUniformBuffer[]? toDestroy))
-					{
-						foreach (AutoUniformBuffer buf in toDestroy)
-						{
-							DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
-						}
-					}
+				if (_autoUniformBuffers.TryGetValue(singleName, out AutoUniformBuffer[]? toDestroy))
+					foreach (AutoUniformBuffer buf in toDestroy)
+						DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
 
 				_autoUniformBuffers.Remove(singleName);
 				return;
 			}
 
 			foreach (AutoUniformBuffer[] buffers in _autoUniformBuffers.Values)
-			{
 				foreach (AutoUniformBuffer buf in buffers)
-				{
 					DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
-				}
-			}
 
 			_autoUniformBuffers.Clear();
 		}
@@ -155,17 +139,16 @@ public unsafe partial class VulkanRenderer
 				Debug.VulkanWarning(message);
 		}
 
-		#endregion // Resource Cleanup
+        #endregion // Resource Cleanup
 
-		#region Format Conversion Utilities
+        #region Format Conversion Utilities
 
-		/// <summary>
-		/// Converts engine component type, count, and integral flag to a Vulkan
-		/// <see cref="Format"/>. Defaults to R32 float formats for unrecognized types.
-		/// </summary>
-		private static Format ToFormat(EComponentType type, uint count, bool integral, bool normalized = false)
-		{
-			return (type, count, integral, normalized) switch
+        /// <summary>
+        /// Converts engine component type, count, and integral flag to a Vulkan
+        /// <see cref="Format"/>. Defaults to R32 float formats for unrecognized types.
+        /// </summary>
+        private static Format ToFormat(EComponentType type, uint count, bool integral, bool normalized = false)
+			=> (type, count, integral, normalized) switch
 			{
 				(EComponentType.SByte, 1, false, true) => Format.R8SNorm,
 				(EComponentType.SByte, 2, false, true) => Format.R8G8SNorm,
@@ -219,13 +202,12 @@ public unsafe partial class VulkanRenderer
 					_ => Format.Undefined
 				}
 			};
-		}
 
-		/// <summary>
-		/// Converts engine <see cref="IndexSize"/> to Vulkan <see cref="IndexType"/>.
-		/// Byte-sized indices require the VK_EXT_index_type_uint8 extension.
-		/// </summary>
-		private static IndexType ToVkIndexType(IndexSize size)
+        /// <summary>
+        /// Converts engine <see cref="IndexSize"/> to Vulkan <see cref="IndexType"/>.
+        /// Byte-sized indices require the VK_EXT_index_type_uint8 extension.
+        /// </summary>
+        private static IndexType ToVkIndexType(IndexSize size)
 			=> size switch
 			{
 				IndexSize.Byte => IndexType.Uint8Ext,

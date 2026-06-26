@@ -10,7 +10,10 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed class VulkanBarrierPlanner
 {
-    internal const int SwapchainPassIndex = -1;
+    // Keep the swapchain pseudo-pass outside the engine render-pass namespace.
+    // EDefaultRenderPass.PreRender is -1, so using -1 here makes real PreRender
+    // frame ops indistinguishable from frame-start swapchain barriers.
+    internal const int SwapchainPassIndex = int.MinValue + 1;
     private static readonly PlannedImageBarrier[] _emptyImageBarriers = [];
     private static readonly PlannedBufferBarrier[] _emptyBufferBarriers = [];
 

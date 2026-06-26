@@ -130,6 +130,8 @@ namespace XREngine.Rendering
         private int _bindlessMaterialTableUnsupportedLogBudget = 4;
 
     private static GPURenderPassCollection.IndirectDebugSettings DebugSettings => GPURenderPassCollection.IndirectDebug;
+    private static bool VulkanCounterDiagnosticsEnabled =>
+        string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanCounterDiagnostics), "1", StringComparison.OrdinalIgnoreCase);
     private static readonly HashSet<uint> _warnedMultiVertexMaterials = [];
     private static bool IsGpuIndirectLoggingEnabled()
         => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
@@ -642,6 +644,162 @@ namespace XREngine.Rendering
                 return false;
             }
         }
+
+        private static bool TryReadUIntAtForDiagnostics(XRDataBuffer? buffer, uint index, out uint value, out string reason)
+        {
+            value = 0u;
+            reason = "<missing>";
+
+            if (buffer is null)
+                return false;
+
+            if (index >= buffer.ElementCount)
+            {
+                reason = $"<out-of-range:{index}/{buffer.ElementCount}>";
+                return false;
+            }
+
+            try
+            {
+                if (AbstractRenderer.Current is not VulkanRenderer vulkanRenderer)
+                {
+                    reason = "<not-vulkan>";
+                    return false;
+                }
+
+                uint byteOffset = checked(index * sizeof(uint));
+                Span<byte> bytes = stackalloc byte[sizeof(uint)];
+                if (!vulkanRenderer.TryReadBufferBytesForDiagnostics(buffer, byteOffset, bytes, out reason))
+                    return false;
+
+                value = BitConverter.ToUInt32(bytes);
+                reason = "gpu";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                reason = $"<{ex.GetType().Name}>";
+                XREngine.Debug.VulkanWarningEvery(
+                    $"VulkanCounters.DrawBucket.ReadFailed.{RuntimeHelpers.GetHashCode(buffer)}.{index}",
+                    TimeSpan.FromSeconds(2),
+                    "[VulkanCounters] failed to read draw-count buffer='{0}' index={1}: {2}: {3}",
+                    buffer.AttributeName ?? buffer.Target.ToString(),
+                    index,
+                    ex.GetType().Name,
+                    ex.Message);
+                return false;
+            }
+        }
+
+        private static bool TryReadIndirectCommandForDiagnostics(
+            XRDataBuffer? buffer,
+            nuint byteOffset,
+            out DrawElementsIndirectCommand command,
+            out string reason)
+        {
+            command = default;
+            reason = "<missing>";
+
+            if (buffer is null)
+                return false;
+
+            ulong offset = byteOffset;
+            uint commandSize = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
+            if (offset > uint.MaxValue)
+            {
+                reason = $"<offset-too-large:{offset}>";
+                return false;
+            }
+
+            if (offset >= buffer.Length || commandSize > buffer.Length - offset)
+            {
+                reason = $"<out-of-range:{offset}+{commandSize}/{buffer.Length}>";
+                return false;
+            }
+
+            try
+            {
+                if (AbstractRenderer.Current is not VulkanRenderer vulkanRenderer)
+                {
+                    reason = "<not-vulkan>";
+                    return false;
+                }
+
+                Span<byte> bytes = stackalloc byte[(int)commandSize];
+                if (!vulkanRenderer.TryReadBufferBytesForDiagnostics(buffer, (uint)offset, bytes, out reason))
+                    return false;
+
+                command = MemoryMarshal.Read<DrawElementsIndirectCommand>(bytes);
+                reason = "gpu";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                reason = $"<{ex.GetType().Name}>";
+                XREngine.Debug.VulkanWarningEvery(
+                    $"VulkanCounters.IndirectCommand.ReadFailed.{RuntimeHelpers.GetHashCode(buffer)}.{offset}",
+                    TimeSpan.FromSeconds(2),
+                    "[VulkanCounters] failed to read indirect command buffer='{0}' offset={1}: {2}: {3}",
+                    buffer.AttributeName ?? buffer.Target.ToString(),
+                    offset,
+                    ex.GetType().Name,
+                    ex.Message);
+                return false;
+            }
+        }
+
+        private static void LogVulkanCounterBucketDiagnostics(
+            string point,
+            XRDataBuffer indirectDrawBuffer,
+            XRDataBuffer parameterBuffer,
+            uint maxDrawCount,
+            uint stride,
+            nuint indirectByteOffset,
+            nuint countByteOffset,
+            XRRenderProgram graphicsProgram,
+            XRMaterial? material)
+        {
+            if (!VulkanCounterDiagnosticsEnabled)
+                return;
+
+            uint countIndex = countByteOffset <= uint.MaxValue - sizeof(uint)
+                ? (uint)(countByteOffset / sizeof(uint))
+                : uint.MaxValue;
+            bool countAvailable = TryReadUIntAtForDiagnostics(parameterBuffer, countIndex, out uint count, out string reason);
+            string countText = countAvailable ? count.ToString() : reason;
+            bool commandAvailable = TryReadIndirectCommandForDiagnostics(indirectDrawBuffer, indirectByteOffset, out DrawElementsIndirectCommand command, out string commandReason);
+            string commandText = commandAvailable
+                ? $"cmd0(indexCount={command.Count},instances={command.InstanceCount},firstIndex={command.FirstIndex},baseVertex={command.BaseVertex},baseInstance={command.BaseInstance})"
+                : commandReason;
+            string validity = !countAvailable
+                ? "count-unavailable"
+                : count > maxDrawCount
+                    ? "count-exceeds-max"
+                    : commandAvailable && count > 0u && (command.Count == 0u || command.InstanceCount == 0u)
+                        ? "nonzero-count-zero-command"
+                        : "ok";
+
+            XREngine.Debug.VulkanEvery(
+                $"VulkanCounters.DrawBucket.{RuntimeHelpers.GetHashCode(parameterBuffer)}.{countIndex}.{point}",
+                TimeSpan.FromMilliseconds(250),
+                "[VulkanCounters] point={0} bucket={1} countOffset={2} count={3} indirectOffset={4} maxDraws={5} stride={6} indirectBuffer={7} countBuffer={8} command={9} validity={10} program='{11}' material='{12}'",
+                point,
+                countIndex,
+                countByteOffset,
+                countText,
+                indirectByteOffset,
+                maxDrawCount,
+                stride,
+                DescribeBufferForCounterDiagnostics(indirectDrawBuffer),
+                DescribeBufferForCounterDiagnostics(parameterBuffer),
+                commandText,
+                validity,
+                graphicsProgram.Name ?? "<unnamed>",
+                material?.Name ?? "<unnamed>");
+        }
+
+        private static string DescribeBufferForCounterDiagnostics(XRDataBuffer buffer)
+            => $"{buffer.AttributeName ?? buffer.Target.ToString()}#{RuntimeHelpers.GetHashCode(buffer)} len={buffer.Length} elems={buffer.ElementCount} wrappers={buffer.APIWrappers.Count}";
 
         private static void ClearIndirectTail(XRDataBuffer indirectDrawBuffer, uint drawCount, uint maxCommands)
         {
@@ -1922,6 +2080,9 @@ namespace XREngine.Rendering
             long shaderStateRevision = material.ShaderStateRevision;
             (uint materialId, int rendererKey) useKey = (materialID, rendererKey);
 
+            if (TryGetReadyCombinedProgramFromUseCache(useKey, shaderStateRevision, material, out XRRenderProgram? cachedProgram))
+                return cachedProgram;
+
             GpuDebug($"Creating new program for material: {material.Name ?? "<unnamed>"}");
             GpuDebug($"Material has {material.Shaders.Count} shaders");
 
@@ -2037,6 +2198,37 @@ namespace XREngine.Rendering
             //Debug.Meshes("Program cached");
             
             return fallbackProgram;
+        }
+
+        private bool TryGetReadyCombinedProgramFromUseCache(
+            (uint materialId, int rendererKey) useKey,
+            long shaderStateRevision,
+            XRMaterial material,
+            out XRRenderProgram? program)
+        {
+            program = null;
+
+            if (!_materialProgramUseDescriptors.TryGetValue(useKey, out XRRenderProgramDescriptor descriptor))
+                return false;
+
+            if (descriptor.RenderSettingsVersion != RuntimeEngine.Rendering.Settings.ShaderConfigVersion ||
+                descriptor.MaterialVariantHash != material.ActiveUberVariant.VariantHash)
+            {
+                return false;
+            }
+
+            if (!_materialPrograms.TryGetValue(descriptor, out MaterialProgramCache cache) ||
+                cache.ShaderStateRevision != shaderStateRevision)
+            {
+                return false;
+            }
+
+            if (!IsProgramReadyForCurrentRenderer(cache.Program))
+                return false;
+
+            ShaderProgramLifecycleDiagnostics.RecordGpuDrivenProgramPoolHit();
+            program = cache.Program;
+            return true;
         }
 
         private static XRRenderProgramDescriptor BuildGpuDrivenCombinedProgramDescriptor(
@@ -4738,6 +4930,7 @@ namespace XREngine.Rendering
                         program,
                         camera,
                         defaultModelMatrix,
+                        material: material,
                         allowMaxDrawFallback: true,
                         emitBarrier: false);
                 }
@@ -4878,6 +5071,7 @@ namespace XREngine.Rendering
                     program,
                     camera,
                     defaultModelMatrix,
+                    material: material,
                     allowMaxDrawFallback: true,
                     emitBarrier: false);
             }
@@ -5058,8 +5252,9 @@ namespace XREngine.Rendering
                     program,
                     camera,
                     defaultModelMatrix,
-                    materialTableBuffer,
-                    materialTextureHandleBuffer,
+                    material: invalidMaterial,
+                    materialTableBuffer: materialTableBuffer,
+                    materialTextureHandleBuffer: materialTextureHandleBuffer,
                     bindVulkanMaterialTextureDescriptorTable: textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable,
                     allowMaxDrawFallback: true,
                     emitBarrier: false);
@@ -5225,6 +5420,7 @@ namespace XREngine.Rendering
             XRRenderProgram graphicsProgram,
             XRCamera camera,
             Matrix4x4 modelMatrix,
+            XRMaterial? material = null,
             XRDataBuffer? materialTableBuffer = null,
             XRDataBuffer? materialTextureHandleBuffer = null,
             bool bindVulkanMaterialTextureDescriptorTable = false,
@@ -5250,6 +5446,25 @@ namespace XREngine.Rendering
 
             if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirectCountBucket"))
                 return;
+
+            bool TryBeginVulkanIndirectDrawState(out IDisposable? scope)
+            {
+                scope = null;
+                if (renderer is not VulkanRenderer vulkanRenderer)
+                    return true;
+
+                if (material is null)
+                {
+                    XREngine.Debug.RenderingWarningEvery(
+                        "RenderDispatch.VulkanIndirectDrawStateMissingMaterial",
+                        TimeSpan.FromSeconds(2),
+                        "[RenderDispatch] Vulkan indirect draw skipped because no material was provided for captured draw state.");
+                    return false;
+                }
+
+                scope = vulkanRenderer.PushIndirectDrawState(graphicsProgram, material, modelMatrix);
+                return true;
+            }
 
             culledCommandsBuffer.BindTo(graphicsProgram, IndirectCommandSsboBinding);
             drawMetadataBuffer.BindTo(graphicsProgram, DrawMetadataSsboBinding);
@@ -5335,6 +5550,11 @@ namespace XREngine.Rendering
 
                     using (RuntimeEngine.Profiler.Start("GpuIndirect.MultiDrawElementsIndirectWithOffset"))
                     {
+                        if (!TryBeginVulkanIndirectDrawState(out IDisposable? indirectDrawStateScope))
+                            return;
+
+                        using (indirectDrawStateScope)
+                        {
                         VulkanRenderer? vulkanRenderer = bindVulkanMaterialTextureDescriptorTable
                             ? renderer as VulkanRenderer
                             : null;
@@ -5356,6 +5576,7 @@ namespace XREngine.Rendering
                         {
                             if (bindlessScopeActive)
                                 vulkanRenderer?.EndGlobalMaterialTextureDescriptorScope(graphicsProgram);
+                        }
                         }
                     }
                 }
@@ -5408,11 +5629,26 @@ namespace XREngine.Rendering
                         ? (uint)(countByteOffset / sizeof(uint))
                         : uint.MaxValue;
                     LogIndirectDrawSizes("DispatchRenderIndirectCountBucket", maxDrawCount, stride, indirectDrawBuffer, parameterBuffer, indirectByteOffset, countByteOffset);
+                    LogVulkanCounterBucketDiagnostics(
+                        "before-draw",
+                        indirectDrawBuffer,
+                        parameterBuffer,
+                        maxDrawCount,
+                        stride,
+                        indirectByteOffset,
+                        countByteOffset,
+                        graphicsProgram,
+                        material);
                     GPURenderPassCollection.Crumb($"MDIC.BUCKET.BEGIN bucket={bucketIndex} maxCmd={maxDrawCount} stride={stride} indirectOff={indirectByteOffset} countOff={countByteOffset} indCap={indirectDrawBuffer.ElementCount} paramCap={parameterBuffer.ElementCount}");
                     VulkanRenderer? vulkanRenderer = bindVulkanMaterialTextureDescriptorTable
                         ? renderer as VulkanRenderer
                         : null;
                     bool bindlessScopeActive = false;
+                    if (!TryBeginVulkanIndirectDrawState(out IDisposable? indirectDrawStateScope))
+                        return;
+
+                    using (indirectDrawStateScope)
+                    {
                     try
                     {
                         if (vulkanRenderer is not null)
@@ -5430,6 +5666,7 @@ namespace XREngine.Rendering
                     {
                         if (bindlessScopeActive)
                             vulkanRenderer?.EndGlobalMaterialTextureDescriptorScope(graphicsProgram);
+                    }
                     }
                     if (P3Diagnostics.FinishAfterMultiDrawIndirectCount)
                     {

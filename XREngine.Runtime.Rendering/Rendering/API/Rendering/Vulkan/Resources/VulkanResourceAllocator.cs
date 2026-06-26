@@ -696,11 +696,11 @@ internal sealed class VulkanResourceAllocator
             EBufferTarget.TransformFeedbackBuffer => BufferUsageFlags.StorageBufferBit,
             EBufferTarget.CopyReadBuffer => BufferUsageFlags.TransferSrcBit,
             EBufferTarget.CopyWriteBuffer => BufferUsageFlags.TransferDstBit,
-            EBufferTarget.DrawIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit,
-            EBufferTarget.ShaderStorageBuffer => BufferUsageFlags.StorageBufferBit,
-            EBufferTarget.DispatchIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit,
+            EBufferTarget.DrawIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
+            EBufferTarget.ShaderStorageBuffer => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
+            EBufferTarget.DispatchIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
             EBufferTarget.QueryBuffer => BufferUsageFlags.TransferDstBit,
-            EBufferTarget.AtomicCounterBuffer => BufferUsageFlags.StorageBufferBit,
+            EBufferTarget.AtomicCounterBuffer => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
             EBufferTarget.ParameterBuffer => BufferUsageFlags.UniformBufferBit,
             _ => BufferUsageFlags.StorageBufferBit
         };

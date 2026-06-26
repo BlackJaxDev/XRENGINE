@@ -60,7 +60,7 @@ internal static class VPRC_RenderMeshesPassTraditional
                 return;
 
             bool shaderWarmupFallback = ShouldUseOpenGLShaderWarmupFallback(command.MeshSubmissionStrategy);
-            bool allowCpuSafetyNet = shaderWarmupFallback || IsExplicitCpuFallbackAllowed();
+            bool allowCpuSafetyNet = shaderWarmupFallback || IsExplicitCpuFallbackAllowed(command.MeshSubmissionStrategy);
 
             if (allowCpuSafetyNet)
             {
@@ -105,7 +105,7 @@ internal static class VPRC_RenderMeshesPassTraditional
             path,
             renderPass);
 
-    private static bool IsExplicitCpuFallbackAllowed()
+    private static bool IsExplicitCpuFallbackAllowed(EMeshSubmissionStrategy strategy)
     {
         bool fallbackRequested = (RuntimeEngine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
             || (RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging && RuntimeEngine.EffectiveSettings.EnableGpuIndirectCpuFallback);
@@ -115,6 +115,12 @@ internal static class VPRC_RenderMeshesPassTraditional
 
         if (!IsActiveRendererVulkan())
             return true;
+
+        if (strategy.IsGpuZeroReadbackStrategy())
+        {
+            string? explicitSafetyNet = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanAllowCpuMeshSafetyNet);
+            return string.Equals(explicitSafetyNet, "1", StringComparison.OrdinalIgnoreCase);
+        }
 
         return !VulkanFeatureProfile.EnforceStrictNoFallbacks
             && (!VulkanFeatureProfile.IsActive ||
@@ -144,7 +150,7 @@ internal static class VPRC_RenderMeshesPassTraditional
     private static string GetCpuSafetyNetPolicyName()
     {
         if (IsActiveRendererVulkan())
-            return VulkanFeatureProfile.ActiveProfile.ToString();
+            return $"Vulkan/{VulkanFeatureProfile.ActiveProfile} (set {XREngineEnvironmentVariables.VulkanAllowCpuMeshSafetyNet}=1 to opt into CPU mesh safety-net)";
 
         return IsActiveRendererOpenGL()
             ? "OpenGL"

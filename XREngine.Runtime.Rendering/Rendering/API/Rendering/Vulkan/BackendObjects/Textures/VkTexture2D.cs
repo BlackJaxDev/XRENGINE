@@ -48,8 +48,6 @@ public unsafe partial class VulkanRenderer
 
         protected override void PushTextureData()
         {
-            Generate();
-
             var mipmaps = Data.Mipmaps;
             if (mipmaps is null || mipmaps.Length == 0)
             {
@@ -57,9 +55,13 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
+            RecreateImageForFullTextureDataUpload("full 2D texture data upload");
+            Generate();
             TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
 
-            uint levelCount = Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
+            uint levelCount = Data.AutoGenerateMipmaps
+                ? 1u
+                : Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
             for (uint level = 0; level < levelCount; level++)
             {
                 Mipmap2D? mip = mipmaps[level];
@@ -183,8 +185,7 @@ public unsafe partial class VulkanRenderer
             if (mip is null)
                 return true;
 
-            EnsureProgressiveUploadMipCapacity(mipmaps.Length);
-
+            EnsureProgressiveUploadImageCapacity(mipmaps.Length, mipIndex, mip);
             Generate();
             if (Image.Handle == 0)
                 return false;
@@ -232,16 +233,46 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
-        private void EnsureProgressiveUploadMipCapacity(int sourceMipCount)
+        private void EnsureProgressiveUploadImageCapacity(int sourceMipCount, int mipIndex, Mipmap2D mip)
         {
-            if (!Data.RuntimeManagedProgressiveUploadActive || sourceMipCount <= 1 || !IsActive)
+            if (!Data.RuntimeManagedProgressiveUploadActive || !IsActive)
                 return;
 
-            if (ResolvedMipLevels >= (uint)sourceMipCount)
+            uint requiredMipLevels = sourceMipCount <= 1 ? 1u : (uint)sourceMipCount;
+            uint requiredBaseWidth = ExpandMipDimension(mip.Width, mipIndex);
+            uint requiredBaseHeight = ExpandMipDimension(mip.Height, mipIndex);
+            bool mipCountFits = ResolvedMipLevels >= requiredMipLevels && (uint)mipIndex < ResolvedMipLevels;
+            bool extentFits = ResolvedExtent.Width >= requiredBaseWidth && ResolvedExtent.Height >= requiredBaseHeight;
+
+            if (mipCountFits && extentFits)
                 return;
 
+            Debug.VulkanWarningEvery(
+                $"Vulkan.Texture.ProgressiveImageRecreate.{Data.GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Recreating progressive texture '{0}' before mip upload: image={1}x{2} mips={3}, requiredBase={4}x{5} mips={6}, uploadMip={7} extent={8}x{9}.",
+                Data.Name ?? GetDescribingName(),
+                ResolvedExtent.Width,
+                ResolvedExtent.Height,
+                ResolvedMipLevels,
+                requiredBaseWidth,
+                requiredBaseHeight,
+                requiredMipLevels,
+                mipIndex,
+                mip.Width,
+                mip.Height);
             Destroy();
-            Generate();
+        }
+
+        private static uint ExpandMipDimension(uint mipDimension, int mipIndex)
+        {
+            uint dimension = Math.Max(mipDimension, 1u);
+            if (mipIndex <= 0)
+                return dimension;
+
+            for (int i = 0; i < mipIndex && dimension <= (uint.MaxValue >> 1); i++)
+                dimension <<= 1;
+            return dimension;
         }
 
         /// <summary>

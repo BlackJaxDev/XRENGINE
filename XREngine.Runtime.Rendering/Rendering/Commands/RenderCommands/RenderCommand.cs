@@ -170,9 +170,14 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
-            _dirty = true;
+            if (IsRenderStateDirtyProperty(propName))
+                _dirty = true;
+
             base.OnPropertyChanged(propName, prev, field);
         }
+
+        protected virtual bool IsRenderStateDirtyProperty(string? propName)
+            => true;
 
         /// <summary>
         /// Manual dirty hook for paths that mutate render-command state without using

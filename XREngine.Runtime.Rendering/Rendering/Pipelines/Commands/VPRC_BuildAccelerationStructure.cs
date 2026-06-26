@@ -2,6 +2,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.Pipelines.Commands;
@@ -32,10 +33,16 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
         }
 
         GPUScene gpuScene = scene.GPUCommands;
-        if (EnableGpuBvh)
-            gpuScene.UseGpuBvh = true;
-        if (EnableInternalSceneBvh)
-            gpuScene.UseInternalBvh = true;
+        bool useGpuBvh = EnableGpuBvh &&
+            VulkanFeatureProfile.ResolveGpuBvhPreference(RuntimeEngine.EffectiveSettings.UseGpuBvh);
+        gpuScene.UseGpuBvh = useGpuBvh;
+        gpuScene.UseInternalBvh = useGpuBvh && EnableInternalSceneBvh;
+
+        if (!useGpuBvh)
+        {
+            PublishEmpty();
+            return;
+        }
 
         uint primitiveCount = gpuScene.TotalCommandCount;
         if (primitiveCount == 0)

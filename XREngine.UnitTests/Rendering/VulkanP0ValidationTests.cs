@@ -595,6 +595,11 @@ public sealed class VulkanP0ValidationTests
         textureView.ShouldContain("SamplerConversions.FromMinFilter(Data.MinFilter)");
         textureView.ShouldContain("MaxLod = Math.Max(0f, Math.Max(Data.NumLevels, 1u) - 1u)");
         textureView.ShouldContain("case nameof(XRTextureViewBase.MinFilter):");
+        textureView.ShouldContain("private void RetireOwnedImageViews()");
+        textureView.ShouldContain("RetireOwnedImageViews();");
+        textureView.ShouldContain("if (_view.Handle != 0 && _sampler.Handle == 0)");
+        textureView.ShouldContain("RetireOwnedViewsAndSampler()");
+        textureView.ShouldContain("DestroySampler();");
 
         bloomPass.ShouldContain("MinFilter = ETexMinFilter.Linear,");
     }

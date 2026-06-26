@@ -709,7 +709,7 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                RetireOwnedViewsAndSampler();
+                RetireOwnedImageViews();
 
                 _image = liveImage;
                 _format = source.DescriptorFormat;
@@ -746,7 +746,7 @@ namespace XREngine.Rendering.Vulkan
                         _depthOnlyView = default;
                 }
 
-                if (_view.Handle != 0)
+                if (_view.Handle != 0 && _sampler.Handle == 0)
                     CreateSampler();
 
                 if (_view.Handle != 0)
@@ -814,10 +814,15 @@ namespace XREngine.Rendering.Vulkan
 
             private void RetireOwnedViewsAndSampler()
             {
+                RetireOwnedImageViews();
+                DestroySampler();
+            }
+
+            private void RetireOwnedImageViews()
+            {
                 if (_view.Handle == 0 &&
                     _depthOnlyView.Handle == 0 &&
-                    _stencilOnlyView.Handle == 0 &&
-                    _sampler.Handle == 0)
+                    _stencilOnlyView.Handle == 0)
                 {
                     return;
                 }
@@ -840,13 +845,12 @@ namespace XREngine.Rendering.Vulkan
                     default,
                     _view,
                     attachmentViews,
-                    _sampler,
+                    default,
                     0));
 
                 _view = default;
                 _depthOnlyView = default;
                 _stencilOnlyView = default;
-                _sampler = default;
             }
 
             private void CreateSampler()

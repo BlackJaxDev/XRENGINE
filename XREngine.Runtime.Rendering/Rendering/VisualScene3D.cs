@@ -13,6 +13,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Vulkan;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Scene
@@ -31,7 +32,7 @@ namespace XREngine.Scene
         private bool _hasSceneBounds = false;
         private bool _isGpuDispatchActive = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.CpuDirect;
         private bool _isCpuGpuCommandMirrorActive = false;
-        private bool _useGpuBvhActive = RuntimeEngine.EffectiveSettings.UseGpuBvh;
+        private bool _useGpuBvhActive = VulkanFeatureProfile.ResolveGpuBvhPreference(RuntimeEngine.EffectiveSettings.UseGpuBvh);
         private ECpuSceneCullingStructure _cpuSceneCullingStructureActive = RuntimeEngine.EffectiveSettings.CpuSceneCullingStructure;
         private I3DRenderTree<RenderInfo3D> ActiveCpuRenderTree
             => _cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh ? _bvhRenderTree : RenderTree;

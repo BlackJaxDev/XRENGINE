@@ -1534,10 +1534,8 @@ public unsafe partial class VulkanRenderer
 			DestroyDescriptors();
 
 			foreach (var pipe in _pipelines.Values)
-			{
 				if (pipe.Handle != 0)
 					Renderer.RetirePipeline(pipe);
-			}
 
 			_pipelines.Clear();
 		}

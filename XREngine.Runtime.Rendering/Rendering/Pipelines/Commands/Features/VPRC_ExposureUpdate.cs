@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
 
@@ -45,9 +46,17 @@ namespace XREngine.Rendering.Pipelines.Commands
         protected override void Execute()
         {
             int passIndex = ResolvePassIndex(nameof(VPRC_ExposureUpdate));
-            using var passScope = passIndex != int.MinValue
-                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
-                : default;
+            if (passIndex == int.MinValue)
+            {
+                Debug.RenderingWarningEvery(
+                    "ExposureUpdate.MissingRenderGraphPass",
+                    TimeSpan.FromSeconds(1),
+                    "[ExposureUpdate] Skipping GPU auto exposure because no render-graph pass metadata was generated for '{0}'.",
+                    nameof(VPRC_ExposureUpdate));
+                return;
+            }
+
+            using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex);
 
             var stage = ActivePipelineInstance.RenderState.SceneCamera?.GetPostProcessStageState<ColorGradingSettings>();
             if (stage?.TryGetBacking(out ColorGradingSettings? grading) != true || grading is null)
@@ -111,17 +120,36 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private int ResolvePassIndex(string passName)
         {
-            var metadata = ParentPipeline?.PassMetadata;
+            if (TryResolvePassIndex(ParentPipeline?.PassMetadata, passName, out int passIndex))
+                return passIndex;
+
+            return TryResolvePassIndex(
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata,
+                passName,
+                out passIndex)
+                ? passIndex
+                : int.MinValue;
+        }
+
+        private static bool TryResolvePassIndex(
+            IReadOnlyCollection<RenderPassMetadata>? metadata,
+            string passName,
+            out int passIndex)
+        {
+            passIndex = int.MinValue;
             if (metadata is null)
-                return int.MinValue;
+                return false;
 
             foreach (var pass in metadata)
             {
                 if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
-                    return pass.PassIndex;
+                {
+                    passIndex = pass.PassIndex;
+                    return true;
+                }
             }
 
-            return int.MinValue;
+            return false;
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

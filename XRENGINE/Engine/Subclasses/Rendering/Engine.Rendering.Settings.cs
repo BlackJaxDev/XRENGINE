@@ -681,7 +681,7 @@ namespace XREngine
                 private float _openXrCollectVisibleFrustumPaddingDegrees = 2.0f;
                 private OpenXRAPI.OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
                 private OpenXRAPI.OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
-                private OpenXRAPI.OpenXrRenderPacingMode _openXrRenderPacingMode = OpenXRAPI.OpenXrRenderPacingMode.PostRenderCallback;
+                private OpenXRAPI.OpenXrRenderPacingMode _openXrRenderPacingMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
                 private Vector2 _vrFoveationCenterUv = new(0.5f, 0.5f);
                 private float _vrFoveationInnerRadius = 0.35f;
                 private float _vrFoveationOuterRadius = 0.85f;
@@ -2033,7 +2033,7 @@ namespace XREngine
                 /// Controls where OpenXR's next-frame prep (xrWaitFrame/xrBeginFrame/LocateViews(Predicted)) runs.
                 /// </summary>
                 [Category("VR")]
-                [Description("Controls where OpenXR's next-frame prep runs: inline at start of render callback, post-render (default), or on a dedicated pacing thread.")]
+                [Description("Controls where OpenXR's next-frame prep runs: inline at start of render callback, post-render, or on the default dedicated pacing thread.")]
                 public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode
                 {
                     get => _openXrRenderPacingMode;

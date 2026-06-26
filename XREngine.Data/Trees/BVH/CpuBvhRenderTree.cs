@@ -22,6 +22,7 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
     private readonly Dictionary<T, int> _swapCommandIndices = new(ReferenceEqualityComparer.Instance);
     private readonly List<BvhEntry> _entries = [];
     private readonly List<T> _unboundedItems = [];
+    private readonly object _treeSyncRoot = new();
     private AABB _bounds;
     private BvhNode? _root;
     private BvhNode _unboundedNode;
@@ -43,25 +44,32 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
 
     public void Remake()
     {
-        _dirty = true;
+        lock (_treeSyncRoot)
+            _dirty = true;
     }
 
     public void Remake(AABB newBounds)
     {
-        _bounds = newBounds;
-        _unboundedNode = new BvhNode(this, newBounds, 0, 0, null);
-        _dirty = true;
+        lock (_treeSyncRoot)
+        {
+            _bounds = newBounds;
+            _unboundedNode = new BvhNode(this, newBounds, 0, 0, null);
+            _dirty = true;
+        }
     }
 
     public void Swap()
     {
-        if (IRenderTree.ProfilingHook is not null)
+        lock (_treeSyncRoot)
         {
-            using var sample = IRenderTree.ProfilingHook("CpuBvhRenderTree.Swap");
-            SwapInternal();
+            if (IRenderTree.ProfilingHook is not null)
+            {
+                using var sample = IRenderTree.ProfilingHook("CpuBvhRenderTree.Swap");
+                SwapInternal();
+            }
+            else
+                SwapInternal();
         }
-        else
-            SwapInternal();
     }
 
     private void SwapInternal()
@@ -156,32 +164,38 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
 
     public void CollectAll(Action<T> action)
     {
-        EnsureBuilt();
-
-        for (int i = 0; i < _unboundedItems.Count; i++)
+        lock (_treeSyncRoot)
         {
-            T item = _unboundedItems[i];
-            if (item.ShouldRender)
-                action(item);
-        }
+            EnsureBuilt();
 
-        if (_root is not null)
-            CollectAll(_root, action);
+            for (int i = 0; i < _unboundedItems.Count; i++)
+            {
+                T item = _unboundedItems[i];
+                if (item.ShouldRender)
+                    action(item);
+            }
+
+            if (_root is not null)
+                CollectAll(_root, action);
+        }
     }
 
     void I3DRenderTree.CollectAll(Action<IOctreeItem> action)
     {
-        EnsureBuilt();
-
-        for (int i = 0; i < _unboundedItems.Count; i++)
+        lock (_treeSyncRoot)
         {
-            T item = _unboundedItems[i];
-            if (item.ShouldRender)
-                action(item);
-        }
+            EnsureBuilt();
 
-        if (_root is not null)
-            CollectAll(_root, action);
+            for (int i = 0; i < _unboundedItems.Count; i++)
+            {
+                T item = _unboundedItems[i];
+                if (item.ShouldRender)
+                    action(item);
+            }
+
+            if (_root is not null)
+                CollectAll(_root, action);
+        }
     }
 
     public void CollectVisible(
@@ -190,17 +204,20 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
         Action<T> action,
         OctreeNode<T>.DelIntersectionTest intersectionTest)
     {
-        EnsureBuilt();
-
-        for (int i = 0; i < _unboundedItems.Count; i++)
+        lock (_treeSyncRoot)
         {
-            T item = _unboundedItems[i];
-            if (item.ShouldRender && intersectionTest(item, volume, onlyContainingItems))
-                action(item);
-        }
+            EnsureBuilt();
 
-        if (_root is not null)
-            CollectVisible(_root, volume, onlyContainingItems, action, intersectionTest);
+            for (int i = 0; i < _unboundedItems.Count; i++)
+            {
+                T item = _unboundedItems[i];
+                if (item.ShouldRender && intersectionTest(item, volume, onlyContainingItems))
+                    action(item);
+            }
+
+            if (_root is not null)
+                CollectVisible(_root, volume, onlyContainingItems, action, intersectionTest);
+        }
     }
 
     void I3DRenderTree.CollectVisible(
@@ -209,63 +226,75 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
         Action<IOctreeItem> action,
         OctreeNode<IOctreeItem>.DelIntersectionTestGeneric intersectionTest)
     {
-        EnsureBuilt();
-
-        for (int i = 0; i < _unboundedItems.Count; i++)
+        lock (_treeSyncRoot)
         {
-            T item = _unboundedItems[i];
-            if (item.ShouldRender && intersectionTest(item, volume, onlyContainingItems))
-                action(item);
-        }
+            EnsureBuilt();
 
-        if (_root is not null)
-            CollectVisible(_root, volume, onlyContainingItems, action, intersectionTest);
+            for (int i = 0; i < _unboundedItems.Count; i++)
+            {
+                T item = _unboundedItems[i];
+                if (item.ShouldRender && intersectionTest(item, volume, onlyContainingItems))
+                    action(item);
+            }
+
+            if (_root is not null)
+                CollectVisible(_root, volume, onlyContainingItems, action, intersectionTest);
+        }
     }
 
     public void CollectVisibleNodes(IVolume? cullingVolume, bool containsOnly, Action<(OctreeNodeBase node, bool intersects)> action)
     {
-        EnsureBuilt();
+        lock (_treeSyncRoot)
+        {
+            EnsureBuilt();
 
-        if (_unboundedItems.Count > 0)
-            CollectUnboundedNode(cullingVolume, containsOnly, action);
+            if (_unboundedItems.Count > 0)
+                CollectUnboundedNode(cullingVolume, containsOnly, action);
 
-        if (_root is not null)
-            CollectVisibleNodes(_root, cullingVolume, containsOnly, action);
-        else if (_unboundedItems.Count == 0)
-            CollectUnboundedNode(cullingVolume, containsOnly, action);
+            if (_root is not null)
+                CollectVisibleNodes(_root, cullingVolume, containsOnly, action);
+            else if (_unboundedItems.Count == 0)
+                CollectUnboundedNode(cullingVolume, containsOnly, action);
+        }
     }
 
     public void DebugRender(IVolume? cullingVolume, DelRenderAABB render, bool onlyContainingItems = false)
     {
-        EnsureBuilt();
+        lock (_treeSyncRoot)
+        {
+            EnsureBuilt();
 
-        if (_unboundedItems.Count > 0)
-            DebugRenderUnboundedNode(cullingVolume, render);
+            if (_unboundedItems.Count > 0)
+                DebugRenderUnboundedNode(cullingVolume, render);
 
-        if (_root is not null)
-            DebugRender(_root, cullingVolume, render, onlyContainingItems);
-        else if (_unboundedItems.Count == 0 && !onlyContainingItems)
-            DebugRenderUnboundedNode(cullingVolume, render);
+            if (_root is not null)
+                DebugRender(_root, cullingVolume, render, onlyContainingItems);
+            else if (_unboundedItems.Count == 0 && !onlyContainingItems)
+                DebugRenderUnboundedNode(cullingVolume, render);
+        }
     }
 
     public SpatialTreeOccupancyStats GetOccupancyStats()
     {
-        EnsureBuilt();
+        lock (_treeSyncRoot)
+        {
+            EnsureBuilt();
 
-        int nodeCount = _root is null ? 1 : 0;
-        int maxNodeItemCount = _unboundedItems.Count;
-        int maxDepth = 0;
+            int nodeCount = _root is null ? 1 : 0;
+            int maxNodeItemCount = _unboundedItems.Count;
+            int maxDepth = 0;
 
-        if (_root is not null)
-            CollectStats(_root, ref nodeCount, ref maxNodeItemCount, ref maxDepth);
+            if (_root is not null)
+                CollectStats(_root, ref nodeCount, ref maxNodeItemCount, ref maxDepth);
 
-        return new SpatialTreeOccupancyStats(
-            nodeCount,
-            _items.Count,
-            _unboundedItems.Count,
-            maxNodeItemCount,
-            maxDepth,
-            _unboundedItems.Count);
+            return new SpatialTreeOccupancyStats(
+                nodeCount,
+                _items.Count,
+                _unboundedItems.Count,
+                maxNodeItemCount,
+                maxDepth,
+                _unboundedItems.Count);
+        }
     }
 
     public void RaycastAsync(
@@ -296,8 +325,11 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
         ArgumentNullException.ThrowIfNull(items);
         ArgumentNullException.ThrowIfNull(directTest);
 
-        EnsureBuilt();
-        RaycastInternal(segment, items, directTest);
+        lock (_treeSyncRoot)
+        {
+            EnsureBuilt();
+            RaycastInternal(segment, items, directTest);
+        }
     }
 
     public T? FindFirst(Predicate<T> itemTester, Predicate<AABB> bvhNodeTester)
@@ -305,18 +337,21 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
         ArgumentNullException.ThrowIfNull(itemTester);
         ArgumentNullException.ThrowIfNull(bvhNodeTester);
 
-        EnsureBuilt();
-        if (bvhNodeTester(_unboundedNode.Bounds))
+        lock (_treeSyncRoot)
         {
-            for (int i = 0; i < _unboundedItems.Count; i++)
+            EnsureBuilt();
+            if (bvhNodeTester(_unboundedNode.Bounds))
             {
-                T item = _unboundedItems[i];
-                if (item.ShouldRender && itemTester(item))
-                    return item;
+                for (int i = 0; i < _unboundedItems.Count; i++)
+                {
+                    T item = _unboundedItems[i];
+                    if (item.ShouldRender && itemTester(item))
+                        return item;
+                }
             }
-        }
 
-        return _root is null ? null : FindFirst(_root, itemTester, bvhNodeTester);
+            return _root is null ? null : FindFirst(_root, itemTester, bvhNodeTester);
+        }
     }
 
     public List<T> FindAll(Predicate<T> itemTester, Predicate<AABB> bvhNodeTester)
@@ -324,22 +359,25 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
         ArgumentNullException.ThrowIfNull(itemTester);
         ArgumentNullException.ThrowIfNull(bvhNodeTester);
 
-        List<T> list = [];
-        EnsureBuilt();
-        if (bvhNodeTester(_unboundedNode.Bounds))
+        lock (_treeSyncRoot)
         {
-            for (int i = 0; i < _unboundedItems.Count; i++)
+            List<T> list = [];
+            EnsureBuilt();
+            if (bvhNodeTester(_unboundedNode.Bounds))
             {
-                T item = _unboundedItems[i];
-                if (item.ShouldRender && itemTester(item))
-                    list.Add(item);
+                for (int i = 0; i < _unboundedItems.Count; i++)
+                {
+                    T item = _unboundedItems[i];
+                    if (item.ShouldRender && itemTester(item))
+                        list.Add(item);
+                }
             }
+
+            if (_root is not null)
+                FindAll(_root, itemTester, bvhNodeTester, list);
+
+            return list;
         }
-
-        if (_root is not null)
-            FindAll(_root, itemTester, bvhNodeTester, list);
-
-        return list;
     }
 
     private SwapExecutionSummary ConsumeSwapCommands()
@@ -519,6 +557,10 @@ public sealed class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : class, IOct
 
     private BvhNode BuildNode(int start, int count, int depth, BvhNode? parent, int childIndex)
     {
+        if (count <= 0 || start < 0 || start >= _entries.Count || count > _entries.Count - start)
+            throw new InvalidOperationException(
+                $"Invalid CPU BVH node range: start={start}, count={count}, entries={_entries.Count}, items={_items.Count}, depth={depth}");
+
         AABB bounds = _entries[start].Bounds;
         for (int i = start + 1; i < start + count; i++)
             bounds.ExpandToInclude(_entries[i].Bounds);

@@ -37,6 +37,74 @@ public sealed class GpuIndirectPhase3PolicyTests
     }
 
     [Test]
+    public void VulkanFeatureProfile_AllRuntimeProfilesAllowGpuRenderDispatch()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/VulkanFeatureProfile.cs");
+
+        source.ShouldContain("private static bool ProfileAllowsGpuRenderDispatch");
+        source.ShouldContain("EVulkanGpuDrivenProfile.ShippingFast => true");
+        source.ShouldContain("EVulkanGpuDrivenProfile.DevParity => true");
+        source.ShouldContain("EVulkanGpuDrivenProfile.Diagnostics => true");
+        source.ShouldNotContain("ProfileAllowsGpuRenderDispatch\n        => false");
+    }
+
+    [Test]
+    public void VulkanFeatureProfile_GpuBvhCulling_IsExplicitVulkanOptIn()
+    {
+        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy(null).ShouldBeFalse();
+        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy("").ShouldBeFalse();
+        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy("0").ShouldBeFalse();
+        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy("disabled").ShouldBeFalse();
+        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy("1").ShouldBeTrue();
+        VulkanFeatureProfile.ResolveVulkanGpuBvhCullingPolicy("enabled").ShouldBeTrue();
+
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/VulkanFeatureProfile.cs");
+        source.ShouldContain("GpuBvhCullingEnvVar = XREngineEnvironmentVariables.VulkanGpuBvhCulling");
+        source.ShouldContain("private static readonly bool VulkanGpuBvhCullingEnabled");
+        source.ShouldContain("ResolveVulkanGpuBvhCullingPolicy(Environment.GetEnvironmentVariable(GpuBvhCullingEnvVar))");
+        source.ShouldContain("return ProfileAllowsGpuBvh && VulkanGpuBvhCullingEnabled;");
+    }
+
+    [Test]
+    public void BuildAccelerationStructure_RespectsVulkanGpuBvhProfile()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_BuildAccelerationStructure.cs");
+
+        source.ShouldContain("VulkanFeatureProfile.ResolveGpuBvhPreference(RuntimeEngine.EffectiveSettings.UseGpuBvh)");
+        source.ShouldContain("gpuScene.UseGpuBvh = useGpuBvh;");
+        source.ShouldContain("gpuScene.UseInternalBvh = useGpuBvh && EnableInternalSceneBvh;");
+        source.ShouldContain("if (!useGpuBvh)");
+        source.ShouldContain("PublishEmpty();");
+    }
+
+    [Test]
+    public void ZeroReadbackMaterialScatter_PreparedOnlyAfterDispatchSucceeds()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
+
+        source.ShouldContain("bool materialScatterDispatched = DispatchMaterialScatter(scene);");
+        source.ShouldContain("_zeroReadbackMaterialScatterPreparedThisFrame = materialScatterDispatched &&");
+        source.ShouldContain("private bool DispatchMaterialScatter(GPUScene scene)");
+        source.ShouldContain("if (!ResetMaterialScatterBuffersOnGpu())");
+        source.ShouldContain("return false;");
+        source.ShouldContain("return true;");
+        source.ShouldContain("private static bool RequiresActiveMaterialBucketList");
+    }
+
+    [Test]
+    public void VulkanMeshRenderer_ExternalTriangleIndexBufferSurvivesPreparation()
+    {
+        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string buffersSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
+
+        meshRendererSource.ShouldContain("private bool _triangleIndexBufferExternallyProvided;");
+        buffersSource.ShouldContain("else if (_triangleIndexBufferExternallyProvided)");
+        buffersSource.ShouldContain("_triangleIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);");
+        buffersSource.ShouldContain("_triangleIndexBufferExternallyProvided = buffer is not null;");
+        buffersSource.ShouldContain("_triangleIndexBufferExternallyProvided = false;");
+    }
+
+    [Test]
     public void Phase3_CullingPolicy_SourceContracts_ArePresent()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.CullingAndSoA.cs");
@@ -105,6 +173,31 @@ public sealed class GpuIndirectPhase3PolicyTests
         source.ShouldContain("if (requestedSourceView != gpuPass.IndirectSourceViewId)");
     }
 
+    [Test]
+    public void ZeroReadbackCombinedProgram_UsesReadyUseCacheBeforeRebuildingDescriptor()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
+        string ensureMethod = SliceMethod(
+            source,
+            "private XRRenderProgram? EnsureCombinedProgram",
+            "private bool TryGetReadyCombinedProgramFromUseCache");
+
+        ensureMethod.ShouldContain("TryGetReadyCombinedProgramFromUseCache(useKey, shaderStateRevision, material, out XRRenderProgram? cachedProgram)");
+        ensureMethod.IndexOf("TryGetReadyCombinedProgramFromUseCache", StringComparison.Ordinal)
+            .ShouldBeLessThan(ensureMethod.IndexOf("new List<XRShader>", StringComparison.Ordinal));
+
+        string cacheMethod = SliceMethod(
+            source,
+            "private bool TryGetReadyCombinedProgramFromUseCache",
+            "private bool EnsureZeroReadbackMaterialSlotProgramsReady");
+
+        cacheMethod.ShouldContain("_materialProgramUseDescriptors.TryGetValue(useKey, out XRRenderProgramDescriptor descriptor)");
+        cacheMethod.ShouldContain("descriptor.RenderSettingsVersion != RuntimeEngine.Rendering.Settings.ShaderConfigVersion");
+        cacheMethod.ShouldContain("descriptor.MaterialVariantHash != material.ActiveUberVariant.VariantHash");
+        cacheMethod.ShouldContain("_materialPrograms.TryGetValue(descriptor, out MaterialProgramCache cache)");
+        cacheMethod.ShouldContain("IsProgramReadyForCurrentRenderer(cache.Program)");
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         string fullPath = ResolveWorkspacePath(relativePath);
@@ -125,5 +218,14 @@ public sealed class GpuIndirectPhase3PolicyTests
         }
 
         throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
+    }
+
+    private static string SliceMethod(string source, string startMarker, string endMarker)
+    {
+        int start = source.IndexOf(startMarker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, $"Missing start marker '{startMarker}'.");
+        int end = source.IndexOf(endMarker, start + startMarker.Length, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, $"Missing end marker '{endMarker}' after '{startMarker}'.");
+        return source[start..end];
     }
 }

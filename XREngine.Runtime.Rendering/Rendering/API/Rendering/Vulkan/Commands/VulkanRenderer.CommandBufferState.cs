@@ -53,6 +53,20 @@ namespace XREngine.Rendering.Vulkan
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanRecordingDiag), "1", StringComparison.Ordinal);
         private static readonly bool CommandRecordingDetailProfilingEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanRecordingProfileDetail), "1", StringComparison.Ordinal);
+        private static readonly bool FrameOpTraceEnabled =
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanFrameOpTrace), "1", StringComparison.Ordinal);
+        private static readonly bool TargetTraceEnabled =
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanTargetTrace), "1", StringComparison.Ordinal);
+        private static readonly bool IndirectTraceEnabled =
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanIndirectTrace), "1", StringComparison.Ordinal);
+        private static readonly bool DescriptorTraceEnabled =
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDescriptorTrace), "1", StringComparison.Ordinal);
+        private static readonly bool ParallelRecordingValidationEnabled =
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanParallelRecordingValidate), "1", StringComparison.Ordinal);
+        private static readonly bool OpenXrVulkanTraceEnabled =
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanTrace), "1", StringComparison.Ordinal);
+        private static readonly bool OpenXrVulkanPrimaryReuseEnabled =
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanPrimaryReuse), "1", StringComparison.Ordinal);
         private FrameOpSignatureDebugPart[][]? _commandBufferFrameOpSignatureDebugParts;
         private int _frameOpSignatureDiffLogCount;
         private string? _vulkanDiagnosticBaseWindowTitle;
@@ -75,6 +89,18 @@ namespace XREngine.Rendering.Vulkan
         private readonly List<KeyValuePair<int, int>> _swapchainWriterCountSortScratch = new();
         private readonly StringBuilder _swapchainWriterSummaryBuilder = new(256);
         private bool _lastEnsureCommandBufferRecordedPrimary;
+        private int _descriptorFrameSlotFrameCountOverride;
+        internal int DescriptorFrameSlotFrameCount
+        {
+            get
+            {
+                int overrideCount = Volatile.Read(ref _descriptorFrameSlotFrameCountOverride);
+                if (overrideCount > 0)
+                    return overrideCount;
+
+                return Math.Max(swapChainImages?.Length ?? 0, MAX_FRAMES_IN_FLIGHT);
+            }
+        }
         private int _secondaryBucketByStartCapacityHint = 1;
         private int _recordSwapchainWriterCapacityHint = 1;
         private int _recordPipelineNameCapacityHint = 1;
@@ -386,6 +412,47 @@ namespace XREngine.Rendering.Vulkan
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(vertexBufferBinds: 1);
         }
 
+        internal void BindVertexBufferTracked(
+            CommandBuffer commandBuffer,
+            uint binding,
+            Silk.NET.Vulkan.Buffer buffer,
+            ulong offset)
+        {
+            if (buffer.Handle == 0)
+                return;
+
+            HashCode hash = new();
+            hash.Add(binding);
+            hash.Add(1);
+            hash.Add(buffer.Handle);
+            hash.Add(offset);
+
+            ulong signature = unchecked((ulong)hash.ToHashCode());
+            bool shouldBind;
+            ulong key = (ulong)commandBuffer.Handle;
+            lock (_commandBindStateLock)
+            {
+                _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
+                shouldBind = state.VertexBufferSignature != signature;
+                if (shouldBind)
+                {
+                    state.VertexBufferSignature = signature;
+                    _commandBindStates[key] = state;
+                }
+            }
+
+            if (!shouldBind)
+            {
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(vertexBufferBindSkips: 1);
+                return;
+            }
+
+            Silk.NET.Vulkan.Buffer localBuffer = buffer;
+            ulong localOffset = offset;
+            Api!.CmdBindVertexBuffers(commandBuffer, binding, 1, &localBuffer, &localOffset);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(vertexBufferBinds: 1);
+        }
+
         internal void BindIndexBufferTracked(CommandBuffer commandBuffer, Silk.NET.Vulkan.Buffer indexBuffer, ulong offset, IndexType indexType)
         {
             if (indexBuffer.Handle == 0)
@@ -531,25 +598,7 @@ namespace XREngine.Rendering.Vulkan
                     continue;
 
                 foreach (CommandChain chain in cache.Values)
-                {
-                    CommandBuffer secondary = chain.SecondaryCommandBuffer;
-                    if (secondary.Handle == 0)
-                        continue;
-
-                    if (_deviceLost || chain.SecondaryCommandPool.Handle == 0)
-                    {
-                        RemoveCommandBufferBindState(secondary);
-                        chain.SecondaryCommandBuffer = default;
-                        chain.SecondaryCommandPool = default;
-                        continue;
-                    }
-
-                    CommandBuffer freedSecondary = secondary;
-                    Api!.FreeCommandBuffers(device, chain.SecondaryCommandPool, 1, ref secondary);
-                    RemoveCommandBufferBindState(freedSecondary);
-                    chain.SecondaryCommandBuffer = default;
-                    chain.SecondaryCommandPool = default;
-                }
+                    DestroyCommandChainSecondaryCommandBuffer(chain);
 
                 cache.Clear();
             }

@@ -1874,6 +1874,16 @@ public unsafe partial class VulkanRenderer
     {
         passMetadata ??= RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata;
 
+        if (passIndex == VulkanBarrierPlanner.SwapchainPassIndex)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.InvalidPass.{opName}.SwapchainPseudoPass",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] '{0}' attempted to use the reserved swapchain pseudo-pass as a render-graph pass. Treating it as unresolved.",
+                opName);
+            passIndex = int.MinValue;
+        }
+
         // Short-circuit: well-known EDefaultRenderPass values are always valid.
         // Metadata may lag behind runtime enqueues (conditional pipeline paths,
         // hot-reload) â€” accept standard passes without warning.
@@ -1898,7 +1908,7 @@ public unsafe partial class VulkanRenderer
             if (currentPassDefined)
                 return currentPassIndex;
 
-            if (hasMetadata)
+            if (hasMetadata && !opName.Contains("Compute", StringComparison.OrdinalIgnoreCase))
             {
                 const int preRenderPass = (int)EDefaultRenderPass.PreRender;
                 if (passMetadata!.Any(m => m.PassIndex == preRenderPass))

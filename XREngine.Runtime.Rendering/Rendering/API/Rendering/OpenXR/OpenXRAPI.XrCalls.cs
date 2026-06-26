@@ -235,7 +235,11 @@ public unsafe partial class OpenXRAPI
     {
         AssertOpenXrRenderThread("xrEndFrame");
         long start = Stopwatch.GetTimestamp();
-        var result = CheckResult(Api.EndFrame(_session, in frameEndInfo), "xrEndFrame");
+        Result result;
+        using (var endFrameSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.XrEndFrame"))
+        {
+            result = CheckResult(Api.EndFrame(_session, in frameEndInfo), "xrEndFrame");
+        }
         long end = Stopwatch.GetTimestamp();
         long ticks = end - start;
         RuntimeEngine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency));
@@ -537,6 +541,7 @@ public unsafe partial class OpenXRAPI
             _viewportMirrorDepth = null;
             _viewportMirrorColor?.Destroy();
             _viewportMirrorColor = null;
+            DestroyVulkanEyeMirrorTargets();
             DestroyOpenXrPreviewTargets();
         }
         catch

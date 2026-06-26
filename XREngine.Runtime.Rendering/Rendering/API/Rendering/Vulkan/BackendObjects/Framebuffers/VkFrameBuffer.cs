@@ -953,9 +953,7 @@ public unsafe partial class VulkanRenderer
                     !edge.ResourceName.Equals(usage.ResourceName, StringComparison.OrdinalIgnoreCase) ||
                     !SubresourceRangesOverlap(edge.SubresourceRange, usage.SubresourceRange) ||
                     edge.ConsumerState.Layout is not { } nextLayout)
-                {
                     continue;
-                }
 
                 ImageLayout finalLayout = ToVkImageLayout(nextLayout, signature);
                 if (finalLayout != ImageLayout.Undefined)
@@ -967,14 +965,11 @@ public unsafe partial class VulkanRenderer
 
         private static bool SubresourceRangesOverlap(
             RenderGraphSubresourceRange first,
-            RenderGraphSubresourceRange second)
-        {
-            if (first.IsWholeResource || second.IsWholeResource)
-                return true;
-
-            return RangesOverlap(first.BaseMipLevel, first.MipLevelCount, second.BaseMipLevel, second.MipLevelCount) &&
-                   RangesOverlap(first.BaseArrayLayer, first.ArrayLayerCount, second.BaseArrayLayer, second.ArrayLayerCount);
-        }
+            RenderGraphSubresourceRange second) => 
+                first.IsWholeResource || 
+                second.IsWholeResource || 
+                (RangesOverlap(first.BaseMipLevel, first.MipLevelCount, second.BaseMipLevel, second.MipLevelCount) &&
+                RangesOverlap(first.BaseArrayLayer, first.ArrayLayerCount, second.BaseArrayLayer, second.ArrayLayerCount));
 
         private static bool RangesOverlap(uint firstStart, uint firstCount, uint secondStart, uint secondCount)
         {
@@ -1013,14 +1008,11 @@ public unsafe partial class VulkanRenderer
             FrameBufferAttachmentSignature signature,
             RenderPassResourceUsage usage,
             bool passHasWriteCapableDepthStencilUsage)
-        {
-            if (signature.Role == AttachmentRole.Color)
-                return ImageLayout.ColorAttachmentOptimal;
-
-            return usage.Access == ERenderGraphAccess.Read && !passHasWriteCapableDepthStencilUsage
+            => signature.Role == AttachmentRole.Color
+                ? ImageLayout.ColorAttachmentOptimal
+                : usage.Access == ERenderGraphAccess.Read && !passHasWriteCapableDepthStencilUsage
                 ? ImageLayout.DepthStencilReadOnlyOptimal
                 : ImageLayout.DepthStencilAttachmentOptimal;
-        }
 
         private static AttachmentLoadOp ToVkLoadOp(ERenderPassLoadOp op)
             => op switch
@@ -1041,10 +1033,8 @@ public unsafe partial class VulkanRenderer
                 return false;
 
             for (int i = 0; i < first.Length; i++)
-            {
                 if (!first[i].Equals(second[i]))
                     return false;
-            }
 
             return true;
         }
@@ -1197,10 +1187,8 @@ public unsafe partial class VulkanRenderer
 
             ImageView view = source.GetAttachmentView(mipLevel, layerIndex);
             if (view.Handle == 0)
-            {
                 throw new InvalidOperationException(
                     $"Texture '{texture.Name ?? texture.GetDescribingName()}' could not provide a Vulkan image view for framebuffer attachment '{attachment}'.");
-            }
 
             ImageAspectFlags aspect = NormalizeAttachmentAspectMask(source.DescriptorFormat, source.DescriptorAspect);
             ImageUsageFlags usage = source.DescriptorUsage;

@@ -888,6 +888,14 @@ public unsafe partial class VulkanRenderer
             if (_physicalGroup is null)
                 return;
 
+            bool physicalGroupChanged = false;
+            VulkanPhysicalImageGroup? activeGroup = TryResolvePhysicalGroup(ensureAllocated: true);
+            if (activeGroup is not null && !ReferenceEquals(activeGroup, _physicalGroup))
+            {
+                _physicalGroup = activeGroup;
+                physicalGroupChanged = true;
+            }
+
             if (!_physicalGroup.IsAllocated)
             {
                 // The physical group was destroyed — the resource planner may have rebuilt
@@ -896,6 +904,7 @@ public unsafe partial class VulkanRenderer
                 VulkanPhysicalImageGroup? replacement = TryResolvePhysicalGroup(ensureAllocated: true);
                 if (replacement is not null && replacement.IsAllocated)
                 {
+                    physicalGroupChanged |= !ReferenceEquals(replacement, _physicalGroup);
                     _physicalGroup = replacement;
                     // Fall through to the handle-update check below.
                 }
@@ -933,6 +942,17 @@ public unsafe partial class VulkanRenderer
                 _arrayLayersOverride = Math.Max(_physicalGroup.Template.Layers, 1u);
                 _mipLevelsOverride = Math.Max(1u, _physicalGroup.MipLevels);
                 _samplesOverride = _physicalGroup.Samples;
+                Usage = _physicalGroup.Usage;
+                if (Data.RequiresStorageUsage)
+                    Usage |= ImageUsageFlags.StorageBit;
+                if (physicalGroupChanged)
+                {
+                    ResetAttachmentLayoutTracking();
+                    _currentImageLayout = _physicalGroup.LastKnownLayout;
+                    HasUploadedData = true;
+                    IsInvalidated = false;
+                    MarkDescriptorPublished();
+                }
                 return;
             }
 
@@ -1135,12 +1155,12 @@ public unsafe partial class VulkanRenderer
             XRTexture2D.ApplyResidentDataForVulkanPublication(texture, residentData, includeMipChain);
             RefreshLayout();
 
-            Format format = ResolvedFormat;
+            Format format = Format;
             ImageAspectFlags aspectMask = NormalizeAspectMaskForFormat(format, AspectFlags);
             AspectFlags = aspectMask;
-            Extent3D extent = ResolvedExtent;
-            uint mipLevels = Math.Max(ResolvedMipLevels, 1u);
-            uint arrayLayers = Math.Max(ResolvedArrayLayers, 1u);
+            Extent3D extent = _layout.Extent;
+            uint mipLevels = Math.Max(_layout.MipLevels, 1u);
+            uint arrayLayers = Math.Max(_layout.ArrayLayers, 1u);
             string debugName = BuildImportedUploadDebugName(request, publicationToken);
 
             preparation = new VulkanImportedTextureUploadPreparation(
@@ -1243,6 +1263,18 @@ public unsafe partial class VulkanRenderer
                         return true;
 
                     case VulkanImportedTextureUploadPreparationStep.Complete:
+                        if (!VulkanImportedTextureUploadValidation.TryValidateCopyRegions(
+                                preparation.Request.TextureName,
+                                preparation.PublicationToken,
+                                preparation.Extent,
+                                preparation.MipLevels,
+                                preparation.ArrayLayers,
+                                preparation.StagingResources,
+                                out failureReason))
+                        {
+                            return false;
+                        }
+
                         pendingUpload = new VulkanImportedTexturePendingUpload(
                             preparation.Request,
                             preparation.Texture,
@@ -1254,6 +1286,7 @@ public unsafe partial class VulkanRenderer
                             preparation.AspectMask,
                             preparation.Extent,
                             preparation.MipLevels,
+                            preparation.ArrayLayers,
                             preparation.CommittedBytes,
                             preparation.PublicationToken,
                             [.. preparation.StagingResources],
@@ -1602,7 +1635,10 @@ public unsafe partial class VulkanRenderer
             _mipLevelsOverride = null;
             _samplesOverride = null;
             _allocatedVRAMBytes = pendingUpload.CommittedBytes;
-            _layout = new TextureLayout(pendingUpload.Extent, 1u, Math.Max(pendingUpload.MipLevels, 1u));
+            _layout = new TextureLayout(
+                pendingUpload.Extent,
+                Math.Max(pendingUpload.ArrayLayers, 1u),
+                Math.Max(pendingUpload.MipLevels, 1u));
             _layoutInitialized = true;
             Format = pendingUpload.Format;
             AspectFlags = pendingUpload.AspectMask;
@@ -2537,6 +2573,9 @@ public unsafe partial class VulkanRenderer
         /// and logs an error (skipping the copy) if there is a mismatch.</param>
         protected void CopyBufferToImage(Buffer buffer, uint mipLevel, uint baseArrayLayer, uint layerCount, Extent3D extent, ulong stagingBufferSize = 0)
         {
+            if (!ValidateCopyBufferToImageRegion(mipLevel, baseArrayLayer, layerCount, extent))
+                return;
+
             // Validate staging buffer size against what the GPU will actually read.
             if (stagingBufferSize > 0)
             {
@@ -2711,6 +2750,94 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        private bool ValidateCopyBufferToImageRegion(uint mipLevel, uint baseArrayLayer, uint layerCount, Extent3D extent)
+        {
+            if (_image.Handle == 0)
+                return false;
+
+            uint mipCount = Math.Max(ResolvedMipLevels, 1u);
+            uint arrayLayerCount = Math.Max(ResolvedArrayLayers, 1u);
+            if (mipLevel >= mipCount)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.CopyMipOutOfRange.{Data.GetHashCode()}.{mipLevel}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping CopyBufferToImage for '{0}': mip {1} is outside image mip count {2}.",
+                    Data.Name ?? GetDescribingName(),
+                    mipLevel,
+                    mipCount);
+                return false;
+            }
+
+            if (layerCount == 0 || baseArrayLayer >= arrayLayerCount || layerCount > arrayLayerCount - baseArrayLayer)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.CopyLayerOutOfRange.{Data.GetHashCode()}.{baseArrayLayer}.{layerCount}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping CopyBufferToImage for '{0}': layers {1}+{2} exceed image layer count {3}.",
+                    Data.Name ?? GetDescribingName(),
+                    baseArrayLayer,
+                    layerCount,
+                    arrayLayerCount);
+                return false;
+            }
+
+            if (extent.Width == 0 || extent.Height == 0 || extent.Depth == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.CopyZeroExtent.{Data.GetHashCode()}.{mipLevel}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping CopyBufferToImage for '{0}': requested extent {1}x{2}x{3} is invalid.",
+                    Data.Name ?? GetDescribingName(),
+                    extent.Width,
+                    extent.Height,
+                    extent.Depth);
+                return false;
+            }
+
+            Extent3D baseExtent = ResolvedExtent;
+            Extent3D mipExtent = ResolveMipExtent(baseExtent, mipLevel);
+            if (extent.Width <= mipExtent.Width && extent.Height <= mipExtent.Height && extent.Depth <= mipExtent.Depth)
+                return true;
+
+            Debug.VulkanWarningEvery(
+                $"Vulkan.Texture.CopyExtentOutOfRange.{Data.GetHashCode()}.{mipLevel}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Skipping CopyBufferToImage for '{0}': requested extent {1}x{2}x{3} exceeds mip {4} extent {5}x{6}x{7} (base {8}x{9}x{10}, mips={11}).",
+                Data.Name ?? GetDescribingName(),
+                extent.Width,
+                extent.Height,
+                extent.Depth,
+                mipLevel,
+                mipExtent.Width,
+                mipExtent.Height,
+                mipExtent.Depth,
+                baseExtent.Width,
+                baseExtent.Height,
+                baseExtent.Depth,
+                mipCount);
+            return false;
+        }
+
+        private static Extent3D ResolveMipExtent(Extent3D baseExtent, uint mipLevel)
+        {
+            uint width = Math.Max(baseExtent.Width, 1u);
+            uint height = Math.Max(baseExtent.Height, 1u);
+            uint depth = Math.Max(baseExtent.Depth, 1u);
+
+            for (uint i = 0; i < mipLevel; i++)
+            {
+                if (width > 1)
+                    width >>= 1;
+                if (height > 1)
+                    height >>= 1;
+                if (depth > 1)
+                    depth >>= 1;
+            }
+
+            return new Extent3D(width, height, depth);
+        }
+
         #endregion
 
         #region Descriptor Helpers
@@ -2771,6 +2898,20 @@ public unsafe partial class VulkanRenderer
         protected virtual void PushTextureData()
         {
             Debug.VulkanWarning($"{GetType().Name} does not implement texture data uploads yet.");
+        }
+
+        /// <summary>
+        /// Full texture uploads replace the whole mip chain. Recreate any active
+        /// dedicated image so imported low-res resident images cannot be reused
+        /// as storage for a later larger CPU mip chain.
+        /// </summary>
+        protected void RecreateImageForFullTextureDataUpload(string reason)
+        {
+            if (!IsActive || _image.Handle == 0 || Renderer.IsDeviceLost)
+                return;
+
+            WaitForInFlightWorkBeforeImportedTextureReplacement(reason);
+            Destroy();
         }
 
         /// <summary>

@@ -75,6 +75,7 @@ public static class XREngineEnvironmentVariables
     public const string OpenXrSmokeFrames = "XRE_SMOKE_FRAMES";
     public const string OpenXrSmokeTimeoutSeconds = "XRE_SMOKE_TIMEOUT_SECONDS";
     public const string OpenXrSmokeSummary = "XRE_OPENXR_SMOKE_SUMMARY";
+    public const string OpenXrRenderPacingMode = "XRE_OPENXR_RENDER_PACING_MODE";
     public const string SmokeSummary = "XRE_SMOKE_SUMMARY";
 
     public const string ProfilerEnabled = "XRE_PROFILER_ENABLED";
@@ -203,6 +204,21 @@ public static class XREngineEnvironmentVariables
     public const string VulkanParallelPacketBuild = "XRE_VULKAN_PARALLEL_PACKET_BUILD";
     public const string VulkanCommandChainMultiQueue = "XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE";
     public const string VulkanCommandChainMeshSecondaryNoop = "XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP";
+    public const string VulkanValidation = "XRE_VULKAN_VALIDATION";
+    public const string VulkanFrameOpTrace = "XRE_VULKAN_FRAMEOP_TRACE";
+    public const string VulkanTargetTrace = "XRE_VULKAN_TARGET_TRACE";
+    public const string VulkanIndirectTrace = "XRE_VULKAN_INDIRECT_TRACE";
+    public const string VulkanCounterDiagnostics = "XRE_VULKAN_COUNTER_DIAGNOSTICS";
+    public const string VulkanDescriptorTrace = "XRE_VULKAN_DESCRIPTOR_TRACE";
+    public const string OpenXrVulkanTrace = "XRE_OPENXR_VULKAN_TRACE";
+    public const string OpenXrVulkanMirrorFbo = "XRE_OPENXR_VULKAN_MIRROR_FBO";
+    public const string OpenXrVulkanPrewarmEyes = "XRE_OPENXR_VULKAN_PREWARM_EYES";
+    public const string OpenXrVulkanSerialEyeSubmit = "XRE_OPENXR_VULKAN_SERIAL_EYE_SUBMIT";
+    public const string OpenXrVulkanPrimaryReuse = "XRE_OPENXR_VULKAN_PRIMARY_REUSE";
+    public const string VulkanAllowCpuMeshSafetyNet = "XRE_VULKAN_ALLOW_CPU_MESH_SAFETY_NET";
+    public const string VulkanParallelRecordingValidate = "XRE_VULKAN_PARALLEL_RECORDING_VALIDATE";
+    public const string VulkanCaptureEyeOutputs = "XRE_VULKAN_CAPTURE_EYE_OUTPUTS";
+    public const string VulkanGpuBvhCulling = "XRE_VULKAN_GPU_BVH_CULLING";
 
     public const string CaptureDefaultPipelineSkipFrames = "XRE_CAPTURE_DEFAULT_PIPELINE_SKIP_FRAMES";
     public const string CaptureDefaultPipelineFbo = "XRE_CAPTURE_DEFAULT_PIPELINE_FBO";

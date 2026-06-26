@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using ImageMagick;
 using Silk.NET.Vulkan;
 using XREngine.Data;
@@ -51,6 +52,123 @@ namespace XREngine.Rendering.Vulkan
             catch
             {
                 // Best-effort shutdown path: lingering readbacks should not abort renderer teardown.
+            }
+        }
+
+        internal bool TryReadBufferBytesForDiagnostics(XRDataBuffer? sourceBuffer, uint sourceByteOffset, Span<byte> destination, out string reason)
+        {
+            reason = "<missing>";
+
+            if (sourceBuffer is null)
+                return false;
+
+            if (destination.Length == 0)
+            {
+                reason = "<empty>";
+                return true;
+            }
+
+            ulong byteOffset = sourceByteOffset;
+            ulong byteCount = (ulong)destination.Length;
+            ulong sourceLength = sourceBuffer.Length;
+            if (byteOffset >= sourceLength || byteCount > sourceLength - byteOffset)
+            {
+                reason = $"<out-of-range:{byteOffset}+{byteCount}/{sourceLength}>";
+                return false;
+            }
+
+            if (!TryGetAPIRenderObject(sourceBuffer, out AbstractRenderAPIObject? apiObject) ||
+                apiObject is not VkDataBuffer vkBuffer ||
+                !vkBuffer.IsGenerated ||
+                vkBuffer.BufferHandle is not { } sourceHandle ||
+                sourceHandle.Handle == 0)
+            {
+                reason = "<no-generated-vulkan-buffer>";
+                return false;
+            }
+
+            if (!vkBuffer.LastUsageFlags.HasFlag(BufferUsageFlags.TransferSrcBit))
+            {
+                reason = $"<missing-transfer-src:{vkBuffer.LastUsageFlags}>";
+                return false;
+            }
+
+            var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(byteCount);
+            try
+            {
+                using (var scope = NewCommandScope())
+                {
+                    BufferMemoryBarrier sourceBarrier = new()
+                    {
+                        SType = StructureType.BufferMemoryBarrier,
+                        SrcAccessMask =
+                            AccessFlags.ShaderWriteBit |
+                            AccessFlags.TransferWriteBit |
+                            AccessFlags.MemoryWriteBit,
+                        DstAccessMask = AccessFlags.TransferReadBit,
+                        SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                        DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                        Buffer = sourceHandle,
+                        Offset = byteOffset,
+                        Size = byteCount,
+                    };
+
+                    CmdPipelineBarrierTracked(
+                        scope.CommandBuffer,
+                        PipelineStageFlags.AllCommandsBit,
+                        PipelineStageFlags.TransferBit,
+                        0,
+                        0,
+                        null,
+                        1,
+                        &sourceBarrier,
+                        0,
+                        null);
+
+                    BufferCopy copy = new()
+                    {
+                        SrcOffset = byteOffset,
+                        DstOffset = 0,
+                        Size = byteCount,
+                    };
+
+                    Api!.CmdCopyBuffer(scope.CommandBuffer, sourceHandle, stagingBuffer, 1, &copy);
+                }
+
+                if (!TryMapReadbackMemory(stagingBuffer, stagingMemory, 0, byteCount, out void* mappedPtr))
+                {
+                    reason = "<map-failed>";
+                    return false;
+                }
+
+                try
+                {
+                    new Span<byte>(mappedPtr, destination.Length).CopyTo(destination);
+                    reason = "gpu";
+                    return true;
+                }
+                finally
+                {
+                    UnmapBufferMemory(stagingBuffer, stagingMemory);
+                }
+            }
+            catch (Exception ex)
+            {
+                reason = $"<{ex.GetType().Name}>";
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Readback.BufferDiagnostics.{RuntimeHelpers.GetHashCode(sourceBuffer)}.{sourceByteOffset}.{destination.Length}",
+                    TimeSpan.FromSeconds(2),
+                    "[VulkanCounters] failed diagnostic buffer readback buffer='{0}' offset={1} length={2}: {3}: {4}",
+                    sourceBuffer.AttributeName ?? sourceBuffer.Target.ToString(),
+                    sourceByteOffset,
+                    destination.Length,
+                    ex.GetType().Name,
+                    ex.Message);
+                return false;
+            }
+            finally
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
             }
         }
 

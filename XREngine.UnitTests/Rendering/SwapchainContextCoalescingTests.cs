@@ -85,7 +85,11 @@ public sealed class SwapchainContextCoalescingTests
 
     /// <summary>Creates an <see cref="IndirectDrawOp"/> (always targets swapchain — Target is always null).</summary>
     private static IndirectDrawOp SwapchainIndirectDraw(int passIndex, FrameOpContext ctx) =>
-        new(passIndex, IndirectBuffer: null!, ParameterBuffer: null, DrawCount: 0,
+        new(passIndex, Target: null, IndirectBuffer: null!, ParameterBuffer: null, MeshRenderer: null!, Draw: default, DrawCount: 0,
+            Stride: 0, ByteOffset: 0, CountByteOffset: 0, UseCount: false, BindlessMaterialTextures: null, Context: ctx);
+
+    private static IndirectDrawOp FboIndirectDraw(int passIndex, FrameOpContext ctx, XREngine.Rendering.XRFrameBuffer fbo) =>
+        new(passIndex, Target: fbo, IndirectBuffer: null!, ParameterBuffer: null, MeshRenderer: null!, Draw: default, DrawCount: 0,
             Stride: 0, ByteOffset: 0, CountByteOffset: 0, UseCount: false, BindlessMaterialTextures: null, Context: ctx);
 
     /// <summary>Creates a <see cref="ComputeDispatchOp"/> (never targets swapchain).</summary>
@@ -178,6 +182,29 @@ public sealed class SwapchainContextCoalescingTests
     {
         var op = SwapchainBlit(passIndex: 0, CtxPipelineA);
         VulkanRenderGraphCompiler.OpTargetsSwapchain(op).ShouldBeTrue();
+    }
+
+    [Test]
+    public void OpTargetsSwapchain_BlitOp_WithOutFbo_ReturnsFalse()
+    {
+        var fbo = new XREngine.Rendering.XRFrameBuffer { Name = "GraphDestinationFBO" };
+        var op = FboBlit(passIndex: 0, CtxPipelineA, fbo);
+        VulkanRenderGraphCompiler.OpTargetsSwapchain(op).ShouldBeFalse();
+    }
+
+    [Test]
+    public void BlitOp_FboDestination_PublishesOutFboAsFrameOpTarget()
+    {
+        var fbo = new XREngine.Rendering.XRFrameBuffer { Name = "GraphDestinationFBO" };
+        BlitOp op = FboBlit(passIndex: 0, CtxPipelineA, fbo);
+        op.Target.ShouldBeSameAs(fbo);
+    }
+
+    [Test]
+    public void BlitOp_SwapchainDestination_PublishesNullFrameOpTarget()
+    {
+        BlitOp op = SwapchainBlit(passIndex: 0, CtxPipelineA);
+        op.Target.ShouldBeNull();
     }
 
     [Test]
@@ -365,7 +392,7 @@ public sealed class SwapchainContextCoalescingTests
     }
 
     [Test]
-    public void SortFrameOps_GroupsInterleavedOps_ByFirstOccurrence()
+    public void SortFrameOps_PreservesInterleavedSamePassOps_ByOriginalOrder()
     {
         // If ops arrive interleaved (A, B, A, B), sort should group them as (A, A, B, B)
         // based on first-occurrence order.
@@ -382,17 +409,82 @@ public sealed class SwapchainContextCoalescingTests
 
         FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
 
-        // All A ops grouped first, then all B ops
+        // Original order is preserved across contexts.
         sorted[0].Context.ShouldBe(CtxPipelineA);
-        sorted[1].Context.ShouldBe(CtxPipelineA);
-        sorted[2].Context.ShouldBe(CtxPipelineB);
+        sorted[1].Context.ShouldBe(CtxPipelineB);
+        sorted[2].Context.ShouldBe(CtxPipelineA);
         sorted[3].Context.ShouldBe(CtxPipelineB);
 
-        // Within each group, original order is preserved
         sorted[0].PassIndex.ShouldBe(0);
-        sorted[1].PassIndex.ShouldBe(2);
-        sorted[2].PassIndex.ShouldBe(1);
+        sorted[1].PassIndex.ShouldBe(1);
+        sorted[2].PassIndex.ShouldBe(2);
         sorted[3].PassIndex.ShouldBe(3);
+    }
+
+    [Test]
+    public void SortFrameOps_PreservesSamePassComputeBeforeIndirectConsumer_AcrossContexts()
+    {
+        var graph = VulkanCompiledRenderGraph.Empty;
+
+        FrameOp[] ops =
+        [
+            SwapchainClear(1, CtxPipelineA),
+            ComputeDispatch(1, CtxPipelineB),
+            MemoryBarrier(1, CtxPipelineB),
+            SwapchainIndirectDraw(1, CtxPipelineA),
+        ];
+
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
+
+        sorted.Select(op => op.GetType()).ToArray().ShouldBe(
+        [
+            typeof(ClearOp),
+            typeof(ComputeDispatchOp),
+            typeof(MemoryBarrierOp),
+            typeof(IndirectDrawOp),
+        ]);
+    }
+
+    [Test]
+    public void SecondaryBuckets_SplitBlitsByResolvedTarget()
+    {
+        var compiler = new VulkanRenderGraphCompiler();
+        var firstFbo = new XREngine.Rendering.XRFrameBuffer { Name = "FirstTarget" };
+        var secondFbo = new XREngine.Rendering.XRFrameBuffer { Name = "SecondTarget" };
+        FrameOp[] ops =
+        [
+            FboBlit(1, CtxPipelineA, firstFbo),
+            FboBlit(1, CtxPipelineA, secondFbo),
+        ];
+
+        IReadOnlyList<SecondaryRecordingBucket> buckets = compiler.BuildSecondaryRecordingBuckets(ops);
+
+        buckets.Count.ShouldBe(2);
+        buckets[0].StartIndex.ShouldBe(0);
+        buckets[0].Count.ShouldBe(1);
+        buckets[0].TargetIdentity.ShouldBe(firstFbo.GetHashCode());
+        buckets[1].StartIndex.ShouldBe(1);
+        buckets[1].Count.ShouldBe(1);
+        buckets[1].TargetIdentity.ShouldBe(secondFbo.GetHashCode());
+    }
+
+    [Test]
+    public void SecondaryBuckets_SplitIndirectDrawsByResolvedTarget()
+    {
+        var compiler = new VulkanRenderGraphCompiler();
+        var firstFbo = new XREngine.Rendering.XRFrameBuffer { Name = "FirstTarget" };
+        var secondFbo = new XREngine.Rendering.XRFrameBuffer { Name = "SecondTarget" };
+        FrameOp[] ops =
+        [
+            FboIndirectDraw(1, CtxPipelineA, firstFbo),
+            FboIndirectDraw(1, CtxPipelineA, secondFbo),
+        ];
+
+        IReadOnlyList<SecondaryRecordingBucket> buckets = compiler.BuildSecondaryRecordingBuckets(ops);
+
+        buckets.Count.ShouldBe(2);
+        buckets[0].TargetIdentity.ShouldBe(firstFbo.GetHashCode());
+        buckets[1].TargetIdentity.ShouldBe(secondFbo.GetHashCode());
     }
 
     [Test]
@@ -690,7 +782,7 @@ public sealed class SwapchainContextCoalescingTests
     [Test]
     public void VulkanPassValidation_AllowsActiveParentPassAcrossNestedPipelineMetadata()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
 
         source.ShouldContain("int currentPassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;");
         source.ShouldContain("if (passIndex != int.MinValue && passIndex == currentPassIndex)");

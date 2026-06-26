@@ -388,6 +388,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public double TextureUploadFrameBudgetMilliseconds => 2.0;
         public ETwoPlayerPreference TwoPlayerViewportPreference => ETwoPlayerPreference.SplitHorizontally;
         public EThreePlayerPreference ThreePlayerViewportPreference => EThreePlayerPreference.PreferFirstPlayer;
+        public bool EnableOpenXrVulkanParallelRendering => RuntimeRenderingHostServiceDefaults.EnableOpenXrVulkanParallelRendering;
         public RuntimeGraphicsApiKind CurrentRenderBackend => RuntimeGraphicsApiKind.Unknown;
         public IRuntimeRendererHost? CurrentRenderer => null;
         public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => null;
@@ -439,7 +440,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public float OpenXrCollectVisibleFrustumPaddingDegrees => 2.0f;
         public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
         public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy => OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
-        public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => OpenXRAPI.OpenXrRenderPacingMode.PostRenderCallback;
+        public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
         public bool ShouldForceDebugOpaquePipeline => false;
 
         public RuntimeGraphicsApiKind GetWindowRenderBackend(IRuntimeRenderWindowHost? window)

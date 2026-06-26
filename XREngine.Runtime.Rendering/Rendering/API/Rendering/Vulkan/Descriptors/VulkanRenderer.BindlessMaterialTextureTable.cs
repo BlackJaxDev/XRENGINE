@@ -638,7 +638,7 @@ public unsafe partial class VulkanRenderer
             tier = EVulkanBindlessMaterialCapabilityTier.BindlessMaterialDrawPathReady;
         else if (tier >= EVulkanBindlessMaterialCapabilityTier.BindlessMaterialTableShaderReady &&
                  string.IsNullOrWhiteSpace(reason))
-            reason = "Vulkan GPU render dispatch remains disabled because IndirectDrawOp is not integrated with Vulkan render-pass/pipeline ownership.";
+            reason = "Vulkan GPU render dispatch is disabled by the active Vulkan feature profile or runtime settings.";
 
         _bindlessMaterialCapability = new VulkanBindlessMaterialCapability(
             mode,

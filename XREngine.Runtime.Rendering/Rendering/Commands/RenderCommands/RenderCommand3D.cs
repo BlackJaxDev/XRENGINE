@@ -29,6 +29,10 @@ namespace XREngine.Rendering.Commands
 
         public void UpdateRenderDistance(Vector3 thisWorldPosition, IRuntimeRenderCamera camera)
             => RenderDistance = (camera.Transform.RenderTranslation - thisWorldPosition).LengthSquared();
+
+        protected override bool IsRenderStateDirtyProperty(string? propName)
+            => propName != nameof(RenderDistance) && base.IsRenderStateDirtyProperty(propName);
+
         public override int CompareTo(RenderCommand? other)
         {
             int distanceCompare = RenderDistance.CompareTo((other as RenderCommand3D)?.RenderDistance ?? 0.0f);
