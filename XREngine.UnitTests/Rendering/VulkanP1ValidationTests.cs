@@ -243,6 +243,36 @@ public sealed class VulkanP1ValidationTests
     }
 
     [Test]
+    public void ResourcePlanner_SwitchesPerFrameOpContextDuringPrimaryRecording()
+    {
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs").Replace("\r\n", "\n");
+        string plannerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs").Replace("\r\n", "\n");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs").Replace("\r\n", "\n");
+        string loweringSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainLowering.cs").Replace("\r\n", "\n");
+        string initializationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs").Replace("\r\n", "\n");
+
+        stateSource.ShouldContain("_frameOpResourcePlannerStates");
+        stateSource.ShouldContain("private readonly struct FrameOpResourcePlannerRecordingScope : IDisposable");
+        stateSource.ShouldContain("renderer._frameOpResourcePlannerRecordingScopeActive = true;");
+
+        plannerSource.ShouldContain("private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(FrameOp[] ops)");
+        plannerSource.ShouldContain("private FrameOpContext PrepareResourcePlannerForFrameOps(FrameOp[] ops, in FrameOpPlannerStateKey key)");
+        plannerSource.ShouldContain("private bool TryActivateFrameOpResourcePlannerState(in FrameOpContext context)");
+        plannerSource.ShouldContain("private void SaveActiveFrameOpResourcePlannerState()");
+        plannerSource.ShouldContain("BuildActiveFrameOpPassSet(ops, key)");
+        plannerSource.ShouldContain("BuildActiveFrameOpFrameBufferSet(ops, key)");
+
+        commandBufferSource.ShouldContain("PrepareFrameOpResourcePlannerStatesForFrameOps(ops)");
+        commandBufferSource.ShouldContain("using FrameOpResourcePlannerRecordingScope frameOpResourcePlannerRecordingScope = EnterFrameOpResourcePlannerRecordingScope();");
+        commandBufferSource.ShouldContain("_ = TryActivateFrameOpResourcePlannerState(initialContext);");
+        commandBufferSource.ShouldContain("if (TryActivateFrameOpResourcePlannerState(activeContext))");
+        commandBufferSource.ShouldContain("if (_frameOpResourcePlannerSwitchingActive)\n                return false;");
+
+        loweringSource.ShouldContain("if (_frameOpResourcePlannerSwitchingActive)\n            return null;");
+        initializationSource.ShouldContain("DestroyFrameOpResourcePlannerStates();");
+    }
+
+    [Test]
     public void CommandChainResourcePlanFreeze_PreventsPlannerMutationDuringLowering()
     {
         string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");

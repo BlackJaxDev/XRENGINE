@@ -8,6 +8,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using Debug = XREngine.Debug;
+using OxrExtDebugUtils = Silk.NET.OpenXR.Extensions.EXT.ExtDebugUtils;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
@@ -23,14 +24,15 @@ internal sealed unsafe class OpenXrVulkanEnable2BootstrapContext(
     XR api,
     Instance xrInstance,
     ulong systemId,
-    KhrVulkanEnable2 vulkan2Extension) : IDisposable
+    KhrVulkanEnable2 vulkan2Extension,
+    string[] enabledExtensions) : IDisposable
 {
     private bool _disposed;
     private bool _destroyXrInstanceOnDispose = true;
     internal XR Api => api;
     internal Instance XrInstance => xrInstance;
     internal ulong SystemId => systemId;
-    internal static string[] EnabledExtensions { get; } = [KhrVulkanEnable2.ExtensionName];
+    internal string[] EnabledExtensions { get; } = enabledExtensions.ToArray();
 
     internal void AbandonXrInstanceOnDispose(string reason)
     {
@@ -480,6 +482,7 @@ public unsafe partial class OpenXRAPI
             out Instance xrInstance,
             out ulong systemId,
             out KhrVulkanEnable2? vulkan2Extension,
+            out _,
             out failureReason))
         {
             return false;
@@ -540,12 +543,13 @@ public unsafe partial class OpenXRAPI
             out Instance xrInstance,
             out ulong systemId,
             out KhrVulkanEnable2? vulkan2Extension,
+            out string[] enabledExtensions,
             out failureReason))
         {
             return false;
         }
 
-        context = new OpenXrVulkanEnable2BootstrapContext(api!, xrInstance, systemId, vulkan2Extension!);
+        context = new OpenXrVulkanEnable2BootstrapContext(api!, xrInstance, systemId, vulkan2Extension!, enabledExtensions);
         return true;
     }
 
@@ -584,6 +588,7 @@ public unsafe partial class OpenXRAPI
             out Instance xrInstance,
             out ulong systemId,
             out KhrVulkanEnable2? vulkan2Extension,
+            out _,
             out failureReason))
         {
             return false;
@@ -640,12 +645,14 @@ public unsafe partial class OpenXRAPI
         out Instance instance,
         out ulong systemId,
         out KhrVulkanEnable2? vulkan2Extension,
+        out string[] enabledExtensions,
         out string? failureReason)
     {
         api = null;
         instance = default;
         systemId = 0;
         vulkan2Extension = null;
+        enabledExtensions = [];
         failureReason = null;
 
         if (!ShouldQueryVulkanRuntimeRequirements())
@@ -663,8 +670,9 @@ public unsafe partial class OpenXRAPI
                 return false;
             }
 
+            enabledExtensions = BuildVulkanEnable2BootstrapExtensions(availableExtensions);
             var appInfo = MakeAppInfo();
-            var createInfo = MakeCreateInfo(appInfo, [KhrVulkanEnable2.ExtensionName], null, null);
+            var createInfo = MakeCreateInfo(appInfo, enabledExtensions, null, null);
             Instance createdInstance = default;
             Result createResult = api.CreateInstance(&createInfo, &createdInstance);
             Free(createInfo);
@@ -711,9 +719,26 @@ public unsafe partial class OpenXRAPI
             DestroyTemporaryOpenXrContext(api, instance);
             api = null;
             instance = default;
+            enabledExtensions = [];
             Debug.VulkanWarning($"[OpenXR] Vulkan enable2 creation context failed: {failureReason}");
             return false;
         }
+    }
+
+    private static string[] BuildVulkanEnable2BootstrapExtensions(HashSet<string> availableExtensions)
+    {
+        List<string> extensions = [KhrVulkanEnable2.ExtensionName];
+
+        AddOptionalExtension(extensions, availableExtensions, KhrWin32ConvertPerformanceCounterTime.ExtensionName);
+        AddOptionalExtension(extensions, availableExtensions, OxrExtDebugUtils.ExtensionName);
+
+        return [.. extensions];
+    }
+
+    private static void AddOptionalExtension(List<string> extensions, HashSet<string> availableExtensions, string extensionName)
+    {
+        if (availableExtensions.Contains(extensionName))
+            extensions.Add(extensionName);
     }
 
     private static void DestroyTemporaryOpenXrContext(XR? api, Instance instance)

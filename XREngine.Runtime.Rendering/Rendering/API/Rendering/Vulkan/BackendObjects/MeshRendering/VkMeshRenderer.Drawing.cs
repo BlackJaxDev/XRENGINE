@@ -733,9 +733,10 @@ public unsafe partial class VulkanRenderer
 			}
 
 			EnsureRuntimeDeformationBuffersCurrent();
-			EnsureBuffers(ProgramUsesShaderGeneratedVertices());
+			bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
+			EnsureBuffers(usesShaderGeneratedVertices);
 
-			if (!AreCachedBuffersReadyForRendering(out string bufferDetail))
+			if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
 			{
 				reason = $"buffers not ready: {bufferDetail}";
 				return false;
@@ -800,7 +801,7 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			if (!AreCachedBuffersReadyForRendering(out string bufferDetail))
+			if (!AreCachedBuffersReadyForRendering(out string bufferDetail, ProgramUsesShaderGeneratedVertices()))
 			{
 				reason = $"buffers not ready: {bufferDetail}";
 				return false;

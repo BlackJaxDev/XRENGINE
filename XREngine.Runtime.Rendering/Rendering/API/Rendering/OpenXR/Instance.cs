@@ -20,6 +20,8 @@ public unsafe partial class OpenXRAPI
     private Instance _instance;
     private bool _instanceOwnedByRenderer;
     private bool _apiOwnedByRenderer;
+    private readonly HashSet<string> _availableInstanceExtensions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _enabledInstanceExtensions = new(StringComparer.OrdinalIgnoreCase);
 
     private void DestroyInstance()
     {
@@ -30,6 +32,7 @@ public unsafe partial class OpenXRAPI
             Api?.DestroyInstance(_instance);
 
         _instanceOwnedByRenderer = false;
+        ClearInstanceExtensionState();
     }
 
     private void CreateInstance()
@@ -56,6 +59,7 @@ public unsafe partial class OpenXRAPI
             _instance = rendererOwnedInstance;
             _instanceOwnedByRenderer = true;
             _apiOwnedByRenderer = true;
+            SetInstanceExtensionState(GetAvailableInstanceExtensions(), rendererOwnedExtensions);
             RecordSmokeInstanceCreated(renderer.ToString(), rendererOwnedExtensions);
             Debug.Vulkan("[OpenXR] Reusing renderer-owned XR_KHR_vulkan_enable2 instance for OpenXR session creation.");
             return;
@@ -104,6 +108,7 @@ public unsafe partial class OpenXRAPI
 
         var createInfo = MakeCreateInfo(appInfo, filtered, enabledLayers, next);
         MakeInstance(createInfo);
+        SetInstanceExtensionState(availableExtensions, filtered);
         RecordSmokeInstanceCreated(renderer.ToString(), filtered);
         Free(createInfo);
     }
@@ -241,33 +246,39 @@ public unsafe partial class OpenXRAPI
         return set;
     }
 
-    private bool IsInstanceExtensionAvailable(string extensionName)
+    private void SetInstanceExtensionState(IEnumerable<string> availableExtensions, IEnumerable<string> enabledExtensions)
     {
-        uint count = 0;
-        Api!.EnumerateInstanceExtensionProperties((byte*)null, 0, ref count, null);
-        if (count == 0)
-            return false;
+        _availableInstanceExtensions.Clear();
+        foreach (string extension in availableExtensions)
+            if (!string.IsNullOrWhiteSpace(extension))
+                _availableInstanceExtensions.Add(extension);
 
-        var props = new ExtensionProperties[count];
-        for (int i = 0; i < props.Length; i++)
-            props[i].Type = StructureType.ExtensionProperties;
+        _enabledInstanceExtensions.Clear();
+        foreach (string extension in enabledExtensions)
+            if (!string.IsNullOrWhiteSpace(extension))
+                _enabledInstanceExtensions.Add(extension);
 
-        fixed (ExtensionProperties* propsPtr = props)
-        {
-            Api!.EnumerateInstanceExtensionProperties((byte*)null, count, ref count, propsPtr);
-        }
+        ResetOpenXrOptionalExtensionCaches();
+    }
 
-        for (int i = 0; i < count; i++)
-        {
-            fixed (byte* namePtr = props[i].ExtensionName)
-            {
-                var name = Marshal.PtrToStringAnsi((nint)namePtr);
-                if (string.Equals(name, extensionName, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-        }
+    private void ClearInstanceExtensionState()
+    {
+        _availableInstanceExtensions.Clear();
+        _enabledInstanceExtensions.Clear();
+        ResetOpenXrOptionalExtensionCaches();
+    }
 
-        return false;
+    private bool IsInstanceExtensionEnabled(string extensionName)
+        => _enabledInstanceExtensions.Contains(extensionName);
+
+    private string DescribeInstanceExtensionState(string extensionName)
+    {
+        if (_enabledInstanceExtensions.Contains(extensionName))
+            return "enabled";
+
+        return _availableInstanceExtensions.Contains(extensionName)
+            ? "runtime advertised the extension, but this OpenXR instance did not enable it"
+            : "runtime did not advertise the extension";
     }
 
     private void MakeInstance(InstanceCreateInfo createInfo)
@@ -398,7 +409,6 @@ public unsafe partial class OpenXRAPI
         {
             createInfo.EnabledApiLayerCount = 0;
             createInfo.EnabledApiLayerNames = null;
-            createInfo.Next = null;
         }
         return createInfo;
     }

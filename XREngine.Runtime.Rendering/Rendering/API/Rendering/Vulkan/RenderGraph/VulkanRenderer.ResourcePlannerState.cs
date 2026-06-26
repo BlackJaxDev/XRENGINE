@@ -233,11 +233,241 @@ public unsafe partial class VulkanRenderer
         return plannerContext;
     }
 
+    private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(FrameOp[] ops)
+    {
+        _frameOpResourcePlannerSwitchingActive = false;
+        _frameOpResourcePlannerRecordingScopeActive = false;
+        _hasActiveFrameOpResourcePlannerStateKey = false;
+        _activeFrameOpResourcePlannerStateKeys.Clear();
+
+        if (ops.Length == 0)
+            return ResourcePlannerRevision;
+
+        List<FrameOpPlannerStateKey> keys = _frameOpPlannerStateKeyScratch;
+        keys.Clear();
+        CollectFrameOpPlannerStateKeys(ops, keys);
+        if (keys.Count <= 1)
+            return ResourcePlannerRevision;
+
+        ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
+        try
+        {
+            for (int i = 0; i < keys.Count; i++)
+            {
+                FrameOpPlannerStateKey key = keys[i];
+                ResourcePlannerRuntimeState state = _frameOpResourcePlannerStates.TryGetValue(key, out ResourcePlannerRuntimeState existingState)
+                    ? existingState
+                    : ResourcePlannerRuntimeState.CreateEmpty();
+
+                RestoreResourcePlannerRuntimeState(state);
+                _ = PrepareResourcePlannerForFrameOps(ops, key);
+                _frameOpResourcePlannerStates[key] = CaptureResourcePlannerRuntimeState();
+                _activeFrameOpResourcePlannerStateKeys.Add(key);
+            }
+        }
+        finally
+        {
+            RestoreResourcePlannerRuntimeState(previousState);
+        }
+
+        keys.Clear();
+        _frameOpResourcePlannerSwitchingActive = _activeFrameOpResourcePlannerStateKeys.Count > 1;
+        if (!_frameOpResourcePlannerSwitchingActive)
+            return ResourcePlannerRevision;
+
+        ulong signature = ComputeActiveFrameOpResourcePlannerStatesSignature();
+        Debug.VulkanEvery(
+            $"Vulkan.ResourcePlanner.FrameOpContextStates.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[VulkanResourcePlanner] Prepared {0} frame-op context resource planner states. Signature=0x{1:X16}.",
+            _activeFrameOpResourcePlannerStateKeys.Count,
+            signature);
+        return signature;
+    }
+
+    private FrameOpContext PrepareResourcePlannerForFrameOps(FrameOp[] ops, in FrameOpPlannerStateKey key)
+    {
+        HashSet<int>? activePassIndices = BuildActiveFrameOpPassSet(ops, key);
+        HashSet<string>? activeFrameBufferNames = BuildActiveFrameOpFrameBufferSet(ops, key);
+        int activeResourceSetSignature = ComputeActiveFrameBufferSetSignature(activeFrameBufferNames);
+        FrameOpContext plannerContext = SelectPrimaryPlannerContext(ops, key);
+        plannerContext = RefreshPlannerExtentsFromLiveContext(plannerContext, ops, filterByPlannerKey: true, plannerKey: key);
+        UpdateResourcePlannerFromContext(
+            plannerContext,
+            activePassIndices,
+            activeFrameBufferNames,
+            activeResourceSetSignature);
+        return plannerContext;
+    }
+
+    private void CollectFrameOpPlannerStateKeys(FrameOp[] ops, List<FrameOpPlannerStateKey> keys)
+    {
+        for (int i = 0; i < ops.Length; i++)
+        {
+            FrameOpContext context = ops[i].Context;
+            if (!FrameOpContextHasPlannerResources(context))
+                continue;
+
+            FrameOpPlannerStateKey key = BuildFrameOpPlannerStateKey(context);
+            if (!keys.Contains(key))
+                keys.Add(key);
+        }
+
+        keys.Sort(static (left, right) =>
+        {
+            int compare = left.PipelineIdentity.CompareTo(right.PipelineIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = left.ViewportIdentity.CompareTo(right.ViewportIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = left.ResourceRegistryIdentity.CompareTo(right.ResourceRegistryIdentity);
+            if (compare != 0)
+                return compare;
+
+            return left.PassMetadataIdentity.CompareTo(right.PassMetadataIdentity);
+        });
+    }
+
+    private ulong ComputeActiveFrameOpResourcePlannerStatesSignature()
+    {
+        FrameOpSignatureHasher hash = new();
+        List<FrameOpPlannerStateKey> keys = _frameOpPlannerStateKeyScratch;
+        keys.Clear();
+        foreach (FrameOpPlannerStateKey key in _activeFrameOpResourcePlannerStateKeys)
+            keys.Add(key);
+        keys.Sort(static (left, right) =>
+        {
+            int compare = left.PipelineIdentity.CompareTo(right.PipelineIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = left.ViewportIdentity.CompareTo(right.ViewportIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = left.ResourceRegistryIdentity.CompareTo(right.ResourceRegistryIdentity);
+            if (compare != 0)
+                return compare;
+
+            return left.PassMetadataIdentity.CompareTo(right.PassMetadataIdentity);
+        });
+
+        hash.Add(keys.Count);
+
+        for (int i = 0; i < keys.Count; i++)
+        {
+            FrameOpPlannerStateKey key = keys[i];
+            hash.Add(key.PipelineIdentity);
+            hash.Add(key.ViewportIdentity);
+            hash.Add(key.ResourceRegistryIdentity);
+            hash.Add(key.PassMetadataIdentity);
+
+            if (!_frameOpResourcePlannerStates.TryGetValue(key, out ResourcePlannerRuntimeState state))
+            {
+                hash.Add(0);
+                continue;
+            }
+
+            hash.Add(state.ResourcePlannerRevision);
+            hash.Add(state.ResourcePlannerSignature);
+            hash.Add(state.ResourceAllocationSignature);
+        }
+
+        keys.Clear();
+        return hash.ToHash();
+    }
+
+    private FrameOpResourcePlannerRecordingScope EnterFrameOpResourcePlannerRecordingScope()
+        => new(this);
+
+    private bool TryActivateFrameOpResourcePlannerState(in FrameOpContext context)
+    {
+        if (!_frameOpResourcePlannerSwitchingActive ||
+            !FrameOpContextHasPlannerResources(context))
+        {
+            return false;
+        }
+
+        FrameOpPlannerStateKey key = BuildFrameOpPlannerStateKey(context);
+        if (!_activeFrameOpResourcePlannerStateKeys.Contains(key))
+            return false;
+
+        if (_hasActiveFrameOpResourcePlannerStateKey &&
+            key.Equals(_activeFrameOpResourcePlannerStateKey))
+        {
+            return true;
+        }
+
+        SaveActiveFrameOpResourcePlannerState();
+
+        if (!_frameOpResourcePlannerStates.TryGetValue(key, out ResourcePlannerRuntimeState state))
+            return false;
+
+        RestoreResourcePlannerRuntimeState(state);
+        _activeFrameOpResourcePlannerStateKey = key;
+        _hasActiveFrameOpResourcePlannerStateKey = true;
+        return true;
+    }
+
+    private void SaveActiveFrameOpResourcePlannerState()
+    {
+        if (!_frameOpResourcePlannerRecordingScopeActive ||
+            !_hasActiveFrameOpResourcePlannerStateKey)
+        {
+            return;
+        }
+
+        _frameOpResourcePlannerStates[_activeFrameOpResourcePlannerStateKey] = CaptureResourcePlannerRuntimeState();
+    }
+
+    private void DestroyFrameOpResourcePlannerStates()
+    {
+        if (_frameOpResourcePlannerStates.Count == 0)
+            return;
+
+        ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
+        WaitForAllInFlightWork();
+        foreach (KeyValuePair<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> pair in _frameOpResourcePlannerStates)
+        {
+            RestoreResourcePlannerRuntimeState(pair.Value);
+            ReleaseDescriptorReferencesForPhysicalResourceDestruction(
+                $"FrameOpResourcePlannerStateDestroy.pipe{pair.Key.PipelineIdentity}.vp{pair.Key.ViewportIdentity}");
+            DrainAllRetiredDescriptorPools();
+            _resourceAllocator.DestroyPhysicalImages(this);
+            _resourceAllocator.DestroyPhysicalBuffers(this);
+        }
+
+        _frameOpResourcePlannerStates.Clear();
+        _activeFrameOpResourcePlannerStateKeys.Clear();
+        _frameOpResourcePlannerSwitchingActive = false;
+        _frameOpResourcePlannerRecordingScopeActive = false;
+        _hasActiveFrameOpResourcePlannerStateKey = false;
+        RestoreResourcePlannerRuntimeState(previousState);
+    }
+
     private static HashSet<int>? BuildActiveFrameOpPassSet(FrameOp[] ops)
     {
         HashSet<int> passIndices = [];
         foreach (FrameOp op in ops)
         {
+            if (op.PassIndex != int.MinValue)
+                passIndices.Add(op.PassIndex);
+        }
+
+        return passIndices.Count > 0 ? passIndices : null;
+    }
+
+    private static HashSet<int>? BuildActiveFrameOpPassSet(FrameOp[] ops, in FrameOpPlannerStateKey key)
+    {
+        HashSet<int> passIndices = [];
+        foreach (FrameOp op in ops)
+        {
+            if (!FrameOpMatchesPlannerStateKey(op, key))
+                continue;
+
             if (op.PassIndex != int.MinValue)
                 passIndices.Add(op.PassIndex);
         }
@@ -262,6 +492,26 @@ public unsafe partial class VulkanRenderer
         return frameBufferNames.Count > 0 ? frameBufferNames : null;
     }
 
+    private static HashSet<string>? BuildActiveFrameOpFrameBufferSet(FrameOp[] ops, in FrameOpPlannerStateKey key)
+    {
+        HashSet<string> frameBufferNames = new(StringComparer.OrdinalIgnoreCase);
+        foreach (FrameOp op in ops)
+        {
+            if (!FrameOpMatchesPlannerStateKey(op, key))
+                continue;
+
+            AddFrameBufferName(frameBufferNames, op.Target);
+
+            if (op is BlitOp blit)
+            {
+                AddFrameBufferName(frameBufferNames, blit.InFbo);
+                AddFrameBufferName(frameBufferNames, blit.OutFbo);
+            }
+        }
+
+        return frameBufferNames.Count > 0 ? frameBufferNames : null;
+    }
+
     private static void AddFrameBufferName(HashSet<string> frameBufferNames, XRFrameBuffer? frameBuffer)
     {
         string? name = frameBuffer?.Name;
@@ -269,7 +519,32 @@ public unsafe partial class VulkanRenderer
             frameBufferNames.Add(name);
     }
 
+    private static bool FrameOpContextHasPlannerResources(in FrameOpContext context)
+        => context.ResourceRegistry is not null ||
+            context.PassMetadata is { Count: > 0 };
+
+    private static FrameOpPlannerStateKey BuildFrameOpPlannerStateKey(in FrameOpContext context)
+        => new(
+            context.PipelineIdentity,
+            context.ViewportIdentity,
+            context.ResourceRegistry is null ? 0 : RuntimeHelpers.GetHashCode(context.ResourceRegistry),
+            context.PassMetadata is null ? 0 : RuntimeHelpers.GetHashCode(context.PassMetadata));
+
+    private static bool FrameOpMatchesPlannerStateKey(FrameOp op, in FrameOpPlannerStateKey key)
+        => FrameOpContextHasPlannerResources(op.Context) &&
+            BuildFrameOpPlannerStateKey(op.Context).Equals(key);
+
     private FrameOpContext RefreshPlannerExtentsFromLiveContext(FrameOpContext context, FrameOp[] ops)
+    {
+        FrameOpPlannerStateKey ignoredKey = default;
+        return RefreshPlannerExtentsFromLiveContext(context, ops, filterByPlannerKey: false, ignoredKey);
+    }
+
+    private FrameOpContext RefreshPlannerExtentsFromLiveContext(
+        FrameOpContext context,
+        FrameOp[] ops,
+        bool filterByPlannerKey,
+        in FrameOpPlannerStateKey plannerKey)
     {
         if (XRWindow.IsInteractiveResizeInProgress)
             return ApplyInteractiveResizePlannerFreeze(context);
@@ -286,6 +561,9 @@ public unsafe partial class VulkanRenderer
         {
             foreach (FrameOp op in ops)
             {
+                if (filterByPlannerKey && !FrameOpMatchesPlannerStateKey(op, plannerKey))
+                    continue;
+
                 if (VulkanRenderGraphCompiler.OpTargetsSwapchain(op))
                 {
                     refreshExtents = true;
@@ -373,6 +651,58 @@ public unsafe partial class VulkanRenderer
         }
 
         return best;
+    }
+
+    private static FrameOpContext SelectPrimaryPlannerContext(FrameOp[] ops, in FrameOpPlannerStateKey key)
+    {
+        FrameOpContext best = default;
+        bool hasBest = false;
+        int bestScore = int.MinValue;
+
+        foreach (FrameOp op in ops)
+        {
+            if (!FrameOpMatchesPlannerStateKey(op, key))
+                continue;
+
+            FrameOpContext context = op.Context;
+            if (!hasBest)
+            {
+                best = context;
+                hasBest = true;
+            }
+
+            if (context.ResourceRegistry is null)
+                continue;
+
+            int score = 1;
+            score += Math.Min(context.ResourceRegistry.TextureRecords.Count, 128);
+            score += Math.Min(context.ResourceRegistry.FrameBufferRecords.Count, 128) * 2;
+            score += (context.PassMetadata?.Count ?? 0) * 4;
+            if (VulkanRenderGraphCompiler.OpTargetsSwapchain(op))
+                score += 16;
+
+            foreach (XRFrameBuffer target in EnumerateFrameOpFrameBuffers(op))
+            {
+                if (!string.IsNullOrWhiteSpace(target.Name) &&
+                    context.ResourceRegistry.FrameBufferRecords.ContainsKey(target.Name))
+                {
+                    score += 256;
+                }
+                else
+                {
+                    score += 32;
+                }
+            }
+
+            if (score > bestScore ||
+                (score == bestScore && ComparePlannerContextTieBreak(context, best) < 0))
+            {
+                bestScore = score;
+                best = context;
+            }
+        }
+
+        return hasBest ? best : SelectPrimaryPlannerContext(ops);
     }
 
     private static int ComparePlannerContextTieBreak(in FrameOpContext left, in FrameOpContext right)

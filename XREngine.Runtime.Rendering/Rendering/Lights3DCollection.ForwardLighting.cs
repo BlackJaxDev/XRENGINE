@@ -42,6 +42,10 @@ namespace XREngine.Scene
         private XRDataBuffer? _emptyForwardPlusLocalLightsBuffer;
         private XRDataBuffer? _emptyForwardPlusVisibleIndicesBuffer;
 
+        [ThreadStatic] private static DirectionalLightComponent[]? t_forwardDirectionalLightSnapshot;
+        [ThreadStatic] private static PointLightComponent[]? t_forwardPointLightSnapshot;
+        [ThreadStatic] private static SpotLightComponent[]? t_forwardSpotLightSnapshot;
+
         // Frame tokens used to gate redundant per-material-program re-uploads.
         // SetForwardLightingUniforms runs once per material program per pass, but
         // the underlying buffer contents only need to be uploaded once per frame.
@@ -79,6 +83,61 @@ namespace XREngine.Scene
             for (int i = 0; i < count; i++)
                 names[i] = $"{prefix}[{i}]";
             return names;
+        }
+
+        private static T[] EnsureForwardLightSnapshotCapacity<T>(ref T[]? snapshot, int requiredCount) where T : class
+        {
+            int requiredCapacity = Math.Max(requiredCount, 1);
+            if (snapshot is not null && snapshot.Length >= requiredCapacity)
+                return snapshot;
+
+            int newCapacity = snapshot is null ? 4 : snapshot.Length;
+            while (newCapacity < requiredCapacity)
+                newCapacity *= 2;
+
+            snapshot = new T[newCapacity];
+            return snapshot;
+        }
+
+        private void CollectForwardLightSnapshot(
+            out DirectionalLightComponent[] directionalLights,
+            out int directionalLightCount,
+            out PointLightComponent[] pointLights,
+            out int pointLightCount,
+            out SpotLightComponent[] spotLights,
+            out int spotLightCount)
+        {
+            int sourceDirectionalCount = Math.Min(DynamicDirectionalLights.Count, MaxForwardDirectionalLights);
+            int sourcePointCount = DynamicPointLights.Count;
+            int sourceSpotCount = DynamicSpotLights.Count;
+
+            directionalLights = EnsureForwardLightSnapshotCapacity(ref t_forwardDirectionalLightSnapshot, MaxForwardDirectionalLights);
+            pointLights = EnsureForwardLightSnapshotCapacity(ref t_forwardPointLightSnapshot, sourcePointCount);
+            spotLights = EnsureForwardLightSnapshotCapacity(ref t_forwardSpotLightSnapshot, sourceSpotCount);
+
+            directionalLightCount = 0;
+            for (int i = 0; i < sourceDirectionalCount && directionalLightCount < MaxForwardDirectionalLights; i++)
+            {
+                DirectionalLightComponent? light = DynamicDirectionalLights[i];
+                if (light is not null)
+                    directionalLights[directionalLightCount++] = light;
+            }
+
+            pointLightCount = 0;
+            for (int i = 0; i < sourcePointCount; i++)
+            {
+                PointLightComponent? light = DynamicPointLights[i];
+                if (light is not null)
+                    pointLights[pointLightCount++] = light;
+            }
+
+            spotLightCount = 0;
+            for (int i = 0; i < sourceSpotCount; i++)
+            {
+                SpotLightComponent? light = DynamicSpotLights[i];
+                if (light is not null)
+                    spotLights[spotLightCount++] = light;
+            }
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -346,7 +405,13 @@ namespace XREngine.Scene
             program.Uniform("ForwardPlusEyeCount", RuntimeEngine.Rendering.State.IsStereoPass ? 2 : 1);
         }
 
-        private void UploadForwardLightBuffers(int directionalLightCount, int pointLightCount, int spotLightCount)
+        private void UploadForwardLightBuffers(
+            DirectionalLightComponent[] directionalLights,
+            int directionalLightCount,
+            PointLightComponent[] pointLights,
+            int pointLightCount,
+            SpotLightComponent[] spotLights,
+            int spotLightCount)
         {
             EnsureForwardLightBuffers(pointLightCount, spotLightCount);
 
@@ -360,7 +425,7 @@ namespace XREngine.Scene
             for (int i = 0; i < MaxForwardDirectionalLights; i++)
             {
                 ForwardDirectionalLightGpu light = i < directionalLightCount
-                    ? CreateForwardDirectionalLightGpu(DynamicDirectionalLights[i])
+                    ? CreateForwardDirectionalLightGpu(directionalLights[i])
                     : default;
                 _forwardDirectionalLightsBuffer!.Set((uint)i, light);
             }
@@ -369,14 +434,14 @@ namespace XREngine.Scene
                 _forwardPointLightsBuffer!.Set(0, default(ForwardPointLightGpu));
             for (int i = 0; i < pointLightCount; i++)
             {
-                _forwardPointLightsBuffer!.Set((uint)i, CreateForwardPointLightGpu(DynamicPointLights[i]));
+                _forwardPointLightsBuffer!.Set((uint)i, CreateForwardPointLightGpu(pointLights[i]));
             }
 
             if (spotLightCount == 0)
                 _forwardSpotLightsBuffer!.Set(0, default(ForwardSpotLightGpu));
             for (int i = 0; i < spotLightCount; i++)
             {
-                _forwardSpotLightsBuffer!.Set((uint)i, CreateForwardSpotLightGpu(DynamicSpotLights[i]));
+                _forwardSpotLightsBuffer!.Set((uint)i, CreateForwardSpotLightGpu(spotLights[i]));
             }
 
             _forwardDirectionalLightsBuffer!.PushSubData();
@@ -722,14 +787,24 @@ namespace XREngine.Scene
             program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), (float)area.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
 
-            int directionalLightCount = Math.Min(DynamicDirectionalLights.Count, MaxForwardDirectionalLights);
-            int pointLightCount = DynamicPointLights.Count;
-            int spotLightCount = DynamicSpotLights.Count;
+            CollectForwardLightSnapshot(
+                out DirectionalLightComponent[] directionalLights,
+                out int directionalLightCount,
+                out PointLightComponent[] pointLights,
+                out int pointLightCount,
+                out SpotLightComponent[] spotLights,
+                out int spotLightCount);
 
             program.Uniform("DirLightCount", directionalLightCount);
             program.Uniform("PointLightCount", pointLightCount);
             program.Uniform("SpotLightCount", spotLightCount);
-            UploadForwardLightBuffers(directionalLightCount, pointLightCount, spotLightCount);
+            UploadForwardLightBuffers(
+                directionalLights,
+                directionalLightCount,
+                pointLights,
+                pointLightCount,
+                spotLights,
+                spotLightCount);
             BindForwardLightBuffers(program);
 
             // Keep bindings in sync with the compute shader: 20 (local lights), 21 (visible indices).
@@ -805,7 +880,7 @@ namespace XREngine.Scene
             Array.Clear(_directionalShadowMomentFilterParams);
             if (directionalLightCount > 0)
             {
-                var firstDirLight = DynamicDirectionalLights[0];
+                var firstDirLight = directionalLights[0];
                 ShadowMapFormatSelection firstShadowFormat = firstDirLight.ResolveShadowMapFormat(preferredStorageFormat: null);
                 program.Uniform("ShadowPackedI0", new IVector4(
                     firstDirLight.BlockerSamples,
@@ -961,7 +1036,7 @@ namespace XREngine.Scene
 
                 if (i < directionalLightCount)
                 {
-                    DirectionalLightComponent dirLight = DynamicDirectionalLights[i];
+                    DirectionalLightComponent dirLight = directionalLights[i];
                     ShadowMapFormatSelection dirShadowFormat = dirLight.ResolveShadowMapFormat(preferredStorageFormat: null);
                     bool perLightUseAtlas = dirLight.UsesDirectionalShadowAtlasForCurrentEncoding;
                     useDirectionalShadowAtlas |= perLightUseAtlas;
@@ -1006,7 +1081,7 @@ namespace XREngine.Scene
             EShadowMapEncoding pointAtlasEncoding = EShadowMapEncoding.Depth;
             for (int i = 0; i < pointLightCount; i++)
             {
-                PointLightComponent light = DynamicPointLights[i];
+                PointLightComponent light = pointLights[i];
                 if (!light.UsesPointShadowAtlasForCurrentEncoding)
                     continue;
 
@@ -1024,7 +1099,7 @@ namespace XREngine.Scene
                 _forwardPointShadowMetadataBuffer!.Set(0, default(ForwardPointShadowGpu));
             for (int i = 0; i < pointLightCount; ++i)
             {
-                PointLightComponent light = DynamicPointLights[i];
+                PointLightComponent light = pointLights[i];
                 int shadowSlot = -1;
                 bool useLightPointAtlas = light.UsesPointShadowAtlasForCurrentEncoding;
                 ShadowMapFormatSelection pointShadowFormat = light.ResolveShadowMapFormat(preferredStorageFormat: light.ShadowMapStorageFormat);
@@ -1090,7 +1165,7 @@ namespace XREngine.Scene
             EShadowMapEncoding spotAtlasEncoding = EShadowMapEncoding.Depth;
             for (int i = 0; i < spotLightCount; i++)
             {
-                SpotLightComponent light = DynamicSpotLights[i];
+                SpotLightComponent light = spotLights[i];
                 if (!light.UsesSpotShadowAtlasForCurrentEncoding)
                     continue;
 
@@ -1107,7 +1182,7 @@ namespace XREngine.Scene
             EShadowMapEncoding directionalAtlasEncoding = EShadowMapEncoding.Depth;
             for (int i = 0; i < directionalLightCount; i++)
             {
-                DirectionalLightComponent light = DynamicDirectionalLights[i];
+                DirectionalLightComponent light = directionalLights[i];
                 if (!light.UsesDirectionalShadowAtlasForCurrentEncoding)
                     continue;
 
@@ -1125,7 +1200,7 @@ namespace XREngine.Scene
                 _forwardSpotShadowMetadataBuffer!.Set(0, default(ForwardSpotShadowGpu));
             for (int i = 0; i < spotLightCount; ++i)
             {
-                SpotLightComponent light = DynamicSpotLights[i];
+                SpotLightComponent light = spotLights[i];
                 int shadowSlot = -1;
                 bool useLightSpotAtlas = light.UsesSpotShadowAtlasForCurrentEncoding;
 
@@ -1205,7 +1280,7 @@ namespace XREngine.Scene
             {
                 for (int i = 0; i < directionalLightCount; i++)
                 {
-                    DirectionalLightComponent dirLight = DynamicDirectionalLights[i];
+                    DirectionalLightComponent dirLight = directionalLights[i];
                     if (!dirLight.CastsShadows)
                         continue;
 
@@ -1250,7 +1325,7 @@ namespace XREngine.Scene
             program.Uniform("DirectionalShadowAtlasParams1", _directionalShadowAtlasParams1);
 
             LogForwardDirectionalShadowBinding(
-                directionalLightCount > 0 ? DynamicDirectionalLights[0] : null,
+                directionalLightCount > 0 ? directionalLights[0] : null,
                 useDirectionalShadowAtlas,
                 directionalAtlasSampleable,
                 useCascadedDirectionalShadows,

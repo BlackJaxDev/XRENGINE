@@ -14,7 +14,7 @@ public unsafe partial class VulkanRenderer
 			   _program is not null &&
 			   !_buffersDirty &&
 			   !_descriptorDirty &&
-			   AreCachedBuffersReadyForRendering(out _) &&
+			   AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices()) &&
 			   string.Equals(_lastPrepareResult, "Ready", StringComparison.Ordinal);
 
 		public string LastPrepareDetail => _lastPrepareDetail;
@@ -59,10 +59,10 @@ public unsafe partial class VulkanRenderer
 			if (!EnsureProgram(material))
 				return SetPrepareResult(false, "ProgramsPending", "No compatible Vulkan render program is available yet.", out reason);
 
-			bool skipIndexBuffers = ProgramUsesShaderGeneratedVertices();
-			EnsureBuffers(skipIndexBuffers);
+			bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
+			EnsureBuffers(usesShaderGeneratedVertices);
 
-			if (!AreCachedBuffersReadyForRendering(out string bufferDetail))
+			if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
 				return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
 
 			ApplyScopedProgramBindingsForPreparation(material);
@@ -109,9 +109,10 @@ public unsafe partial class VulkanRenderer
 
 			ActivateCapturedProgram(material, preparedProgram, preparedProgramIdentity);
 			EnsureRuntimeDeformationBuffersCurrent();
-			EnsureBuffers(ProgramUsesShaderGeneratedVertices());
+			bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
+			EnsureBuffers(usesShaderGeneratedVertices);
 
-			if (!AreCachedBuffersReadyForRendering(out string bufferDetail))
+			if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
 				return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
 
 			ApplyScopedProgramBindingsForPreparation(material);
@@ -160,9 +161,10 @@ public unsafe partial class VulkanRenderer
 
 			ActivateCapturedProgram(material, preparedProgram, preparedProgramIdentity);
 			EnsureRuntimeDeformationBuffersCurrent();
-			EnsureBuffers(ProgramUsesShaderGeneratedVertices());
+			bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
+			EnsureBuffers(usesShaderGeneratedVertices);
 
-			if (!AreCachedBuffersReadyForRendering(out string bufferDetail))
+			if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
 				return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
 
 			ApplyScopedProgramBindingsForPreparation(material);
@@ -224,7 +226,7 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			return AreCachedBuffersReadyForRendering(out _);
+			return AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices());
 		}
 
 		private void ApplyScopedProgramBindingsForPreparation(XRMaterial material)
@@ -258,11 +260,14 @@ public unsafe partial class VulkanRenderer
 			   _program.TryGetVertexStageInputCount(out int vertexInputCount) &&
 			   vertexInputCount == 0;
 
-		private bool AreCachedBuffersReadyForRendering(out string detail)
+		private bool AreCachedBuffersReadyForRendering(out string detail, bool skipVertexAttributeBuffers = false)
 		{
 			foreach (var pair in _bufferCache)
 			{
 				VkDataBuffer buffer = pair.Value;
+				if (skipVertexAttributeBuffers && buffer.Data.Target == EBufferTarget.ArrayBuffer)
+					continue;
+
 				if (!buffer.IsReadyForRendering)
 				{
 					detail = $"buffer='{pair.Key}' target={buffer.Data.Target} generated={buffer.IsGenerated} length={buffer.Data.Length} allocated={buffer.AllocatedByteSize}";

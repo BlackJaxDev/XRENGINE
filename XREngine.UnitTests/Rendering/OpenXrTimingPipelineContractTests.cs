@@ -36,7 +36,8 @@ public sealed class OpenXrTimingPipelineContractTests
         environmentVariables.ShouldContain("XRE_OPENXR_VULKAN_SERIAL_EYE_SUBMIT");
         vulkanOpenXr.ShouldContain("OpenXrVulkanPrewarmEyes");
         vulkanOpenXr.ShouldContain("Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanMirrorFbo)");
-        vulkanOpenXr.ShouldContain("\"0\"");
+        vulkanOpenXr.ShouldContain("\"1\"");
+        vulkanOpenXr.ShouldContain("leave it unset for direct swapchain rendering");
         vulkanOpenXr.ShouldContain("ShouldPrewarmVulkanEyeResources");
         vulkanOpenXr.ShouldContain("MarkVulkanEyeResourceWarmupComplete");
         editorProgram.ShouldContain("ApplyOpenXrRenderPacingOverride");
@@ -54,6 +55,10 @@ public sealed class OpenXrTimingPipelineContractTests
         string vulkanOpenXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
         string vulkanRendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         string vulkanCommandBufferState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferState.cs");
+        string vulkanComputeDescriptors = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.ComputeDescriptors.cs");
+        string vulkanDynamicUniformRingBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
+        string vulkanInitialization = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
+        string vulkanSwapchain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
         string unitTestUi = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs");
         string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
         string defaultPipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
@@ -100,12 +105,39 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanRendererOpenXr.ShouldContain("imageIndex: OpenXrExternalSwapchainTargetImageIndex");
         vulkanRendererOpenXr.ShouldContain("frameDataImageIndexOverride: recordImageIndex");
         vulkanRendererOpenXr.ShouldContain("ResetDynamicUniformRingBuffer(recordImageIndex)");
+        vulkanRendererOpenXr.ShouldContain("private void WaitForOpenXrFrameDataSlot");
+        vulkanRendererOpenXr.ShouldContain("ResolveOpenXrFrameDataSlotCount");
+        vulkanRendererOpenXr.ShouldContain("ResolveOpenXrDesktopFrameDataSlotCount");
+        vulkanRendererOpenXr.ShouldContain("desktopFrameDataSlotCount + eyeIndex");
+        vulkanRendererOpenXr.ShouldContain("private void ReserveOpenXrFrameDataSlotsIfRequired");
+        vulkanRendererOpenXr.ShouldContain("RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR");
+        vulkanRendererOpenXr.ShouldContain("private void MarkOpenXrPrimaryCommandBufferVariantsDirty");
+        vulkanRendererOpenXr.ShouldContain("EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);");
+        vulkanRendererOpenXr.ShouldContain("EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);");
+        vulkanRendererOpenXr.ShouldContain("EnsureCommandBufferFrameDataSlotCapacity(frameDataSlotCount);");
+        vulkanInitialization.ShouldContain("ReserveOpenXrFrameDataSlotsIfRequired(\"initialization\");");
+        vulkanSwapchain.ShouldContain("ReserveOpenXrFrameDataSlotsIfRequired(\"swapchain recreation\");");
+        vulkanRendererOpenXr.ShouldContain("WaitForTimelineValue(_graphicsTimelineSemaphore, value);");
+        vulkanRendererOpenXr.ShouldContain("WaitForOpenXrFrameDataSlot(recordImageIndex, \"eye swapchain render\");");
+        vulkanRendererOpenXr.ShouldContain("WaitForOpenXrFrameDataSlot(recordImageIndex, \"eye mirror render\");");
         vulkanRendererOpenXr.ShouldContain("ComputeOpenXrPrimaryCommandBufferGroupHandleSignature");
         vulkanRendererOpenXr.ShouldContain("SubmitAndWaitOpenXrCommandBuffers(");
         vulkanRendererOpenXr.ShouldContain("commandBuffers[0] = firstCommandBuffer");
         vulkanRendererOpenXr.ShouldContain("commandBuffers[1] = secondCommandBuffer");
         vulkanRendererOpenXr.ShouldContain("commandBuffers[2] = publishCommandBuffer");
         vulkanRendererOpenXr.ShouldContain("fenceWaitMs");
+        vulkanCommandBufferState.ShouldContain("private void EnsureCommandBufferFrameDataSlotCapacity");
+        vulkanCommandBufferState.ShouldContain("private bool EnsureDescriptorFrameSlotFrameCountFloor");
+        vulkanCommandBufferState.ShouldContain("Interlocked.CompareExchange(ref _descriptorFrameSlotFrameCountOverride");
+        vulkanCommandBufferState.ShouldContain("MarkCommandBuffersDirty();");
+        vulkanCommandBufferState.ShouldContain("MarkOpenXrPrimaryCommandBufferVariantsDirty();");
+        vulkanCommandBufferState.ShouldContain("Array.Resize(ref _computeTransientResources, frameDataSlotCount);");
+        vulkanCommandBufferState.ShouldContain("Array.Resize(ref _deferredSecondaryCommandBuffers, frameDataSlotCount);");
+        vulkanCommandBufferState.ShouldContain("EnsureDynamicUniformRingBufferCapacity(frameDataSlotCount);");
+        vulkanComputeDescriptors.ShouldContain("private void EnsureComputeDescriptorCacheCapacity");
+        vulkanComputeDescriptors.ShouldContain("Array.Resize(ref _computeDescriptorCaches, imageCount);");
+        vulkanDynamicUniformRingBuffer.ShouldContain("private void EnsureDynamicUniformRingBufferCapacity");
+        vulkanDynamicUniformRingBuffer.ShouldContain("Array.Resize(ref _dynamicUniformRingBuffers, count);");
 
         defaultPipeline.ShouldContain("State.WindowViewport is not null\n            && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null");
         defaultPipeline2.ShouldContain("State.WindowViewport is not null\n            && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null");
@@ -114,6 +146,27 @@ public sealed class OpenXrTimingPipelineContractTests
         unitTestUi.ShouldContain("Engine.VRState.IsOpenXRActive");
         unitTestUi.ShouldContain("RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan");
         unitTestUi.ShouldContain("target.FlipVerticalUVCoord = flipVerticalUVCoord;");
+
+        string directEyeRecord = SliceMethod(
+            vulkanRendererOpenXr,
+            "private bool TryRecordOpenXrEyeSwapchainCommandBuffer",
+            "private void EnsureOpenXrSingleSwapchainSlotCapacity");
+        directEyeRecord.IndexOf("WaitForOpenXrFrameDataSlot(recordImageIndex, \"eye swapchain render\");", StringComparison.Ordinal)
+            .ShouldBeLessThan(directEyeRecord.IndexOf("ResetDynamicUniformRingBuffer(recordImageIndex);", StringComparison.Ordinal));
+
+        string mirrorEyeRecord = SliceMethod(
+            vulkanRendererOpenXr,
+            "private bool TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer",
+            "private bool TryReuseOpenXrMirrorPrimaryCommandBuffer");
+        mirrorEyeRecord.IndexOf("WaitForOpenXrFrameDataSlot(recordImageIndex, \"eye mirror render\");", StringComparison.Ordinal)
+            .ShouldBeLessThan(mirrorEyeRecord.IndexOf("request.EmitFrameOps();", StringComparison.Ordinal));
+
+        string mirrorPrimaryRecord = SliceMethod(
+            vulkanRendererOpenXr,
+            "private CommandBuffer RecordOpenXrMirrorPrimaryCommandBuffer",
+            "private static int ResolveOpenXrFrameDataSlotCount");
+        mirrorPrimaryRecord.ShouldContain("OpenXrExternalSwapchainTargetImageIndex");
+        mirrorPrimaryRecord.ShouldContain("frameDataImageIndexOverride: recordImageIndex");
     }
 
     [Test]

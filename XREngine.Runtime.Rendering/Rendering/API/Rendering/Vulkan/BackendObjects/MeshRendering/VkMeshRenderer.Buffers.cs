@@ -233,7 +233,7 @@ public unsafe partial class VulkanRenderer
 			}
 
 			bool needIndexRebuild = _indexBuffersSkippedForShaderGeneratedVertices && !skipIndexBuffers;
-			if (!_buffersDirty && !needIndexRebuild && AreCachedBuffersReadyForRendering(out _))
+			if (!_buffersDirty && !needIndexRebuild && AreCachedBuffersReadyForRendering(out _, skipIndexBuffers))
 				return;
 
 			if (!_buffersDirty)

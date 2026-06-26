@@ -152,7 +152,11 @@ namespace XREngine.Rendering.Vulkan
                         AllowSynchronousResourceUploads);
                 }
 
-                plannerRevision = ResourcePlannerRevision;
+                plannerRevision = hasStaticFrameOps
+                    ? PrepareFrameOpResourcePlannerStatesForFrameOps(ops)
+                    : dynamicUiBatchTextOps.Length > 0
+                        ? PrepareFrameOpResourcePlannerStatesForFrameOps(dynamicUiBatchTextOps)
+                        : ResourcePlannerRevision;
             }
 
             if (!hasStaticFrameOps &&
@@ -641,6 +645,9 @@ namespace XREngine.Rendering.Vulkan
             dynamicUiBatchTextOverlayOpCount = 0;
             dynamicUiBatchTextOverlayVariant = null;
             swapchainLayoutAfterCommandBuffer = ImageLayout.PresentSrcKhr;
+            if (_frameOpResourcePlannerSwitchingActive)
+                return false;
+
             if (!CommandChainsEnabled ||
                 _commandBufferVariants is null ||
                 imageIndex >= _commandBufferVariants.Length)
@@ -693,7 +700,7 @@ namespace XREngine.Rendering.Vulkan
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.FastReuse.RefreshFrameData"))
                 {
                     refreshedReusableFrameData = ops.Length == 0 ||
-                        TryRefreshReusableCommandBufferFrameData(imageIndex, ops, refreshMaterialUniforms: false);
+                        TryRefreshReusableCommandBufferFrameData(imageIndex, ops);
                     if (refreshedReusableFrameData && dynamicUiBatchTextOps.Length > 0)
                         refreshedReusableFrameData = TryRefreshReusableCommandBufferFrameData(imageIndex, dynamicUiBatchTextOps);
                 }
@@ -1346,6 +1353,12 @@ namespace XREngine.Rendering.Vulkan
                 if (commandChainSchedule is not null && CommandChainValidationEnabled)
                     ValidatePrimaryCommandChainSchedule(commandChainSchedule, ops, dynamicUiBatchTextOpCount);
             }
+
+            initialContext = ops.Length > 0
+                ? ops[0].Context
+                : initialContext;
+            using FrameOpResourcePlannerRecordingScope frameOpResourcePlannerRecordingScope = EnterFrameOpResourcePlannerRecordingScope();
+            _ = TryActivateFrameOpResourcePlannerState(initialContext);
 
             // Ensure swapchain resources are transitioned appropriately before any rendering.
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.FrameStartBarriers"))
@@ -3596,11 +3609,12 @@ namespace XREngine.Rendering.Vulkan
                             hasActiveContext = true;
                             ApplyPipelineOverride(activeContext);
 
-                            // The physical resource plan is selected before command-buffer
-                            // recording starts. Do not rebuild it mid-recording: changing
-                            // VkImage handles after framebuffer attachment views/descriptors
-                            // have been resolved is a resize-time crash amplifier.
-                            if (activeContext.PipelineInstance is not null && !hasPlannerContext)
+                            if (TryActivateFrameOpResourcePlannerState(activeContext))
+                            {
+                                plannerContext = activeContext;
+                                hasPlannerContext = true;
+                            }
+                            else if (activeContext.PipelineInstance is not null && !hasPlannerContext)
                             {
                                 plannerContext = activeContext;
                                 hasPlannerContext = true;

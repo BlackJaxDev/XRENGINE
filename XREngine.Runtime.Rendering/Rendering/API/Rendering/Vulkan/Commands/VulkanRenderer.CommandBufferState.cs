@@ -101,6 +101,26 @@ namespace XREngine.Rendering.Vulkan
                 return Math.Max(swapChainImages?.Length ?? 0, MAX_FRAMES_IN_FLIGHT);
             }
         }
+
+        private bool EnsureDescriptorFrameSlotFrameCountFloor(int frameSlotCount)
+        {
+            if (frameSlotCount <= 0)
+                return false;
+
+            while (true)
+            {
+                int current = Volatile.Read(ref _descriptorFrameSlotFrameCountOverride);
+                if (current >= frameSlotCount)
+                    return false;
+
+                if (Interlocked.CompareExchange(ref _descriptorFrameSlotFrameCountOverride, frameSlotCount, current) == current)
+                {
+                    MarkCommandBuffersDirty();
+                    MarkOpenXrPrimaryCommandBufferVariantsDirty();
+                    return true;
+                }
+            }
+        }
         private int _secondaryBucketByStartCapacityHint = 1;
         private int _recordSwapchainWriterCapacityHint = 1;
         private int _recordPipelineNameCapacityHint = 1;
@@ -688,6 +708,27 @@ namespace XREngine.Rendering.Vulkan
                 RemoveCommandBufferBindState(commandBuffer);
 
             _imguiOverlayCommandBuffers = null;
+        }
+
+        private void EnsureCommandBufferFrameDataSlotCapacity(int frameDataSlotCount)
+        {
+            if (frameDataSlotCount <= 0)
+                return;
+
+            if (_computeTransientResources is not null &&
+                _computeTransientResources.Length < frameDataSlotCount)
+            {
+                Array.Resize(ref _computeTransientResources, frameDataSlotCount);
+            }
+
+            if (_deferredSecondaryCommandBuffers is not null &&
+                _deferredSecondaryCommandBuffers.Length < frameDataSlotCount)
+            {
+                Array.Resize(ref _deferredSecondaryCommandBuffers, frameDataSlotCount);
+            }
+
+            EnsureComputeDescriptorCacheCapacity(frameDataSlotCount);
+            EnsureDynamicUniformRingBufferCapacity(frameDataSlotCount);
         }
 
         private void ReleaseDeferredSecondaryCommandBuffers(uint imageIndex)

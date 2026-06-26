@@ -21,7 +21,7 @@ public unsafe partial class VulkanRenderer
         {
             api = _openXrVulkanEnable2Context.Api;
             xrInstance = _openXrVulkanEnable2Context.XrInstance;
-            enabledExtensions = OpenXrVulkanEnable2BootstrapContext.EnabledExtensions;
+            enabledExtensions = _openXrVulkanEnable2Context.EnabledExtensions;
             return xrInstance.Handle != 0;
         }
 

@@ -275,6 +275,8 @@ This is not needed for Vulkan, which can create sessions from any thread since d
 
 The Vulkan path is simpler because all handles (`VkInstance`, `VkPhysicalDevice`, `VkDevice`) are plain integers that don't require thread-local context.
 
+Vulkan OpenXR renders directly to the runtime-owned eye swapchain by default. This keeps the normal viewport render pipeline active, including deferred G-buffer lighting and post-processing. Set `XRE_OPENXR_VULKAN_MIRROR_FBO=1` only for compatibility debugging; that path first renders each eye through an offscreen FBO command chain, so it does not match the full deferred viewport lighting path.
+
 ---
 
 ## Swapchain Creation

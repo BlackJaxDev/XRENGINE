@@ -23,9 +23,9 @@ internal sealed class OpenXrGraphicsSessionException(Result result, string messa
 public unsafe partial class OpenXRAPI
 {
     private static bool OpenXrVulkanMirrorFbo =>
-        !string.Equals(
+        string.Equals(
             Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanMirrorFbo),
-            "0",
+            "1",
             StringComparison.Ordinal);
 
     private static bool OpenXrVulkanPrewarmEyes =>
@@ -70,6 +70,15 @@ public unsafe partial class OpenXRAPI
 
         if (Window.Renderer is not VulkanRenderer renderer)
             throw new Exception("Renderer is not a VulkanRenderer.");
+
+        if (OpenXrVulkanMirrorFbo)
+        {
+            Debug.RenderingWarningEvery(
+                "OpenXR.Vulkan.MirrorFboCompatibilityPath",
+                TimeSpan.FromSeconds(30),
+                "[OpenXR] Vulkan mirror-FBO compatibility path is enabled. Eye rendering will use the offscreen FBO command chain, which does not match the full deferred viewport lighting path. Set {0}=0 or leave it unset for direct swapchain rendering.",
+                XREngineEnvironmentVariables.OpenXrVulkanMirrorFbo);
+        }
 
         KhrVulkanEnable? vulkanExtension = null;
         string? vulkanLoadError = null;

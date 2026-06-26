@@ -145,6 +145,22 @@ public unsafe partial class VulkanRenderer
         Debug.Vulkan($"[Vulkan] Dynamic uniform ring buffers initialized: {count} x {DynamicUniformRingBufferCapacity / 1024} KB, alignment={_dynamicUniformRingBuffers[0]?.Alignment}");
     }
 
+    private void EnsureDynamicUniformRingBufferCapacity(int count)
+    {
+        if (!RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.DynamicUniformBufferEnabled ||
+            count <= _dynamicUniformRingBuffers.Length)
+        {
+            return;
+        }
+
+        int oldLength = _dynamicUniformRingBuffers.Length;
+        Array.Resize(ref _dynamicUniformRingBuffers, count);
+        for (int i = oldLength; i < _dynamicUniformRingBuffers.Length; i++)
+            _dynamicUniformRingBuffers[i] = new VulkanDynamicUniformRingBuffer(this, DynamicUniformRingBufferCapacity);
+
+        Debug.Vulkan($"[Vulkan] Dynamic uniform ring buffers expanded: {oldLength}->{count} slots.");
+    }
+
     private void DestroyDynamicUniformRingBuffers()
     {
         for (int i = 0; i < _dynamicUniformRingBuffers.Length; i++)
