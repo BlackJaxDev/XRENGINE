@@ -43,7 +43,7 @@ internal sealed class RuntimeRenderSettings
     private float _openXrCollectVisibleFrustumPaddingDegrees = RuntimeRenderingHostServiceDefaults.OpenXrCollectVisibleFrustumPaddingDegrees;
     private OpenXRAPI.OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
     private OpenXRAPI.OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
-    private OpenXRAPI.OpenXrRenderPacingMode _openXrRenderPacingMode = OpenXRAPI.OpenXrRenderPacingMode.PostRenderCallback;
+    private OpenXRAPI.OpenXrRenderPacingMode _openXrRenderPacingMode = RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
 
     private bool _allowBinaryProgramCaching = RuntimeRenderingHostServiceDefaults.AllowBinaryProgramCaching;
     public bool AllowBinaryProgramCaching

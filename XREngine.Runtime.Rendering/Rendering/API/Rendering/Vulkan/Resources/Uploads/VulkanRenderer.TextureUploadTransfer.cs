@@ -45,6 +45,12 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        if (!upload.TryValidateCopyRegions(out string? validationFailure))
+        {
+            failureReason = validationFailure;
+            return false;
+        }
+
         CommandPool pool = GetThreadTransferCommandPool();
         CommandBuffer commandBuffer = default;
         Fence fence = default;

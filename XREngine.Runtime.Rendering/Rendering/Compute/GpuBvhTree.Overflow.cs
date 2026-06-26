@@ -65,6 +65,7 @@ public sealed partial class GpuBvhTree
         };
         _overflowFlagBuffer.SetBlockIndex(Bindings.OverflowFlag);
         _overflowFlagBuffer.SetDataRaw(new uint[] { 0u }, 1);
+        _overflowFlagBuffer.Generate();
         _overflowFlagBuffer.PushSubData();
     }
 

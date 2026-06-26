@@ -28,6 +28,8 @@ namespace XREngine.Rendering.Commands
         #region Fields & Properties
 
         internal static Action? ResetCountersHook { get; set; }
+        private static bool VulkanCounterDiagnosticsEnabled =>
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanCounterDiagnostics), "1", StringComparison.OrdinalIgnoreCase);
         private int _resolveMaterialLogBudget = 16;
         private readonly HashSet<uint> _lastMaterialTableIds = [];
         private int _materialResidencyLogBudget = 12;
@@ -100,6 +102,7 @@ namespace XREngine.Rendering.Commands
 
             try
             {
+            using var renderGraphPassScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(RenderPass);
             _gpuBatchingPreparedThisFrame = false;
             _zeroReadbackMaterialScatterPreparedThisFrame = false;
             _zeroReadbackActiveBucketListPreparedThisFrame = false;
@@ -113,6 +116,8 @@ namespace XREngine.Rendering.Commands
                 resetStopwatch.Elapsed);
 
             Cull(scene, camera);
+            LogVulkanCounterDiagnostics("after-cull");
+            LogVulkanCullInputDiagnostics(scene, "after-cull");
             SelectVisibleCommandLods(scene, camera);
             ExpandVisibleMeshlets(scene);
             ClassifyTransparencyDomains(scene);
@@ -271,31 +276,41 @@ namespace XREngine.Rendering.Commands
         {
             ResetVisibleCounters();
 
-            if (_resetCountersComputeShader is null ||
-                _culledCountBuffer is null ||
+            if (_culledCountBuffer is null ||
                 _drawCountBuffer is null ||
-                _cullCountScratchBuffer is null ||
+                _cullCountScratchBuffer is null)
+            {
+                Dbg($"Reset counters abort - missing base buffers: {DescribeMissingResetCounterBuffers(baseOnly: true)}", "Lifecycle");
+                return;
+            }
+
+            if (_resetCountersComputeShader is null ||
+                _cullingOverflowFlagBuffer is null ||
+                _indirectOverflowFlagBuffer is null ||
+                _truncationFlagBuffer is null ||
+                _statsBuffer is null ||
+                _gpuBatchCountBuffer is null ||
                 _visibleMeshletTaskCountBuffer is null ||
                 _meshletDispatchIndirectBuffer is null ||
                 _meshletDispatchCountBuffer is null ||
                 _meshletExpansionOverflowFlagBuffer is null)
+            {
+                Dbg($"Reset counters fallback - full shader contract unavailable: {DescribeMissingResetCounterBuffers(baseOnly: false)}", "Lifecycle");
+                ResetBaseCountersOnCpu();
+                LogVulkanCounterDiagnostics("after-reset-cpu-fallback");
                 return;
+            }
 
             Dbg("Reset counters dispatch", "Lifecycle");
 
             BindStorageBuffer(_resetCountersComputeShader, _culledCountBuffer, 0);
             BindStorageBuffer(_resetCountersComputeShader, _drawCountBuffer, 1);
-            if (_cullingOverflowFlagBuffer is not null)
-                _resetCountersComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 2);
-            if (_indirectOverflowFlagBuffer is not null)
-                _resetCountersComputeShader.BindBuffer(_indirectOverflowFlagBuffer, 3);
-            if (_truncationFlagBuffer is not null)
-                _resetCountersComputeShader.BindBuffer(_truncationFlagBuffer, 4);
+            _resetCountersComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 2);
+            _resetCountersComputeShader.BindBuffer(_indirectOverflowFlagBuffer, 3);
+            _resetCountersComputeShader.BindBuffer(_truncationFlagBuffer, 4);
             BindStorageBuffer(_resetCountersComputeShader, _cullCountScratchBuffer, 6);
-            if (_statsBuffer is not null)
-                _resetCountersComputeShader.BindBuffer(_statsBuffer, 8);
-            if (_gpuBatchCountBuffer is not null)
-                _resetCountersComputeShader.BindBuffer(_gpuBatchCountBuffer, 9);
+            _resetCountersComputeShader.BindBuffer(_statsBuffer, 8);
+            _resetCountersComputeShader.BindBuffer(_gpuBatchCountBuffer, 9);
             BindStorageBuffer(_resetCountersComputeShader, _visibleMeshletTaskCountBuffer, 10);
             _resetCountersComputeShader.BindBuffer(_meshletDispatchIndirectBuffer, 11);
             _resetCountersComputeShader.BindBuffer(_meshletExpansionOverflowFlagBuffer, 12);
@@ -307,6 +322,71 @@ namespace XREngine.Rendering.Commands
 
             if (_occlusionOverflowFlagBuffer is not null)
                 WriteUInt(_occlusionOverflowFlagBuffer, 0u);
+
+            LogVulkanCounterDiagnostics("after-reset");
+        }
+
+        private string DescribeMissingResetCounterBuffers(bool baseOnly)
+        {
+            StringBuilder builder = new();
+            AppendMissing(builder, _culledCountBuffer, nameof(_culledCountBuffer));
+            AppendMissing(builder, _drawCountBuffer, nameof(_drawCountBuffer));
+            AppendMissing(builder, _cullCountScratchBuffer, nameof(_cullCountScratchBuffer));
+
+            if (!baseOnly)
+            {
+                AppendMissing(builder, _resetCountersComputeShader, nameof(_resetCountersComputeShader));
+                AppendMissing(builder, _cullingOverflowFlagBuffer, nameof(_cullingOverflowFlagBuffer));
+                AppendMissing(builder, _indirectOverflowFlagBuffer, nameof(_indirectOverflowFlagBuffer));
+                AppendMissing(builder, _truncationFlagBuffer, nameof(_truncationFlagBuffer));
+                AppendMissing(builder, _statsBuffer, nameof(_statsBuffer));
+                AppendMissing(builder, _gpuBatchCountBuffer, nameof(_gpuBatchCountBuffer));
+                AppendMissing(builder, _visibleMeshletTaskCountBuffer, nameof(_visibleMeshletTaskCountBuffer));
+                AppendMissing(builder, _meshletDispatchIndirectBuffer, nameof(_meshletDispatchIndirectBuffer));
+                AppendMissing(builder, _meshletDispatchCountBuffer, nameof(_meshletDispatchCountBuffer));
+                AppendMissing(builder, _meshletExpansionOverflowFlagBuffer, nameof(_meshletExpansionOverflowFlagBuffer));
+            }
+
+            return builder.Length == 0 ? "<none>" : builder.ToString();
+
+            static void AppendMissing(StringBuilder builder, object? value, string name)
+            {
+                if (value is not null)
+                    return;
+
+                if (builder.Length > 0)
+                    builder.Append(',');
+                builder.Append(name);
+            }
+        }
+
+        private void ResetBaseCountersOnCpu()
+        {
+            if (_culledCountBuffer is not null)
+            {
+                for (uint i = 0u; i < GPUScene.VisibleCountComponents; i++)
+                    WriteUIntAt(_culledCountBuffer, i, 0u);
+            }
+
+            if (_cullCountScratchBuffer is not null)
+            {
+                for (uint i = 0u; i < GPUScene.VisibleCountComponents; i++)
+                    WriteUIntAt(_cullCountScratchBuffer, i, 0u);
+            }
+
+            if (_drawCountBuffer is not null)
+                WriteUInt(_drawCountBuffer, 0u);
+            if (_cullingOverflowFlagBuffer is not null)
+                WriteUInt(_cullingOverflowFlagBuffer, 0u);
+            if (_indirectOverflowFlagBuffer is not null)
+                WriteUInt(_indirectOverflowFlagBuffer, 0u);
+            if (_truncationFlagBuffer is not null)
+                WriteUInt(_truncationFlagBuffer, 0u);
+            if (_occlusionOverflowFlagBuffer is not null)
+                WriteUInt(_occlusionOverflowFlagBuffer, 0u);
+
+            ResetPerViewDrawCounts(_activeViewCount);
+            ResetCountersHook?.Invoke();
         }
 
         #endregion
@@ -321,7 +401,18 @@ namespace XREngine.Rendering.Commands
 
             if (_indirectRenderTaskShader is null || _indirectDrawBuffer is null)
             {
-                Dbg("BuildIndirect abort - shaders or draw buffer null", "Indirect");
+                Dbg($"BuildIndirect abort - missing shader/draw resources: {DescribeMissingBuildIndirectBuffers(shaderOnly: true)}", "Indirect");
+                return;
+            }
+
+            if (_culledCountBuffer is null ||
+                _drawCountBuffer is null ||
+                _indirectOverflowFlagBuffer is null ||
+                _truncationFlagBuffer is null ||
+                _statsBuffer is null ||
+                CulledSceneToRenderBuffer is null)
+            {
+                Dbg($"BuildIndirect abort - missing required buffers: {DescribeMissingBuildIndirectBuffers(shaderOnly: false)}", "Indirect");
                 return;
             }
 
@@ -349,6 +440,252 @@ namespace XREngine.Rendering.Commands
             _indirectRenderTaskShader.DispatchCompute(dispatchGroups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
             Dbg($"Indirect dispatch groups={dispatchGroups} visible={VisibleCommandCount}", "Indirect");
+            LogVulkanCounterDiagnostics("after-build");
+        }
+
+        private void LogVulkanCounterDiagnostics(string point)
+        {
+            if (!VulkanCounterDiagnosticsEnabled)
+                return;
+
+            string culledDraw = DescribeCounter(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
+            string culledInstances = DescribeCounter(_culledCountBuffer, GPUScene.VisibleCountInstanceIndex);
+            string culledOverflow = DescribeCounter(_culledCountBuffer, GPUScene.VisibleCountOverflowIndex);
+            string drawCount = DescribeCounter(_drawCountBuffer, 0u);
+            string materialBuckets = DescribeMaterialTierCountSample();
+
+            Debug.VulkanEvery(
+                $"VulkanCounters.{RuntimeHelpers.GetHashCode(this)}.{RenderPass}.{point}",
+                TimeSpan.FromMilliseconds(250),
+                "[VulkanCounters] pass={0} point={1} cpuVisible={2} cpuInstances={3} upperBoundValid={4} upperBound={5} culledDraw={6} culledInstances={7} culledOverflow={8} drawCount0={9} materialBuckets={10}",
+                RenderPass,
+                point,
+                VisibleCommandCount,
+                VisibleInstanceCount,
+                _visibleCommandUpperBoundValid,
+                _visibleCommandUpperBound,
+                culledDraw,
+                culledInstances,
+                culledOverflow,
+                drawCount,
+                materialBuckets);
+        }
+
+        private void LogVulkanCullInputDiagnostics(GPUScene scene, string point)
+        {
+            if (!VulkanCounterDiagnosticsEnabled)
+                return;
+
+            XRDataBuffer commandBuffer = scene.AllLoadedCommandsBuffer;
+            XRDataBuffer metadataBuffer = scene.DrawMetadataBuffer;
+            uint inputCount = Math.Min(scene.TotalCommandCount, commandBuffer.ElementCount);
+            uint targetPass = unchecked((uint)RenderPass);
+            bool matchAll = RenderPass < 0;
+            uint commandPassMatches = 0u;
+            uint metadataPassMatches = 0u;
+            uint commandMetadataPassMismatch = 0u;
+            uint materialKnown = 0u;
+            uint meshKnown = 0u;
+            uint zeroInstances = 0u;
+            uint sampled = Math.Min(inputCount, 8u);
+            StringBuilder sample = new();
+
+            for (uint i = 0u; i < inputCount; i++)
+            {
+                GPUIndirectRenderCommand command;
+                DrawMetadata metadata;
+                try
+                {
+                    command = commandBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
+                    metadata = i < metadataBuffer.ElementCount
+                        ? metadataBuffer.GetDataRawAtIndex<DrawMetadata>(i)
+                        : default;
+                }
+                catch (Exception ex)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"VulkanCounters.CullInput.ReadFailed.{RuntimeHelpers.GetHashCode(this)}.{RenderPass}",
+                        TimeSpan.FromSeconds(2),
+                        "[VulkanCounters] point={0} pass={1} failed to sample cull input at index={2}: {3}: {4}",
+                        point,
+                        RenderPass,
+                        i,
+                        ex.GetType().Name,
+                        ex.Message);
+                    break;
+                }
+
+                bool commandPassMatch = matchAll || command.RenderPass == targetPass || command.RenderPass == uint.MaxValue;
+                bool metadataPassMatch = matchAll || metadata.RenderPass == targetPass || metadata.RenderPass == uint.MaxValue;
+                if (commandPassMatch)
+                    commandPassMatches++;
+                if (metadataPassMatch)
+                    metadataPassMatches++;
+                if (command.RenderPass != metadata.RenderPass)
+                    commandMetadataPassMismatch++;
+                if (scene.MaterialMap.ContainsKey(command.MaterialID))
+                    materialKnown++;
+                if (scene.TryGetMeshDataEntry(command.MeshID, out GPUScene.MeshDataEntry meshEntry) && meshEntry.IndexCount != 0u)
+                    meshKnown++;
+                if (command.InstanceCount == 0u)
+                    zeroInstances++;
+
+                if (i >= sampled)
+                    continue;
+
+                if (sample.Length > 0)
+                    sample.Append(" | ");
+                sample.Append('#').Append(i)
+                    .Append(" cmdPass=").Append(command.RenderPass)
+                    .Append(" metaPass=").Append(metadata.RenderPass)
+                    .Append(" mat=").Append(command.MaterialID)
+                    .Append(scene.MaterialMap.ContainsKey(command.MaterialID) ? ":ok" : ":missing")
+                    .Append(" mesh=").Append(command.MeshID)
+                    .Append(meshEntry.IndexCount != 0u ? ":ok" : ":missing")
+                    .Append(" inst=").Append(command.InstanceCount)
+                    .Append(" bounds=").Append(command.BoundsID);
+            }
+
+            Debug.VulkanEvery(
+                $"VulkanCounters.CullInput.{RuntimeHelpers.GetHashCode(this)}.{RenderPass}.{point}",
+                TimeSpan.FromMilliseconds(250),
+                "[VulkanCounters] point={0} pass={1} cullInput total={2} commandPassMatches={3} metadataPassMatches={4} commandMetadataPassMismatch={5} materialKnown={6} meshKnown={7} zeroInstances={8} bvhReady={9} bvhNodes={10} bvhProvider={11} sample={12}",
+                point,
+                RenderPass,
+                inputCount,
+                commandPassMatches,
+                metadataPassMatches,
+                commandMetadataPassMismatch,
+                materialKnown,
+                meshKnown,
+                zeroInstances,
+                scene.BvhProvider?.IsBvhReady ?? false,
+                scene.BvhProvider?.BvhNodeCount ?? 0u,
+                scene.BvhProvider?.GetType().Name ?? "<none>",
+                sample.Length == 0 ? "<none>" : sample.ToString());
+        }
+
+        private string DescribeCounter(XRDataBuffer? buffer, uint index)
+        {
+            if (TryReadCounter(buffer, index, out uint value, out string reason))
+                return value.ToString();
+
+            return reason;
+        }
+
+        private bool TryReadCounter(XRDataBuffer? buffer, uint index, out uint value, out string reason)
+        {
+            value = 0u;
+            reason = "<missing>";
+
+            if (buffer is null)
+                return false;
+
+            if (index >= buffer.ElementCount)
+            {
+                reason = $"<out-of-range:{index}/{buffer.ElementCount}>";
+                return false;
+            }
+
+            try
+            {
+                if (AbstractRenderer.Current is VulkanRenderer vulkanRenderer)
+                {
+                    uint byteOffset = checked(index * sizeof(uint));
+                    Span<byte> bytes = stackalloc byte[sizeof(uint)];
+                    if (!vulkanRenderer.TryReadBufferBytesForDiagnostics(buffer, byteOffset, bytes, out reason))
+                        return false;
+
+                    value = BitConverter.ToUInt32(bytes);
+                    reason = "gpu";
+                    return true;
+                }
+
+                value = ReadUIntAt(buffer, index);
+                reason = "mapped";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                reason = $"<{ex.GetType().Name}>";
+                Debug.VulkanWarningEvery(
+                    $"VulkanCounters.ReadFailed.{RuntimeHelpers.GetHashCode(buffer)}.{index}",
+                    TimeSpan.FromSeconds(2),
+                    "[VulkanCounters] failed to read counter buffer='{0}' index={1}: {2}: {3}",
+                    buffer.AttributeName ?? buffer.Target.ToString(),
+                    index,
+                    ex.GetType().Name,
+                    ex.Message);
+                return false;
+            }
+        }
+
+        private string DescribeMaterialTierCountSample()
+        {
+            if (_materialTierDrawCountBuffer is null)
+                return "drawCounts=<missing>";
+
+            uint bucketCount = _materialTierBucketCount == 0u
+                ? _materialTierDrawCountBuffer.ElementCount
+                : Math.Min(_materialTierBucketCount, _materialTierDrawCountBuffer.ElementCount);
+            if (bucketCount == 0u)
+                return "drawCounts=<empty>";
+
+            uint scanCount = Math.Min(bucketCount, 128u);
+            uint nonZero = 0u;
+            uint appended = 0u;
+            StringBuilder firstNonZero = new();
+
+            for (uint i = 0u; i < scanCount; ++i)
+            {
+                if (!TryReadCounter(_materialTierDrawCountBuffer, i, out uint count, out _))
+                    continue;
+
+                if (count == 0u)
+                    continue;
+
+                nonZero++;
+                if (appended >= 8u)
+                    continue;
+
+                if (firstNonZero.Length > 0)
+                    firstNonZero.Append(',');
+                firstNonZero.Append(i).Append(':').Append(count);
+                appended++;
+            }
+
+            string activeBucketCount = DescribeCounter(_materialTierActiveBucketCountBuffer, 0u);
+            string sample = firstNonZero.Length == 0 ? "<none>" : firstNonZero.ToString();
+            return $"bucketCount={bucketCount} scan={scanCount} nonZero={nonZero} firstNonZero={sample} activeCount={activeBucketCount}";
+        }
+
+        private string DescribeMissingBuildIndirectBuffers(bool shaderOnly)
+        {
+            StringBuilder builder = new();
+            AppendMissing(builder, _indirectRenderTaskShader, nameof(_indirectRenderTaskShader));
+            AppendMissing(builder, _indirectDrawBuffer, nameof(_indirectDrawBuffer));
+
+            if (!shaderOnly)
+            {
+                AppendMissing(builder, _culledCountBuffer, nameof(_culledCountBuffer));
+                AppendMissing(builder, _drawCountBuffer, nameof(_drawCountBuffer));
+                AppendMissing(builder, _indirectOverflowFlagBuffer, nameof(_indirectOverflowFlagBuffer));
+                AppendMissing(builder, _truncationFlagBuffer, nameof(_truncationFlagBuffer));
+                AppendMissing(builder, _statsBuffer, nameof(_statsBuffer));
+                AppendMissing(builder, CulledSceneToRenderBuffer, nameof(CulledSceneToRenderBuffer));
+            }
+
+            return builder.Length == 0 ? "<none>" : builder.ToString();
+
+            static void AppendMissing(StringBuilder builder, object? value, string name)
+            {
+                if (value is not null)
+                    return;
+
+                if (builder.Length > 0)
+                    builder.Append(',');
+                builder.Append(name);
+            }
         }
 
         private void SelectVisibleCommandLods(GPUScene scene, XRCamera camera)
@@ -517,21 +854,19 @@ namespace XREngine.Rendering.Commands
             CulledSceneToRenderBuffer.BindTo(_indirectRenderTaskShader!, 0);
             _indirectDrawBuffer!.BindTo(_indirectRenderTaskShader!, 1);
             scene.MeshDataBuffer.BindTo(_indirectRenderTaskShader!, 2);
-            _culledCountBuffer?.BindTo(_indirectRenderTaskShader!, 3);
-            _drawCountBuffer?.BindTo(_indirectRenderTaskShader!, 4);
-            _indirectOverflowFlagBuffer?.BindTo(_indirectRenderTaskShader!, 5);
+            _culledCountBuffer!.BindTo(_indirectRenderTaskShader!, 3);
+            _drawCountBuffer!.BindTo(_indirectRenderTaskShader!, 4);
+            _indirectOverflowFlagBuffer!.BindTo(_indirectRenderTaskShader!, 5);
             scene.LodTransitionBuffer.BindTo(_indirectRenderTaskShader!, 10);
 
-            if (_truncationFlagBuffer is not null)
-            {
-                _truncationFlagBuffer.SetDataRawAtIndex(0, 0u);
-                _truncationFlagBuffer.PushSubData();
-                _truncationFlagBuffer.BindTo(_indirectRenderTaskShader!, 7);
-            }
+            _truncationFlagBuffer!.SetDataRawAtIndex(0, 0u);
+            _truncationFlagBuffer.PushSubData();
+            _truncationFlagBuffer.BindTo(_indirectRenderTaskShader!, 7);
 
-            _statsBuffer?.BindTo(_indirectRenderTaskShader!, 8);
-            if (_culledCommandsUseHotLayout)
-                _culledHotCommandBuffer?.BindTo(_indirectRenderTaskShader!, 9);
+            _statsBuffer!.BindTo(_indirectRenderTaskShader!, 8);
+            (_culledCommandsUseHotLayout && _culledHotCommandBuffer is not null
+                ? _culledHotCommandBuffer
+                : CulledSceneToRenderBuffer).BindTo(_indirectRenderTaskShader!, 9);
             BindViewSetBuffers(_indirectRenderTaskShader!);
         }
 
@@ -587,8 +922,9 @@ namespace XREngine.Rendering.Commands
             if (EnableZeroReadbackMaterialScatter)
             {
                 DispatchBuildKeys();
-                DispatchMaterialScatter(scene);
-                _zeroReadbackMaterialScatterPreparedThisFrame = _materialTierIndirectDrawBuffer is not null &&
+                bool materialScatterDispatched = DispatchMaterialScatter(scene);
+                _zeroReadbackMaterialScatterPreparedThisFrame = materialScatterDispatched &&
+                    _materialTierIndirectDrawBuffer is not null &&
                     _materialTierDrawCountBuffer is not null &&
                     _materialSlotLookupBuffer is not null &&
                     _materialSlotIds.Count > 0;
@@ -624,7 +960,7 @@ namespace XREngine.Rendering.Commands
 #endif
         }
 
-        private void DispatchMaterialScatter(GPUScene scene)
+        private bool DispatchMaterialScatter(GPUScene scene)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchMaterialScatter");
 
@@ -632,7 +968,7 @@ namespace XREngine.Rendering.Commands
                 _keyIndexBufferA is null ||
                 _culledCountBuffer is null)
             {
-                return;
+                return false;
             }
 
             PopulateMaterialSlotLookup(scene);
@@ -642,11 +978,11 @@ namespace XREngine.Rendering.Commands
                 _materialTierBucketCount == 0u ||
                 _maxDrawsPerMaterialTier == 0u)
             {
-                return;
+                return false;
             }
 
             if (!ResetMaterialScatterBuffersOnGpu())
-                return;
+                return false;
 
             _materialScatterComputeShader.Uniform("CurrentRenderPass", RenderPass);
             _materialScatterComputeShader.Uniform("MaxMaterialSlotLookup", (int)_materialSlotLookupBuffer.ElementCount);
@@ -669,6 +1005,8 @@ namespace XREngine.Rendering.Commands
             uint groups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u), MaterialScatterLocalSizeX).Item1);
             _materialScatterComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            LogVulkanCounterDiagnostics("after-material-scatter");
+            return true;
         }
 
         private static bool RequiresActiveMaterialBucketList(EZeroReadbackMaterialDrawPath path)
@@ -2083,6 +2421,7 @@ namespace XREngine.Rendering.Commands
             _cullingOverflowFlagBuffer?.Dispose();
             _indirectOverflowFlagBuffer?.Dispose();
             _occlusionOverflowFlagBuffer?.Dispose();
+            _overflowDebugBuffer?.Dispose();
             _sortedCommandBuffer?.Dispose();
             _keyIndexBufferA?.Dispose();
             _gpuBatchRangeBuffer?.Dispose();

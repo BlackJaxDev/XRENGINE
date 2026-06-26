@@ -39,6 +39,16 @@ public unsafe partial class VulkanRenderer
             if (_physicalGroup is null)
                 return;
 
+            bool physicalGroupChanged = false;
+            if (!string.IsNullOrWhiteSpace(Data.Name) &&
+                Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(Data.Name, out VulkanPhysicalImageGroup? activeGroup) &&
+                activeGroup is not null &&
+                !ReferenceEquals(activeGroup, _physicalGroup))
+            {
+                _physicalGroup = activeGroup;
+                physicalGroupChanged = true;
+            }
+
             if (!_physicalGroup.IsAllocated)
             {
                 // The physical group was destroyed — the resource planner may have rebuilt
@@ -48,6 +58,7 @@ public unsafe partial class VulkanRenderer
                     Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(Data.Name, out VulkanPhysicalImageGroup? replacement) &&
                     replacement is not null)
                 {
+                    physicalGroupChanged |= !ReferenceEquals(replacement, _physicalGroup);
                     _physicalGroup = replacement;
                     // Fall through to EnsureAllocated + handle check below.
                 }
@@ -66,15 +77,31 @@ public unsafe partial class VulkanRenderer
             }
 
             _physicalGroup.EnsureAllocated(Renderer);
+            Format expectedFormat = _physicalGroup.Format;
+            ImageAspectFlags expectedAspect = ResolveAspect(Data.Type);
+            bool viewMetadataChanged =
+                _formatOverride != expectedFormat ||
+                _aspectOverride != expectedAspect ||
+                physicalGroupChanged;
+
             if (_physicalGroup.Image.Handle == _image.Handle)
+            {
+                _formatOverride = expectedFormat;
+                _aspectOverride = expectedAspect;
+                _samplesOverride = _physicalGroup.Samples;
+                if (viewMetadataChanged && _view.Handle != 0)
+                    CreateImageView();
                 return;
+            }
 
             // Physical group was reallocated — refresh our cached handles.
             RetireView();
 
             _image = _physicalGroup.Image;
             _memory = _physicalGroup.Memory;
-            _formatOverride = _physicalGroup.Format;
+            _formatOverride = expectedFormat;
+            _aspectOverride = expectedAspect;
+            _samplesOverride = _physicalGroup.Samples;
 
             CreateImageView();
         }
@@ -152,7 +179,7 @@ public unsafe partial class VulkanRenderer
                 _ownsImage = false;
                 _formatOverride = group.Format;
                 _aspectOverride = ResolveAspect(Data.Type);
-                _samplesOverride = SampleCountFlags.Count1Bit;
+                _samplesOverride = group.Samples;
                 return;
             }
 
@@ -219,15 +246,17 @@ public unsafe partial class VulkanRenderer
         {
             RetireView();
 
+            Format viewFormat = Format;
+            ImageAspectFlags viewAspect = Aspect;
             ImageViewCreateInfo viewInfo = new()
             {
                 SType = StructureType.ImageViewCreateInfo,
                 Image = _image,
                 ViewType = ImageViewType.Type2D,
-                Format = ResolveFormat(Data.Type),
+                Format = viewFormat,
                 SubresourceRange = new ImageSubresourceRange
                 {
-                    AspectMask = ResolveAspect(Data.Type),
+                    AspectMask = viewAspect,
                     BaseMipLevel = 0,
                     LevelCount = 1,
                     BaseArrayLayer = 0,

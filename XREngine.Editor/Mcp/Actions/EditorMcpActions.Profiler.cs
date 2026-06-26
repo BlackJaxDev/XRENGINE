@@ -1,8 +1,10 @@
+using System;
 using System.ComponentModel;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Data.Core;
 using GpuPipelineStats = XREngine.Engine.Rendering.Stats.GpuPipelineProfiler;
+using VrStats = XREngine.Engine.Rendering.Stats.Vr;
 using VulkanStats = XREngine.Engine.Rendering.Stats.Vulkan;
 
 namespace XREngine.Editor.Mcp
@@ -72,6 +74,27 @@ namespace XREngine.Editor.Mcp
                         backend = GpuPipelineStats.GpuRenderPipelineBackend,
                         status = GpuPipelineStats.GpuRenderPipelineStatusMessage,
                         frame_ms = GpuPipelineStats.GpuRenderPipelineFrameMs,
+                    },
+                    vr = new
+                    {
+                        left_eye_draws = VrStats.VrLeftEyeDraws,
+                        right_eye_draws = VrStats.VrRightEyeDraws,
+                        left_eye_visible = VrStats.VrLeftEyeVisible,
+                        right_eye_visible = VrStats.VrRightEyeVisible,
+                        left_worker_build_ms = JsonFinite(VrStats.VrLeftWorkerBuildTimeMs),
+                        right_worker_build_ms = JsonFinite(VrStats.VrRightWorkerBuildTimeMs),
+                        render_submit_ms = JsonFinite(VrStats.VrRenderSubmitTimeMs),
+                        xr_wait_frame_block_ms = JsonFinite(VrStats.VrXrWaitFrameBlockTimeMs),
+                        xr_end_frame_submit_ms = JsonFinite(VrStats.VrXrEndFrameSubmitTimeMs),
+                        predicted_to_late_pose_delta_mm = JsonFinite(VrStats.VrXrPredictedToLatePoseDeltaMillimeters),
+                        predicted_to_late_pose_delta_degrees = JsonFinite(VrStats.VrXrPredictedToLatePoseDeltaDegrees),
+                        predicted_display_lead_time_ms = JsonFinite(VrStats.VrXrPredictedDisplayLeadTimeMs),
+                        missed_deadline_frames = VrStats.VrXrMissedDeadlineFrames,
+                        tracking_loss_frames = VrStats.VrXrTrackingLossFrames,
+                        relocate_predicted_time_ms = JsonFinite(VrStats.VrXrRelocatePredictedTimeMs),
+                        collect_frustum_expansion_degrees = JsonFinite(VrStats.VrXrCollectFrustumExpansionDegrees),
+                        pacing_thread_idle_ms = JsonFinite(VrStats.VrXrPacingThreadIdleTimeMs),
+                        pacing_handoff_stalls = VrStats.VrXrPacingHandoffStalls,
                     },
                     vulkan = new
                     {
@@ -189,5 +212,8 @@ namespace XREngine.Editor.Mcp
                     },
                 }));
         }
+
+        private static double? JsonFinite(double value)
+            => double.IsFinite(value) ? value : null;
     }
 }

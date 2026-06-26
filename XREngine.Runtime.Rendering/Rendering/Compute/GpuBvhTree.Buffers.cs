@@ -82,10 +82,12 @@ public sealed partial class GpuBvhTree
             };
             if (bindingIndex.HasValue)
                 buffer.SetBlockIndex(bindingIndex.Value);
+            buffer.Generate();
         }
         else if (buffer.ElementCount < scalarCount)
         {
-            buffer.Resize(scalarCount, false, true);
+            if (buffer.Resize(scalarCount, false, true))
+                buffer.PushData();
         }
     }
 

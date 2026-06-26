@@ -406,19 +406,21 @@ public sealed class VulkanDeferredProbeGiFixesTests
     }
 
     [Test]
-    public void VulkanFrameOpSort_UsesRenderGraphPassOrderBeforeContextGrouping()
+    public void VulkanFrameOpSort_UsesRenderGraphPassOrderBeforeDependencySafeOriginalOrder()
     {
         string compilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs");
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
 
         int passOrderSort = compilerSource.IndexOf("x.PassOrder.CompareTo(y.PassOrder)", StringComparison.Ordinal);
-        int groupOrderTieBreak = compilerSource.IndexOf("x.GroupOrder.CompareTo(y.GroupOrder)", StringComparison.Ordinal);
+        int originalIndexTieBreak = compilerSource.IndexOf("x.OriginalIndex.CompareTo(y.OriginalIndex)", StringComparison.Ordinal);
 
         passOrderSort.ShouldBeGreaterThanOrEqualTo(0);
-        groupOrderTieBreak.ShouldBeGreaterThan(passOrderSort);
+        originalIndexTieBreak.ShouldBeGreaterThan(passOrderSort);
+        compilerSource.ShouldNotContain("x.GroupOrder.CompareTo(y.GroupOrder)");
         compilerSource.ShouldNotContain(".OrderBy(x => x.GroupOrder)");
         compilerSource.ShouldContain("ArrayPool<FrameOpSortKey>.Shared.Rent(opCount)");
-        commandBufferSource.ShouldContain("Always sort frame ops by (PassOrder, GroupOrder, OriginalIndex).");
+        commandBufferSource.ShouldContain("Always sort frame ops by (PassOrder, safe draw order, OriginalIndex).");
+        commandBufferSource.ShouldContain("counters are written before the draw commands that consume them.");
     }
 
     [Test]

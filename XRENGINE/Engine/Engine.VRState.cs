@@ -771,6 +771,8 @@ namespace XREngine
 
             private static void Render()
             {
+                using var sample = Engine.Profiler.Start("VRState.Render");
+
                 if (IsOpenXRActive)
                 {
                     OpenXRApi?.EngineRenderTick();

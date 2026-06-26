@@ -18,7 +18,8 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex,
             CommandBufferCacheVariant variant,
             FrameOp[] dynamicUiBatchTextOps,
-            ulong dynamicUiBatchTextSignature)
+            ulong dynamicUiBatchTextSignature,
+            bool forceRecord = false)
         {
             if (dynamicUiBatchTextOps.Length == 0)
             {
@@ -28,7 +29,8 @@ namespace XREngine.Rendering.Vulkan
                 return true;
             }
 
-            if (variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
+            if (!forceRecord &&
+                variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
                 variant.DynamicUiSecondaryRecorded)
             {
                 if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
@@ -254,9 +256,29 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer secondaryCommandBuffer,
             int dynamicUiBatchTextOpCount,
             ImageLayout initialSwapchainLayout,
+            CommandBufferCacheVariant? dynamicUiBatchTextVariant,
+            FrameOp[] dynamicUiBatchTextOps,
+            ulong dynamicUiBatchTextSignature,
             out CommandBuffer overlayCommandBuffer)
         {
             overlayCommandBuffer = default;
+            if (dynamicUiBatchTextVariant is not null)
+            {
+                if (dynamicUiBatchTextOps.Length == 0 ||
+                    !RecordDynamicUiBatchTextSecondaryCommandBuffer(
+                        imageIndex,
+                        dynamicUiBatchTextVariant,
+                        dynamicUiBatchTextOps,
+                        dynamicUiBatchTextSignature,
+                        forceRecord: true))
+                {
+                    return false;
+                }
+
+                secondaryCommandBuffer = dynamicUiBatchTextVariant.DynamicUiSecondaryCommandBuffer;
+                dynamicUiBatchTextOpCount = dynamicUiBatchTextVariant.DynamicUiOpCount;
+            }
+
             if (dynamicUiBatchTextOpCount <= 0 ||
                 secondaryCommandBuffer.Handle == 0 ||
                 _dynamicUiBatchTextOverlayCommandBuffers is null ||
@@ -358,6 +380,24 @@ namespace XREngine.Rendering.Vulkan
                 _enableParallelSecondaryCommandBufferRecording &&
                 bucket.Count >= Math.Max(_parallelSecondaryIndirectRunThreshold, 2);
 
+            if (CommandChainsEnabledForCurrentRecording)
+            {
+                ExecutePrimaryOwnedSecondaryCommandBufferBatch(
+                    primaryCommandBuffer,
+                    label,
+                    imageIndex,
+                    ops,
+                    startIndex,
+                    bucket.Count,
+                    useParallelSecondary,
+                    (relativeIndex, secondary) =>
+                    {
+                        FrameOp runOp = ops[startIndex + relativeIndex];
+                        RecordFrameOpInSecondary(secondary, imageIndex, runOp);
+                    });
+                return true;
+            }
+
             if (bucket.Count > 1 && useParallelSecondary)
             {
                 ExecuteSecondaryCommandBufferBatchParallel(
@@ -384,6 +424,141 @@ namespace XREngine.Rendering.Vulkan
             }
 
             return true;
+        }
+
+        private void ExecutePrimaryOwnedSecondaryCommandBufferBatch(
+            CommandBuffer primaryCommandBuffer,
+            string label,
+            uint imageIndex,
+            FrameOp[] ops,
+            int startIndex,
+            int count,
+            bool useParallelSecondary,
+            Action<int, CommandBuffer> recorder)
+        {
+            if (count <= 0)
+                return;
+
+            CmdBeginLabel(primaryCommandBuffer, useParallelSecondary && count > 1
+                ? $"{label}PrimaryOwnedBatch"
+                : $"{label}PrimaryOwned");
+
+            CommandBuffer[] secondaryBuffers = ArrayPool<CommandBuffer>.Shared.Rent(count);
+            CommandChain[] secondaryChains = ArrayPool<CommandChain>.Shared.Rent(count);
+            Task[]? tasks = useParallelSecondary && count > 1
+                ? ArrayPool<Task>.Shared.Rent(count)
+                : null;
+            Exception? firstError = null;
+            object errorLock = new();
+
+            try
+            {
+                Dictionary<CommandChainKey, CommandChain> commandChainCache = GetCommandChainCache(imageIndex);
+                int commandBufferImageSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+                for (int i = 0; i < count; i++)
+                {
+                    FrameOp op = ops[startIndex + i];
+                    int primaryOwnedChainOrdinal = HashCode.Combine(startIndex, i, primaryCommandBuffer.Handle, 0x53454342);
+                    CommandChainKey chainKey = new(
+                        commandBufferImageSlot,
+                        BuildRenderViewKey(op, dynamicOverlay: false),
+                        op.PassIndex,
+                        ResolveCommandChainTargetIdentity(op),
+                        primaryOwnedChainOrdinal);
+                    CommandChain chain = GetOrCreateCommandChain(commandChainCache, chainKey);
+                    if (!TryEnsureCommandChainSecondaryCommandBuffer(chain, imageIndex, out CommandBuffer secondary))
+                        throw new InvalidOperationException("Failed to allocate Vulkan primary-owned secondary command buffer.");
+
+                    secondaryChains[i] = chain;
+                    secondaryBuffers[i] = secondary;
+                }
+
+                void RecordSecondaryAt(int relativeIndex)
+                {
+                    CommandChain chain = secondaryChains[relativeIndex];
+                    CommandBuffer secondary = secondaryBuffers[relativeIndex];
+
+                    try
+                    {
+                        Api!.ResetCommandBuffer(secondary, 0);
+
+                        CommandBufferBeginInfo beginInfo = new()
+                        {
+                            SType = StructureType.CommandBufferBeginInfo,
+                            Flags = CommandBufferUsageFlags.OneTimeSubmitBit
+                        };
+
+                        CommandBufferInheritanceInfo inheritanceInfo = new()
+                        {
+                            SType = StructureType.CommandBufferInheritanceInfo,
+                            RenderPass = default,
+                            Subpass = 0,
+                            Framebuffer = default,
+                            OcclusionQueryEnable = Vk.False,
+                            QueryFlags = QueryControlFlags.None,
+                            PipelineStatistics = QueryPipelineStatisticFlags.None
+                        };
+
+                        beginInfo.PInheritanceInfo = &inheritanceInfo;
+
+                        if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+                            throw new Exception("Failed to begin Vulkan primary-owned secondary command buffer.");
+
+                        ResetCommandBufferBindState(secondary);
+                        recorder(relativeIndex, secondary);
+
+                        if (Api!.EndCommandBuffer(secondary) != Result.Success)
+                            throw new Exception("Failed to end Vulkan primary-owned secondary command buffer.");
+
+                        MarkCommandChainSecondaryCommandBufferRecorded(chain);
+                    }
+                    catch (Exception ex)
+                    {
+                        lock (errorLock)
+                            firstError ??= ex;
+
+                        DestroyCommandChainSecondaryCommandBuffer(chain);
+                        secondaryBuffers[relativeIndex] = default;
+                    }
+                }
+
+                if (tasks is not null)
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        int taskIndex = i;
+                        tasks[i] = Task.Run(() => RecordSecondaryAt(taskIndex));
+                    }
+
+                    for (int i = 0; i < count; i++)
+                        tasks[i]!.Wait();
+                }
+                else
+                {
+                    for (int i = 0; i < count; i++)
+                        RecordSecondaryAt(i);
+                }
+
+                if (firstError is not null)
+                    throw firstError;
+
+                fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
+                    Api!.CmdExecuteCommands(primaryCommandBuffer, (uint)count, secondaryPtr);
+            }
+            finally
+            {
+                if (tasks is not null)
+                {
+                    Array.Clear(tasks, 0, count);
+                    ArrayPool<Task>.Shared.Return(tasks);
+                }
+
+                Array.Clear(secondaryBuffers, 0, count);
+                Array.Clear(secondaryChains, 0, count);
+                ArrayPool<CommandBuffer>.Shared.Return(secondaryBuffers);
+                ArrayPool<CommandChain>.Shared.Return(secondaryChains);
+                CmdEndLabel(primaryCommandBuffer);
+            }
         }
 
         private static bool TryGetSecondaryBucketForStart(

@@ -801,13 +801,17 @@ namespace XREngine.Rendering.Commands
             BindStorageBuffer(_cullingComputeShader, _culledCountBuffer!, 3);
             if (_cullingOverflowFlagBuffer is not null)
                 _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 4);
+            if (_statsBuffer is not null)
+                _cullingComputeShader.BindBuffer(_statsBuffer, 8);
             if (useHotCommands)
             {
                 _cullingComputeShader.BindBuffer(_sourceHotCommandBuffer!, 9);
                 _cullingComputeShader.BindBuffer(_culledHotCommandBuffer!, 10);
             }
-            if (_statsBuffer is not null)
-                _cullingComputeShader.BindBuffer(_statsBuffer, 8);
+            else
+            {
+                _cullingComputeShader.BindBuffer(dst, 10);
+            }
             BindViewSetBuffers(_cullingComputeShader);
 
             // Dispatch compute shader
@@ -1059,8 +1063,12 @@ namespace XREngine.Rendering.Commands
             // Bind optional buffers
             if (_statsBuffer is not null)
                 _bvhFrustumCullProgram.BindBuffer(_statsBuffer, 8);
+            if (_overflowDebugBuffer is not null)
+                _bvhFrustumCullProgram.BindBuffer(_overflowDebugBuffer, 9);
             if (useHotCommands)
                 _bvhFrustumCullProgram.BindBuffer(_culledHotCommandBuffer!, 10);
+            else
+                _bvhFrustumCullProgram.BindBuffer(dst, 10);
             BindViewSetBuffers(_bvhFrustumCullProgram);
 
             // Dispatch based on leaf count (each thread processes one leaf)

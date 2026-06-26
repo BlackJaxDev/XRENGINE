@@ -151,6 +151,13 @@ namespace XREngine.Rendering.Vulkan
             private string _lastBindingName = string.Empty;
             private bool _requiresStorageBufferUsage;
             private readonly Dictionary<XRRenderProgram, uint> _resolvedProgramBindings = [];
+            private readonly object _queuedUploadSync = new();
+            private bool _queuedRenderThreadUpload;
+            private bool _queuedUploadIsFull;
+            private bool _queuedSubUpload;
+            private uint _queuedSubUploadStart;
+            private uint _queuedSubUploadEnd;
+            private string? _renderThreadUploadJobLabel;
 
             // --- Event wiring ---
             protected override void UnlinkData()
@@ -227,10 +234,15 @@ namespace XREngine.Rendering.Vulkan
 
             internal bool TryEnsureReadyForRendering(bool allowSynchronousUpload)
             {
+                bool canUploadNow = CanUploadFromRenderReadinessCheck(allowSynchronousUpload);
                 if (!IsActive)
                 {
-                    if (!allowSynchronousUpload)
+                    if (!canUploadNow)
+                    {
+                        if (allowSynchronousUpload)
+                            TraceDeferredRenderThreadUpload("TryEnsureReady.Generate");
                         return IsReadyForRendering;
+                    }
 
                     Generate();
                     return IsReadyForRendering;
@@ -239,8 +251,12 @@ namespace XREngine.Rendering.Vulkan
                 if (IsReadyForRendering)
                     return true;
 
-                if (!allowSynchronousUpload)
+                if (!canUploadNow)
+                {
+                    if (allowSynchronousUpload)
+                        TraceDeferredRenderThreadUpload("TryEnsureReady.PushData");
                     return false;
+                }
 
                 PushData();
                 return IsReadyForRendering;
@@ -279,8 +295,27 @@ namespace XREngine.Rendering.Vulkan
                 return address != 0ul;
             }
 
+            public override string GetDescribingName()
+            {
+                string? name = Data.Name;
+                if (!string.IsNullOrWhiteSpace(name))
+                    return name;
+
+                string? attributeName = Data.AttributeName;
+                if (!string.IsNullOrWhiteSpace(attributeName))
+                    return attributeName;
+
+                return base.GetDescribingName();
+            }
+
             protected internal override void PostGenerated()
             {
+                if (!RuntimeEngine.IsRenderThread)
+                {
+                    TraceDeferredRenderThreadUpload("PostGenerated");
+                    return;
+                }
+
                 if (Data.Resizable)
                     PushData();
                 else
@@ -299,8 +334,11 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 if (HasBlockingActiveMapping())
                     return;
-                if (RuntimeEngine.InvokeOnMainThread(PushData, "VkDataBuffer.PushData"))
+                if (!RuntimeEngine.IsRenderThread)
+                {
+                    EnqueueRenderThreadUpload(fullUpload: true, offset: 0, length: Data.Length, "PushData");
                     return;
+                }
 
                 // Determine usage and memory flags
                 BufferUsageFlags usage = ResolveVkUsageFlags(Data.Target, Data.Usage);
@@ -482,8 +520,6 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 if (HasBlockingActiveMapping())
                     return;
-                if (RuntimeEngine.InvokeOnMainThread(() => PushSubData(offset, length), "VkDataBuffer.PushSubData"))
-                    return;
                 if (offset < 0)
                 {
                     TracePushSubData(offset, length, "negative-offset-ignored");
@@ -493,6 +529,12 @@ namespace XREngine.Rendering.Vulkan
                     return;
 
                 uint totalLength = Data.Length;
+                if (!RuntimeEngine.IsRenderThread)
+                {
+                    EnqueueRenderThreadUpload(fullUpload: length >= totalLength && offset == 0, offset, length, "PushSubData");
+                    return;
+                }
+
                 if ((uint)offset >= totalLength)
                 {
                     Debug.VulkanWarningEvery(
@@ -611,6 +653,96 @@ namespace XREngine.Rendering.Vulkan
                 Renderer.TrackBufferBinding(Data);
                 RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.BufferUploadBytes, clampedLength);
                 TracePushSubData(offset, clampedLength, "done");
+                ReportBackendState();
+            }
+
+            private string RenderThreadUploadJobLabel
+                => _renderThreadUploadJobLabel ??= $"VkDataBuffer.Upload:{GetDescribingName()}";
+
+            private void EnqueueRenderThreadUpload(bool fullUpload, int offset, uint length, string reason)
+            {
+                bool shouldQueue = false;
+                lock (_queuedUploadSync)
+                {
+                    _hasPendingUpload = true;
+
+                    if (fullUpload)
+                    {
+                        _queuedUploadIsFull = true;
+                        _queuedSubUpload = false;
+                        _queuedSubUploadStart = 0u;
+                        _queuedSubUploadEnd = 0u;
+                    }
+                    else if (!_queuedUploadIsFull)
+                    {
+                        uint start = (uint)Math.Max(offset, 0);
+                        ulong requestedEnd = (ulong)start + length;
+                        uint end = requestedEnd > uint.MaxValue ? uint.MaxValue : (uint)requestedEnd;
+
+                        if (!_queuedSubUpload)
+                        {
+                            _queuedSubUpload = true;
+                            _queuedSubUploadStart = start;
+                            _queuedSubUploadEnd = end;
+                        }
+                        else
+                        {
+                            if (start < _queuedSubUploadStart)
+                                _queuedSubUploadStart = start;
+                            if (end > _queuedSubUploadEnd)
+                                _queuedSubUploadEnd = end;
+                        }
+                    }
+
+                    if (!_queuedRenderThreadUpload)
+                    {
+                        _queuedRenderThreadUpload = true;
+                        shouldQueue = true;
+                    }
+                }
+
+                TraceQueuedUpload(reason);
+                if (!shouldQueue)
+                    return;
+
+                if (!RuntimeEngine.InvokeOnMainThread(DrainQueuedRenderThreadUpload, RenderThreadUploadJobLabel))
+                    DrainQueuedRenderThreadUpload();
+            }
+
+            private void DrainQueuedRenderThreadUpload()
+            {
+                bool fullUpload;
+                bool subUpload;
+                uint subStart;
+                uint subEnd;
+
+                lock (_queuedUploadSync)
+                {
+                    fullUpload = _queuedUploadIsFull;
+                    subUpload = _queuedSubUpload;
+                    subStart = _queuedSubUploadStart;
+                    subEnd = _queuedSubUploadEnd;
+
+                    _queuedRenderThreadUpload = false;
+                    _queuedUploadIsFull = false;
+                    _queuedSubUpload = false;
+                    _queuedSubUploadStart = 0u;
+                    _queuedSubUploadEnd = 0u;
+                }
+
+                if (fullUpload)
+                {
+                    PushData();
+                    return;
+                }
+
+                if (subUpload && subEnd > subStart)
+                {
+                    PushSubData(checked((int)subStart), subEnd - subStart);
+                    return;
+                }
+
+                _hasPendingUpload = false;
                 ReportBackendState();
             }
 
@@ -1045,6 +1177,11 @@ namespace XREngine.Rendering.Vulkan
             internal void EnsureStorageAllocatedForGpuUse()
             {
                 _requiresStorageBufferUsage = true;
+                if (!RuntimeEngine.IsRenderThread)
+                {
+                    TraceDeferredRenderThreadUpload("EnsureStorageAllocatedForGpuUse");
+                    return;
+                }
 
                 bool hasStorageUsage = _lastUsageFlags.HasFlag(BufferUsageFlags.StorageBufferBit);
                 if (_vkBuffer is null || _vkMemory is null || _bufferSize < (ulong)Data.Length || !hasStorageUsage)
@@ -1160,6 +1297,56 @@ namespace XREngine.Rendering.Vulkan
                     _lastUploadRoute);
             }
 
+            private void TraceQueuedUpload(string reason)
+            {
+                if (!RenderDiagnosticsFlags.UploadStageLogging &&
+                    !RenderDiagnosticsFlags.PushSubDataTrace &&
+                    !RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+                {
+                    return;
+                }
+
+                Debug.Vulkan(
+                    "[VkBufferUploadQueue] name='{0}' reason={1} full={2} sub={3} start={4} end={5} queued={6} ready={7} dataLength={8} uploaded={9} allocated={10}.",
+                    GetDescribingName(),
+                    reason,
+                    _queuedUploadIsFull,
+                    _queuedSubUpload,
+                    _queuedSubUploadStart,
+                    _queuedSubUploadEnd,
+                    _queuedRenderThreadUpload,
+                    IsReadyForRendering,
+                    Data.Length,
+                    _uploadedByteCount,
+                    _bufferSize);
+            }
+
+            private bool CanUploadFromRenderReadinessCheck(bool allowSynchronousUpload)
+                => allowSynchronousUpload && RuntimeEngine.IsRenderThread;
+
+            private void TraceDeferredRenderThreadUpload(string stage)
+            {
+                if (!RenderDiagnosticsFlags.UploadStageLogging &&
+                    !RenderDiagnosticsFlags.PushSubDataTrace &&
+                    !RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+                {
+                    return;
+                }
+
+                Debug.VulkanWarningEvery(
+                    $"VkDataBuffer.DeferredRenderThreadUpload.{stage}.{GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[VkDataBuffer] deferred upload for '{0}' at {1}: readiness checks cannot enqueue render-thread uploads from thread {2}; generated={3} ready={4} length={5} uploaded={6} allocated={7}.",
+                    GetDescribingName(),
+                    stage,
+                    Environment.CurrentManagedThreadId,
+                    IsGenerated,
+                    IsReadyForRendering,
+                    Data.Length,
+                    _uploadedByteCount,
+                    _bufferSize);
+            }
+
             private static bool IsBufferUploadLoggingEnabled()
                 => RenderDiagnosticsFlags.UploadStageLogging ||
                    RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
@@ -1217,11 +1404,11 @@ namespace XREngine.Rendering.Vulkan
                 EBufferTarget.TransformFeedbackBuffer => BufferUsageFlags.StorageBufferBit,
                 EBufferTarget.CopyReadBuffer => BufferUsageFlags.TransferSrcBit,
                 EBufferTarget.CopyWriteBuffer => BufferUsageFlags.TransferDstBit,
-                EBufferTarget.DrawIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit,
-                EBufferTarget.ShaderStorageBuffer => BufferUsageFlags.StorageBufferBit,
-                EBufferTarget.DispatchIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit,
+                EBufferTarget.DrawIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
+                EBufferTarget.ShaderStorageBuffer => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
+                EBufferTarget.DispatchIndirectBuffer => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
                 EBufferTarget.QueryBuffer => BufferUsageFlags.TransferDstBit,
-                EBufferTarget.AtomicCounterBuffer => BufferUsageFlags.StorageBufferBit,
+                EBufferTarget.AtomicCounterBuffer => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit,
                 EBufferTarget.ParameterBuffer => BufferUsageFlags.UniformBufferBit,
                 _ => BufferUsageFlags.StorageBufferBit,
             };
@@ -1685,8 +1872,7 @@ namespace XREngine.Rendering.Vulkan
             if (source == null || size == 0)
                 return;
 
-            void* mappedPtr = null;
-            if (!TryMapBufferMemory(buffer, memory, 0, size, out mappedPtr))
+            if (!TryMapBufferMemory(buffer, memory, 0, size, out void* mappedPtr))
                 throw new Exception("Failed to map Vulkan memory for staging upload.");
 
             try

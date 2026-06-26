@@ -330,6 +330,8 @@ public static partial class EditorImGuiUI
 
         private static void RenderEditorScenePanelMode()
         {
+            using var profilerScope = Engine.Profiler.Start("EditorImGuiUI.RenderEditorScenePanelMode");
+
             if (Engine.EditorPreferences.ViewportPresentationMode != EditorPreferences.EViewportPresentationMode.UseViewportPanel)
                 return;
 

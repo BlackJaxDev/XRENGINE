@@ -697,7 +697,7 @@ public unsafe partial class VulkanRenderer
     private static string ResolveVulkanGpuProfilerPassName(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
         if (passIndex == VulkanBarrierPlanner.SwapchainPassIndex)
-            return "Pass[-1:Swapchain]";
+            return $"Pass[{VulkanBarrierPlanner.SwapchainPassIndex}:Swapchain]";
 
         if (passMetadata is not null)
         {

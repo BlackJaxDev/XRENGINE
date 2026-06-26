@@ -118,7 +118,8 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     {
         ViewportRenderCommandContainer container = new(this);
         var ifElse = container.Add<VPRC_IfElse>();
-        ifElse.ConditionEvaluator = () => State.WindowViewport is not null;
+        ifElse.ConditionEvaluator = () => State.WindowViewport is not null
+            && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;
         ifElse.TrueCommands = CreateViewportTargetCommands();
         ifElse.FalseCommands = CreateFBOTargetCommands();
         return container;

@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using NUnit.Framework;
 using Shouldly;
+using Silk.NET.Vulkan;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
 
@@ -181,8 +182,9 @@ public sealed class ImportedTextureStreamingContractTests
         managerSource.ShouldContain("private static bool ShouldFreezeVulkanImportedTextureResidency(ImportedTextureStreamingSnapshot snapshot)");
         managerSource.ShouldContain("docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md");
         managerSource.ShouldContain("VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable");
-        managerSource.ShouldContain(XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze);
+        managerSource.ShouldContain("XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze");
         managerSource.ShouldContain("&& IsVulkanImportedTexturePreviewFreezeForced();");
+        managerSource.ShouldContain("RenderDiagnosticsFlags.VkImportedTexturePreviewFreeze");
         managerSource.ShouldNotContain("&& (!VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable");
         managerSource.ShouldNotContain("ShouldPreserveVulkanResidentSizeAgainstDemotion");
         ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/TextureResidencyPolicy.cs")
@@ -294,7 +296,8 @@ public sealed class ImportedTextureStreamingContractTests
     public void VulkanTextureUploadService_RecordsCopiesBarriersAndFrameSafePublication()
     {
         string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
-        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
         string serviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanTextureUploadService.cs");
         string hookSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Streaming/VulkanRenderer.TextureStreamingHooks.cs");
         string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
@@ -331,9 +334,83 @@ public sealed class ImportedTextureStreamingContractTests
     }
 
     [Test]
+    public void VulkanTextureUploadService_ValidatesCopyRegionsAgainstPreparedImageExtent()
+    {
+        VulkanImportedTextureUploadStagingResource invalidCopy = new(
+            default,
+            default,
+            new BufferImageCopy
+            {
+                ImageSubresource = new ImageSubresourceLayers
+                {
+                    AspectMask = ImageAspectFlags.ColorBit,
+                    MipLevel = 0,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1,
+                },
+                ImageExtent = new Extent3D(64u, 64u, 1u),
+            },
+            64u * 64u * 4u);
+
+        VulkanImportedTextureUploadValidation.TryValidateCopyRegions(
+            "promotion",
+            17UL,
+            new Extent3D(8u, 8u, 1u),
+            mipLevels: 1u,
+            arrayLayers: 1u,
+            [invalidCopy],
+            out string? failureReason).ShouldBeFalse();
+        failureReason.ShouldNotBeNull();
+        failureReason.ShouldContain("64x64x1");
+        failureReason.ShouldContain("mip 0 extent 8x8x1");
+
+        BufferImageCopy validCopyRegion = invalidCopy.CopyRegion;
+        validCopyRegion.ImageExtent = new Extent3D(64u, 64u, 1u);
+        VulkanImportedTextureUploadStagingResource validBaseCopy = new(
+            default,
+            default,
+            validCopyRegion,
+            64u * 64u * 4u);
+
+        VulkanImportedTextureUploadValidation.TryValidateCopyRegions(
+            "promotion",
+            18UL,
+            new Extent3D(64u, 64u, 1u),
+            mipLevels: 1u,
+            arrayLayers: 1u,
+            [validBaseCopy],
+            out failureReason).ShouldBeTrue();
+        failureReason.ShouldBeNull();
+    }
+
+    [Test]
+    public void VulkanTextureUploadService_SizesPendingUploadsFromLogicalResidentLayout()
+    {
+        string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string serviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanTextureUploadService.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string transferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanRenderer.TextureUploadTransfer.cs");
+
+        imageTextureSource.ShouldContain("Extent3D extent = _layout.Extent;");
+        imageTextureSource.ShouldContain("uint mipLevels = Math.Max(_layout.MipLevels, 1u);");
+        imageTextureSource.ShouldContain("uint arrayLayers = Math.Max(_layout.ArrayLayers, 1u);");
+        imageTextureSource.ShouldContain("VulkanImportedTextureUploadValidation.TryValidateCopyRegions(");
+        imageTextureSource.ShouldContain("new TextureLayout(");
+        imageTextureSource.ShouldContain("Math.Max(pendingUpload.ArrayLayers, 1u)");
+
+        serviceSource.ShouldContain("public uint ArrayLayers { get; }");
+        serviceSource.ShouldContain("public bool TryValidateCopyRegions(out string? failureReason)");
+        serviceSource.ShouldContain("copy[{i}] extent");
+        commandBufferSource.ShouldContain("if (!upload.TryValidateCopyRegions(out string? validationFailure))");
+        commandBufferSource.ShouldContain("VulkanTextureUploadGenerationState.Failed");
+        transferSource.ShouldContain("if (!upload.TryValidateCopyRegions(out string? validationFailure))");
+    }
+
+    [Test]
     public void VulkanCommandChains_TreatImportedTextureUploadsAsPrimaryCommandWork()
     {
-        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.FrameOpDiagnostics.cs");
         string commandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainLowering.cs");
 
         commandBufferSource.ShouldContain("private static bool HasTextureUploadFrameOps(FrameOp[] ops)");

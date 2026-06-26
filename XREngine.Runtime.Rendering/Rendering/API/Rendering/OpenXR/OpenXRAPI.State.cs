@@ -309,6 +309,8 @@ public unsafe partial class OpenXRAPI
     private static bool OpenXrDebugClearOnly => RuntimeEngine.Rendering.Settings.OpenXrDebugClearOnly;
     private static bool OpenXrDebugLifecycle => RuntimeEngine.Rendering.Settings.OpenXrDebugLifecycle;
     private static bool OpenXrDebugRenderRightThenLeft => RuntimeEngine.Rendering.Settings.OpenXrDebugRenderRightThenLeft;
+    private static bool VulkanCaptureEyeOutputs =>
+        string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanCaptureEyeOutputs), "1", StringComparison.Ordinal);
     private static bool OpenXrPrepareFrameAfterDesktopRender => RuntimeEngine.Rendering.Settings.OpenXrPrepareFrameAfterDesktopRender;
     private static float OpenXrDeadlineSafetyMarginMs => RuntimeEngine.Rendering.Settings.OpenXrDeadlineSafetyMarginMs;
     private static OpenXrCollectVisiblePosePolicy OpenXrCollectPosePolicy => RuntimeEngine.Rendering.Settings.OpenXrCollectVisiblePosePolicy;
@@ -341,6 +343,12 @@ public unsafe partial class OpenXRAPI
     private XRFrameBuffer? _viewportMirrorFbo;
     private uint _viewportMirrorWidth;
     private uint _viewportMirrorHeight;
+
+    private readonly XRTexture2D?[] _vulkanEyeMirrorColors = new XRTexture2D?[2];
+    private readonly XRRenderBuffer?[] _vulkanEyeMirrorDepths = new XRRenderBuffer?[2];
+    private readonly XRFrameBuffer?[] _vulkanEyeMirrorFbos = new XRFrameBuffer?[2];
+    private uint _vulkanEyeMirrorWidth;
+    private uint _vulkanEyeMirrorHeight;
 
     private XRTexture2D? _previewLeftEyeTexture;
     private XRTexture2D? _previewRightEyeTexture;

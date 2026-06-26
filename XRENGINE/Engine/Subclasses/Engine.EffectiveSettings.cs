@@ -405,6 +405,7 @@ namespace XREngine
                 => ResolveForcedMeshSubmissionStrategy();
 
             private static bool _legacyGpuMeshletForceStrategyWarningLogged;
+            private static bool _unitTestingOpenXrVulkanIgnoredCpuDirectForceWarningLogged;
 
             private static EMeshSubmissionStrategy? ResolveForcedMeshSubmissionStrategy()
             {
@@ -424,7 +425,46 @@ namespace XREngine
                     return parsed;
                 }
 
-                return Rendering.Settings.ForceMeshSubmissionStrategy;
+                EMeshSubmissionStrategy? persistedForce = Rendering.Settings.ForceMeshSubmissionStrategy;
+                if (persistedForce == EMeshSubmissionStrategy.CpuDirect &&
+                    ShouldIgnorePersistedCpuDirectMeshSubmissionForceForUnitTestingOpenXrVulkan())
+                {
+                    if (!_unitTestingOpenXrVulkanIgnoredCpuDirectForceWarningLogged)
+                    {
+                        _unitTestingOpenXrVulkanIgnoredCpuDirectForceWarningLogged = true;
+                        Debug.RenderingWarning(
+                            "Ignoring persisted ForceMeshSubmissionStrategy=CpuDirect for UnitTesting OpenXR+Vulkan. " +
+                            "Use XRE_FORCE_MESH_SUBMISSION_STRATEGY=CpuDirect for an explicit one-run diagnostic override.");
+                    }
+
+                    return null;
+                }
+
+                return persistedForce;
+            }
+
+            private static bool ShouldIgnorePersistedCpuDirectMeshSubmissionForceForUnitTestingOpenXrVulkan()
+            {
+                string? worldMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WorldMode);
+                if (!string.Equals(worldMode, "UnitTesting", StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                if (!IsUnitTestingOpenXrLaunch())
+                    return false;
+
+                return PreferredRenderBackend == ERenderLibrary.Vulkan;
+            }
+
+            private static bool IsUnitTestingOpenXrLaunch()
+            {
+                string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+                if (string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                return GameSettings is IVRGameStartupSettings { VRRuntime: EVRRuntime.OpenXR };
             }
 
             /// <summary>

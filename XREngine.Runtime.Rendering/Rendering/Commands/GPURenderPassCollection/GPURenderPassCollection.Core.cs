@@ -658,6 +658,7 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _drawCountBuffer;
         private XRDataBuffer? _cullingOverflowFlagBuffer;
         private XRDataBuffer? _indirectOverflowFlagBuffer;
+        private XRDataBuffer? _overflowDebugBuffer;
         private XRDataBuffer? _gpuBatchRangeBuffer;
         private XRDataBuffer? _gpuBatchCountBuffer;
         private XRDataBuffer? _materialSlotLookupBuffer;

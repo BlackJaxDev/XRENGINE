@@ -9,13 +9,27 @@ public unsafe partial class VulkanRenderer
     private ExtDebugUtils? debugUtils;
     private DebugUtilsMessengerEXT debugMessenger;
 
-#if DEBUG
-    private bool EnableValidationLayers = true;
-#else
-    private bool EnableValidationLayers = false;
-#endif
+    private bool EnableValidationLayers = ResolveValidationLayerDefault();
 
     private bool SupportsDebugUtilsLabels => debugUtils is not null;
+
+    private static bool ResolveValidationLayerDefault()
+    {
+#if DEBUG
+        const bool defaultValue = true;
+#else
+        const bool defaultValue = false;
+#endif
+
+        string? raw = Environment.GetEnvironmentVariable(global::XREngine.XREngineEnvironmentVariables.VulkanValidation);
+        if (string.IsNullOrWhiteSpace(raw))
+            return defaultValue;
+
+        return !string.Equals(raw, "0", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(raw, "off", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(raw, "no", StringComparison.OrdinalIgnoreCase);
+    }
 
     private void CmdBeginLabel(CommandBuffer commandBuffer, string name)
     {

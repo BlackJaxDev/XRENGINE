@@ -311,6 +311,7 @@ uniform float CenterWeightStrength;
 uniform float CenterWeightPower;
 
 const int MAX_SAMPLES = 256;
+const int SAMPLE_GRID = 16;
 
 float SafeLum(vec3 rgb)
 {
@@ -320,39 +321,39 @@ float SafeLum(vec3 rgb)
 
 float ComputeMeteredLuminance()
 {
+    int mip = (MeteringMode == 0)
+        ? clamp(SmallestMip, 0, SmallestMip)
+        : clamp(MeteringMip, 0, SmallestMip);
+    ivec2 sz = textureSize(SourceTex, mip);
+    int w = max(sz.x, 1);
+    int h = max(sz.y, 1);
+    int gridX = min(w, SAMPLE_GRID);
+    int gridY = min(h, SAMPLE_GRID);
+    int sampleCount = clamp(gridX * gridY, 1, MAX_SAMPLES);
+
     if (MeteringMode == 0)
     {
-        int mip = clamp(SmallestMip, 0, SmallestMip);
-        ivec2 sz = textureSize(SourceTex, mip);
-        int w = max(sz.x, 1);
-        int h = max(sz.y, 1);
-        int sampleCount = min(w * h, MAX_SAMPLES);
         if (sampleCount <= 1)
         {
             vec3 src = texelFetch(SourceTex, ivec2(0, 0), mip).rgb;
             return SafeLum(src);
         }
 
-        int stride = max((w * h) / sampleCount, 1);
         float sum = 0.0;
-        for (int i = 0; i < sampleCount; ++i)
+        for (int gy = 0; gy < gridY; ++gy)
         {
-            int idx = i * stride;
-            int x = idx % w;
-            int y = idx / w;
-            vec3 src = texelFetch(SourceTex, ivec2(x, y), mip).rgb;
-            sum += SafeLum(src);
+            int y = min((gy * h + h / 2) / gridY, h - 1);
+            for (int gx = 0; gx < gridX; ++gx)
+            {
+                int x = min((gx * w + w / 2) / gridX, w - 1);
+                vec3 src = texelFetch(SourceTex, ivec2(x, y), mip).rgb;
+                sum += SafeLum(src);
+            }
         }
 
         return sum / float(sampleCount);
     }
 
-    int mip = clamp(MeteringMip, 0, SmallestMip);
-    ivec2 sz = textureSize(SourceTex, mip);
-    int w = max(sz.x, 1);
-    int h = max(sz.y, 1);
-
-    int sampleCount = min(w * h, MAX_SAMPLES);
     if (sampleCount <= 0)
     {
         vec3 src = texelFetch(SourceTex, ivec2(0, 0), SmallestMip).rgb;
@@ -360,29 +361,30 @@ float ComputeMeteredLuminance()
     }
 
     float lums[MAX_SAMPLES];
-    int stride = max((w * h) / sampleCount, 1);
-
-    for (int i = 0; i < sampleCount; ++i)
+    int sampleIndex = 0;
+    for (int gy = 0; gy < gridY; ++gy)
     {
-        int idx = i * stride;
-        int x = idx % w;
-        int y = idx / w;
-        vec3 rgb = texelFetch(SourceTex, ivec2(x, y), mip).rgb;
-        float lum = SafeLum(rgb);
-
-        if (MeteringMode == 1)
-            lum = log2(lum);
-        else if (MeteringMode == 2)
+        int y = min((gy * h + h / 2) / gridY, h - 1);
+        for (int gx = 0; gx < gridX; ++gx)
         {
-            vec2 uv = (vec2(x, y) + vec2(0.5)) / vec2(w, h);
-            vec2 d = uv - vec2(0.5);
-            float r = length(d) / 0.70710678;
-            float weight = mix(1.0, max(0.0, 1.0 - r), clamp(CenterWeightStrength, 0.0, 1.0));
-            weight = pow(max(weight, 1e-4), max(CenterWeightPower, 0.01));
-            lum *= weight;
-        }
+            int x = min((gx * w + w / 2) / gridX, w - 1);
+            vec3 rgb = texelFetch(SourceTex, ivec2(x, y), mip).rgb;
+            float lum = SafeLum(rgb);
 
-        lums[i] = lum;
+            if (MeteringMode == 1)
+                lum = log2(lum);
+            else if (MeteringMode == 2)
+            {
+                vec2 uv = (vec2(x, y) + vec2(0.5)) / vec2(w, h);
+                vec2 d = uv - vec2(0.5);
+                float r = length(d) / 0.70710678;
+                float weight = mix(1.0, max(0.0, 1.0 - r), clamp(CenterWeightStrength, 0.0, 1.0));
+                weight = pow(max(weight, 1e-4), max(CenterWeightPower, 0.01));
+                lum *= weight;
+            }
+
+            lums[sampleIndex++] = lum;
+        }
     }
 
     for (int i = 1; i < sampleCount; ++i)
@@ -471,6 +473,7 @@ uniform float CenterWeightPower;
 uniform int LayerCount;
 
 const int MAX_SAMPLES = 256;
+const int SAMPLE_GRID = 16;
 
 float SafeLum(vec3 rgb)
 {
@@ -480,39 +483,39 @@ float SafeLum(vec3 rgb)
 
 float ComputeMeteredLuminanceForLayer(int layer)
 {
+    int mip = (MeteringMode == 0)
+        ? clamp(SmallestMip, 0, SmallestMip)
+        : clamp(MeteringMip, 0, SmallestMip);
+    ivec2 sz = textureSize(SourceTex, mip).xy;
+    int w = max(sz.x, 1);
+    int h = max(sz.y, 1);
+    int gridX = min(w, SAMPLE_GRID);
+    int gridY = min(h, SAMPLE_GRID);
+    int sampleCount = clamp(gridX * gridY, 1, MAX_SAMPLES);
+
     if (MeteringMode == 0)
     {
-        int mip = clamp(SmallestMip, 0, SmallestMip);
-        ivec2 sz = textureSize(SourceTex, mip).xy;
-        int w = max(sz.x, 1);
-        int h = max(sz.y, 1);
-        int sampleCount = min(w * h, MAX_SAMPLES);
         if (sampleCount <= 1)
         {
             vec3 src = texelFetch(SourceTex, ivec3(0, 0, layer), mip).rgb;
             return SafeLum(src);
         }
 
-        int stride = max((w * h) / sampleCount, 1);
         float sum = 0.0;
-        for (int i = 0; i < sampleCount; ++i)
+        for (int gy = 0; gy < gridY; ++gy)
         {
-            int idx = i * stride;
-            int x = idx % w;
-            int y = idx / w;
-            vec3 src = texelFetch(SourceTex, ivec3(x, y, layer), mip).rgb;
-            sum += SafeLum(src);
+            int y = min((gy * h + h / 2) / gridY, h - 1);
+            for (int gx = 0; gx < gridX; ++gx)
+            {
+                int x = min((gx * w + w / 2) / gridX, w - 1);
+                vec3 src = texelFetch(SourceTex, ivec3(x, y, layer), mip).rgb;
+                sum += SafeLum(src);
+            }
         }
 
         return sum / float(sampleCount);
     }
 
-    int mip = clamp(MeteringMip, 0, SmallestMip);
-    ivec2 sz = textureSize(SourceTex, mip).xy;
-    int w = max(sz.x, 1);
-    int h = max(sz.y, 1);
-
-    int sampleCount = min(w * h, MAX_SAMPLES);
     if (sampleCount <= 0)
     {
         vec3 src = texelFetch(SourceTex, ivec3(0, 0, layer), SmallestMip).rgb;
@@ -520,29 +523,30 @@ float ComputeMeteredLuminanceForLayer(int layer)
     }
 
     float lums[MAX_SAMPLES];
-    int stride = max((w * h) / sampleCount, 1);
-
-    for (int i = 0; i < sampleCount; ++i)
+    int sampleIndex = 0;
+    for (int gy = 0; gy < gridY; ++gy)
     {
-        int idx = i * stride;
-        int x = idx % w;
-        int y = idx / w;
-        vec3 rgb = texelFetch(SourceTex, ivec3(x, y, layer), mip).rgb;
-        float lum = SafeLum(rgb);
-
-        if (MeteringMode == 1)
-            lum = log2(lum);
-        else if (MeteringMode == 2)
+        int y = min((gy * h + h / 2) / gridY, h - 1);
+        for (int gx = 0; gx < gridX; ++gx)
         {
-            vec2 uv = (vec2(x, y) + vec2(0.5)) / vec2(w, h);
-            vec2 d = uv - vec2(0.5);
-            float r = length(d) / 0.70710678;
-            float weight = mix(1.0, max(0.0, 1.0 - r), clamp(CenterWeightStrength, 0.0, 1.0));
-            weight = pow(max(weight, 1e-4), max(CenterWeightPower, 0.01));
-            lum *= weight;
-        }
+            int x = min((gx * w + w / 2) / gridX, w - 1);
+            vec3 rgb = texelFetch(SourceTex, ivec3(x, y, layer), mip).rgb;
+            float lum = SafeLum(rgb);
 
-        lums[i] = lum;
+            if (MeteringMode == 1)
+                lum = log2(lum);
+            else if (MeteringMode == 2)
+            {
+                vec2 uv = (vec2(x, y) + vec2(0.5)) / vec2(w, h);
+                vec2 d = uv - vec2(0.5);
+                float r = length(d) / 0.70710678;
+                float weight = mix(1.0, max(0.0, 1.0 - r), clamp(CenterWeightStrength, 0.0, 1.0));
+                weight = pow(max(weight, 1e-4), max(CenterWeightPower, 0.01));
+                lum *= weight;
+            }
+
+            lums[sampleIndex++] = lum;
+        }
     }
 
     for (int i = 1; i < sampleCount; ++i)

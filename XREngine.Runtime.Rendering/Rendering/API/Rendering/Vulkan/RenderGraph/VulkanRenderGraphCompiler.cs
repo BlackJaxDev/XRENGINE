@@ -30,6 +30,7 @@ public unsafe partial class VulkanRenderer
             int StartIndex,
             int Count,
             int PassIndex,
+            int TargetIdentity,
             int SchedulingIdentity,
             Type OpType,
             FrameOpContext Context);
@@ -37,12 +38,10 @@ public unsafe partial class VulkanRenderer
         private readonly struct FrameOpSortKey(
             FrameOp operation,
             int passOrder,
-            int groupOrder,
             int originalIndex)
         {
             public FrameOp Operation { get; } = operation;
             public int PassOrder { get; } = passOrder;
-            public int GroupOrder { get; } = groupOrder;
             public int OriginalIndex { get; } = originalIndex;
         }
 
@@ -55,10 +54,6 @@ public unsafe partial class VulkanRenderer
                 int passCompare = x.PassOrder.CompareTo(y.PassOrder);
                 if (passCompare != 0)
                     return passCompare;
-
-                int groupCompare = x.GroupOrder.CompareTo(y.GroupOrder);
-                if (groupCompare != 0)
-                    return groupCompare;
 
                 if (x.Operation is MeshDrawOp xDraw &&
                     y.Operation is MeshDrawOp yDraw &&
@@ -183,16 +178,17 @@ public unsafe partial class VulkanRenderer
         /// <summary>
         /// Sorts frame operations deterministically by:
         /// 1) compiled pass topological order,
-        /// 2) first-occurrence scheduling group,
-        /// 3) original index (stable tie-breaker).
+        /// 2) canonical opaque mesh draw order when both operations are safe to reorder,
+        /// 3) original index for all dependency-carrying operations.
         /// </summary>
         /// <remarks>
         /// Pass order must dominate scheduling groups so consumers cannot be recorded before
         /// producers when different pipeline/viewport contexts enqueue related work. The pass
         /// rank is resolved from the compiled frame graph first; per-context metadata is only
         /// a fallback for nested work that is absent from the active graph.
-        /// First occurrence is still used as the group tie-breaker instead of raw scheduling hash
-        /// so same-pass operations preserve inter-pipeline enqueue order.
+        /// Same-pass operations preserve original enqueue order unless both are canonicalizable
+        /// opaque mesh draws; compute, barrier, and indirect draw operations must not cross each
+        /// other because they can share GPU-written counters and buffers.
         /// </remarks>
         /// <param name="ops">Operations to sort.</param>
         /// <param name="graph">Compiled pass-order metadata.</param>
@@ -205,30 +201,17 @@ public unsafe partial class VulkanRenderer
 
             int opCount = ops.Length;
             FrameOpSortKey[]? sortKeys = null;
-            int[]? schedulingIds = null;
-            int[]? schedulingFirstIndices = null;
 
             try
             {
                 sortKeys = ArrayPool<FrameOpSortKey>.Shared.Rent(opCount);
-                schedulingIds = ArrayPool<int>.Shared.Rent(opCount);
-                schedulingFirstIndices = ArrayPool<int>.Shared.Rent(opCount);
 
-                int schedulingIdentityCount = 0;
                 for (int i = 0; i < opCount; i++)
                 {
                     FrameOp op = ops[i];
-                    int groupOrder = FindOrAddSchedulingFirstOccurrence(
-                        op.Context.SchedulingIdentity,
-                        i,
-                        schedulingIds,
-                        schedulingFirstIndices,
-                        ref schedulingIdentityCount);
-
                     sortKeys[i] = new FrameOpSortKey(
                         op,
                         ResolvePassOrder(op, graph),
-                        groupOrder,
                         i);
                 }
 
@@ -242,30 +225,7 @@ public unsafe partial class VulkanRenderer
             {
                 if (sortKeys is not null)
                     ArrayPool<FrameOpSortKey>.Shared.Return(sortKeys, clearArray: true);
-                if (schedulingIds is not null)
-                    ArrayPool<int>.Shared.Return(schedulingIds);
-                if (schedulingFirstIndices is not null)
-                    ArrayPool<int>.Shared.Return(schedulingFirstIndices);
             }
-        }
-
-        private static int FindOrAddSchedulingFirstOccurrence(
-            int schedulingIdentity,
-            int originalIndex,
-            int[] schedulingIds,
-            int[] schedulingFirstIndices,
-            ref int schedulingIdentityCount)
-        {
-            for (int i = 0; i < schedulingIdentityCount; i++)
-            {
-                if (schedulingIds[i] == schedulingIdentity)
-                    return schedulingFirstIndices[i];
-            }
-
-            schedulingIds[schedulingIdentityCount] = schedulingIdentity;
-            schedulingFirstIndices[schedulingIdentityCount] = originalIndex;
-            schedulingIdentityCount++;
-            return originalIndex;
         }
 
         private static int ResolvePassOrder(FrameOp op, VulkanCompiledRenderGraph graph)
@@ -389,6 +349,7 @@ public unsafe partial class VulkanRenderer
             buckets.Clear();
             int runStart = -1;
             int runPassIndex = int.MinValue;
+            int runTargetIdentity = int.MinValue;
             int runSchedulingIdentity = int.MinValue;
             Type? runType = null;
             FrameOpContext runContext = default;
@@ -404,6 +365,7 @@ public unsafe partial class VulkanRenderer
                 }
 
                 int passIndex = op.PassIndex;
+                int targetIdentity = ResolveFrameOpTargetIdentity(op);
                 int schedulingIdentity = op.Context.SchedulingIdentity;
                 Type opType = op.GetType();
 
@@ -411,6 +373,7 @@ public unsafe partial class VulkanRenderer
                 {
                     runStart = i;
                     runPassIndex = passIndex;
+                    runTargetIdentity = targetIdentity;
                     runSchedulingIdentity = schedulingIdentity;
                     runType = opType;
                     runContext = op.Context;
@@ -421,6 +384,7 @@ public unsafe partial class VulkanRenderer
                 bool sameBucket =
                     runType == opType &&
                     runPassIndex == passIndex &&
+                    runTargetIdentity == targetIdentity &&
                     runSchedulingIdentity == schedulingIdentity &&
                     Equals(runContext, op.Context);
 
@@ -430,6 +394,7 @@ public unsafe partial class VulkanRenderer
                     FinalizeRun(i);
                     runStart = i;
                     runPassIndex = passIndex;
+                    runTargetIdentity = targetIdentity;
                     runSchedulingIdentity = schedulingIdentity;
                     runType = opType;
                     runContext = op.Context;
@@ -452,6 +417,7 @@ public unsafe partial class VulkanRenderer
                         runStart,
                         runCount,
                         runPassIndex,
+                        runTargetIdentity,
                         runSchedulingIdentity,
                         runType,
                         runContext));
@@ -459,6 +425,7 @@ public unsafe partial class VulkanRenderer
 
                 runStart = -1;
                 runPassIndex = int.MinValue;
+                runTargetIdentity = int.MinValue;
                 runSchedulingIdentity = int.MinValue;
                 runType = null;
                 runContext = default;
@@ -470,6 +437,9 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         private static bool IsSecondaryBucketEligible(FrameOp op)
             => op is BlitOp or IndirectDrawOp;
+
+        private static int ResolveFrameOpTargetIdentity(FrameOp op)
+            => op.Target?.GetHashCode() ?? 0;
 
         /// <summary>
         /// Determines whether a pass can be merged into an existing compiled batch.

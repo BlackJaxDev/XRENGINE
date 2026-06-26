@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
 using System.Threading;
+using Silk.NET.Vulkan;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Shadows;
@@ -37,6 +38,7 @@ public unsafe partial class VulkanRenderer
     private static bool ParallelCommandChainRecordingDisabled => IsCommandChainFlagEnabled(DisableParallelChainRecordingEnvVar);
     private static bool ParallelPacketBuildEnabled => IsCommandChainFlagEnabled(ParallelPacketBuildEnvVar);
     private static bool CommandChainMultiQueueEnabled => IsCommandChainFlagEnabled(CommandChainMultiQueueEnvVar);
+    private bool CommandChainsEnabledForCurrentRecording => CommandChainsEnabled || IsRenderingExternalSwapchainTarget;
 
     private readonly record struct CommandChainLoweringStats(
         int VisibilityPackets,
@@ -74,7 +76,7 @@ public unsafe partial class VulkanRenderer
         out CommandChainLoweringStats stats)
     {
         stats = default;
-        if (!CommandChainsEnabled)
+        if (!CommandChainsEnabledForCurrentRecording)
             return null;
 
         using CommandChainResourcePlanReadScope resourcePlanReadScope = BeginCommandChainResourcePlanReadScope(resourcePlanRevision);
@@ -531,6 +533,87 @@ public unsafe partial class VulkanRenderer
         return chain;
     }
 
+    private bool TryEnsureCommandChainSecondaryCommandBuffer(
+        CommandChain chain,
+        uint imageIndex,
+        out CommandBuffer secondary)
+    {
+        secondary = chain.SecondaryCommandBuffer;
+        if (secondary.Handle != 0 && chain.SecondaryCommandPool.Handle != 0)
+            return true;
+
+        DestroyCommandChainSecondaryCommandBuffer(chain);
+
+        QueueFamilyIndices queueFamilyIndices = FamilyQueueIndices;
+        uint graphicsFamily = queueFamilyIndices.GraphicsFamilyIndex
+            ?? throw new InvalidOperationException("Graphics queue family is not available.");
+        CommandPool pool = CreateCommandPoolForFamily(graphicsFamily);
+        CommandBufferAllocateInfo allocInfo = new()
+        {
+            SType = StructureType.CommandBufferAllocateInfo,
+            CommandPool = pool,
+            Level = CommandBufferLevel.Secondary,
+            CommandBufferCount = 1
+        };
+
+        Result allocateResult = Api!.AllocateCommandBuffers(device, ref allocInfo, out secondary);
+        if (allocateResult != Result.Success || secondary.Handle == 0)
+        {
+            if (pool.Handle != 0)
+                Api!.DestroyCommandPool(device, pool, null);
+
+            secondary = default;
+            return false;
+        }
+
+        chain.SecondaryCommandBuffer = secondary;
+        chain.SecondaryCommandPool = pool;
+        chain.OwnsSecondaryCommandPool = true;
+        RegisterCommandBufferImageIndex(secondary, imageIndex);
+        MarkCommandChainSecondaryCommandBufferChanged(chain);
+        return true;
+    }
+
+    private void MarkCommandChainSecondaryCommandBufferRecorded(CommandChain chain)
+        => MarkCommandChainSecondaryCommandBufferChanged(chain);
+
+    private static void MarkCommandChainSecondaryCommandBufferChanged(CommandChain chain)
+    {
+        unchecked
+        {
+            chain.SecondaryCommandBufferGeneration++;
+        }
+    }
+
+    private void DestroyCommandChainSecondaryCommandBuffer(CommandChain chain)
+    {
+        CommandBuffer secondary = chain.SecondaryCommandBuffer;
+        CommandPool pool = chain.SecondaryCommandPool;
+        bool ownsPool = chain.OwnsSecondaryCommandPool;
+
+        if (secondary.Handle != 0)
+        {
+            if (!_deviceLost && pool.Handle != 0)
+            {
+                CommandBuffer freedSecondary = secondary;
+                Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
+                RemoveCommandBufferBindState(freedSecondary);
+            }
+            else
+            {
+                RemoveCommandBufferBindState(secondary);
+            }
+        }
+
+        if (ownsPool && pool.Handle != 0 && !_deviceLost)
+            Api!.DestroyCommandPool(device, pool, null);
+
+        chain.SecondaryCommandBuffer = default;
+        chain.SecondaryCommandPool = default;
+        chain.OwnsSecondaryCommandPool = false;
+        MarkCommandChainSecondaryCommandBufferChanged(chain);
+    }
+
     internal static CommandChainDirtyReason EvaluateCommandChainDirtyReason(CommandChain chain, RenderPacket packet)
     {
         if (chain.StructuralSignature == 0)
@@ -720,9 +803,15 @@ public unsafe partial class VulkanRenderer
                 hash.Add(key.ViewKey.LightIdentity);
                 hash.Add(key.ViewKey.CascadeIndex);
                 if (chains is not null && chains.TryGetValue(key, out CommandChain? chain))
+                {
                     hash.Add(chain.SecondaryCommandBuffer.Handle);
+                    hash.Add(chain.SecondaryCommandBufferGeneration);
+                }
                 else
+                {
                     hash.Add(0UL);
+                    hash.Add(0UL);
+                }
             }
         }
 
@@ -993,6 +1082,20 @@ public unsafe partial class VulkanRenderer
         return null;
     }
 
+    private static string ResolvePassName(IReadOnlyCollection<RenderPassMetadata>? passMetadata, int passIndex)
+    {
+        if (passMetadata is null)
+            return "<unknown>";
+
+        foreach (RenderPassMetadata pass in passMetadata)
+        {
+            if (pass.PassIndex == passIndex)
+                return pass.Name;
+        }
+
+        return "<unknown>";
+    }
+
     private static int ResolveCommandChainTargetIdentity(FrameOp op)
         => op switch
         {
@@ -1126,6 +1229,8 @@ public unsafe partial class VulkanRenderer
                 hash.Add(indirect.ParameterBuffer?.GetHashCode() ?? 0);
                 hash.Add(indirect.DrawCount);
                 hash.Add(indirect.Stride);
+                hash.Add(indirect.ByteOffset);
+                hash.Add(indirect.CountByteOffset);
                 hash.Add(indirect.UseCount);
                 break;
             case MeshTaskDispatchIndirectCountOp meshTask:

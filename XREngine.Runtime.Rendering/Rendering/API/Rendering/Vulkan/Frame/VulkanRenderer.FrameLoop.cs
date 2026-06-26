@@ -892,6 +892,9 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer submitCommandBuffer;
             CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer;
             int dynamicUiBatchTextOverlayOpCount;
+            FrameOp[] dynamicUiBatchTextOverlayOps;
+            ulong dynamicUiBatchTextOverlaySignature;
+            CommandBufferCacheVariant? dynamicUiBatchTextOverlayVariant;
             ImageLayout swapchainLayoutAfterScene;
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordCommandBuffer"))
@@ -904,6 +907,9 @@ namespace XREngine.Rendering.Vulkan
                         preserveSwapchainForImGuiOverlay,
                         out dynamicUiBatchTextSecondaryCommandBuffer,
                         out dynamicUiBatchTextOverlayOpCount,
+                        out dynamicUiBatchTextOverlayOps,
+                        out dynamicUiBatchTextOverlaySignature,
+                        out dynamicUiBatchTextOverlayVariant,
                         out swapchainLayoutAfterScene);
                 }
                 catch (Exception recordEx)
@@ -997,6 +1003,9 @@ namespace XREngine.Rendering.Vulkan
                             dynamicUiBatchTextSecondaryCommandBuffer,
                             dynamicUiBatchTextOverlayOpCount,
                             ImageLayout.PresentSrcKhr,
+                            dynamicUiBatchTextOverlayVariant,
+                            dynamicUiBatchTextOverlayOps,
+                            dynamicUiBatchTextOverlaySignature,
                             out dynamicUiBatchTextOverlayCommandBuffer);
                     }
                     catch (Exception overlayEx)

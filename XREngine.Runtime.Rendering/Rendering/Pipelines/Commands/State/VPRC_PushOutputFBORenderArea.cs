@@ -13,6 +13,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             ActivePipelineInstance.RenderState.PushRenderArea((int)fbo.Width, (int)fbo.Height);
+            ActivePipelineInstance.RenderState.PushCropArea((int)fbo.Width, (int)fbo.Height);
         }
     }
 }

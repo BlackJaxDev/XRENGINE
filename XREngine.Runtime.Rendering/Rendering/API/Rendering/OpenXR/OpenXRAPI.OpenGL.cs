@@ -1028,8 +1028,32 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
+        LogResolvedOpenXrVrRig(vrInfo.HMDNode, leftEyeCamera, rightEyeCamera, world);
+
         reason = string.Empty;
         return true;
+    }
+
+    private static void LogResolvedOpenXrVrRig(
+        XREngine.Scene.SceneNode hmdNode,
+        XRCamera leftEyeCamera,
+        XRCamera rightEyeCamera,
+        IRuntimeRenderWorld world)
+    {
+        if (!VulkanCaptureEyeOutputs && !OpenXrDebugLifecycle)
+            return;
+
+        Debug.RenderingEvery(
+            "OpenXR.Rig.Resolved",
+            TimeSpan.FromSeconds(2),
+            "[OpenXR] Resolved scene VR rig: hmd='{0}' hmdTransform={1} leftTransform={2} leftParentIsHmd={3} rightTransform={4} rightParentIsHmd={5} world=0x{6:X8}",
+            hmdNode.Name ?? "<unnamed>",
+            hmdNode.Transform.GetType().FullName ?? "<unknown>",
+            leftEyeCamera.Transform.GetType().FullName ?? "<unknown>",
+            ReferenceEquals(leftEyeCamera.Transform.Parent, hmdNode.Transform),
+            rightEyeCamera.Transform.GetType().FullName ?? "<unknown>",
+            ReferenceEquals(rightEyeCamera.Transform.Parent, hmdNode.Transform),
+            world.GetHashCode());
     }
 
     private void ApplyOpenXrEyePoseForRenderThread(uint viewIndex)
@@ -1067,6 +1091,24 @@ public unsafe partial class OpenXRAPI
 
         // Apply composed render matrix so rapid locomotion-root rotations can't temporarily snap the eye.
         camera.Transform.SetRenderMatrix(eyeRender, recalcAllChildRenderMatrices: false);
+
+        if (VulkanCaptureEyeOutputs || OpenXrDebugLifecycle)
+        {
+            var hmdTransform = RuntimeEngine.VRState.ViewInformation.HMDNode?.Transform;
+            Debug.RenderingEvery(
+                $"OpenXR.RenderPose.RigEye.{viewIndex}",
+                TimeSpan.FromSeconds(2),
+                "[OpenXR] Applied late eye pose view {0}: transform={1} parentIsHmd={2} localTranslation=({3:F4},{4:F4},{5:F4}) rootTranslation=({6:F4},{7:F4},{8:F4}).",
+                viewIndex,
+                camera.Transform.GetType().FullName ?? "<unknown>",
+                ReferenceEquals(camera.Transform.Parent, hmdTransform),
+                localPose.M41,
+                localPose.M42,
+                localPose.M43,
+                rootRender.M41,
+                rootRender.M42,
+                rootRender.M43);
+        }
     }
 
     private void EnsureViewportMirrorTargets(AbstractRenderer renderer, uint width, uint height)

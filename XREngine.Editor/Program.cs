@@ -177,6 +177,7 @@ internal class Program
                 WriteBootstrapTrace($"Applied explicit unit-test user setting overrides: Render={XREngine.Engine.UserSettings.RenderLibrary}, Physics={XREngine.Engine.UserSettings.PhysicsLibrary}");
             else
                 WriteBootstrapTrace("No unit-test RenderAPI/PhysicsAPI overrides were specified; keeping loaded user settings.");
+            TraceBootstrapStep("BeforeCreateWindows.ApplyOpenXrRenderPacingOverride", () => ApplyOpenXrRenderPacingOverride(RuntimeBootstrapState.Settings));
             TraceBootstrapStep("BeforeCreateWindows.StartStartupFontPrewarm", StartStartupFontPrewarm);
             TraceBootstrapStep("BeforeCreateWindows.StartStartupTextShaderPrewarm", StartStartupTextShaderPrewarm);
             
@@ -224,6 +225,50 @@ internal class Program
         EngineDebug.LogWarning(
             "[OpenXRSettings] UseOpenXR=true and SceneOnlyVRPawn=true. SceneOnlyVRPawn is a scene-only VR rig path; " +
             "it does not emulate the OpenXR API. UseOpenXR still requests a real OpenXR runtime.");
+    }
+
+    private static void ApplyOpenXrRenderPacingOverride(UnitTestingWorldSettings settings)
+    {
+        if (TryGetOpenXrRenderPacingModeEnv(out OpenXRAPI.OpenXrRenderPacingMode envMode))
+        {
+            XREngine.Engine.Rendering.Settings.OpenXrRenderPacingMode = envMode;
+            WriteBootstrapTrace($"OpenXR render pacing overridden to {envMode} via {XREngineEnvironmentVariables.OpenXrRenderPacingMode}.");
+            return;
+        }
+
+        if (!IsVulkanOpenXrUnitTestingLaunch(settings))
+            return;
+
+        OpenXRAPI.OpenXrRenderPacingMode mode = RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
+        XREngine.Engine.Rendering.Settings.OpenXrRenderPacingMode = mode;
+        WriteBootstrapTrace($"OpenXR Vulkan unit-testing launch forcing render pacing to {mode} after editor preferences loaded.");
+    }
+
+    private static bool TryGetOpenXrRenderPacingModeEnv(out OpenXRAPI.OpenXrRenderPacingMode mode)
+    {
+        mode = default;
+        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrRenderPacingMode);
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        if (Enum.TryParse(raw, true, out mode))
+            return true;
+
+        EngineDebug.LogWarning(
+            $"Invalid {XREngineEnvironmentVariables.OpenXrRenderPacingMode} value '{raw}'. Expected one of: " +
+            string.Join(", ", Enum.GetNames<OpenXRAPI.OpenXrRenderPacingMode>()) + ".");
+        return false;
+    }
+
+    private static bool IsVulkanOpenXrUnitTestingLaunch(UnitTestingWorldSettings settings)
+    {
+        if (settings.VR.Mode is not (UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR))
+            return false;
+
+        ERenderLibrary renderBackend = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
+            ? settings.Rendering.RenderBackend
+            : settings.RenderAPI;
+        return renderBackend == ERenderLibrary.Vulkan;
     }
 
     private sealed class OpenXrSmokeRunController : IDisposable

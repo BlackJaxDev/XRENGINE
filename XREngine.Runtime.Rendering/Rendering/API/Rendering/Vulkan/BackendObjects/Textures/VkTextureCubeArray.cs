@@ -41,8 +41,6 @@ public unsafe partial class VulkanRenderer
 
         protected override void PushTextureData()
         {
-            Generate();
-
             XRTextureCube[] cubes = Data.Cubes;
             if (cubes is null || cubes.Length == 0)
             {
@@ -50,6 +48,8 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
+            RecreateImageForFullTextureDataUpload("full cubemap array texture data upload");
+            Generate();
             TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
 
             uint cubeCount = Math.Min((uint)cubes.Length, Math.Max(1u, ResolvedArrayLayers / 6u));
@@ -60,7 +60,9 @@ public unsafe partial class VulkanRenderer
                 if (mipmaps is null || mipmaps.Length == 0)
                     continue;
 
-                uint levelCount = Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
+                uint levelCount = Data.AutoGenerateMipmaps
+                    ? 1u
+                    : Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
                 for (uint level = 0; level < levelCount; level++)
                 {
                     CubeMipmap? cubeMip = mipmaps[level];

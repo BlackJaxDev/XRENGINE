@@ -57,6 +57,9 @@ public readonly record struct VulkanBindlessMaterialCapability(
 public static class VulkanFeatureProfile
 {
     public const string BindlessMaterialModeEnvVar = XREngineEnvironmentVariables.VulkanBindlessMaterialMode;
+    public const string GpuBvhCullingEnvVar = XREngineEnvironmentVariables.VulkanGpuBvhCulling;
+    private static readonly bool VulkanGpuBvhCullingEnabled =
+        ResolveVulkanGpuBvhCullingPolicy(Environment.GetEnvironmentVariable(GpuBvhCullingEnvVar));
 
     /// <summary>
     /// Returns <c>true</c> when the Vulkan renderer is the currently active backend
@@ -89,11 +92,14 @@ public static class VulkanFeatureProfile
             _ => false,
         };
 
-    // GPU render dispatch uses IndirectDrawOp which doesn't capture the target FBO
-    // and always ends the active render pass. Until the indirect draw path is
-    // integrated with Vulkan render passes, force CPU dispatch.
     private static bool ProfileAllowsGpuRenderDispatch
-        => false;
+        => ActiveProfile switch
+        {
+            EVulkanGpuDrivenProfile.ShippingFast => true,
+            EVulkanGpuDrivenProfile.DevParity => true,
+            EVulkanGpuDrivenProfile.Diagnostics => true,
+            _ => false,
+        };
 
     private static bool ProfileAllowsGpuBvh
         => ActiveProfile switch
@@ -188,7 +194,20 @@ public static class VulkanFeatureProfile
         if (!requested)
             return false;
 
-        return !IsActive || ProfileAllowsGpuBvh;
+        if (!IsActive)
+            return true;
+
+        return ProfileAllowsGpuBvh && VulkanGpuBvhCullingEnabled;
+    }
+
+    public static bool ResolveVulkanGpuBvhCullingPolicy(string? envOverride)
+    {
+        if (TryParseEnabled(envOverride, out bool enabled))
+            return enabled;
+
+        // Vulkan BVH culling is diagnostic opt-in until the BVH traversal path is validated
+        // against the regular GPU frustum culling path. This still uses GPU-driven rendering.
+        return false;
     }
 
     public static bool ResolveImGuiPreference(bool requested)
@@ -236,6 +255,34 @@ public static class VulkanFeatureProfile
             return false;
 
         return Enum.TryParse(raw.Trim(), ignoreCase: true, out mode);
+    }
+
+    private static bool TryParseEnabled(string? raw, out bool enabled)
+    {
+        enabled = false;
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        string value = raw.Trim();
+        if (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "enabled", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "on", StringComparison.OrdinalIgnoreCase))
+        {
+            enabled = true;
+            return true;
+        }
+
+        if (string.Equals(value, "0", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "disabled", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "off", StringComparison.OrdinalIgnoreCase))
+        {
+            enabled = false;
+            return true;
+        }
+
+        return false;
     }
 
     public static bool ResolveDescriptorContractValidationPreference(bool requested)

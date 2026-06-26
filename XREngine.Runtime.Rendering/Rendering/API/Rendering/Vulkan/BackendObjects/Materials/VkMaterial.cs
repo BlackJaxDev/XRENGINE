@@ -26,95 +26,8 @@ namespace XREngine.Rendering.Vulkan
         /// A schema fingerprint is used to detect layout mismatches and trigger re-creation.
         /// </para>
         /// </summary>
-        public class VkMaterial(VulkanRenderer api, XRMaterial data) : VkObject<XRMaterial>(api, data)
+        public partial class VkMaterial(VulkanRenderer api, XRMaterial data) : VkObject<XRMaterial>(api, data)
         {
-            #region Nested Types
-
-            /// <summary>
-            /// Holds all Vulkan descriptor resources that have been allocated for a specific
-            /// <see cref="VkRenderProgram"/>. A separate state is maintained per program because
-            /// different programs may declare different descriptor set layouts.
-            /// </summary>
-            private sealed class ProgramDescriptorState
-            {
-                /// <summary>The render program this state was created for.</summary>
-                public required VkRenderProgram Program { get; init; }
-
-                /// <summary>Snapshot of the program's descriptor binding metadata at creation time.</summary>
-                public required IReadOnlyList<DescriptorBindingInfo> Bindings { get; init; }
-
-                /// <summary>
-                /// Per-frame descriptor sets. Indexed as <c>[frameIndex][setIndex]</c>.
-                /// One full copy per swap-chain image avoids write-after-read hazards.
-                /// </summary>
-                public required DescriptorSet[][] DescriptorSets { get; init; }
-
-                /// <summary>
-                /// Uniform buffer resources keyed by <c>(set, binding)</c>.
-                /// Only material-owned uniform bindings appear here; engine-managed uniforms are excluded.
-                /// </summary>
-                public required Dictionary<(uint set, uint binding), UniformBindingResource> UniformBindings { get; init; }
-
-                /// <summary>
-                /// True when descriptor reflection produced at least one material-owned parameter,
-                /// sampler, image, or texel-buffer binding for this material to service.
-                /// </summary>
-                public required bool HasMaterialParameterOrSamplerBindings { get; init; }
-
-                /// <summary>Number of swap-chain images (frames in flight) at the time of creation.</summary>
-                public required int FrameCount { get; init; }
-
-                /// <summary>Number of descriptor set layouts declared by the program.</summary>
-                public required int SetCount { get; init; }
-
-                /// <summary>
-                /// Hash of the binding layout used to detect when the program's descriptor schema
-                /// has changed, requiring the state to be rebuilt.
-                /// </summary>
-                public required ulong SchemaFingerprint { get; init; }
-
-                /// <summary>
-                /// Hash of concrete Vulkan texture descriptor handles written into the descriptor sets.
-                /// </summary>
-                public ulong ResourceFingerprint;
-
-                /// <summary>The Vulkan descriptor pool from which all sets in this state were allocated.</summary>
-                public DescriptorPool DescriptorPool;
-
-                /// <summary>
-                /// When <c>true</c>, the descriptor writes need to be re-issued
-                /// (e.g. after a texture or parameter change).
-                /// </summary>
-                public bool Dirty = true;
-            }
-
-            /// <summary>
-            /// Tracks a single material-owned uniform buffer binding, including per-frame
-            /// Vulkan buffer handles and their backing device memory.
-            /// </summary>
-            private sealed class UniformBindingResource
-            {
-                /// <summary>The shader uniform name this resource is bound to.</summary>
-                public required string Name { get; init; }
-
-                /// <summary>The material <see cref="ShaderVar"/> whose value is uploaded each frame for legacy single-uniform bindings.</summary>
-                public ShaderVar? Parameter { get; init; }
-
-                /// <summary>Reflected std140/std430 block metadata used when the shader compiler rewrote loose uniforms into a UBO.</summary>
-                public AutoUniformBlockInfo? ReflectedBlock { get; init; }
-
-                /// <summary>Size in bytes of the uniform buffer.</summary>
-                public required uint Size { get; init; }
-
-                /// <summary>Per-frame Vulkan buffer handles.</summary>
-                public required Silk.NET.Vulkan.Buffer[] Buffers { get; init; }
-
-                /// <summary>Per-frame device memory backing the corresponding <see cref="Buffers"/> entries.</summary>
-                public required DeviceMemory[] Memories { get; init; }
-            }
-
-            #endregion
-
             #region Fields
 
             /// <summary>Synchronizes access to <see cref="_programStates"/> and related mutable state.</summary>
@@ -159,7 +72,8 @@ namespace XREngine.Rendering.Vulkan
             #region VkObject Lifecycle
 
             /// <inheritdoc />
-            protected override uint CreateObjectInternal() => CacheObject(this);
+            protected override uint CreateObjectInternal()
+                => CacheObject(this);
 
             /// <inheritdoc />
             /// <remarks>Destroys all per-program descriptor states and removes this object from the cache.</remarks>
@@ -221,7 +135,7 @@ namespace XREngine.Rendering.Vulkan
             /// </returns>
             public bool TryBindDescriptorSets(CommandBuffer commandBuffer, VkRenderProgram program, int frameIndex, uint firstSet = 0)
             {
-                if (program is null || !program.Link() || Renderer.swapChainImages is null || Renderer.swapChainImages.Length == 0)
+                if (program is null || !program.Link() || Renderer.DescriptorFrameSlotFrameCount <= 0)
                     return false;
 
                 if (!TryEnsureState(program, out ProgramDescriptorState? state) || state is null)
@@ -381,7 +295,7 @@ namespace XREngine.Rendering.Vulkan
                         return false;
                     }
 
-                    int frameCount = Renderer.swapChainImages!.Length;
+                    int frameCount = Renderer.DescriptorFrameSlotFrameCount;
                     int setCount = program.DescriptorSetLayouts.Count;
                     ulong fingerprint = ComputeSchemaFingerprint(program.DescriptorBindings, frameCount, setCount);
                     uint key = program.BindingId;
@@ -425,7 +339,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 state = null;
 
-                int frameCount = Renderer.swapChainImages?.Length ?? 0;
+                int frameCount = Renderer.DescriptorFrameSlotFrameCount;
                 if (frameCount <= 0)
                     return false;
 
@@ -766,10 +680,8 @@ namespace XREngine.Rendering.Vulkan
             private bool UpdateDescriptorSets(ProgramDescriptorState state)
             {
                 for (int frame = 0; frame < state.FrameCount; frame++)
-                {
                     if (!UpdateFrameDescriptorSet(state, frame))
                         return false;
-                }
 
                 return true;
             }

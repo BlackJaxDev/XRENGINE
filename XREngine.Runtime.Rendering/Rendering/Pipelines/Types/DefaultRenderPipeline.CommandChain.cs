@@ -20,7 +20,8 @@ public partial class DefaultRenderPipeline
     {
         ViewportRenderCommandContainer c = new(this);
         var ifElse = c.Add<VPRC_IfElse>();
-        ifElse.ConditionEvaluator = () => State.WindowViewport is not null;
+        ifElse.ConditionEvaluator = () => State.WindowViewport is not null
+            && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;
         ifElse.TrueCommands = CreateViewportTargetCommands();
         ifElse.FalseCommands = CreateFBOTargetCommands();
         return c;

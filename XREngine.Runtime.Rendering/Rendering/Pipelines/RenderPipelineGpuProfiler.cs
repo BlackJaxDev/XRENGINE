@@ -17,6 +17,8 @@ internal sealed class RenderPipelineGpuProfiler
     public static RenderPipelineGpuProfiler Instance { get; } = new();
     private const ulong PartialPublishDelayFrames = 3;
     private const ulong StalePendingQueryFrames = 120;
+    private const ulong LiveTimingHistoryPublishIntervalFrames = 8;
+    private const int MaxTimingHistoryFrameSummaries = 1200;
     private const int MaxTimestampScopesPerFrame = 512;
     private const double SlowTimestampQuerySuspendMilliseconds = 12.0;
     private const ulong SlowTimestampQuerySuspendFrames = 120;
@@ -260,6 +262,7 @@ internal sealed class RenderPipelineGpuProfiler
     private readonly Dictionary<string, PipelineTimingHistory> _pipelineTimingHistories = new(StringComparer.Ordinal);
     private readonly List<PendingScope> _pendingScopes = [];
     private readonly List<OrphanedQuery> _orphanedQueries = [];
+    private readonly List<ulong> _frameRemovalScratch = [];
     private RenderStatsGpuPipelineSnapshot _latestSnapshot = RenderStatsGpuPipelineSnapshot.Disabled();
     private ulong _lastPublishedFrameId;
     private bool _hasPublishedFrame;
@@ -882,42 +885,55 @@ internal sealed class RenderPipelineGpuProfiler
         if (best is null)
             return;
 
-        RecordTimingHistoryNoLock(best);
-        _latestSnapshot = CreateSnapshot(best);
-        if (!_hasPublishedFrame || best.FrameId > _lastPublishedFrameId)
+        bool shouldPublish =
+            !_hasPublishedFrame ||
+            (best.FrameId > _lastPublishedFrameId &&
+             best.FrameId - _lastPublishedFrameId >= LiveTimingHistoryPublishIntervalFrames);
+
+        if (shouldPublish)
         {
-            _lastPublishedFrameId = best.FrameId;
-            _hasPublishedFrame = true;
+            RecordTimingHistoryNoLock(best);
+            _latestSnapshot = CreateSnapshot(best);
+            if (!_hasPublishedFrame || best.FrameId > _lastPublishedFrameId)
+            {
+                _lastPublishedFrameId = best.FrameId;
+                _hasPublishedFrame = true;
+            }
         }
 
-        List<ulong> keysToRemove = [];
+        RemoveFramesThroughNoLock(best.FrameId);
+    }
+
+    private void RemoveFramesThroughNoLock(ulong maxFrameId)
+    {
+        _frameRemovalScratch.Clear();
         foreach (ulong key in _frames.Keys)
         {
-            if (key <= best.FrameId)
-                keysToRemove.Add(key);
+            if (key <= maxFrameId)
+                _frameRemovalScratch.Add(key);
         }
 
-        for (int i = 0; i < keysToRemove.Count; i++)
-            _frames.Remove(keysToRemove[i]);
+        for (int i = 0; i < _frameRemovalScratch.Count; i++)
+            _frames.Remove(_frameRemovalScratch[i]);
+
+        _frameRemovalScratch.Clear();
     }
 
     private void PruneFramesNoLock(ulong currentFrameId)
     {
-        List<ulong>? stale = null;
+        _frameRemovalScratch.Clear();
         foreach ((ulong frameId, FrameCapture frame) in _frames)
         {
             if (!IsOlderThan(currentFrameId, frameId, StalePendingQueryFrames))
                 continue;
 
-            stale ??= [];
-            stale.Add(frameId);
+            _frameRemovalScratch.Add(frameId);
         }
 
-        if (stale is null)
-            return;
+        for (int i = 0; i < _frameRemovalScratch.Count; i++)
+            _frames.Remove(_frameRemovalScratch[i]);
 
-        for (int i = 0; i < stale.Count; i++)
-            _frames.Remove(stale[i]);
+        _frameRemovalScratch.Clear();
     }
 
     private void CancelDanglingUserScopesNoLock()
@@ -1096,6 +1112,7 @@ internal sealed class RenderPipelineGpuProfiler
                 sampleCount,
                 renderThreadMilliseconds,
                 renderThreadUnattributedMilliseconds));
+            TrimFrameSummariesNoLock(history);
 
             if (frameMilliseconds < history.MinFrameMilliseconds)
             {
@@ -1140,6 +1157,13 @@ internal sealed class RenderPipelineGpuProfiler
                     history.WorstFrames.RemoveAt(history.WorstFrames.Count - 1);
             }
         }
+    }
+
+    private static void TrimFrameSummariesNoLock(PipelineTimingHistory history)
+    {
+        int excessCount = history.FrameSummaries.Count - MaxTimingHistoryFrameSummaries;
+        if (excessCount > 0)
+            history.FrameSummaries.RemoveRange(0, excessCount);
     }
 
     private PipelineTimingHistory GetOrCreatePipelineTimingHistoryNoLock(string pipelineName)

@@ -87,18 +87,30 @@ public unsafe partial class OpenXRAPI
 
         renderCallback ??= RenderViewportsToSwapchain;
 
-        bool allEyesRendered = true;
-        // NOTE: OpenXR swapchain acquire/wait/release is safest when done serially.
-        // Parallelizing via Task.Run can break GL context ownership and runtime expectations.
-        if (OpenXrDebugRenderRightThenLeft)
+        bool allEyesRendered;
+        bool vulkanBatchHandled;
+        using (var batchSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderFrame.TryRenderVulkanEyesBatch"))
         {
-            for (int i = (int)_viewCount - 1; i >= 0; i--)
-                allEyesRendered &= RenderEye((uint)i, renderCallback, projectionViews);
+            allEyesRendered = TryRenderVulkanEyesBatch(projectionViews, out vulkanBatchHandled);
         }
-        else
+
+        if (!allEyesRendered && !vulkanBatchHandled && OpenXrDebugRenderRightThenLeft)
         {
-            for (uint i = 0; i < _viewCount; i++)
-                allEyesRendered &= RenderEye(i, renderCallback, projectionViews);
+            allEyesRendered = true;
+            using (var sequentialSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderFrame.RenderEyesSequential"))
+            {
+                for (int i = (int)_viewCount - 1; i >= 0; i--)
+                    allEyesRendered &= RenderEye((uint)i, renderCallback, projectionViews);
+            }
+        }
+        else if (!allEyesRendered && !vulkanBatchHandled)
+        {
+            allEyesRendered = true;
+            using (var sequentialSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderFrame.RenderEyesSequential"))
+            {
+                for (uint i = 0; i < _viewCount; i++)
+                    allEyesRendered &= RenderEye(i, renderCallback, projectionViews);
+            }
         }
 
         if (_gl is not null)
@@ -174,7 +186,7 @@ public unsafe partial class OpenXRAPI
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         try
         {
-            if (Window?.Renderer is VulkanRenderer)
+            if (Window?.Renderer is VulkanRenderer && ShouldPrewarmVulkanEyeResources(viewIndex))
                 PrewarmVulkanEyeResources(viewIndex);
 
             var acquireResult = CheckResult(Api.AcquireSwapchainImage(_swapchains[viewIndex], in acquireInfo, ref imageIndex), "xrAcquireSwapchainImage");
@@ -244,22 +256,7 @@ public unsafe partial class OpenXRAPI
             }
 
             // Setup projection view (only if we successfully acquired+waited the swapchain image).
-            projectionViews[viewIndex] = default;
-            projectionViews[viewIndex].Type = StructureType.CompositionLayerProjectionView;
-            projectionViews[viewIndex].Next = null;
-            projectionViews[viewIndex].Fov = _views[viewIndex].Fov;
-            projectionViews[viewIndex].Pose = _views[viewIndex].Pose;
-            projectionViews[viewIndex].SubImage.Swapchain = _swapchains[viewIndex];
-            projectionViews[viewIndex].SubImage.ImageArrayIndex = 0;
-            projectionViews[viewIndex].SubImage.ImageRect = new Rect2Di
-            {
-                Offset = new Offset2Di { X = 0, Y = 0 },
-                Extent = new Extent2Di
-                {
-                    Width = (int)_viewConfigViews[viewIndex].RecommendedImageRectWidth,
-                    Height = (int)_viewConfigViews[viewIndex].RecommendedImageRectHeight
-                }
-            };
+            FillProjectionView(viewIndex, projectionViews);
 
             return true;
         }
@@ -281,6 +278,26 @@ public unsafe partial class OpenXRAPI
                     Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Release => {releaseResult}");
             }
         }
+    }
+
+    private void FillProjectionView(uint viewIndex, CompositionLayerProjectionView* projectionViews)
+    {
+        projectionViews[viewIndex] = default;
+        projectionViews[viewIndex].Type = StructureType.CompositionLayerProjectionView;
+        projectionViews[viewIndex].Next = null;
+        projectionViews[viewIndex].Fov = _views[viewIndex].Fov;
+        projectionViews[viewIndex].Pose = _views[viewIndex].Pose;
+        projectionViews[viewIndex].SubImage.Swapchain = _swapchains[viewIndex];
+        projectionViews[viewIndex].SubImage.ImageArrayIndex = 0;
+        projectionViews[viewIndex].SubImage.ImageRect = new Rect2Di
+        {
+            Offset = new Offset2Di { X = 0, Y = 0 },
+            Extent = new Extent2Di
+            {
+                Width = (int)_viewConfigViews[viewIndex].RecommendedImageRectWidth,
+                Height = (int)_viewConfigViews[viewIndex].RecommendedImageRectHeight
+            }
+        };
     }
 
     /// <summary>
@@ -325,12 +342,16 @@ public unsafe partial class OpenXRAPI
         try
         {
             // Keep OpenXR event/state progression on the render thread.
-            PollEvents();
+            using (var pollEventsSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.PollEvents"))
+            {
+                PollEvents();
+            }
 
             // Late-update: refresh tracked poses as close to rendering as possible.
             // This updates the view poses used for projection submission and device transforms.
             if (_sessionBegun && Volatile.Read(ref _pendingXrFrame) != 0)
             {
+                using var latePoseSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.LatePose");
                 // Capture predicted pose before late update for debug comparison.
                 System.Numerics.Matrix4x4 predHead;
                 lock (_openXrPoseLock)
@@ -357,24 +378,37 @@ public unsafe partial class OpenXRAPI
 
             // Match OpenVR timing: allow the engine to update any VR/locomotion transforms right before rendering.
             // (OpenXR runs its own render callback path, so we need to invoke the same hook here.)
-            RuntimeEngine.VRState.InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Late);
+            using (var recalcSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.RecalcMatrixOnDraw"))
+            {
+                RuntimeEngine.VRState.InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Late);
+            }
 
             if (!_sessionBegun)
                 return;
 
             // Lazily start the dedicated pacing thread when the session is ready and the mode is enabled.
             // The render thread then only signals it after xrEndFrame instead of running prep inline.
-            EnsureOpenXrPacingThreadStarted();
+            using (var pacingStartSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.EnsurePacingThread"))
+            {
+                EnsureOpenXrPacingThreadStarted();
+            }
 
             // Render the frame whose visibility buffers were published by the CollectVisible thread.
-            RenderFrame(null);
+            using (var renderFrameSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.RenderFrame"))
+            {
+                RenderFrame(null);
+            }
 
             // Inline prep (pre-desktop-render) is the legacy InRenderCallback path.
             if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.InRenderCallback)
+            {
+                using var prepSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.PrepareNextFrame");
                 PrepareNextFrameOnRenderThread();
+            }
         }
         finally
         {
+            using var restoreStateSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.RestoreRenderState");
             // XRWindow renders desktop viewports immediately after this callback returns.
             // Restore the GL state that existed before OpenXR's work to avoid contaminating
             // the engine's normal desktop rendering. If snapshot capture failed, do best-effort sanitation.
@@ -405,6 +439,7 @@ public unsafe partial class OpenXRAPI
         if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.PostRenderCallback
             && OpenXrPrepareFrameAfterDesktopRender)
         {
+            using var prepSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.PostRender.PrepareNextFrame");
             PrepareNextFrameOnRenderThread();
         }
     }
@@ -602,29 +637,48 @@ public unsafe partial class OpenXRAPI
             // OpenXR eye rendering is strictly driven by the scene VR rig. If the rig has not published
             // HMD-owned eye cameras, skip the frame instead of falling back to the desktop/editor camera.
             var vrInfo = RuntimeEngine.VRState.ViewInformation;
+            float nearPlane = sourceCamera?.Parameters.NearZ
+                              ?? vrInfo.LeftEyeCamera?.Parameters.NearZ
+                              ?? vrInfo.RightEyeCamera?.Parameters.NearZ
+                              ?? _openXrFrameBaseCamera?.Parameters.NearZ
+                              ?? 0.1f;
+            float farPlane = sourceCamera?.Parameters.FarZ
+                             ?? vrInfo.LeftEyeCamera?.Parameters.FarZ
+                             ?? vrInfo.RightEyeCamera?.Parameters.FarZ
+                             ?? _openXrFrameBaseCamera?.Parameters.FarZ
+                             ?? 100000.0f;
+
             if (vrInfo.HMDNode is null || vrInfo.LeftEyeCamera is null || vrInfo.RightEyeCamera is null)
             {
-                float nearPlane = sourceCamera?.Parameters.NearZ
-                                  ?? vrInfo.LeftEyeCamera?.Parameters.NearZ
-                                  ?? vrInfo.RightEyeCamera?.Parameters.NearZ
-                                  ?? _openXrFrameBaseCamera?.Parameters.NearZ
-                                  ?? 0.1f;
-                float farPlane = sourceCamera?.Parameters.FarZ
-                                 ?? vrInfo.LeftEyeCamera?.Parameters.FarZ
-                                 ?? vrInfo.RightEyeCamera?.Parameters.FarZ
-                                 ?? _openXrFrameBaseCamera?.Parameters.FarZ
-                                 ?? 100000.0f;
-
                 if (RuntimeVrRenderingServices.TryEnsureHeadsetViewInformation(vrInfo.World, vrInfo.HMDNode, nearPlane, farPlane))
                     vrInfo = RuntimeEngine.VRState.ViewInformation;
             }
 
-            if (!TryResolveRequiredOpenXrVrRig(
-                    out XRCamera? leftEyeCamera,
-                    out XRCamera? rightEyeCamera,
-                    out IRuntimeRenderWorld? world,
-                    out var rigLocomotionRoot,
-                    out string rigReason))
+            bool rigResolved = TryResolveRequiredOpenXrVrRig(
+                out XRCamera? leftEyeCamera,
+                out XRCamera? rightEyeCamera,
+                out IRuntimeRenderWorld? world,
+                out var rigLocomotionRoot,
+                out string rigReason);
+
+            if (!rigResolved &&
+                RuntimeVrRenderingServices.TryEnsureHeadsetViewInformation(vrInfo.World, null, nearPlane, farPlane))
+            {
+                Debug.RenderingEvery(
+                    "OpenXR.CollectVisible.RepublishedVrRig",
+                    TimeSpan.FromSeconds(2),
+                    "[OpenXR] Re-published active VR headset view information after strict rig validation failed: {0}",
+                    rigReason);
+
+                rigResolved = TryResolveRequiredOpenXrVrRig(
+                    out leftEyeCamera,
+                    out rightEyeCamera,
+                    out world,
+                    out rigLocomotionRoot,
+                    out rigReason);
+            }
+
+            if (!rigResolved)
             {
                 Debug.RenderingWarningEvery(
                     "OpenXR.CollectVisible.NoRequiredVrRig",

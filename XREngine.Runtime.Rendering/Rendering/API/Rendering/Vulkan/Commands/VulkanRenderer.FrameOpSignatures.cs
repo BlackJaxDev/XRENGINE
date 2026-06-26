@@ -299,10 +299,11 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(indirect.DrawCount);
             hash.Add(indirect.Stride);
             hash.Add(indirect.ByteOffset);
+            hash.Add(indirect.CountByteOffset);
             hash.Add(indirect.UseCount);
             hash.Add(indirect.BindlessMaterialTextures?.Program.GetHashCode() ?? 0);
             hash.Add(indirect.BindlessMaterialTextures?.Consumer, StringComparer.Ordinal);
-            AddSignaturePart(parts, opIndex, opType, "indirect", hash, $"draws={indirect.DrawCount} stride={indirect.Stride} useCount={indirect.UseCount} bindlessMaterialTextures={indirect.BindlessMaterialTextures.HasValue}");
+            AddSignaturePart(parts, opIndex, opType, "indirect", hash, $"draws={indirect.DrawCount} stride={indirect.Stride} byteOffset={indirect.ByteOffset} countOffset={indirect.CountByteOffset} useCount={indirect.UseCount} bindlessMaterialTextures={indirect.BindlessMaterialTextures.HasValue}");
         }
 
         private static void AddMeshTaskSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, MeshTaskDispatchIndirectCountOp meshTask)
@@ -509,6 +510,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 hash.Add(pair.Key);
                 hash.Add(pair.Value.GetHashCode());
+                hash.Add(ComputeTextureDescriptorSignature(pair.Value));
             }
 
             return hash.ToHashCode();
@@ -522,6 +524,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 hash.Add(pair.Key, StringComparer.Ordinal);
                 hash.Add(pair.Value.GetHashCode());
+                hash.Add(ComputeTextureDescriptorSignature(pair.Value));
             }
 
             return hash.ToHashCode();
@@ -536,6 +539,7 @@ namespace XREngine.Rendering.Vulkan
                 ProgramImageBinding binding = pair.Value;
                 hash.Add(pair.Key);
                 hash.Add(binding.Texture.GetHashCode());
+                hash.Add(ComputeTextureDescriptorSignature(binding.Texture));
                 hash.Add(binding.Level);
                 hash.Add(binding.Layered);
                 hash.Add(binding.Layer);

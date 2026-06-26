@@ -74,19 +74,22 @@ public unsafe partial class VulkanRenderer
         bool DepthBit,
         bool StencilBit,
         bool LinearFilter,
-        FrameOpContext Context) : FrameOp(PassIndex, null, Context);
+        FrameOpContext Context) : FrameOp(PassIndex, OutFbo, Context);
 
     internal sealed record IndirectDrawOp(
         int PassIndex,
+        XRFrameBuffer? Target,
         VkDataBuffer IndirectBuffer,
         VkDataBuffer? ParameterBuffer,
+        VkMeshRenderer MeshRenderer,
+        PendingMeshDraw Draw,
         uint DrawCount,
         uint Stride,
         nuint ByteOffset,
         nuint CountByteOffset,
         bool UseCount,
         VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures,
-        FrameOpContext Context) : FrameOp(PassIndex, null, Context);
+        FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
 
     internal sealed record MeshTaskDispatchIndirectCountOp(
         int PassIndex,
@@ -439,6 +442,7 @@ public unsafe partial class VulkanRenderer
                     hash.Add(indirect.DrawCount);
                     hash.Add(indirect.Stride);
                     hash.Add(indirect.ByteOffset);
+                    hash.Add(indirect.CountByteOffset);
                     hash.Add(indirect.UseCount);
                     break;
                 case MeshTaskDispatchIndirectCountOp meshTaskDispatch:
@@ -636,7 +640,7 @@ public unsafe partial class VulkanRenderer
         {
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
-            item.Add(pair.Value.GetHashCode());
+            AddTextureDescriptorSignature(ref item, pair.Value);
             AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 
@@ -651,7 +655,7 @@ public unsafe partial class VulkanRenderer
         {
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
-            item.Add(pair.Value.GetHashCode());
+            AddTextureDescriptorSignature(ref item, pair.Value);
             AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 
@@ -667,7 +671,7 @@ public unsafe partial class VulkanRenderer
             ProgramImageBinding binding = pair.Value;
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
-            item.Add(binding.Texture.GetHashCode());
+            AddTextureDescriptorSignature(ref item, binding.Texture);
             item.Add(binding.Level);
             item.Add(binding.Layered);
             item.Add(binding.Layer);
@@ -677,6 +681,44 @@ public unsafe partial class VulkanRenderer
         }
 
         return FinishUnorderedHash(images.Count, xor, sum);
+    }
+
+    private static void AddTextureDescriptorSignature(ref FrameOpSignatureHasher hash, XRTexture? texture)
+    {
+        hash.Add(texture?.GetHashCode() ?? 0);
+        if (texture is null)
+        {
+            hash.Add(0UL);
+            return;
+        }
+
+        if (AbstractRenderer.Current is VulkanRenderer renderer &&
+            renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is IVkImageDescriptorSource source)
+        {
+            hash.Add(source.IsDescriptorReady);
+            hash.Add(source.DescriptorGeneration);
+            hash.Add(source.DescriptorImage.Handle);
+            hash.Add(source.DescriptorView.Handle);
+            hash.Add(source.DescriptorSampler.Handle);
+            hash.Add((int)source.DescriptorViewType);
+            hash.Add((int)source.DescriptorFormat);
+            hash.Add((int)source.DescriptorAspect);
+            hash.Add((int)source.DescriptorUsage);
+            hash.Add((int)source.DescriptorSamples);
+            hash.Add(source.DescriptorMipLevels);
+            hash.Add(source.DescriptorArrayLayers);
+        }
+        else
+        {
+            hash.Add(0UL);
+        }
+    }
+
+    private static ulong ComputeTextureDescriptorSignature(XRTexture? texture)
+    {
+        FrameOpSignatureHasher hash = new();
+        AddTextureDescriptorSignature(ref hash, texture);
+        return hash.ToHash();
     }
 
     private static ulong HashBufferBindings(Dictionary<uint, XRDataBuffer> buffers)
@@ -870,85 +912,10 @@ public unsafe partial class VulkanRenderer
         private IndexSize _triangleIndexSize;
         private IndexSize _lineIndexSize;
         private IndexSize _pointIndexSize;
+        private bool _triangleIndexBufferExternallyProvided;
         private bool _indexBuffersSkippedForShaderGeneratedVertices;
 
         private readonly Dictionary<PipelineKey, Pipeline> _pipelines = new();
-        internal readonly record struct PipelineKey(
-            PrimitiveTopology Topology,
-            bool UseDynamicRendering,
-            ulong RenderPassHandle,
-            DynamicRenderingFormatSignature DynamicRenderingFormats,
-            ulong ProgramPipelineHash,
-            ulong VertexLayoutHash,
-            ulong DescriptorLayoutHash,
-            ulong MaterialLayoutHash,
-            ulong PassMetadataHash,
-            ulong FeatureProfileHash,
-            SampleCountFlags RasterizationSamples,
-            bool DepthTestEnabled,
-            bool DepthWriteEnabled,
-            CompareOp DepthCompareOp,
-            bool StencilTestEnabled,
-            StencilOpState FrontStencilState,
-            StencilOpState BackStencilState,
-            uint StencilWriteMask,
-            CullModeFlags CullMode,
-            FrontFace FrontFace,
-            bool BlendEnabled,
-            bool AlphaToCoverageEnabled,
-            BlendOp ColorBlendOp,
-            BlendOp AlphaBlendOp,
-            BlendFactor SrcColorBlendFactor,
-            BlendFactor DstColorBlendFactor,
-            BlendFactor SrcAlphaBlendFactor,
-            BlendFactor DstAlphaBlendFactor,
-            ColorComponentFlags ColorWriteMask,
-            uint ViewportScissorCount,
-            bool NativeNegativeOneToOneDepth);
-
-        internal readonly record struct GraphicsPipelineCompileKey(
-            int OwnerIdentity,
-            PipelineKey Pipeline);
-
-        internal enum GraphicsPipelineLibrarySubset : byte
-        {
-            VertexInputInterface,
-            PreRasterizationShaders,
-            FragmentShader,
-            FragmentOutputInterface,
-        }
-
-        internal readonly record struct GraphicsPipelineLibraryKey(
-            GraphicsPipelineLibrarySubset Subset,
-            bool UseDynamicRendering,
-            ulong RenderPassHandle,
-            DynamicRenderingFormatSignature DynamicRenderingFormats,
-            PrimitiveTopology Topology,
-            ulong ProgramPipelineHash,
-            ulong VertexLayoutHash,
-            ulong DescriptorLayoutHash,
-            ulong FeatureProfileHash,
-            SampleCountFlags RasterizationSamples,
-            bool DepthTestEnabled,
-            bool DepthWriteEnabled,
-            CompareOp DepthCompareOp,
-            bool StencilTestEnabled,
-            StencilOpState FrontStencilState,
-            StencilOpState BackStencilState,
-            uint StencilWriteMask,
-            CullModeFlags CullMode,
-            FrontFace FrontFace,
-            bool BlendEnabled,
-            bool AlphaToCoverageEnabled,
-            BlendOp ColorBlendOp,
-            BlendOp AlphaBlendOp,
-            BlendFactor SrcColorBlendFactor,
-            BlendFactor DstColorBlendFactor,
-            BlendFactor SrcAlphaBlendFactor,
-            BlendFactor DstAlphaBlendFactor,
-            ColorComponentFlags ColorWriteMask,
-            uint ViewportScissorCount,
-            bool NativeNegativeOneToOneDepth);
 
         internal VulkanFrameDrawStats EstimateFrameDrawStats(in PendingMeshDraw draw)
         {
@@ -1008,81 +975,6 @@ public unsafe partial class VulkanRenderer
             return total > int.MaxValue ? int.MaxValue : (int)total;
         }
 
-        internal sealed class GraphicsPipelineBuildRequest
-        {
-            public GraphicsPipelineBuildRequest(
-                VkMeshRenderer owner,
-                VkRenderProgram program,
-                PipelineKey key,
-                string pipelineName,
-                uint colorAttachmentCount,
-                PipelineLayout pipelineLayout,
-                VertexInputBindingDescription[] vertexBindings,
-                VertexInputAttributeDescription[] vertexAttributes,
-                PipelineInputAssemblyStateCreateInfo inputAssembly,
-                uint viewportScissorCount,
-                bool nativeNegativeOneToOneDepth,
-                PipelineRasterizationStateCreateInfo rasterizer,
-                PipelineMultisampleStateCreateInfo multisampling,
-                PipelineDepthStencilStateCreateInfo depthStencil,
-                PipelineColorBlendAttachmentState[] blendAttachments,
-                DynamicState[] dynamicStates,
-                RenderPass renderPass,
-                DynamicRenderingFormatSignature dynamicRenderingFormats,
-                PipelineShaderStageCreateInfo[] graphicsStages,
-                PipelineShaderStageCreateInfo[] preRasterStages,
-                PipelineShaderStageCreateInfo[] fragmentStages)
-            {
-                Owner = owner;
-                Program = program;
-                Key = key;
-                CompileKey = new GraphicsPipelineCompileKey(
-                    global::System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(owner),
-                    key);
-                PipelineName = pipelineName;
-                ColorAttachmentCount = colorAttachmentCount;
-                PipelineLayout = pipelineLayout;
-                VertexBindings = vertexBindings;
-                VertexAttributes = vertexAttributes;
-                InputAssembly = inputAssembly;
-                ViewportScissorCount = viewportScissorCount;
-                NativeNegativeOneToOneDepth = nativeNegativeOneToOneDepth;
-                Rasterizer = rasterizer;
-                Multisampling = multisampling;
-                DepthStencil = depthStencil;
-                BlendAttachments = blendAttachments;
-                DynamicStates = dynamicStates;
-                RenderPass = renderPass;
-                DynamicRenderingFormats = dynamicRenderingFormats;
-                GraphicsStages = graphicsStages;
-                PreRasterStages = preRasterStages;
-                FragmentStages = fragmentStages;
-            }
-
-            public VkMeshRenderer Owner { get; }
-            public VkRenderProgram Program { get; }
-            public PipelineKey Key { get; }
-            public GraphicsPipelineCompileKey CompileKey { get; }
-            public string PipelineName { get; }
-            public uint ColorAttachmentCount { get; }
-            public PipelineLayout PipelineLayout { get; }
-            public VertexInputBindingDescription[] VertexBindings { get; }
-            public VertexInputAttributeDescription[] VertexAttributes { get; }
-            public PipelineInputAssemblyStateCreateInfo InputAssembly { get; }
-            public uint ViewportScissorCount { get; }
-            public bool NativeNegativeOneToOneDepth { get; }
-            public PipelineRasterizationStateCreateInfo Rasterizer { get; }
-            public PipelineMultisampleStateCreateInfo Multisampling { get; }
-            public PipelineDepthStencilStateCreateInfo DepthStencil { get; }
-            public PipelineColorBlendAttachmentState[] BlendAttachments { get; }
-            public DynamicState[] DynamicStates { get; }
-            public RenderPass RenderPass { get; }
-            public DynamicRenderingFormatSignature DynamicRenderingFormats { get; }
-            public PipelineShaderStageCreateInfo[] GraphicsStages { get; }
-            public PipelineShaderStageCreateInfo[] PreRasterStages { get; }
-            public PipelineShaderStageCreateInfo[] FragmentStages { get; }
-        }
-
         private VkRenderProgram? _program;
         private XRRenderProgram? _generatedProgram;
         private string? _activeProgramIdentity;
@@ -1140,50 +1032,8 @@ public unsafe partial class VulkanRenderer
         private const string PrecombinedBlendshapeNormalBufferName = "PrecombinedBlendshapeNormalDeltas";
         private const string PrecombinedBlendshapeTangentBufferName = "PrecombinedBlendshapeTangentDeltas";
 
-        private sealed class GeneratedProgramCacheEntry
-        {
-            public required XRRenderProgram Data { get; init; }
-            public required VkRenderProgram Program { get; init; }
-        }
-
-        private readonly record struct DescriptorAllocationKey(
-            ulong SchemaFingerprint,
-            ulong ResourceFingerprint,
-            int DescriptorFrameSlotCount,
-            int SetCount);
-
-        private sealed class DescriptorAllocation
-        {
-            public VkRenderProgram? Program;
-            public XRMaterial? Material;
-            public ulong MaterialBindingLayoutVersion;
-            public int DescriptorFrameSlotCount;
-            public int SetCount;
-            public DescriptorPool Pool;
-            public DescriptorSet[][] Sets = [];
-            public ulong SchemaFingerprint;
-            public ulong ResourceFingerprint;
-            public string ResourceFingerprintDetails = string.Empty;
-        }
-
         private static bool IsStencilCapableFormat(Format format)
             => format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
-
-        private readonly struct EngineUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size, void* mappedPtr)
-        {
-            public Silk.NET.Vulkan.Buffer Buffer { get; } = buffer;
-            public DeviceMemory Memory { get; } = memory;
-            public uint Size { get; } = size;
-            public void* MappedPtr { get; } = mappedPtr;
-        }
-
-        private readonly struct AutoUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size, void* mappedPtr)
-        {
-            public Silk.NET.Vulkan.Buffer Buffer { get; } = buffer;
-            public DeviceMemory Memory { get; } = memory;
-            public uint Size { get; } = size;
-            public void* MappedPtr { get; } = mappedPtr;
-        }
 
         public XRMeshRenderer MeshRenderer => Data.Parent;
         public XRMesh? Mesh => MeshRenderer.Mesh;
@@ -1340,8 +1190,9 @@ public unsafe partial class VulkanRenderer
             {
                 // A skipped draw means the recorded frame is incomplete. Keep the
                 // command buffers invalid until the pending program/buffers/descriptors
-                // are ready so startup frames do not get stuck on a black recording.
-                Renderer.MarkCommandBuffersDirty();
+                // are ready on the legacy primary path. Command-chain primaries are
+                // invalidated by the frame-op signature when the draw becomes available.
+                Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
                 Debug.VulkanWarningEvery(
                     $"Vulkan.MeshRenderer.PrepareSkip.{MeshRenderer.Name ?? "UnnamedRenderer"}.{prepareReason}",
                     TimeSpan.FromSeconds(2),
@@ -1607,6 +1458,171 @@ public unsafe partial class VulkanRenderer
                 context));
         }
 
+        internal bool TryCreatePreparedIndirectDrawSnapshot(
+            XRMaterial effectiveMaterial,
+            VkRenderProgram preparedProgram,
+            string? preparedProgramIdentity,
+            ComputeDispatchSnapshot? programBindingSnapshot,
+            Matrix4x4 modelMatrix,
+            XRFrameBuffer? target,
+            out PendingMeshDraw draw,
+            out string reason)
+        {
+            draw = default;
+            reason = "Ready";
+
+            if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null)
+                return SetPrepareResult(false, "PipelineMissing", "No active rendering pipeline is available for indirect draw capture.", out reason);
+
+            bool preparedForIndirect;
+            if (Renderer.IsPrewarmingOpenXrExternalSwapchainTarget)
+            {
+                preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, programBindingSnapshot, 0, out reason);
+            }
+            else if (Renderer.IsRenderingExternalSwapchainTarget)
+            {
+                using (Renderer.BlockSynchronousResourceUploads("IndirectDrawSnapshot"))
+                {
+                    preparedForIndirect = TryReuseCapturedProgramForIndirectDrawSnapshot(effectiveMaterial, preparedProgram, preparedProgramIdentity, programBindingSnapshot, 0, out reason);
+                }
+            }
+            else
+            {
+                using (Renderer.BlockSynchronousResourceUploads("IndirectDrawSnapshot"))
+                {
+                    preparedForIndirect = TryReuseCapturedProgramForIndirectDrawSnapshot(effectiveMaterial, preparedProgram, preparedProgramIdentity, programBindingSnapshot, 0, out reason);
+                }
+
+                if (!preparedForIndirect)
+                    preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, programBindingSnapshot, 0, out reason);
+            }
+
+            if (!preparedForIndirect)
+                return false;
+
+            XRFrameBuffer? effectiveTarget = target ?? Renderer.GetCurrentDrawFrameBuffer();
+            SampleCountFlags rasterizationSamples = ResolveRasterizationSamples(effectiveTarget);
+            bool alphaToCoverageEnabled = Renderer.GetAlphaToCoverageEnabled() && rasterizationSamples != SampleCountFlags.Count1Bit;
+
+            XRRenderPipelineInstance? currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            XRCamera? snapshotCamera = RuntimeEngine.Rendering.State.RenderingCamera
+                ?? currentPipeline?.RenderState.RenderingCamera
+                ?? currentPipeline?.RenderState.SceneCamera
+                ?? currentPipeline?.LastRenderingCamera
+                ?? currentPipeline?.LastSceneCamera;
+            XRCamera? snapshotRightEyeCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera
+                ?? currentPipeline?.RenderState.StereoRightEyeCamera;
+            bool useUnjitteredProjectionSnapshot = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+            Matrix4x4 viewMatrixSnapshot = snapshotCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 inverseViewMatrixSnapshot = snapshotCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 projectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
+                ? snapshotCamera.ProjectionMatrixUnjittered
+                : snapshotCamera?.ProjectionMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 inverseProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
+                ? snapshotCamera.InverseProjectionMatrixUnjittered
+                : snapshotCamera?.InverseProjectionMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 viewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotCamera is not null
+                ? snapshotCamera.ViewProjectionMatrixUnjittered
+                : snapshotCamera?.ViewProjectionMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 rightEyeViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.InverseRenderMatrix ?? viewMatrixSnapshot;
+            Matrix4x4 rightEyeInverseViewMatrixSnapshot = snapshotRightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrixSnapshot;
+            Matrix4x4 rightEyeProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
+                ? snapshotRightEyeCamera.ProjectionMatrixUnjittered
+                : snapshotRightEyeCamera?.ProjectionMatrix ?? projectionMatrixSnapshot;
+            Matrix4x4 rightEyeInverseProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
+                ? snapshotRightEyeCamera.InverseProjectionMatrixUnjittered
+                : snapshotRightEyeCamera?.InverseProjectionMatrix ?? inverseProjectionMatrixSnapshot;
+            Matrix4x4 rightEyeViewProjectionMatrixSnapshot = useUnjitteredProjectionSnapshot && snapshotRightEyeCamera is not null
+                ? snapshotRightEyeCamera.ViewProjectionMatrixUnjittered
+                : snapshotRightEyeCamera?.ViewProjectionMatrix ?? viewProjectionMatrixSnapshot;
+            Vector3 cameraPositionSnapshot = snapshotCamera?.Transform.RenderTranslation ?? Vector3.Zero;
+            Vector3 cameraForwardSnapshot = snapshotCamera?.Transform.RenderForward ?? Vector3.UnitZ;
+            Vector3 cameraUpSnapshot = snapshotCamera?.Transform.RenderUp ?? Vector3.UnitY;
+            Vector3 cameraRightSnapshot = snapshotCamera?.Transform.RenderRight ?? Vector3.UnitX;
+            uint transformIdSnapshot = RuntimeEngine.Rendering.State.CurrentTransformId;
+
+            var renderAreaSnapshot = RuntimeEngine.Rendering.State.RenderArea;
+            int renderAreaWidthSnapshot = renderAreaSnapshot.Width;
+            int renderAreaHeightSnapshot = renderAreaSnapshot.Height;
+            if (renderAreaWidthSnapshot <= 0 || renderAreaHeightSnapshot <= 0)
+            {
+                if (effectiveTarget is not null)
+                {
+                    renderAreaWidthSnapshot = (int)effectiveTarget.Width;
+                    renderAreaHeightSnapshot = (int)effectiveTarget.Height;
+                }
+                else
+                {
+                    Extent2D targetExtent = Renderer.GetCurrentTargetExtent();
+                    renderAreaWidthSnapshot = (int)targetExtent.Width;
+                    renderAreaHeightSnapshot = (int)targetExtent.Height;
+                }
+            }
+
+            LayeredShadowUniformState shadowUniformState = LayeredShadowUniformState.CaptureFromCurrentRenderingState();
+            IndexedViewportScissorSnapshot indexedViewportScissors = Renderer.GetCurrentIndexedViewportScissorSnapshot();
+            uint viewportScissorCount = indexedViewportScissors.Count > 1 ? indexedViewportScissors.Count : 1u;
+
+            draw = new PendingMeshDraw(
+                this,
+                Renderer.GetCurrentViewport(),
+                Renderer.GetCurrentScissor(),
+                viewportScissorCount > 1 ? indexedViewportScissors.Viewports : null,
+                viewportScissorCount > 1 ? indexedViewportScissors.Scissors : null,
+                viewportScissorCount,
+                rasterizationSamples,
+                Renderer.GetDepthTestEnabled(),
+                Renderer.GetDepthWriteEnabled(),
+                Renderer.GetDepthCompareOp(),
+                Renderer.GetStencilTestEnabled(),
+                Renderer.GetFrontStencilState(),
+                Renderer.GetBackStencilState(),
+                Renderer.GetStencilWriteMask(),
+                Renderer.GetColorWriteMask(),
+                Renderer.GetCullMode(),
+                Renderer.GetFrontFace(),
+                Renderer.GetBlendEnabled(),
+                alphaToCoverageEnabled,
+                Renderer.GetColorBlendOp(),
+                Renderer.GetAlphaBlendOp(),
+                Renderer.GetSrcColorBlendFactor(),
+                Renderer.GetDstColorBlendFactor(),
+                Renderer.GetSrcAlphaBlendFactor(),
+                Renderer.GetDstAlphaBlendFactor(),
+                modelMatrix,
+                modelMatrix,
+                effectiveMaterial,
+                1u,
+                effectiveMaterial.BillboardMode,
+                snapshotCamera,
+                snapshotRightEyeCamera,
+                RuntimeEngine.Rendering.State.IsStereoPass,
+                useUnjitteredProjectionSnapshot,
+                transformIdSnapshot,
+                viewMatrixSnapshot,
+                inverseViewMatrixSnapshot,
+                projectionMatrixSnapshot,
+                inverseProjectionMatrixSnapshot,
+                viewProjectionMatrixSnapshot,
+                rightEyeViewMatrixSnapshot,
+                rightEyeInverseViewMatrixSnapshot,
+                rightEyeProjectionMatrixSnapshot,
+                rightEyeInverseProjectionMatrixSnapshot,
+                rightEyeViewProjectionMatrixSnapshot,
+                cameraPositionSnapshot,
+                cameraForwardSnapshot,
+                cameraUpSnapshot,
+                cameraRightSnapshot,
+                renderAreaWidthSnapshot,
+                renderAreaHeightSnapshot,
+                shadowUniformState,
+                preparedProgram,
+                preparedProgramIdentity,
+                programBindingSnapshot);
+
+            return true;
+        }
+
         private ComputeDispatchSnapshot? CaptureProgramBindingSnapshot(XRMaterial material, in LayeredShadowUniformState shadowUniformState)
         {
             if (_program is not { Data: { } programData } program)
@@ -1622,6 +1638,7 @@ public unsafe partial class VulkanRenderer
             VulkanFixedFunctionStateSnapshot stateSnapshot = Renderer.CaptureFixedFunctionState();
             try
             {
+                program.ClearBindings();
                 Renderer.SetMaterialUniforms(material, programData, shadowUniformState);
                 if (MeshRenderer.HasSettingUniformsHandlers)
                     MeshRenderer.OnSettingUniforms(programData, programData);

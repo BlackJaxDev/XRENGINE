@@ -44,14 +44,15 @@ public unsafe partial class VulkanRenderer
 
         protected override void PushTextureData()
         {
-            Generate();
-
             XRTexture2D[] layers = Data.Textures;
             if (layers is null || layers.Length == 0)
             {
                 Debug.VulkanWarning($"Texture array '{Data.Name ?? GetDescribingName()}' has no layers to upload.");
                 return;
             }
+
+            RecreateImageForFullTextureDataUpload("full 2D texture array data upload");
+            Generate();
 
             bool uploadedAny = false;
             uint arrayLayers = Math.Min((uint)layers.Length, ResolvedArrayLayers);
@@ -62,7 +63,9 @@ public unsafe partial class VulkanRenderer
                 if (mipmaps is null || mipmaps.Length == 0)
                     continue;
 
-                uint levelCount = Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
+                uint levelCount = Data.AutoGenerateMipmaps
+                    ? 1u
+                    : Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
                 for (uint level = 0; level < levelCount; level++)
                 {
                     Mipmap2D? mip = mipmaps[level];

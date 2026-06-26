@@ -1,8 +1,10 @@
 using System;
 using System.Diagnostics;
+using System.Numerics;
 using Silk.NET.Vulkan;
 using XREngine.Data;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -116,31 +118,119 @@ namespace XREngine.Rendering.Vulkan
         private VkMeshRenderer? _boundMeshRendererForIndirect;
         private IndexType _boundIndexType = IndexType.Uint32;
         private uint _boundIndexCount;
+        private VulkanIndirectDrawState? _pendingIndirectDrawState;
+
+        private readonly record struct VulkanIndirectDrawState(
+            XRRenderProgram Program,
+            XRMaterial Material,
+            Matrix4x4 ModelMatrix);
+
+        internal IDisposable PushIndirectDrawState(XRRenderProgram program, XRMaterial material, Matrix4x4 modelMatrix)
+        {
+            VulkanIndirectDrawState? previous = _pendingIndirectDrawState;
+            _pendingIndirectDrawState = new VulkanIndirectDrawState(program, material, modelMatrix);
+            return new IndirectDrawStateScope(this, previous);
+        }
+
+        private sealed class IndirectDrawStateScope(VulkanRenderer renderer, VulkanIndirectDrawState? previous) : IDisposable
+        {
+            private bool _disposed;
+
+            public void Dispose()
+            {
+                if (_disposed)
+                    return;
+
+                renderer._pendingIndirectDrawState = previous;
+                _disposed = true;
+            }
+        }
+
+        private bool TryCaptureIndirectDrawPayload(
+            string contextName,
+            out VkMeshRenderer meshRenderer,
+            out PendingMeshDraw draw)
+        {
+            meshRenderer = null!;
+            draw = default;
+
+            if (_boundMeshRendererForIndirect is null || _boundIndexCount == 0)
+            {
+                Debug.VulkanWarning("{0}: No indexed mesh renderer bound.", contextName);
+                return false;
+            }
+
+            if (_pendingIndirectDrawState is not { } state)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.IndirectDrawStateMissing.{contextName}",
+                    TimeSpan.FromSeconds(1),
+                    "{0}: No Vulkan indirect draw state was pushed before indirect submission.",
+                    contextName);
+                return false;
+            }
+
+            var preparedProgram = GetOrCreateAPIRenderObject(state.Program) as VkRenderProgram;
+            if (preparedProgram is null)
+            {
+                Debug.VulkanWarning("{0}: Vulkan program wrapper is unavailable for indirect draw program '{1}'.", contextName, state.Program.Name ?? "<unnamed>");
+                return false;
+            }
+
+            if (!preparedProgram.IsLinked && !preparedProgram.Link())
+            {
+                Debug.VulkanWarning("{0}: Vulkan indirect draw program '{1}' is not linked.", contextName, state.Program.Name ?? "<unnamed>");
+                return false;
+            }
+
+            ComputeDispatchSnapshot bindingSnapshot = preparedProgram.CaptureComputeSnapshot();
+            string programIdentity = state.Program.Name ?? preparedProgram.GetHashCode().ToString();
+            if (!_boundMeshRendererForIndirect.TryCreatePreparedIndirectDrawSnapshot(
+                    state.Material,
+                    preparedProgram,
+                    programIdentity,
+                    bindingSnapshot,
+                    state.ModelMatrix,
+                    GetCurrentDrawFrameBuffer(),
+                    out draw,
+                    out string reason))
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.IndirectDrawSnapshotFailed.{contextName}.{reason}",
+                    TimeSpan.FromSeconds(2),
+                    "{0}: Failed to capture indirect draw state for program '{1}' material '{2}': {3}. {4}",
+                    contextName,
+                    state.Program.Name ?? "<unnamed program>",
+                    state.Material.Name ?? "<unnamed material>",
+                    reason,
+                    _boundMeshRendererForIndirect.LastPrepareDetail);
+                return false;
+            }
+
+            meshRenderer = _boundMeshRendererForIndirect;
+            return true;
+        }
 
         public override void BindDrawIndirectBuffer(XRDataBuffer buffer)
         {
             var vkBuffer = GenericToAPI<VkDataBuffer>(buffer);
             _boundIndirectBuffer = vkBuffer;
-            MarkCommandBuffersDirty();
         }
 
         public override void UnbindDrawIndirectBuffer()
         {
             _boundIndirectBuffer = null;
-            MarkCommandBuffersDirty();
         }
 
         public override void BindParameterBuffer(XRDataBuffer buffer)
         {
             var vkBuffer = GenericToAPI<VkDataBuffer>(buffer);
             _boundParameterBuffer = vkBuffer;
-            MarkCommandBuffersDirty();
         }
 
         public override void UnbindParameterBuffer()
         {
             _boundParameterBuffer = null;
-            MarkCommandBuffersDirty();
         }
 
         public override void MultiDrawElementsIndirect(uint drawCount, uint stride)
@@ -162,12 +252,19 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
+            if (!TryCaptureIndirectDrawPayload("MultiDrawElementsIndirectWithOffset", out VkMeshRenderer meshRenderer, out PendingMeshDraw draw))
+                return;
+
             FrameOpContext context = CaptureFrameOpContext();
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
+            XRFrameBuffer? target = GetCurrentDrawFrameBuffer();
             EnqueueFrameOp(new IndirectDrawOp(
                 EnsureValidPassIndex(passIndex, "IndirectDraw", context.PassMetadata),
+                target,
                 _boundIndirectBuffer,
                 _boundParameterBuffer,
+                meshRenderer,
+                draw,
                 drawCount,
                 stride,
                 byteOffset,
@@ -206,12 +303,19 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
+            if (!TryCaptureIndirectDrawPayload("MultiDrawElementsIndirectCount", out VkMeshRenderer meshRenderer, out PendingMeshDraw draw))
+                return;
+
             FrameOpContext context = CaptureFrameOpContext();
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
+            XRFrameBuffer? target = GetCurrentDrawFrameBuffer();
             EnqueueFrameOp(new IndirectDrawOp(
                 EnsureValidPassIndex(passIndex, "IndirectCountDraw", context.PassMetadata),
+                target,
                 _boundIndirectBuffer,
                 _boundParameterBuffer,
+                meshRenderer,
+                draw,
                 maxDrawCount,
                 stride,
                 byteOffset,

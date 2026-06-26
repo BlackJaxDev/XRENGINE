@@ -80,7 +80,7 @@ public unsafe partial class VulkanRenderer
 
 		private int UniformBufferSlotCount => Math.Max(_uniformDrawSlotCapacity, 1);
 
-		private int UniformBufferFrameCount => Math.Max(Renderer.swapChainImages?.Length ?? 1, 1);
+		private int UniformBufferFrameCount => Math.Max(Renderer.DescriptorFrameSlotFrameCount, 1);
 
 		private int UniformBufferArrayLength => UniformBufferFrameCount * UniformBufferSlotCount;
 
@@ -473,16 +473,13 @@ public unsafe partial class VulkanRenderer
 				FormatGizmoAutoUniformBlocks());
 		}
 
-		private string FormatGizmoAutoUniformBlocks()
-		{
-			if (_program is null || _program.AutoUniformBlocks.Count == 0)
-				return "<none>";
+        private string FormatGizmoAutoUniformBlocks()
+			=> _program is null || _program.AutoUniformBlocks.Count == 0
+                ? "<none>"
+                : string.Join("; ", _program.AutoUniformBlocks.Select(pair =>
+                $"{pair.Key}[{string.Join(",", pair.Value.Members.Select(static member => member.Name))}]"));
 
-			return string.Join("; ", _program.AutoUniformBlocks.Select(pair =>
-				$"{pair.Key}[{string.Join(",", pair.Value.Members.Select(static member => member.Name))}]"));
-		}
-
-		private static string FormatMaterialUniformDiagnosticValue(object? value)
+        private static string FormatMaterialUniformDiagnosticValue(object? value)
 			=> value switch
 			{
 				null => "<null>",
@@ -553,15 +550,12 @@ public unsafe partial class VulkanRenderer
 			return wroteAny;
 		}
 
-		private bool TryWriteProgramUniformArray(Span<byte> data, AutoUniformMember member, string uniformName)
-		{
-			if (_program is not null && _program.TryGetUniformValue(uniformName, out ProgramUniformValue programValue))
-				return TryWriteProgramUniformValue(data, member, programValue);
+        private bool TryWriteProgramUniformArray(Span<byte> data, AutoUniformMember member, string uniformName)
+			=> _program is not null && _program.TryGetUniformValue(uniformName, out ProgramUniformValue programValue)
+                ? TryWriteProgramUniformValue(data, member, programValue)
+                : TryWriteIndexedProgramUniformArray(data, member, uniformName);
 
-			return TryWriteIndexedProgramUniformArray(data, member, uniformName);
-		}
-
-		private bool TryWriteIndexedProgramUniformArray(Span<byte> data, AutoUniformMember member, string uniformName)
+        private bool TryWriteIndexedProgramUniformArray(Span<byte> data, AutoUniformMember member, string uniformName)
 		{
 			if (_program is null || !member.IsArray || member.ArrayStride == 0 || member.ArrayLength == 0)
 				return false;
@@ -1004,16 +998,12 @@ public unsafe partial class VulkanRenderer
 			}
 		}
 
-		/// <summary>
-		/// Checks whether two shader variable types are compatible for writing.
-		/// Allows common promotions (vec3↔vec4, int↔bool, uint↔bool).
-		/// </summary>
-		private static bool AreCompatible(EShaderVarType expected, EShaderVarType actual)
-		{
-			if (expected == actual)
-				return true;
-
-			return (expected, actual) switch
+        /// <summary>
+        /// Checks whether two shader variable types are compatible for writing.
+        /// Allows common promotions (vec3↔vec4, int↔bool, uint↔bool).
+        /// </summary>
+        private static bool AreCompatible(EShaderVarType expected, EShaderVarType actual)
+			=> expected == actual || (expected, actual) switch
 			{
 				(EShaderVarType._vec4, EShaderVarType._vec3) => true,
 				(EShaderVarType._vec3, EShaderVarType._vec4) => true,
@@ -1023,14 +1013,13 @@ public unsafe partial class VulkanRenderer
 				(EShaderVarType._bool, EShaderVarType._uint) => true,
 				_ => false
 			};
-		}
 
-		// ── Scalar and Vector Write Helpers ───────────────────────────────────
-		// Each helper writes a specific type into a byte span at the given offset.
-		// std140 aligns vec3 members to 16 bytes but still lets the next scalar use
-		// the fourth lane, so vec3 writes must only touch xyz.
+        // ── Scalar and Vector Write Helpers ───────────────────────────────────
+        // Each helper writes a specific type into a byte span at the given offset.
+        // std140 aligns vec3 members to 16 bytes but still lets the next scalar use
+        // the fourth lane, so vec3 writes must only touch xyz.
 
-		private static bool TryWriteScalar<T>(Span<byte> data, uint offset, object value, Func<object, T> converter) where T : unmanaged
+        private static bool TryWriteScalar<T>(Span<byte> data, uint offset, object value, Func<object, T> converter) where T : unmanaged
 		{
 			if (value is null || value is Array)
 				return false;
@@ -1416,22 +1405,19 @@ public unsafe partial class VulkanRenderer
 			return false;
 		}
 
-		/// <summary>Strips the vertex-stage suffix ("_VTX") from engine uniform names.</summary>
-		private static string NormalizeEngineUniformName(string name)
-		{
-			if (string.IsNullOrWhiteSpace(name))
-				return string.Empty;
+        /// <summary>Strips the vertex-stage suffix ("_VTX") from engine uniform names.</summary>
+        private static string NormalizeEngineUniformName(string name)
+			=> string.IsNullOrWhiteSpace(name)
+                ? string.Empty
+                : name.EndsWith(VertexUniformSuffix, StringComparison.Ordinal)
+                ? name[..^VertexUniformSuffix.Length]
+                : name;
 
-			return name.EndsWith(VertexUniformSuffix, StringComparison.Ordinal)
-				? name[..^VertexUniformSuffix.Length]
-				: name;
-		}
-
-		/// <summary>
-		/// Returns the byte size of a named engine uniform.
-		/// Returns 0 for unrecognized names (e.g. user-defined uniforms).
-		/// </summary>
-		private static uint GetEngineUniformSize(string name)
+        /// <summary>
+        /// Returns the byte size of a named engine uniform.
+        /// Returns 0 for unrecognized names (e.g. user-defined uniforms).
+        /// </summary>
+        private static uint GetEngineUniformSize(string name)
 		{
 			string normalized = NormalizeEngineUniformName(name);
 			return normalized switch

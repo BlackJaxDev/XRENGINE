@@ -37,24 +37,17 @@ public unsafe partial class VulkanRenderer
 
 			var meshBuffers = Mesh?.Buffers as IEventDictionary<string, XRDataBuffer>;
 			if (meshBuffers is not null)
-			{
+			
 				foreach (var pair in meshBuffers)
-				{
 					if (Renderer.GenericToAPI<VkDataBuffer>(pair.Value) is { } vkBuffer)
 						_bufferCache[pair.Key] = vkBuffer;
-				}
-			}
 
 			var rendererBuffers = MeshRenderer.Buffers as IEventDictionary<string, XRDataBuffer>;
 			if (rendererBuffers is not null)
-			{
 				foreach (var pair in rendererBuffers)
-				{
 					if (Renderer.GenericToAPI<VkDataBuffer>(pair.Value) is { } vkBuffer)
 						_bufferCache[pair.Key] = vkBuffer;
-				}
-			}
-
+						
 			FilterRuntimeDeformationSourceBuffers();
 			AddRuntimeDeformationBuffers();
 			CaptureRuntimeDeformationBufferReferences();
@@ -260,6 +253,7 @@ public unsafe partial class VulkanRenderer
 			}
 			else if (Mesh is not null)
 			{
+				_triangleIndexBufferExternallyProvided = false;
 				var tri = GetIndexBufferForBinding(EPrimitiveType.Triangles, out _triangleIndexSize, _triangleIndexBuffer);
 				_triangleIndexBuffer = tri is not null ? Renderer.GenericToAPI<VkDataBuffer>(tri) : null;
 				_triangleIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
@@ -271,6 +265,13 @@ public unsafe partial class VulkanRenderer
 				var point = GetIndexBufferForBinding(EPrimitiveType.Points, out _pointIndexSize, _pointIndexBuffer);
 				_pointIndexBuffer = point is not null ? Renderer.GenericToAPI<VkDataBuffer>(point) : null;
 				_pointIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
+				_indexBuffersSkippedForShaderGeneratedVertices = false;
+			}
+			else if (_triangleIndexBufferExternallyProvided)
+			{
+				_triangleIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
+				_lineIndexBuffer = null;
+				_pointIndexBuffer = null;
 				_indexBuffersSkippedForShaderGeneratedVertices = false;
 			}
 			else
@@ -306,6 +307,7 @@ public unsafe partial class VulkanRenderer
 			_triangleIndexSize = IndexSize.FourBytes;
 			_lineIndexSize = IndexSize.FourBytes;
 			_pointIndexSize = IndexSize.FourBytes;
+			_triangleIndexBufferExternallyProvided = false;
 		}
 
 		private void OnAsyncIndexBufferReady(XRDataBuffer buffer, IndexSize elementSize)
@@ -334,6 +336,8 @@ public unsafe partial class VulkanRenderer
 			bool changed = !ReferenceEquals(_triangleIndexBuffer, buffer) || _triangleIndexSize != elementType;
 			_triangleIndexBuffer = buffer;
 			_triangleIndexSize = elementType;
+			_triangleIndexBufferExternallyProvided = buffer is not null;
+			_indexBuffersSkippedForShaderGeneratedVertices = false;
 			_triangleIndexBuffer?.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads);
 			return changed;
 		}

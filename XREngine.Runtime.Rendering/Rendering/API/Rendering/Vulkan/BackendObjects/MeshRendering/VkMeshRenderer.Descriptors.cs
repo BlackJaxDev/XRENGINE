@@ -53,14 +53,14 @@ public unsafe partial class VulkanRenderer
 				return true;
 			}
 
-			if (Renderer.swapChainImages is null || Renderer.swapChainImages.Length == 0)
+			int frameCount = Renderer.DescriptorFrameSlotFrameCount;
+			if (frameCount <= 0)
 				return false;
 
 			EnsureUniformDrawSlotCapacity(drawUniformSlot + 1);
 			if (!EnsureDescriptorUniformBuffers(bindings))
 				return false;
 
-			int frameCount = Renderer.swapChainImages.Length;
 			int drawSlotCount = UniformBufferSlotCount;
 			int descriptorFrameSlotCount = frameCount * drawSlotCount;
 			int setCount = layouts.Count;
@@ -230,7 +230,8 @@ public unsafe partial class VulkanRenderer
 			if (layouts is null || layouts.Count == 0 || bindings.Count == 0)
 				return true;
 
-			if (Renderer.swapChainImages is null || Renderer.swapChainImages.Length == 0)
+			int frameCount = Renderer.DescriptorFrameSlotFrameCount;
+			if (frameCount <= 0)
 			{
 				reason = "swapchain images unavailable";
 				return false;
@@ -243,22 +244,22 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			int frameCount = Renderer.swapChainImages.Length;
 			int descriptorFrameSlotCount = frameCount * UniformBufferSlotCount;
 			int setCount = layouts.Count;
+			ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);
+			ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount);
 			if (resourcesCapturedByFrameSignature &&
 				TryActivateReusableDescriptorSetsForCapturedResources(
 					material,
 					drawUniformSlot,
 					descriptorFrameSlotCount,
 					setCount,
+					schemaFingerprint,
+					resourceFingerprint,
 					out reason))
 			{
 				return true;
 			}
-
-			ulong schemaFingerprint = ComputeDescriptorSchemaFingerprint(bindings, setCount);
-			ulong resourceFingerprint = ComputeDescriptorResourceFingerprint(material, frameCount);
 
 			if (TryActivateReusableDescriptorSetsFast(
 				material,
@@ -268,9 +269,7 @@ public unsafe partial class VulkanRenderer
 				schemaFingerprint,
 				resourceFingerprint,
 				out reason))
-			{
 				return true;
-			}
 
 			DescriptorAllocationKey allocationKey = new(schemaFingerprint, resourceFingerprint, descriptorFrameSlotCount, setCount);
 
@@ -372,6 +371,8 @@ public unsafe partial class VulkanRenderer
 			int drawUniformSlot,
 			int descriptorFrameSlotCount,
 			int setCount,
+			ulong schemaFingerprint,
+			ulong resourceFingerprint,
 			out string reason)
 		{
 			reason = "reusable";
@@ -409,6 +410,26 @@ public unsafe partial class VulkanRenderer
 			if (drawUniformSlot >= _uniformDrawSlotCapacity)
 			{
 				reason = $"draw slot capacity {drawUniformSlot + 1}>{_uniformDrawSlotCapacity}";
+				return false;
+			}
+
+			if (allocation.SchemaFingerprint != schemaFingerprint)
+			{
+				reason = $"captured schema fingerprint 0x{allocation.SchemaFingerprint:X16}->0x{schemaFingerprint:X16}";
+				return false;
+			}
+
+			if (allocation.ResourceFingerprint != resourceFingerprint)
+			{
+				if (DescriptorResourceFingerprintDiagnosticsEnabled)
+				{
+					string currentDetails = ComputeDescriptorResourceFingerprintDetails(material, Renderer.DescriptorFrameSlotFrameCount);
+					reason = $"captured resource fingerprint 0x{allocation.ResourceFingerprint:X16}->0x{resourceFingerprint:X16}; old=[{allocation.ResourceFingerprintDetails}] new=[{currentDetails}]";
+				}
+				else
+				{
+					reason = $"captured resource fingerprint 0x{allocation.ResourceFingerprint:X16}->0x{resourceFingerprint:X16}";
+				}
 				return false;
 			}
 
@@ -488,20 +509,18 @@ public unsafe partial class VulkanRenderer
 			return true;
 		}
 
-		private static bool IsDescriptorAllocationValid(DescriptorAllocation allocation, int descriptorFrameSlotCount, int setCount)
-		{
-			return allocation.Pool.Handle != 0 &&
-				allocation.Sets is { Length: > 0 } &&
-				allocation.Sets.Length == descriptorFrameSlotCount &&
-				DescriptorSetsHaveSetCount(allocation.Sets, setCount);
-		}
+        private static bool IsDescriptorAllocationValid(DescriptorAllocation allocation, int descriptorFrameSlotCount, int setCount)
+			=> allocation.Pool.Handle != 0 &&
+                allocation.Sets is { Length: > 0 } &&
+                allocation.Sets.Length == descriptorFrameSlotCount &&
+                DescriptorSetsHaveSetCount(allocation.Sets, setCount);
 
-		/// <summary>
-		/// Computes a fingerprint over descriptor set layout metadata (binding indices,
-		/// types, stages). Used to detect when the schema changes and a full
-		/// reallocation of the descriptor pool is required.
-		/// </summary>
-		private static ulong ComputeDescriptorSchemaFingerprint(IReadOnlyList<DescriptorBindingInfo> bindings, int setCount)
+        /// <summary>
+        /// Computes a fingerprint over descriptor set layout metadata (binding indices,
+        /// types, stages). Used to detect when the schema changes and a full
+        /// reallocation of the descriptor pool is required.
+        /// </summary>
+        private static ulong ComputeDescriptorSchemaFingerprint(IReadOnlyList<DescriptorBindingInfo> bindings, int setCount)
 		{
 			HashCode hash = new();
 			hash.Add(setCount);
@@ -554,12 +573,10 @@ public unsafe partial class VulkanRenderer
 			builder.Append(value.ToString("X16", System.Globalization.CultureInfo.InvariantCulture));
 		}
 
-		private ulong ComputeCachedBufferResourceFingerprint()
-		{
-			return ComputeCachedBufferResourceFingerprintCore();
-		}
+        private ulong ComputeCachedBufferResourceFingerprint()
+			=> ComputeCachedBufferResourceFingerprintCore();
 
-		private ulong ComputeMaterialTextureResourceFingerprint(XRMaterial material)
+        private ulong ComputeMaterialTextureResourceFingerprint(XRMaterial material)
 		{
 			HashCode hash = new();
 			hash.Add(material.Textures.Count);
@@ -568,17 +585,13 @@ public unsafe partial class VulkanRenderer
 			return unchecked((ulong)hash.ToHashCode());
 		}
 
-		private ulong ComputeEngineUniformResourceFingerprint()
-		{
-			return ComputeEngineUniformResourceFingerprintCore();
-		}
+        private ulong ComputeEngineUniformResourceFingerprint()
+			=> ComputeEngineUniformResourceFingerprintCore();
 
-		private ulong ComputeAutoUniformResourceFingerprint()
-		{
-			return ComputeAutoUniformResourceFingerprintCore();
-		}
+        private ulong ComputeAutoUniformResourceFingerprint()
+			=> ComputeAutoUniformResourceFingerprintCore();
 
-		private ulong ComputeDescriptorResourceFingerprint(XRMaterial material, int frameCount)
+        private ulong ComputeDescriptorResourceFingerprint(XRMaterial material, int frameCount)
 		{
 			HashCode hash = new();
 			hash.Add(frameCount);
@@ -608,10 +621,8 @@ public unsafe partial class VulkanRenderer
 		private static bool DescriptorSetsHaveSetCount(DescriptorSet[][] descriptorSets, int setCount)
 		{
 			for (int i = 0; i < descriptorSets.Length; i++)
-			{
 				if (descriptorSets[i].Length != setCount)
 					return false;
-			}
 
 			return true;
 		}
@@ -722,6 +733,9 @@ public unsafe partial class VulkanRenderer
 				hash.Add(imageSource.DescriptorFormat);
 				hash.Add(imageSource.DescriptorAspect);
 				hash.Add(imageSource.DescriptorUsage);
+				hash.Add(imageSource.DescriptorSamples);
+				hash.Add(imageSource.DescriptorMipLevels);
+				hash.Add(imageSource.DescriptorArrayLayers);
 			}
 			else
 			{
@@ -1042,10 +1056,8 @@ public unsafe partial class VulkanRenderer
 		private static bool HasZeroBuffer(DescriptorBufferInfo* buffers, uint count)
 		{
 			for (uint i = 0; i < count; i++)
-			{
 				if (buffers[i].Buffer.Handle == 0)
 					return true;
-			}
 
 			return false;
 		}
@@ -1053,10 +1065,8 @@ public unsafe partial class VulkanRenderer
 		private static bool HasZeroBufferView(BufferView* views, uint count)
 		{
 			for (uint i = 0; i < count; i++)
-			{
 				if (views[i].Handle == 0)
 					return true;
-			}
 
 			return false;
 		}
@@ -1128,7 +1138,7 @@ public unsafe partial class VulkanRenderer
 
 					foreach (VkDataBuffer candidate in _bufferCache.Values)
 					{
-						if (candidate.Data.Target == EBufferTarget.ShaderStorageBuffer &&
+						if (IsStorageBufferCompatibleTarget(candidate.Data.Target) &&
 							candidate.Data.BindingIndexOverride == binding.Binding)
 						{
 							buffer = candidate;
@@ -1282,10 +1292,15 @@ public unsafe partial class VulkanRenderer
 		private static bool IsDescriptorCompatibleBufferTarget(DescriptorType descriptorType, EBufferTarget target)
 			=> descriptorType switch
 			{
-				DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic => target == EBufferTarget.ShaderStorageBuffer,
+				DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic => IsStorageBufferCompatibleTarget(target),
 				DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic => target == EBufferTarget.UniformBuffer,
 				_ => false,
 			};
+
+		private static bool IsStorageBufferCompatibleTarget(EBufferTarget target)
+			=> target is EBufferTarget.ShaderStorageBuffer
+				or EBufferTarget.DrawIndirectBuffer
+				or EBufferTarget.DispatchIndirectBuffer;
 
 		private bool TryResolveProgramBoundBuffer(DescriptorBindingInfo binding, out VkDataBuffer? buffer)
 		{
@@ -1295,7 +1310,7 @@ public unsafe partial class VulkanRenderer
 
 			bool targetMatches = binding.DescriptorType switch
 			{
-				DescriptorType.StorageBuffer => dataBuffer.Target == EBufferTarget.ShaderStorageBuffer,
+				DescriptorType.StorageBuffer => IsStorageBufferCompatibleTarget(dataBuffer.Target),
 				DescriptorType.UniformBuffer => dataBuffer.Target == EBufferTarget.UniformBuffer,
 				_ => false,
 			};
@@ -1320,16 +1335,12 @@ public unsafe partial class VulkanRenderer
 			string trimmedName = TrimDescriptorBufferSuffix(bindingName);
 			if (!string.Equals(trimmedName, bindingName, StringComparison.Ordinal) &&
 				_bufferCache.TryGetValue(trimmedName, out buffer))
-			{
 				return true;
-			}
 
 			string aliasName = string.Empty;
 			if (TryGetDebugPrimitiveBufferAlias(bindingName, out aliasName) &&
 				_bufferCache.TryGetValue(aliasName, out buffer))
-			{
 				return true;
-			}
 
 			foreach (VkDataBuffer candidate in _bufferCache.Values)
 			{
@@ -1453,6 +1464,10 @@ public unsafe partial class VulkanRenderer
 			bool allowSynchronousTextureUpload = Renderer.AllowSynchronousResourceUploads;
 			if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
 			{
+				if (!allowSynchronousTextureUpload &&
+					TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-wrapper-not-ready", out imageInfo))
+					return true;
+
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' is not a Vulkan texture.");
 				RecordDescriptorFailure(binding, "texture has no Vulkan descriptor source");
 				return false;
@@ -1460,16 +1475,8 @@ public unsafe partial class VulkanRenderer
 
 			if (!source.TryEnsureDescriptorReadyForUse($"mesh material descriptor '{binding.Name}'", allowSynchronousTextureUpload))
 			{
-				imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
-				if (imageInfo.ImageView.Handle != 0)
-				{
-					WarnOnce($"Texture for descriptor binding '{binding.Name}' is not ready for Vulkan descriptor use. Using placeholder.");
-					LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, "placeholder-texture-not-ready");
-					LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, "placeholder-texture-not-ready");
-					LogMaterialDescriptor(binding, material, arrayIndex, textureBinding, texture, source, imageInfo, "placeholder-texture-not-ready");
-					RecordDescriptorFallback(binding);
+				if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-not-ready", out imageInfo, source))
 					return true;
-				}
 
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' is not ready for Vulkan descriptor use.");
 				RecordDescriptorFailure(binding, "texture descriptor not ready");
@@ -1553,6 +1560,49 @@ public unsafe partial class VulkanRenderer
 			LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}");
 			LogMaterialDescriptor(binding, material, arrayIndex, textureBinding, texture, source, imageInfo, $"{source.DescriptorFormat}/{source.DescriptorAspect}");
 			return imageInfo.ImageView.Handle != 0;
+		}
+
+		private bool TryUsePlaceholderDescriptor(
+			DescriptorBindingInfo binding,
+			DescriptorType descriptorType,
+			int arrayIndex,
+			XRMaterial material,
+			MaterialTextureBindingResolution textureBinding,
+			XRTexture? texture,
+			string reason,
+			out DescriptorImageInfo imageInfo,
+			IVkImageDescriptorSource? source = null)
+		{
+			imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
+			if (imageInfo.ImageView.Handle == 0)
+				return false;
+
+			WarnOnce($"Texture for descriptor binding '{binding.Name}' is not ready for Vulkan descriptor use ({reason}). Using placeholder.");
+			if (DescriptorTraceEnabled)
+			{
+				Debug.VulkanWarningEvery(
+					$"Vulkan.Descriptor.Placeholder.{GetHashCode()}.{binding.Name}.{binding.Binding}.{arrayIndex}.{reason}",
+					TimeSpan.FromSeconds(2),
+					"[VulkanDescriptor] fallback={0} program='{1}' mesh='{2}' material='{3}' binding='{4}' set={5} bindingIndex={6} arrayIndex={7} texture='{8}' sourceImage=0x{9:X} sourceView=0x{10:X} imageInfoView=0x{11:X}",
+					reason,
+					_program?.Data?.Name ?? "<null>",
+					Mesh?.Name ?? "<null>",
+					material.Name ?? "<unnamed>",
+					binding.Name ?? "<null>",
+					binding.Set,
+					binding.Binding,
+					arrayIndex,
+					texture?.Name ?? texture?.GetDescribingName() ?? "<null>",
+					source?.DescriptorImage.Handle ?? 0,
+					source?.DescriptorView.Handle ?? 0,
+					imageInfo.ImageView.Handle);
+			}
+
+			LogPostProcessDescriptor(binding, arrayIndex, texture, imageInfo, reason);
+			LogDeferredLightingDescriptor(binding, arrayIndex, textureBinding, texture, source, imageInfo, reason);
+			LogMaterialDescriptor(binding, material, arrayIndex, textureBinding, texture, source, imageInfo, reason);
+			RecordDescriptorFallback(binding);
+			return true;
 		}
 
 		private bool TryResolveDescriptorSampler(DescriptorBindingInfo binding, DescriptorType descriptorType, IVkImageDescriptorSource source, out Sampler sampler)

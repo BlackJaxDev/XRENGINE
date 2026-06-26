@@ -2670,15 +2670,30 @@ namespace XREngine.Rendering
                     return;
                 }
 
+                ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+
                 // Reset per-frame rendering statistics at the start of each frame.
-                RuntimeRenderingHostServices.Current.BeginRenderStatsFrame();
-                frameRenderer.PollGpuRenderStatsReadbacks();
+                long phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                using (var renderStatsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.BeginRenderStatsFrame"))
+                {
+                    RuntimeRenderingHostServices.Current.BeginRenderStatsFrame();
+                }
+                RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.BeginRenderStatsFrame", phaseStart);
+
+                phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                using (var gpuReadbackSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.PollGpuRenderStatsReadbacks"))
+                {
+                    frameRenderer.PollGpuRenderStatsReadbacks();
+                }
+                RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.PollGpuRenderStatsReadbacks", phaseStart);
 
                 // Process any pending async buffer uploads within the frame budget.
+                phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 using (var uploadSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.ProcessPendingUploads"))
                 {
                     frameRenderer.ProcessPendingUploads();
                 }
+                RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.ProcessPendingUploads", phaseStart);
 
                 frameRenderer.Active = true;
                 AbstractRenderer.Current = frameRenderer;

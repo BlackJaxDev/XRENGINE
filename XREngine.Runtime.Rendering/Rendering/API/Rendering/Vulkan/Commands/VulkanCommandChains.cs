@@ -164,6 +164,8 @@ internal sealed class CommandChain(CommandChainKey key)
     public CommandChainState State { get; set; }
     public CommandBuffer SecondaryCommandBuffer { get; set; }
     public CommandPool SecondaryCommandPool { get; set; }
+    public bool OwnsSecondaryCommandPool { get; set; }
+    public ulong SecondaryCommandBufferGeneration { get; set; }
     public ulong StructuralSignature { get; set; }
     public ulong FrameDataSignature { get; set; }
     public ulong ResourcePlanRevision { get; set; }

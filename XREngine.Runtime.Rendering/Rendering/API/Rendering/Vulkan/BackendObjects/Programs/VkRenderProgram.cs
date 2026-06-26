@@ -67,7 +67,7 @@ public unsafe partial class VulkanRenderer
         EProgramStageMask.MeshShaderBit |
         EProgramStageMask.TaskShaderBit;
 
-    public class VkRenderProgram(VulkanRenderer renderer, XRRenderProgram data) : VkObject<XRRenderProgram>(renderer, data)
+    public partial class VkRenderProgram(VulkanRenderer renderer, XRRenderProgram data) : VkObject<XRRenderProgram>(renderer, data)
     {
         private readonly Dictionary<XRShader, VkShader> _shaderCache = new();
         private readonly Dictionary<EProgramStageMask, VkShader> _stageLookup = new();
@@ -111,26 +111,6 @@ public unsafe partial class VulkanRenderer
         public IReadOnlyDictionary<string, AutoUniformBlockInfo> AutoUniformBlocks => _autoUniformBlocks;
         public bool DescriptorSetsRequireUpdateAfterBind => _descriptorSetsRequireUpdateAfterBind;
         public bool DescriptorSetsRequireVariableDescriptorCount => _descriptorSetsRequireVariableDescriptorCount;
-
-        private enum EComputeUniformBufferKind : byte
-        {
-            Auto,
-            Fallback
-        }
-
-        private readonly record struct ComputeUniformBufferKey(
-            EComputeUniformBufferKind Kind,
-            uint ImageIndex,
-            uint Set,
-            uint Binding,
-            string Name);
-
-        private readonly struct ComputeUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size)
-        {
-            public Silk.NET.Vulkan.Buffer Buffer { get; } = buffer;
-            public DeviceMemory Memory { get; } = memory;
-            public uint Size { get; } = size;
-        }
 
         protected override uint CreateObjectInternal() => CacheObject(this);
 
@@ -356,10 +336,8 @@ public unsafe partial class VulkanRenderer
         private bool ShouldUseAsyncShaderCompileForLinkRequest()
         {
             foreach (VkShader shader in _shaderCache.Values)
-            {
                 if (shader.Data.Type == EShaderType.Compute)
                     return false;
-            }
 
             return true;
         }
@@ -379,7 +357,7 @@ public unsafe partial class VulkanRenderer
                 Link();
         }
 
-        private void ClearBindings()
+        internal void ClearBindings()
         {
             lock (_bindingLock)
             {
@@ -1040,6 +1018,8 @@ public unsafe partial class VulkanRenderer
             item.Add(texture?.GetHashCode() ?? 0);
             if (texture is not null && Renderer.GetOrCreateAPIRenderObject(texture, generateNow: false) is IVkImageDescriptorSource source)
             {
+                item.Add(source.IsDescriptorReady);
+                item.Add(source.DescriptorGeneration);
                 item.Add(source.DescriptorImage.Handle);
                 item.Add(source.DescriptorView.Handle);
                 item.Add(source.DescriptorSampler.Handle);
@@ -1047,6 +1027,9 @@ public unsafe partial class VulkanRenderer
                 item.Add(source.DescriptorFormat);
                 item.Add(source.DescriptorAspect);
                 item.Add(source.DescriptorUsage);
+                item.Add(source.DescriptorSamples);
+                item.Add(source.DescriptorMipLevels);
+                item.Add(source.DescriptorArrayLayers);
             }
             else
             {
@@ -2143,8 +2126,7 @@ public unsafe partial class VulkanRenderer
             ComputeDispatchSnapshot snapshot,
             AutoUniformBlockInfo block)
         {
-            void* mapped;
-            if (!Renderer.TryMapBufferMemory(resource.Buffer, resource.Memory, 0, size, out mapped))
+            if (!Renderer.TryMapBufferMemory(resource.Buffer, resource.Memory, 0, size, out void* mapped))
                 return false;
 
             try
@@ -2202,8 +2184,7 @@ public unsafe partial class VulkanRenderer
 
         private bool ClearComputeUniformBuffer(ComputeUniformBuffer resource, uint size)
         {
-            void* mapped;
-            if (!Renderer.TryMapBufferMemory(resource.Buffer, resource.Memory, 0, size, out mapped))
+            if (!Renderer.TryMapBufferMemory(resource.Buffer, resource.Memory, 0, size, out void* mapped))
                 return false;
 
             try
@@ -2566,12 +2547,9 @@ public unsafe partial class VulkanRenderer
         }
 
         private static bool TryWriteUniformValue(Span<byte> destination, AutoUniformMember member, ProgramUniformValue value)
-        {
-            if (member.IsArray)
-                return TryWriteUniformArray(destination, member, value);
-
-            return TryWriteSingleUniform(destination, member.Offset, value.Type, value.Value);
-        }
+            => member.IsArray
+                ? TryWriteUniformArray(destination, member, value)
+                : TryWriteSingleUniform(destination, member.Offset, value.Type, value.Value);
 
         private static bool TryWriteUniformArray(Span<byte> destination, AutoUniformMember member, ProgramUniformValue value)
         {
@@ -2831,58 +2809,6 @@ public unsafe partial class VulkanRenderer
             return new DescriptorLayoutBuildResult(layouts.ToArray(), mergedBindings, requiresUpdateAfterBind, requiresVariableDescriptorCount);
         }
 
-        private sealed class DescriptorSetLayoutBindingBuilder
-        {
-            public uint Set { get; }
-            public uint Binding { get; }
-            public DescriptorType DescriptorType { get; }
-            public uint Count { get; }
-            public string Name { get; private set; }
-            public ShaderStageFlags StageFlags { get; private set; }
-            public ImageViewType? ExpectedImageViewType { get; private set; }
-
-            public DescriptorSetLayoutBindingBuilder(DescriptorBindingInfo info)
-            {
-                Set = info.Set;
-                Binding = info.Binding;
-                DescriptorType = info.DescriptorType;
-                Count = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(info);
-                Name = string.IsNullOrWhiteSpace(info.Name) ? string.Empty : info.Name;
-                StageFlags = info.StageFlags;
-                ExpectedImageViewType = info.ExpectedImageViewType;
-            }
-
-            public void Merge(DescriptorBindingInfo info)
-            {
-                uint incomingCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(info);
-                if (info.DescriptorType != DescriptorType || incomingCount != Count)
-                {
-                    Debug.VulkanWarning($"Ignoring conflicting descriptor definition for set {Set}, binding {Binding}. Existing: {DescriptorType} x{Count}, incoming: {info.DescriptorType} x{incomingCount}.");
-                    return;
-                }
-
-                if (string.IsNullOrWhiteSpace(Name) && !string.IsNullOrWhiteSpace(info.Name))
-                    Name = info.Name;
-
-                ExpectedImageViewType ??= info.ExpectedImageViewType;
-                StageFlags |= info.StageFlags;
-            }
-
-            public DescriptorSetLayoutBinding ToBinding()
-                => new()
-                {
-                    Binding = Binding,
-                    DescriptorType = DescriptorType,
-                    DescriptorCount = Count,
-                    StageFlags = StageFlags,
-                };
-
-            public DescriptorBindingInfo ToDescriptorBindingInfo()
-                => new(Set, Binding, DescriptorType, StageFlags, Count, Name, ExpectedImageViewType);
-        }
-
-        private readonly record struct DescriptorLayoutBuildResult(DescriptorSetLayout[] Layouts, List<DescriptorBindingInfo> Bindings, bool RequiresUpdateAfterBind, bool RequiresVariableDescriptorCount);
-
         private static readonly EProgramStageMask[] StageOrder =
         {
             EProgramStageMask.TaskShaderBit,
@@ -2898,10 +2824,8 @@ public unsafe partial class VulkanRenderer
         private static IEnumerable<EProgramStageMask> EnumerateStages(EProgramStageMask mask)
         {
             foreach (EProgramStageMask stage in StageOrder)
-            {
                 if (mask.HasFlag(stage))
                     yield return stage;
-            }
         }
 
     }

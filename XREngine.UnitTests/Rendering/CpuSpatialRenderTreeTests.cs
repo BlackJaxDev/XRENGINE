@@ -1,4 +1,6 @@
 using System.Numerics;
+using System.Threading;
+using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Data;
@@ -283,6 +285,51 @@ public sealed class CpuSpatialRenderTreeTests
         tree.Swap();
 
         callbackCalled.ShouldBeTrue();
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void CpuBvhTraversalBlocksConcurrentRemakeAndSwap()
+    {
+        var tree = new CpuBvhRenderTree<TestRenderItem>(AABB.FromCenterSize(Vector3.Zero, new Vector3(100.0f)));
+        tree.AddRange(CreateOriginCrossingItems(32));
+        tree.Swap();
+
+        using var traversalEntered = new ManualResetEventSlim();
+        using var releaseTraversal = new ManualResetEventSlim();
+        using var swapStarted = new ManualResetEventSlim();
+        int blockedActionEntered = 0;
+        int swapCompleted = 0;
+
+        Task traversalTask = Task.Run(() =>
+        {
+            tree.CollectAll(_ =>
+            {
+                if (Interlocked.Exchange(ref blockedActionEntered, 1) == 0)
+                {
+                    traversalEntered.Set();
+                    releaseTraversal.Wait();
+                }
+            });
+        });
+
+        traversalEntered.Wait(TimeSpan.FromSeconds(2.0)).ShouldBeTrue();
+
+        Task swapTask = Task.Run(() =>
+        {
+            swapStarted.Set();
+            tree.Remake(AABB.FromCenterSize(Vector3.Zero, new Vector3(200.0f)));
+            tree.Swap();
+            Volatile.Write(ref swapCompleted, 1);
+        });
+
+        swapStarted.Wait(TimeSpan.FromSeconds(2.0)).ShouldBeTrue();
+        Thread.Sleep(50);
+        Volatile.Read(ref swapCompleted).ShouldBe(0);
+
+        releaseTraversal.Set();
+        Task.WaitAll([traversalTask, swapTask], TimeSpan.FromSeconds(2.0)).ShouldBeTrue();
+        Volatile.Read(ref swapCompleted).ShouldBe(1);
     }
 
     [Test]

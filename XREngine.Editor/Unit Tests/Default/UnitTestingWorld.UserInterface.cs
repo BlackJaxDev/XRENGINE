@@ -572,9 +572,14 @@ public static partial class EditorUnitTests
             }
 
             UpdateVRStereoPreviewAspect(leftTex, rightTex);
-            ApplyPreviewTexture(_vrStereoPreviewLeft, leftTex, isArray, ref _vrStereoPreviewLeftWasArray, ref _vrStereoPreviewLastLeft);
-            ApplyPreviewTexture(_vrStereoPreviewRight, rightTex, isArray, ref _vrStereoPreviewRightWasArray, ref _vrStereoPreviewLastRight);
+            bool flipVerticalUv = ShouldFlipOpenXrVulkanStereoPreviewUv();
+            ApplyPreviewTexture(_vrStereoPreviewLeft, leftTex, isArray, flipVerticalUv, ref _vrStereoPreviewLeftWasArray, ref _vrStereoPreviewLastLeft);
+            ApplyPreviewTexture(_vrStereoPreviewRight, rightTex, isArray, flipVerticalUv, ref _vrStereoPreviewRightWasArray, ref _vrStereoPreviewLastRight);
         }
+
+        private static bool ShouldFlipOpenXrVulkanStereoPreviewUv()
+            => Engine.VRState.IsOpenXRActive
+            && RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
 
         private static bool TryResolveVRStereoPreviewTextures(
             out XRTexture? leftTex,
@@ -655,11 +660,19 @@ public static partial class EditorUnitTests
             UIMaterialComponent target,
             XRTexture? texture,
             bool isArray,
+            bool flipVerticalUVCoord,
             ref bool wasArray,
             ref XRTexture? lastTexture)
         {
             if (texture is null)
                 return;
+
+            if (target.FlipVerticalUVCoord != flipVerticalUVCoord)
+            {
+                target.FlipVerticalUVCoord = flipVerticalUVCoord;
+                InvalidateVRStereoPreviewTransform(target.BoundableTransform);
+                _vrStereoPreviewForceLayoutRefresh = true;
+            }
 
             // Only rebuild the material if the texture type (2D vs 2DArray) changed.
             if (target.Material is null || wasArray != isArray || target.Material.Textures.Count == 0)
