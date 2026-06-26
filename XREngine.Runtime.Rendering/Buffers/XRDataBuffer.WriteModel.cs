@@ -623,7 +623,7 @@ public partial class XRDataBuffer
 
     private void TraceDirtyRangeCollapse(bool byCount, bool byCoverage, ulong dirtyBytes, uint capacity)
     {
-        if (!RenderDiagnosticsFlags.PushSubDataTrace && !RenderDiagnosticsFlags.UploadStageLogging)
+        if (!RenderDiagnosticsFlags.PushSubDataTrace)
             return;
 
             RuntimeRenderObjectServices.Current?.LogOutput(
@@ -632,7 +632,7 @@ public partial class XRDataBuffer
 
     private void TraceWriterUploadCommit(XRBufferWriteOptions options, XRBufferDirtyRange[] rangesToUpload)
     {
-        if (!RenderDiagnosticsFlags.PushSubDataTrace && !RenderDiagnosticsFlags.UploadStageLogging)
+        if (!RenderDiagnosticsFlags.PushSubDataTrace)
             return;
 
         ulong dirtyBytes = 0ul;

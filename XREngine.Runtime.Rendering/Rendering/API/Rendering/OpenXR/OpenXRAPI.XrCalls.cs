@@ -14,6 +14,14 @@ public unsafe partial class OpenXRAPI
     private int _win32PerformanceCounterTimeExtensionChecked;
     private int _win32PerformanceCounterTimeExtensionUnavailableLogged;
 
+    private void ResetOpenXrOptionalExtensionCaches()
+    {
+        _win32PerformanceCounterTimeExtension = null;
+        Volatile.Write(ref _win32PerformanceCounterTimeExtensionChecked, 0);
+        Volatile.Write(ref _win32PerformanceCounterTimeExtensionUnavailableLogged, 0);
+        Volatile.Write(ref _debugUtilsUnavailableLogged, 0);
+    }
+
     private void MarkOpenXrRenderThread()
     {
         int currentId = Environment.CurrentManagedThreadId;
@@ -186,6 +194,12 @@ public unsafe partial class OpenXRAPI
 
         if (_instance.Handle == 0)
             return false;
+
+        if (!IsInstanceExtensionEnabled(KhrWin32ConvertPerformanceCounterTime.ExtensionName))
+        {
+            MarkWin32PerformanceCounterTimeUnavailable(DescribeInstanceExtensionState(KhrWin32ConvertPerformanceCounterTime.ExtensionName));
+            return false;
+        }
 
         try
         {

@@ -39,6 +39,7 @@ namespace XREngine.Rendering.Vulkan
             CreateFrameTimingResources();
             InitializeSynchronizationBackend();
             InitializeDynamicUniformRingBuffers();
+            ReserveOpenXrFrameDataSlotsIfRequired("initialization");
             FlushPendingDeviceReadyProgramLinks();
         }
 
@@ -108,6 +109,7 @@ namespace XREngine.Rendering.Vulkan
             DestroyPlaceholderTexture();
             DisposeImGuiResources();
             DestroyOpenXrRenderingResources();
+            DestroyFrameOpResourcePlannerStates();
             DestroyAllSwapChainObjects();
             // FBO render passes are NOT destroyed during swapchain recreation
             // (they are swapchain-independent). Clean them up here at full shutdown.

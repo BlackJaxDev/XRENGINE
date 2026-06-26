@@ -164,15 +164,15 @@ namespace XREngine.Scene
         /// <summary>
         /// All directional lights that are not baked and need to be rendered.
         /// </summary>
-        public EventList<DirectionalLightComponent> DynamicDirectionalLights { get; } = new() { ThreadSafe = true };
+        public EventList<DirectionalLightComponent> DynamicDirectionalLights { get; } = new(allowDuplicates: true, allowNull: false) { ThreadSafe = true };
         /// <summary>
         /// All point lights that are not baked and need to be rendered.
         /// </summary>
-        public EventList<PointLightComponent> DynamicPointLights { get; } = new() { ThreadSafe = true };
+        public EventList<PointLightComponent> DynamicPointLights { get; } = new(allowDuplicates: true, allowNull: false) { ThreadSafe = true };
         /// <summary>
         /// All spotlights that are not baked and need to be rendered.
         /// </summary>
-        public EventList<SpotLightComponent> DynamicSpotLights { get; } = new() { ThreadSafe = true };
+        public EventList<SpotLightComponent> DynamicSpotLights { get; } = new(allowDuplicates: true, allowNull: false) { ThreadSafe = true };
         /// <summary>
         /// All light probes in the scene.
         /// </summary>

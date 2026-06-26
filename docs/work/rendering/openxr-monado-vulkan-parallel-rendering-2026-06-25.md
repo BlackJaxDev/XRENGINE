@@ -582,3 +582,72 @@ Validation needed next:
 - Capture editor viewport plus left/right OpenXR preview textures and visually inspect the PNGs.
 - Confirm logs no longer show unconditional `mirror reused primary` messages when `XRE_OPENXR_VULKAN_PRIMARY_REUSE` is unset.
 - If visuals stabilize but frame rate remains low, refactor the OpenXR mirror render/publish sequence to avoid redundant CPU waits while keeping parallel command recording.
+
+## Reopened 2026-06-26: Slow Left-Eye Deferred Flicker
+
+After the editor-view deferred flicker was resolved by refreshing material/auto uniform buffers during primary command-buffer reuse, the user reported that the left eye deferred meshes now flicker slowly while the editor view remains stable.
+
+Latest user repro logs from `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-06-26_13-50-01_pid41156` show direct Vulkan OpenXR swapchain rendering with left/right eye pipelines `DefaultRenderPipeline#37` and `DefaultRenderPipeline#38`. There are no Vulkan validation errors, no frame-op recording failures, and no dropped command-chain ops. The recurring clue is:
+
+- `[OpenXR] Vulkan skipped retired-resource drain before eye rendering because frame slot 0 is still pending ...`
+
+Current hypothesis:
+
+- OpenXR eye recording maps left/right eye frame data onto desktop frame-data slots 0/1.
+- The eye submit path waits on its own fence after submission, but it did not wait before borrowing a desktop slot that may still be referenced by an in-flight desktop frame.
+- Rewriting per-draw UBOs in a slot still owned by desktop GPU work creates a host/GPU race. It is most visible as one-eye deferred flicker because deferred mesh descriptors depend on camera/material auto uniforms; forward meshes are less sensitive.
+
+Targeted change:
+
+- First attempt: before direct eye or mirror-FBO eye recording writes frame-data slot 0/1, wait for the corresponding desktop frame-slot timeline value to complete.
+- User result: the main editor view began flickering again. That means waiting on completed GPU work is insufficient when OpenXR can record between editor command-buffer recording and editor submit; the eye recorder can still overwrite a desktop UBO slot before the desktop command buffer reaches the GPU.
+- Corrected fix: OpenXR now writes per-eye frame data into dedicated slots after the desktop descriptor-frame range, and grows the per-slot transient compute, deferred secondary command-buffer, and compute descriptor-cache arrays to cover those slots.
+- Keep this as a correctness fix. A later performance cleanup can make these dedicated OpenXR frame-data slots explicit in a small slot allocator instead of deriving them from the desktop swapchain image count.
+- Crash follow-up: the first dedicated-slot fix was incomplete. The dynamic UBO ring-buffer array still only covered desktop slots, and the mirror-FBO primary recorder used the high frame-data slot as the render target image index. The follow-up fix expands dynamic UBO ring buffers with the other frame-data stores and records mirror primaries with swapchain target slot 0 plus `frameDataImageIndexOverride`.
+- Direct-swapchain crash follow-up: making the descriptor frame-slot count a scoped override is unsafe because shared mesh/material descriptor allocations can flip between desktop-sized and OpenXR-sized shapes while cached eye command buffers still reference the larger shape. The corrected fix keeps a monotonic descriptor frame-slot floor once OpenXR expands the frame-data slots.
+- Editor flicker follow-up: even with a monotonic floor, the first floor growth could still happen after desktop primaries had already recorded against the desktop-only descriptor shape. Vulkan initialization and swapchain recreation now reserve OpenXR frame-data slots up front when OpenXR is selected, and any later floor growth dirties both desktop and OpenXR primary command-buffer caches.
+
+Validation needed next:
+
+- Build `XREngine.Editor`. Done: passed on 2026-06-26 with only existing Magick.NET advisory warnings.
+- Run `OpenXrTimingPipelineContractTests`. Done: 24/24 passed on 2026-06-26 with only existing Magick.NET advisory warnings.
+- Re-run Monado OpenXR Vulkan with the existing direct swapchain settings.
+- Confirm the left eye no longer flickers.
+- Confirm the editor view no longer flickers.
+- Check `log_vulkan.log` for absence of Vulkan validation errors and for any repeated OpenXR frame-data slot diagnostics.
+
+## Reopened 2026-06-26: Editor Deferred Flicker Still Occurs
+
+After the dedicated OpenXR frame-data slot fixes, the user reported that the main editor view deferred meshes still flicker. A deeper source/log review of the latest Vulkan session found a stronger recurring clue than the frame-data-slot path:
+
+- `[VulkanResourcePlanner] Keeping pre-recorded physical plan during command-buffer recording despite context change.`
+- `DispatchCompute emitted with invalid render-graph pass index ... CurrentPipeline=XRRenderPipelineInstance`
+
+Root cause hypothesis:
+
+- The desktop primary recorder drains a global frame-op queue that can contain editor, shadow, helper/UI, and OpenXR-adjacent pipeline contexts in one command buffer.
+- The existing recorder selected one physical render-graph plan before recording and kept it active across context changes.
+- Multiple `DefaultRenderPipeline` instances use identical logical graph resource names such as `DeferredGBufferFBO`, `LightingAccumTexture`, `HDRSceneTex`, and related G-buffer attachments.
+- `VulkanResourceAllocator` resolves physical groups by logical resource name inside the active allocator. If the active allocator belongs to another pipeline/viewport context, deferred FBO attachments and descriptors can resolve to the wrong physical image.
+- Forward meshes are less sensitive because the forward/swapchain path does not depend on the same deferred G-buffer/lighting resource graph.
+
+Targeted fix implemented:
+
+- Added persistent per-frame-op-context resource planner states keyed by pipeline identity, viewport identity, resource registry identity, and pass metadata identity.
+- Preparing a mixed frame-op batch now builds/updates one resource planner, physical allocator, compiled graph, and barrier planner per active context.
+- Primary command-buffer recording enters a scoped planner switcher. On context change, it saves the outgoing context planner state, restores the incoming state, and saves the final state before returning to the outer renderer state.
+- The first sorted op context is activated before frame-start barriers so initial barrier emission matches the first planned resource context.
+- Primary command-chain scheduling/reuse is disabled for batches requiring multiple planner states, because primary command chains currently snapshot a single resource-plan revision.
+- Shutdown now destroys the cached frame-op-context planner states.
+
+Validation:
+
+- `dotnet build .\XREngine.Editor\XREngine.Editor.csproj` passed on 2026-06-26 with only existing Magick.NET advisory warnings.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~ResourcePlanner_SwitchesPerFrameOpContextDuringPrimaryRecording"` passed on 2026-06-26 with only existing Magick.NET advisory warnings.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter VulkanP1ValidationTests` was also run, but the bucket is not green because several pre-existing source-contract assertions still look for planner/push-constant code in files where it no longer lives. The new per-context planner guard itself passes.
+
+Validation still needed:
+
+- Re-run the Monado OpenXR Vulkan repro with the same editor launch path the user is using.
+- Confirm that `log_vulkan.log` no longer repeats the "Keeping pre-recorded physical plan during command-buffer recording despite context change" warning during steady-state rendering.
+- Visually confirm deferred meshes stay stable in the editor viewport and both eye paths.

@@ -37,6 +37,31 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    private void EnsureComputeDescriptorCacheCapacity(int imageCount)
+    {
+        if (imageCount <= 0)
+            return;
+
+        lock (_computeDescriptorCacheLock)
+        {
+            if (_computeDescriptorCaches is null)
+            {
+                _computeDescriptorCaches = new ComputeDescriptorImageCache[imageCount];
+                for (int i = 0; i < imageCount; i++)
+                    _computeDescriptorCaches[i] = new ComputeDescriptorImageCache();
+                return;
+            }
+
+            if (_computeDescriptorCaches.Length >= imageCount)
+                return;
+
+            int oldLength = _computeDescriptorCaches.Length;
+            Array.Resize(ref _computeDescriptorCaches, imageCount);
+            for (int i = oldLength; i < _computeDescriptorCaches.Length; i++)
+                _computeDescriptorCaches[i] = new ComputeDescriptorImageCache();
+        }
+    }
+
     private void DestroyComputeDescriptorCaches()
     {
         lock (_computeDescriptorCacheLock)

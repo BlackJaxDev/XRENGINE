@@ -79,6 +79,9 @@ public unsafe partial class VulkanRenderer
         if (!CommandChainsEnabledForCurrentRecording)
             return null;
 
+        if (_frameOpResourcePlannerSwitchingActive)
+            return null;
+
         using CommandChainResourcePlanReadScope resourcePlanReadScope = BeginCommandChainResourcePlanReadScope(resourcePlanRevision);
         ulong fastScheduleSignature = ComputeCommandChainFastScheduleSignature(imageIndex, staticOps, volatileOps, resourcePlanRevision);
         if (TryGetCachedCommandChainSchedule(

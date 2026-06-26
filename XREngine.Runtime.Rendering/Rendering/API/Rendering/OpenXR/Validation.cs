@@ -1,6 +1,7 @@
 using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.EXT;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Debug = XREngine.Debug;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
@@ -9,6 +10,7 @@ public unsafe partial class OpenXRAPI
 {
     private ExtDebugUtils? _debugUtils;
     private DebugUtilsMessengerEXT _debugMessenger;
+    private int _debugUtilsUnavailableLogged;
 
     private bool _enableValidationLayers = true;
     public bool EnableValidationLayers
@@ -29,8 +31,20 @@ public unsafe partial class OpenXRAPI
 
     private void DestroyValidationLayers()
     {
-        if (_enableValidationLayers)
-            _debugUtils?.DestroyDebugUtilsMessenger(_debugMessenger);
+        if (_debugMessenger.Handle != 0 && _debugUtils is not null)
+        {
+            try
+            {
+                _debugUtils.DestroyDebugUtilsMessenger(_debugMessenger);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"OpenXR debug utils messenger destroy failed: {ex.Message}");
+            }
+        }
+
+        _debugMessenger = default;
+        _debugUtils = null;
     }
 
     private static void PopulateDebugMessengerCreateInfo(ref DebugUtilsMessengerCreateInfoEXT createInfo)
@@ -48,17 +62,28 @@ public unsafe partial class OpenXRAPI
     }
     private void SetupDebugMessenger()
     {
-        if (!EnableValidationLayers)
+        if (!EnableValidationLayers || _instance.Handle == 0)
             return;
+
+        DestroyValidationLayers();
+
+        if (!IsInstanceExtensionEnabled(ExtDebugUtils.ExtensionName))
+        {
+            LogDebugUtilsUnavailable(DescribeInstanceExtensionState(ExtDebugUtils.ExtensionName));
+            return;
+        }
 
         try
         {
             if (!Api!.TryGetInstanceExtension(null, _instance, out _debugUtils) || _debugUtils is null)
+            {
+                LogDebugUtilsUnavailable("Silk.NET did not return the extension wrapper");
                 return;
+            }
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"OpenXR debug utils extension is unavailable; validation messenger disabled. Reason={ex.Message}");
+            LogDebugUtilsUnavailable($"extension load failed: {ex.Message}");
             _debugUtils = null;
             return;
         }
@@ -74,19 +99,29 @@ public unsafe partial class OpenXRAPI
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"OpenXR debug utils messenger could not be created; validation messenger disabled. Reason={ex.Message}");
+            LogDebugUtilsUnavailable($"messenger create failed: {ex.Message}");
             _debugUtils = null;
             return;
         }
 
         if (result != Result.Success)
         {
-            Debug.LogWarning($"OpenXR debug utils messenger could not be created; validation messenger disabled. Result={result}");
+            LogDebugUtilsUnavailable($"messenger create returned {result}");
             _debugUtils = null;
             return;
         }
 
         _debugMessenger = d;
+    }
+
+    private void LogDebugUtilsUnavailable(string reason)
+    {
+        if (Interlocked.Exchange(ref _debugUtilsUnavailableLogged, 1) != 0)
+            return;
+
+        Debug.LogWarning(
+            "OpenXR debug utils messenger is unavailable; validation messenger disabled. " +
+            $"Reason={reason}");
     }
     private bool CheckValidationLayerSupport()
     {
@@ -104,7 +139,16 @@ public unsafe partial class OpenXRAPI
     }
     private static uint DebugCallback(DebugUtilsMessageSeverityFlagsEXT messageSeverity, DebugUtilsMessageTypeFlagsEXT messageTypes, DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
     {
-        Console.WriteLine($"validation layer:{Marshal.PtrToStringAnsi((nint)pCallbackData->Message)}");
+        string message = Marshal.PtrToStringAnsi((nint)pCallbackData->Message) ?? string.Empty;
+        if ((messageSeverity & DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt) != 0 ||
+            (messageSeverity & DebugUtilsMessageSeverityFlagsEXT.WarningBitExt) != 0)
+        {
+            Debug.LogWarning($"OpenXR validation: {message}");
+        }
+        else
+        {
+            Debug.Out($"OpenXR validation: {message}");
+        }
 
         return XR.False;
     }

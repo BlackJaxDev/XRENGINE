@@ -117,6 +117,7 @@ public unsafe partial class VulkanRenderer
             DeviceWaitIdle();
             DestroyAllSwapChainObjects();
             CreateAllSwapChainObjects();
+            ReserveOpenXrFrameDataSlotsIfRequired("swapchain recreation");
             EnsureSwapchainTimelineState();
             return true;
         }

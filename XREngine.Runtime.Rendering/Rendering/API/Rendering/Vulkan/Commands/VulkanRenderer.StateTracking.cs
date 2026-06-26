@@ -71,6 +71,9 @@ public unsafe partial class VulkanRenderer
     private double _queueOverlapFrameDeltaEmaMs = -1.0;
     private double _queueOverlapModeStartFrameDeltaMs = -1.0;
     private readonly List<MergedFrameOpRegistryCacheEntry> _mergedFrameOpRegistryCache = new(MaxMergedFrameOpRegistryCacheEntries);
+    private readonly Dictionary<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> _frameOpResourcePlannerStates = new();
+    private readonly HashSet<FrameOpPlannerStateKey> _activeFrameOpResourcePlannerStateKeys = new();
+    private readonly List<FrameOpPlannerStateKey> _frameOpPlannerStateKeyScratch = [];
     private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterSourcePassMetadata;
     private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterResult;
     private int _lastActiveFilterPassSetSignature = int.MinValue;
@@ -148,6 +151,12 @@ public unsafe partial class VulkanRenderer
                 FailedResourceAllocationSignature = ulong.MaxValue,
             };
     }
+
+    private readonly record struct FrameOpPlannerStateKey(
+        int PipelineIdentity,
+        int ViewportIdentity,
+        int ResourceRegistryIdentity,
+        int PassMetadataIdentity);
 
     private readonly record struct ResourcePlannerSignatureBreakdown(
         int Registry,
@@ -278,6 +287,44 @@ public unsafe partial class VulkanRenderer
                 _renderer._commandChainFrozenResourcePlanRevision = 0;
         }
     }
+
+    private readonly struct FrameOpResourcePlannerRecordingScope : IDisposable
+    {
+        private readonly VulkanRenderer _renderer;
+        private readonly ResourcePlannerRuntimeState _previousState;
+        private readonly bool _active;
+
+        public FrameOpResourcePlannerRecordingScope(VulkanRenderer renderer)
+        {
+            _renderer = renderer;
+            _active = renderer._frameOpResourcePlannerSwitchingActive;
+            _previousState = _active
+                ? renderer.CaptureResourcePlannerRuntimeState()
+                : default;
+
+            if (_active)
+            {
+                renderer._frameOpResourcePlannerRecordingScopeActive = true;
+                renderer._hasActiveFrameOpResourcePlannerStateKey = false;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (!_active)
+                return;
+
+            _renderer.SaveActiveFrameOpResourcePlannerState();
+            _renderer._frameOpResourcePlannerRecordingScopeActive = false;
+            _renderer._hasActiveFrameOpResourcePlannerStateKey = false;
+            _renderer.RestoreResourcePlannerRuntimeState(_previousState);
+        }
+    }
+
+    private bool _frameOpResourcePlannerSwitchingActive;
+    private bool _frameOpResourcePlannerRecordingScopeActive;
+    private bool _hasActiveFrameOpResourcePlannerStateKey;
+    private FrameOpPlannerStateKey _activeFrameOpResourcePlannerStateKey;
 
     private ResourcePlannerRuntimeState CaptureResourcePlannerRuntimeState()
         => new()

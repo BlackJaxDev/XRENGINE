@@ -112,8 +112,7 @@ public unsafe partial class VulkanRenderer
     public override bool IsRenderingExternalSwapchainTarget => _openXrExternalSwapchainRenderDepth > 0;
     internal bool IsPrewarmingOpenXrExternalSwapchainTarget => _openXrExternalSwapchainPrewarmDepth > 0;
     public override bool AllowSynchronousResourceUploads
-        => _openXrExternalSwapchainPrewarmDepth > 0 ||
-           (_synchronousResourceUploadBlockDepth == 0 && base.AllowSynchronousResourceUploads);
+        => _synchronousResourceUploadBlockDepth == 0;
 
     internal IDisposable BlockSynchronousResourceUploads(string reason)
     {
@@ -127,6 +126,46 @@ public unsafe partial class VulkanRenderer
                 _synchronousResourceUploadBlockDepth);
 
         return new SynchronousResourceUploadBlockScope(this);
+    }
+
+    private void ReserveOpenXrFrameDataSlotsIfRequired(string reason)
+    {
+        if (!ShouldReserveOpenXrFrameDataSlots())
+            return;
+
+        int frameDataSlotCount = ResolveOpenXrFrameDataSlotCount(swapChainImages?.Length ?? 0);
+        EnsureOpenXrFrameDataSlotCapacity(frameDataSlotCount);
+        bool grew = EnsureDescriptorFrameSlotFrameCountFloor(frameDataSlotCount);
+        if (grew || OpenXrVulkanTraceEnabled)
+        {
+            Debug.Vulkan(
+                "[OpenXR] Reserved Vulkan frame-data slots for OpenXR. Reason={0} desktopSwapchainImages={1} frameDataSlots={2} descriptorFrameSlots={3}",
+                reason,
+                swapChainImages?.Length ?? 0,
+                frameDataSlotCount,
+                DescriptorFrameSlotFrameCount);
+        }
+    }
+
+    private static bool ShouldReserveOpenXrFrameDataSlots()
+        => RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
+           RuntimeEngine.VRState.IsOpenXRActive ||
+           IsTruthyEnvironmentValue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
+
+    private static bool IsTruthyEnvironmentValue(string? value)
+        => !string.IsNullOrWhiteSpace(value) &&
+           (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
+
+    private void MarkOpenXrPrimaryCommandBufferVariantsDirty()
+    {
+        foreach (List<CommandBufferCacheVariant> variants in _openXrPrimaryCommandBufferVariants.Values)
+        {
+            for (int i = 0; i < variants.Count; i++)
+                variants[i].Dirty = true;
+        }
     }
 
     public override bool TryGetExternalSwapchainTargetRegion(out BoundingRectangle region)
@@ -302,12 +341,17 @@ public unsafe partial class VulkanRenderer
         ImageView previousDepthView = _swapchainDepthView;
         Format previousDepthFormat = _swapchainDepthFormat;
         ImageAspectFlags previousDepthAspect = _swapchainDepthAspect;
-        int previousDescriptorFrameSlotFrameCountOverride = _descriptorFrameSlotFrameCountOverride;
         _openXrExternalSwapchainRenderDepth++;
-        uint recordImageIndex = ResolveOpenXrRecordImageIndex(request.ResourcePlannerStateIndex);
+        int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(previousSwapChainImages?.Length ?? 0);
+        uint recordImageIndex = ResolveOpenXrRecordImageIndex(
+            request.ResourcePlannerStateIndex,
+            previousSwapChainImages?.Length ?? 0);
 
         try
         {
+            EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
+            EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);
+            WaitForOpenXrFrameDataSlot(recordImageIndex, "eye swapchain render");
             DrainRetiredResourcesIfSubmittedFrameSlotsCompleted();
             DrainCompletedRecordedTextureUploadPublications();
 
@@ -319,9 +363,6 @@ public unsafe partial class VulkanRenderer
             _openXrSingleSwapchainImageViews![OpenXrExternalSwapchainTargetImageIndex] = openXrImageView;
             _openXrSingleSwapchainImageEverPresented![OpenXrExternalSwapchainTargetImageIndex] = false;
 
-            _descriptorFrameSlotFrameCountOverride = Math.Max(
-                previousDescriptorFrameSlotFrameCountOverride,
-                Math.Max(previousSwapChainImages?.Length ?? 0, MAX_FRAMES_IN_FLIGHT));
             swapChainImages = _openXrSingleSwapchainImages;
             swapChainImageViews = _openXrSingleSwapchainImageViews;
             swapChainFramebuffers = null;
@@ -438,7 +479,6 @@ public unsafe partial class VulkanRenderer
             _swapchainDepthView = previousDepthView;
             _swapchainDepthFormat = previousDepthFormat;
             _swapchainDepthAspect = previousDepthAspect;
-            _descriptorFrameSlotFrameCountOverride = previousDescriptorFrameSlotFrameCountOverride;
 
             if (commandBufferAllocated && commandBuffer.Handle != 0)
                 Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
@@ -1012,7 +1052,10 @@ public unsafe partial class VulkanRenderer
 
         CommandBuffer commandBuffer = default;
         bool drainedFrameOps = false;
-        uint recordImageIndex = ResolveOpenXrRecordImageIndex(request.ResourcePlannerStateIndex);
+        int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(swapChainImages?.Length ?? 0);
+        uint recordImageIndex = ResolveOpenXrRecordImageIndex(
+            request.ResourcePlannerStateIndex,
+            swapChainImages?.Length ?? 0);
 
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
             request.Extent.Width,
@@ -1020,6 +1063,9 @@ public unsafe partial class VulkanRenderer
 
         try
         {
+            EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
+            EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);
+            WaitForOpenXrFrameDataSlot(recordImageIndex, "eye mirror render");
             DrainRetiredResourcesIfSubmittedFrameSlotsCompleted();
             DrainCompletedRecordedTextureUploadPublications();
 
@@ -1242,7 +1288,7 @@ public unsafe partial class VulkanRenderer
             }
 
             _ = RecordCommandBuffer(
-                recordImageIndex,
+                OpenXrExternalSwapchainTargetImageIndex,
                 variant.PrimaryCommandBuffer,
                 dynamicUiBatchTextSecondaryCommandBuffer: default,
                 ops,
@@ -1250,7 +1296,8 @@ public unsafe partial class VulkanRenderer
                 commandChainSchedule,
                 preserveSwapchainForOverlay: false,
                 recordedSwapchainWriteCount: out int recordedSwapchainWriteCount,
-                transitionSwapchainToPresent: false);
+                transitionSwapchainToPresent: false,
+                frameDataImageIndexOverride: recordImageIndex);
 
             bool wasDirty = variant.Dirty;
             variant.Dirty = false;
@@ -1316,11 +1363,24 @@ public unsafe partial class VulkanRenderer
         return variant.PrimaryCommandBuffer;
     }
 
-    private uint ResolveOpenXrRecordImageIndex(int resourcePlannerStateIndex)
+    private static int ResolveOpenXrFrameDataSlotCount(int desktopSwapchainImageCount)
+        => ResolveOpenXrDesktopFrameDataSlotCount(desktopSwapchainImageCount) + OpenXrEyeResourcePlannerStateCount;
+
+    private static int ResolveOpenXrDesktopFrameDataSlotCount(int desktopSwapchainImageCount)
+        => Math.Max(Math.Max(desktopSwapchainImageCount, MAX_FRAMES_IN_FLIGHT), 1);
+
+    private static uint ResolveOpenXrRecordImageIndex(
+        int resourcePlannerStateIndex,
+        int desktopSwapchainImageCount)
     {
-        uint requested = (uint)Math.Max(0, resourcePlannerStateIndex);
-        uint commandBufferCount = _commandBuffers is null ? 0u : (uint)_commandBuffers.Length;
-        return commandBufferCount > requested ? requested : 0u;
+        int eyeIndex = NormalizeOpenXrResourcePlannerStateIndex(resourcePlannerStateIndex);
+        int desktopFrameDataSlotCount = ResolveOpenXrDesktopFrameDataSlotCount(desktopSwapchainImageCount);
+        return (uint)(desktopFrameDataSlotCount + eyeIndex);
+    }
+
+    private void EnsureOpenXrFrameDataSlotCapacity(int frameDataSlotCount)
+    {
+        EnsureCommandBufferFrameDataSlotCapacity(frameDataSlotCount);
     }
 
     private CommandChainSchedule? TryBuildOpenXrEyeCommandChainSchedule(
@@ -2245,13 +2305,15 @@ public unsafe partial class VulkanRenderer
         ImageView previousDepthView = _swapchainDepthView;
         Format previousDepthFormat = _swapchainDepthFormat;
         ImageAspectFlags previousDepthAspect = _swapchainDepthAspect;
-        int previousDescriptorFrameSlotFrameCountOverride = _descriptorFrameSlotFrameCountOverride;
+        int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(previousSwapChainImages?.Length ?? 0);
 
         _openXrExternalSwapchainRenderDepth++;
         _openXrExternalSwapchainPrewarmDepth++;
 
         try
         {
+            EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
+            EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);
             DrainRetiredResourcesIfSubmittedFrameSlotsCompleted();
 
             OpenXrDepthTarget depthTarget = GetOrCreateOpenXrDepthTarget(extent);
@@ -2263,9 +2325,6 @@ public unsafe partial class VulkanRenderer
             _openXrSingleSwapchainImageViews[0] = default;
             _openXrSingleSwapchainImageEverPresented[0] = false;
 
-            _descriptorFrameSlotFrameCountOverride = Math.Max(
-                previousDescriptorFrameSlotFrameCountOverride,
-                Math.Max(previousSwapChainImages?.Length ?? 0, MAX_FRAMES_IN_FLIGHT));
             swapChainImages = _openXrSingleSwapchainImages;
             swapChainImageViews = _openXrSingleSwapchainImageViews;
             swapChainFramebuffers = null;
@@ -2317,7 +2376,6 @@ public unsafe partial class VulkanRenderer
             _swapchainDepthView = previousDepthView;
             _swapchainDepthFormat = previousDepthFormat;
             _swapchainDepthAspect = previousDepthAspect;
-            _descriptorFrameSlotFrameCountOverride = previousDescriptorFrameSlotFrameCountOverride;
         }
     }
 
@@ -2332,9 +2390,12 @@ public unsafe partial class VulkanRenderer
 
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(extent.Width, extent.Height);
         _openXrExternalSwapchainPrewarmDepth++;
+        int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(swapChainImages?.Length ?? 0);
 
         try
         {
+            EnsureOpenXrFrameDataSlotCapacity(openXrFrameDataSlotCount);
+            EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);
             DrainRetiredResourcesIfSubmittedFrameSlotsCompleted();
 
             using (EnterOpenXrResourcePlannerScope(resourcePlannerStateIndex))
@@ -2722,6 +2783,30 @@ public unsafe partial class VulkanRenderer
 
         ForceFlushCompletedNonImageRetiredResources();
         DrainCompletedRecordedTextureUploadPublications();
+    }
+
+    private void WaitForOpenXrFrameDataSlot(uint frameDataImageIndex, string reason)
+    {
+        if (_frameSlotTimelineValues is null ||
+            _graphicsTimelineSemaphore.Handle == 0 ||
+            frameDataImageIndex >= _frameSlotTimelineValues.Length)
+        {
+            return;
+        }
+
+        ulong value = _frameSlotTimelineValues[frameDataImageIndex];
+        if (value == 0 || HasTimelineValueCompleted(_graphicsTimelineSemaphore, value))
+            return;
+
+        Debug.VulkanEvery(
+            $"OpenXR.Vulkan.WaitFrameDataSlot.{GetHashCode()}.{frameDataImageIndex}.{reason}",
+            TimeSpan.FromSeconds(1),
+            "[OpenXR] Vulkan waiting for frame-data slot {0} before {1}; pending timeline value {2}.",
+            frameDataImageIndex,
+            reason,
+            value);
+
+        WaitForTimelineValue(_graphicsTimelineSemaphore, value);
     }
 
     private ImageView GetOrCreateOpenXrSwapchainImageView(Image image, Format format)
