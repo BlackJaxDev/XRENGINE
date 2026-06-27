@@ -400,6 +400,7 @@ public unsafe partial class OpenXRAPI
     private DateTime _nextProbeUtc = DateTime.MinValue;
     private TimeSpan _probeInterval = TimeSpan.FromSeconds(1.5);
     private readonly TimeSpan _graphicsDeviceFailureProbeInterval = TimeSpan.FromMinutes(1);
+    private readonly object _runtimeLossLock = new();
     private int _runtimeLossPending;
     private int _sessionRunning;
     private bool _runtimeMonitoringEnabled;

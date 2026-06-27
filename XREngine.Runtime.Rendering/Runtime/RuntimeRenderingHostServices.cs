@@ -41,6 +41,18 @@ public static class RuntimeRenderingHostServices
     /// </summary>
     public static string? GameCachePath { get; set; }
 
+    /// <summary>
+    /// Host-registered callback used by OpenXR recovery when a process-scoped runtime service
+    /// such as Monado may need to be relaunched before probing the loader again.
+    /// </summary>
+    public static Func<string, bool>? OpenXrRuntimeServiceEnsurer { get; set; }
+
+    public static bool TryEnsureOpenXrRuntimeService(string reason)
+    {
+        Func<string, bool>? ensurer = OpenXrRuntimeServiceEnsurer;
+        return ensurer is not null && ensurer(reason);
+    }
+
     private sealed class DefaultRuntimeRenderingHostServices : IRuntimeRenderingHostServices
     {
         private readonly Stopwatch _elapsedStopwatch = Stopwatch.StartNew();

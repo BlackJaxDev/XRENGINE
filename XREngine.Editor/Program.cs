@@ -146,6 +146,7 @@ internal class Program
         UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
         UnitTestingWorldSettingsStore.ApplyVrLaunchOverrides(settings);
         UnitTestingWorldSettingsStore.ApplyAudioOverrides(settings);
+        ConfigureOpenXrRuntimeServiceRecovery(settings);
         WarnForMixedOpenXrSceneOnlyVr(settings);
         ConfigureFbxTraceLogging(settings);
         EditorUnitTests.SyncTogglesFromRuntime();
@@ -225,6 +226,14 @@ internal class Program
         EngineDebug.LogWarning(
             "[OpenXRSettings] UseOpenXR=true and SceneOnlyVRPawn=true. SceneOnlyVRPawn is a scene-only VR rig path; " +
             "it does not emulate the OpenXR API. UseOpenXR still requests a real OpenXR runtime.");
+    }
+
+    private static void ConfigureOpenXrRuntimeServiceRecovery(UnitTestingWorldSettings settings)
+    {
+        RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer =
+            settings.VR.Mode == UnitTestingVrLaunchMode.MonadoOpenXR
+                ? UnitTestingWorldSettingsStore.TryEnsureMonadoServiceForCurrentProcess
+                : null;
     }
 
     private static void ApplyOpenXrRenderPacingOverride(UnitTestingWorldSettings settings)

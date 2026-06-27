@@ -29,9 +29,22 @@ public unsafe partial class OpenXRAPI
             return;
 
         if (!_instanceOwnedByRenderer)
+        {
             Api?.DestroyInstance(_instance);
+        }
+        else if (Window?.Renderer is VulkanRenderer vulkanRenderer &&
+            vulkanRenderer.InvalidateOpenXrVulkanEnable2BootstrapInstance("OpenXR runtime instance teardown"))
+        {
+            Debug.VulkanWarning("[OpenXR] Dropped stale renderer-owned XR instance so runtime recovery can create a fresh session instance.");
+        }
 
         _instanceOwnedByRenderer = false;
+        if (_apiOwnedByRenderer)
+        {
+            Api = XR.GetApi();
+            _apiOwnedByRenderer = false;
+        }
+
         ClearInstanceExtensionState();
     }
 

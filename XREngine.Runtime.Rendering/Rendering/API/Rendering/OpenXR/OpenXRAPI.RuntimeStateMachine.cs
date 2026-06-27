@@ -143,6 +143,8 @@ public unsafe partial class OpenXRAPI
         if (DateTime.UtcNow < _nextProbeUtc)
             return;
 
+        TryEnsureOpenXrRuntimeService("OpenXR runtime probe");
+
         if (_instance.Handle != 0)
         {
             SetRuntimeState(OpenXrRuntimeState.XrInstanceReady);
@@ -180,6 +182,8 @@ public unsafe partial class OpenXRAPI
 
     private void TryCreateSessionAndSwapchains(AbstractRenderer renderer)
     {
+        TryEnsureOpenXrRuntimeService("OpenXR session creation");
+
         if (renderer.IsDeviceLost)
         {
             Debug.LogWarning("OpenXR session init skipped because the active renderer device is lost.");
@@ -301,6 +305,9 @@ public unsafe partial class OpenXRAPI
             || lossReason == OpenXrRuntimeLossReason.RuntimeUnavailable;
 
         TearDownSessionResourcesOnOwningThread(destroyInstance);
+        if (!stopMonitoring)
+            TryEnsureOpenXrRuntimeService($"OpenXR runtime loss: {lossReason}");
+
         if (stopMonitoring)
         {
             _runtimeMonitoringEnabled = false;
@@ -350,20 +357,58 @@ public unsafe partial class OpenXRAPI
         if (reason == OpenXrRuntimeLossReason.None)
             return;
 
-        _runtimeLossReason = reason;
-        Interlocked.Exchange(ref _runtimeLossPending, 1);
+        lock (_runtimeLossLock)
+        {
+            if (Volatile.Read(ref _runtimeLossPending) == 0 ||
+                GetRuntimeLossReasonSeverity(reason) >= GetRuntimeLossReasonSeverity(_runtimeLossReason))
+            {
+                _runtimeLossReason = reason;
+            }
+
+            Volatile.Write(ref _runtimeLossPending, 1);
+        }
     }
 
     private bool ConsumeRuntimeLoss(out OpenXrRuntimeLossReason reason)
     {
-        if (Interlocked.Exchange(ref _runtimeLossPending, 0) == 0)
+        lock (_runtimeLossLock)
         {
-            reason = OpenXrRuntimeLossReason.None;
-            return false;
-        }
+            if (Volatile.Read(ref _runtimeLossPending) == 0)
+            {
+                reason = OpenXrRuntimeLossReason.None;
+                return false;
+            }
 
-        reason = _runtimeLossReason;
-        return true;
+            Volatile.Write(ref _runtimeLossPending, 0);
+            reason = _runtimeLossReason;
+            _runtimeLossReason = OpenXrRuntimeLossReason.None;
+            return true;
+        }
+    }
+
+    private static int GetRuntimeLossReasonSeverity(OpenXrRuntimeLossReason reason)
+        => reason switch
+        {
+            OpenXrRuntimeLossReason.ShutdownRequested => 100,
+            OpenXrRuntimeLossReason.SessionExiting => 90,
+            OpenXrRuntimeLossReason.InstanceLostError => 80,
+            OpenXrRuntimeLossReason.RuntimeUnavailable => 80,
+            OpenXrRuntimeLossReason.SessionLossPending => 70,
+            OpenXrRuntimeLossReason.SessionLostError => 60,
+            _ => 0,
+        };
+
+    private static void TryEnsureOpenXrRuntimeService(string reason)
+    {
+        try
+        {
+            if (RuntimeRenderingHostServices.Current.TryEnsureOpenXrRuntimeService(reason))
+                Debug.Out($"OpenXR runtime service ensured. Reason={reason}");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"OpenXR runtime service recovery failed. Reason={reason}; Error={ex.Message}");
+        }
     }
 
     private Result CheckResult(Result result, string operation)

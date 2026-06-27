@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using Silk.NET.Vulkan;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
@@ -18,6 +19,7 @@ public unsafe partial class VulkanRenderer
     private ulong[]? _swapchainImageTimelineValues;
     private ulong _acquireTimelineValue;
     private ulong _graphicsTimelineValue;
+    private const ulong TimelineWaitPollTimeoutNanoseconds = 50_000_000UL;
 
     /// <summary>
     /// Set to <c>true</c> when <c>VK_ERROR_DEVICE_LOST</c> is detected. Once the Vulkan
@@ -79,6 +81,9 @@ public unsafe partial class VulkanRenderer
         if (semaphore.Handle == 0 || value == 0)
             return true;
 
+        if (value == ulong.MaxValue)
+            throw new InvalidOperationException("Refusing to query Vulkan timeline semaphore completion for the invalid ulong.MaxValue sentinel.");
+
         ulong currentValue = 0;
         Result result = Api!.GetSemaphoreCounterValue(device, semaphore, &currentValue);
         if (result == Result.ErrorDeviceLost)
@@ -99,6 +104,9 @@ public unsafe partial class VulkanRenderer
     {
         if (semaphore.Handle == 0 || value == 0)
             return true;
+
+        if (value == ulong.MaxValue)
+            throw new InvalidOperationException("Refusing to wait for the invalid Vulkan timeline semaphore value ulong.MaxValue.");
 
         SemaphoreWaitInfo waitInfo = new()
         {
@@ -136,7 +144,17 @@ public unsafe partial class VulkanRenderer
 
     private void WaitForTimelineValue(Semaphore semaphore, ulong value)
     {
-        _ = TryWaitForTimelineValue(semaphore, value, ulong.MaxValue);
+        long waitStart = Stopwatch.GetTimestamp();
+        while (!TryWaitForTimelineValue(semaphore, value, TimelineWaitPollTimeoutNanoseconds))
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.TimelineWait.{GetHashCode()}.{semaphore.Handle:X}.{value}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Still waiting for timeline semaphore 0x{0:X} to reach value {1}. WaitedMs={2:F1}",
+                semaphore.Handle,
+                value,
+                Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds);
+        }
     }
 
     private void DestroySyncObjects()

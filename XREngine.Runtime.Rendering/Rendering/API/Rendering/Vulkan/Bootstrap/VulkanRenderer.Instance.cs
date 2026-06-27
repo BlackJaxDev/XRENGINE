@@ -31,6 +31,30 @@ public unsafe partial class VulkanRenderer
         return false;
     }
 
+    internal bool InvalidateOpenXrVulkanEnable2BootstrapInstance(string reason)
+    {
+        if (_openXrVulkanEnable2Context is null)
+            return false;
+
+        _openXrVulkanEnable2Context.AbandonXrInstanceOnDispose(reason);
+        _openXrVulkanEnable2Context.Dispose();
+        _openXrVulkanEnable2Context = null;
+
+        Debug.VulkanWarning(
+            "[OpenXR] Invalidated renderer-owned XR_KHR_vulkan_enable2 bootstrap instance. Reason={0}",
+            string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
+
+        if (UsesOpenXrVulkanEnable2Creation)
+        {
+            MarkDeviceLost(
+                string.IsNullOrWhiteSpace(reason)
+                    ? "OpenXR runtime loss invalidated XR_KHR_vulkan_enable2-created Vulkan handles"
+                    : $"OpenXR runtime loss invalidated XR_KHR_vulkan_enable2-created Vulkan handles: {reason}");
+        }
+
+        return true;
+    }
+
     private void DestroyInstance()
     {
         if (instance.Handle != 0)

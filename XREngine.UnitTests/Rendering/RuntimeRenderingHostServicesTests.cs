@@ -175,6 +175,29 @@ public sealed class RuntimeRenderingHostServicesTests
     }
 
     [Test]
+    public void OpenXrRuntimeServiceEnsurer_UsesRegisteredDelegate()
+    {
+        Func<string, bool>? previousEnsurer = RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer;
+        try
+        {
+            int callCount = 0;
+            RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer = reason =>
+            {
+                reason.ShouldBe("unit-test recovery");
+                callCount++;
+                return true;
+            };
+
+            RuntimeRenderingHostServices.Current.TryEnsureOpenXrRuntimeService("unit-test recovery").ShouldBeTrue();
+            callCount.ShouldBe(1);
+        }
+        finally
+        {
+            RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer = previousEnsurer;
+        }
+    }
+
+    [Test]
     public void CameraRenderPipelineReplacement_UpdatesConnectedViewportPipelineInstance()
     {
         RuntimeRenderingHostServices.Current = new TestRuntimeRenderingHostServices

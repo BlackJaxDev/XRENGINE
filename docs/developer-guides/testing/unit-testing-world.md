@@ -207,8 +207,12 @@ For script-driven launches, these process-scoped overrides select the lane witho
 
 - `XRE_UNIT_TEST_VR_MODE=Desktop|Emulated|MonadoOpenXR|OpenVR|OpenXR`
 - `XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1`
+- `XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR=0`
+- `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0`
 - `XRE_UNIT_TEST_OPENXR_RUNTIME_JSON=C:\path\to\openxr_monado.json`
 - `XRE_UNIT_TEST_RENDER_API=OpenGL|Vulkan` maps into `Rendering.RenderBackend`
+
+For highest-framerate Monado Vulkan validation, set `XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=0`, `XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR=0`, and `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0` so the editor does not also render the desktop preview window while submitting OpenXR eye frames.
 
 ### Test networking pose sync
 

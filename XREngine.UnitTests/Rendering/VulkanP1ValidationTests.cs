@@ -149,7 +149,8 @@ public sealed class VulkanP1ValidationTests
     [Test]
     public void ResourcePlanReplacements_AreFenceRetiredAndObservable()
     {
-        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string resourceRegistrationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/VulkanRenderer.ResourceRegistration.cs");
         string plannerUpdate = SliceBetween(
             stateSource,
             "private void UpdateResourcePlannerFromContext",
@@ -158,8 +159,14 @@ public sealed class VulkanP1ValidationTests
         plannerUpdate.ShouldContain("RecordVulkanRetiredResourcePlanReplacement");
         plannerUpdate.ShouldContain("DestroyPhysicalImages(this)");
         plannerUpdate.ShouldContain("DestroyPhysicalBuffers(this)");
+        plannerUpdate.ShouldContain("LogDeferredResourcePlanReplacementRetirement");
+        stateSource.ShouldContain("Deferring replaced physical resource plan retirement through frame-slot queues");
+        stateSource.ShouldContain("ShouldSkipAutoExposureHistoryPreserve");
+        stateSource.ShouldContain("_resourcePlannerRevision == 0");
+        stateSource.ShouldContain("RuntimeRenderingHostServices.Current.IsInVR");
         plannerUpdate.ShouldNotContain("WaitForAllInFlightWork()");
-        stateSource.ShouldContain("RetireBuffer(buffer, memory)");
+        plannerUpdate.ShouldNotContain("DeviceWaitIdle()");
+        resourceRegistrationSource.ShouldContain("RetireBuffer(buffer, memory)");
 
         string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vulkan.cs");
         string packetSource = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");

@@ -77,6 +77,10 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanOpenXrApi.ShouldContain("ReleaseOpenXrEyeImageIfAcquired(1");
         vulkanOpenXrApi.ShouldContain("ReleaseOpenXrEyeImageIfAcquired(0");
         vulkanOpenXrApi.ShouldContain("previewFlippedY=False");
+        vulkanOpenXrApi.ShouldContain("ShouldCopyDirectVulkanEyeSwapchainPreview");
+        vulkanOpenXrApi.ShouldContain("bool copiedPreview = shouldCopyPreview &&");
+        vulkanOpenXrApi.ShouldContain("VulkanCaptureEyeOutputs");
+        vulkanOpenXrApi.ShouldContain("RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures");
 
         vulkanRendererOpenXr.ShouldContain("OpenXrEyeMirrorRenderRequest");
         vulkanRendererOpenXr.ShouldContain("TryRenderOpenXrEyeMirrorFrameBuffers");
@@ -446,9 +450,53 @@ public sealed class OpenXrTimingPipelineContractTests
         runtimeStateMachine.ShouldContain("_runtimeState != OpenXrRuntimeState.SessionRunning");
         runtimeStateMachine.ShouldContain("state == SessionState.Ready");
         runtimeStateMachine.ShouldContain("SetRuntimeState(OpenXrRuntimeState.RecreatePending);");
+        runtimeStateMachine.ShouldContain("TryEnsureOpenXrRuntimeService(\"OpenXR runtime probe\")");
+        runtimeStateMachine.ShouldContain("TryEnsureOpenXrRuntimeService(\"OpenXR session creation\")");
         vulkan.ShouldContain("Failed to create Vulkan OpenXR session");
         vulkan.ShouldContain("ErrorGraphicsDeviceInvalid");
         vulkan.ShouldContain("runtime-required OpenXR Vulkan");
+    }
+
+    [Test]
+    public void OpenXrRuntimeRecovery_RestartsHostServiceAndKeepsStrongestLossReason()
+    {
+        string program = ReadWorkspaceFile("XREngine.Editor/Program.cs");
+        string settingsStore = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/UnitTestingWorldSettingsStore.cs");
+        string hostServices = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServices.cs");
+        string hostInterface = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs");
+        string state = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
+        string instance = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/Instance.cs");
+        string runtimeStateMachine = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs");
+        string vulkanInstance = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Instance.cs");
+        string vulkanSyncObjects = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SyncObjects.cs");
+
+        program.ShouldContain("ConfigureOpenXrRuntimeServiceRecovery(settings)");
+        program.ShouldContain("RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer");
+        program.ShouldContain("UnitTestingWorldSettingsStore.TryEnsureMonadoServiceForCurrentProcess");
+
+        settingsStore.ShouldContain("TryEnsureMonadoServiceForCurrentProcess");
+        settingsStore.ShouldContain("TryEnsureMonadoService(settings, reason)");
+        settingsStore.ShouldContain("Reason={reason}");
+
+        hostServices.ShouldContain("OpenXrRuntimeServiceEnsurer");
+        hostServices.ShouldContain("TryEnsureOpenXrRuntimeService(string reason)");
+        hostInterface.ShouldContain("bool TryEnsureOpenXrRuntimeService(string reason)");
+
+        state.ShouldContain("_runtimeLossLock");
+        runtimeStateMachine.ShouldContain("GetRuntimeLossReasonSeverity");
+        runtimeStateMachine.ShouldContain("OpenXrRuntimeLossReason.InstanceLostError => 80");
+        runtimeStateMachine.ShouldContain("OpenXrRuntimeLossReason.SessionLostError => 60");
+        runtimeStateMachine.ShouldContain("TryEnsureOpenXrRuntimeService($\"OpenXR runtime loss: {lossReason}\")");
+
+        instance.ShouldContain("InvalidateOpenXrVulkanEnable2BootstrapInstance(\"OpenXR runtime instance teardown\")");
+        vulkanInstance.ShouldContain("internal bool InvalidateOpenXrVulkanEnable2BootstrapInstance(string reason)");
+        vulkanInstance.ShouldContain("AbandonXrInstanceOnDispose(reason)");
+        vulkanInstance.ShouldContain("UsesOpenXrVulkanEnable2Creation");
+        vulkanInstance.ShouldContain("MarkDeviceLost(");
+
+        vulkanSyncObjects.ShouldContain("TimelineWaitPollTimeoutNanoseconds");
+        vulkanSyncObjects.ShouldContain("value == ulong.MaxValue");
+        vulkanSyncObjects.ShouldNotContain("TryWaitForTimelineValue(semaphore, value, ulong.MaxValue)");
     }
 
     [Test]
@@ -466,8 +514,10 @@ public sealed class OpenXrTimingPipelineContractTests
         store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestUseOpenXr));
         store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestSceneOnlyVrPawn));
         store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestPreviewVrStereoViews));
+        store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestRenderWindowsWhileInVr));
         store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson));
         store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestRenderApi));
+        store.ShouldContain("settings.RenderWindowsWhileInVR = renderWindowsWhileInVr");
         store.ShouldContain("MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.Rendering))");
         store.ShouldContain("NormalizeVrSettings");
         store.ShouldContain("TryAutoDetectMonadoRuntimeJson");
@@ -487,6 +537,55 @@ public sealed class OpenXrTimingPipelineContractTests
         editorUnitTestingPawns.ShouldContain("Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();");
         engineState.ShouldContain("XRComponent? controlledPawn = existing.ControlledPawnComponent");
         engineState.ShouldContain("replacement.ControlledPawnComponent = controlledPawn");
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void UnitTestingWorld_VrPerfEnvOverridesCanDisableDesktopVrWindow()
+    {
+        string? previousRuntimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        string? previousPreview = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestPreviewVrStereoViews);
+        string? previousAllowDesktopEditing = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestAllowDesktopEditingInVr);
+        string? previousRenderWindows = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderWindowsWhileInVr);
+        string? previousPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, @"C:\existing\openxr_monado.json");
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestPreviewVrStereoViews, "0");
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestAllowDesktopEditingInVr, "0");
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderWindowsWhileInVr, "0");
+
+            UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.ParseJsonc(
+                """
+                {
+                  "VR": {
+                    "Mode": "MonadoOpenXR",
+                    "PreviewStereoViews": true,
+                    "AllowDesktopEditing": true,
+                    "OpenXrRuntimeJson": null
+                  },
+                  "RenderWindowsWhileInVR": true
+                }
+                """);
+
+            UnitTestingWorldSettingsStore.ApplyVrLaunchOverrides(settings);
+
+            settings.VR.PreviewStereoViews.ShouldBeFalse();
+            settings.VR.AllowDesktopEditing.ShouldBeFalse();
+            settings.PreviewVRStereoViews.ShouldBeFalse();
+            settings.AllowEditingInVR.ShouldBeFalse();
+            settings.RenderWindowsWhileInVR.ShouldBeFalse();
+            settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)).ShouldBeTrue();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, previousRuntimeJson);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestPreviewVrStereoViews, previousPreview);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestAllowDesktopEditingInVr, previousAllowDesktopEditing);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderWindowsWhileInVr, previousRenderWindows);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.Path, previousPath);
+        }
     }
 
     [Test]
