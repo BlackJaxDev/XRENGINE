@@ -1381,10 +1381,13 @@ public unsafe partial class VulkanRenderer
 
         if (retiredImageCount > 0 || retiredBufferCount > 0)
         {
-            WaitForResourcePlanReplacementIdle(retiredImageCount, retiredBufferCount);
+            LogDeferredResourcePlanReplacementRetirement(retiredImageCount, retiredBufferCount);
             ReleaseDescriptorReferencesForPhysicalResourceDestruction("ResourcePlanReplacement");
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourcePlanReplacement(retiredImageCount, retiredBufferCount);
         }
+
+        if (IsDeviceLost)
+            return;
 
         PreserveAutoExposureHistory(oldAllocator);
 
@@ -1394,6 +1397,9 @@ public unsafe partial class VulkanRenderer
 
     private void PreserveAutoExposureHistory(VulkanResourceAllocator oldAllocator)
     {
+        if (ShouldSkipAutoExposureHistoryPreserve())
+            return;
+
         if (!oldAllocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.AutoExposureTextureName, out VulkanPhysicalImageGroup? oldGroup) ||
             !_resourceAllocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.AutoExposureTextureName, out VulkanPhysicalImageGroup? newGroup) ||
             oldGroup is null ||
@@ -1483,6 +1489,11 @@ public unsafe partial class VulkanRenderer
         oldGroup.LastKnownLayout = ImageLayout.TransferSrcOptimal;
         newGroup.LastKnownLayout = newLayout;
     }
+
+    private bool ShouldSkipAutoExposureHistoryPreserve()
+        => IsDeviceLost ||
+           _resourcePlannerRevision == 0 ||
+           RuntimeRenderingHostServices.Current.IsInVR;
 
     private void TransitionPhysicalGroupForCopy(
         CommandBuffer commandBuffer,
@@ -1704,19 +1715,17 @@ public unsafe partial class VulkanRenderer
         return hash.ToHashCode();
     }
 
-    private void WaitForResourcePlanReplacementIdle(int imageCount, int bufferCount)
+    private void LogDeferredResourcePlanReplacementRetirement(int imageCount, int bufferCount)
     {
         if (IsDeviceLost)
             return;
 
         Debug.VulkanEvery(
-            "Vulkan.ResourcePlanner.PlanReplacementIdle",
+            "Vulkan.ResourcePlanner.PlanReplacementDeferredRetirement",
             TimeSpan.FromSeconds(2),
-            "[VulkanResourcePlanner] Waiting for device idle before retiring replaced physical resource plan. images={0} buffers={1}",
+            "[VulkanResourcePlanner] Deferring replaced physical resource plan retirement through frame-slot queues. images={0} buffers={1}",
             imageCount,
             bufferCount);
-
-        DeviceWaitIdle();
     }
 
     private static void ValidateVulkanResourcePlanMetadata(

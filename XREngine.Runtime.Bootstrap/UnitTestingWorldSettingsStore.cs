@@ -248,6 +248,13 @@ public static class UnitTestingWorldSettingsStore
             applied = true;
         }
 
+        if (TryGetBoolEnv(XREngineEnvironmentVariables.UnitTestRenderWindowsWhileInVr, out bool renderWindowsWhileInVr))
+        {
+            settings.RenderWindowsWhileInVR = renderWindowsWhileInVr;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR));
+            applied = true;
+        }
+
         string? runtimeJsonEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson);
         if (!string.IsNullOrWhiteSpace(runtimeJsonEnv))
         {
@@ -286,7 +293,7 @@ public static class UnitTestingWorldSettingsStore
                 "[UnitTestingWorldSettings] Applied VR launch env overrides: " +
                 $"VR.Mode={settings.VR.Mode}, VRPawn={settings.VRPawn}, UseOpenXR={settings.UseOpenXR}, " +
                 $"SceneOnlyVRPawn={settings.SceneOnlyVRPawn}, PreviewVRStereoViews={settings.PreviewVRStereoViews}, " +
-                $"RenderBackend={ResolveRenderBackend(settings)}.");
+                $"RenderWindowsWhileInVR={settings.RenderWindowsWhileInVR}, RenderBackend={ResolveRenderBackend(settings)}.");
         }
     }
 
@@ -500,14 +507,26 @@ public static class UnitTestingWorldSettingsStore
     }
 
     private static void ApplyMonadoServiceStartup(UnitTestingWorldSettings settings)
+        => _ = TryEnsureMonadoService(settings, "initial UnitTestingWorld settings normalization");
+
+    public static bool TryEnsureMonadoServiceForCurrentProcess(string reason)
+    {
+        UnitTestingWorldSettings? settings = RuntimeBootstrapState.Settings;
+        if (settings is null)
+            return false;
+
+        return TryEnsureMonadoService(settings, reason);
+    }
+
+    private static bool TryEnsureMonadoService(UnitTestingWorldSettings settings, string reason)
     {
         if (settings.VR.Mode != UnitTestingVrLaunchMode.MonadoOpenXR)
-            return;
+            return false;
 
         if (TryGetRunningMonadoService(out int existingPid, out string? existingPath))
         {
-            Debug.Out($"[UnitTestingWorldSettings] Reusing running Monado service pid={existingPid} path='{existingPath ?? "<unknown>"}'.");
-            return;
+            Debug.Out($"[UnitTestingWorldSettings] Reusing running Monado service pid={existingPid} path='{existingPath ?? "<unknown>"}'. Reason={reason}");
+            return true;
         }
 
         string? runtimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
@@ -519,19 +538,19 @@ public static class UnitTestingWorldSettingsStore
         if (string.IsNullOrWhiteSpace(runtimeJson))
         {
             Debug.Out("[UnitTestingWorldSettings] VR.Mode=MonadoOpenXR but no Monado runtime manifest was available for service startup.");
-            return;
+            return false;
         }
 
         if (!TryReadOpenXrRuntimeManifest(runtimeJson, out string resolvedRuntimeJson, out string? runtimeName, out string? runtimeLibraryPath, out string? manifestError))
         {
             Debug.Out($"[UnitTestingWorldSettings] Could not start Monado service because the OpenXR runtime manifest is invalid: {manifestError}");
-            return;
+            return false;
         }
 
         if (!LooksLikeMonadoRuntime(resolvedRuntimeJson, runtimeName))
         {
             Debug.Out($"[UnitTestingWorldSettings] VR.Mode=MonadoOpenXR selected, but active XR runtime '{runtimeName ?? "<unknown>"}' does not look like Monado. Service startup skipped.");
-            return;
+            return false;
         }
 
         string? servicePath = EnumerateMonadoServiceCandidates(resolvedRuntimeJson, runtimeLibraryPath)
@@ -540,7 +559,7 @@ public static class UnitTestingWorldSettingsStore
         if (string.IsNullOrWhiteSpace(servicePath))
         {
             Debug.Out($"[UnitTestingWorldSettings] Could not locate {MonadoServiceExeName} near Monado runtime manifest '{resolvedRuntimeJson}'. OpenXR startup may fail with ErrorRuntimeUnavailable.");
-            return;
+            return false;
         }
 
         string? serviceDirectory = Path.GetDirectoryName(servicePath);
@@ -570,7 +589,7 @@ public static class UnitTestingWorldSettingsStore
             if (process is null)
             {
                 Debug.Out($"[UnitTestingWorldSettings] Failed to start Monado service from '{servicePath}': Process.Start returned null.");
-                return;
+                return false;
             }
 
             using (process)
@@ -579,15 +598,17 @@ public static class UnitTestingWorldSettingsStore
                 if (process.HasExited)
                 {
                     Debug.Out($"[UnitTestingWorldSettings] Monado service exited immediately with code {process.ExitCode}: {servicePath}");
-                    return;
+                    return false;
                 }
 
-                Debug.Out($"[UnitTestingWorldSettings] Started Monado service pid={process.Id}: {servicePath}");
+                Debug.Out($"[UnitTestingWorldSettings] Started Monado service pid={process.Id}: {servicePath}. Reason={reason}");
+                return true;
             }
         }
         catch (Exception ex)
         {
             Debug.Out($"[UnitTestingWorldSettings] Failed to start Monado service from '{servicePath}': {ex.Message}");
+            return false;
         }
     }
 

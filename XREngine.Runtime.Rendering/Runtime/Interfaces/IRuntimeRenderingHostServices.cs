@@ -1352,6 +1352,13 @@ public interface IRuntimeRenderingHostServices
     OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode { get; }
 
     /// <summary>
+    /// Ensures a host-owned process-scoped OpenXR runtime service is running before recovery probes continue.
+    /// Hosts that do not manage a runtime service can use the default no-op implementation.
+    /// </summary>
+    bool TryEnsureOpenXrRuntimeService(string reason)
+        => RuntimeRenderingHostServices.TryEnsureOpenXrRuntimeService(reason);
+
+    /// <summary>
     /// Attempts to render the host desktop mirror composition into the current target size.
     /// </summary>
     void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight);

@@ -982,13 +982,15 @@ public unsafe partial class OpenXRAPI
         uint height)
     {
         XRTexture2D? previewTexture = viewIndex == 0 ? _previewLeftEyeTexture : _previewRightEyeTexture;
-        bool copiedPreview = renderer.TryCopyOpenXrEyeSwapchainImageToTexture(
-            sourceImage,
-            sourceFormat,
-            sourceExtent,
-            previewTexture,
-            $"preview eye {viewIndex}",
-            flipY: false);
+        bool shouldCopyPreview = ShouldCopyDirectVulkanEyeSwapchainPreview();
+        bool copiedPreview = shouldCopyPreview &&
+            renderer.TryCopyOpenXrEyeSwapchainImageToTexture(
+                sourceImage,
+                sourceFormat,
+                sourceExtent,
+                previewTexture,
+                $"preview eye {viewIndex}",
+                flipY: false);
 
         if (VulkanCaptureEyeOutputs)
         {
@@ -1006,6 +1008,11 @@ public unsafe partial class OpenXRAPI
         if (copiedPreview)
             RecordSmokeDesktopMirrorComposed();
     }
+
+    private static bool ShouldCopyDirectVulkanEyeSwapchainPreview()
+        => VulkanCaptureEyeOutputs ||
+           (RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR &&
+            RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures);
 
     private void PrewarmVulkanEyeResources(uint viewIndex)
     {
