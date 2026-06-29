@@ -132,6 +132,9 @@ public unsafe partial class VulkanRenderer
 
         private void EnsureLayouts()
         {
+            if (Renderer.IsDeviceLost)
+                return;
+
             if (!_layoutsDirty)
                 return;
 
@@ -167,10 +170,7 @@ public unsafe partial class VulkanRenderer
             }
 
             if (_pipelineLayout.Handle != 0)
-            {
-                Api!.DestroyPipelineLayout(Device, _pipelineLayout, null);
-                _pipelineLayout = default;
-            }
+                DestroyPipelineLayout("VkRenderProgramPipeline.DestroyLayouts");
 
             _descriptorBindings.Clear();
             _layoutsDirty = true;
@@ -178,11 +178,10 @@ public unsafe partial class VulkanRenderer
 
         private void CreatePipelineLayout(DescriptorSetLayout[] layouts)
         {
-            if (_pipelineLayout.Handle != 0)
-            {
-                Api!.DestroyPipelineLayout(Device, _pipelineLayout, null);
-                _pipelineLayout = default;
-            }
+            if (Renderer.IsDeviceLost)
+                return;
+
+            DestroyPipelineLayout("VkRenderProgramPipeline.CreatePipelineLayout");
 
             if (layouts.Length == 0)
             {
@@ -195,6 +194,7 @@ public unsafe partial class VulkanRenderer
                 };
                 if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                     throw new InvalidOperationException("Failed to create pipeline layout for pipeline object.");
+                Renderer.TrackLivePipelineLayout(_pipelineLayout, "VkRenderProgramPipeline.PipelineLayout");
                 return;
             }
 
@@ -213,7 +213,20 @@ public unsafe partial class VulkanRenderer
 
                 if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                     throw new InvalidOperationException("Failed to create pipeline layout for pipeline object.");
+                Renderer.TrackLivePipelineLayout(_pipelineLayout, "VkRenderProgramPipeline.PipelineLayout");
             }
+        }
+
+        private void DestroyPipelineLayout(string owner)
+        {
+            if (_pipelineLayout.Handle == 0)
+                return;
+
+            PipelineLayout pipelineLayout = _pipelineLayout;
+            _pipelineLayout = default;
+
+            if (Renderer.TryBeginDestroyPipelineLayout(pipelineLayout, owner))
+                Api!.DestroyPipelineLayout(Device, pipelineLayout, null);
         }
 
         private static PushConstantRange CreateCommonPushConstantRange()

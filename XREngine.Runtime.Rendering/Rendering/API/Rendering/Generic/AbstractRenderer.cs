@@ -34,10 +34,48 @@ namespace XREngine.Rendering
         public static readonly Vector3 UIPositionBias = new(0.0f, 0.0f, 0.1f);
         public static readonly Rotator UIRotation = new(90.0f, 0.0f, 0.0f, ERotationOrder.YPR);
 
+        private static AbstractRenderer? _globalCurrent;
+        [ThreadStatic]
+        private static AbstractRenderer? _threadCurrent;
+        [ThreadStatic]
+        private static bool _hasThreadCurrentOverride;
+
         /// <summary>
         /// Use this to retrieve the currently rendering window renderer.
         /// </summary>
-        public static AbstractRenderer? Current { get; internal set; }
+        public static AbstractRenderer? Current
+        {
+            get => _hasThreadCurrentOverride ? _threadCurrent : _globalCurrent;
+            internal set
+            {
+                _threadCurrent = value;
+                _hasThreadCurrentOverride = value is not null;
+                _globalCurrent = value;
+            }
+        }
+
+        internal static IDisposable PushThreadCurrent(AbstractRenderer? renderer)
+            => new ThreadCurrentScope(renderer);
+
+        private readonly struct ThreadCurrentScope : IDisposable
+        {
+            private readonly AbstractRenderer? _previousThreadCurrent;
+            private readonly bool _previousHasThreadCurrentOverride;
+
+            public ThreadCurrentScope(AbstractRenderer? renderer)
+            {
+                _previousThreadCurrent = _threadCurrent;
+                _previousHasThreadCurrentOverride = _hasThreadCurrentOverride;
+                _threadCurrent = renderer;
+                _hasThreadCurrentOverride = true;
+            }
+
+            public void Dispose()
+            {
+                _threadCurrent = _previousThreadCurrent;
+                _hasThreadCurrentOverride = _previousHasThreadCurrentOverride;
+            }
+        }
 
         public const float DefaultPointSize = 5.0f;
         public const float DefaultLineSize = 1.0f;

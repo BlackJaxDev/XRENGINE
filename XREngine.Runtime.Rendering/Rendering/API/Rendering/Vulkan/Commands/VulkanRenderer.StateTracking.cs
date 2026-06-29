@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -21,6 +21,18 @@ public unsafe partial class VulkanRenderer
     private const int MaxMergedFrameOpRegistryCacheEntries = 8;
 
     private readonly VulkanStateTracker _state = new();
+    [ThreadStatic]
+    private static VulkanRenderer? _threadRenderStateOwner;
+    [ThreadStatic]
+    private static VulkanStateTracker? _threadRenderState;
+    [ThreadStatic]
+    private static VulkanRenderer? _threadResourcePlannerRuntimeStateOwner;
+    [ThreadStatic]
+    private static ResourcePlannerRuntimeState? _threadResourcePlannerRuntimeState;
+    [ThreadStatic]
+    private static VulkanRenderer? _threadFrameOpResourcePlannerSwitchingStateOwner;
+    [ThreadStatic]
+    private static FrameOpResourcePlannerSwitchingState? _threadFrameOpResourcePlannerSwitchingState;
     private VulkanResourcePlanner _resourcePlanner = new();
     private VulkanResourceAllocator _resourceAllocator = new();
     private VulkanBarrierPlanner _barrierPlanner = new();
@@ -46,12 +58,303 @@ public unsafe partial class VulkanRenderer
     private int _commandChainFrozenPlanReaders;
     private ulong _commandChainFrozenResourcePlanRevision;
     private readonly Dictionary<string, XRDataBuffer> _trackedBuffersByName = new(StringComparer.OrdinalIgnoreCase);
-    internal VulkanResourcePlanner ResourcePlanner => _resourcePlanner;
-    internal VulkanResourcePlan ResourcePlan => _resourcePlanner.CurrentPlan;
-    internal VulkanResourceAllocator ResourceAllocator => _resourceAllocator;
-    internal int ResourceAllocatorIdentity => RuntimeHelpers.GetHashCode(_resourceAllocator);
-    internal VulkanCompiledRenderGraph CompiledRenderGraph => _compiledRenderGraph;
-    internal ulong ResourcePlannerRevision => _resourcePlannerRevision;
+    private readonly FrameOpResourcePlannerSwitchingState _frameOpResourcePlannerSwitchingState = new();
+    private VulkanStateTracker ActiveState =>
+        ReferenceEquals(_threadRenderStateOwner, this) && _threadRenderState is not null
+            ? _threadRenderState
+            : _state;
+    private bool HasThreadResourcePlannerRuntimeState =>
+        ReferenceEquals(_threadResourcePlannerRuntimeStateOwner, this) &&
+        _threadResourcePlannerRuntimeState.HasValue;
+    private FrameOpResourcePlannerSwitchingState ActiveFrameOpResourcePlannerSwitchingState =>
+        ReferenceEquals(_threadFrameOpResourcePlannerSwitchingStateOwner, this) &&
+        _threadFrameOpResourcePlannerSwitchingState is not null
+            ? _threadFrameOpResourcePlannerSwitchingState
+            : _frameOpResourcePlannerSwitchingState;
+    internal VulkanResourcePlanner ResourcePlanner =>
+        HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.ResourcePlanner
+            : _resourcePlanner;
+    internal VulkanResourcePlan ResourcePlan => ResourcePlanner.CurrentPlan;
+    internal VulkanResourceAllocator ResourceAllocator =>
+        HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.ResourceAllocator
+            : _resourceAllocator;
+    internal int ResourceAllocatorIdentity => RuntimeHelpers.GetHashCode(ResourceAllocator);
+    internal VulkanBarrierPlanner BarrierPlanner =>
+        HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.BarrierPlanner
+            : _barrierPlanner;
+    internal VulkanCompiledRenderGraph CompiledRenderGraph =>
+        HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.CompiledRenderGraph
+            : _compiledRenderGraph;
+    internal ulong ResourcePlannerRevision =>
+        HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.ResourcePlannerRevision
+            : _resourcePlannerRevision;
+    private VulkanResourcePlanner ActiveResourcePlanner
+    {
+        get => ResourcePlanner;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.ResourcePlanner = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _resourcePlanner = value;
+        }
+    }
+    private VulkanResourceAllocator ActiveResourceAllocator
+    {
+        get => ResourceAllocator;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.ResourceAllocator = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _resourceAllocator = value;
+        }
+    }
+    private VulkanBarrierPlanner ActiveBarrierPlanner
+    {
+        get => BarrierPlanner;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.BarrierPlanner = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _barrierPlanner = value;
+        }
+    }
+    private VulkanCompiledRenderGraph ActiveCompiledRenderGraph
+    {
+        get => CompiledRenderGraph;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.CompiledRenderGraph = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _compiledRenderGraph = value;
+        }
+    }
+    private FrameOpContext? ActiveLastActiveFrameOpContext
+    {
+        get => HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.LastActiveFrameOpContext
+            : _lastActiveFrameOpContext;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.LastActiveFrameOpContext = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _lastActiveFrameOpContext = value;
+        }
+    }
+    private ulong ActiveResourcePlannerSignature
+    {
+        get => HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.ResourcePlannerSignature
+            : _resourcePlannerSignature;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.ResourcePlannerSignature = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _resourcePlannerSignature = value;
+        }
+    }
+    private ulong ActiveResourceAllocationSignature
+    {
+        get => HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.ResourceAllocationSignature
+            : _resourceAllocationSignature;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.ResourceAllocationSignature = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _resourceAllocationSignature = value;
+        }
+    }
+    private ulong ActiveFailedResourcePlannerSignature
+    {
+        get => HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.FailedResourcePlannerSignature
+            : _failedResourcePlannerSignature;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.FailedResourcePlannerSignature = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _failedResourcePlannerSignature = value;
+        }
+    }
+    private ulong ActiveFailedResourceAllocationSignature
+    {
+        get => HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.FailedResourceAllocationSignature
+            : _failedResourceAllocationSignature;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.FailedResourceAllocationSignature = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _failedResourceAllocationSignature = value;
+        }
+    }
+    private long ActiveFailedResourceAllocationTimestamp
+    {
+        get => HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.FailedResourceAllocationTimestamp
+            : _failedResourceAllocationTimestamp;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.FailedResourceAllocationTimestamp = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _failedResourceAllocationTimestamp = value;
+        }
+    }
+    private ResourcePlannerFastPathKey ActiveResourcePlannerFastPathKey
+    {
+        get => HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.ResourcePlannerFastPathKey
+            : _resourcePlannerFastPathKey;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.ResourcePlannerFastPathKey = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _resourcePlannerFastPathKey = value;
+        }
+    }
+    private bool ActiveHasResourcePlannerFastPathKey
+    {
+        get => HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.HasResourcePlannerFastPathKey
+            : _hasResourcePlannerFastPathKey;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.HasResourcePlannerFastPathKey = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _hasResourcePlannerFastPathKey = value;
+        }
+    }
+    private BarrierPlanFastPathKey ActiveBarrierPlanFastPathKey
+    {
+        get => HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.BarrierPlanFastPathKey
+            : _barrierPlanFastPathKey;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.BarrierPlanFastPathKey = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _barrierPlanFastPathKey = value;
+        }
+    }
+    private bool ActiveHasBarrierPlanFastPathKey
+    {
+        get => HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.HasBarrierPlanFastPathKey
+            : _hasBarrierPlanFastPathKey;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.HasBarrierPlanFastPathKey = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _hasBarrierPlanFastPathKey = value;
+        }
+    }
+    private ResourcePlannerSignatureBreakdown ActiveResourcePlannerSignatureBreakdown
+    {
+        get => HasThreadResourcePlannerRuntimeState
+            ? _threadResourcePlannerRuntimeState!.Value.ResourcePlannerSignatureBreakdown
+            : _resourcePlannerSignatureBreakdown;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.ResourcePlannerSignatureBreakdown = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _resourcePlannerSignatureBreakdown = value;
+        }
+    }
+    private ulong ActiveResourcePlannerRevision
+    {
+        get => ResourcePlannerRevision;
+        set
+        {
+            if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
+            {
+                state.ResourcePlannerRevision = value;
+                StoreThreadResourcePlannerRuntimeState(in state);
+                return;
+            }
+
+            _resourcePlannerRevision = value;
+        }
+    }
     private bool IsCommandChainResourcePlanFrozen => Volatile.Read(ref _commandChainFrozenPlanReaders) > 0;
     private bool[]? _commandBufferDirtyFlags;
     private readonly object _commandBufferDirtyReasonLock = new();
@@ -61,6 +364,7 @@ public unsafe partial class VulkanRenderer
     private XRFrameBuffer? _boundReadFrameBuffer;
     private XRTexture? _lastWindowPresentColorTexture;
     private XRFrameBuffer? _lastWindowPresentFrameBuffer;
+    private FrameOpContext? _lastWindowPresentFrameOpContext;
     private EReadBufferMode _readBufferMode = EReadBufferMode.ColorAttachment0;
     private EVulkanQueueOverlapMode _autoQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
     private EVulkanQueueOverlapMode _lastResolvedQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
@@ -71,8 +375,6 @@ public unsafe partial class VulkanRenderer
     private double _queueOverlapFrameDeltaEmaMs = -1.0;
     private double _queueOverlapModeStartFrameDeltaMs = -1.0;
     private readonly List<MergedFrameOpRegistryCacheEntry> _mergedFrameOpRegistryCache = new(MaxMergedFrameOpRegistryCacheEntries);
-    private readonly Dictionary<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> _frameOpResourcePlannerStates = new();
-    private readonly HashSet<FrameOpPlannerStateKey> _activeFrameOpResourcePlannerStateKeys = new();
     private readonly List<FrameOpPlannerStateKey> _frameOpPlannerStateKeyScratch = [];
     private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterSourcePassMetadata;
     private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterResult;
@@ -119,6 +421,16 @@ public unsafe partial class VulkanRenderer
         public ulong LastUsedFrameId { get; set; } = lastUsedFrameId;
     }
 
+    private sealed class FrameOpResourcePlannerSwitchingState
+    {
+        public Dictionary<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> States { get; } = new();
+        public HashSet<FrameOpPlannerStateKey> ActiveKeys { get; } = new();
+        public bool SwitchingActive;
+        public bool RecordingScopeActive;
+        public bool HasActiveKey;
+        public FrameOpPlannerStateKey ActiveKey;
+    }
+
     private struct ResourcePlannerRuntimeState
     {
         public VulkanResourcePlanner ResourcePlanner;
@@ -137,6 +449,7 @@ public unsafe partial class VulkanRenderer
         public bool HasBarrierPlanFastPathKey;
         public ResourcePlannerSignatureBreakdown ResourcePlannerSignatureBreakdown;
         public ulong ResourcePlannerRevision;
+        public FrameOpResourcePlannerSwitchingState? FrameOpResourcePlannerSwitchingState;
 
         public static ResourcePlannerRuntimeState CreateEmpty()
             => new()
@@ -149,8 +462,130 @@ public unsafe partial class VulkanRenderer
                 ResourceAllocationSignature = ulong.MaxValue,
                 FailedResourcePlannerSignature = ulong.MaxValue,
                 FailedResourceAllocationSignature = ulong.MaxValue,
+                FrameOpResourcePlannerSwitchingState = new FrameOpResourcePlannerSwitchingState(),
             };
     }
+
+    private readonly struct ThreadRenderStateScope : IDisposable
+    {
+        private readonly VulkanRenderer? _previousOwner;
+        private readonly VulkanStateTracker? _previousState;
+
+        public ThreadRenderStateScope(VulkanRenderer renderer, VulkanStateTracker state)
+        {
+            _previousOwner = _threadRenderStateOwner;
+            _previousState = _threadRenderState;
+            _threadRenderStateOwner = renderer;
+            _threadRenderState = state;
+        }
+
+        public void Dispose()
+        {
+            _threadRenderStateOwner = _previousOwner;
+            _threadRenderState = _previousState;
+        }
+    }
+
+    private ThreadRenderStateScope EnterThreadRenderStateScope(VulkanStateTracker state)
+        => new(this, state);
+
+    private bool TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state)
+    {
+        if (HasThreadResourcePlannerRuntimeState)
+        {
+            state = _threadResourcePlannerRuntimeState!.Value;
+            return true;
+        }
+
+        state = default;
+        return false;
+    }
+
+    private static void StoreThreadResourcePlannerRuntimeState(in ResourcePlannerRuntimeState state)
+    {
+        ResourcePlannerRuntimeState next = state;
+        next.FrameOpResourcePlannerSwitchingState = _threadFrameOpResourcePlannerSwitchingState ??
+            next.FrameOpResourcePlannerSwitchingState;
+        _threadResourcePlannerRuntimeState = next;
+    }
+
+    private readonly struct ThreadResourcePlannerRuntimeStateScope : IDisposable
+    {
+        private readonly VulkanRenderer? _previousOwner;
+        private readonly ResourcePlannerRuntimeState? _previousState;
+
+        public ThreadResourcePlannerRuntimeStateScope(
+            VulkanRenderer renderer,
+            in ResourcePlannerRuntimeState state)
+        {
+            ResourcePlannerRuntimeState scopedState = state;
+            scopedState.FrameOpResourcePlannerSwitchingState ??= new FrameOpResourcePlannerSwitchingState();
+            _previousOwner = _threadResourcePlannerRuntimeStateOwner;
+            _previousState = _threadResourcePlannerRuntimeState;
+            _threadResourcePlannerRuntimeStateOwner = renderer;
+            _threadResourcePlannerRuntimeState = scopedState;
+        }
+
+        public ResourcePlannerRuntimeState CaptureCurrent(VulkanRenderer renderer)
+        {
+            if (!ReferenceEquals(_threadResourcePlannerRuntimeStateOwner, renderer) ||
+                !_threadResourcePlannerRuntimeState.HasValue)
+            {
+                return renderer.CaptureResourcePlannerRuntimeState();
+            }
+
+            ResourcePlannerRuntimeState state = _threadResourcePlannerRuntimeState.Value;
+            state.FrameOpResourcePlannerSwitchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
+            return state;
+        }
+
+        public void Dispose()
+        {
+            _threadResourcePlannerRuntimeStateOwner = _previousOwner;
+            _threadResourcePlannerRuntimeState = _previousState;
+        }
+    }
+
+    private ThreadResourcePlannerRuntimeStateScope EnterThreadResourcePlannerRuntimeStateScope(
+        in ResourcePlannerRuntimeState state)
+        => new(this, state);
+
+    private readonly struct ThreadFrameOpResourcePlannerSwitchingStateScope : IDisposable
+    {
+        private readonly VulkanRenderer? _previousOwner;
+        private readonly FrameOpResourcePlannerSwitchingState? _previousState;
+
+        public ThreadFrameOpResourcePlannerSwitchingStateScope(
+            VulkanRenderer renderer,
+            FrameOpResourcePlannerSwitchingState state)
+        {
+            _previousOwner = _threadFrameOpResourcePlannerSwitchingStateOwner;
+            _previousState = _threadFrameOpResourcePlannerSwitchingState;
+            _threadFrameOpResourcePlannerSwitchingStateOwner = renderer;
+            _threadFrameOpResourcePlannerSwitchingState = state;
+        }
+
+        public FrameOpResourcePlannerSwitchingState CaptureCurrent(VulkanRenderer renderer)
+        {
+            if (!ReferenceEquals(_threadFrameOpResourcePlannerSwitchingStateOwner, renderer) ||
+                _threadFrameOpResourcePlannerSwitchingState is null)
+            {
+                return renderer.ActiveFrameOpResourcePlannerSwitchingState;
+            }
+
+            return _threadFrameOpResourcePlannerSwitchingState;
+        }
+
+        public void Dispose()
+        {
+            _threadFrameOpResourcePlannerSwitchingStateOwner = _previousOwner;
+            _threadFrameOpResourcePlannerSwitchingState = _previousState;
+        }
+    }
+
+    private ThreadFrameOpResourcePlannerSwitchingStateScope EnterThreadFrameOpResourcePlannerSwitchingStateScope(
+        FrameOpResourcePlannerSwitchingState state)
+        => new(this, state);
 
     private readonly record struct FrameOpPlannerStateKey(
         int PipelineIdentity,
@@ -297,15 +732,16 @@ public unsafe partial class VulkanRenderer
         public FrameOpResourcePlannerRecordingScope(VulkanRenderer renderer)
         {
             _renderer = renderer;
-            _active = renderer._frameOpResourcePlannerSwitchingActive;
+            FrameOpResourcePlannerSwitchingState switchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
+            _active = switchingState.SwitchingActive;
             _previousState = _active
                 ? renderer.CaptureResourcePlannerRuntimeState()
                 : default;
 
             if (_active)
             {
-                renderer._frameOpResourcePlannerRecordingScopeActive = true;
-                renderer._hasActiveFrameOpResourcePlannerStateKey = false;
+                switchingState.RecordingScopeActive = true;
+                switchingState.HasActiveKey = false;
             }
         }
 
@@ -315,19 +751,23 @@ public unsafe partial class VulkanRenderer
                 return;
 
             _renderer.SaveActiveFrameOpResourcePlannerState();
-            _renderer._frameOpResourcePlannerRecordingScopeActive = false;
-            _renderer._hasActiveFrameOpResourcePlannerStateKey = false;
+            FrameOpResourcePlannerSwitchingState switchingState = _renderer.ActiveFrameOpResourcePlannerSwitchingState;
+            switchingState.RecordingScopeActive = false;
+            switchingState.HasActiveKey = false;
             _renderer.RestoreResourcePlannerRuntimeState(_previousState);
         }
     }
 
-    private bool _frameOpResourcePlannerSwitchingActive;
-    private bool _frameOpResourcePlannerRecordingScopeActive;
-    private bool _hasActiveFrameOpResourcePlannerStateKey;
-    private FrameOpPlannerStateKey _activeFrameOpResourcePlannerStateKey;
-
     private ResourcePlannerRuntimeState CaptureResourcePlannerRuntimeState()
-        => new()
+    {
+        if (HasThreadResourcePlannerRuntimeState)
+        {
+            ResourcePlannerRuntimeState state = _threadResourcePlannerRuntimeState!.Value;
+            state.FrameOpResourcePlannerSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;
+            return state;
+        }
+
+        return new()
         {
             ResourcePlanner = _resourcePlanner,
             ResourceAllocator = _resourceAllocator,
@@ -345,10 +785,20 @@ public unsafe partial class VulkanRenderer
             HasBarrierPlanFastPathKey = _hasBarrierPlanFastPathKey,
             ResourcePlannerSignatureBreakdown = _resourcePlannerSignatureBreakdown,
             ResourcePlannerRevision = _resourcePlannerRevision,
+            FrameOpResourcePlannerSwitchingState = _frameOpResourcePlannerSwitchingState,
         };
+    }
 
     private void RestoreResourcePlannerRuntimeState(in ResourcePlannerRuntimeState state)
     {
+        if (HasThreadResourcePlannerRuntimeState)
+        {
+            ResourcePlannerRuntimeState next = state;
+            next.FrameOpResourcePlannerSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;
+            _threadResourcePlannerRuntimeState = next;
+            return;
+        }
+
         _resourcePlanner = state.ResourcePlanner;
         _resourceAllocator = state.ResourceAllocator;
         _barrierPlanner = state.BarrierPlanner;
@@ -384,13 +834,13 @@ public unsafe partial class VulkanRenderer
     }
 
     internal Viewport GetCurrentViewport()
-        => _state.GetViewport(ResolveCurrentDrawTargetExtent());
+        => ActiveState.GetViewport(ResolveCurrentDrawTargetExtent());
 
     internal Rect2D GetCurrentScissor()
-        => _state.GetScissor(ResolveCurrentDrawTargetExtent());
+        => ActiveState.GetScissor(ResolveCurrentDrawTargetExtent());
 
     internal IndexedViewportScissorSnapshot GetCurrentIndexedViewportScissorSnapshot()
-        => _state.GetIndexedViewportScissorSnapshot(ResolveCurrentDrawTargetExtent());
+        => ActiveState.GetIndexedViewportScissorSnapshot(ResolveCurrentDrawTargetExtent());
 
     internal readonly record struct IndexedViewportScissorSnapshot(
         Viewport[]? Viewports,
@@ -429,7 +879,7 @@ public unsafe partial class VulkanRenderer
         if (fbo is not null)
             return ResolveFrameBufferDrawExtent(fbo);
 
-        return _state.GetCurrentTargetExtent();
+        return ActiveState.GetCurrentTargetExtent();
     }
 
     internal XRFrameBuffer? GetCurrentDrawFrameBuffer()
@@ -476,79 +926,79 @@ public unsafe partial class VulkanRenderer
         => _readBufferMode;
 
     internal bool GetDepthTestEnabled()
-        => _state.GetDepthTestEnabled();
+        => ActiveState.GetDepthTestEnabled();
 
     internal bool GetDepthWriteEnabled()
-        => _state.GetDepthWriteEnabled();
+        => ActiveState.GetDepthWriteEnabled();
 
     internal CompareOp GetDepthCompareOp()
-        => _state.GetDepthCompareOp();
+        => ActiveState.GetDepthCompareOp();
 
     internal uint GetStencilWriteMask()
-        => _state.GetStencilWriteMask();
+        => ActiveState.GetStencilWriteMask();
 
     internal ColorComponentFlags GetColorWriteMask()
-        => _state.GetColorWriteMask();
+        => ActiveState.GetColorWriteMask();
 
     internal CullModeFlags GetCullMode()
-        => _state.GetCullMode();
+        => ActiveState.GetCullMode();
 
     internal FrontFace GetFrontFace()
-        => _state.GetFrontFace();
+        => ActiveState.GetFrontFace();
 
     internal bool GetBlendEnabled()
-        => _state.GetBlendEnabled();
+        => ActiveState.GetBlendEnabled();
 
     internal bool GetAlphaToCoverageEnabled()
-        => _state.GetAlphaToCoverageEnabled();
+        => ActiveState.GetAlphaToCoverageEnabled();
 
     internal BlendOp GetColorBlendOp()
-        => _state.GetColorBlendOp();
+        => ActiveState.GetColorBlendOp();
 
     internal BlendOp GetAlphaBlendOp()
-        => _state.GetAlphaBlendOp();
+        => ActiveState.GetAlphaBlendOp();
 
     internal BlendFactor GetSrcColorBlendFactor()
-        => _state.GetSrcColorBlendFactor();
+        => ActiveState.GetSrcColorBlendFactor();
 
     internal BlendFactor GetDstColorBlendFactor()
-        => _state.GetDstColorBlendFactor();
+        => ActiveState.GetDstColorBlendFactor();
 
     internal BlendFactor GetSrcAlphaBlendFactor()
-        => _state.GetSrcAlphaBlendFactor();
+        => ActiveState.GetSrcAlphaBlendFactor();
 
     internal BlendFactor GetDstAlphaBlendFactor()
-        => _state.GetDstAlphaBlendFactor();
+        => ActiveState.GetDstAlphaBlendFactor();
 
     internal bool GetStencilTestEnabled()
-        => _state.GetStencilTestEnabled();
+        => ActiveState.GetStencilTestEnabled();
 
     internal StencilOpState GetFrontStencilState()
-        => _state.GetFrontStencilState();
+        => ActiveState.GetFrontStencilState();
 
     internal StencilOpState GetBackStencilState()
-        => _state.GetBackStencilState();
+        => ActiveState.GetBackStencilState();
 
     internal VulkanFixedFunctionStateSnapshot CaptureFixedFunctionState()
-        => _state.CaptureFixedFunctionState();
+        => ActiveState.CaptureFixedFunctionState();
 
     internal void RestoreFixedFunctionState(in VulkanFixedFunctionStateSnapshot snapshot)
-        => _state.RestoreFixedFunctionState(snapshot);
+        => ActiveState.RestoreFixedFunctionState(snapshot);
 
     internal bool GetCroppingEnabled()
-        => _state.GetCroppingEnabled();
+        => ActiveState.GetCroppingEnabled();
 
     internal ColorF4 GetClearColorValue()
-        => _state.GetClearColorValue();
+        => ActiveState.GetClearColorValue();
 
     internal float GetClearDepthValue()
-        => _state.GetClearDepthValue();
+        => ActiveState.GetClearDepthValue();
 
     internal uint GetClearStencilValue()
-        => _state.GetClearStencilValue();
+        => ActiveState.GetClearStencilValue();
 
     internal Extent2D GetCurrentTargetExtent()
-        => _state.GetCurrentTargetExtent();
+        => ActiveState.GetCurrentTargetExtent();
 
     private static bool _reportedNativeNegativeOneToOneDepth;
     private static bool _reportedShaderRemappedNegativeOneToOneDepth;

@@ -42,6 +42,18 @@ public unsafe partial class OpenXRAPI
     }
 
     /// <summary>
+    /// Records the engine CollectVisible thread when it owns next-frame prep.
+    /// </summary>
+    private bool TryBeginOpenXrCollectVisiblePrepThread()
+    {
+        if (Interlocked.CompareExchange(ref _openXrCollectVisiblePrepActive, 1, 0) != 0)
+            return false;
+
+        Volatile.Write(ref _openXrCollectVisiblePrepThreadId, Environment.CurrentManagedThreadId);
+        return true;
+    }
+
+    /// <summary>
     /// Clears the registered OpenXR pacing thread id (call after the dedicated pacing thread exits).
     /// </summary>
     private void ClearOpenXrPacingThread()
@@ -49,20 +61,28 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _openXrPacingThreadId, 0);
     }
 
+    private void ClearOpenXrCollectVisiblePrepThread()
+    {
+        Volatile.Write(ref _openXrCollectVisiblePrepThreadId, 0);
+        Volatile.Write(ref _openXrCollectVisiblePrepActive, 0);
+    }
+
     [Conditional("DEBUG")]
     private void AssertOpenXrRenderThread(string operation)
     {
         int renderThreadId = Volatile.Read(ref _openXrRenderThreadId);
         int pacingThreadId = Volatile.Read(ref _openXrPacingThreadId);
-        if (renderThreadId == 0 && pacingThreadId == 0)
+        int collectVisiblePrepThreadId = Volatile.Read(ref _openXrCollectVisiblePrepThreadId);
+        if (renderThreadId == 0 && pacingThreadId == 0 && collectVisiblePrepThreadId == 0)
             return;
 
         int currentId = Environment.CurrentManagedThreadId;
         bool ok = (renderThreadId != 0 && currentId == renderThreadId)
-               || (pacingThreadId != 0 && currentId == pacingThreadId);
+               || (pacingThreadId != 0 && currentId == pacingThreadId)
+               || (collectVisiblePrepThreadId != 0 && currentId == collectVisiblePrepThreadId);
         System.Diagnostics.Debug.Assert(
             ok,
-            $"OpenXR frame API call '{operation}' ran on thread {currentId}; expected render thread {renderThreadId} or pacing thread {pacingThreadId}.");
+            $"OpenXR frame API call '{operation}' ran on thread {currentId}; expected render thread {renderThreadId}, pacing thread {pacingThreadId}, or CollectVisible prep thread {collectVisiblePrepThreadId}.");
     }
 
     /// <summary>
@@ -487,11 +507,13 @@ public unsafe partial class OpenXRAPI
                             Debug.Out($"xrEndSession: {endResult}");
                             _sessionBegun = false;
                             StopOpenXrPacingThread();
+                            ClearOpenXrCollectVisiblePrepThread();
                         }
                         else if (_sessionState == SessionState.Exiting || _sessionState == SessionState.LossPending)
                         {
                             _sessionBegun = false;
                             StopOpenXrPacingThread();
+                            ClearOpenXrCollectVisiblePrepThread();
                             MarkRuntimeLoss(_sessionState == SessionState.LossPending
                                 ? OpenXrRuntimeLossReason.SessionLossPending
                                 : OpenXrRuntimeLossReason.SessionExiting);
@@ -516,6 +538,7 @@ public unsafe partial class OpenXRAPI
     {
         DisableRuntimeMonitoring();
         StopOpenXrPacingThread();
+        ClearOpenXrCollectVisiblePrepThread();
         StopOpenXrParallelCollectWorkers();
 
         if (Window is not null && _deferredOpenGlInit is not null)

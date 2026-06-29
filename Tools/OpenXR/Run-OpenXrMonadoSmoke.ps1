@@ -35,6 +35,9 @@ param(
     [string]$ServiceExe,
 
     [Parameter()]
+    [switch]$SkipLoaderPreflight,
+
+    [Parameter()]
     [switch]$SkipAllocationAudit
 )
 
@@ -485,6 +488,13 @@ $summaryFullPath = if ([string]::IsNullOrWhiteSpace($SummaryPath)) {
 else {
     Resolve-FullPath $SummaryPath
 }
+$summaryDirectory = Split-Path -Parent $summaryFullPath
+if (-not [string]::IsNullOrWhiteSpace($summaryDirectory)) {
+    [System.IO.Directory]::CreateDirectory($summaryDirectory) | Out-Null
+}
+if (Test-Path -LiteralPath $summaryFullPath -PathType Leaf) {
+    Remove-Item -LiteralPath $summaryFullPath -Force
+}
 
 if (-not $NoBuild) {
     $buildLog = Join-Path $logs "build-editor.log"
@@ -505,7 +515,15 @@ else {
     @("XR_KHR_vulkan_enable", "XR_KHR_vulkan_enable2")
 }
 
-if ($Renderer -eq "Vulkan") {
+if ($SkipLoaderPreflight) {
+    [pscustomobject]@{
+        skipped            = $true
+        reason             = "Skipped by -SkipLoaderPreflight."
+        runtimeJson        = $runtimeJsonFullPath
+        requiredExtensions = $requiredExtensions
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $reports "openxr-loader-preflight.json") -Encoding UTF8
+}
+elseif ($Renderer -eq "Vulkan") {
     $preflightReport = Invoke-OpenXrLoaderPreflight `
         -RuntimeManifest $runtimeJsonFullPath `
         -RequiredExtensions @() `

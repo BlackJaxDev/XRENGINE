@@ -797,6 +797,9 @@ namespace XREngine.Rendering.Vulkan
             rgbaPixels = [];
             width = 0;
             height = 0;
+            using IDisposable? plannerScope = _lastWindowPresentFrameOpContext is { } context
+                ? EnterFrameOpResourcePlannerReadbackScope(in context)
+                : null;
 
             if (_lastWindowPresentFrameBuffer is not null)
             {
@@ -844,6 +847,9 @@ namespace XREngine.Rendering.Vulkan
         private bool TryReadLastWindowPresentColorPixel(int x, int y, out ColorF4 color)
         {
             color = ColorF4.Transparent;
+            using IDisposable? plannerScope = _lastWindowPresentFrameOpContext is { } context
+                ? EnterFrameOpResourcePlannerReadbackScope(in context)
+                : null;
 
             if (_lastWindowPresentFrameBuffer is not null)
             {

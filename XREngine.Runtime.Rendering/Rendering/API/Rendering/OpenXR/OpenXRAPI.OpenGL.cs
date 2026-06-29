@@ -90,6 +90,7 @@ public unsafe partial class OpenXRAPI
             throw new Exception("Failed to get OpenGL graphics requirements");
 
         Debug.Out($"OpenGL requirements: Min {requirements.MinApiVersionSupported}, Max {requirements.MaxApiVersionSupported}");
+        _ = TryResolveOpenXrFoveation(ERenderLibrary.OpenGL, out _);
 
         int glMajor = 0;
         int glMinor = 0;

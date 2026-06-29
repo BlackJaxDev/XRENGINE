@@ -2,6 +2,7 @@ using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.EXT;
 using Silk.NET.Core.Native;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
@@ -156,6 +157,10 @@ public unsafe partial class VulkanRenderer
             return Vk.False;
         }
 
+        string objectSummary = FormatDebugCallbackObjects(pCallbackData);
+        if (!string.IsNullOrEmpty(objectSummary))
+            msg = $"{msg} objects=[{objectSummary}]";
+
         bool isError = messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanValidationMessage(isError, msg);
 
@@ -167,5 +172,39 @@ public unsafe partial class VulkanRenderer
             Debug.Vulkan($"[Vulkan] {msg}");
 
         return Vk.False;
+    }
+
+    private static string FormatDebugCallbackObjects(DebugUtilsMessengerCallbackDataEXT* callbackData)
+    {
+        if (callbackData is null ||
+            callbackData->ObjectCount == 0 ||
+            callbackData->PObjects is null)
+        {
+            return string.Empty;
+        }
+
+        StringBuilder builder = new();
+        DebugUtilsObjectNameInfoEXT* objects = callbackData->PObjects;
+        uint objectCount = callbackData->ObjectCount;
+        for (uint i = 0; i < objectCount; i++)
+        {
+            DebugUtilsObjectNameInfoEXT info = objects[i];
+            if (builder.Length > 0)
+                builder.Append("; ");
+
+            string? objectName = info.PObjectName is null
+                ? null
+                : Marshal.PtrToStringAnsi((nint)info.PObjectName);
+
+            builder
+                .Append(info.ObjectType)
+                .Append(" 0x")
+                .Append(info.ObjectHandle.ToString("X"));
+
+            if (!string.IsNullOrWhiteSpace(objectName))
+                builder.Append(" '").Append(objectName).Append('\'');
+        }
+
+        return builder.ToString();
     }
 }

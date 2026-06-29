@@ -59,6 +59,10 @@ public static class XREngineEnvironmentVariables
     public const string UnitTestSceneOnlyVrPawn = "XRE_UNIT_TEST_SCENE_ONLY_VR_PAWN";
     public const string UnitTestPreviewVrStereoViews = "XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS";
     public const string UnitTestAllowDesktopEditingInVr = "XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR";
+    public const string UnitTestVrViewRenderMode = "XRE_UNIT_TEST_VR_VIEW_RENDER_MODE";
+    public const string UnitTestVrFoveationMode = "XRE_UNIT_TEST_VR_FOVEATION_MODE";
+    public const string UnitTestVrFoveationQualityPreset = "XRE_UNIT_TEST_VR_FOVEATION_QUALITY_PRESET";
+    public const string UnitTestVrFoveationRequireRequested = "XRE_UNIT_TEST_VR_FOVEATION_REQUIRE_REQUESTED";
     public const string UnitTestRenderWindowsWhileInVr = "XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR";
     public const string UnitTestOpenXrRuntimeJson = "XRE_UNIT_TEST_OPENXR_RUNTIME_JSON";
     public const string UnitTestRenderApi = "XRE_UNIT_TEST_RENDER_API";

@@ -109,9 +109,18 @@ public static partial class EditorUnitTests
     public class UnitTestingVrSettings
     {
         public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop; //Selects the VR launch path: Desktop, Emulated scene-only VR, Monado-backed OpenXR, vendor OpenVR, or vendor OpenXR.
+        public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.SequentialViews; //Selects how VR eye views are rendered: sequential per-view, single-pass stereo, or Vulkan-only parallel command-buffer recording.
         public bool PreviewStereoViews { get; set; } = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active.
         public bool AllowDesktopEditing { get; set; } = true; //When a VR pawn is active, keeps a desktop editing camera/pawn available.
+        public UnitTestingVrFoveationSettings Foveation { get; set; } = new(); //Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback.
         public string? OpenXrRuntimeJson { get; set; } = null; //Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes. Existing XR_RUNTIME_JSON environment values win. MonadoOpenXR auto-detects common Monado install/build locations when this is unset.
+    }
+
+    public class UnitTestingVrFoveationSettings
+    {
+        public EVrFoveationMode Mode { get; set; } = EVrFoveationMode.Off; //Requested foveated rendering mode for VR view contexts.
+        public EVrFoveationQualityPreset QualityPreset { get; set; } = EVrFoveationQualityPreset.Balanced; //Quality preset used when the active backend/runtime supports foveation.
+        public bool RequireRequested { get; set; } = false; //When true, unsupported requested foveation is a visible configuration failure instead of an automatic Off fallback.
     }
 
     public class Settings

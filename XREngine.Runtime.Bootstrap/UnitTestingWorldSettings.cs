@@ -99,14 +99,23 @@ public enum UnitTestingVrLaunchMode
 public class UnitTestingVrSettings
 {
     public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop;
+    public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.SequentialViews;
     public bool PreviewStereoViews { get; set; } = false;
     public bool AllowDesktopEditing { get; set; } = true;
+    public UnitTestingVrFoveationSettings Foveation { get; set; } = new();
     /// <summary>
     /// Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes.
     /// Existing XR_RUNTIME_JSON environment values win. MonadoOpenXR auto-detects
     /// common Monado install/build locations when this is unset.
     /// </summary>
     public string? OpenXrRuntimeJson { get; set; }
+}
+
+public class UnitTestingVrFoveationSettings
+{
+    public EVrFoveationMode Mode { get; set; } = EVrFoveationMode.Off;
+    public EVrFoveationQualityPreset QualityPreset { get; set; } = EVrFoveationQualityPreset.Balanced;
+    public bool RequireRequested { get; set; } = false;
 }
 
 public class UnitTestingRenderSettings
@@ -150,8 +159,15 @@ public class UnitTestingWorldSettings
     public IReadOnlySet<string> ExplicitJsonProperties { get; internal set; } =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+    [JsonIgnore]
+    public IReadOnlySet<string> ExplicitJsonPropertyPaths { get; internal set; } =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     public bool IsJsonPropertySpecified(string propertyName)
         => !TracksExplicitJsonProperties || ExplicitJsonProperties.Contains(propertyName);
+
+    public bool IsJsonPropertyPathSpecified(params string[] path)
+        => !TracksExplicitJsonProperties || ExplicitJsonPropertyPaths.Contains(string.Join('.', path));
 
     public UnitTestWorldKind WorldKind { get; set; } = UnitTestWorldKind.Default;
 

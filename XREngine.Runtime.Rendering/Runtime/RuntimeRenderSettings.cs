@@ -44,6 +44,10 @@ internal sealed class RuntimeRenderSettings
     private OpenXRAPI.OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
     private OpenXRAPI.OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
     private OpenXRAPI.OpenXrRenderPacingMode _openXrRenderPacingMode = RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
+    private EVrViewRenderMode _vrViewRenderMode = RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
+    private EVrFoveationMode _vrFoveationMode = RuntimeRenderingHostServiceDefaults.VrFoveationMode;
+    private EVrFoveationQualityPreset _vrFoveationQualityPreset = RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
+    private bool _vrFoveationRequireRequested = RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
 
     private bool _allowBinaryProgramCaching = RuntimeRenderingHostServiceDefaults.AllowBinaryProgramCaching;
     public bool AllowBinaryProgramCaching
@@ -367,7 +371,41 @@ internal sealed class RuntimeRenderSettings
     public bool OutputHDR { get; set; } = true;
     public bool PreferNVStereo { get; set; }
     public bool ProcessMeshImportsAsynchronously { get; set; } = true;
-    public bool RenderVRSinglePassStereo { get; set; } = true;
+    public EVrViewRenderMode VrViewRenderMode
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.VrViewRenderMode
+            : _vrViewRenderMode;
+        set => _vrViewRenderMode = value;
+    }
+    public bool RenderVRSinglePassStereo
+    {
+        get => VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
+        set => _vrViewRenderMode = value
+            ? EVrViewRenderMode.SinglePassStereo
+            : EVrViewRenderMode.SequentialViews;
+    }
+    public EVrFoveationMode VrFoveationMode
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.VrFoveationMode
+            : _vrFoveationMode;
+        set => _vrFoveationMode = value;
+    }
+    public EVrFoveationQualityPreset VrFoveationQualityPreset
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.VrFoveationQualityPreset
+            : _vrFoveationQualityPreset;
+        set => _vrFoveationQualityPreset = value;
+    }
+    public bool VrFoveationRequireRequested
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.VrFoveationRequireRequested
+            : _vrFoveationRequireRequested;
+        set => _vrFoveationRequireRequested = value;
+    }
     public int ShaderConfigVersion
     {
         get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)

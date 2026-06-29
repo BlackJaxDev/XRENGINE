@@ -457,7 +457,7 @@ namespace XREngine
                 return true;
             }
 
-            private static bool Stereo => Rendering.Settings.RenderVRSinglePassStereo;
+            private static bool Stereo => Rendering.Settings.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
             //private static bool StereoUseTextureViews => Rendering.Settings.SubmitOpenVRTextureArrayAsTwoViews;
 
             private static uint _lastRenderWidth = 0u;

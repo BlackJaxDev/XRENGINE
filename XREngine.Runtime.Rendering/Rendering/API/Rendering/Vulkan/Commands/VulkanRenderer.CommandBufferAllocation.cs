@@ -115,12 +115,18 @@ namespace XREngine.Rendering.Vulkan
                 RegisterCommandBufferImageIndex(_dynamicUiBatchTextSecondaryCommandBuffers[i], imageIndex);
                 RegisterCommandBufferImageIndex(_dynamicUiBatchTextOverlayCommandBuffers[i], imageIndex);
                 RegisterCommandBufferImageIndex(_imguiOverlayCommandBuffers[i], imageIndex);
+                SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)_commandBuffers[i].Handle), $"SwapchainPrimary[{i}]");
+                SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)_dynamicUiBatchTextSecondaryCommandBuffers[i].Handle), $"DynamicUiBatchText.Secondary[{i}]");
+                SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)_dynamicUiBatchTextOverlayCommandBuffers[i].Handle), $"DynamicUiBatchTextOverlay.Primary[{i}]");
+                SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)_imguiOverlayCommandBuffers[i].Handle), $"ImGuiOverlay.Primary[{i}]");
                 _activeCommandBuffers[i] = _commandBuffers[i];
                 _commandBufferVariants[i] =
                 [
                     new CommandBufferCacheVariant(
                         _commandBuffers[i],
                         _dynamicUiBatchTextSecondaryCommandBuffers[i],
+                        commandPool,
+                        commandPool,
                         ownsPrimaryCommandBuffer: false,
                         ownsDynamicUiSecondaryCommandBuffer: false)
                 ];
@@ -164,7 +170,8 @@ namespace XREngine.Rendering.Vulkan
             CommandChainSchedule? commandChainSchedule,
             ulong commandChainPrimaryGroupSignature,
             int commandChainPrimaryGroupCount,
-            bool preserveSwapchainForOverlay)
+            bool preserveSwapchainForOverlay,
+            FrameOp[] frameOpsForDiagnostics)
         {
             if (_commandBufferVariants is null || imageIndex >= _commandBufferVariants.Length)
                 throw new InvalidOperationException("Command buffer variants are not initialised correctly.");
@@ -217,6 +224,8 @@ namespace XREngine.Rendering.Vulkan
                 CommandBufferCacheVariant variant = new(
                     primary,
                     dynamicUiSecondary,
+                    commandPool,
+                    commandPool,
                     ownsPrimaryCommandBuffer: true,
                     ownsDynamicUiSecondaryCommandBuffer: true);
                 variants.Add(variant);
@@ -230,7 +239,9 @@ namespace XREngine.Rendering.Vulkan
                     evicted = variants[i];
             }
 
+            LogFrameOpSignatureVariantEvictionDiff(imageIndex, evicted, frameOpsSignature, frameOpsForDiagnostics);
             evicted.Dirty = true;
+            evicted.DirtyReason = "variant eviction";
             evicted.FrameOpsSignature = ulong.MaxValue;
             evicted.DynamicUiSignature = ulong.MaxValue;
             evicted.DynamicUiOpCount = -1;
@@ -253,11 +264,14 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private CommandBuffer AllocateCommandBuffer(CommandBufferLevel level, string label)
+            => AllocateCommandBuffer(level, label, commandPool);
+
+        private CommandBuffer AllocateCommandBuffer(CommandBufferLevel level, string label, CommandPool ownerPool)
         {
             CommandBufferAllocateInfo allocInfo = new()
             {
                 SType = StructureType.CommandBufferAllocateInfo,
-                CommandPool = commandPool,
+                CommandPool = ownerPool,
                 Level = level,
                 CommandBufferCount = 1,
             };
@@ -268,6 +282,7 @@ namespace XREngine.Rendering.Vulkan
                 throw new Exception($"Failed to allocate Vulkan {label}.");
             }
 
+            SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)commandBuffer.Handle), label);
             return commandBuffer;
         }
 
@@ -310,16 +325,16 @@ namespace XREngine.Rendering.Vulkan
                 reason);
         }
 
-        private void MarkCommandBufferVariantsDirty()
+        private void MarkCommandBufferVariantsDirty(string? reason = null)
         {
             if (_commandBufferVariants is null)
                 return;
 
             for (int i = 0; i < _commandBufferVariants.Length; i++)
-                MarkCommandBufferVariantsDirty(unchecked((uint)i));
+                MarkCommandBufferVariantsDirty(unchecked((uint)i), reason);
         }
 
-        private void MarkCommandBufferVariantsDirty(uint imageIndex)
+        private void MarkCommandBufferVariantsDirty(uint imageIndex, string? reason = null)
         {
             if (_commandBufferVariants is null || imageIndex >= _commandBufferVariants.Length)
                 return;
@@ -328,8 +343,12 @@ namespace XREngine.Rendering.Vulkan
             if (variants is null)
                 return;
 
+            string dirtyReason = string.IsNullOrWhiteSpace(reason) ? "variant invalidated" : reason;
             foreach (CommandBufferCacheVariant variant in variants)
+            {
                 variant.Dirty = true;
+                variant.DirtyReason = dirtyReason;
+            }
         }
 
         private void AllocateCommandBufferDirtyFlags()

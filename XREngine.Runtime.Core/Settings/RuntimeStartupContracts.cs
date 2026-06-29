@@ -42,6 +42,7 @@ public interface IVRGameStartupSettings
     VrManifest? VRManifest { get; set; }
     IActionManifest? ActionManifest { get; }
     EVRRuntime VRRuntime { get; set; }
+    EVrViewRenderMode VrViewRenderMode { get; set; }
     bool EnableOpenXrVulkanParallelRendering { get; set; }
     string GameName { get; set; }
     (Environment.SpecialFolder folder, string relativePath)[] GameSearchPaths { get; set; }

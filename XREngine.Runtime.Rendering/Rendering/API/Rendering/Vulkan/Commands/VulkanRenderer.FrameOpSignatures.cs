@@ -44,6 +44,28 @@ namespace XREngine.Rendering.Vulkan
                 $"[Vulkan] Frame-op signature mismatch image={imageIndex} previous=0x{variant.FrameOpsSignature:X16} current=0x{currentSignature:X16} ops={ops.Length}: {summary}");
         }
 
+        private void LogFrameOpSignatureVariantEvictionDiff(
+            uint imageIndex,
+            CommandBufferCacheVariant evicted,
+            ulong currentSignature,
+            FrameOp[] ops)
+        {
+            if (!FrameOpSignatureDiffDiagnosticsEnabled || evicted.FrameOpsSignature == ulong.MaxValue)
+                return;
+
+            int logIndex = Interlocked.Increment(ref _frameOpSignatureDiffLogCount);
+            if (logIndex > FrameOpSignatureDiffLogLimit)
+                return;
+
+            FrameOpSignatureDebugPart[] currentParts = CaptureFrameOpSignatureDebugParts(ops);
+            string summary = evicted.SignatureDebugParts is null
+                ? "no previous component snapshot for evicted variant"
+                : BuildFrameOpSignatureDiffSummary(evicted.SignatureDebugParts, currentParts);
+
+            Debug.Vulkan(
+                $"[Vulkan] Frame-op variant cache eviction image={imageIndex} previous=0x{evicted.FrameOpsSignature:X16} current=0x{currentSignature:X16} ops={ops.Length} variants={PrimaryCommandBufferVariantCapacity}: {summary}");
+        }
+
         private static string BuildFrameOpSignatureDiffSummary(FrameOpSignatureDebugPart[] previous, FrameOpSignatureDebugPart[] current)
         {
             int commonCount = Math.Min(previous.Length, current.Length);
@@ -294,8 +316,8 @@ namespace XREngine.Rendering.Vulkan
         private static void AddIndirectDrawSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, IndirectDrawOp indirect)
         {
             HashCode hash = new();
-            hash.Add(indirect.IndirectBuffer.GetHashCode());
-            hash.Add(indirect.ParameterBuffer?.GetHashCode() ?? 0);
+            hash.Add(ComputeCommandBufferDataBufferSignature(indirect.IndirectBuffer));
+            hash.Add(ComputeCommandBufferDataBufferSignature(indirect.ParameterBuffer));
             hash.Add(indirect.DrawCount);
             hash.Add(indirect.Stride);
             hash.Add(indirect.ByteOffset);
@@ -303,21 +325,21 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(indirect.UseCount);
             hash.Add(indirect.BindlessMaterialTextures?.Program.GetHashCode() ?? 0);
             hash.Add(indirect.BindlessMaterialTextures?.Consumer, StringComparer.Ordinal);
-            AddSignaturePart(parts, opIndex, opType, "indirect", hash, $"draws={indirect.DrawCount} stride={indirect.Stride} byteOffset={indirect.ByteOffset} countOffset={indirect.CountByteOffset} useCount={indirect.UseCount} bindlessMaterialTextures={indirect.BindlessMaterialTextures.HasValue}");
+            AddSignaturePart(parts, opIndex, opType, "indirect", hash, $"draws={indirect.DrawCount} stride={indirect.Stride} byteOffset={indirect.ByteOffset} countOffset={indirect.CountByteOffset} useCount={indirect.UseCount} indirectBuffer=0x{indirect.IndirectBuffer.BufferHandle?.Handle ?? 0UL:X} parameterBuffer=0x{indirect.ParameterBuffer?.BufferHandle?.Handle ?? 0UL:X} bindlessMaterialTextures={indirect.BindlessMaterialTextures.HasValue}");
         }
 
         private static void AddMeshTaskSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, MeshTaskDispatchIndirectCountOp meshTask)
         {
             HashCode hash = new();
-            hash.Add(meshTask.IndirectBuffer.GetHashCode());
-            hash.Add(meshTask.CountBuffer.GetHashCode());
+            hash.Add(ComputeCommandBufferDataBufferSignature(meshTask.IndirectBuffer));
+            hash.Add(ComputeCommandBufferDataBufferSignature(meshTask.CountBuffer));
             hash.Add(meshTask.MaxDrawCount);
             hash.Add(meshTask.Stride);
             hash.Add(meshTask.ByteOffset);
             hash.Add(meshTask.CountByteOffset);
             hash.Add(meshTask.BindlessMaterialTextures?.Program.GetHashCode() ?? 0);
             hash.Add(meshTask.BindlessMaterialTextures?.Consumer, StringComparer.Ordinal);
-            AddSignaturePart(parts, opIndex, opType, "meshTask", hash, $"maxDraws={meshTask.MaxDrawCount} stride={meshTask.Stride} bindlessMaterialTextures={meshTask.BindlessMaterialTextures.HasValue}");
+            AddSignaturePart(parts, opIndex, opType, "meshTask", hash, $"maxDraws={meshTask.MaxDrawCount} stride={meshTask.Stride} indirectBuffer=0x{meshTask.IndirectBuffer.BufferHandle?.Handle ?? 0UL:X} countBuffer=0x{meshTask.CountBuffer.BufferHandle?.Handle ?? 0UL:X} bindlessMaterialTextures={meshTask.BindlessMaterialTextures.HasValue}");
         }
 
         private static void AddMemoryBarrierSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, MemoryBarrierOp barrier)
@@ -433,8 +455,8 @@ namespace XREngine.Rendering.Vulkan
                 opIndex,
                 opType,
                 $"{prefix}.samplerUnits",
-                HashSamplerUnitBindings(snapshot.Samplers),
-                $"count={snapshot.Samplers.Count} stable=0x{unchecked((ulong)HashSamplerUnitBindingsStable(snapshot.Samplers)):X16} keys=[{SampleKeys(snapshot.Samplers.Keys)}]");
+                HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit),
+                $"count={snapshot.Samplers.Count} stable=0x{unchecked((ulong)HashSamplerUnitBindingsStable(snapshot.Samplers, snapshot.SamplerNamesByUnit)):X16} keys=[{SampleKeys(snapshot.Samplers.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
@@ -502,15 +524,22 @@ namespace XREngine.Rendering.Vulkan
             return hash.ToHashCode();
         }
 
-        private static int HashSamplerUnitBindingsStable(Dictionary<uint, XRTexture> samplers)
+        private static int HashSamplerUnitBindingsStable(Dictionary<uint, XRTexture> samplers, Dictionary<uint, string> samplerNamesByUnit)
         {
             HashCode hash = new();
             hash.Add(samplers.Count);
             foreach (var pair in samplers.OrderBy(p => p.Key))
             {
                 hash.Add(pair.Key);
-                hash.Add(pair.Value.GetHashCode());
-                hash.Add(ComputeTextureDescriptorSignature(pair.Value));
+                if (samplerNamesByUnit.TryGetValue(pair.Key, out string? samplerName) && IsFrameSourceSamplerName(samplerName))
+                {
+                    hash.Add(FrameSourceMutableDescriptorSignature);
+                }
+                else
+                {
+                    hash.Add(pair.Value.GetHashCode());
+                    hash.Add(ComputeTextureDescriptorSignature(pair.Value));
+                }
             }
 
             return hash.ToHashCode();
@@ -523,8 +552,15 @@ namespace XREngine.Rendering.Vulkan
             foreach (var pair in samplers.OrderBy(p => p.Key, StringComparer.Ordinal))
             {
                 hash.Add(pair.Key, StringComparer.Ordinal);
-                hash.Add(pair.Value.GetHashCode());
-                hash.Add(ComputeTextureDescriptorSignature(pair.Value));
+                if (IsFrameSourceSamplerName(pair.Key))
+                {
+                    hash.Add(FrameSourceMutableDescriptorSignature);
+                }
+                else
+                {
+                    hash.Add(pair.Value.GetHashCode());
+                    hash.Add(ComputeTextureDescriptorSignature(pair.Value));
+                }
             }
 
             return hash.ToHashCode();

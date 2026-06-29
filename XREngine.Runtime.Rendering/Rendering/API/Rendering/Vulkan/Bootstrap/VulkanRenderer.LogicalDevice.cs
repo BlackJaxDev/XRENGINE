@@ -536,6 +536,71 @@ public unsafe partial class VulkanRenderer
         properties = queriedProperties;
     }
 
+    private unsafe void QueryFragmentShadingRateCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported,
+        out bool pipelineFragmentShadingRate,
+        out bool primitiveFragmentShadingRate,
+        out bool attachmentFragmentShadingRate)
+    {
+        featureSupported = false;
+        pipelineFragmentShadingRate = false;
+        primitiveFragmentShadingRate = false;
+        attachmentFragmentShadingRate = false;
+
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceFragmentShadingRateFeaturesKHR features = new()
+        {
+            SType = StructureType.PhysicalDeviceFragmentShadingRateFeaturesKhr,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        pipelineFragmentShadingRate = features.PipelineFragmentShadingRate;
+        primitiveFragmentShadingRate = features.PrimitiveFragmentShadingRate;
+        attachmentFragmentShadingRate = features.AttachmentFragmentShadingRate;
+        featureSupported = pipelineFragmentShadingRate || primitiveFragmentShadingRate || attachmentFragmentShadingRate;
+    }
+
+    private unsafe void QueryFragmentDensityMapCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported,
+        out bool dynamicSupported,
+        out bool nonSubsampledImagesSupported)
+    {
+        featureSupported = false;
+        dynamicSupported = false;
+        nonSubsampledImagesSupported = false;
+
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceFragmentDensityMapFeaturesEXT features = new()
+        {
+            SType = StructureType.PhysicalDeviceFragmentDensityMapFeaturesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = features.FragmentDensityMap;
+        dynamicSupported = features.FragmentDensityMapDynamic;
+        nonSubsampledImagesSupported = features.FragmentDensityMapNonSubsampledImages;
+    }
+
     /// <summary>
     /// Creates a logical device interface to the physical device with specific 
     /// queue families and extensions.
@@ -865,6 +930,27 @@ public unsafe partial class VulkanRenderer
             transformFeedbackExtensionEnabled &&
             transformFeedbackFeatureSupported;
 
+        bool fragmentShadingRateExtensionEnabled = extensionsArray.Contains("VK_KHR_fragment_shading_rate");
+        QueryFragmentShadingRateCapabilities(
+            fragmentShadingRateExtensionEnabled,
+            out bool fragmentShadingRateFeatureSupported,
+            out bool pipelineFragmentShadingRateSupported,
+            out bool primitiveFragmentShadingRateSupported,
+            out bool attachmentFragmentShadingRateSupported);
+        bool enableFragmentShadingRateFeature =
+            fragmentShadingRateExtensionEnabled &&
+            fragmentShadingRateFeatureSupported;
+
+        bool fragmentDensityMapExtensionEnabled = extensionsArray.Contains("VK_EXT_fragment_density_map");
+        QueryFragmentDensityMapCapabilities(
+            fragmentDensityMapExtensionEnabled,
+            out bool fragmentDensityMapFeatureSupported,
+            out bool fragmentDensityMapDynamicSupported,
+            out bool fragmentDensityMapNonSubsampledImagesSupported);
+        bool enableFragmentDensityMapFeature =
+            fragmentDensityMapExtensionEnabled &&
+            fragmentDensityMapFeatureSupported;
+
         _nvMemoryDecompressionMethods = enableNvMemoryDecompression ? nvMemoryDecompressionMethods : 0;
         _nvMaxMemoryDecompressionIndirectCount = enableNvMemoryDecompression ? nvMaxDecompressionIndirectCount : 0;
         _nvCopyMemoryIndirectSupportedQueues = enableNvCopyMemoryIndirect ? nvCopyMemoryIndirectSupportedQueues : 0;
@@ -993,6 +1079,24 @@ public unsafe partial class VulkanRenderer
             GeometryStreams = enableTransformFeedbackFeature && transformFeedbackGeometryStreamsSupported,
         };
 
+        PhysicalDeviceFragmentShadingRateFeaturesKHR fragmentShadingRateFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceFragmentShadingRateFeaturesKhr,
+            PNext = null,
+            PipelineFragmentShadingRate = enableFragmentShadingRateFeature && pipelineFragmentShadingRateSupported,
+            PrimitiveFragmentShadingRate = enableFragmentShadingRateFeature && primitiveFragmentShadingRateSupported,
+            AttachmentFragmentShadingRate = enableFragmentShadingRateFeature && attachmentFragmentShadingRateSupported,
+        };
+
+        PhysicalDeviceFragmentDensityMapFeaturesEXT fragmentDensityMapFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceFragmentDensityMapFeaturesExt,
+            PNext = null,
+            FragmentDensityMap = enableFragmentDensityMapFeature,
+            FragmentDensityMapDynamic = enableFragmentDensityMapFeature && fragmentDensityMapDynamicSupported,
+            FragmentDensityMapNonSubsampledImages = enableFragmentDensityMapFeature && fragmentDensityMapNonSubsampledImagesSupported,
+        };
+
         // Keep promoted feature structs separate. Mixing VkPhysicalDeviceVulkan12Features
         // with the promoted per-feature structs is invalid and Monado rejects the device
         // created from that pNext chain during xrCreateSession.
@@ -1089,6 +1193,18 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &transformFeedbackFeatureEnable;
         }
 
+        if (enableFragmentShadingRateFeature)
+        {
+            fragmentShadingRateFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &fragmentShadingRateFeatureEnable;
+        }
+
+        if (enableFragmentDensityMapFeature)
+        {
+            fragmentDensityMapFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &fragmentDensityMapFeatureEnable;
+        }
+
         PhysicalDeviceFeatures2 featureChain = new()
         {
             SType = StructureType.PhysicalDeviceFeatures2,
@@ -1158,6 +1274,10 @@ public unsafe partial class VulkanRenderer
         _supportsTransformFeedbackQueries = enableTransformFeedbackFeature && transformFeedbackProperties.TransformFeedbackQueries;
         _supportsTransformFeedbackDraw = enableTransformFeedbackFeature && transformFeedbackProperties.TransformFeedbackDraw;
         _transformFeedbackProperties = enableTransformFeedbackFeature ? transformFeedbackProperties : default;
+        _supportsVulkanFragmentShadingRate = enableFragmentShadingRateFeature;
+        _supportsVulkanFragmentShadingRateAttachment = enableFragmentShadingRateFeature && attachmentFragmentShadingRateSupported;
+        _supportsVulkanFragmentDensityMap = enableFragmentDensityMapFeature;
+        _supportsVulkanFragmentDensityMapDynamic = enableFragmentDensityMapFeature && fragmentDensityMapDynamicSupported;
         _supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
         _supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
         ResolveRenderTargetMode();
@@ -1290,6 +1410,39 @@ public unsafe partial class VulkanRenderer
                 Debug.VulkanWarning(
                     "[Vulkan] {0} present but disabled because the transformFeedback feature bit is unavailable.",
                     ExtTransformFeedback.ExtensionName);
+            }
+
+            if (fragmentShadingRateExtensionEnabled)
+            {
+                if (enableFragmentShadingRateFeature)
+                {
+                    Debug.Vulkan(
+                        "[Vulkan] VK_KHR_fragment_shading_rate enabled (pipeline={0}, primitive={1}, attachment={2}).",
+                        pipelineFragmentShadingRateSupported,
+                        primitiveFragmentShadingRateSupported,
+                        attachmentFragmentShadingRateSupported);
+                }
+                else
+                {
+                    Debug.VulkanWarning(
+                        "[Vulkan] VK_KHR_fragment_shading_rate present but disabled because no fragment shading-rate feature bit is available.");
+                }
+            }
+
+            if (fragmentDensityMapExtensionEnabled)
+            {
+                if (enableFragmentDensityMapFeature)
+                {
+                    Debug.Vulkan(
+                        "[Vulkan] VK_EXT_fragment_density_map enabled (dynamic={0}, nonSubsampledImages={1}).",
+                        fragmentDensityMapDynamicSupported,
+                        fragmentDensityMapNonSubsampledImagesSupported);
+                }
+                else
+                {
+                    Debug.VulkanWarning(
+                        "[Vulkan] VK_EXT_fragment_density_map present but disabled because the fragmentDensityMap feature bit is unavailable.");
+                }
             }
 
         // Load optional extensions

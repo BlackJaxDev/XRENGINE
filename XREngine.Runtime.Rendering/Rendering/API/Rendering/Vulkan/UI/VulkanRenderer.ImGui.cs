@@ -697,8 +697,14 @@ public unsafe partial class VulkanRenderer
         _imguiPipeline = default;
 
         if (_imguiPipelineLayout.Handle != 0)
-            Api.DestroyPipelineLayout(device, _imguiPipelineLayout, null);
-        _imguiPipelineLayout = default;
+        {
+            PipelineLayout pipelineLayout = _imguiPipelineLayout;
+            _imguiPipelineLayout = default;
+            if (TryBeginDestroyPipelineLayout(pipelineLayout, "ImGui.DestroyPipelineResources"))
+            {
+                Api.DestroyPipelineLayout(device, pipelineLayout, null);
+            }
+        }
 
         if (_imguiVertShader.Handle != 0)
             Api.DestroyShaderModule(device, _imguiVertShader, null);
@@ -723,7 +729,7 @@ public unsafe partial class VulkanRenderer
         }
         _imguiFontSampler = default;
 
-        if (_imguiFontImageView.Handle != 0)
+        if (_imguiFontImageView.Handle != 0 && TryBeginDestroyImageView(_imguiFontImageView, "DestroyImGuiFontImageView"))
             Api.DestroyImageView(device, _imguiFontImageView, null);
         _imguiFontImageView = default;
 
@@ -863,6 +869,7 @@ public unsafe partial class VulkanRenderer
 
         if (Api.CreateImageView(device, ref viewInfo, null, out _imguiFontImageView) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui font image view.");
+        TrackLiveImageView(_imguiFontImageView, "ImGui.FontAtlas");
 
         SamplerCreateInfo samplerInfo = new()
         {
@@ -1111,6 +1118,7 @@ public unsafe partial class VulkanRenderer
 
         if (Api.CreatePipelineLayout(device, ref layoutInfo, null, out _imguiPipelineLayout) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui pipeline layout.");
+        TrackLivePipelineLayout(_imguiPipelineLayout, "ImGui.PipelineLayout");
 
         PipelineShaderStageCreateInfo* stages = stackalloc PipelineShaderStageCreateInfo[2];
         stages[0] = new PipelineShaderStageCreateInfo
@@ -1575,7 +1583,7 @@ public unsafe partial class VulkanRenderer
 
             const uint attachmentCount = 2;
             ClearValue* clearValues = stackalloc ClearValue[(int)attachmentCount];
-            _state.WriteClearValues(clearValues, attachmentCount);
+            ActiveState.WriteClearValues(clearValues, attachmentCount);
             renderPassInfo.ClearValueCount = attachmentCount;
             renderPassInfo.PClearValues = clearValues;
 

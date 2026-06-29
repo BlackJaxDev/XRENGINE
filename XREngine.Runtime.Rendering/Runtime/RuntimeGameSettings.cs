@@ -1,3 +1,5 @@
+using XREngine.Rendering;
+
 namespace XREngine;
 
 internal sealed class RuntimeGameSettings : IVRGameStartupSettings
@@ -7,6 +9,7 @@ internal sealed class RuntimeGameSettings : IVRGameStartupSettings
     public OpenVR.NET.Manifest.VrManifest? VRManifest { get; set; }
     public OpenVR.NET.Manifest.IActionManifest? ActionManifest { get; }
     public EVRRuntime VRRuntime { get; set; } = EVRRuntime.Auto;
+    public EVrViewRenderMode VrViewRenderMode { get; set; } = RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
     public bool EnableOpenXrVulkanParallelRendering { get; set; }
     public string GameName { get; set; } = string.Empty;
     public (Environment.SpecialFolder folder, string relativePath)[] GameSearchPaths { get; set; } = [];

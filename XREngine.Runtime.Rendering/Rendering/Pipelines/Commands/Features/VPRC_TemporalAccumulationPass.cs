@@ -308,7 +308,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (IsLightProbePass || RuntimeEngine.Rendering.State.IsSceneCapturePass)
             return EAntiAliasingMode.None;
 
-        if (RuntimeEngine.VRState.IsInVR && !RuntimeEngine.Rendering.Settings.RenderVRSinglePassStereo)
+        if (RuntimeEngine.VRState.IsInVR && RuntimeEngine.Rendering.Settings.VrViewRenderMode != EVrViewRenderMode.SinglePassStereo)
             return EAntiAliasingMode.None;
 
         return XREngine.Rendering.RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame();

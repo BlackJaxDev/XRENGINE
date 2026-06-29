@@ -78,6 +78,7 @@ public unsafe partial class VulkanRenderer
         private readonly object _bindingLock = new();
         private readonly Dictionary<string, ProgramUniformValue> _uniformValues = new(StringComparer.Ordinal);
         private readonly Dictionary<uint, XRTexture> _samplersByUnit = new();
+        private readonly Dictionary<uint, string> _samplerNamesByUnit = new();
         private readonly Dictionary<string, XRTexture> _samplersByName = new(StringComparer.Ordinal);
         private readonly Dictionary<uint, ProgramImageBinding> _imagesByUnit = new();
         private readonly Dictionary<uint, XRDataBuffer> _buffersByBinding = new();
@@ -363,6 +364,7 @@ public unsafe partial class VulkanRenderer
             {
                 _uniformValues.Clear();
                 _samplersByUnit.Clear();
+                _samplerNamesByUnit.Clear();
                 _samplersByName.Clear();
                 _imagesByUnit.Clear();
                 _buffersByBinding.Clear();
@@ -408,6 +410,7 @@ public unsafe partial class VulkanRenderer
             {
                 _uniformValues.Clear();
                 _samplersByUnit.Clear();
+                _samplerNamesByUnit.Clear();
                 _samplersByName.Clear();
                 _imagesByUnit.Clear();
                 _buffersByBinding.Clear();
@@ -417,6 +420,9 @@ public unsafe partial class VulkanRenderer
 
                 foreach (var pair in snapshot.Samplers)
                     _samplersByUnit[pair.Key] = pair.Value;
+
+                foreach (var pair in snapshot.SamplerNamesByUnit)
+                    _samplerNamesByUnit[pair.Key] = pair.Value;
 
                 foreach (var pair in snapshot.SamplersByName)
                     _samplersByName[pair.Key] = pair.Value;
@@ -436,6 +442,7 @@ public unsafe partial class VulkanRenderer
                 return new ComputeDispatchSnapshot(
                     new Dictionary<string, ProgramUniformValue>(_uniformValues, StringComparer.Ordinal),
                     new Dictionary<uint, XRTexture>(_samplersByUnit),
+                    new Dictionary<uint, string>(_samplerNamesByUnit),
                     new Dictionary<string, XRTexture>(_samplersByName, StringComparer.Ordinal),
                     new Dictionary<uint, ProgramImageBinding>(_imagesByUnit),
                     new Dictionary<uint, XRDataBuffer>(_buffersByBinding));
@@ -513,7 +520,14 @@ public unsafe partial class VulkanRenderer
             {
                 _samplersByUnit[unit] = xrTexture;
                 if (!string.IsNullOrWhiteSpace(name))
+                {
+                    _samplerNamesByUnit[unit] = name;
                     _samplersByName[name] = xrTexture;
+                }
+                else
+                {
+                    _samplerNamesByUnit.Remove(unit);
+                }
             }
 
             Renderer.TrackTextureBinding(xrTexture);
@@ -564,6 +578,9 @@ public unsafe partial class VulkanRenderer
 
         public bool Link(bool allowAsyncShaderCompile = false)
         {
+            if (Renderer.IsDeviceLost)
+                return false;
+
             global::System.Diagnostics.Stopwatch buildWatch = global::System.Diagnostics.Stopwatch.StartNew();
             double compileMilliseconds = 0.0;
             int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
@@ -1159,11 +1176,10 @@ public unsafe partial class VulkanRenderer
 
         private void CreatePipelineLayout(IReadOnlyList<DescriptorSetLayout> layouts)
         {
-            if (_pipelineLayout.Handle != 0)
-            {
-                Api!.DestroyPipelineLayout(Device, _pipelineLayout, null);
-                _pipelineLayout = default;
-            }
+            if (Renderer.IsDeviceLost)
+                return;
+
+            DestroyPipelineLayout("VkRenderProgram.CreatePipelineLayout");
 
             if (layouts.Count == 0)
             {
@@ -1176,6 +1192,7 @@ public unsafe partial class VulkanRenderer
                 };
                 if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                     throw new InvalidOperationException($"Failed to create pipeline layout for program '{Data.Name ?? "UnnamedProgram"}'.");
+                Renderer.TrackLivePipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
                 return;
             }
 
@@ -1194,6 +1211,7 @@ public unsafe partial class VulkanRenderer
 
                 if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
                     throw new InvalidOperationException($"Failed to create pipeline layout for program '{Data.Name ?? "UnnamedProgram"}'.");
+                Renderer.TrackLivePipelineLayout(_pipelineLayout, "VkRenderProgram.PipelineLayout");
             }
         }
 
@@ -1216,15 +1234,24 @@ public unsafe partial class VulkanRenderer
             }
 
             if (_pipelineLayout.Handle != 0)
-            {
-                Api!.DestroyPipelineLayout(Device, _pipelineLayout, null);
-                _pipelineLayout = default;
-            }
+                DestroyPipelineLayout("VkRenderProgram.DestroyLayouts");
 
             _programDescriptorBindings.Clear();
             _descriptorSetsRequireUpdateAfterBind = false;
             _descriptorSetsRequireVariableDescriptorCount = false;
             IsLinked = false;
+        }
+
+        private void DestroyPipelineLayout(string owner)
+        {
+            if (_pipelineLayout.Handle == 0)
+                return;
+
+            PipelineLayout pipelineLayout = _pipelineLayout;
+            _pipelineLayout = default;
+
+            if (Renderer.TryBeginDestroyPipelineLayout(pipelineLayout, owner))
+                Api!.DestroyPipelineLayout(Device, pipelineLayout, null);
         }
 
         private void DestroyComputeUniformBuffers()
@@ -1506,6 +1533,7 @@ public unsafe partial class VulkanRenderer
             CommandBuffer commandBuffer,
             uint imageIndex,
             ComputeDispatchSnapshot snapshot,
+            ulong reusableDescriptorBindingKey,
             out DescriptorPool descriptorPool,
             out List<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> tempUniformBuffers)
         {
@@ -1642,12 +1670,13 @@ public unsafe partial class VulkanRenderer
             {
                 ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
                 ulong bindingFingerprint = ComputeComputeDescriptorBindingFingerprint(pendingWriteArray, bufferArray, imageArray, texelArray);
+                ulong cacheBindingFingerprint = reusableDescriptorBindingKey == 0UL ? bindingFingerprint : reusableDescriptorBindingKey;
                 DescriptorSetLayout[] layoutArray = _descriptorSetLayouts.ToArray();
 
                 if (!Renderer.TryGetOrCreateComputeDescriptorSets(
                     imageIndex,
                     schemaFingerprint,
-                    bindingFingerprint,
+                    cacheBindingFingerprint,
                     layoutArray,
                     poolSizes,
                     _descriptorSetsRequireUpdateAfterBind,
@@ -1667,7 +1696,7 @@ public unsafe partial class VulkanRenderer
                     return false;
                 }
 
-                shouldUpdateDescriptorData = isNewAllocation;
+                shouldUpdateDescriptorData = isNewAllocation || reusableDescriptorBindingKey != 0UL;
             }
             else
             {
@@ -2037,7 +2066,7 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
-        internal bool TryRefreshReusableComputeDispatchFrameData(uint imageIndex, ComputeDispatchSnapshot snapshot)
+        internal bool TryRefreshReusableComputeDispatchFrameData(uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
         {
             if (_descriptorSetLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
                 return true;
@@ -2064,6 +2093,121 @@ public unsafe partial class VulkanRenderer
                     return false;
             }
 
+            return TryRefreshReusableComputeDescriptorSets(imageIndex, snapshot, reusableDescriptorBindingKey);
+        }
+
+        private bool TryRefreshReusableComputeDescriptorSets(uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
+        {
+            if (reusableDescriptorBindingKey == 0UL)
+                return true;
+
+            Dictionary<DescriptorType, uint> poolSizeCounts = new();
+            foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
+            {
+                uint count = Math.Max(binding.Count, 1u);
+                if (poolSizeCounts.TryGetValue(binding.DescriptorType, out uint existing))
+                    poolSizeCounts[binding.DescriptorType] = existing + count;
+                else
+                    poolSizeCounts[binding.DescriptorType] = count;
+            }
+
+            if (poolSizeCounts.Count == 0)
+                return true;
+
+            DescriptorPoolSize[] poolSizes = poolSizeCounts
+                .Select(p => new DescriptorPoolSize { Type = p.Key, DescriptorCount = p.Value })
+                .ToArray();
+
+            List<PendingDescriptorWrite> pendingWrites = [];
+            List<DescriptorBufferInfo> bufferInfos = [];
+            List<DescriptorImageInfo> imageInfos = [];
+            List<BufferView> texelBufferViews = [];
+            bool hasUnresolvedBinding = false;
+
+            foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
+            {
+                if (binding.Set >= _descriptorSetLayouts.Length)
+                    continue;
+
+                uint descriptorCount = Math.Max(binding.Count, 1u);
+                switch (binding.DescriptorType)
+                {
+                    case DescriptorType.UniformBuffer:
+                    case DescriptorType.StorageBuffer:
+                        if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, out DescriptorBufferInfo bufferInfo))
+                        {
+                            hasUnresolvedBinding = true;
+                            RecordComputeDescriptorFailure(binding, "buffer refresh failed", skippedDispatch: true);
+                            continue;
+                        }
+
+                        int bufferStart = bufferInfos.Count;
+                        for (int i = 0; i < descriptorCount; i++)
+                            bufferInfos.Add(bufferInfo);
+
+                        pendingWrites.Add(PendingDescriptorWrite.Buffer(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, bufferStart));
+                        break;
+
+                    case DescriptorType.CombinedImageSampler:
+                    case DescriptorType.SampledImage:
+                    case DescriptorType.Sampler:
+                    case DescriptorType.StorageImage:
+                        if (!TryResolveComputeImage(binding, snapshot, out DescriptorImageInfo imageInfo))
+                        {
+                            hasUnresolvedBinding = true;
+                            RecordComputeDescriptorFailure(binding, "image refresh failed", skippedDispatch: true);
+                            continue;
+                        }
+
+                        int imageStart = imageInfos.Count;
+                        for (int i = 0; i < descriptorCount; i++)
+                            imageInfos.Add(imageInfo);
+
+                        pendingWrites.Add(PendingDescriptorWrite.Image(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, imageStart));
+                        break;
+
+                    case DescriptorType.UniformTexelBuffer:
+                    case DescriptorType.StorageTexelBuffer:
+                        if (!TryResolveComputeTexelBuffer(binding, snapshot, out BufferView texelView))
+                        {
+                            hasUnresolvedBinding = true;
+                            RecordComputeDescriptorFailure(binding, "texel refresh failed", skippedDispatch: true);
+                            continue;
+                        }
+
+                        int texelStart = texelBufferViews.Count;
+                        for (int i = 0; i < descriptorCount; i++)
+                            texelBufferViews.Add(texelView);
+
+                        pendingWrites.Add(PendingDescriptorWrite.Texel(binding.Set, binding.Binding, binding.DescriptorType, descriptorCount, texelStart));
+                        break;
+                }
+            }
+
+            if (hasUnresolvedBinding || pendingWrites.Count == 0)
+                return false;
+
+            ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint();
+            DescriptorSetLayout[] layoutArray = _descriptorSetLayouts.ToArray();
+            if (!Renderer.TryGetOrCreateComputeDescriptorSets(
+                imageIndex,
+                schemaFingerprint,
+                reusableDescriptorBindingKey,
+                layoutArray,
+                poolSizes,
+                _descriptorSetsRequireUpdateAfterBind,
+                out DescriptorSet[] descriptorSets,
+                out _))
+            {
+                return false;
+            }
+
+            UpdateComputeDescriptorSets(
+                descriptorSets,
+                pendingWrites.ToArray(),
+                bufferInfos.ToArray(),
+                imageInfos.ToArray(),
+                texelBufferViews.ToArray());
             return true;
         }
 

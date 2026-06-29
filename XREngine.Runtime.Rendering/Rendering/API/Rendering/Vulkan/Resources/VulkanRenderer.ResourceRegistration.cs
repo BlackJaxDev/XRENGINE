@@ -26,7 +26,7 @@ public unsafe partial class VulkanRenderer
     {
         List<(Image image, ImageLayout target, ImageAspectFlags aspect, uint mipLevels, uint layers)>? overflow = null;
 
-        foreach (VulkanPhysicalImageGroup group in _resourceAllocator.EnumeratePhysicalGroups())
+        foreach (VulkanPhysicalImageGroup group in ResourceAllocator.EnumeratePhysicalGroups())
         {
             if (!group.IsAllocated || group.LastKnownLayout != ImageLayout.Undefined)
                 continue;
@@ -300,10 +300,10 @@ public unsafe partial class VulkanRenderer
     }
 
     public bool TryGetPhysicalImage(string resourceName, out Image image)
-        => _resourceAllocator.TryGetImage(resourceName, out image);
+        => ResourceAllocator.TryGetImage(resourceName, out image);
 
     public bool TryGetPhysicalBuffer(string resourceName, out Buffer buffer, out ulong size)
-        => _resourceAllocator.TryGetBuffer(resourceName, out buffer, out size);
+        => ResourceAllocator.TryGetBuffer(resourceName, out buffer, out size);
 
     private void EnsureFrameBufferRegistered(XRFrameBuffer frameBuffer)
     {
@@ -454,7 +454,7 @@ public unsafe partial class VulkanRenderer
 
     internal bool TryResolveTrackedBuffer(string resourceName, out Buffer buffer, out ulong size)
     {
-        if (_resourceAllocator.TryGetBuffer(resourceName, out buffer, out size))
+        if (ResourceAllocator.TryGetBuffer(resourceName, out buffer, out size))
             return true;
 
         if (_trackedBuffersByName.TryGetValue(resourceName, out XRDataBuffer? dataBuffer) &&

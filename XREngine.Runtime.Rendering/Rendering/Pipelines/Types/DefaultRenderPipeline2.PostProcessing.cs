@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using XREngine;
 using XREngine.Data.Colors;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
@@ -1747,7 +1748,7 @@ public partial class DefaultRenderPipeline2
 
     private static bool DisableHistoryBasedVrEffects()
         => IsRenderingExternalSwapchainTarget()
-        || (RuntimeEngine.VRState.IsInVR && !RuntimeEngine.Rendering.Settings.RenderVRSinglePassStereo);
+        || (RuntimeEngine.VRState.IsInVR && RuntimeEngine.Rendering.Settings.VrViewRenderMode != EVrViewRenderMode.SinglePassStereo);
 
     private static bool ShouldUseMotionBlur()
         => !IsLightProbePass

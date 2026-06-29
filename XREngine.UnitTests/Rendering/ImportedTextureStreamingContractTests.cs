@@ -186,7 +186,9 @@ public sealed class ImportedTextureStreamingContractTests
         managerSource.ShouldContain("&& IsVulkanImportedTexturePreviewFreezeForced();");
         managerSource.ShouldContain("RenderDiagnosticsFlags.VkImportedTexturePreviewFreeze");
         managerSource.ShouldNotContain("&& (!VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable");
-        managerSource.ShouldNotContain("ShouldPreserveVulkanResidentSizeAgainstDemotion");
+        managerSource.ShouldContain("ShouldPreserveVulkanDenseResidentSizeWithoutPressure(");
+        managerSource.ShouldContain("ShouldPreserveDenseResidentSizeWithoutPressure(");
+        managerSource.ShouldContain("VulkanDenseNonPressureDemotionPreserveBudgetFillRatio");
         ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/TextureResidencyPolicy.cs")
             .ShouldContain("visibility grace demotion");
         managerSource.ShouldContain("includeMipChain = ShouldIncludeResidentMipChain(backend, normalizedTarget);");
@@ -206,6 +208,20 @@ public sealed class ImportedTextureStreamingContractTests
         hookSource.ShouldContain("TryScheduleImportedTextureResidencyTransition(");
         denseBackendSource.ShouldContain("RuntimeRenderingHostServices.Current.CurrentRenderer ?? AbstractRenderer.Current");
         glBackendSource.ShouldContain("RuntimeRenderingHostServices.Current.CurrentRenderer ?? AbstractRenderer.Current");
+    }
+
+    [Test]
+    public void VulkanTextureUploadFrameOps_DoNotPoisonReusablePrimaryCommandBufferCache()
+    {
+        string recordingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+
+        recordingSource.ShouldContain("if (hasTextureUploadFrameOps)\n                MarkCommandBufferVariantTransientAfterTextureUpload(variant);");
+        recordingSource.ShouldContain("private static void MarkCommandBufferVariantTransientAfterTextureUpload(CommandBufferCacheVariant variant)");
+        recordingSource.ShouldContain("variant.DirtyReason = \"transient texture upload\";");
+        recordingSource.ShouldContain("variant.FrameOpsSignature = ulong.MaxValue;");
+        recordingSource.ShouldContain("variant.RecordedSwapchainWriteCount = 0;");
+        recordingSource.ShouldContain("variant.RecordedSwapchainWriteCount = 0;");
+        recordingSource.ShouldContain("if (variant.RecordedSwapchainWriteCount <= 0 ||");
     }
 
     [Test]

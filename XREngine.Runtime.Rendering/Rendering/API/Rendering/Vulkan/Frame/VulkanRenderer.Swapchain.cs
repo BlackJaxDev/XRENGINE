@@ -199,7 +199,8 @@ public unsafe partial class VulkanRenderer
     {
         if (_swapchainDepthView.Handle != 0)
         {
-            Api!.DestroyImageView(device, _swapchainDepthView, null);
+            if (TryBeginDestroyImageView(_swapchainDepthView, "DestroySwapchainDepth"))
+                Api!.DestroyImageView(device, _swapchainDepthView, null);
             _swapchainDepthView = default;
         }
 
@@ -272,6 +273,8 @@ public unsafe partial class VulkanRenderer
 
         if (Api!.CreateImageView(device, ref viewInfo, null, out _swapchainDepthView) != Result.Success)
             throw new Exception("Failed to create swapchain depth view.");
+
+        TrackLiveImageView(_swapchainDepthView, "Swapchain.Depth");
     }
 
     private static bool IsDepthStencilFormat(Format format)

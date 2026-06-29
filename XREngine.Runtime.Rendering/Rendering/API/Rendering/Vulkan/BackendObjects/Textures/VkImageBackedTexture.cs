@@ -31,6 +31,15 @@ public unsafe partial class VulkanRenderer
         /// <summary>Cache of per-attachment image views keyed by mip/layer/viewType/aspect.</summary>
         private readonly Dictionary<AttachmentViewKey, ImageView> _attachmentViews = new();
 
+        /// <summary>
+        /// Per physical-image view cache used when serial desktop/eye rendering switches resource-planner
+        /// contexts for the same logical texture. Context switches should restore the matching views instead
+        /// of retiring/recreating them every pass; true same-group reallocations still retire stale views.
+        /// </summary>
+        private readonly List<PhysicalImageViewCacheEntry> _physicalImageViewCache = [];
+
+        private readonly object _imageStateLock = new();
+
         /// <summary>Layout tracking for framebuffer writes that touch only one mip/layer at a time.</summary>
         private readonly Dictionary<AttachmentLayoutKey, ImageLayout> _attachmentLayouts = new();
 
@@ -90,8 +99,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                return _image.Handle != 0 || _view.Handle != 0 || _sampler.Handle != 0;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return _image.Handle != 0 || _view.Handle != 0 || _sampler.Handle != 0;
+                }
             }
         }
 
@@ -99,19 +111,50 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return IsDescriptorReadyNoLock();
+                }
+            }
+        }
+
+        private bool IsDescriptorReadyNoLock()
+        {
+            bool descriptorHandlesReady =
+                (_image.Handle != 0 || _view.Handle != 0 || _sampler.Handle != 0)
+                && !IsDescriptorDirty
+                && _view.Handle != 0
+                && (!CreateSampler || _sampler.Handle != 0);
+            if (!descriptorHandlesReady)
+                return false;
+
+            if (_physicalGroup is not null || Data.FrameBufferAttachment.HasValue || Data.RequiresStorageUsage)
+                return true;
+
+            return !IsInvalidated && HasUploadedData;
+        }
+
+        public override bool TryEnsureDescriptorReadyForUse(string reason)
+        {
+            lock (_imageStateLock)
+            {
+                EnsureDescriptorReadyForVulkanUse(reason);
                 RefreshPhysicalGroupImageIfStale();
-                bool descriptorHandlesReady =
-                    IsGenerated
-                    && !IsDescriptorDirty
-                    && _view.Handle != 0
-                    && (!CreateSampler || _sampler.Handle != 0);
-                if (!descriptorHandlesReady)
-                    return false;
+                return IsDescriptorReadyNoLock();
+            }
+        }
 
-                if (_physicalGroup is not null || Data.FrameBufferAttachment.HasValue || Data.RequiresStorageUsage)
-                    return true;
+        public override bool TryEnsureDescriptorReadyForUse(string reason, bool allowSynchronousUpload)
+        {
+            lock (_imageStateLock)
+            {
+                if (allowSynchronousUpload)
+                    EnsureDescriptorReadyForVulkanUse(reason);
+                else
+                    RefreshPhysicalGroupImageIfStale();
 
-                return !IsInvalidated && HasUploadedData;
+                return IsDescriptorReadyNoLock();
             }
         }
 
@@ -134,19 +177,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                if (_physicalGroup is not null)
+                lock (_imageStateLock)
                 {
-                    _currentImageLayout = ResolvePhysicalGroupWholeImageLayout();
-                    return _currentImageLayout;
+                    RefreshPhysicalGroupImageIfStale();
+                    return ResolveTrackedImageLayoutNoLock();
                 }
-
-                if (_hasPartialAttachmentLayouts)
-                    return TryResolveWholeImageAttachmentLayout(out ImageLayout layout)
-                        ? layout
-                        : ImageLayout.Undefined;
-
-                return _currentImageLayout;
             }
         }
 
@@ -161,9 +196,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                // Ensure the cached handle is still valid if the planner rebuilt the image.
-                RefreshPhysicalGroupImageIfStale();
-                return _image;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return _image;
+                }
             }
         }
 
@@ -171,8 +208,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                return _memory;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return _memory;
+                }
             }
         }
 
@@ -180,8 +220,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                return _view;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return _view;
+                }
             }
         }
 
@@ -191,8 +234,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                return _sampler;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return _sampler;
+                }
             }
         }
 
@@ -200,8 +246,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                return ResolvedFormat;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return ResolvedFormat;
+                }
             }
         }
 
@@ -209,8 +258,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                return AspectFlags;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return AspectFlags;
+                }
             }
         }
 
@@ -218,8 +270,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                return Usage;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return Usage;
+                }
             }
         }
 
@@ -227,8 +282,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                return SampleCount;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return SampleCount;
+                }
             }
         }
 
@@ -236,8 +294,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                return ResolvedMipLevels;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return ResolvedMipLevels;
+                }
             }
         }
 
@@ -245,37 +306,113 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                return ResolvedArrayLayers;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return ResolvedArrayLayers;
+                }
+            }
+        }
+
+        bool IVkImageDescriptorSource.TryGetDescriptorSnapshot(
+            ImageViewType? requestedViewType,
+            ImageAspectFlags? requestedAspectMask,
+            string reason,
+            bool allowSynchronousUpload,
+            out VkImageDescriptorSnapshot snapshot)
+        {
+            lock (_imageStateLock)
+            {
+                if (allowSynchronousUpload)
+                    EnsureDescriptorReadyForVulkanUse(reason);
+                else
+                    RefreshPhysicalGroupImageIfStale();
+
+                return TryBuildDescriptorSnapshotNoLock(requestedViewType, requestedAspectMask, out snapshot);
             }
         }
 
         /// <inheritdoc />
         ImageView IVkImageDescriptorSource.GetDepthOnlyDescriptorView()
         {
-            RefreshPhysicalGroupImageIfStale();
-
-            // Build a view key for the full mip/layer range with only the DepthBit aspect.
-            var key = new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, DefaultViewType, ImageAspectFlags.DepthBit);
-
-            if (!_attachmentViews.TryGetValue(key, out ImageView cached))
+            lock (_imageStateLock)
             {
-                cached = CreateView(key);
-                _attachmentViews[key] = cached;
+                RefreshPhysicalGroupImageIfStale();
+                return GetDepthOnlyDescriptorViewNoLock();
             }
-
-            return cached;
         }
 
         ImageView IVkImageDescriptorSource.GetStencilOnlyDescriptorView()
         {
-            RefreshPhysicalGroupImageIfStale();
+            lock (_imageStateLock)
+            {
+                RefreshPhysicalGroupImageIfStale();
+                return GetStencilOnlyDescriptorViewNoLock();
+            }
+        }
 
-            if (!HasStencilAspect(ResolvedFormat))
-                return default;
+        ImageView IVkImageDescriptorSource.GetDescriptorView(ImageViewType viewType)
+        {
+            lock (_imageStateLock)
+            {
+                RefreshPhysicalGroupImageIfStale();
+                return GetDescriptorViewNoLock(viewType);
+            }
+        }
 
-            var key = new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, DefaultViewType, ImageAspectFlags.StencilBit);
+        private bool TryBuildDescriptorSnapshotNoLock(
+            ImageViewType? requestedViewType,
+            ImageAspectFlags? requestedAspectMask,
+            out VkImageDescriptorSnapshot snapshot)
+        {
+            ImageView view = requestedAspectMask switch
+            {
+                ImageAspectFlags.DepthBit => GetDepthOnlyDescriptorViewNoLock(),
+                ImageAspectFlags.StencilBit => GetStencilOnlyDescriptorViewNoLock(),
+                _ => requestedViewType is { } viewType
+                    ? GetDescriptorViewNoLock(viewType)
+                    : _view
+            };
+            ImageLayout trackedLayout = ResolveTrackedImageLayoutNoLock();
+            bool ready = IsDescriptorReadyNoLock() && view.Handle != 0;
+            snapshot = new(
+                _image,
+                _memory,
+                view,
+                requestedViewType ?? DefaultViewType,
+                _sampler,
+                ResolvedFormat,
+                AspectFlags,
+                Usage,
+                SampleCount,
+                ResolvedMipLevels,
+                ResolvedArrayLayers,
+                DescriptorGeneration,
+                trackedLayout,
+                _physicalGroup is not null,
+                ready);
+            return ready;
+        }
 
+        private ImageLayout ResolveTrackedImageLayoutNoLock()
+        {
+            if (_physicalGroup is not null)
+            {
+                _currentImageLayout = ResolvePhysicalGroupWholeImageLayout();
+                return _currentImageLayout;
+            }
+
+            if (_hasPartialAttachmentLayouts)
+                return TryResolveWholeImageAttachmentLayout(out ImageLayout layout)
+                    ? layout
+                    : ImageLayout.Undefined;
+
+            return _currentImageLayout;
+        }
+
+        private ImageView GetDepthOnlyDescriptorViewNoLock()
+        {
+            var key = new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, DefaultViewType, ImageAspectFlags.DepthBit);
             if (!_attachmentViews.TryGetValue(key, out ImageView cached))
             {
                 cached = CreateView(key);
@@ -285,10 +422,23 @@ public unsafe partial class VulkanRenderer
             return cached;
         }
 
-        ImageView IVkImageDescriptorSource.GetDescriptorView(ImageViewType viewType)
+        private ImageView GetStencilOnlyDescriptorViewNoLock()
         {
-            RefreshPhysicalGroupImageIfStale();
+            if (!HasStencilAspect(ResolvedFormat))
+                return default;
 
+            var key = new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, DefaultViewType, ImageAspectFlags.StencilBit);
+            if (!_attachmentViews.TryGetValue(key, out ImageView cached))
+            {
+                cached = CreateView(key);
+                _attachmentViews[key] = cached;
+            }
+
+            return cached;
+        }
+
+        private ImageView GetDescriptorViewNoLock(ImageViewType viewType)
+        {
             if (viewType == DefaultViewType)
                 return _view;
 
@@ -383,16 +533,11 @@ public unsafe partial class VulkanRenderer
         {
             get
             {
-                RefreshPhysicalGroupImageIfStale();
-                if (_physicalGroup is not null)
-                    return ResolvePhysicalGroupWholeImageLayout();
-
-                if (_hasPartialAttachmentLayouts)
-                    return TryResolveWholeImageAttachmentLayout(out ImageLayout layout)
-                        ? layout
-                        : ImageLayout.Undefined;
-
-                return _currentImageLayout;
+                lock (_imageStateLock)
+                {
+                    RefreshPhysicalGroupImageIfStale();
+                    return ResolveTrackedImageLayoutNoLock();
+                }
             }
         }
 
@@ -712,6 +857,9 @@ public unsafe partial class VulkanRenderer
                 _sampler,
                 _ownsImageMemory ? _allocatedVRAMBytes : 0));
 
+            RemovePhysicalImageViewCacheEntry(_physicalGroup, _image.Handle);
+            DestroyPhysicalImageViewCache();
+
             // Report the VRAM deallocation to the stats tracker immediately
             // (the logical allocation is gone even if the GPU handle lingers).
             if (_ownsImageMemory && _allocatedVRAMBytes > 0)
@@ -885,15 +1033,24 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         private void RefreshPhysicalGroupImageIfStale()
         {
+            lock (_imageStateLock)
+                RefreshPhysicalGroupImageIfStaleNoLock();
+        }
+
+        private void RefreshPhysicalGroupImageIfStaleNoLock()
+        {
             if (_physicalGroup is null)
                 return;
 
             bool physicalGroupChanged = false;
+            bool switchedPhysicalGroup = false;
             VulkanPhysicalImageGroup? activeGroup = TryResolvePhysicalGroup(ensureAllocated: true);
             if (activeGroup is not null && !ReferenceEquals(activeGroup, _physicalGroup))
             {
+                SaveCurrentPhysicalImageViewCache();
                 _physicalGroup = activeGroup;
                 physicalGroupChanged = true;
+                switchedPhysicalGroup = true;
             }
 
             if (!_physicalGroup.IsAllocated)
@@ -912,9 +1069,21 @@ public unsafe partial class VulkanRenderer
                 {
                     // No replacement group available. Clear the stale handle so callers
                     // don't use a destroyed VkImage.
-                    if (_image.Handle != 0)
+                    if (switchedPhysicalGroup)
                     {
+                        _view = default;
+                        _attachmentViews.Clear();
                         _image = default;
+                        _memory = default;
+                    }
+                    else if (_image.Handle != 0)
+                    {
+                        DestroyCurrentViews(removeActiveCacheEntry: true);
+                        _image = default;
+                        _memory = default;
+                    }
+                    else
+                    {
                         _memory = default;
                     }
                     return;
@@ -929,9 +1098,17 @@ public unsafe partial class VulkanRenderer
                     TimeSpan.FromSeconds(2),
                     "[Vulkan] Physical group for '{0}' is allocated but has no image handle yet.",
                     ResolveLogicalResourceName() ?? Data.Name ?? "<unnamed>");
+                if (switchedPhysicalGroup)
+                {
+                    _view = default;
+                    _attachmentViews.Clear();
+                }
+                else
+                {
+                    DestroyCurrentViews(removeActiveCacheEntry: true);
+                }
                 _image = default;
                 _memory = default;
-                DestroyAllViews();
                 return;
             }
 
@@ -956,6 +1133,34 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
+            if (switchedPhysicalGroup)
+            {
+                _image = current;
+                _memory = _physicalGroup.Memory;
+                _extentOverride = _physicalGroup.ResolvedExtent;
+                _formatOverride = _physicalGroup.Format;
+                _arrayLayersOverride = Math.Max(_physicalGroup.Template.Layers, 1u);
+                _mipLevelsOverride = Math.Max(1u, _physicalGroup.MipLevels);
+                _samplesOverride = _physicalGroup.Samples;
+                Usage = _physicalGroup.Usage;
+                if (Data.RequiresStorageUsage)
+                    Usage |= ImageUsageFlags.StorageBit;
+
+                if (!TryRestorePhysicalImageViewCache(_physicalGroup, current))
+                {
+                    _view = default;
+                    _attachmentViews.Clear();
+                    CreateImageView(default);
+                }
+
+                ResetAttachmentLayoutTracking();
+                _currentImageLayout = _physicalGroup.LastKnownLayout;
+                HasUploadedData = true;
+                IsInvalidated = false;
+                MarkDescriptorPublished();
+                return;
+            }
+
             Debug.VulkanWarningEvery(
                 $"Vulkan.StaleImageHandle.{ResolveLogicalResourceName() ?? "?"}",
                 TimeSpan.FromSeconds(2),
@@ -964,6 +1169,9 @@ public unsafe partial class VulkanRenderer
                 _image.Handle,
                 current.Handle);
 
+            // Same physical-group handle changes mean the underlying image was reallocated.
+            // Retire the old views before changing _image so cache removal targets the old handle.
+            DestroyCurrentViews(removeActiveCacheEntry: true);
             _image = current;
             _memory = _physicalGroup.Memory;
             _extentOverride = _physicalGroup.ResolvedExtent;
@@ -977,7 +1185,6 @@ public unsafe partial class VulkanRenderer
 
             // Recreate the views against the new image. Old views may still be
             // referenced by retired framebuffers or in-flight command buffers.
-            DestroyAllViews();
             ResetAttachmentLayoutTracking();
             CreateImageView(default);
             _currentImageLayout = _physicalGroup.LastKnownLayout;
@@ -1505,6 +1712,7 @@ public unsafe partial class VulkanRenderer
             if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
                 throw new Exception("Failed to create synchronized imported texture image view.");
 
+            Renderer.TrackLiveImageView(created, "VkImageBackedTexture.ImportedUploadView");
             return created;
         }
 
@@ -1728,6 +1936,7 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
                 throw new Exception("Failed to create image view.");
+            Renderer.TrackLiveImageView(created, "VkImageBackedTexture.View");
             return created;
         }
 
@@ -1784,6 +1993,13 @@ public unsafe partial class VulkanRenderer
         /// <summary>Destroys the primary view and all cached attachment views.</summary>
         private void DestroyAllViews()
         {
+            DestroyCurrentViews(removeActiveCacheEntry: true);
+            DestroyPhysicalImageViewCache();
+        }
+
+        /// <summary>Destroys only the views for the currently active physical image.</summary>
+        private void DestroyCurrentViews(bool removeActiveCacheEntry)
+        {
             ImageView primaryView = _view;
             ImageView[] attachmentViews;
             if (_attachmentViews.Count > 0)
@@ -1811,6 +2027,9 @@ public unsafe partial class VulkanRenderer
 
             _view = default;
             _attachmentViews.Clear();
+
+            if (removeActiveCacheEntry && _image.Handle != 0)
+                RemovePhysicalImageViewCacheEntry(_physicalGroup, _image.Handle);
         }
 
         /// <summary>
@@ -1822,96 +2041,102 @@ public unsafe partial class VulkanRenderer
         /// <param name="layerIndex">Array layer index, or &lt;0 for the default layer range.</param>
         public ImageView GetAttachmentView(int mipLevel, int layerIndex)
         {
-            RefreshPhysicalGroupImageIfStale();
-            if (_image.Handle == 0)
+            lock (_imageStateLock)
             {
-                AcquireImageHandle();
-                RefreshPhysicalGroupImageIfStale();
-            }
+                RefreshPhysicalGroupImageIfStaleNoLock();
+                if (_image.Handle == 0)
+                {
+                    AcquireImageHandle();
+                    RefreshPhysicalGroupImageIfStaleNoLock();
+                }
 
-            if (_image.Handle == 0)
-            {
-                Debug.VulkanWarningEvery(
-                    $"Vulkan.Texture.AttachmentViewWithoutImage.{Data.GetHashCode()}",
-                    TimeSpan.FromSeconds(2),
-                    "[Vulkan] Texture '{0}' has no VkImage for framebuffer attachment view.",
-                    ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName());
-                return default;
-            }
+                if (_image.Handle == 0)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Texture.AttachmentViewWithoutImage.{Data.GetHashCode()}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Texture '{0}' has no VkImage for framebuffer attachment view.",
+                        ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName());
+                    return default;
+                }
 
-            if (_view.Handle == 0)
-                CreateImageView(default);
+                if (_view.Handle == 0)
+                    CreateImageView(default);
 
-            AttachmentViewKey key = BuildAttachmentViewKey(mipLevel, layerIndex);
-            if (key == default)
-            {
+                AttachmentViewKey key = BuildAttachmentViewKey(mipLevel, layerIndex);
+                if (key == default)
+                {
+                    if (BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(ResolveLogicalResourceName() ?? Data.Name))
+                    {
+                        Debug.VulkanEvery(
+                            $"Vulkan.BloomDiag.AttachmentView.Primary.{ResolveLogicalResourceName() ?? Data.Name}.{mipLevel}.{layerIndex}",
+                            TimeSpan.FromSeconds(1),
+                            "[BloomDiag][Vulkan] attachmentView texture='{0}' requestedMip={1} resolvedMip=0 layer={2} key=primary view=0x{3:X} image=0x{4:X} mips={5} layers={6}",
+                            ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
+                            mipLevel,
+                            layerIndex,
+                            _view.Handle,
+                            _image.Handle,
+                            ResolvedMipLevels,
+                            ResolvedArrayLayers);
+                    }
+                    return _view;
+                }
+
+                if (!_attachmentViews.TryGetValue(key, out ImageView cached))
+                {
+                    cached = CreateView(key);
+                    if (cached.Handle != 0)
+                        _attachmentViews[key] = cached;
+                }
+
                 if (BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(ResolveLogicalResourceName() ?? Data.Name))
                 {
                     Debug.VulkanEvery(
-                        $"Vulkan.BloomDiag.AttachmentView.Primary.{ResolveLogicalResourceName() ?? Data.Name}.{mipLevel}.{layerIndex}",
+                        $"Vulkan.BloomDiag.AttachmentView.{ResolveLogicalResourceName() ?? Data.Name}.{mipLevel}.{layerIndex}.{key.BaseMipLevel}.{key.BaseArrayLayer}.{cached.Handle}",
                         TimeSpan.FromSeconds(1),
-                        "[BloomDiag][Vulkan] attachmentView texture='{0}' requestedMip={1} resolvedMip=0 layer={2} key=primary view=0x{3:X} image=0x{4:X} mips={5} layers={6}",
+                        "[BloomDiag][Vulkan] attachmentView texture='{0}' requestedMip={1} resolvedMip={2} requestedLayer={3} baseLayer={4} levelCount={5} layerCount={6} view=0x{7:X} image=0x{8:X} mips={9} layers={10}",
                         ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
                         mipLevel,
+                        key.BaseMipLevel,
                         layerIndex,
-                        _view.Handle,
+                        key.BaseArrayLayer,
+                        key.LevelCount,
+                        key.LayerCount,
+                        cached.Handle,
                         _image.Handle,
                         ResolvedMipLevels,
                         ResolvedArrayLayers);
                 }
-                return _view;
-            }
 
-            if (!_attachmentViews.TryGetValue(key, out ImageView cached))
-            {
-                cached = CreateView(key);
-                if (cached.Handle != 0)
-                    _attachmentViews[key] = cached;
+                return cached;
             }
-
-            if (BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(ResolveLogicalResourceName() ?? Data.Name))
-            {
-                Debug.VulkanEvery(
-                    $"Vulkan.BloomDiag.AttachmentView.{ResolveLogicalResourceName() ?? Data.Name}.{mipLevel}.{layerIndex}.{key.BaseMipLevel}.{key.BaseArrayLayer}.{cached.Handle}",
-                    TimeSpan.FromSeconds(1),
-                    "[BloomDiag][Vulkan] attachmentView texture='{0}' requestedMip={1} resolvedMip={2} requestedLayer={3} baseLayer={4} levelCount={5} layerCount={6} view=0x{7:X} image=0x{8:X} mips={9} layers={10}",
-                    ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
-                    mipLevel,
-                    key.BaseMipLevel,
-                    layerIndex,
-                    key.BaseArrayLayer,
-                    key.LevelCount,
-                    key.LayerCount,
-                    cached.Handle,
-                    _image.Handle,
-                    ResolvedMipLevels,
-                    ResolvedArrayLayers);
-            }
-
-            return cached;
         }
 
         bool IVkFrameBufferAttachmentSource.TryGetAttachmentExtent(int mipLevel, int layerIndex, out Extent2D extent)
         {
-            RefreshPhysicalGroupImageIfStale();
-            if (_image.Handle == 0)
+            lock (_imageStateLock)
             {
-                AcquireImageHandle();
-                RefreshPhysicalGroupImageIfStale();
-            }
+                RefreshPhysicalGroupImageIfStaleNoLock();
+                if (_image.Handle == 0)
+                {
+                    AcquireImageHandle();
+                    RefreshPhysicalGroupImageIfStaleNoLock();
+                }
 
-            Extent3D resolvedExtent = ResolvedExtent;
-            if (resolvedExtent.Width == 0 || resolvedExtent.Height == 0)
-            {
-                extent = default;
-                return false;
-            }
+                Extent3D resolvedExtent = ResolvedExtent;
+                if (resolvedExtent.Width == 0 || resolvedExtent.Height == 0)
+                {
+                    extent = default;
+                    return false;
+                }
 
-            uint baseMip = ClampAttachmentMipLevel(mipLevel);
-            uint width = Math.Max(resolvedExtent.Width >> (int)baseMip, 1u);
-            uint height = Math.Max(resolvedExtent.Height >> (int)baseMip, 1u);
-            extent = new Extent2D(width, height);
-            return true;
+                uint baseMip = ClampAttachmentMipLevel(mipLevel);
+                uint width = Math.Max(resolvedExtent.Width >> (int)baseMip, 1u);
+                uint height = Math.Max(resolvedExtent.Height >> (int)baseMip, 1u);
+                extent = new Extent2D(width, height);
+                return true;
+            }
         }
 
         public void EnsureAttachmentLayout(bool depthStencil)
@@ -2848,13 +3073,16 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         public DescriptorImageInfo CreateImageInfo()
         {
-            RefreshPhysicalGroupImageIfStale();
-            return new DescriptorImageInfo
+            lock (_imageStateLock)
             {
-                ImageLayout = ImageLayout.ShaderReadOnlyOptimal,
-                ImageView = _view,
-                Sampler = _sampler,
-            };
+                RefreshPhysicalGroupImageIfStaleNoLock();
+                return new DescriptorImageInfo
+                {
+                    ImageLayout = ImageLayout.ShaderReadOnlyOptimal,
+                    ImageView = _view,
+                    Sampler = _sampler,
+                };
+            }
         }
 
         #endregion
@@ -2886,6 +3114,101 @@ public unsafe partial class VulkanRenderer
         protected internal readonly record struct TextureLayout(Extent3D Extent, uint ArrayLayers, uint MipLevels);
 
         /// <summary>Key identifying a unique image-view configuration for attachment use.</summary>
+        private void SaveCurrentPhysicalImageViewCache()
+        {
+            if (_physicalGroup is null || _image.Handle == 0)
+                return;
+
+            int cacheIndex = FindPhysicalImageViewCacheIndex(_physicalGroup, _image.Handle);
+            PhysicalImageViewCacheEntry entry = new(
+                _physicalGroup,
+                _image.Handle,
+                _view,
+                new Dictionary<AttachmentViewKey, ImageView>(_attachmentViews));
+
+            if (cacheIndex >= 0)
+                _physicalImageViewCache[cacheIndex] = entry;
+            else
+                _physicalImageViewCache.Add(entry);
+        }
+
+        private bool TryRestorePhysicalImageViewCache(VulkanPhysicalImageGroup group, Image image)
+        {
+            int cacheIndex = FindPhysicalImageViewCacheIndex(group, image.Handle);
+            if (cacheIndex < 0)
+                return false;
+
+            PhysicalImageViewCacheEntry entry = _physicalImageViewCache[cacheIndex];
+            _view = entry.PrimaryView;
+            _attachmentViews.Clear();
+            foreach (KeyValuePair<AttachmentViewKey, ImageView> pair in entry.AttachmentViews)
+                _attachmentViews[pair.Key] = pair.Value;
+            return _view.Handle != 0;
+        }
+
+        private int FindPhysicalImageViewCacheIndex(VulkanPhysicalImageGroup? group, ulong imageHandle)
+        {
+            if (group is null || imageHandle == 0)
+                return -1;
+
+            for (int i = 0; i < _physicalImageViewCache.Count; i++)
+            {
+                PhysicalImageViewCacheEntry entry = _physicalImageViewCache[i];
+                if (ReferenceEquals(entry.Group, group) && entry.ImageHandle == imageHandle)
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private void RemovePhysicalImageViewCacheEntry(VulkanPhysicalImageGroup? group, ulong imageHandle)
+        {
+            int cacheIndex = FindPhysicalImageViewCacheIndex(group, imageHandle);
+            if (cacheIndex >= 0)
+                _physicalImageViewCache.RemoveAt(cacheIndex);
+        }
+
+        private void DestroyPhysicalImageViewCache()
+        {
+            if (_physicalImageViewCache.Count == 0)
+                return;
+
+            List<ImageView> cachedViews = [];
+            HashSet<ulong> seenHandles = [];
+            foreach (PhysicalImageViewCacheEntry entry in _physicalImageViewCache)
+            {
+                AddUniqueView(entry.PrimaryView);
+                foreach (ImageView view in entry.AttachmentViews.Values)
+                    AddUniqueView(view);
+            }
+
+            if (cachedViews.Count > 0)
+            {
+                Renderer.RetireImageResources(new RetiredImageResources(
+                    default,
+                    default,
+                    default,
+                    [.. cachedViews],
+                    default,
+                    0));
+            }
+
+            _physicalImageViewCache.Clear();
+
+            void AddUniqueView(ImageView view)
+            {
+                if (view.Handle == 0 || !seenHandles.Add(view.Handle))
+                    return;
+                cachedViews.Add(view);
+            }
+        }
+
+        private sealed record class PhysicalImageViewCacheEntry(
+            VulkanPhysicalImageGroup Group,
+            ulong ImageHandle,
+            ImageView PrimaryView,
+            Dictionary<AttachmentViewKey, ImageView> AttachmentViews);
+
         protected internal readonly record struct AttachmentViewKey(uint BaseMipLevel, uint LevelCount, uint BaseArrayLayer, uint LayerCount, ImageViewType ViewType, ImageAspectFlags AspectMask);
 
         /// <summary>Key identifying the layout state for one framebuffer attachment range.</summary>

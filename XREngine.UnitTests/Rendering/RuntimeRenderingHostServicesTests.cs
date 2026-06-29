@@ -442,9 +442,14 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool ForceFullViewport => false;
         public bool RenderWindowsWhileInVR => false;
         public bool EnableVrFoveatedViewSet => false;
+        public EVrViewRenderMode VrViewRenderMode => RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
+        public EVrFoveationMode VrFoveationMode => RuntimeRenderingHostServiceDefaults.VrFoveationMode;
+        public EVrFoveationQualityPreset VrFoveationQualityPreset => RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
+        public bool VrFoveationRequireRequested => RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
         public bool IsInVR => false;
         public bool IsOpenXRActive => false;
         public bool VrMirrorComposeFromEyeTextures => false;
+        public bool VrCopyEyePreviewTextures => false;
         public Vector2 VrFoveationCenterUv => new(0.5f, 0.5f);
         public float VrFoveationInnerRadius => 0.35f;
         public float VrFoveationOuterRadius => 0.85f;

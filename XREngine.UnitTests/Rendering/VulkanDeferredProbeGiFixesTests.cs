@@ -171,7 +171,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
         string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
         string rendererStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
 
-        descriptorSource.ShouldContain("_program?.AddBoundBufferResourceFingerprint(ref hash)");
+        descriptorSource.ShouldContain("ComputeReferencedProgramBufferResourceFingerprint(bindings)");
         descriptorSource.ShouldContain("TryResolvePipelineResourceBuffer(binding, out buffer)");
         descriptorSource.ShouldContain("pipeline.TryGetBuffer(name, out XRDataBuffer? buffer)");
         descriptorSource.ShouldContain("IsDescriptorCompatibleBufferTarget(descriptorType, buffer.Target)");

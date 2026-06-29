@@ -28,7 +28,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (passIndex == int.MinValue)
             {
-                _state.RegisterMemoryBarrier(mask);
+                ActiveState.RegisterMemoryBarrier(mask);
                 MarkCommandBuffersDirty();
                 return;
             }
@@ -37,21 +37,21 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void ColorMask(bool red, bool green, bool blue, bool alpha)
         {
-            _state.SetColorMask(red, green, blue, alpha);
+            ActiveState.SetColorMask(red, green, blue, alpha);
         }
 
         public override void ClearColor(ColorF4 color)
         {
-            _state.SetClearColor(color);
+            ActiveState.SetClearColor(color);
         }
 
         public override void CropRenderArea(BoundingRectangle region)
         {
-            _state.SetScissor(region);
+            ActiveState.SetScissor(region);
         }
         public override void SetRenderArea(BoundingRectangle region)
         {
-            _state.SetViewport(region);
+            ActiveState.SetViewport(region);
         }
 
         public override bool SetIndexedViewportScissors(
@@ -66,7 +66,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            _state.SetIndexedViewportScissors(viewports[..count], scissors[..count]);
+            ActiveState.SetIndexedViewportScissors(viewports[..count], scissors[..count]);
             MarkCommandBuffersDirty();
             return true;
         }
@@ -76,7 +76,7 @@ namespace XREngine.Rendering.Vulkan
             if (count <= 0)
                 return;
 
-            _state.ClearIndexedViewportScissors();
+            ActiveState.ClearIndexedViewportScissors();
             MarkCommandBuffersDirty();
         }
 
@@ -1024,6 +1024,22 @@ namespace XREngine.Rendering.Vulkan
                     }
                 }
                 recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+            }
+
+            if (_commandBufferDirtyFlags is not null &&
+                imageIndex < (uint)_commandBufferDirtyFlags.Length &&
+                _commandBufferDirtyFlags[imageIndex])
+            {
+                currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.DirtyBeforeSubmit",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Command buffer for image {0} was dirtied after recording and before submit. Recreating swapchain to avoid submitting stale GPU resources.",
+                    imageIndex);
+
+                RecreateSwapchainImmediately("Command buffer dirtied before submit - recovering timeline/present state");
+                return;
             }
 
             // 5. Submit the command buffer with timeline sync.

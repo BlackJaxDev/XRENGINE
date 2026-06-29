@@ -357,7 +357,7 @@ namespace XREngine.Rendering.Vulkan
                 : $"registry=fbo({string.Join(", ", context.ResourceRegistry.FrameBufferRecords.Keys.Take(8))}) tex({string.Join(", ", context.ResourceRegistry.TextureRecords.Keys.Take(8))}) buf({string.Join(", ", context.ResourceRegistry.BufferRecords.Keys.Take(8))})";
 
             string physicalSummary =
-                $"plannerRev={ResourcePlannerRevision} logicalImages={_resourceAllocator.LogicalTextureAllocations.Count} physicalImages={_resourceAllocator.EnumeratePhysicalGroups().Count()} logicalBuffers={_resourceAllocator.LogicalBufferAllocations.Count} physicalBuffers={_resourceAllocator.EnumeratePhysicalBufferGroups().Count()}";
+                $"plannerRev={ResourcePlannerRevision} logicalImages={ResourceAllocator.LogicalTextureAllocations.Count} physicalImages={ResourceAllocator.EnumeratePhysicalGroups().Count()} logicalBuffers={ResourceAllocator.LogicalBufferAllocations.Count} physicalBuffers={ResourceAllocator.EnumeratePhysicalBufferGroups().Count()}";
 
             string failureSummary = firstFailure is { } failure
                 ? $"firstFailure={failure.OpType} pass={failure.PassIndex} pipe={failure.PipelineIdentity} vp={failure.ViewportIdentity} target={failure.TargetName} material={failure.MaterialName} shader={failure.ShaderName} message={failure.Message}"

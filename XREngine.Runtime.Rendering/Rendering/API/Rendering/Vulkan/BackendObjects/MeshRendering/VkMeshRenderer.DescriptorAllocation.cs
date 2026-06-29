@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
@@ -19,7 +21,15 @@ public unsafe partial class VulkanRenderer
             public ulong SchemaFingerprint;
             public ulong ResourceFingerprint;
             public string ResourceFingerprintDetails = string.Empty;
+            public readonly Dictionary<FrameSourceDescriptorWriteKey, ulong> FrameSourceDescriptorWriteSignatures = new();
         }
+
+        private readonly record struct FrameSourceDescriptorWriteKey(
+            int DescriptorSlotIndex,
+            uint Set,
+            uint Binding,
+            DescriptorType DescriptorType,
+            uint DescriptorCount);
     }
 }
 

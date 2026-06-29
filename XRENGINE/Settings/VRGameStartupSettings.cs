@@ -11,6 +11,7 @@ namespace XREngine
         private (Environment.SpecialFolder folder, string relativePath)[] _gameSearchPaths = [];
         private string _gameName = "XREngine Game";
         private EVRRuntime _vrRuntime = EVRRuntime.Auto;
+        private EVrViewRenderMode _vrViewRenderMode = EVrViewRenderMode.SequentialViews;
         private bool _enableOpenXrVulkanParallelRendering = true;
 
         /// <summary>
@@ -47,8 +48,14 @@ namespace XREngine
             set => SetField(ref _vrRuntime, value);
         }
 
+        public EVrViewRenderMode VrViewRenderMode
+        {
+            get => _vrViewRenderMode;
+            set => SetField(ref _vrViewRenderMode, value);
+        }
+
         /// <summary>
-        /// If true, OpenXR Vulkan path may run per-eye visibility buffer generation in parallel when the renderer supports multiple graphics queues.
+        /// Legacy allow gate for the OpenXR Vulkan parallel command-buffer recording mode.
         /// </summary>
         public bool EnableOpenXrVulkanParallelRendering
         {

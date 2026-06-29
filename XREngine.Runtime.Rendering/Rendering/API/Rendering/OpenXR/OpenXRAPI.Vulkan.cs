@@ -138,18 +138,34 @@ public unsafe partial class OpenXRAPI
         // Check if multiple graphics queues are supported
         bool supportsMultiQueue = renderer.SupportsMultipleGraphicsQueues();
         bool projectAllowsParallel = RuntimeRenderingHostServices.Current.EnableOpenXrVulkanParallelRendering;
+        VrViewRenderModeResolution viewRenderMode = VrViewRenderModeResolver.Resolve(
+            ERenderLibrary.Vulkan,
+            RuntimeRenderingHostServices.Current.VrViewRenderMode,
+            projectAllowsParallel);
+        RecordSmokeViewRenderModeResolution(viewRenderMode);
 
-        if (supportsMultiQueue && projectAllowsParallel)
+        if (!viewRenderMode.IsSupported)
         {
-            Debug.Vulkan("Multiple graphics queues are supported; OpenXR uses combined stereo visibility collection and serial swapchain submission.");
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.ViewRenderMode.Unsupported.{viewRenderMode.RequestedMode}",
+                TimeSpan.FromSeconds(5),
+                "[OpenXR] {0}",
+                viewRenderMode.Diagnostic ?? $"Unsupported VR.ViewRenderMode={viewRenderMode.RequestedMode}.");
+        }
+        else if (viewRenderMode.EffectiveMode == EVrViewRenderMode.ParallelCommandBufferRecording && supportsMultiQueue)
+        {
+            Debug.Vulkan("VR.ViewRenderMode=ParallelCommandBufferRecording selected; Vulkan reports multiple graphics queues.");
         }
         else
         {
-            if (!projectAllowsParallel)
-                Debug.Vulkan("OpenXR Vulkan parallel eye rendering disabled by game startup settings.");
-            else
-                Debug.Vulkan("Multiple graphics queues not supported - using single queue rendering");
+            Debug.Vulkan(
+                "VR.ViewRenderMode={0}; Vulkan multiple graphics queues supported={1}; OpenXR Vulkan parallel gate={2}.",
+                viewRenderMode.EffectiveMode,
+                supportsMultiQueue,
+                projectAllowsParallel);
         }
+
+        _ = TryResolveOpenXrFoveation(ERenderLibrary.Vulkan, out _);
 
         GraphicsBindingVulkanKHR vkBinding = default;
         void* graphicsBinding = null;
@@ -190,6 +206,33 @@ public unsafe partial class OpenXRAPI
 
             throw new OpenXrGraphicsSessionException(result, message);
         }
+    }
+
+    private bool TryResolveOpenXrViewRenderModeForCurrentBackend(out VrViewRenderModeResolution resolution)
+    {
+        ERenderLibrary backend = Window?.Renderer is VulkanRenderer
+            ? ERenderLibrary.Vulkan
+            : ERenderLibrary.OpenGL;
+
+        resolution = VrViewRenderModeResolver.Resolve(
+            backend,
+            RuntimeRenderingHostServices.Current.VrViewRenderMode,
+            RuntimeRenderingHostServices.Current.EnableOpenXrVulkanParallelRendering);
+        RecordSmokeViewRenderModeResolution(resolution);
+
+        if (resolution.IsSupported)
+            return true;
+
+        Debug.RenderingWarningEvery(
+            $"OpenXR.ViewRenderMode.Unsupported.{backend}.{resolution.RequestedMode}",
+            TimeSpan.FromSeconds(5),
+            "[OpenXR] Unsupported VR.ViewRenderMode={0} for backend {1}. {2}",
+            resolution.RequestedMode,
+            backend,
+            resolution.Diagnostic ?? "No fallback was applied.");
+        RecordSmokeFailureOnce(
+            $"Unsupported VR.ViewRenderMode={resolution.RequestedMode} for backend {backend}. {resolution.Diagnostic ?? "No fallback was applied."}");
+        return false;
     }
 
     /// <summary>
@@ -436,6 +479,7 @@ public unsafe partial class OpenXRAPI
                     resourcePlannerStateIndex: (int)viewIndex,
                     openXrViewIndex: viewIndex,
                     openXrImageIndex: imageIndex,
+                    foveation: CreateOpenXrEyeFoveationContext(viewIndex),
                     emitFrameOps: () =>
                     {
                         eyeViewport.Render(null, _openXrFrameWorld, eyeCamera, shadowPass: false, forcedMaterial: null);
@@ -586,6 +630,15 @@ public unsafe partial class OpenXRAPI
         if (OpenXrDebugRenderRightThenLeft || OpenXrVulkanSerialEyeSubmit)
             return false;
 
+        if (!TryResolveOpenXrViewRenderModeForCurrentBackend(out VrViewRenderModeResolution modeResolution))
+        {
+            handled = true;
+            return false;
+        }
+
+        if (modeResolution.EffectiveMode == EVrViewRenderMode.SequentialViews)
+            return false;
+
         uint leftWidth = _viewConfigViews[0].RecommendedImageRectWidth;
         uint leftHeight = _viewConfigViews[0].RecommendedImageRectHeight;
         uint rightWidth = _viewConfigViews[1].RecommendedImageRectWidth;
@@ -602,21 +655,54 @@ public unsafe partial class OpenXRAPI
 
         try
         {
-            if (ShouldPrewarmVulkanEyeResources(0))
-                PrewarmVulkanEyeResources(0);
-            if (ShouldPrewarmVulkanEyeResources(1))
-                PrewarmVulkanEyeResources(1);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.Prewarm"))
+            {
+                if (ShouldPrewarmVulkanEyeResources(0))
+                    PrewarmVulkanEyeResources(0);
+                if (ShouldPrewarmVulkanEyeResources(1))
+                    PrewarmVulkanEyeResources(1);
+            }
 
-            if (!AcquireAndWaitOpenXrEyeImage(0, ref leftImageIndex, ref leftAcquired, frameNo))
-                return false;
-            if (!AcquireAndWaitOpenXrEyeImage(1, ref rightImageIndex, ref rightAcquired, frameNo))
-                return false;
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.AcquireWaitLeft"))
+            {
+                if (!AcquireAndWaitOpenXrEyeImage(0, ref leftImageIndex, ref leftAcquired, frameNo))
+                    return false;
+            }
 
-            if (!TryRenderVulkanEyeBatchToSwapchains(renderer, leftImageIndex, rightImageIndex))
-                return false;
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.AcquireWaitRight"))
+            {
+                if (!AcquireAndWaitOpenXrEyeImage(1, ref rightImageIndex, ref rightAcquired, frameNo))
+                    return false;
+            }
 
-            FillProjectionView(0, projectionViews);
-            FillProjectionView(1, projectionViews);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RenderSwapchains"))
+            {
+                bool rendered = modeResolution.EffectiveMode switch
+                {
+                    EVrViewRenderMode.SinglePassStereo => TryRenderVulkanEyeSinglePassStereoToSwapchains(
+                        renderer,
+                        leftImageIndex,
+                        rightImageIndex),
+                    EVrViewRenderMode.ParallelCommandBufferRecording => TryRenderVulkanEyeParallelCommandBufferRecordingToSwapchains(
+                        renderer,
+                        leftImageIndex,
+                        rightImageIndex),
+                    _ => TryRenderVulkanEyeBatchToSwapchains(
+                        renderer,
+                        leftImageIndex,
+                        rightImageIndex,
+                        modeResolution.EffectiveMode),
+                };
+
+                if (!rendered)
+                    return false;
+            }
+
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.FillProjectionViews"))
+            {
+                FillProjectionView(0, projectionViews);
+                FillProjectionView(1, projectionViews);
+            }
             return true;
         }
         catch (Exception ex)
@@ -626,8 +712,11 @@ public unsafe partial class OpenXRAPI
         }
         finally
         {
-            ReleaseOpenXrEyeImageIfAcquired(1, rightAcquired, frameNo);
-            ReleaseOpenXrEyeImageIfAcquired(0, leftAcquired, frameNo);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.ReleaseEyes"))
+            {
+                ReleaseOpenXrEyeImageIfAcquired(1, rightAcquired, frameNo);
+                ReleaseOpenXrEyeImageIfAcquired(0, leftAcquired, frameNo);
+            }
         }
     }
 
@@ -683,10 +772,47 @@ public unsafe partial class OpenXRAPI
             Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Release(batch) => {releaseResult}");
     }
 
-    private bool TryRenderVulkanEyeBatchToSwapchains(
+    private bool TryRenderVulkanEyeSinglePassStereoToSwapchains(
         VulkanRenderer renderer,
         uint leftImageIndex,
         uint rightImageIndex)
+    {
+        Debug.VulkanEvery(
+            $"OpenXR.Vulkan.ViewRenderMode.SinglePassStereo.{GetHashCode()}",
+            TimeSpan.FromSeconds(2),
+            "[OpenXR] VR.ViewRenderMode=SinglePassStereo selected; using explicit stereo compatibility path over per-eye OpenXR swapchains.");
+
+        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.SinglePassStereo.RenderSwapchains"))
+            return TryRenderVulkanEyeBatchToSwapchains(
+                renderer,
+                leftImageIndex,
+                rightImageIndex,
+                EVrViewRenderMode.SinglePassStereo);
+    }
+
+    private bool TryRenderVulkanEyeParallelCommandBufferRecordingToSwapchains(
+        VulkanRenderer renderer,
+        uint leftImageIndex,
+        uint rightImageIndex)
+    {
+        Debug.VulkanEvery(
+            $"OpenXR.Vulkan.ViewRenderMode.ParallelCommandBufferRecording.{GetHashCode()}",
+            TimeSpan.FromSeconds(2),
+            "[OpenXR] VR.ViewRenderMode=ParallelCommandBufferRecording selected; left/right eye primary recording uses the explicit worker-backed parallel path.");
+
+        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.RenderSwapchains"))
+            return TryRenderVulkanEyeBatchToSwapchains(
+                renderer,
+                leftImageIndex,
+                rightImageIndex,
+                EVrViewRenderMode.ParallelCommandBufferRecording);
+    }
+
+    private bool TryRenderVulkanEyeBatchToSwapchains(
+        VulkanRenderer renderer,
+        uint leftImageIndex,
+        uint rightImageIndex,
+        EVrViewRenderMode viewRenderMode)
     {
         SwapchainImageVulkan2KHR* leftImages = _swapchainImagesVK[0];
         SwapchainImageVulkan2KHR* rightImages = _swapchainImagesVK[1];
@@ -697,9 +823,12 @@ public unsafe partial class OpenXRAPI
 
         uint width = _viewConfigViews[0].RecommendedImageRectWidth;
         uint height = _viewConfigViews[0].RecommendedImageRectHeight;
-        if (OpenXrVulkanMirrorFbo)
-            EnsureVulkanEyeMirrorTargets(renderer, width, height);
-        EnsureOpenXrPreviewTargets(renderer, width, height);
+        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.EnsureTargets"))
+        {
+            if (OpenXrVulkanMirrorFbo)
+                EnsureVulkanEyeMirrorTargets(renderer, width, height);
+            EnsureOpenXrPreviewTargets(renderer, width, height);
+        }
 
         if (OpenXrDebugClearOnly)
         {
@@ -842,6 +971,7 @@ public unsafe partial class OpenXRAPI
                 ResourcePlannerStateIndex: 0,
                 OpenXrViewIndex: 0,
                 OpenXrImageIndex: leftImageIndex,
+                Foveation: CreateOpenXrEyeFoveationContext(0),
                 EmitFrameOps: () =>
                 {
                     ApplyOpenXrEyePoseForRenderThread(0);
@@ -855,18 +985,30 @@ public unsafe partial class OpenXRAPI
                 ResourcePlannerStateIndex: 1,
                 OpenXrViewIndex: 1,
                 OpenXrImageIndex: rightImageIndex,
+                Foveation: CreateOpenXrEyeFoveationContext(1),
                 EmitFrameOps: () =>
                 {
                     ApplyOpenXrEyePoseForRenderThread(1);
                     rightViewport.Render(null, _openXrFrameWorld, rightCamera, shadowPass: false, forcedMaterial: null);
                 });
 
-            bool directRendered = renderer.TryRenderOpenXrEyeSwapchains(leftRequest, rightRequest);
+            bool directRendered;
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RenderDirectSwapchains"))
+            {
+                directRendered = viewRenderMode switch
+                {
+                    EVrViewRenderMode.SinglePassStereo => renderer.TryRenderOpenXrEyeSwapchainsSinglePassStereo(leftRequest, rightRequest),
+                    EVrViewRenderMode.ParallelCommandBufferRecording => renderer.TryRenderOpenXrEyeSwapchainsParallelCommandBufferRecording(leftRequest, rightRequest),
+                    _ => renderer.TryRenderOpenXrEyeSwapchains(leftRequest, rightRequest),
+                };
+            }
             if (!directRendered)
                 return false;
 
-            PublishVulkanEyeSwapchain(renderer, leftImage, (VkFormat)leftFormat, extent, 0, leftImageIndex, width, height);
-            PublishVulkanEyeSwapchain(renderer, rightImage, (VkFormat)rightFormat, extent, 1, rightImageIndex, width, height);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.PublishLeft"))
+                PublishVulkanEyeSwapchain(renderer, leftImage, (VkFormat)leftFormat, extent, 0, leftImageIndex, width, height);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.PublishRight"))
+                PublishVulkanEyeSwapchain(renderer, rightImage, (VkFormat)rightFormat, extent, 1, rightImageIndex, width, height);
             MarkVulkanEyeResourceWarmupComplete(0);
             MarkVulkanEyeResourceWarmupComplete(1);
             return true;
@@ -940,11 +1082,21 @@ public unsafe partial class OpenXRAPI
             previewTexture,
             $"preview eye {viewIndex}",
             flipY: false);
+        bool copiedDesktopMirror = false;
+        if (ShouldCopyVulkanEyeToDesktopMirror(viewIndex))
+        {
+            EnsureViewportMirrorTargets(renderer, width, height);
+            copiedDesktopMirror = renderer.TryCopyOpenXrEyeMirrorTexture(
+                sourceTexture,
+                _viewportMirrorColor,
+                $"desktop mirror eye {viewIndex}",
+                flipY: false);
+        }
 
         if (VulkanCaptureEyeOutputs)
-            LogVulkanEyeMirrorPublish(sourceTexture, previewTexture, viewIndex, imageIndex, width, height, copiedPreview);
+            LogVulkanEyeMirrorPublish(sourceTexture, previewTexture, viewIndex, imageIndex, width, height, copiedPreview, copiedDesktopMirror);
 
-        if (copiedPreview)
+        if (copiedPreview || copiedDesktopMirror)
             RecordSmokeDesktopMirrorComposed();
     }
 
@@ -955,17 +1107,19 @@ public unsafe partial class OpenXRAPI
         uint imageIndex,
         uint width,
         uint height,
-        bool previewCopied)
+        bool previewCopied,
+        bool desktopMirrorCopied = false)
     {
         if (!VulkanCaptureEyeOutputs)
             return;
 
         Debug.Vulkan(
-            "[OpenXR] Vulkan eye mirror eye={0} swapchainImage={1} source='{2}' previewCopied={3} previewFlippedY=False preview='{4}' extent={5}x{6}",
+            "[OpenXR] Vulkan eye mirror eye={0} swapchainImage={1} source='{2}' previewCopied={3} desktopMirrorCopied={4} previewFlippedY=False preview='{5}' extent={6}x{7}",
             viewIndex,
             imageIndex,
             sourceTexture?.Name ?? "<none>",
             previewCopied,
+            desktopMirrorCopied,
             previewTexture?.Name ?? "<none>",
             width,
             height);
@@ -991,28 +1145,48 @@ public unsafe partial class OpenXRAPI
                 previewTexture,
                 $"preview eye {viewIndex}",
                 flipY: false);
+        bool copiedDesktopMirror = false;
+        if (ShouldCopyVulkanEyeToDesktopMirror(viewIndex))
+        {
+            EnsureViewportMirrorTargets(renderer, width, height);
+            copiedDesktopMirror = renderer.TryCopyOpenXrEyeSwapchainImageToTexture(
+                sourceImage,
+                sourceFormat,
+                sourceExtent,
+                _viewportMirrorColor,
+                $"desktop mirror eye {viewIndex}",
+                flipY: false);
+        }
 
         if (VulkanCaptureEyeOutputs)
         {
             Debug.Vulkan(
-                "[OpenXR] Vulkan eye swapchain eye={0} swapchainImage={1} source=0x{2:X} previewCopied={3} previewFlippedY=False preview='{4}' extent={5}x{6} path=direct-swapchain",
+                "[OpenXR] Vulkan eye swapchain eye={0} swapchainImage={1} source=0x{2:X} previewCopied={3} desktopMirrorCopied={4} previewFlippedY=False preview='{5}' mirror='{6}' extent={7}x{8} path=direct-swapchain",
                 viewIndex,
                 imageIndex,
                 sourceImage.Handle,
                 copiedPreview,
+                copiedDesktopMirror,
                 previewTexture?.Name ?? "<none>",
+                _viewportMirrorColor?.Name ?? "<none>",
                 width,
                 height);
         }
 
-        if (copiedPreview)
+        if (copiedPreview || copiedDesktopMirror)
             RecordSmokeDesktopMirrorComposed();
     }
 
     private static bool ShouldCopyDirectVulkanEyeSwapchainPreview()
         => VulkanCaptureEyeOutputs ||
+           RuntimeRenderingHostServices.Current.VrCopyEyePreviewTextures ||
            (RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR &&
             RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures);
+
+    private static bool ShouldCopyVulkanEyeToDesktopMirror(uint viewIndex)
+        => viewIndex == 0 &&
+           RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR &&
+           RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures;
 
     private void PrewarmVulkanEyeResources(uint viewIndex)
     {

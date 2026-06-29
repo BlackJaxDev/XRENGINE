@@ -236,17 +236,19 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
+            int commandChainSecondaryCount = InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease();
             MarkCommandBuffersDirty();
 
             Debug.VulkanEvery(
                 $"Vulkan.ResourceDestroy.ReleaseDescriptorReferences.{reason}",
                 TimeSpan.FromSeconds(1),
-                "[Vulkan] Released descriptor references before physical resource destruction: reason={0} meshRenderers={1} materials={2} computeCachedPools={3} computeTransientPools={4}.",
+                "[Vulkan] Released descriptor references before physical resource destruction: reason={0} meshRenderers={1} materials={2} computeCachedPools={3} computeTransientPools={4} commandChainSecondaries={5}.",
                 reason,
                 meshRendererCount,
                 materialCount,
                 computeCachedPoolCount,
-                computeTransientPoolCount);
+                computeTransientPoolCount,
+                commandChainSecondaryCount);
         }
 
         /// <summary>
@@ -615,8 +617,11 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (r.PrimaryView.Handle != 0)
                 {
-                    Api!.DestroyImageView(device, r.PrimaryView, null);
-                    destroyedViews++;
+                    if (TryBeginDestroyImageView(r.PrimaryView, "DrainRetiredImages.PrimaryView"))
+                    {
+                        Api!.DestroyImageView(device, r.PrimaryView, null);
+                        destroyedViews++;
+                    }
                 }
                 if (r.AttachmentViews is not null)
                 {
@@ -624,8 +629,11 @@ namespace XREngine.Rendering.Vulkan
                     {
                         if (v.Handle != 0)
                         {
-                            Api!.DestroyImageView(device, v, null);
-                            destroyedViews++;
+                            if (TryBeginDestroyImageView(v, "DrainRetiredImages.AttachmentView"))
+                            {
+                                Api!.DestroyImageView(device, v, null);
+                                destroyedViews++;
+                            }
                         }
                     }
                 }

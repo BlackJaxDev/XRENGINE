@@ -38,7 +38,7 @@ namespace XREngine
                         CaptureActiveTextureBindingRung(),
                         CaptureActiveStereoMode(),
                         CaptureActiveRenderBackend(),
-                        Engine.EffectiveSettings.EnableGpuIndirectValidationLogging || Vulkan.VulkanValidationMessageCountCurrentFrame > 0,
+                        RuntimeEngine.Rendering.State.IsVulkan && RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled,
                         IsDebugOutputEnabled(),
                         gpuTimestampsDenseMode);
                     if (gpuTimestampsDenseMode)
@@ -98,7 +98,7 @@ namespace XREngine
                     if (!Engine.VRState.IsInVR && !RuntimeEngine.Rendering.State.IsStereoPass)
                         return "mono";
 
-                    if (Engine.Rendering.Settings.RenderVRSinglePassStereo)
+                    if (Engine.Rendering.Settings.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo)
                     {
                         if (RuntimeEngine.Rendering.State.HasVulkanMultiView)
                             return "single-pass-vulkan-multiview";

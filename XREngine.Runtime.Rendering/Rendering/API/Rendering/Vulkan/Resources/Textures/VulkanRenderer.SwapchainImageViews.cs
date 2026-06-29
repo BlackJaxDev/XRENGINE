@@ -13,7 +13,7 @@ public unsafe partial class VulkanRenderer
 
         foreach (var imageView in swapChainImageViews)
         {
-            if (imageView.Handle != 0)
+            if (imageView.Handle != 0 && TryBeginDestroyImageView(imageView, "DestroySwapchainImageViews"))
                 Api!.DestroyImageView(device, imageView, null);
         }
 
@@ -52,6 +52,8 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.CreateImageView(device, ref createInfo, null, out swapChainImageViews[i]) != Result.Success)
                 throw new Exception("Failed to create image views.");
+
+            TrackLiveImageView(swapChainImageViews[i], "Swapchain.Color");
         }
     }
 }

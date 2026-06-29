@@ -2103,6 +2103,7 @@ internal static partial class RuntimeEngine
             public static bool IsNVIDIA { get; internal set; }
             public static bool IsIntel { get; internal set; }
             public static bool IsVulkan { get; internal set; }
+            public static bool VulkanValidationLayersEnabled { get; internal set; }
             public static bool HasNvRayTracing { get; internal set; }
             public static bool HasVulkanRayTracing { get; internal set; }
             public static bool HasVulkanMemoryDecompression { get; internal set; }

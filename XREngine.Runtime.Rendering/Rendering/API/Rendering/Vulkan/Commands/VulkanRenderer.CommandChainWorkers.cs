@@ -201,7 +201,6 @@ public unsafe partial class VulkanRenderer
         if (pool.Handle == 0 || !destroyed.Add(pool.Handle))
             return;
 
-        if (!_deviceLost)
-            Api!.DestroyCommandPool(device, pool, null);
+        Api!.DestroyCommandPool(device, pool, null);
     }
 }
