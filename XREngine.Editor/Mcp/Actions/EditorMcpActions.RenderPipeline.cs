@@ -12,6 +12,7 @@ using XREngine.Core;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Editor.Mcp
 {
@@ -135,6 +136,7 @@ namespace XREngine.Editor.Mcp
                     PipelineCaptureOrientation orientation = ResolvePipelineCaptureOrientation(renderer, window, flipVertically);
                     PipelineTextureCaptureResult result = CapturePipelineTexture(
                         renderer,
+                        viewport,
                         viewport.RenderPipelineInstance,
                         textureName,
                         path,
@@ -412,6 +414,163 @@ namespace XREngine.Editor.Mcp
             }
         }
 
+        [XRMcp(Name = "capture_openxr_desktop_mirror_texture", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Capture the latest OpenXR desktop mirror texture and report pixel statistics.")]
+        public static async Task<McpToolResponse> CaptureOpenXrDesktopMirrorTextureAsync(
+            McpToolContext context,
+            [McpName("window_index"), Description("Optional window index to use for render-thread scheduling.")] int windowIndex = 0,
+            [McpName("viewport_index"), Description("Optional viewport index to use for render-thread scheduling.")] int viewportIndex = 0,
+            [McpName("output_dir"), Description("Optional directory to write the texture capture into.")] string? outputDir = null,
+            [McpName("mip_level"), Description("Mip level to capture.")] int mipLevel = 0,
+            [McpName("layer_index"), Description("Array/cube layer index to capture.")] int layerIndex = 0,
+            [McpName("normalize"), Description("Normalize RGB values to the captured min/max range before writing.")] bool normalize = false,
+            [McpName("flip_vertically"), Description("Optional override for vertical export orientation. Omit for automatic render API + clip-space policy handling.")] bool? flipVertically = null,
+            [McpName("preserve_alpha"), Description("Preserve captured alpha in the PNG. Defaults to opaque output for easier inspection.")] bool preserveAlpha = false,
+            [McpName("output_format"), Description("Output format: png, exr, or hdr. PNG is LDR; EXR/HDR preserve direct HDR values.")] string outputFormat = "png",
+            [McpName("tonemap"), Description("Optional PNG LDR tonemap: Linear, Gamma, Clip, Reinhard, Hable, Mobius, ACES, Neutral, Filmic, AgX, or GT7. Omit to keep clamp/normalize debug output.")] string? tonemap = null,
+            [McpName("exposure"), Description("Exposure multiplier used when tonemap is supplied.")] float exposure = 1.0f,
+            [McpName("gamma"), Description("Gamma used by Gamma tonemapping and optional sRGB encoding.")] float gamma = 2.2f,
+            [McpName("mobius_transition"), Description("Mobius transition value used by Mobius tonemapping.")] float mobiusTransition = 0.6f,
+            [McpName("encode_srgb"), Description("For tonemapped PNG output, encode display-linear values to sRGB/gamma. Defaults on.")] bool encodeSrgb = true,
+            CancellationToken token = default)
+        {
+            if (!TryParsePipelineCaptureFormat(outputFormat, out PipelineTextureOutputFormat format, out string formatFailure))
+                return new McpToolResponse(formatFailure, isError: true);
+
+            ETonemappingType? tonemapType = null;
+            if (!string.IsNullOrWhiteSpace(tonemap))
+            {
+                if (format != PipelineTextureOutputFormat.Png)
+                    return new McpToolResponse("tonemap is only valid with output_format='png'. Use output_format='exr' or 'hdr' for direct HDR export.", isError: true);
+
+                if (!Enum.TryParse(tonemap, ignoreCase: true, out ETonemappingType parsedTonemap))
+                    return new McpToolResponse($"Unsupported tonemap '{tonemap}'. Supported values: {string.Join(", ", Enum.GetNames<ETonemappingType>())}.", isError: true);
+
+                tonemapType = parsedTonemap;
+            }
+
+            XRTexture2D? texture = Engine.VRState.OpenXRApi?.DesktopMirrorTexture;
+            if (texture is null)
+                return new McpToolResponse("OpenXR desktop mirror texture is not available.", isError: true);
+
+            XRViewport? viewport = ResolveViewport(context.WorldInstance, null, windowIndex, viewportIndex);
+            if (viewport is null)
+                return new McpToolResponse("No viewport found.", isError: true);
+
+            XRWindow? window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+            if (window is null)
+                return new McpToolResponse("No window found for the target viewport.", isError: true);
+
+            string folder = outputDir ?? Path.Combine(Environment.CurrentDirectory, "McpCaptures", "OpenXR");
+            string fileName = $"OpenXRDesktopMirror_{DateTime.Now:yyyyMMdd_HHmmss}.{GetPipelineCaptureExtension(format)}";
+            string path = Path.Combine(folder, fileName);
+            Utility.EnsureDirPathExists(path);
+
+            var tcs = new TaskCompletionSource<PipelineTextureCaptureResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Action? deferredHandler = null;
+
+            void BeginCapture(AbstractRenderer renderer)
+            {
+                try
+                {
+                    PipelineCaptureOrientation orientation = ResolvePipelineCaptureOrientation(renderer, window, flipVertically);
+                    PipelineTextureCaptureResult result = CaptureTexture(
+                        renderer,
+                        texture,
+                        path,
+                        mipLevel,
+                        layerIndex,
+                        normalize,
+                        orientation,
+                        preserveAlpha,
+                        format,
+                        tonemapType,
+                        exposure,
+                        gamma,
+                        mobiusTransition,
+                        encodeSrgb);
+                    tcs.TrySetResult(result);
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
+            }
+
+            void ScheduleCaptureOnRenderThread()
+            {
+                if (AbstractRenderer.Current is { } currentRenderer)
+                {
+                    BeginCapture(currentRenderer);
+                    return;
+                }
+
+                int captureStarted = 0;
+                deferredHandler = () =>
+                {
+                    var renderer = AbstractRenderer.Current;
+                    if (renderer is null)
+                        return;
+
+                    if (Interlocked.CompareExchange(ref captureStarted, 1, 0) != 0)
+                        return;
+
+                    window.RenderViewportsCallback -= deferredHandler;
+                    BeginCapture(renderer);
+                };
+
+                window.RenderViewportsCallback += deferredHandler;
+            }
+
+            if (Engine.IsRenderThread)
+                ScheduleCaptureOnRenderThread();
+            else
+                Engine.InvokeOnMainThread(ScheduleCaptureOnRenderThread, "MCP: Capture OpenXR desktop mirror texture", executeNowIfAlreadyMainThread: true);
+
+            using var reg = token.Register(() =>
+            {
+                if (deferredHandler is not null)
+                    window.RenderViewportsCallback -= deferredHandler;
+
+                tcs.TrySetCanceled(token);
+            });
+
+            try
+            {
+                PipelineTextureCaptureResult result = await tcs.Task;
+                return new McpToolResponse(
+                    $"Captured OpenXR desktop mirror texture to '{result.Path}'.",
+                    new
+                    {
+                        texture_name = texture.Name,
+                        path = result.Path,
+                        width = result.Width,
+                        height = result.Height,
+                        mip_level = mipLevel,
+                        layer_index = layerIndex,
+                        output_format = format.ToString().ToLowerInvariant(),
+                        normalized = normalize,
+                        flipped_vertically = result.Orientation.FlipVertically,
+                        auto_flip_vertically = result.Orientation.AutoFlipVertically,
+                        flip_vertically_override = result.Orientation.OverrideRequested,
+                        render_backend = result.Orientation.Backend.ToString(),
+                        clip_space_y_direction = result.Orientation.ClipSpaceYDirection.ToString(),
+                        framebuffer_texture_y_direction = result.Orientation.FramebufferTextureYDirection.ToString(),
+                        preserve_alpha = preserveAlpha,
+                        tonemap = tonemapType?.ToString(),
+                        exposure,
+                        gamma,
+                        mobius_transition = mobiusTransition,
+                        encode_srgb = encodeSrgb,
+                        stats = result.Stats,
+                    });
+            }
+            catch (Exception ex)
+            {
+                return new McpToolResponse($"Failed to capture OpenXR desktop mirror texture: {ex.Message}", isError: true);
+            }
+        }
+
         private static object DescribeTextureRecord(string name, RenderTextureResource record)
         {
             XRTexture? texture = record.Instance;
@@ -506,6 +665,7 @@ namespace XREngine.Editor.Mcp
 
         private static PipelineTextureCaptureResult CapturePipelineTexture(
             AbstractRenderer renderer,
+            XRViewport viewport,
             XRRenderPipelineInstance instance,
             string textureName,
             string path,
@@ -526,6 +686,10 @@ namespace XREngine.Editor.Mcp
 
             if (record.Instance is not XRTexture texture)
                 throw new InvalidOperationException($"Texture resource '{textureName}' has no live texture instance.");
+
+            using IDisposable? plannerScope = renderer is VulkanRenderer vulkanRenderer
+                ? vulkanRenderer.EnterPipelineResourcePlannerReadbackScope(instance, viewport)
+                : null;
 
             return CaptureTexture(
                 renderer,

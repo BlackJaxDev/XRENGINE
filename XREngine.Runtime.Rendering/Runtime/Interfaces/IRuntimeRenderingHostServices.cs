@@ -1284,9 +1284,18 @@ public interface IRuntimeRenderingHostServices
     bool EnableOpenXrVulkanParallelRendering { get; }
 
     /// <summary>
+    /// Gets the requested VR view rendering strategy.
+    /// </summary>
+    EVrViewRenderMode VrViewRenderMode { get; }
+
+    /// <summary>
     /// Gets whether VR rendering should configure a foveated multi-view view set.
     /// </summary>
     bool EnableVrFoveatedViewSet { get; }
+
+    EVrFoveationMode VrFoveationMode { get; }
+    EVrFoveationQualityPreset VrFoveationQualityPreset { get; }
+    bool VrFoveationRequireRequested { get; }
 
     /// <summary>
     /// Gets whether the host is currently in VR mode.
@@ -1302,6 +1311,11 @@ public interface IRuntimeRenderingHostServices
     /// Gets whether the desktop mirror should compose from eye textures instead of rendering desktop viewports directly.
     /// </summary>
     bool VrMirrorComposeFromEyeTextures { get; }
+
+    /// <summary>
+    /// Gets whether OpenXR eye swapchain output should be copied into preview textures for UI or diagnostics.
+    /// </summary>
+    bool VrCopyEyePreviewTextures { get; }
 
     /// <summary>
     /// Gets the normalized UV center of the VR foveation region.

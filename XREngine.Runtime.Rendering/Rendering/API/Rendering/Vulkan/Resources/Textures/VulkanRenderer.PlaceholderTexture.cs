@@ -188,6 +188,7 @@ public unsafe partial class VulkanRenderer
             Debug.VulkanWarning("[Vulkan] Failed to create placeholder image view.");
             return;
         }
+        TrackLiveImageView(_placeholderImageView, "Placeholder.Texture2D");
 
         // ── Sampler ──────────────────────────────────────────────────────
         SamplerCreateInfo samplerInfo = new()
@@ -279,7 +280,10 @@ public unsafe partial class VulkanRenderer
         };
 
         if (Api!.CreateImageView(device, ref viewInfo, null, out imageView) == Result.Success)
+        {
+            TrackLiveImageView(imageView, "Placeholder.TextureVariant");
             return true;
+        }
 
         Debug.VulkanWarning($"[Vulkan] Failed to create placeholder {viewType} image view.");
         imageView = default;
@@ -353,25 +357,29 @@ public unsafe partial class VulkanRenderer
 
         if (_placeholderImageView.Handle != 0)
         {
-            Api!.DestroyImageView(device, _placeholderImageView, null);
+            if (TryBeginDestroyImageView(_placeholderImageView, "DestroyPlaceholderImageView2D"))
+                Api!.DestroyImageView(device, _placeholderImageView, null);
             _placeholderImageView = default;
         }
 
         if (_placeholderImageView2DArray.Handle != 0)
         {
-            Api!.DestroyImageView(device, _placeholderImageView2DArray, null);
+            if (TryBeginDestroyImageView(_placeholderImageView2DArray, "DestroyPlaceholderImageView2DArray"))
+                Api!.DestroyImageView(device, _placeholderImageView2DArray, null);
             _placeholderImageView2DArray = default;
         }
 
         if (_placeholderImageViewCube.Handle != 0)
         {
-            Api!.DestroyImageView(device, _placeholderImageViewCube, null);
+            if (TryBeginDestroyImageView(_placeholderImageViewCube, "DestroyPlaceholderImageViewCube"))
+                Api!.DestroyImageView(device, _placeholderImageViewCube, null);
             _placeholderImageViewCube = default;
         }
 
         if (_placeholderImageViewCubeArray.Handle != 0)
         {
-            Api!.DestroyImageView(device, _placeholderImageViewCubeArray, null);
+            if (TryBeginDestroyImageView(_placeholderImageViewCubeArray, "DestroyPlaceholderImageViewCubeArray"))
+                Api!.DestroyImageView(device, _placeholderImageViewCubeArray, null);
             _placeholderImageViewCubeArray = default;
         }
 

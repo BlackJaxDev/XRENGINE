@@ -358,6 +358,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (needsRecreate)
                 {
+                    bool replacesExistingBacking = _vkBuffer.HasValue || _vkMemory.HasValue;
                     ulong requestedAllocationBytes = Math.Max((ulong)Data.Length, 1UL);
                     if (!CanAllocateBufferVram(requestedAllocationBytes))
                         return;
@@ -489,6 +490,12 @@ namespace XREngine.Rendering.Vulkan
                     _uploadedByteCount = uploadedContent ? _bufferSize : 0ul;
                     _hasPendingUpload = false;
                     ReportBackendState();
+
+                    if (replacesExistingBacking)
+                    {
+                        Renderer.MarkCommandBuffersDirty("VkDataBufferRecreated");
+                        Renderer.MarkOpenXrPrimaryCommandBufferVariantsDirty();
+                    }
 
                     // Track VRAM allocation only when the backing allocation is recreated.
                     _allocatedVRAMBytes = (long)_bufferSize;

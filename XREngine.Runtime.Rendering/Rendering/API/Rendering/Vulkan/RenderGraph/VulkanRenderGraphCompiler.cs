@@ -215,6 +215,19 @@ public unsafe partial class VulkanRenderer
                         i);
                 }
 
+                bool alreadySorted = true;
+                for (int i = 1; i < opCount; i++)
+                {
+                    if (FrameOpSortKeyComparer.Instance.Compare(sortKeys[i - 1], sortKeys[i]) <= 0)
+                        continue;
+
+                    alreadySorted = false;
+                    break;
+                }
+
+                if (alreadySorted)
+                    return ops;
+
                 Array.Sort(sortKeys, 0, opCount, FrameOpSortKeyComparer.Instance);
                 for (int i = 0; i < opCount; i++)
                     ops[i] = sortKeys[i].Operation;

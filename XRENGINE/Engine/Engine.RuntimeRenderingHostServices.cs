@@ -1126,10 +1126,15 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool RenderWindowsWhileInVR => Engine.Rendering.Settings.RenderWindowsWhileInVR;
     public bool EnableOpenXrVulkanParallelRendering
         => Engine.GameSettings is not IVRGameStartupSettings vrSettings || vrSettings.EnableOpenXrVulkanParallelRendering;
+    public EVrViewRenderMode VrViewRenderMode => Engine.Rendering.Settings.VrViewRenderMode;
     public bool EnableVrFoveatedViewSet => Engine.Rendering.Settings.EnableVrFoveatedViewSet;
+    public EVrFoveationMode VrFoveationMode => Engine.Rendering.Settings.VrFoveationMode;
+    public EVrFoveationQualityPreset VrFoveationQualityPreset => Engine.Rendering.Settings.VrFoveationQualityPreset;
+    public bool VrFoveationRequireRequested => Engine.Rendering.Settings.VrFoveationRequireRequested;
     public bool IsInVR => Engine.VRState.IsInVR;
     public bool IsOpenXRActive => Engine.VRState.IsOpenXRActive;
     public bool VrMirrorComposeFromEyeTextures => Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures;
+    public bool VrCopyEyePreviewTextures => Engine.Rendering.Settings.VrCopyEyePreviewTextures;
     public Vector2 VrFoveationCenterUv => Engine.Rendering.Settings.VrFoveationCenterUv;
     public float VrFoveationInnerRadius => Engine.Rendering.Settings.VrFoveationInnerRadius;
     public float VrFoveationOuterRadius => Engine.Rendering.Settings.VrFoveationOuterRadius;

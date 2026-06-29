@@ -14,6 +14,7 @@ using XREngine.Editor;
 using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
@@ -332,6 +333,12 @@ namespace XREngine.Editor.Mcp
             var pawnNode = mainPawn?.SceneNode;
             var pawnTransform = pawnNode?.Transform;
             var renderArea = Engine.Rendering.State.RenderArea;
+            var activeViewportCommands = activeViewport?.RenderPipelineInstance.MeshRenderCommands;
+            var renderingViewportCommands = viewport?.RenderPipelineInstance.MeshRenderCommands;
+            var activeViewports = Engine
+                .EnumerateActiveViewports(Engine.EViewportEnumerationMode.IncludeVrEyeViewports)
+                .Select(BuildViewportRenderSummary)
+                .ToArray();
 
             var data = new
             {
@@ -352,6 +359,15 @@ namespace XREngine.Editor.Mcp
                 activeViewportIndex = activeViewport?.Index,
                 activeViewportSize = activeViewport is null ? null : new { width = activeViewport.Width, height = activeViewport.Height },
                 activeViewportInternalSize = activeViewport is null ? null : new { width = activeViewport.InternalWidth, height = activeViewport.InternalHeight },
+                activeViewportAutomaticallyCollectVisible = activeViewport?.AutomaticallyCollectVisible,
+                activeViewportAutomaticallySwapBuffers = activeViewport?.AutomaticallySwapBuffers,
+                activeViewportSuppress3DSceneRendering = activeViewport?.Suppress3DSceneRendering,
+                activeViewportCullWithFrustum = activeViewport?.CullWithFrustum,
+                activeViewportCameraCullWithFrustum = activeViewport?.CameraComponent?.CullWithFrustum,
+                activeViewportRenderingCommandCount = activeViewportCommands?.GetRenderingCommandCount(),
+                activeViewportUpdatingCommandCount = activeViewportCommands?.GetUpdatingCommandCount(),
+                activeViewportCommandsAddedCount = activeViewportCommands?.GetCommandsAddedCount(),
+                activeViewportRenderingCommandPasses = BuildRenderCommandPassSummary(activeViewportCommands),
                 activeCameraType = activeCamera?.GetType().FullName,
                 activeCameraNodeId = activeCameraNode?.ID,
                 activeCameraNodeName = activeCameraNode?.Name,
@@ -378,10 +394,120 @@ namespace XREngine.Editor.Mcp
                 renderGraphPassIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex,
                 renderStateCameraType = renderState?.SceneCamera?.GetType().FullName,
                 renderStateViewportIndex = stateViewport?.Index,
-                renderStateViewportSize = stateViewport is null ? null : new { width = stateViewport.Width, height = stateViewport.Height }
+                renderStateViewportSize = stateViewport is null ? null : new { width = stateViewport.Width, height = stateViewport.Height },
+                renderingViewportAutomaticallyCollectVisible = viewport?.AutomaticallyCollectVisible,
+                renderingViewportAutomaticallySwapBuffers = viewport?.AutomaticallySwapBuffers,
+                renderingViewportSuppress3DSceneRendering = viewport?.Suppress3DSceneRendering,
+                renderingViewportCullWithFrustum = viewport?.CullWithFrustum,
+                renderingViewportCameraCullWithFrustum = viewport?.CameraComponent?.CullWithFrustum,
+                renderingViewportRenderingCommandCount = renderingViewportCommands?.GetRenderingCommandCount(),
+                renderingViewportUpdatingCommandCount = renderingViewportCommands?.GetUpdatingCommandCount(),
+                renderingViewportCommandsAddedCount = renderingViewportCommands?.GetCommandsAddedCount(),
+                renderingViewportRenderingCommandPasses = BuildRenderCommandPassSummary(renderingViewportCommands),
+                activeViewports
             };
 
             return Task.FromResult(new McpToolResponse("Retrieved render state.", data));
+        }
+
+        private static object BuildViewportRenderSummary(XRViewport viewport)
+        {
+            RenderCommandCollection ownCommands = viewport.RenderPipelineInstance.MeshRenderCommands;
+            RenderCommandCollection? overrideCommands = viewport.MeshRenderCommandsOverride;
+            RenderCommandCollection activeCommands = overrideCommands ?? ownCommands;
+            XRCamera? activeCamera = viewport.ActiveCamera;
+            TransformBase? activeCameraTransform = activeCamera?.Transform ?? viewport.CameraComponent?.Transform;
+            SceneNode? activeCameraNode = activeCameraTransform?.SceneNode;
+
+            return new
+            {
+                index = viewport.Index,
+                isVrLeftEyeViewport = ReferenceEquals(viewport, Engine.VRState.LeftEyeViewport),
+                isVrRightEyeViewport = ReferenceEquals(viewport, Engine.VRState.RightEyeViewport),
+                isWindowViewport = Engine.Windows.Any(window => window.Viewports.Contains(viewport)),
+                width = viewport.Width,
+                height = viewport.Height,
+                internalWidth = viewport.InternalWidth,
+                internalHeight = viewport.InternalHeight,
+                automaticallyCollectVisible = viewport.AutomaticallyCollectVisible,
+                automaticallySwapBuffers = viewport.AutomaticallySwapBuffers,
+                suppress3DSceneRendering = viewport.Suppress3DSceneRendering,
+                cullWithFrustum = viewport.CullWithFrustum,
+                cameraCullWithFrustum = viewport.CameraComponent?.CullWithFrustum,
+                meshRenderCommandsOverride = overrideCommands is not null,
+                ownRenderingCommandCount = ownCommands.GetRenderingCommandCount(),
+                ownUpdatingCommandCount = ownCommands.GetUpdatingCommandCount(),
+                activeRenderingCommandCount = activeCommands.GetRenderingCommandCount(),
+                activeUpdatingCommandCount = activeCommands.GetUpdatingCommandCount(),
+                activeCommandPasses = BuildRenderCommandPassSummary(activeCommands),
+                cameraType = activeCamera?.GetType().FullName,
+                cameraNodeId = activeCameraNode?.ID,
+                cameraNodeName = activeCameraNode?.Name,
+                cameraWorldPosition = activeCameraTransform is null ? null : ToMcpVector3(activeCameraTransform.WorldTranslation),
+                cameraWorldForward = activeCameraTransform is null ? null : ToMcpVector3(activeCameraTransform.WorldForward),
+                pipelineInstanceId = viewport.RenderPipelineInstance.InstanceId,
+                pipelineDebugName = viewport.RenderPipelineInstance.DebugName,
+                pipelineType = viewport.RenderPipeline?.GetType().FullName,
+                resourceGeneration = viewport.RenderPipelineInstance.ResourceGeneration
+            };
+        }
+
+        private static object[]? BuildRenderCommandPassSummary(RenderCommandCollection? commands)
+        {
+            if (commands is null)
+                return null;
+
+            return commands.PassMetadata
+                .OrderBy(static pair => pair.Key)
+                .Select(pair =>
+                {
+                    int commandCount = 0;
+                    int meshCommandCount = 0;
+                    int enabledCommandCount = 0;
+                    int enabledMeshCommandCount = 0;
+                    string? firstCommandType = null;
+                    string? firstMeshName = null;
+                    string? firstMaterialName = null;
+
+                    if (commands.TryGetRenderingPassCommands(pair.Key, out IReadOnlyCollection<RenderCommand>? passCommands) &&
+                        passCommands is not null)
+                    {
+                        commandCount = passCommands.Count;
+                        foreach (RenderCommand command in passCommands)
+                        {
+                            firstCommandType ??= command.GetType().Name;
+
+                            if (command.RenderEnabled)
+                                enabledCommandCount++;
+
+                            if (command is IRenderCommandMesh meshCommand)
+                            {
+                                meshCommandCount++;
+                                if (command.RenderEnabled)
+                                    enabledMeshCommandCount++;
+
+                                firstMeshName ??= meshCommand.Mesh?.Mesh?.Name;
+                                firstMaterialName ??= (meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material)?.Name;
+                            }
+                        }
+                    }
+
+                    return new
+                    {
+                        passIndex = pair.Key,
+                        passName = pair.Value.Name,
+                        stage = pair.Value.Stage.ToString(),
+                        commandCount,
+                        meshCommandCount,
+                        enabledCommandCount,
+                        enabledMeshCommandCount,
+                        firstCommandType,
+                        firstMeshName,
+                        firstMaterialName
+                    };
+                })
+                .Cast<object>()
+                .ToArray();
         }
 
         /// <summary>

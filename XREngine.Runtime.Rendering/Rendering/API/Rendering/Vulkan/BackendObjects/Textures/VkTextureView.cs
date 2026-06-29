@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Vulkan
             private ImageView _depthOnlyView;
             private ImageView _stencilOnlyView;
             private Sampler _sampler;
+            private readonly object _viewLifetimeLock = new();
             private Format _format = Format.R8G8B8A8Unorm;
             private ImageAspectFlags _aspect = ImageAspectFlags.ColorBit;
             private ImageUsageFlags _usage = ImageUsageFlags.SampledBit;
@@ -31,8 +32,11 @@ namespace XREngine.Rendering.Vulkan
             {
                 get
                 {
-                    RefreshFromViewedTextureIfStale();
-                    return !IsDescriptorDirty && (_view.Handle != 0 || _texelBufferView.Handle != 0);
+                    lock (_viewLifetimeLock)
+                    {
+                        RefreshFromViewedTextureIfStale();
+                        return IsDescriptorReadyNoLock();
+                    }
                 }
             }
 
@@ -186,6 +190,49 @@ namespace XREngine.Rendering.Vulkan
                         && source.UsesAllocatorImage;
                 }
             }
+            bool IVkImageDescriptorSource.TryGetDescriptorSnapshot(
+                ImageViewType? requestedViewType,
+                ImageAspectFlags? requestedAspectMask,
+                string reason,
+                bool allowSynchronousUpload,
+                out VkImageDescriptorSnapshot snapshot)
+            {
+                lock (_viewLifetimeLock)
+                {
+                    if (allowSynchronousUpload)
+                        EnsureDescriptorReadyForVulkanUse(reason);
+                    else
+                        RefreshFromViewedTextureIfStale();
+
+                    ImageViewType actualViewType = ResolveViewType(Data.TextureTarget);
+                    ImageView view = requestedAspectMask switch
+                    {
+                        ImageAspectFlags.DepthBit => GetAspectOnlyDescriptorView(ImageAspectFlags.DepthBit, ref _depthOnlyView),
+                        ImageAspectFlags.StencilBit => GetAspectOnlyDescriptorView(ImageAspectFlags.StencilBit, ref _stencilOnlyView),
+                        _ => requestedViewType is { } viewType && viewType != actualViewType
+                            ? default
+                            : _view
+                    };
+
+                    snapshot = new(
+                        _image,
+                        TryResolveViewedDescriptorMemoryNoLock(),
+                        view,
+                        actualViewType,
+                        _sampler,
+                        _format,
+                        _aspect,
+                        _usage,
+                        _samples,
+                        _mipLevels,
+                        _arrayLayers,
+                        DescriptorGeneration,
+                        ResolveTrackedImageLayoutNoLock(),
+                        ResolveUsesAllocatorImageNoLock(),
+                        IsDescriptorReadyNoLock() && view.Handle != 0);
+                    return snapshot.IsReady;
+                }
+            }
             ImageView IVkImageDescriptorSource.GetDepthOnlyDescriptorView()
             {
                 RefreshFromViewedTextureIfStale();
@@ -202,6 +249,9 @@ namespace XREngine.Rendering.Vulkan
 
             private ImageView GetAspectOnlyDescriptorView(ImageAspectFlags aspect, ref ImageView cached)
             {
+                if (Renderer.IsDeviceLost)
+                    return default;
+
                 if (!IsCombinedDepthStencilFormat(_format) ||
                     (_aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))
                     return default;
@@ -212,27 +262,96 @@ namespace XREngine.Rendering.Vulkan
                 if (_image.Handle == 0)
                     return default;
 
-                ImageSubresourceRange subresourceRange = CurrentViewSubresourceRange(aspect);
-
-                ImageViewCreateInfo depthViewInfo = new()
+                lock (_viewLifetimeLock)
                 {
-                    SType = StructureType.ImageViewCreateInfo,
-                    Image = _image,
-                    ViewType = ResolveViewType(Data.TextureTarget),
-                    Format = _format,
-                    SubresourceRange = subresourceRange,
-                };
+                    if (Renderer.IsDeviceLost)
+                        return default;
 
-                if (Api!.CreateImageView(Device, ref depthViewInfo, null, out cached) != Result.Success)
+                    if (cached.Handle != 0)
+                        return cached;
+
+                    if (_image.Handle == 0)
+                        return default;
+
+                    ImageSubresourceRange subresourceRange = CurrentViewSubresourceRange(aspect);
+
+                    ImageViewCreateInfo depthViewInfo = new()
+                    {
+                        SType = StructureType.ImageViewCreateInfo,
+                        Image = _image,
+                        ViewType = ResolveViewType(Data.TextureTarget),
+                        Format = _format,
+                        SubresourceRange = subresourceRange,
+                    };
+
+                    if (Api!.CreateImageView(Device, ref depthViewInfo, null, out cached) != Result.Success)
+                        return default;
+
+                    Renderer.TrackLiveImageView(cached, "VkTextureView.AspectOnlyDescriptor");
+                    return cached;
+                }
+            }
+
+            private bool IsDescriptorReadyNoLock()
+                => !IsDescriptorDirty && (_view.Handle != 0 || _texelBufferView.Handle != 0);
+
+            private DeviceMemory TryResolveViewedDescriptorMemoryNoLock()
+            {
+                XRTexture viewedTexture = Data.GetViewedTexture();
+                if (viewedTexture is null)
                     return default;
 
-                return cached;
+                return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
+                    ? source.DescriptorMemory
+                    : default;
+            }
+
+            private bool ResolveUsesAllocatorImageNoLock()
+            {
+                XRTexture viewedTexture = Data.GetViewedTexture();
+                if (viewedTexture is null)
+                    return false;
+
+                return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
+                    && source.UsesAllocatorImage;
+            }
+
+            private ImageLayout ResolveTrackedImageLayoutNoLock()
+            {
+                if (!TryGetViewedAttachmentSource(out IVkFrameBufferAttachmentSource? attachmentSource))
+                    return ImageLayout.Undefined;
+
+                ImageLayout? common = null;
+                uint mipCount = Math.Max(_mipLevels, 1u);
+                uint layerCount = Math.Max(_arrayLayers, 1u);
+                for (uint mip = 0; mip < mipCount; mip++)
+                {
+                    int sourceMip = checked((int)(_baseMipLevel + mip));
+                    for (uint layer = 0; layer < layerCount; layer++)
+                    {
+                        ImageLayout layout = attachmentSource.GetAttachmentTrackedLayout(
+                            sourceMip,
+                            checked((int)(_baseArrayLayer + layer)));
+                        if (layout == ImageLayout.Undefined)
+                            return ImageLayout.Undefined;
+
+                        if (common.HasValue && common.Value != layout)
+                            return ImageLayout.Undefined;
+
+                        common = layout;
+                    }
+                }
+
+                return common ?? ImageLayout.Undefined;
             }
             BufferView IVkTexelBufferDescriptorSource.DescriptorBufferView => _texelBufferView;
             Format IVkTexelBufferDescriptorSource.DescriptorBufferFormat => _texelBufferFormat;
 
             protected override uint CreateObjectInternal()
             {
+                if (Renderer.IsDeviceLost)
+                    return InvalidBindingId;
+
                 CreateView();
                 if (IsGenerated)
                 {
@@ -449,6 +568,9 @@ namespace XREngine.Rendering.Vulkan
 
             public override void PushData()
             {
+                if (Renderer.IsDeviceLost)
+                    return;
+
                 if (!TryBeginPushData(out bool allowPostPushCallback))
                     return;
 
@@ -598,6 +720,14 @@ namespace XREngine.Rendering.Vulkan
 
             private void CreateView()
             {
+                if (Renderer.IsDeviceLost)
+                    return;
+
+                lock (_viewLifetimeLock)
+                {
+                    if (Renderer.IsDeviceLost)
+                        return;
+
                 XRTexture? viewedTexture = Data.GetViewedTexture();
                 if (viewedTexture is null)
                     throw new InvalidOperationException("Texture view requires a valid viewed texture.");
@@ -659,6 +789,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
                     throw new InvalidOperationException("Failed to create Vulkan texture view.");
+                Renderer.TrackLiveImageView(_view, "VkTextureView.View");
 
                 // For depth/stencil formats with both aspects, create a depth-only view for
                 // sampled descriptors (Vulkan requires exactly one aspect in that case).
@@ -674,9 +805,11 @@ namespace XREngine.Rendering.Vulkan
                     };
                     if (Api!.CreateImageView(Device, ref depthOnlyViewInfo, null, out _depthOnlyView) != Result.Success)
                         throw new InvalidOperationException("Failed to create depth-only descriptor view for texture view.");
+                    Renderer.TrackLiveImageView(_depthOnlyView, "VkTextureView.DepthOnlyDescriptor");
                 }
 
                 CreateSampler();
+                }
             }
 
             internal void RefreshDescriptorFromViewedTextureIfStale()
@@ -684,6 +817,9 @@ namespace XREngine.Rendering.Vulkan
 
             private void RefreshFromViewedTextureIfStale()
             {
+                if (Renderer.IsDeviceLost)
+                    return;
+
                 if (_texelBufferView.Handle != 0)
                     return;
 
@@ -699,61 +835,83 @@ namespace XREngine.Rendering.Vulkan
                 if (liveImage.Handle == 0)
                     return;
 
-                if (liveImage.Handle == _image.Handle && _view.Handle != 0)
+                if (liveImage.Handle == _image.Handle && _view.Handle != 0 && _sampler.Handle != 0)
                 {
-                    if (_sampler.Handle == 0)
-                        CreateSampler();
                     HasUploadedData = true;
                     IsInvalidated = false;
                     MarkDescriptorClean();
                     return;
                 }
 
-                RetireOwnedImageViews();
-
-                _image = liveImage;
-                _format = source.DescriptorFormat;
-                _usage = source.DescriptorUsage;
-                _aspect = NormalizeAspectMaskForFormat(_format, source.DescriptorAspect);
-                _samples = source.DescriptorSamples;
-
-                ImageViewType viewType = ResolveViewType(Data.TextureTarget);
-                ImageSubresourceRange subresourceRange = ResolveViewSubresourceRange(source, NormalizeAspectMaskForFormat(_format, _aspect));
-
-                ImageViewCreateInfo viewInfo = new()
+                lock (_viewLifetimeLock)
                 {
-                    SType = StructureType.ImageViewCreateInfo,
-                    Image = _image,
-                    ViewType = viewType,
-                    Format = _format,
-                    SubresourceRange = subresourceRange,
-                };
+                    if (Renderer.IsDeviceLost)
+                        return;
 
-                if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
-                    _view = default;
+                    liveImage = source.DescriptorImage;
+                    if (liveImage.Handle == 0)
+                        return;
 
-                bool hasStencil = _format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
-                if (_view.Handle != 0 && hasStencil && (_usage & ImageUsageFlags.SampledBit) != 0)
-                {
-                    ImageViewCreateInfo depthOnlyViewInfo = viewInfo with
+                    if (liveImage.Handle == _image.Handle && _view.Handle != 0)
                     {
-                        SubresourceRange = viewInfo.SubresourceRange with
-                        {
-                            AspectMask = ImageAspectFlags.DepthBit,
-                        },
+                        if (_sampler.Handle == 0)
+                            CreateSampler();
+                        HasUploadedData = true;
+                        IsInvalidated = false;
+                        MarkDescriptorClean();
+                        return;
+                    }
+
+                    RetireOwnedImageViews();
+
+                    _image = liveImage;
+                    _format = source.DescriptorFormat;
+                    _usage = source.DescriptorUsage;
+                    _aspect = NormalizeAspectMaskForFormat(_format, source.DescriptorAspect);
+                    _samples = source.DescriptorSamples;
+
+                    ImageViewType viewType = ResolveViewType(Data.TextureTarget);
+                    ImageSubresourceRange subresourceRange = ResolveViewSubresourceRange(source, NormalizeAspectMaskForFormat(_format, _aspect));
+
+                    ImageViewCreateInfo viewInfo = new()
+                    {
+                        SType = StructureType.ImageViewCreateInfo,
+                        Image = _image,
+                        ViewType = viewType,
+                        Format = _format,
+                        SubresourceRange = subresourceRange,
                     };
-                    if (Api!.CreateImageView(Device, ref depthOnlyViewInfo, null, out _depthOnlyView) != Result.Success)
-                        _depthOnlyView = default;
-                }
 
-                if (_view.Handle != 0 && _sampler.Handle == 0)
-                    CreateSampler();
+                    if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
+                        _view = default;
+                    else
+                        Renderer.TrackLiveImageView(_view, "VkTextureView.RefreshedView");
 
-                if (_view.Handle != 0)
-                {
-                    HasUploadedData = true;
-                    IsInvalidated = false;
-                    MarkDescriptorPublished();
+                    bool hasStencil = _format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
+                    if (_view.Handle != 0 && hasStencil && (_usage & ImageUsageFlags.SampledBit) != 0)
+                    {
+                        ImageViewCreateInfo depthOnlyViewInfo = viewInfo with
+                        {
+                            SubresourceRange = viewInfo.SubresourceRange with
+                            {
+                                AspectMask = ImageAspectFlags.DepthBit,
+                            },
+                        };
+                        if (Api!.CreateImageView(Device, ref depthOnlyViewInfo, null, out _depthOnlyView) != Result.Success)
+                            _depthOnlyView = default;
+                        else
+                            Renderer.TrackLiveImageView(_depthOnlyView, "VkTextureView.RefreshedDepthOnlyDescriptor");
+                    }
+
+                    if (_view.Handle != 0 && _sampler.Handle == 0)
+                        CreateSampler();
+
+                    if (_view.Handle != 0)
+                    {
+                        HasUploadedData = true;
+                        IsInvalidated = false;
+                        MarkDescriptorPublished();
+                    }
                 }
             }
 
@@ -807,15 +965,21 @@ namespace XREngine.Rendering.Vulkan
 
             private void RecreateSampler()
             {
-                DestroySampler();
-                if (_image.Handle != 0 && _texelBufferView.Handle == 0)
-                    CreateSampler();
+                lock (_viewLifetimeLock)
+                {
+                    DestroySampler();
+                    if (_image.Handle != 0 && _texelBufferView.Handle == 0)
+                        CreateSampler();
+                }
             }
 
             private void RetireOwnedViewsAndSampler()
             {
-                RetireOwnedImageViews();
-                DestroySampler();
+                lock (_viewLifetimeLock)
+                {
+                    RetireOwnedImageViews();
+                    DestroySampler();
+                }
             }
 
             private void RetireOwnedImageViews()
@@ -855,6 +1019,9 @@ namespace XREngine.Rendering.Vulkan
 
             private void CreateSampler()
             {
+                if (Renderer.IsDeviceLost)
+                    return;
+
                 DestroySampler();
 
                 (Filter minFilter, SamplerMipmapMode mipmapMode) = SamplerConversions.FromMinFilter(Data.MinFilter);

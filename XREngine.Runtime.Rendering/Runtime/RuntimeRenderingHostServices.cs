@@ -996,10 +996,15 @@ public static class RuntimeRenderingHostServices
 
         public bool RenderWindowsWhileInVR => RuntimeRenderingHostServiceDefaults.RenderWindowsWhileInVR;
         public bool EnableOpenXrVulkanParallelRendering => RuntimeRenderingHostServiceDefaults.EnableOpenXrVulkanParallelRendering;
+        public EVrViewRenderMode VrViewRenderMode => RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
         public bool EnableVrFoveatedViewSet => RuntimeRenderingHostServiceDefaults.EnableVrFoveatedViewSet;
+        public EVrFoveationMode VrFoveationMode => RuntimeRenderingHostServiceDefaults.VrFoveationMode;
+        public EVrFoveationQualityPreset VrFoveationQualityPreset => RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
+        public bool VrFoveationRequireRequested => RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
         public bool IsInVR => RuntimeRenderingHostServiceDefaults.IsInVR;
         public bool IsOpenXRActive => RuntimeRenderingHostServiceDefaults.IsOpenXRActive;
         public bool VrMirrorComposeFromEyeTextures => RuntimeRenderingHostServiceDefaults.VrMirrorComposeFromEyeTextures;
+        public bool VrCopyEyePreviewTextures => RuntimeRenderingHostServiceDefaults.VrCopyEyePreviewTextures;
         public Vector2 VrFoveationCenterUv => new(
             RuntimeRenderingHostServiceDefaults.VrFoveationCenterU,
             RuntimeRenderingHostServiceDefaults.VrFoveationCenterV);

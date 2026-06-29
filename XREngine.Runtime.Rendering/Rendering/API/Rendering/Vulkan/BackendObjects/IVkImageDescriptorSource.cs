@@ -3,6 +3,23 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
+    internal readonly record struct VkImageDescriptorSnapshot(
+        Image Image,
+        DeviceMemory Memory,
+        ImageView View,
+        ImageViewType ViewType,
+        Sampler Sampler,
+        Format Format,
+        ImageAspectFlags Aspect,
+        ImageUsageFlags Usage,
+        SampleCountFlags Samples,
+        uint MipLevels,
+        uint ArrayLayers,
+        ulong Generation,
+        ImageLayout TrackedLayout,
+        bool UsesAllocatorImage,
+        bool IsReady);
+
     internal interface IVkImageDescriptorSource
     {
         Image DescriptorImage { get; }
@@ -21,6 +38,46 @@ public unsafe partial class VulkanRenderer
         bool TryEnsureDescriptorReadyForUse(string reason) => IsDescriptorReady;
         bool TryEnsureDescriptorReadyForUse(string reason, bool allowSynchronousUpload)
             => allowSynchronousUpload ? TryEnsureDescriptorReadyForUse(reason) : IsDescriptorReady;
+
+        bool TryGetDescriptorSnapshot(
+            ImageViewType? requestedViewType,
+            ImageAspectFlags? requestedAspectMask,
+            string reason,
+            bool allowSynchronousUpload,
+            out VkImageDescriptorSnapshot snapshot)
+        {
+            if (!TryEnsureDescriptorReadyForUse(reason, allowSynchronousUpload))
+            {
+                snapshot = default;
+                return false;
+            }
+
+            ImageView view = requestedAspectMask switch
+            {
+                ImageAspectFlags.DepthBit => GetDepthOnlyDescriptorView(),
+                ImageAspectFlags.StencilBit => GetStencilOnlyDescriptorView(),
+                _ => requestedViewType is { } viewType
+                    ? GetDescriptorView(viewType)
+                    : DescriptorView
+            };
+            snapshot = new(
+                DescriptorImage,
+                DescriptorMemory,
+                view,
+                requestedViewType ?? DescriptorViewType,
+                DescriptorSampler,
+                DescriptorFormat,
+                DescriptorAspect,
+                DescriptorUsage,
+                DescriptorSamples,
+                DescriptorMipLevels,
+                DescriptorArrayLayers,
+                DescriptorGeneration,
+                TrackedImageLayout,
+                UsesAllocatorImage,
+                view.Handle != 0 && IsDescriptorReady);
+            return snapshot.IsReady;
+        }
 
         /// <summary>
         /// Returns the most recently tracked <see cref="ImageLayout"/> for the backing VkImage.

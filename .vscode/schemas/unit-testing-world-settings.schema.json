@@ -772,6 +772,11 @@
           "description": "Selects the VR launch path: Desktop, Emulated scene-only VR, Monado-backed OpenXR, vendor OpenVR, or vendor OpenXR.",
           "markdownDescription": "Supported values: `Desktop`, `Emulated`, `MonadoOpenXR`, `OpenVR`, `OpenXR`."
         },
+        "ViewRenderMode": {
+          "$ref": "#/definitions/EVrViewRenderMode",
+          "description": "Selects how VR eye views are rendered: sequential per-view, single-pass stereo, or Vulkan-only parallel command-buffer recording.",
+          "markdownDescription": "Supported values: `SequentialViews`, `SinglePassStereo`, `ParallelCommandBufferRecording`."
+        },
         "PreviewStereoViews": {
           "type": "boolean",
           "description": "Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active."
@@ -779,6 +784,10 @@
         "AllowDesktopEditing": {
           "type": "boolean",
           "description": "When a VR pawn is active, keeps a desktop editing camera/pawn available."
+        },
+        "Foveation": {
+          "$ref": "#/definitions/UnitTestingVrFoveationSettings",
+          "description": "Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback."
         },
         "OpenXrRuntimeJson": {
           "type": [
@@ -799,6 +808,54 @@
         "OpenXR"
       ],
       "markdownDescription": "Supported values: `Desktop`, `Emulated`, `MonadoOpenXR`, `OpenVR`, `OpenXR`."
+    },
+    "EVrViewRenderMode": {
+      "type": "string",
+      "enum": [
+        "SequentialViews",
+        "SinglePassStereo",
+        "ParallelCommandBufferRecording"
+      ],
+      "markdownDescription": "Supported values: `SequentialViews`, `SinglePassStereo`, `ParallelCommandBufferRecording`."
+    },
+    "UnitTestingVrFoveationSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Mode": {
+          "$ref": "#/definitions/EVrFoveationMode",
+          "markdownDescription": "Supported values: `Off`, `Fixed`, `EyeTracked`, `RuntimePreferred`.",
+          "description": "Selects the Mode enum value."
+        },
+        "QualityPreset": {
+          "$ref": "#/definitions/EVrFoveationQualityPreset",
+          "markdownDescription": "Supported values: `Conservative`, `Balanced`, `Aggressive`.",
+          "description": "Selects the QualityPreset enum value."
+        },
+        "RequireRequested": {
+          "type": "boolean",
+          "description": "Enables or disables RequireRequested."
+        }
+      }
+    },
+    "EVrFoveationMode": {
+      "type": "string",
+      "enum": [
+        "Off",
+        "Fixed",
+        "EyeTracked",
+        "RuntimePreferred"
+      ],
+      "markdownDescription": "Supported values: `Off`, `Fixed`, `EyeTracked`, `RuntimePreferred`."
+    },
+    "EVrFoveationQualityPreset": {
+      "type": "string",
+      "enum": [
+        "Conservative",
+        "Balanced",
+        "Aggressive"
+      ],
+      "markdownDescription": "Supported values: `Conservative`, `Balanced`, `Aggressive`."
     },
     "LightProbeMode": {
       "type": "string",

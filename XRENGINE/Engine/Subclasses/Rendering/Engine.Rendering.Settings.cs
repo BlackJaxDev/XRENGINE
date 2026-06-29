@@ -666,10 +666,14 @@ namespace XREngine
                 private bool _useAbsoluteBlendshapePositions = false;
                 private bool _logVRFrameTimes = false;
                 private bool _preferNVStereo = true;
-                private bool _renderVRSinglePassStereo = false;
+                private EVrViewRenderMode _vrViewRenderMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
                 private bool _renderWindowsWhileInVR = true;
                 private bool _vrMirrorComposeFromEyeTextures = true;
+                private bool _vrCopyEyePreviewTextures = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrCopyEyePreviewTextures;
                 private bool _enableVrFoveatedViewSet = false;
+                private EVrFoveationMode _vrFoveationMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationMode;
+                private EVrFoveationQualityPreset _vrFoveationQualityPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
+                private bool _vrFoveationRequireRequested = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
                 private bool _openXrCullWithFrustum = true;
                 private bool _openXrDebugGl = false;
                 private bool _openXrDebugClearOnly = false;
@@ -1907,14 +1911,27 @@ namespace XREngine
                 }
 
                 /// <summary>
-                /// If true, VR single-pass stereo rendering will be enabled.
+                /// Selects the VR view rendering strategy.
                 /// </summary>
                 [Category("VR")]
-                [Description("If true, VR single-pass stereo rendering will be enabled.")]
+                [Description("Selects sequential view rendering, single-pass stereo, or Vulkan-only parallel command-buffer recording.")]
+                public EVrViewRenderMode VrViewRenderMode
+                {
+                    get => _vrViewRenderMode;
+                    set => SetField(ref _vrViewRenderMode, value);
+                }
+
+                /// <summary>
+                /// Legacy compatibility view of <see cref="VrViewRenderMode"/>.
+                /// </summary>
+                [Category("VR")]
+                [Description("Legacy compatibility toggle. True maps to SinglePassStereo; false maps to SequentialViews.")]
                 public bool RenderVRSinglePassStereo
                 {
-                    get => _renderVRSinglePassStereo;
-                    set => SetField(ref _renderVRSinglePassStereo, value);
+                    get => _vrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
+                    set => VrViewRenderMode = value
+                        ? EVrViewRenderMode.SinglePassStereo
+                        : EVrViewRenderMode.SequentialViews;
                 }
 
                 /// <summary>
@@ -1941,6 +1958,17 @@ namespace XREngine
                 }
 
                 /// <summary>
+                /// If true, OpenXR eye swapchain output is copied into preview textures for stereo preview UI or diagnostics.
+                /// </summary>
+                [Category("VR")]
+                [Description("If true, OpenXR eye swapchain output is copied into preview textures for stereo preview UI or diagnostics.")]
+                public bool VrCopyEyePreviewTextures
+                {
+                    get => _vrCopyEyePreviewTextures;
+                    set => SetField(ref _vrCopyEyePreviewTextures, value);
+                }
+
+                /// <summary>
                 /// If true, ViewSet generation adds per-eye foveated views in addition to full-resolution stereo views.
                 /// </summary>
                 [Category("VR")]
@@ -1949,6 +1977,30 @@ namespace XREngine
                 {
                     get => _enableVrFoveatedViewSet;
                     set => SetField(ref _enableVrFoveatedViewSet, value);
+                }
+
+                [Category("VR")]
+                [Description("Requested VR foveated rendering mode. Unsupported explicit requests must be reported rather than silently disabled.")]
+                public EVrFoveationMode VrFoveationMode
+                {
+                    get => _vrFoveationMode;
+                    set => SetField(ref _vrFoveationMode, value);
+                }
+
+                [Category("VR")]
+                [Description("Quality preset used when VR foveated rendering is supported by the active backend/runtime.")]
+                public EVrFoveationQualityPreset VrFoveationQualityPreset
+                {
+                    get => _vrFoveationQualityPreset;
+                    set => SetField(ref _vrFoveationQualityPreset, value);
+                }
+
+                [Category("VR")]
+                [Description("If true, explicitly requested VR foveation is treated as a visible configuration failure when unsupported.")]
+                public bool VrFoveationRequireRequested
+                {
+                    get => _vrFoveationRequireRequested;
+                    set => SetField(ref _vrFoveationRequireRequested, value);
                 }
 
                 /// <summary>
@@ -2033,7 +2085,7 @@ namespace XREngine
                 /// Controls where OpenXR's next-frame prep (xrWaitFrame/xrBeginFrame/LocateViews(Predicted)) runs.
                 /// </summary>
                 [Category("VR")]
-                [Description("Controls where OpenXR's next-frame prep runs: inline at start of render callback, post-render, or on the default dedicated pacing thread.")]
+                [Description("Controls where OpenXR's next-frame prep runs: inline at start of render callback, post-render, on the default dedicated pacing thread, or on the CollectVisible thread.")]
                 public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode
                 {
                     get => _openXrRenderPacingMode;

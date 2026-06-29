@@ -64,6 +64,19 @@ public sealed class VulkanP0ValidationTests
         statsSource.ShouldContain("VulkanValidationErrorCountCurrentFrame");
     }
 
+    [Test]
+    public void VulkanValidationLayerState_IsReportedFromRendererInstanceState()
+    {
+        string runtimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs");
+        string instanceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Instance.cs");
+        string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs");
+
+        runtimeSource.ShouldContain("public static bool VulkanValidationLayersEnabled { get; internal set; }");
+        instanceSource.ShouldContain("RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled = EnableValidationLayers;");
+        instanceSource.ShouldContain("RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled = false;");
+        statsSource.ShouldContain("RuntimeEngine.Rendering.State.IsVulkan && RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled");
+    }
+
     #endregion
 
     #region Final Output Contract
@@ -177,7 +190,7 @@ public sealed class VulkanP0ValidationTests
         stateSource.ShouldContain("viewport?.InternalWidth");
         meshSource.ShouldContain("hash.Add(op.Context.ViewportIdentity)");
         meshSource.ShouldContain("hash.Add(blit.OutFbo?.GetHashCode() ?? 0)");
-        descriptorSource.ShouldContain("ComputeDescriptorResourceFingerprint(material, frameCount)");
+        descriptorSource.ShouldContain("ComputeDescriptorResourceFingerprint(material, frameCount, bindings)");
         descriptorSource.ShouldContain("allocation.ResourceFingerprint != resourceFingerprint");
         descriptorSource.ShouldContain("active resource fingerprint");
     }

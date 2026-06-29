@@ -31,6 +31,7 @@ internal sealed class ImportedTextureStreamingManager
     private const int RecordRefCompactionIntervalFrames = 600;
     private const int TextureSummaryIntervalFrames = 60;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
+    private const double VulkanDenseNonPressureDemotionPreserveBudgetFillRatio = 0.75;
     private const string VulkanImportedTextureStreamingTodoPath = "docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md";
     private const string VulkanImportedTexturePreviewFreezeEnvVar = XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze;
     private const string VulkanPreviewFreezeReason = "explicit Vulkan imported-texture preview freeze requested";
@@ -834,6 +835,18 @@ internal sealed class ImportedTextureStreamingManager
             {
                 if (!pressureDemotion)
                 {
+                    if (ShouldPreserveVulkanDenseResidentTargetWithoutPressure(
+                        snapshot,
+                        currentResidentSize,
+                        assignedResidentSize,
+                        currentCommittedBytes,
+                        targetCommittedBytes,
+                        currentManagedBytes,
+                        availableManagedBytes))
+                    {
+                        return false;
+                    }
+
                     if (importsActive)
                         return false;
 
@@ -956,6 +969,18 @@ internal sealed class ImportedTextureStreamingManager
             bool pressureDemotion = assignedResidentSize < desiredResidentSize
                 && targetCommittedBytes < snapshot.CurrentCommittedBytes
                 && availableManagedBytes != long.MaxValue;
+            if (ShouldPreserveVulkanDenseResidentSizeWithoutPressure(
+                    snapshot,
+                    assignedResidentSize,
+                    targetCommittedBytes,
+                    currentManagedBytes,
+                    availableManagedBytes))
+            {
+                assignedResidentSize = snapshot.ResidentMaxDimension;
+                desiredPageSelection = snapshot.CurrentPageSelection.Normalize(PageSelectionFullCoverageThreshold);
+                targetCommittedBytes = snapshot.CurrentCommittedBytes;
+                pressureDemotion = false;
+            }
 
             TextureRuntimeDiagnostics.LogResidencyDesired(
                 frameId,
@@ -1387,6 +1412,81 @@ internal sealed class ImportedTextureStreamingManager
         }
 
         return backend.Name;
+    }
+
+    private static bool ShouldPreserveVulkanDenseResidentSizeWithoutPressure(
+        ImportedTextureStreamingSnapshot snapshot,
+        uint assignedResidentSize,
+        long targetCommittedBytes,
+        long currentManagedBytes,
+        long availableManagedBytes)
+        => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan
+            && string.Equals(snapshot.Backend.Name, nameof(VulkanDenseTextureResidencyBackend), StringComparison.Ordinal)
+            && ShouldPreserveDenseResidentSizeWithoutPressure(
+                snapshot.ResidentMaxDimension,
+                assignedResidentSize,
+                snapshot.CurrentCommittedBytes,
+                targetCommittedBytes,
+                currentManagedBytes,
+                availableManagedBytes,
+                snapshot.PendingMaxDimension != 0);
+
+    private static bool ShouldPreserveVulkanDenseResidentTargetWithoutPressure(
+        ImportedTextureStreamingSnapshot snapshot,
+        uint currentResidentSize,
+        uint assignedResidentSize,
+        long currentCommittedBytes,
+        long targetCommittedBytes,
+        long currentManagedBytes,
+        long availableManagedBytes)
+        => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan
+            && string.Equals(snapshot.Backend.Name, nameof(VulkanDenseTextureResidencyBackend), StringComparison.Ordinal)
+            && ShouldPreserveDenseResidentTargetWithoutPressure(
+                currentResidentSize,
+                assignedResidentSize,
+                currentCommittedBytes,
+                targetCommittedBytes,
+                currentManagedBytes,
+                availableManagedBytes);
+
+    internal static bool ShouldPreserveDenseResidentTargetWithoutPressure(
+        uint currentResidentSize,
+        uint assignedResidentSize,
+        long currentCommittedBytes,
+        long targetCommittedBytes,
+        long currentManagedBytes,
+        long availableManagedBytes)
+        => ShouldPreserveDenseResidentSizeWithoutPressure(
+            currentResidentSize,
+            assignedResidentSize,
+            currentCommittedBytes,
+            targetCommittedBytes,
+            currentManagedBytes,
+            availableManagedBytes,
+            hasPendingTransition: false);
+
+    internal static bool ShouldPreserveDenseResidentSizeWithoutPressure(
+        uint currentResidentSize,
+        uint assignedResidentSize,
+        long currentCommittedBytes,
+        long targetCommittedBytes,
+        long currentManagedBytes,
+        long availableManagedBytes,
+        bool hasPendingTransition)
+    {
+        if (hasPendingTransition || currentResidentSize == 0 || currentCommittedBytes <= targetCommittedBytes)
+            return false;
+
+        if (assignedResidentSize >= currentResidentSize)
+            return false;
+
+        if (availableManagedBytes == long.MaxValue)
+            return true;
+
+        if (availableManagedBytes <= 0L || currentManagedBytes < 0L)
+            return false;
+
+        return currentManagedBytes <= availableManagedBytes * VulkanDenseNonPressureDemotionPreserveBudgetFillRatio;
     }
 
     private static bool ShouldIncludeResidentMipChain(ITextureResidencyBackend backend, uint normalizedTarget)

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
+using XREngine.Rendering;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
@@ -32,6 +33,17 @@ public sealed class OpenXrSmokeSummary
     public string RuntimeState { get; set; } = string.Empty;
     public string SessionState { get; set; } = string.Empty;
     public string ReferenceSpaceType { get; set; } = string.Empty;
+    public string ViewRenderModeRequested { get; set; } = string.Empty;
+    public string ViewRenderModeEffective { get; set; } = string.Empty;
+    public bool ViewRenderModeSupported { get; set; }
+    public string? ViewRenderModeDiagnostic { get; set; }
+    public string FoveationRequestedMode { get; set; } = string.Empty;
+    public string FoveationEffectiveMode { get; set; } = string.Empty;
+    public string FoveationQualityPreset { get; set; } = string.Empty;
+    public string FoveationCapabilityPath { get; set; } = string.Empty;
+    public bool FoveationSupported { get; set; }
+    public string? FoveationDiagnostic { get; set; }
+    public string[] FoveationBackendCapabilities { get; set; } = [];
     public string[] EnabledExtensions { get; set; } = [];
     public bool InstanceCreated { get; set; }
     public bool SystemFound { get; set; }
@@ -72,6 +84,9 @@ public unsafe partial class OpenXRAPI
     private readonly long[] _smokePerEyeWaitCounts = new long[2];
     private readonly long[] _smokePerEyeReleaseCounts = new long[2];
     private string[] _smokeEnabledExtensions = [];
+    private VrViewRenderModeResolution _smokeViewRenderModeResolution;
+    private VrFoveationResolution _smokeFoveationResolution;
+    private string[] _smokeFoveationBackendCapabilities = [];
     private string _smokeRendererBackend = string.Empty;
     private string _smokeReferenceSpaceType = string.Empty;
     private int _smokeInstanceCreated;
@@ -106,6 +121,7 @@ public unsafe partial class OpenXRAPI
 
         lock (_smokeDiagnosticsLock)
         {
+            string[] failures = BuildSmokeFailuresForSummary();
             return new OpenXrSmokeSummary
             {
                 CapturedAtUtc = DateTimeOffset.UtcNow,
@@ -117,6 +133,17 @@ public unsafe partial class OpenXRAPI
                 RuntimeState = _runtimeState.ToString(),
                 SessionState = _sessionState.ToString(),
                 ReferenceSpaceType = _smokeReferenceSpaceType,
+                ViewRenderModeRequested = _smokeViewRenderModeResolution.RequestedMode.ToString(),
+                ViewRenderModeEffective = _smokeViewRenderModeResolution.EffectiveMode.ToString(),
+                ViewRenderModeSupported = _smokeViewRenderModeResolution.IsSupported,
+                ViewRenderModeDiagnostic = _smokeViewRenderModeResolution.Diagnostic,
+                FoveationRequestedMode = _smokeFoveationResolution.RequestedMode.ToString(),
+                FoveationEffectiveMode = _smokeFoveationResolution.EffectiveMode.ToString(),
+                FoveationQualityPreset = _smokeFoveationResolution.QualityPreset.ToString(),
+                FoveationCapabilityPath = _smokeFoveationResolution.CapabilityPath.ToString(),
+                FoveationSupported = _smokeFoveationResolution.IsSupported,
+                FoveationDiagnostic = _smokeFoveationResolution.Diagnostic,
+                FoveationBackendCapabilities = [.. _smokeFoveationBackendCapabilities],
                 EnabledExtensions = [.. _smokeEnabledExtensions],
                 InstanceCreated = Volatile.Read(ref _smokeInstanceCreated) != 0,
                 SystemFound = Volatile.Read(ref _smokeSystemFound) != 0,
@@ -142,9 +169,43 @@ public unsafe partial class OpenXRAPI
                 RuntimeStateTransitions = [.. _smokeRuntimeStateTransitions],
                 SessionStateTransitions = [.. _smokeSessionStateTransitions],
                 Warnings = [.. _smokeWarnings],
-                Failures = [.. _smokeFailures],
+                Failures = failures,
             };
         }
+    }
+
+    private string[] BuildSmokeFailuresForSummary()
+    {
+        List<string> failures = [.. _smokeFailures];
+        if (!_smokeViewRenderModeResolution.IsSupported &&
+            !string.IsNullOrWhiteSpace(_smokeViewRenderModeResolution.Diagnostic))
+        {
+            AddFailureIfMissing(
+                failures,
+                $"Unsupported VR.ViewRenderMode={_smokeViewRenderModeResolution.RequestedMode}. {_smokeViewRenderModeResolution.Diagnostic}");
+        }
+
+        if (!_smokeFoveationResolution.IsSupported &&
+            RuntimeRenderingHostServices.Current.VrFoveationRequireRequested &&
+            !string.IsNullOrWhiteSpace(_smokeFoveationResolution.Diagnostic))
+        {
+            AddFailureIfMissing(
+                failures,
+                $"Unsupported VR.Foveation.Mode={_smokeFoveationResolution.RequestedMode}. {_smokeFoveationResolution.Diagnostic}");
+        }
+
+        return [.. failures];
+    }
+
+    private static void AddFailureIfMissing(List<string> failures, string failure)
+    {
+        foreach (string existing in failures)
+        {
+            if (string.Equals(existing, failure, StringComparison.Ordinal))
+                return;
+        }
+
+        failures.Add(failure);
     }
 
     public void RequestSmokeSessionExit()
@@ -174,6 +235,9 @@ public unsafe partial class OpenXRAPI
             _smokeFailures.Clear();
             _smokeSwapchains.Clear();
             _smokeEnabledExtensions = [];
+            _smokeViewRenderModeResolution = default;
+            _smokeFoveationResolution = default;
+            _smokeFoveationBackendCapabilities = [];
             _smokeRendererBackend = string.Empty;
             _smokeReferenceSpaceType = string.Empty;
         }
@@ -208,6 +272,23 @@ public unsafe partial class OpenXRAPI
         }
 
         Volatile.Write(ref _smokeInstanceCreated, 1);
+    }
+
+    private void RecordSmokeViewRenderModeResolution(VrViewRenderModeResolution resolution)
+    {
+        lock (_smokeDiagnosticsLock)
+            _smokeViewRenderModeResolution = resolution;
+    }
+
+    private void RecordSmokeFoveationResolution(
+        VrFoveationResolution resolution,
+        VrFoveationBackendCapabilities capabilities)
+    {
+        lock (_smokeDiagnosticsLock)
+        {
+            _smokeFoveationResolution = resolution;
+            _smokeFoveationBackendCapabilities = BuildFoveationCapabilityNames(capabilities);
+        }
     }
 
     private void RecordSmokeSystemFound()
@@ -331,6 +412,20 @@ public unsafe partial class OpenXRAPI
             _smokeFailures.Add(failure);
     }
 
+    private void RecordSmokeFailureOnce(string failure)
+    {
+        lock (_smokeDiagnosticsLock)
+        {
+            foreach (string existing in _smokeFailures)
+            {
+                if (string.Equals(existing, failure, StringComparison.Ordinal))
+                    return;
+            }
+
+            _smokeFailures.Add(failure);
+        }
+    }
+
     private static void IncrementEyeCounter(long[] counters, uint viewIndex)
     {
         if (viewIndex >= counters.Length)
@@ -345,6 +440,24 @@ public unsafe partial class OpenXRAPI
         for (int i = 0; i < source.Length; i++)
             copy[i] = Volatile.Read(ref source[i]);
         return copy;
+    }
+
+    private static string[] BuildFoveationCapabilityNames(VrFoveationBackendCapabilities capabilities)
+    {
+        List<string> names = [];
+        if (capabilities.VulkanFragmentShadingRate)
+            names.Add(nameof(capabilities.VulkanFragmentShadingRate));
+        if (capabilities.VulkanFragmentDensityMap)
+            names.Add(nameof(capabilities.VulkanFragmentDensityMap));
+        if (capabilities.OpenXrRuntimeFoveation)
+            names.Add(nameof(capabilities.OpenXrRuntimeFoveation));
+        if (capabilities.OpenXrQuadViews)
+            names.Add(nameof(capabilities.OpenXrQuadViews));
+        if (capabilities.OpenGlFixedFoveationExtension)
+            names.Add(nameof(capabilities.OpenGlFixedFoveationExtension));
+        if (capabilities.OpenGlMultiResolution)
+            names.Add(nameof(capabilities.OpenGlMultiResolution));
+        return [.. names];
     }
 
     private static (string? RuntimeName, string? RuntimeVersion) TryReadRuntimeManifestMetadata(string? runtimeManifestPath)

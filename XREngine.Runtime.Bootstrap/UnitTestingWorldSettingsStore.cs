@@ -30,6 +30,7 @@ public static class UnitTestingWorldSettingsStore
             string serializedSettings = JsonConvert.SerializeObject(settings, JsonSettings);
             settings.TracksExplicitJsonProperties = true;
             settings.ExplicitJsonProperties = ReadTopLevelPropertyNames(serializedSettings);
+            settings.ExplicitJsonPropertyPaths = ReadJsonPropertyPaths(serializedSettings);
             File.WriteAllText(filePath, serializedSettings);
         }
         else
@@ -65,6 +66,7 @@ public static class UnitTestingWorldSettingsStore
 
         settings.TracksExplicitJsonProperties = true;
         settings.ExplicitJsonProperties = ReadTopLevelPropertyNames(content);
+        settings.ExplicitJsonPropertyPaths = ReadJsonPropertyPaths(content);
         NormalizeRenderSettings(settings);
         NormalizeVrSettings(settings);
         return settings;
@@ -248,6 +250,41 @@ public static class UnitTestingWorldSettingsStore
             applied = true;
         }
 
+        if (TryGetEnumEnv(XREngineEnvironmentVariables.UnitTestVrViewRenderMode, out EVrViewRenderMode viewRenderMode))
+        {
+            settings.VR.ViewRenderMode = viewRenderMode;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.ViewRenderMode));
+            applied = true;
+        }
+
+        if (TryGetEnumEnv(XREngineEnvironmentVariables.UnitTestVrFoveationMode, out EVrFoveationMode foveationMode))
+        {
+            settings.VR.Foveation.Mode = foveationMode;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.Foveation));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.Foveation), nameof(UnitTestingVrFoveationSettings.Mode));
+            applied = true;
+        }
+
+        if (TryGetEnumEnv(XREngineEnvironmentVariables.UnitTestVrFoveationQualityPreset, out EVrFoveationQualityPreset foveationQualityPreset))
+        {
+            settings.VR.Foveation.QualityPreset = foveationQualityPreset;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.Foveation));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.Foveation), nameof(UnitTestingVrFoveationSettings.QualityPreset));
+            applied = true;
+        }
+
+        if (TryGetBoolEnv(XREngineEnvironmentVariables.UnitTestVrFoveationRequireRequested, out bool foveationRequireRequested))
+        {
+            settings.VR.Foveation.RequireRequested = foveationRequireRequested;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.Foveation));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.Foveation), nameof(UnitTestingVrFoveationSettings.RequireRequested));
+            applied = true;
+        }
+
         if (TryGetBoolEnv(XREngineEnvironmentVariables.UnitTestRenderWindowsWhileInVr, out bool renderWindowsWhileInVr))
         {
             settings.RenderWindowsWhileInVR = renderWindowsWhileInVr;
@@ -293,7 +330,9 @@ public static class UnitTestingWorldSettingsStore
                 "[UnitTestingWorldSettings] Applied VR launch env overrides: " +
                 $"VR.Mode={settings.VR.Mode}, VRPawn={settings.VRPawn}, UseOpenXR={settings.UseOpenXR}, " +
                 $"SceneOnlyVRPawn={settings.SceneOnlyVRPawn}, PreviewVRStereoViews={settings.PreviewVRStereoViews}, " +
-                $"RenderWindowsWhileInVR={settings.RenderWindowsWhileInVR}, RenderBackend={ResolveRenderBackend(settings)}.");
+                $"RenderWindowsWhileInVR={settings.RenderWindowsWhileInVR}, RenderBackend={ResolveRenderBackend(settings)}, " +
+                $"ViewRenderMode={settings.VR.ViewRenderMode}, Foveation={settings.VR.Foveation.Mode}/{settings.VR.Foveation.QualityPreset}, " +
+                $"FoveationRequireRequested={settings.VR.Foveation.RequireRequested}.");
         }
     }
 
@@ -302,6 +341,7 @@ public static class UnitTestingWorldSettingsStore
         if (!settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VR)) && HasExplicitLegacyVrSettings(settings))
             settings.VR = CreateVrSettingsFromLegacyFields(settings);
 
+        ApplyLegacySinglePassStereoMigration(settings);
         ApplyVrModeToFlatFields(settings);
         ApplyOpenXrRuntimeJson(settings);
         ApplyOpenXrLoaderPath(settings);
@@ -357,6 +397,39 @@ public static class UnitTestingWorldSettingsStore
         return propertyNames;
     }
 
+    private static HashSet<string> ReadJsonPropertyPaths(string? content)
+    {
+        var propertyPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(content))
+            return propertyPaths;
+
+        using var textReader = new StringReader(content);
+        using var jsonReader = new JsonTextReader(textReader)
+        {
+            DateParseHandling = DateParseHandling.None,
+        };
+
+        if (JToken.ReadFrom(jsonReader) is not JObject root)
+            return propertyPaths;
+
+        AddJsonPropertyPaths(root, null, propertyPaths);
+        return propertyPaths;
+    }
+
+    private static void AddJsonPropertyPaths(JObject obj, string? prefix, HashSet<string> propertyPaths)
+    {
+        foreach (JProperty property in obj.Properties())
+        {
+            string path = string.IsNullOrEmpty(prefix)
+                ? property.Name
+                : $"{prefix}.{property.Name}";
+            propertyPaths.Add(path);
+
+            if (property.Value is JObject child)
+                AddJsonPropertyPaths(child, path, propertyPaths);
+        }
+    }
+
     private static bool TryGetBoolEnv(string name, out bool value)
     {
         value = default;
@@ -406,7 +479,8 @@ public static class UnitTestingWorldSettingsStore
         || HasExplicitJsonProperty(settings, "UseOpenXR")
         || HasExplicitJsonProperty(settings, "SceneOnlyVRPawn")
         || HasExplicitJsonProperty(settings, "PreviewVRStereoViews")
-        || HasExplicitJsonProperty(settings, "AllowEditingInVR");
+        || HasExplicitJsonProperty(settings, "AllowEditingInVR")
+        || HasExplicitJsonProperty(settings, nameof(UnitTestingWorldSettings.SinglePassStereoVR));
 
     private static bool HasExplicitJsonProperty(UnitTestingWorldSettings settings, string propertyName)
         => !settings.TracksExplicitJsonProperties || settings.ExplicitJsonProperties.Contains(propertyName);
@@ -415,10 +489,27 @@ public static class UnitTestingWorldSettingsStore
         => new()
         {
             Mode = ResolveLegacyVrMode(settings),
+            ViewRenderMode = settings.SinglePassStereoVR
+                ? EVrViewRenderMode.SinglePassStereo
+                : EVrViewRenderMode.SequentialViews,
             PreviewStereoViews = settings.PreviewVRStereoViews,
             AllowDesktopEditing = settings.AllowEditingInVR,
+            Foveation = settings.VR.Foveation,
             OpenXrRuntimeJson = settings.VR.OpenXrRuntimeJson,
         };
+
+    private static void ApplyLegacySinglePassStereoMigration(UnitTestingWorldSettings settings)
+    {
+        if (!HasExplicitJsonProperty(settings, nameof(UnitTestingWorldSettings.SinglePassStereoVR)))
+            return;
+
+        if (settings.IsJsonPropertyPathSpecified(nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.ViewRenderMode)))
+            return;
+
+        settings.VR.ViewRenderMode = settings.SinglePassStereoVR
+            ? EVrViewRenderMode.SinglePassStereo
+            : EVrViewRenderMode.SequentialViews;
+    }
 
     private static UnitTestingVrLaunchMode ResolveLegacyVrMode(UnitTestingWorldSettings settings)
     {
@@ -440,6 +531,7 @@ public static class UnitTestingWorldSettingsStore
         settings.UseOpenXR = settings.VR.Mode is UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR;
         settings.PreviewVRStereoViews = settings.VR.PreviewStereoViews;
         settings.AllowEditingInVR = settings.VR.AllowDesktopEditing;
+        settings.SinglePassStereoVR = settings.VR.ViewRenderMode == EVrViewRenderMode.SinglePassStereo;
     }
 
     private static void ApplyOpenXrRuntimeJson(UnitTestingWorldSettings settings)
@@ -980,5 +1072,18 @@ public static class UnitTestingWorldSettingsStore
             propertyName
         };
         settings.ExplicitJsonProperties = properties;
+        MarkJsonPropertySpecified(settings, [propertyName]);
+    }
+
+    private static void MarkJsonPropertySpecified(UnitTestingWorldSettings settings, params string[] propertyPath)
+    {
+        if (!settings.TracksExplicitJsonProperties)
+            return;
+
+        var paths = new HashSet<string>(settings.ExplicitJsonPropertyPaths, StringComparer.OrdinalIgnoreCase)
+        {
+            string.Join('.', propertyPath)
+        };
+        settings.ExplicitJsonPropertyPaths = paths;
     }
 }

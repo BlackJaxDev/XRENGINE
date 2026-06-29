@@ -645,6 +645,21 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
+			if (!TryRefreshFrameSourceDescriptorSetsForDraw(imageIndex, drawUniformSlot, material, draw.ProgramBindingSnapshot, out string frameSourceDescriptorReason))
+			{
+				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason={frameSourceDescriptorReason}");
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
+					programName,
+					"descriptor-set",
+					materialName,
+					0,
+					0,
+					skippedDraw: true,
+					skippedDispatch: false,
+					$"mesh={meshName} {frameSourceDescriptorReason}");
+				return false;
+			}
+
 			if (_descriptorSets is null || _descriptorSets.Length == 0)
 			{
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor set array is null or empty");
@@ -810,13 +825,19 @@ public unsafe partial class VulkanRenderer
 			if (refreshMaterialUniforms && _program?.Data is { } programData)
 				NotifyDrawUniforms(material, programData, draw);
 
-			if (!CanReuseRecordedDescriptorSets(material, drawUniformSlot, draw.ProgramBindingSnapshot is not null, out string descriptorReason))
+			int frameIndex = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+			if (!CanReuseRecordedDescriptorSets(material, drawUniformSlot, draw.ProgramBindingSnapshot is not null, frameIndex, out string descriptorReason))
 			{
 				reason = $"descriptors {descriptorReason}; snapshot={(draw.ProgramBindingSnapshot is null ? "none" : "captured")} program='{_program?.Data?.Name ?? "<unnamed program>"}'";
 				return false;
 			}
 
-			int frameIndex = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+			if (!TryRefreshFrameSourceDescriptorSetsForDraw(frameIndex, drawUniformSlot, material, draw.ProgramBindingSnapshot, out string frameSourceDescriptorReason))
+			{
+				reason = $"descriptors {frameSourceDescriptorReason}; snapshot={(draw.ProgramBindingSnapshot is null ? "none" : "captured")} program='{_program?.Data?.Name ?? "<unnamed program>"}'";
+				return false;
+			}
+
 			UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
 			if (refreshMaterialUniforms)
 				UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);

@@ -123,8 +123,8 @@ public unsafe partial class OpenXRAPI
                 try
                 {
                     // The prep block is thread-agnostic: WaitFrame/BeginFrame/LocateViews/UpdateActionPoseCaches
-                    // use AssertOpenXrRenderThread which accepts either the render thread or this pacing thread.
-                    PrepareNextFrameOnRenderThread();
+                    // use AssertOpenXrRenderThread which accepts the active pacing/prep owner thread.
+                    PrepareNextFrameForPacingOwner();
                 }
                 catch (Exception ex)
                 {

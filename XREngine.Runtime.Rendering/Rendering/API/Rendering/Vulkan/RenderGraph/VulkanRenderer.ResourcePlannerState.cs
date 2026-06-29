@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -20,9 +20,9 @@ public unsafe partial class VulkanRenderer
 {
     private void OnSwapchainExtentChanged(Extent2D extent)
     {
-        _state.SetSwapchainExtent(extent);
+        ActiveState.SetSwapchainExtent(extent);
         if (_boundDrawFrameBuffer is null)
-            _state.SetCurrentTargetExtent(extent);
+            ActiveState.SetCurrentTargetExtent(extent);
         MarkCommandBuffersDirty();
     }
 
@@ -49,15 +49,16 @@ public unsafe partial class VulkanRenderer
     {
         XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingViewport;
+        Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
         uint displayWidth = ResolvePositiveDimension(
             pipeline?.ResourceDisplayWidth,
             viewport?.Width,
-            swapChainExtent.Width,
+            fallbackExtent.Width,
             1u);
         uint displayHeight = ResolvePositiveDimension(
             pipeline?.ResourceDisplayHeight,
             viewport?.Height,
-            swapChainExtent.Height,
+            fallbackExtent.Height,
             1u);
         uint internalWidth = ResolvePositiveDimension(
             pipeline?.ResourceInternalWidth,
@@ -83,7 +84,7 @@ public unsafe partial class VulkanRenderer
         context = ApplyInteractiveResizePlannerFreeze(context);
 
         if (pipeline is not null)
-            _lastActiveFrameOpContext = context;
+            ActiveLastActiveFrameOpContext = context;
 
         return context;
     }
@@ -140,7 +141,103 @@ public unsafe partial class VulkanRenderer
         if (context.PipelineInstance is not null || context.PassMetadata is { Count: > 0 })
             return context;
 
-        return _lastActiveFrameOpContext ?? context;
+        return ActiveLastActiveFrameOpContext ?? context;
+    }
+
+    public IDisposable EnterPipelineResourcePlannerReadbackScope(
+        XRRenderPipelineInstance pipeline,
+        XRViewport? viewport)
+    {
+        if (pipeline is null)
+            throw new ArgumentNullException(nameof(pipeline));
+
+        FrameOpContext context = CreateFrameOpContext(pipeline, viewport);
+        return new ExternalResourcePlannerReadbackScope(this, context);
+    }
+
+    internal IDisposable EnterFrameOpResourcePlannerReadbackScope(in FrameOpContext context)
+        => new ExternalResourcePlannerReadbackScope(this, context);
+
+    private FrameOpContext CreateFrameOpContext(
+        XRRenderPipelineInstance pipeline,
+        XRViewport? viewport)
+    {
+        Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
+        uint displayWidth = ResolvePositiveDimension(
+            pipeline.ResourceDisplayWidth,
+            viewport?.Width,
+            fallbackExtent.Width,
+            1u);
+        uint displayHeight = ResolvePositiveDimension(
+            pipeline.ResourceDisplayHeight,
+            viewport?.Height,
+            fallbackExtent.Height,
+            1u);
+        uint internalWidth = ResolvePositiveDimension(
+            pipeline.ResourceInternalWidth,
+            viewport?.InternalWidth,
+            displayWidth,
+            1u);
+        uint internalHeight = ResolvePositiveDimension(
+            pipeline.ResourceInternalHeight,
+            viewport?.InternalHeight,
+            displayHeight,
+            1u);
+
+        FrameOpContext context = new(
+            pipeline.GetHashCode(),
+            viewport?.GetHashCode() ?? pipeline.LastWindowViewport?.GetHashCode() ?? 0,
+            pipeline,
+            pipeline.Resources,
+            pipeline.Pipeline?.PassMetadata,
+            displayWidth,
+            displayHeight,
+            internalWidth,
+            internalHeight);
+
+        return ApplyInteractiveResizePlannerFreeze(context);
+    }
+
+    private readonly struct ExternalResourcePlannerReadbackScope : IDisposable
+    {
+        private readonly VulkanRenderer _renderer;
+        private readonly ResourcePlannerRuntimeState _previousState;
+        private readonly FrameOpPlannerStateKey _key;
+        private readonly bool _active;
+
+        public ExternalResourcePlannerReadbackScope(
+            VulkanRenderer renderer,
+            in FrameOpContext context)
+        {
+            _renderer = renderer;
+            _previousState = renderer.CaptureResourcePlannerRuntimeState();
+            _key = FrameOpContextHasPlannerResources(context)
+                ? BuildFrameOpPlannerStateKey(context)
+                : default;
+            _active = FrameOpContextHasPlannerResources(context);
+
+            if (!_active)
+                return;
+
+            FrameOpResourcePlannerSwitchingState switchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
+            if (switchingState.States.TryGetValue(_key, out ResourcePlannerRuntimeState state))
+            {
+                renderer.RestoreResourcePlannerRuntimeState(state);
+                return;
+            }
+
+            renderer.UpdateResourcePlannerFromContext(context);
+            switchingState.States[_key] = renderer.CaptureResourcePlannerRuntimeState();
+        }
+
+        public void Dispose()
+        {
+            if (_active)
+                _renderer.ActiveFrameOpResourcePlannerSwitchingState.States[_key] =
+                    _renderer.CaptureResourcePlannerRuntimeState();
+
+            _renderer.RestoreResourcePlannerRuntimeState(_previousState);
+        }
     }
 
     internal bool TryEnsurePhysicalImageForTextureResource(
@@ -151,7 +248,7 @@ public unsafe partial class VulkanRenderer
         if (string.IsNullOrWhiteSpace(resourceName))
             return false;
 
-        if (_resourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) &&
+        if (ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) &&
             group?.IsAllocated == true)
         {
             return true;
@@ -190,7 +287,7 @@ public unsafe partial class VulkanRenderer
 
         UpdateResourcePlannerFromContext(context);
 
-        if (_resourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) &&
+        if (ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) &&
             group is not null)
         {
             group.EnsureAllocated(this);
@@ -235,10 +332,11 @@ public unsafe partial class VulkanRenderer
 
     private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(FrameOp[] ops)
     {
-        _frameOpResourcePlannerSwitchingActive = false;
-        _frameOpResourcePlannerRecordingScopeActive = false;
-        _hasActiveFrameOpResourcePlannerStateKey = false;
-        _activeFrameOpResourcePlannerStateKeys.Clear();
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        switchingState.SwitchingActive = false;
+        switchingState.RecordingScopeActive = false;
+        switchingState.HasActiveKey = false;
+        switchingState.ActiveKeys.Clear();
 
         if (ops.Length == 0)
             return ResourcePlannerRevision;
@@ -255,14 +353,14 @@ public unsafe partial class VulkanRenderer
             for (int i = 0; i < keys.Count; i++)
             {
                 FrameOpPlannerStateKey key = keys[i];
-                ResourcePlannerRuntimeState state = _frameOpResourcePlannerStates.TryGetValue(key, out ResourcePlannerRuntimeState existingState)
+                ResourcePlannerRuntimeState state = switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState existingState)
                     ? existingState
                     : ResourcePlannerRuntimeState.CreateEmpty();
 
                 RestoreResourcePlannerRuntimeState(state);
                 _ = PrepareResourcePlannerForFrameOps(ops, key);
-                _frameOpResourcePlannerStates[key] = CaptureResourcePlannerRuntimeState();
-                _activeFrameOpResourcePlannerStateKeys.Add(key);
+                switchingState.States[key] = CaptureResourcePlannerRuntimeState();
+                switchingState.ActiveKeys.Add(key);
             }
         }
         finally
@@ -271,8 +369,8 @@ public unsafe partial class VulkanRenderer
         }
 
         keys.Clear();
-        _frameOpResourcePlannerSwitchingActive = _activeFrameOpResourcePlannerStateKeys.Count > 1;
-        if (!_frameOpResourcePlannerSwitchingActive)
+        switchingState.SwitchingActive = switchingState.ActiveKeys.Count > 1;
+        if (!switchingState.SwitchingActive)
             return ResourcePlannerRevision;
 
         ulong signature = ComputeActiveFrameOpResourcePlannerStatesSignature();
@@ -280,7 +378,7 @@ public unsafe partial class VulkanRenderer
             $"Vulkan.ResourcePlanner.FrameOpContextStates.{GetHashCode()}",
             TimeSpan.FromSeconds(1),
             "[VulkanResourcePlanner] Prepared {0} frame-op context resource planner states. Signature=0x{1:X16}.",
-            _activeFrameOpResourcePlannerStateKeys.Count,
+            switchingState.ActiveKeys.Count,
             signature);
         return signature;
     }
@@ -333,10 +431,11 @@ public unsafe partial class VulkanRenderer
 
     private ulong ComputeActiveFrameOpResourcePlannerStatesSignature()
     {
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
         FrameOpSignatureHasher hash = new();
         List<FrameOpPlannerStateKey> keys = _frameOpPlannerStateKeyScratch;
         keys.Clear();
-        foreach (FrameOpPlannerStateKey key in _activeFrameOpResourcePlannerStateKeys)
+        foreach (FrameOpPlannerStateKey key in switchingState.ActiveKeys)
             keys.Add(key);
         keys.Sort(static (left, right) =>
         {
@@ -365,7 +464,7 @@ public unsafe partial class VulkanRenderer
             hash.Add(key.ResourceRegistryIdentity);
             hash.Add(key.PassMetadataIdentity);
 
-            if (!_frameOpResourcePlannerStates.TryGetValue(key, out ResourcePlannerRuntimeState state))
+            if (!switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state))
             {
                 hash.Add(0);
                 continue;
@@ -385,66 +484,69 @@ public unsafe partial class VulkanRenderer
 
     private bool TryActivateFrameOpResourcePlannerState(in FrameOpContext context)
     {
-        if (!_frameOpResourcePlannerSwitchingActive ||
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        if (!switchingState.SwitchingActive ||
             !FrameOpContextHasPlannerResources(context))
         {
             return false;
         }
 
         FrameOpPlannerStateKey key = BuildFrameOpPlannerStateKey(context);
-        if (!_activeFrameOpResourcePlannerStateKeys.Contains(key))
+        if (!switchingState.ActiveKeys.Contains(key))
             return false;
 
-        if (_hasActiveFrameOpResourcePlannerStateKey &&
-            key.Equals(_activeFrameOpResourcePlannerStateKey))
+        if (switchingState.HasActiveKey &&
+            key.Equals(switchingState.ActiveKey))
         {
             return true;
         }
 
         SaveActiveFrameOpResourcePlannerState();
 
-        if (!_frameOpResourcePlannerStates.TryGetValue(key, out ResourcePlannerRuntimeState state))
+        if (!switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state))
             return false;
 
         RestoreResourcePlannerRuntimeState(state);
-        _activeFrameOpResourcePlannerStateKey = key;
-        _hasActiveFrameOpResourcePlannerStateKey = true;
+        switchingState.ActiveKey = key;
+        switchingState.HasActiveKey = true;
         return true;
     }
 
     private void SaveActiveFrameOpResourcePlannerState()
     {
-        if (!_frameOpResourcePlannerRecordingScopeActive ||
-            !_hasActiveFrameOpResourcePlannerStateKey)
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        if (!switchingState.RecordingScopeActive ||
+            !switchingState.HasActiveKey)
         {
             return;
         }
 
-        _frameOpResourcePlannerStates[_activeFrameOpResourcePlannerStateKey] = CaptureResourcePlannerRuntimeState();
+        switchingState.States[switchingState.ActiveKey] = CaptureResourcePlannerRuntimeState();
     }
 
     private void DestroyFrameOpResourcePlannerStates()
     {
-        if (_frameOpResourcePlannerStates.Count == 0)
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        if (switchingState.States.Count == 0)
             return;
 
         ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
         WaitForAllInFlightWork();
-        foreach (KeyValuePair<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> pair in _frameOpResourcePlannerStates)
+        foreach (KeyValuePair<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> pair in switchingState.States)
         {
             RestoreResourcePlannerRuntimeState(pair.Value);
             ReleaseDescriptorReferencesForPhysicalResourceDestruction(
                 $"FrameOpResourcePlannerStateDestroy.pipe{pair.Key.PipelineIdentity}.vp{pair.Key.ViewportIdentity}");
             DrainAllRetiredDescriptorPools();
-            _resourceAllocator.DestroyPhysicalImages(this);
-            _resourceAllocator.DestroyPhysicalBuffers(this);
+            ResourceAllocator.DestroyPhysicalImages(this);
+            ResourceAllocator.DestroyPhysicalBuffers(this);
         }
 
-        _frameOpResourcePlannerStates.Clear();
-        _activeFrameOpResourcePlannerStateKeys.Clear();
-        _frameOpResourcePlannerSwitchingActive = false;
-        _frameOpResourcePlannerRecordingScopeActive = false;
-        _hasActiveFrameOpResourcePlannerStateKey = false;
+        switchingState.States.Clear();
+        switchingState.ActiveKeys.Clear();
+        switchingState.SwitchingActive = false;
+        switchingState.RecordingScopeActive = false;
+        switchingState.HasActiveKey = false;
         RestoreResourcePlannerRuntimeState(previousState);
     }
 
@@ -734,14 +836,29 @@ public unsafe partial class VulkanRenderer
         return tertiary > 0 ? tertiary : fallback;
     }
 
+    private Extent2D ResolveFrameOpContextFallbackExtent()
+    {
+        if (TryGetExternalSwapchainTargetRegion(out BoundingRectangle region) &&
+            region.Width > 0 &&
+            region.Height > 0)
+        {
+            return new Extent2D(
+                (uint)region.Width,
+                (uint)region.Height);
+        }
+
+        return swapChainExtent;
+    }
+
     private VulkanResourceExtentContext BuildResourceExtentContext(in FrameOpContext context)
     {
+        Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
         uint displayWidth = context.DisplayWidth > 0
             ? context.DisplayWidth
-            : Math.Max(swapChainExtent.Width, 1u);
+            : Math.Max(fallbackExtent.Width, 1u);
         uint displayHeight = context.DisplayHeight > 0
             ? context.DisplayHeight
-            : Math.Max(swapChainExtent.Height, 1u);
+            : Math.Max(fallbackExtent.Height, 1u);
         uint internalWidth = context.InternalWidth > 0
             ? context.InternalWidth
             : displayWidth;
@@ -1103,7 +1220,7 @@ public unsafe partial class VulkanRenderer
             planningInputs.QueueOwnership,
             planningInputs.CompiledGraph,
             planningInputs.ActivePassMetadata);
-        if (plannerSignature == _resourcePlannerSignature)
+        if (plannerSignature == ActiveResourcePlannerSignature)
         {
             RememberResourcePlannerFastPath(planningInputs.FastPathKey);
             return;
@@ -1118,11 +1235,11 @@ public unsafe partial class VulkanRenderer
             $"Vulkan.ResourcePlanner.SignatureChange.{context.PipelineIdentity}.{context.ViewportIdentity}",
             TimeSpan.FromSeconds(1),
             "[VulkanResourcePlanner] Signature changed. Revision={0} Old=0x{1:X16} New=0x{2:X16} ChangedFields=[{3}] OldComponents=[{4}] NewComponents=[{5}]",
-            _resourcePlannerRevision,
-            _resourcePlannerSignature,
+            ActiveResourcePlannerRevision,
+            ActiveResourcePlannerSignature,
             plannerSignature,
-            signatureBreakdown.DescribeDelta(_resourcePlannerSignatureBreakdown),
-            _resourcePlannerSignatureBreakdown,
+            signatureBreakdown.DescribeDelta(ActiveResourcePlannerSignatureBreakdown),
+            ActiveResourcePlannerSignatureBreakdown,
             signatureBreakdown);
 
         VulkanResourcePlanner pendingPlanner = BuildResourceDescriptorPlan(context, planningInputs.ActivePassMetadata);
@@ -1132,7 +1249,7 @@ public unsafe partial class VulkanRenderer
             planningInputs.ActivePassMetadata);
         LogPhysicalAllocationPlanStatus(context, pendingPlanner, allocationPlan, planningInputs.ActivePassMetadata);
 
-        VulkanResourceAllocator oldAllocator = _resourceAllocator;
+        VulkanResourceAllocator oldAllocator = ResourceAllocator;
         VulkanResourceAllocator? pendingAllocator = null;
         int retiredImageCount = 0;
         int retiredBufferCount = 0;
@@ -1165,17 +1282,17 @@ public unsafe partial class VulkanRenderer
             ClearResourceAllocationPlanFailure(plannerSignature, allocationPlan.Signature);
         }
 
-        _resourcePlanner = pendingPlanner;
+        ActiveResourcePlanner = pendingPlanner;
         if (pendingAllocator is not null)
-            _resourceAllocator = pendingAllocator;
+            ActiveResourceAllocator = pendingAllocator;
 
         CommitPhysicalAllocatorPlan(allocationPlan.Changed, oldAllocator, retiredImageCount, retiredBufferCount);
         RebuildRenderGraphAndBarriers(planningInputs, allocationPlan.Signature);
 
-        _resourcePlannerSignature = plannerSignature;
-        _resourceAllocationSignature = allocationPlan.Signature;
-        _resourcePlannerSignatureBreakdown = signatureBreakdown;
-        _resourcePlannerRevision++;
+        ActiveResourcePlannerSignature = plannerSignature;
+        ActiveResourceAllocationSignature = allocationPlan.Signature;
+        ActiveResourcePlannerSignatureBreakdown = signatureBreakdown;
+        ActiveResourcePlannerRevision++;
         RememberResourcePlannerFastPath(planningInputs.FastPathKey);
     }
 
@@ -1212,14 +1329,14 @@ public unsafe partial class VulkanRenderer
     }
 
     private bool CanReuseResourcePlannerFastPath(in ResourcePlannerFastPathKey key)
-        => _hasResourcePlannerFastPathKey
-            && _resourcePlannerSignature != ulong.MaxValue
-            && key.Matches(_resourcePlannerFastPathKey);
+        => ActiveHasResourcePlannerFastPathKey
+            && ActiveResourcePlannerSignature != ulong.MaxValue
+            && key.Matches(ActiveResourcePlannerFastPathKey);
 
     private void RememberResourcePlannerFastPath(in ResourcePlannerFastPathKey key)
     {
-        _resourcePlannerFastPathKey = key;
-        _hasResourcePlannerFastPathKey = true;
+        ActiveResourcePlannerFastPathKey = key;
+        ActiveHasResourcePlannerFastPathKey = true;
     }
 
     private static VulkanResourcePlanner BuildResourceDescriptorPlan(
@@ -1247,7 +1364,7 @@ public unsafe partial class VulkanRenderer
         return new PhysicalAllocationPlan(
             extentContext,
             allocationSignature,
-            allocationSignature != _resourceAllocationSignature);
+            allocationSignature != ActiveResourceAllocationSignature);
     }
 
     private void LogPhysicalAllocationPlanStatus(
@@ -1268,8 +1385,8 @@ public unsafe partial class VulkanRenderer
                 $"Vulkan.ResourcePlanner.PhysicalPlanChange.{context.PipelineIdentity}.{context.ViewportIdentity}",
                 TimeSpan.FromSeconds(1),
                 "[VulkanResourcePlanner] Physical resource plan changed. Revision={0} Old=0x{1:X16} New=0x{2:X16} Components=[{3}]",
-                _resourcePlannerRevision,
-                _resourceAllocationSignature,
+                ActiveResourcePlannerRevision,
+                ActiveResourceAllocationSignature,
                 allocationPlan.Signature,
                 allocationBreakdown);
             return;
@@ -1279,7 +1396,7 @@ public unsafe partial class VulkanRenderer
             $"Vulkan.ResourcePlanner.PhysicalPlanReuse.{context.PipelineIdentity}.{context.ViewportIdentity}",
             TimeSpan.FromSeconds(1),
             "[VulkanResourcePlanner] Reusing physical resource plan for metadata-only graph change. Revision={0} AllocationSignature=0x{1:X16}",
-            _resourcePlannerRevision,
+            ActiveResourcePlannerRevision,
             allocationPlan.Signature);
     }
 
@@ -1287,14 +1404,14 @@ public unsafe partial class VulkanRenderer
         ulong plannerSignature,
         ulong allocationSignature)
     {
-        if (_failedResourcePlannerSignature != plannerSignature ||
-            _failedResourceAllocationSignature != allocationSignature ||
-            _failedResourceAllocationTimestamp == 0)
+        if (ActiveFailedResourcePlannerSignature != plannerSignature ||
+            ActiveFailedResourceAllocationSignature != allocationSignature ||
+            ActiveFailedResourceAllocationTimestamp == 0)
         {
             return false;
         }
 
-        return Stopwatch.GetElapsedTime(_failedResourceAllocationTimestamp) <
+        return Stopwatch.GetElapsedTime(ActiveFailedResourceAllocationTimestamp) <
             ResourceAllocationFailureRetryDelay;
     }
 
@@ -1302,24 +1419,24 @@ public unsafe partial class VulkanRenderer
         ulong plannerSignature,
         ulong allocationSignature)
     {
-        _failedResourcePlannerSignature = plannerSignature;
-        _failedResourceAllocationSignature = allocationSignature;
-        _failedResourceAllocationTimestamp = Stopwatch.GetTimestamp();
+        ActiveFailedResourcePlannerSignature = plannerSignature;
+        ActiveFailedResourceAllocationSignature = allocationSignature;
+        ActiveFailedResourceAllocationTimestamp = Stopwatch.GetTimestamp();
     }
 
     private void ClearResourceAllocationPlanFailure(
         ulong plannerSignature,
         ulong allocationSignature)
     {
-        if (_failedResourcePlannerSignature != plannerSignature ||
-            _failedResourceAllocationSignature != allocationSignature)
+        if (ActiveFailedResourcePlannerSignature != plannerSignature ||
+            ActiveFailedResourceAllocationSignature != allocationSignature)
         {
             return;
         }
 
-        _failedResourcePlannerSignature = ulong.MaxValue;
-        _failedResourceAllocationSignature = ulong.MaxValue;
-        _failedResourceAllocationTimestamp = 0;
+        ActiveFailedResourcePlannerSignature = ulong.MaxValue;
+        ActiveFailedResourceAllocationSignature = ulong.MaxValue;
+        ActiveFailedResourceAllocationTimestamp = 0;
     }
 
     private bool TryBuildPhysicalAllocator(
@@ -1353,13 +1470,13 @@ public unsafe partial class VulkanRenderer
             pendingAllocator = null;
             Debug.VulkanWarning(
                 "[VulkanResourcePlanner] Pending physical resource plan failed. Keeping active plan revision={0}. Reason={1}",
-                _resourcePlannerRevision,
+                ActiveResourcePlannerRevision,
                 ex.Message);
             return false;
         }
 
-        retiredImageCount = _resourceAllocator.EnumeratePhysicalGroups().Count(static g => g.IsAllocated);
-        retiredBufferCount = _resourceAllocator.EnumeratePhysicalBufferGroups().Count(static g => g.IsAllocated);
+        retiredImageCount = ResourceAllocator.EnumeratePhysicalGroups().Count(static g => g.IsAllocated);
+        retiredBufferCount = ResourceAllocator.EnumeratePhysicalBufferGroups().Count(static g => g.IsAllocated);
         return true;
     }
 
@@ -1401,7 +1518,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         if (!oldAllocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.AutoExposureTextureName, out VulkanPhysicalImageGroup? oldGroup) ||
-            !_resourceAllocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.AutoExposureTextureName, out VulkanPhysicalImageGroup? newGroup) ||
+            !ResourceAllocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.AutoExposureTextureName, out VulkanPhysicalImageGroup? newGroup) ||
             oldGroup is null ||
             newGroup is null ||
             ReferenceEquals(oldGroup, newGroup) ||
@@ -1492,7 +1609,7 @@ public unsafe partial class VulkanRenderer
 
     private bool ShouldSkipAutoExposureHistoryPreserve()
         => IsDeviceLost ||
-           _resourcePlannerRevision == 0 ||
+           ActiveResourcePlannerRevision == 0 ||
            RuntimeRenderingHostServices.Current.IsInVR;
 
     private void TransitionPhysicalGroupForCopy(
@@ -1545,23 +1662,23 @@ public unsafe partial class VulkanRenderer
         in ResourcePlanningInputs planningInputs,
         ulong resourceAllocationSignature)
     {
-        _compiledRenderGraph = planningInputs.CompiledGraph;
+        ActiveCompiledRenderGraph = planningInputs.CompiledGraph;
 
         BarrierPlanFastPathKey barrierKey = new(
             planningInputs.CompiledGraph,
             resourceAllocationSignature,
             planningInputs.QueueOwnership);
-        if (_hasBarrierPlanFastPathKey && barrierKey.Matches(_barrierPlanFastPathKey))
+        if (ActiveHasBarrierPlanFastPathKey && barrierKey.Matches(ActiveBarrierPlanFastPathKey))
             return;
 
-        _barrierPlanner.Rebuild(
+        BarrierPlanner.Rebuild(
             planningInputs.ActivePassMetadata,
-            _resourcePlanner,
-            _resourceAllocator,
-            _compiledRenderGraph.Synchronization,
+            ResourcePlanner,
+            ResourceAllocator,
+            CompiledRenderGraph.Synchronization,
             planningInputs.QueueOwnership);
-        _barrierPlanFastPathKey = barrierKey;
-        _hasBarrierPlanFastPathKey = true;
+        ActiveBarrierPlanFastPathKey = barrierKey;
+        ActiveHasBarrierPlanFastPathKey = true;
     }
 
     private IReadOnlyCollection<RenderPassMetadata>? FilterActivePassMetadata(
@@ -2156,18 +2273,19 @@ public unsafe partial class VulkanRenderer
 
     private int ComputeResourcePlanningSignature(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
+        Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
         HashCode hash = new();
-        hash.Add(swapChainExtent.Width);
-        hash.Add(swapChainExtent.Height);
+        hash.Add(fallbackExtent.Width);
+        hash.Add(fallbackExtent.Height);
 
-        foreach (VulkanAllocationRequest request in _resourcePlanner.CurrentPlan.AllTextures())
+        foreach (VulkanAllocationRequest request in ResourcePlanner.CurrentPlan.AllTextures())
         {
             hash.Add(request.Name, StringComparer.OrdinalIgnoreCase);
             hash.Add((int)request.Lifetime);
             hash.Add(request.AliasKey);
         }
 
-        foreach (VulkanBufferAllocationRequest request in _resourcePlanner.CurrentPlan.AllBuffers())
+        foreach (VulkanBufferAllocationRequest request in ResourcePlanner.CurrentPlan.AllBuffers())
         {
             hash.Add(request.Name, StringComparer.OrdinalIgnoreCase);
             hash.Add((int)request.Lifetime);
@@ -2225,7 +2343,7 @@ public unsafe partial class VulkanRenderer
 
         // Short-circuit: well-known EDefaultRenderPass values are always valid.
         // Metadata may lag behind runtime enqueues (conditional pipeline paths,
-        // hot-reload) â€” accept standard passes without warning.
+        // hot-reload) — accept standard passes without warning.
         if (passIndex != int.MinValue && Enum.IsDefined(typeof(EDefaultRenderPass), passIndex))
             return passIndex;
 
@@ -2261,7 +2379,7 @@ public unsafe partial class VulkanRenderer
             ? "invalid sentinel value"
             : $"pass {passIndex} is missing from metadata";
 
-        int? firstKnownBarrierPass = _barrierPlanner.GetFirstKnownPassIndex();
+        int? firstKnownBarrierPass = BarrierPlanner.GetFirstKnownPassIndex();
 
         Debug.VulkanWarningEvery(
             $"Vulkan.InvalidPass.{opName}.{passIndex}",

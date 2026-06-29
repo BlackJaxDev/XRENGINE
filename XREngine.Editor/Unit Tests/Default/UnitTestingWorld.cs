@@ -99,6 +99,7 @@ public static partial class EditorUnitTests
         if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) || requiresDesktopVrWindow)
             s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresDesktopVrWindow;
         s.VrMirrorComposeFromEyeTextures = !requiresDesktopVrWindow;
+        s.VrCopyEyePreviewTextures = previewVrStereoViews;
 
         bool groupedRenderingSpecified = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));
         if (groupedRenderingSpecified)
@@ -134,7 +135,23 @@ public static partial class EditorUnitTests
 
         if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowSkinning)))
             s.AllowSkinning = Toggles.AllowSkinning;
-        Debug.Out($"[UnitTestingWorld] Applied render toggles AllowSkinning={s.AllowSkinning} AllowShaderPipelines={s.AllowShaderPipelines}");
+        if (groupedVrSpecified)
+        {
+            s.VrViewRenderMode = runtimeSettings.VR.ViewRenderMode;
+            s.VrFoveationMode = runtimeSettings.VR.Foveation.Mode;
+            s.VrFoveationQualityPreset = runtimeSettings.VR.Foveation.QualityPreset;
+            s.VrFoveationRequireRequested = runtimeSettings.VR.Foveation.RequireRequested;
+        }
+        else if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.SinglePassStereoVR)))
+        {
+            s.RenderVRSinglePassStereo = Toggles.SinglePassStereoVR;
+        }
+        Debug.Out(
+            $"[UnitTestingWorld] Applied render toggles AllowSkinning={s.AllowSkinning} " +
+            $"AllowShaderPipelines={s.AllowShaderPipelines} VrViewRenderMode={s.VrViewRenderMode} " +
+            $"VrFoveationMode={s.VrFoveationMode} RenderWindowsWhileInVR={s.RenderWindowsWhileInVR} " +
+            $"VrMirrorComposeFromEyeTextures={s.VrMirrorComposeFromEyeTextures} " +
+            $"VrCopyEyePreviewTextures={s.VrCopyEyePreviewTextures}");
         if (!groupedRenderingSpecified)
         {
             if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLProgramCompileLinkWorkerCount)))
@@ -150,8 +167,6 @@ public static partial class EditorUnitTests
             if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.OpenGLParallelShaderCompileProbeTimeoutMs)))
                 s.OpenGLParallelShaderCompileProbeTimeoutMs = Toggles.OpenGLParallelShaderCompileProbeTimeoutMs;
         }
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.SinglePassStereoVR)))
-            s.RenderVRSinglePassStereo = Toggles.SinglePassStereoVR;
         if (Toggles.RenderPhysicsDebug)
             s.PhysicsVisualizeSettings.SetAllTrue();
 

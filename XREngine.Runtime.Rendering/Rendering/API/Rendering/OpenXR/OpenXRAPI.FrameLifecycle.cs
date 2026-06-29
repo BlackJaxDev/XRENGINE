@@ -81,6 +81,26 @@ public unsafe partial class OpenXRAPI
             return;
         }
 
+        if (!TryResolveOpenXrViewRenderModeForCurrentBackend(out _))
+        {
+            var frameEndInfoNoLayers = new FrameEndInfo
+            {
+                Type = StructureType.FrameEndInfo,
+                DisplayTime = _frameState.PredictedDisplayTime,
+                EnvironmentBlendMode = EnvironmentBlendMode.Opaque,
+                LayerCount = 0,
+                Layers = null
+            };
+            var endResult = EndFrameWithTiming(in frameEndInfoNoLayers);
+            if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+                Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers; unsupported view render mode) => {endResult}");
+
+            Volatile.Write(ref _pendingXrFrame, 0);
+            Volatile.Write(ref _pendingXrFrameCollected, 0);
+            SignalPacingThreadFrameSubmitted();
+            return;
+        }
+
         var projectionViews = stackalloc CompositionLayerProjectionView[(int)_viewCount];
         for (uint i = 0; i < _viewCount; i++)
             projectionViews[i] = default;
@@ -403,7 +423,7 @@ public unsafe partial class OpenXRAPI
             if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.InRenderCallback)
             {
                 using var prepSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.PrepareNextFrame");
-                PrepareNextFrameOnRenderThread();
+                PrepareNextFrameForPacingOwner();
             }
         }
         finally
@@ -440,7 +460,7 @@ public unsafe partial class OpenXRAPI
             && OpenXrPrepareFrameAfterDesktopRender)
         {
             using var prepSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.PostRender.PrepareNextFrame");
-            PrepareNextFrameOnRenderThread();
+            PrepareNextFrameForPacingOwner();
         }
     }
 
@@ -600,14 +620,30 @@ public unsafe partial class OpenXRAPI
 
     /// <summary>
     /// CollectVisible-thread callback.
-    /// Builds per-eye visibility buffers for the OpenXR views prepared on the render thread.
+    /// Builds per-eye visibility buffers for the prepared OpenXR views.
     /// </summary>
     private void OpenXrCollectVisible()
     {
         // Runs on the engine's CollectVisible thread.
-        // Consumes the views located on the render thread and builds per-eye visibility buffers.
+        // Consumes the located views and builds per-eye visibility buffers.
         if (!_sessionBegun)
             return;
+
+        if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.CollectVisibleThread)
+        {
+            if (TryBeginOpenXrCollectVisiblePrepThread())
+            {
+                try
+                {
+                    using var prepSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.CollectVisible.PrepareNextFrame");
+                    PrepareNextFrameForPacingOwner();
+                }
+                finally
+                {
+                    ClearOpenXrCollectVisiblePrepThread();
+                }
+            }
+        }
 
         if (Volatile.Read(ref _pendingXrFrame) == 0)
             return;
@@ -1133,13 +1169,13 @@ public unsafe partial class OpenXRAPI
     }
 
     /// <summary>
-    /// Render-thread helper.
+    /// Pacing-owner helper.
     /// Waits/begins an OpenXR frame and locates views, making that frame available for CollectVisible.
     /// </summary>
-    private void PrepareNextFrameOnRenderThread()
+    private void PrepareNextFrameForPacingOwner()
     {
-        // Called on the render thread. Prepares the next OpenXR frame (WaitFrame/BeginFrame/LocateViews)
-        // so the CollectVisible thread can build buffers for it.
+        // Called by the configured pacing owner. Prepares the next OpenXR frame
+        // (WaitFrame/BeginFrame/LocateViews) so the CollectVisible thread can build buffers for it.
         if (!_sessionBegun)
             return;
 
@@ -1152,6 +1188,9 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _pendingXrFrameCollected, 0);
 
         if (!WaitFrame(out _frameState))
+            return;
+
+        if (!_sessionBegun)
             return;
 
         if (!BeginFrame())

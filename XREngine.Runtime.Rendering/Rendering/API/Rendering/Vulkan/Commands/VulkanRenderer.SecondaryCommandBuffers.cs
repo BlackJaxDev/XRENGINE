@@ -162,17 +162,11 @@ namespace XREngine.Rendering.Vulkan
                     indexedViewports.Length >= (int)viewportScissorCount &&
                     indexedScissors.Length >= (int)viewportScissorCount)
                 {
-                    fixed (Viewport* indexedViewportPtr = indexedViewports)
-                    fixed (Rect2D* indexedScissorPtr = indexedScissors)
-                    {
-                        Api!.CmdSetViewport(secondaryCommandBuffer, 0, viewportScissorCount, indexedViewportPtr);
-                        Api!.CmdSetScissor(secondaryCommandBuffer, 0, viewportScissorCount, indexedScissorPtr);
-                    }
+                    SetViewportScissorTracked(secondaryCommandBuffer, indexedViewports, indexedScissors, viewportScissorCount);
                 }
                 else
                 {
-                    Api!.CmdSetViewport(secondaryCommandBuffer, 0, 1, &viewport);
-                    Api!.CmdSetScissor(secondaryCommandBuffer, 0, 1, &scissor);
+                    SetViewportScissorTracked(secondaryCommandBuffer, viewport, scissor);
                 }
 
                 int drawUniformSlot = GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
@@ -368,6 +362,7 @@ namespace XREngine.Rendering.Vulkan
         private bool TryRecordSecondaryBucket(
             CommandBuffer primaryCommandBuffer,
             uint imageIndex,
+            HashSet<nint> executedCommandChainSecondaryHandles,
             FrameOp[] ops,
             int startIndex,
             VulkanRenderGraphCompiler.SecondaryRecordingBucket bucket,
@@ -390,10 +385,12 @@ namespace XREngine.Rendering.Vulkan
                     startIndex,
                     bucket.Count,
                     useParallelSecondary,
+                    executedCommandChainSecondaryHandles,
                     (relativeIndex, secondary) =>
                     {
-                        FrameOp runOp = ops[startIndex + relativeIndex];
-                        RecordFrameOpInSecondary(secondary, imageIndex, runOp);
+                        int opIndex = startIndex + relativeIndex;
+                        FrameOp runOp = ops[opIndex];
+                        RecordFrameOpInSecondary(secondary, imageIndex, runOp, opIndex);
                     });
                 return true;
             }
@@ -407,20 +404,22 @@ namespace XREngine.Rendering.Vulkan
                     imageIndex,
                     (relativeIndex, secondary) =>
                     {
-                        FrameOp runOp = ops[startIndex + relativeIndex];
-                        RecordFrameOpInSecondary(secondary, imageIndex, runOp);
+                        int opIndex = startIndex + relativeIndex;
+                        FrameOp runOp = ops[opIndex];
+                        RecordFrameOpInSecondary(secondary, imageIndex, runOp, opIndex);
                     });
                 return true;
             }
 
             for (int relativeIndex = 0; relativeIndex < bucket.Count; relativeIndex++)
             {
-                FrameOp runOp = ops[startIndex + relativeIndex];
+                int opIndex = startIndex + relativeIndex;
+                FrameOp runOp = ops[opIndex];
                 ExecuteSecondaryCommandBuffer(
                     primaryCommandBuffer,
                     label,
                     imageIndex,
-                    secondary => RecordFrameOpInSecondary(secondary, imageIndex, runOp));
+                    secondary => RecordFrameOpInSecondary(secondary, imageIndex, runOp, opIndex));
             }
 
             return true;
@@ -434,6 +433,7 @@ namespace XREngine.Rendering.Vulkan
             int startIndex,
             int count,
             bool useParallelSecondary,
+            HashSet<nint> executedCommandChainSecondaryHandles,
             Action<int, CommandBuffer> recorder)
         {
             if (count <= 0)
@@ -464,9 +464,10 @@ namespace XREngine.Rendering.Vulkan
                         BuildRenderViewKey(op, dynamicOverlay: false),
                         op.PassIndex,
                         ResolveCommandChainTargetIdentity(op),
+                        false,
                         primaryOwnedChainOrdinal);
                     CommandChain chain = GetOrCreateCommandChain(commandChainCache, chainKey);
-                    if (!TryEnsureCommandChainSecondaryCommandBuffer(chain, imageIndex, out CommandBuffer secondary))
+                    if (!TryEnsureMutableCommandChainSecondaryCommandBuffer(chain, imageIndex, executedCommandChainSecondaryHandles, out CommandBuffer secondary))
                         throw new InvalidOperationException("Failed to allocate Vulkan primary-owned secondary command buffer.");
 
                     secondaryChains[i] = chain;
@@ -480,12 +481,13 @@ namespace XREngine.Rendering.Vulkan
 
                     try
                     {
+                        MarkCommandChainSecondaryCommandBufferInvalid(chain);
                         Api!.ResetCommandBuffer(secondary, 0);
 
                         CommandBufferBeginInfo beginInfo = new()
                         {
                             SType = StructureType.CommandBufferBeginInfo,
-                            Flags = CommandBufferUsageFlags.OneTimeSubmitBit
+                            Flags = CommandBufferUsageFlags.SimultaneousUseBit
                         };
 
                         CommandBufferInheritanceInfo inheritanceInfo = new()
@@ -544,6 +546,11 @@ namespace XREngine.Rendering.Vulkan
 
                 fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
                     Api!.CmdExecuteCommands(primaryCommandBuffer, (uint)count, secondaryPtr);
+                for (int i = 0; i < count; i++)
+                {
+                    if (secondaryBuffers[i].Handle != 0)
+                        executedCommandChainSecondaryHandles.Add(secondaryBuffers[i].Handle);
+                }
             }
             finally
             {
@@ -584,7 +591,7 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
-        private void RecordFrameOpInSecondary(CommandBuffer secondaryCommandBuffer, uint imageIndex, FrameOp runOp)
+        private void RecordFrameOpInSecondary(CommandBuffer secondaryCommandBuffer, uint imageIndex, FrameOp runOp, int opIndex)
         {
             using IDisposable? _ = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(runOp.Context.PipelineInstance);
             switch (runOp)
@@ -599,7 +606,7 @@ namespace XREngine.Rendering.Vulkan
                     RecordMeshTaskDispatchIndirectCountOp(secondaryCommandBuffer, meshTaskDispatchOp);
                     break;
                 case ComputeDispatchOp computeDispatchOp:
-                    RecordComputeDispatchOp(secondaryCommandBuffer, imageIndex, computeDispatchOp);
+                    RecordComputeDispatchOp(secondaryCommandBuffer, imageIndex, computeDispatchOp, opIndex);
                     break;
                 case MemoryBarrierOp memoryBarrierOp:
                     EmitMemoryBarrierMask(secondaryCommandBuffer, memoryBarrierOp.Mask);
@@ -630,7 +637,10 @@ namespace XREngine.Rendering.Vulkan
                 Api!.AllocateCommandBuffers(device, ref allocInfo, out secondary);
                 allocated = secondary.Handle != 0;
                 if (allocated)
+                {
                     RegisterCommandBufferImageIndex(secondary, imageIndex);
+                    SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)secondary.Handle), $"{label}.Secondary[{imageIndex}]");
+                }
 
                 CommandBufferBeginInfo beginInfo = new()
                 {
@@ -734,7 +744,10 @@ namespace XREngine.Rendering.Vulkan
                             Api!.AllocateCommandBuffers(device, ref allocInfo, out secondary);
                             localAllocated = secondary.Handle != 0;
                             if (localAllocated)
+                            {
                                 RegisterCommandBufferImageIndex(secondary, imageIndex);
+                                SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)secondary.Handle), $"{label}.Secondary[{imageIndex}:{index}]");
+                            }
 
                             CommandBufferBeginInfo beginInfo = new()
                             {

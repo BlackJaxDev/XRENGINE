@@ -24,43 +24,43 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             // Apply color write mask
-            _state.SetColorMask(parameters.WriteRed, parameters.WriteGreen, parameters.WriteBlue, parameters.WriteAlpha);
-            _state.SetCullMode(ToVulkanCullMode(ResolveCullMode(parameters.CullMode)));
-            _state.SetFrontFace(ToVulkanFrontFace(ResolveWinding(parameters.Winding)));
-            _state.SetAlphaToCoverageEnabled(parameters.AlphaToCoverage == ERenderParamUsage.Enabled);
+            ActiveState.SetColorMask(parameters.WriteRed, parameters.WriteGreen, parameters.WriteBlue, parameters.WriteAlpha);
+            ActiveState.SetCullMode(ToVulkanCullMode(ResolveCullMode(parameters.CullMode)));
+            ActiveState.SetFrontFace(ToVulkanFrontFace(ResolveWinding(parameters.Winding)));
+            ActiveState.SetAlphaToCoverageEnabled(parameters.AlphaToCoverage == ERenderParamUsage.Enabled);
 
             // Apply depth test settings
             var depthTest = parameters.DepthTest;
             if (depthTest.Enabled == ERenderParamUsage.Enabled)
             {
-                _state.SetDepthTestEnabled(true);
-                _state.SetDepthWriteEnabled(depthTest.UpdateDepth);
-                _state.SetDepthCompare(ToVulkanCompareOp(RuntimeEngine.Rendering.State.MapDepthComparison(depthTest.Function)));
+                ActiveState.SetDepthTestEnabled(true);
+                ActiveState.SetDepthWriteEnabled(depthTest.UpdateDepth);
+                ActiveState.SetDepthCompare(ToVulkanCompareOp(RuntimeEngine.Rendering.State.MapDepthComparison(depthTest.Function)));
             }
             else if (depthTest.Enabled == ERenderParamUsage.Disabled)
             {
-                _state.SetDepthTestEnabled(false);
-                _state.SetDepthWriteEnabled(false);
+                ActiveState.SetDepthTestEnabled(false);
+                ActiveState.SetDepthWriteEnabled(false);
             }
 
             var stencilTest = parameters.StencilTest;
             if (stencilTest.Enabled == ERenderParamUsage.Enabled)
             {
-                _state.SetStencilEnabled(true);
-                _state.SetStencilStates(ToVulkanStencilState(stencilTest.FrontFace), ToVulkanStencilState(stencilTest.BackFace));
-                _state.SetStencilWriteMask(stencilTest.FrontFace.WriteMask);
+                ActiveState.SetStencilEnabled(true);
+                ActiveState.SetStencilStates(ToVulkanStencilState(stencilTest.FrontFace), ToVulkanStencilState(stencilTest.BackFace));
+                ActiveState.SetStencilWriteMask(stencilTest.FrontFace.WriteMask);
             }
             else if (stencilTest.Enabled == ERenderParamUsage.Disabled)
             {
-                _state.SetStencilEnabled(false);
-                _state.SetStencilStates(default, default);
-                _state.SetStencilWriteMask(0);
+                ActiveState.SetStencilEnabled(false);
+                ActiveState.SetStencilStates(default, default);
+                ActiveState.SetStencilWriteMask(0);
             }
 
             BlendMode? blend = ResolveBlendMode(parameters);
             if (blend is not null && blend.Enabled == ERenderParamUsage.Enabled)
             {
-                _state.SetBlendState(
+                ActiveState.SetBlendState(
                     true,
                     ToVulkanBlendOp(blend.RgbEquation),
                     ToVulkanBlendOp(blend.AlphaEquation),
@@ -71,11 +71,11 @@ namespace XREngine.Rendering.Vulkan
             }
             else if (blend is not null && blend.Enabled == ERenderParamUsage.Disabled)
             {
-                _state.SetBlendState(false, BlendOp.Add, BlendOp.Add, BlendFactor.One, BlendFactor.Zero, BlendFactor.One, BlendFactor.Zero);
+                ActiveState.SetBlendState(false, BlendOp.Add, BlendOp.Add, BlendFactor.One, BlendFactor.Zero, BlendFactor.One, BlendFactor.Zero);
             }
             else if (blend is null)
             {
-                _state.SetBlendState(false, BlendOp.Add, BlendOp.Add, BlendFactor.One, BlendFactor.Zero, BlendFactor.One, BlendFactor.Zero);
+                ActiveState.SetBlendState(false, BlendOp.Add, BlendOp.Add, BlendFactor.One, BlendFactor.Zero, BlendFactor.One, BlendFactor.Zero);
             }
         }
 

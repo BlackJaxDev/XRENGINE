@@ -41,6 +41,8 @@ namespace XREngine.Rendering.Vulkan
         private readonly object _commandBindStateLock = new();
         private readonly Dictionary<ulong, CommandBufferBindState> _commandBindStates = new();
         private readonly Dictionary<ulong, int> _commandBufferImageIndices = new();
+        private readonly object _ownedCommandChainSecondaryPoolsLock = new();
+        private readonly Dictionary<ulong, OwnedCommandChainSecondaryPool> _ownedCommandChainSecondaryPools = new();
         private bool _enableSecondaryCommandBuffers = true;
         private bool _enableParallelSecondaryCommandBufferRecording = !IsParallelSecondaryCommandBufferRecordingDisabled();
         private int _parallelSecondaryIndirectRunThreshold = 4;
@@ -73,21 +75,10 @@ namespace XREngine.Rendering.Vulkan
         private string? _vulkanDiagnosticLastTitle;
         private int _vulkanLastFrameDroppedDrawOps;
         private int _vulkanLastFrameDroppedOps;
-        private readonly Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket> _secondaryBucketByStartScratch = new();
-        private readonly Dictionary<int, int> _swapchainWritesByPipelineScratch = new();
-        private readonly Dictionary<int, string> _swapchainWriterLabelByPipelineScratch = new();
-        private readonly Dictionary<int, string> _swapchainWriterDetailByPipelineScratch = new();
-        private readonly Dictionary<int, FrameOp> _swapchainWriterOpByPipelineScratch = new();
-        private readonly Dictionary<int, int> _swapchainWriterDynamicUiDrawCountByPipelineScratch = new();
-        private readonly Dictionary<int, int> _swapchainWriterPassByPipelineScratch = new();
-        private readonly Dictionary<int, int> _swapchainWriterOpIndexByPipelineScratch = new();
-        private readonly Dictionary<int, string> _pipelineNameByIdentityScratch = new();
-        private readonly Dictionary<VkMeshRenderer, int> _recordMeshDrawSlotsByRendererScratch = new(ReferenceEqualityComparer.Instance);
+        private readonly ThreadLocal<CommandBufferRecordingScratch> _commandBufferRecordingScratch =
+            new(static () => new CommandBufferRecordingScratch());
         private readonly Dictionary<VkMeshRenderer, int> _refreshMeshDrawSlotsByRendererScratch = new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<VkMeshRenderer, int> _dynamicUiMeshDrawSlotsByRendererScratch = new(ReferenceEqualityComparer.Instance);
-        private readonly Dictionary<XRFrameBuffer, ImageLayout[]> _fboLayoutTrackingScratch = new(ReferenceEqualityComparer.Instance);
-        private readonly List<KeyValuePair<int, int>> _swapchainWriterCountSortScratch = new();
-        private readonly StringBuilder _swapchainWriterSummaryBuilder = new(256);
         private bool _lastEnsureCommandBufferRecordedPrimary;
         private int _descriptorFrameSlotFrameCountOverride;
         internal int DescriptorFrameSlotFrameCount
@@ -121,11 +112,6 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
         }
-        private int _secondaryBucketByStartCapacityHint = 1;
-        private int _recordSwapchainWriterCapacityHint = 1;
-        private int _recordPipelineNameCapacityHint = 1;
-        private int _recordMeshDrawSlotCapacityHint = 1;
-        private int _recordFboLayoutCapacityHint = 1;
         private int _refreshMeshDrawSlotCapacityHint = 1;
         private int _dynamicUiMeshDrawSlotCapacityHint = 1;
         private string? _lastReusableFrameDataRefreshFailureReason;
@@ -149,25 +135,55 @@ namespace XREngine.Rendering.Vulkan
             ulong Signature,
             string Detail);
 
+        private sealed class CommandBufferRecordingScratch
+        {
+            public Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket> SecondaryBucketByStart { get; } = new();
+            public Dictionary<int, int> SwapchainWritesByPipeline { get; } = new();
+            public Dictionary<int, string> SwapchainWriterLabelByPipeline { get; } = new();
+            public Dictionary<int, string> SwapchainWriterDetailByPipeline { get; } = new();
+            public Dictionary<int, FrameOp> SwapchainWriterOpByPipeline { get; } = new();
+            public Dictionary<int, int> SwapchainWriterDynamicUiDrawCountByPipeline { get; } = new();
+            public HashSet<nint> ExecutedCommandChainSecondaryHandles { get; } = new();
+            public Dictionary<int, int> SwapchainWriterPassByPipeline { get; } = new();
+            public Dictionary<int, int> SwapchainWriterOpIndexByPipeline { get; } = new();
+            public Dictionary<int, string> PipelineNameByIdentity { get; } = new();
+            public Dictionary<VkMeshRenderer, int> MeshDrawSlotsByRenderer { get; } = new(ReferenceEqualityComparer.Instance);
+            public Dictionary<XRFrameBuffer, ImageLayout[]> FboLayoutTracking { get; } = new(ReferenceEqualityComparer.Instance);
+            public List<KeyValuePair<int, int>> SwapchainWriterCountSort { get; } = new();
+            public StringBuilder SwapchainWriterSummaryBuilder { get; } = new(256);
+            public int SecondaryBucketByStartCapacityHint { get; set; } = 1;
+            public int RecordSwapchainWriterCapacityHint { get; set; } = 1;
+            public int RecordPipelineNameCapacityHint { get; set; } = 1;
+            public int RecordMeshDrawSlotCapacityHint { get; set; } = 1;
+            public int RecordFboLayoutCapacityHint { get; set; } = 1;
+        }
+
         private sealed class CommandBufferCacheVariant
         {
             public CommandBufferCacheVariant(
                 CommandBuffer primaryCommandBuffer,
                 CommandBuffer dynamicUiSecondaryCommandBuffer,
+                CommandPool primaryCommandPool,
+                CommandPool dynamicUiSecondaryCommandPool,
                 bool ownsPrimaryCommandBuffer,
                 bool ownsDynamicUiSecondaryCommandBuffer)
             {
                 PrimaryCommandBuffer = primaryCommandBuffer;
                 DynamicUiSecondaryCommandBuffer = dynamicUiSecondaryCommandBuffer;
+                PrimaryCommandPool = primaryCommandPool;
+                DynamicUiSecondaryCommandPool = dynamicUiSecondaryCommandPool;
                 OwnsPrimaryCommandBuffer = ownsPrimaryCommandBuffer;
                 OwnsDynamicUiSecondaryCommandBuffer = ownsDynamicUiSecondaryCommandBuffer;
             }
 
             public CommandBuffer PrimaryCommandBuffer { get; }
             public CommandBuffer DynamicUiSecondaryCommandBuffer { get; }
+            public CommandPool PrimaryCommandPool { get; }
+            public CommandPool DynamicUiSecondaryCommandPool { get; }
             public bool OwnsPrimaryCommandBuffer { get; }
             public bool OwnsDynamicUiSecondaryCommandBuffer { get; }
             public bool Dirty { get; set; } = true;
+            public string? DirtyReason { get; set; } = "new variant";
             public ulong FrameOpsSignature { get; set; } = ulong.MaxValue;
             public ulong DynamicUiSignature { get; set; } = ulong.MaxValue;
             public int DynamicUiOpCount { get; set; } = -1;
@@ -211,6 +227,12 @@ namespace XREngine.Rendering.Vulkan
             public bool UseTransferQueue { get; } = useTransferQueue;
         }
 
+        private sealed class OwnedCommandChainSecondaryPool(CommandPool pool)
+        {
+            public CommandPool Pool { get; } = pool;
+            public HashSet<ulong> CommandBuffers { get; } = [];
+        }
+
         private struct CommandBufferBindState
         {
             public ulong GraphicsPipeline;
@@ -218,9 +240,11 @@ namespace XREngine.Rendering.Vulkan
             public ulong GraphicsDescriptorSignature;
             public ulong ComputeDescriptorSignature;
             public ulong VertexBufferSignature;
+            public ulong ViewportScissorSignature;
             public ulong IndexBuffer;
             public ulong IndexOffset;
             public IndexType IndexType;
+            public bool HasViewportScissorState;
         }
 
         internal void ResetCommandBufferBindState(CommandBuffer commandBuffer)
@@ -254,8 +278,10 @@ namespace XREngine.Rendering.Vulkan
         }
 
         internal void RemoveCommandBufferBindState(CommandBuffer commandBuffer)
+            => RemoveCommandBufferBindStateByHandle(unchecked((ulong)commandBuffer.Handle));
+
+        private void RemoveCommandBufferBindStateByHandle(ulong key)
         {
-            ulong key = (ulong)commandBuffer.Handle;
             lock (_commandBindStateLock)
             {
                 _commandBindStates.Remove(key);
@@ -299,6 +325,102 @@ namespace XREngine.Rendering.Vulkan
 
             Api!.CmdBindPipeline(commandBuffer, bindPoint, pipeline);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pipelineBinds: 1);
+        }
+
+        internal void SetViewportScissorTracked(
+            CommandBuffer commandBuffer,
+            in Viewport viewport,
+            in Rect2D scissor)
+        {
+            ulong signature = ComputeViewportScissorSignature(viewport, scissor);
+            if (!ShouldSetViewportScissor(commandBuffer, signature))
+                return;
+
+            Viewport viewportCopy = viewport;
+            Rect2D scissorCopy = scissor;
+            Api!.CmdSetViewport(commandBuffer, 0, 1, &viewportCopy);
+            Api!.CmdSetScissor(commandBuffer, 0, 1, &scissorCopy);
+        }
+
+        internal void SetViewportScissorTracked(
+            CommandBuffer commandBuffer,
+            Viewport[] viewports,
+            Rect2D[] scissors,
+            uint count)
+        {
+            if (count == 0)
+                return;
+
+            ulong signature = ComputeViewportScissorSignature(viewports, scissors, count);
+            if (!ShouldSetViewportScissor(commandBuffer, signature))
+                return;
+
+            fixed (Viewport* viewportPtr = viewports)
+            fixed (Rect2D* scissorPtr = scissors)
+            {
+                Api!.CmdSetViewport(commandBuffer, 0, count, viewportPtr);
+                Api!.CmdSetScissor(commandBuffer, 0, count, scissorPtr);
+            }
+        }
+
+        private bool ShouldSetViewportScissor(CommandBuffer commandBuffer, ulong signature)
+        {
+            bool shouldSet;
+            ulong key = (ulong)commandBuffer.Handle;
+            lock (_commandBindStateLock)
+            {
+                _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
+                shouldSet = !state.HasViewportScissorState || state.ViewportScissorSignature != signature;
+                if (shouldSet)
+                {
+                    state.ViewportScissorSignature = signature;
+                    state.HasViewportScissorState = true;
+                    _commandBindStates[key] = state;
+                }
+            }
+
+            return shouldSet;
+        }
+
+        private static ulong ComputeViewportScissorSignature(in Viewport viewport, in Rect2D scissor)
+        {
+            HashCode hash = new();
+            hash.Add(1);
+            AddViewportSignature(ref hash, viewport);
+            AddScissorSignature(ref hash, scissor);
+            return unchecked((ulong)hash.ToHashCode());
+        }
+
+        private static ulong ComputeViewportScissorSignature(Viewport[] viewports, Rect2D[] scissors, uint count)
+        {
+            HashCode hash = new();
+            hash.Add(count);
+            int boundedCount = Math.Min((int)count, Math.Min(viewports.Length, scissors.Length));
+            for (int i = 0; i < boundedCount; i++)
+            {
+                AddViewportSignature(ref hash, viewports[i]);
+                AddScissorSignature(ref hash, scissors[i]);
+            }
+
+            return unchecked((ulong)hash.ToHashCode());
+        }
+
+        private static void AddViewportSignature(ref HashCode hash, in Viewport viewport)
+        {
+            hash.Add(BitConverter.SingleToInt32Bits(viewport.X));
+            hash.Add(BitConverter.SingleToInt32Bits(viewport.Y));
+            hash.Add(BitConverter.SingleToInt32Bits(viewport.Width));
+            hash.Add(BitConverter.SingleToInt32Bits(viewport.Height));
+            hash.Add(BitConverter.SingleToInt32Bits(viewport.MinDepth));
+            hash.Add(BitConverter.SingleToInt32Bits(viewport.MaxDepth));
+        }
+
+        private static void AddScissorSignature(ref HashCode hash, in Rect2D scissor)
+        {
+            hash.Add(scissor.Offset.X);
+            hash.Add(scissor.Offset.Y);
+            hash.Add(scissor.Extent.Width);
+            hash.Add(scissor.Extent.Height);
         }
 
         internal void BindDescriptorSetsTracked(
@@ -505,13 +627,25 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyCommandBuffers()
         {
-            if (_commandBuffers is null)
+            if (_commandBuffers is null &&
+                _commandBufferVariants is null &&
+                _dynamicUiBatchTextSecondaryCommandBuffers is null &&
+                _dynamicUiBatchTextOverlayCommandBuffers is null &&
+                _imguiOverlayCommandBuffers is null &&
+                _commandChainCaches is null &&
+                !HasTrackedCommandChainSecondaryPools() &&
+                _computeTransientResources is null &&
+                _computeDescriptorCaches is null &&
+                _deferredSecondaryCommandBuffers is null)
+            {
                 return;
+            }
 
             CancelCommandChainRecordingWorkers();
             DestroyComputeTransientResources();
             DestroyDeferredSecondaryCommandBuffers();
             DestroyCommandChainCaches();
+            DestroyTrackedCommandChainSecondaryPools();
             DestroyCommandBufferVariants();
             DestroyDynamicUiBatchTextSecondaryCommandBuffers();
             DestroyDynamicUiBatchTextOverlayCommandBuffers();
@@ -520,8 +654,11 @@ namespace XREngine.Rendering.Vulkan
 
             if (_deviceLost)
             {
-                foreach (CommandBuffer commandBuffer in _commandBuffers)
-                    RemoveCommandBufferBindState(commandBuffer);
+                if (_commandBuffers is not null)
+                {
+                    foreach (CommandBuffer commandBuffer in _commandBuffers)
+                        RemoveCommandBufferBindState(commandBuffer);
+                }
 
                 _commandBuffers = null;
                 _activeCommandBuffers = null;
@@ -535,13 +672,19 @@ namespace XREngine.Rendering.Vulkan
                 _commandBufferFrameOpSignatureDebugParts = null;
                 _commandBufferPlannerRevisions = null;
                 _commandChainCaches = null;
+                _commandChainScheduleCache = null;
+                _commandChainScheduleFastSignatures = null;
+                ClearTrackedCommandChainSecondaryPools();
                 return;
             }
 
-            fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
+            if (_commandBuffers is not null)
             {
-                if (_commandBuffers.Length > 0)
-                    Api!.FreeCommandBuffers(device, commandPool, (uint)_commandBuffers.Length, commandBuffersPtr);
+                fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
+                {
+                    if (_commandBuffers.Length > 0)
+                        Api!.FreeCommandBuffers(device, commandPool, (uint)_commandBuffers.Length, commandBuffersPtr);
+                }
             }
 
             _commandBuffers = null;
@@ -558,6 +701,7 @@ namespace XREngine.Rendering.Vulkan
             _commandChainCaches = null;
             _commandChainScheduleCache = null;
             _commandChainScheduleFastSignatures = null;
+            ClearTrackedCommandChainSecondaryPools();
         }
 
         private void DestroyCommandBufferVariants()
@@ -626,6 +770,126 @@ namespace XREngine.Rendering.Vulkan
             _commandChainCaches = null;
             _commandChainScheduleCache = null;
             _commandChainScheduleFastSignatures = null;
+        }
+
+        private bool HasTrackedCommandChainSecondaryPools()
+        {
+            lock (_ownedCommandChainSecondaryPoolsLock)
+                return _ownedCommandChainSecondaryPools.Count != 0;
+        }
+
+        private void TrackOwnedCommandChainSecondaryCommandBuffer(CommandPool pool, CommandBuffer commandBuffer)
+        {
+            if (pool.Handle == 0 || commandBuffer.Handle == 0)
+                return;
+
+            ulong poolHandle = pool.Handle;
+            ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+            lock (_ownedCommandChainSecondaryPoolsLock)
+            {
+                if (!_ownedCommandChainSecondaryPools.TryGetValue(poolHandle, out OwnedCommandChainSecondaryPool? ownedPool))
+                {
+                    ownedPool = new OwnedCommandChainSecondaryPool(pool);
+                    _ownedCommandChainSecondaryPools.Add(poolHandle, ownedPool);
+                }
+
+                ownedPool.CommandBuffers.Add(commandBufferHandle);
+            }
+        }
+
+        private void UntrackOwnedCommandChainSecondaryCommandBuffer(CommandPool pool, CommandBuffer commandBuffer)
+        {
+            if (pool.Handle == 0 || commandBuffer.Handle == 0)
+                return;
+
+            ulong poolHandle = pool.Handle;
+            ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
+            lock (_ownedCommandChainSecondaryPoolsLock)
+            {
+                if (_ownedCommandChainSecondaryPools.TryGetValue(poolHandle, out OwnedCommandChainSecondaryPool? ownedPool))
+                    ownedPool.CommandBuffers.Remove(commandBufferHandle);
+            }
+        }
+
+        private void UntrackOwnedCommandChainSecondaryPool(CommandPool pool)
+        {
+            if (pool.Handle == 0)
+                return;
+
+            lock (_ownedCommandChainSecondaryPoolsLock)
+                _ownedCommandChainSecondaryPools.Remove(pool.Handle);
+        }
+
+        private void ClearTrackedCommandChainSecondaryPools()
+        {
+            lock (_ownedCommandChainSecondaryPoolsLock)
+                _ownedCommandChainSecondaryPools.Clear();
+        }
+
+        private void DestroyTrackedCommandChainSecondaryPools()
+        {
+            OwnedCommandChainSecondaryPool[] ownedPools;
+            lock (_ownedCommandChainSecondaryPoolsLock)
+            {
+                if (_ownedCommandChainSecondaryPools.Count == 0)
+                    return;
+
+                ownedPools = [.. _ownedCommandChainSecondaryPools.Values];
+                _ownedCommandChainSecondaryPools.Clear();
+            }
+
+            int destroyedPoolCount = 0;
+            int trackedCommandBufferCount = 0;
+            foreach (OwnedCommandChainSecondaryPool ownedPool in ownedPools)
+            {
+                CommandPool pool = ownedPool.Pool;
+                foreach (ulong commandBufferHandle in ownedPool.CommandBuffers)
+                {
+                    RemoveCommandBufferBindStateByHandle(commandBufferHandle);
+                    trackedCommandBufferCount++;
+                }
+
+                DiscardDeferredSecondaryCommandBuffersForPool(pool);
+                if (pool.Handle != 0)
+                {
+                    Api!.DestroyCommandPool(device, pool, null);
+                    destroyedPoolCount++;
+                }
+            }
+
+            if (destroyedPoolCount > 0 || trackedCommandBufferCount > 0)
+            {
+                Debug.Vulkan(
+                    "[Vulkan.CommandChains] Destroyed {0} tracked command-chain secondary pools and cleared {1} command-buffer bind states during teardown.",
+                    destroyedPoolCount,
+                    trackedCommandBufferCount);
+            }
+        }
+
+        private void DiscardDeferredSecondaryCommandBuffersForPool(CommandPool pool)
+        {
+            if (_deferredSecondaryCommandBuffers is null || pool.Handle == 0)
+                return;
+
+            ulong poolHandle = pool.Handle;
+            for (int i = 0; i < _deferredSecondaryCommandBuffers.Length; i++)
+            {
+                List<DeferredSecondaryCommandBuffer>? deferred = _deferredSecondaryCommandBuffers[i];
+                if (deferred is null || deferred.Count == 0)
+                    continue;
+
+                for (int j = deferred.Count - 1; j >= 0; j--)
+                {
+                    DeferredSecondaryCommandBuffer entry = deferred[j];
+                    if (entry.Pool.Handle != poolHandle)
+                        continue;
+
+                    CommandBuffer secondary = entry.CommandBuffer;
+                    RemoveCommandBufferBindState(secondary);
+                    UntrackOwnedCommandChainSecondaryCommandBuffer(pool, secondary);
+                    deferred.RemoveAt(j);
+                }
+            }
         }
 
         private void DestroyDynamicUiBatchTextSecondaryCommandBuffers()
@@ -749,11 +1013,13 @@ namespace XREngine.Rendering.Vulkan
                 if (_deviceLost)
                 {
                     RemoveCommandBufferBindState(secondary);
+                    UntrackOwnedCommandChainSecondaryCommandBuffer(entry.Pool, secondary);
                     continue;
                 }
 
                 Api!.FreeCommandBuffers(device, entry.Pool, 1, ref secondary);
                 RemoveCommandBufferBindState(secondary);
+                UntrackOwnedCommandChainSecondaryCommandBuffer(entry.Pool, entry.CommandBuffer);
             }
 
             deferred.Clear();
@@ -768,6 +1034,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 Api!.FreeCommandBuffers(device, pool, 1, ref commandBuffer);
                 RemoveCommandBufferBindState(commandBuffer);
+                UntrackOwnedCommandChainSecondaryCommandBuffer(pool, commandBuffer);
                 return;
             }
 

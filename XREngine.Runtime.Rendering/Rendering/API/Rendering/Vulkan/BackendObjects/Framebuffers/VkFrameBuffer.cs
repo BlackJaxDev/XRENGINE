@@ -16,6 +16,7 @@ public unsafe partial class VulkanRenderer
         private ImageView[]? _attachmentViews;
         private AttachmentTargetInfo[]? _attachmentTargets;
         private Extent2D[]? _attachmentExtents;
+        private readonly List<CachedFrameBufferState> _cachedFrameBufferStates = [];
 
         public override VkObjectType Type { get; } = VkObjectType.Framebuffer;
         public override bool IsGenerated => IsActive;
@@ -55,14 +56,12 @@ public unsafe partial class VulkanRenderer
             if (AttachmentStateMatches(attachments, fbWidth, fbHeight))
                 return;
 
-            Debug.VulkanWarningEvery(
-                $"Vulkan.FrameBuffer.Stale.{Data.GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] Rebuilding framebuffer '{0}' before render pass because attachment views or dimensions changed.",
-                DescribeFrameBuffer());
+            if (TryActivateCachedFrameBufferState(attachments, fbWidth, fbHeight))
+                return;
 
-            Destroy();
-            Generate();
+            CachedFrameBufferState state = CreateFrameBufferState(attachments, fbWidth, fbHeight);
+            _cachedFrameBufferStates.Add(state);
+            ActivateFrameBufferState(state);
         }
 
         internal FrameBufferAttachmentSignature[] ResolveAttachmentSignatureForPass(
@@ -492,8 +491,7 @@ public unsafe partial class VulkanRenderer
             // referenced by an in-flight command buffer.  The retirement queue
             // delays VkDestroyFramebuffer until the frame slot's timeline fence
             // signals that the GPU is done with it.
-            if (_frameBuffer.Handle != 0)
-                Renderer.RetireFramebuffer(_frameBuffer);
+            RetireCachedFrameBufferStates();
             _frameBuffer = default;
             _renderPass = default;
             _attachmentSignature = null;
@@ -509,6 +507,15 @@ public unsafe partial class VulkanRenderer
         protected override uint CreateObjectInternal()
         {
             AttachmentBuildInfo[] attachments = BuildAttachmentInfos();
+            var (fbWidth, fbHeight) = ResolveFramebufferExtent();
+            CachedFrameBufferState state = CreateFrameBufferState(attachments, fbWidth, fbHeight);
+            _cachedFrameBufferStates.Add(state);
+            ActivateFrameBufferState(state);
+            return CacheObject(this);
+        }
+
+        private CachedFrameBufferState CreateFrameBufferState(AttachmentBuildInfo[] attachments, uint fbWidth, uint fbHeight)
+        {
             ImageView[] views = new ImageView[attachments.Length];
             FrameBufferAttachmentSignature[] signatures = new FrameBufferAttachmentSignature[attachments.Length];
             AttachmentTargetInfo[] targetInfos = new AttachmentTargetInfo[attachments.Length];
@@ -522,25 +529,24 @@ public unsafe partial class VulkanRenderer
                 extents[i] = attachments[i].Extent;
             }
 
-            _attachmentSignature = signatures;
-            _attachmentTargets = targetInfos;
-            _attachmentExtents = extents;
-
-            var (fbWidth, fbHeight) = ResolveFramebufferExtent();
-            FramebufferWidth = fbWidth;
-            FramebufferHeight = fbHeight;
-            FramebufferLayers = ResolveFramebufferLayers(attachments);
+            uint framebufferLayers = ResolveFramebufferLayers(attachments);
 
             if (Renderer.UseDynamicRenderingRenderTargets)
             {
-                _renderPass = default;
-                _frameBuffer = default;
-                _attachmentViews = (ImageView[])views.Clone();
-                return CacheObject(this);
+                return new CachedFrameBufferState(
+                    default,
+                    default,
+                    signatures,
+                    views,
+                    targetInfos,
+                    extents,
+                    fbWidth,
+                    fbHeight,
+                    framebufferLayers);
             }
 
             RenderPass renderPass = Renderer.GetOrCreateFrameBufferRenderPass(signatures);
-            _renderPass = renderPass;
+            Framebuffer frameBuffer = default;
 
             fixed (ImageView* viewsPtr = views)
             {
@@ -552,18 +558,73 @@ public unsafe partial class VulkanRenderer
                     PAttachments = viewsPtr,
                     Width = fbWidth,
                     Height = fbHeight,
-                    Layers = FramebufferLayers,
+                    Layers = framebufferLayers,
                 };
 
-                fixed (Framebuffer* frameBufferPtr = &_frameBuffer)
-                {
-                    if (Api!.CreateFramebuffer(Device, ref framebufferInfo, null, frameBufferPtr) != Result.Success)
-                        throw new Exception("Failed to create framebuffer.");
-                }
+                if (Api!.CreateFramebuffer(Device, ref framebufferInfo, null, &frameBuffer) != Result.Success)
+                    throw new Exception("Failed to create framebuffer.");
             }
 
-            _attachmentViews = (ImageView[])views.Clone();
-            return CacheObject(this);
+            return new CachedFrameBufferState(
+                frameBuffer,
+                renderPass,
+                signatures,
+                views,
+                targetInfos,
+                extents,
+                fbWidth,
+                fbHeight,
+                framebufferLayers);
+        }
+
+        private void ActivateFrameBufferState(CachedFrameBufferState state)
+        {
+            _frameBuffer = state.FrameBuffer;
+            _renderPass = state.RenderPass;
+            _attachmentSignature = state.AttachmentSignature;
+            _attachmentViews = state.AttachmentViews;
+            _attachmentTargets = state.AttachmentTargets;
+            _attachmentExtents = state.AttachmentExtents;
+            FramebufferWidth = state.FramebufferWidth;
+            FramebufferHeight = state.FramebufferHeight;
+            FramebufferLayers = state.FramebufferLayers;
+        }
+
+        private bool TryActivateCachedFrameBufferState(AttachmentBuildInfo[] attachments, uint fbWidth, uint fbHeight)
+        {
+            for (int i = 0; i < _cachedFrameBufferStates.Count; i++)
+            {
+                CachedFrameBufferState state = _cachedFrameBufferStates[i];
+                if (!state.Matches(attachments, fbWidth, fbHeight))
+                    continue;
+
+                ActivateFrameBufferState(state);
+                return true;
+            }
+
+            return false;
+        }
+
+        private void RetireCachedFrameBufferStates()
+        {
+            HashSet<ulong> retiredHandles = [];
+            for (int i = 0; i < _cachedFrameBufferStates.Count; i++)
+            {
+                Framebuffer frameBuffer = _cachedFrameBufferStates[i].FrameBuffer;
+                if (frameBuffer.Handle == 0 || !retiredHandles.Add(frameBuffer.Handle))
+                    continue;
+
+                Renderer.RetireFramebuffer(frameBuffer);
+            }
+
+            if (_cachedFrameBufferStates.Count == 0 &&
+                _frameBuffer.Handle != 0 &&
+                retiredHandles.Add(_frameBuffer.Handle))
+            {
+                Renderer.RetireFramebuffer(_frameBuffer);
+            }
+
+            _cachedFrameBufferStates.Clear();
         }
 
         private bool AttachmentStateMatches(AttachmentBuildInfo[] attachments, uint fbWidth, uint fbHeight)
@@ -1325,6 +1386,55 @@ public unsafe partial class VulkanRenderer
 
             ImageAspectFlags normalized = requested & supported;
             return normalized != ImageAspectFlags.None ? normalized : supported;
+        }
+
+        private sealed class CachedFrameBufferState(
+            Framebuffer frameBuffer,
+            RenderPass renderPass,
+            FrameBufferAttachmentSignature[] attachmentSignature,
+            ImageView[] attachmentViews,
+            AttachmentTargetInfo[] attachmentTargets,
+            Extent2D[] attachmentExtents,
+            uint framebufferWidth,
+            uint framebufferHeight,
+            uint framebufferLayers)
+        {
+            public Framebuffer FrameBuffer { get; } = frameBuffer;
+            public RenderPass RenderPass { get; } = renderPass;
+            public FrameBufferAttachmentSignature[] AttachmentSignature { get; } = attachmentSignature;
+            public ImageView[] AttachmentViews { get; } = attachmentViews;
+            public AttachmentTargetInfo[] AttachmentTargets { get; } = attachmentTargets;
+            public Extent2D[] AttachmentExtents { get; } = attachmentExtents;
+            public uint FramebufferWidth { get; } = framebufferWidth;
+            public uint FramebufferHeight { get; } = framebufferHeight;
+            public uint FramebufferLayers { get; } = framebufferLayers;
+
+            public bool Matches(AttachmentBuildInfo[] attachments, uint width, uint height)
+            {
+                if (FramebufferWidth != width ||
+                    FramebufferHeight != height ||
+                    FramebufferLayers != ResolveFramebufferLayers(attachments) ||
+                    AttachmentViews.Length != attachments.Length ||
+                    AttachmentSignature.Length != attachments.Length ||
+                    AttachmentTargets.Length != attachments.Length)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < attachments.Length; i++)
+                {
+                    if (AttachmentViews[i].Handle != attachments[i].View.Handle)
+                        return false;
+
+                    if (!AttachmentSignature[i].Equals(attachments[i].Signature))
+                        return false;
+
+                    if (!AttachmentTargets[i].Equals(attachments[i].TargetInfo))
+                        return false;
+                }
+
+                return true;
+            }
         }
 
         private readonly record struct AttachmentSource(

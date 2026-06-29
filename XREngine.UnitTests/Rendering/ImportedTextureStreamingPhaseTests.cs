@@ -237,6 +237,78 @@ public sealed class ImportedTextureStreamingPhaseTests
     }
 
     [Test]
+    public void ShouldPreserveDenseResidentSizeWithoutPressure_HoldsCurrentResidentImageUnderBudget()
+    {
+        ImportedTextureStreamingManager.ShouldPreserveDenseResidentSizeWithoutPressure(
+            currentResidentSize: 1024u,
+            assignedResidentSize: 64u,
+            currentCommittedBytes: 5_592_404L,
+            targetCommittedBytes: 16_384L,
+            currentManagedBytes: 220L * 1024L * 1024L,
+            availableManagedBytes: 20L * 1024L * 1024L * 1024L,
+            hasPendingTransition: false).ShouldBeTrue();
+    }
+
+    [Test]
+    public void ShouldPreserveDenseResidentSizeWithoutPressure_AllowsDemotionWhenBudgetIsTight()
+    {
+        ImportedTextureStreamingManager.ShouldPreserveDenseResidentSizeWithoutPressure(
+            currentResidentSize: 1024u,
+            assignedResidentSize: 64u,
+            currentCommittedBytes: 5_592_404L,
+            targetCommittedBytes: 16_384L,
+            currentManagedBytes: 220L * 1024L * 1024L,
+            availableManagedBytes: 256L * 1024L * 1024L,
+            hasPendingTransition: false).ShouldBeFalse();
+    }
+
+    [Test]
+    public void ShouldPreserveDenseResidentSizeWithoutPressure_DoesNotInterfereWithPendingOrPromotionWork()
+    {
+        ImportedTextureStreamingManager.ShouldPreserveDenseResidentSizeWithoutPressure(
+            currentResidentSize: 1024u,
+            assignedResidentSize: 64u,
+            currentCommittedBytes: 5_592_404L,
+            targetCommittedBytes: 16_384L,
+            currentManagedBytes: 220L * 1024L * 1024L,
+            availableManagedBytes: 20L * 1024L * 1024L * 1024L,
+            hasPendingTransition: true).ShouldBeFalse();
+
+        ImportedTextureStreamingManager.ShouldPreserveDenseResidentSizeWithoutPressure(
+            currentResidentSize: 512u,
+            assignedResidentSize: 1024u,
+            currentCommittedBytes: 1_398_100L,
+            targetCommittedBytes: 5_592_404L,
+            currentManagedBytes: 220L * 1024L * 1024L,
+            availableManagedBytes: 20L * 1024L * 1024L * 1024L,
+            hasPendingTransition: false).ShouldBeFalse();
+    }
+
+    [Test]
+    public void ShouldPreserveDenseResidentTargetWithoutPressure_HoldsPendingPromotionTargetUnderBudget()
+    {
+        ImportedTextureStreamingManager.ShouldPreserveDenseResidentTargetWithoutPressure(
+            currentResidentSize: 1024u,
+            assignedResidentSize: 64u,
+            currentCommittedBytes: 5_592_404L,
+            targetCommittedBytes: 16_384L,
+            currentManagedBytes: 220L * 1024L * 1024L,
+            availableManagedBytes: 20L * 1024L * 1024L * 1024L).ShouldBeTrue();
+    }
+
+    [Test]
+    public void ShouldPreserveDenseResidentTargetWithoutPressure_AllowsBudgetPressureDemotion()
+    {
+        ImportedTextureStreamingManager.ShouldPreserveDenseResidentTargetWithoutPressure(
+            currentResidentSize: 1024u,
+            assignedResidentSize: 64u,
+            currentCommittedBytes: 5_592_404L,
+            targetCommittedBytes: 16_384L,
+            currentManagedBytes: 220L * 1024L * 1024L,
+            availableManagedBytes: 256L * 1024L * 1024L).ShouldBeFalse();
+    }
+
+    [Test]
     public void DetermineDesiredResidentSize_UsesProjectedPixelSpanAndRoleWeight()
     {
         uint albedoDesired = ImportedTextureStreamingManager.DetermineDesiredResidentSize(

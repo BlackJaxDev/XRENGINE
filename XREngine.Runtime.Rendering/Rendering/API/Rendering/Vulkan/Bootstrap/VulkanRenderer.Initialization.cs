@@ -115,8 +115,8 @@ namespace XREngine.Rendering.Vulkan
             // (they are swapchain-independent). Clean them up here at full shutdown.
             DestroyFrameBufferRenderPasses();
             DestroyDescriptorSetLayout();
-            _resourceAllocator.DestroyPhysicalImages(this);
-            _resourceAllocator.DestroyPhysicalBuffers(this);
+            ResourceAllocator.DestroyPhysicalImages(this);
+            ResourceAllocator.DestroyPhysicalBuffers(this);
             _stagingManager.Destroy(this);
             DestroyDynamicUniformRingBuffers();
 
@@ -133,6 +133,8 @@ namespace XREngine.Rendering.Vulkan
             DestroyCachedAPIRenderObjects();
             DestroyRemainingTrackedMeshUniformBuffers();
             ForceFlushAllRetiredResources();
+            DestroyRemainingTrackedImageViews();
+            DestroyRemainingTrackedPipelineLayouts();
             DestroyRemainingTrackedBufferAllocations();
             DestroyRemainingTrackedImageAllocations();
 
@@ -149,6 +151,8 @@ namespace XREngine.Rendering.Vulkan
             // Flush once more before destroying the logical device to catch any
             // handles retired by sync/command-pool teardown.
             ForceFlushAllRetiredResources();
+            DestroyRemainingTrackedImageViews();
+            DestroyRemainingTrackedPipelineLayouts();
             DestroySharedGraphicsPipelineLibraries();
 
             DestroyLogicalDevice();
@@ -434,7 +438,7 @@ namespace XREngine.Rendering.Vulkan
 
         public override void StencilMask(uint mask)
         {
-            _state.SetStencilWriteMask(mask);
+            ActiveState.SetStencilWriteMask(mask);
         }
 
         public override void EnableStencilTest(bool enable)
@@ -488,23 +492,23 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void AllowDepthWrite(bool v)
         {
-            _state.SetDepthWriteEnabled(v);
+            ActiveState.SetDepthWriteEnabled(v);
         }
         public override void ClearDepth(float v)
         {
-            _state.SetClearDepth(v);
+            ActiveState.SetClearDepth(v);
         }
         public override void ClearStencil(int v)
         {
-            _state.SetClearStencil(v);
+            ActiveState.SetClearStencil(v);
         }
         public override void EnableDepthTest(bool v)
         {
-            _state.SetDepthTestEnabled(v);
+            ActiveState.SetDepthTestEnabled(v);
         }
         public override void DepthFunc(EComparison always)
         {
-            _state.SetDepthCompare(ToVulkanCompareOp(always));
+            ActiveState.SetDepthCompare(ToVulkanCompareOp(always));
         }
         public override void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ)
         {
@@ -578,6 +582,7 @@ namespace XREngine.Rendering.Vulkan
         {
             _lastWindowPresentColorTexture = colorTexture;
             _lastWindowPresentFrameBuffer = sourceFrameBuffer;
+            _lastWindowPresentFrameOpContext = CaptureFrameOpContext();
         }
         public override void BindFrameBuffer(EFramebufferTarget fboTarget, XRFrameBuffer? fbo)
         {
@@ -598,9 +603,9 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (_boundDrawFrameBuffer is null)
-                _state.SetCurrentTargetExtent(swapChainExtent);
+                ActiveState.SetCurrentTargetExtent(swapChainExtent);
             else
-                _state.SetCurrentTargetExtent(new Extent2D(Math.Max(_boundDrawFrameBuffer.Width, 1u), Math.Max(_boundDrawFrameBuffer.Height, 1u)));
+                ActiveState.SetCurrentTargetExtent(new Extent2D(Math.Max(_boundDrawFrameBuffer.Width, 1u), Math.Max(_boundDrawFrameBuffer.Height, 1u)));
 
             if (fbo is not null)
             {
@@ -618,14 +623,14 @@ namespace XREngine.Rendering.Vulkan
             if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null)
                 return;
 
-            _state.SetClearState(color, depth, stencil);
+            ActiveState.SetClearState(color, depth, stencil);
 
             FrameOpContext context = CaptureFrameOpContext();
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
             XRFrameBuffer? target = GetCurrentDrawFrameBuffer();
             Extent2D clearTargetExtent = ResolveCurrentDrawTargetExtent();
-            Rect2D rect = _state.GetCroppingEnabled()
-                ? _state.GetScissor(clearTargetExtent)
+            Rect2D rect = ActiveState.GetCroppingEnabled()
+                ? ActiveState.GetScissor(clearTargetExtent)
                 : new Rect2D(new Offset2D(0, 0), clearTargetExtent);
 
             EnqueueFrameOp(new ClearOp(
@@ -634,9 +639,9 @@ namespace XREngine.Rendering.Vulkan
                 color,
                 depth,
                 stencil,
-                _state.GetClearColorValue(),
-                _state.GetClearDepthValue(),
-                _state.GetClearStencilValue(),
+                ActiveState.GetClearColorValue(),
+                ActiveState.GetClearDepthValue(),
+                ActiveState.GetClearStencilValue(),
                 rect,
                 context));
         }
@@ -687,7 +692,7 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void SetCroppingEnabled(bool enabled)
         {
-            _state.SetCroppingEnabled(enabled);
+            ActiveState.SetCroppingEnabled(enabled);
         }
 
         public void DeviceWaitIdle()

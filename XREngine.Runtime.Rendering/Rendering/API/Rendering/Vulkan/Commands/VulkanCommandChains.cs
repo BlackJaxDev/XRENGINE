@@ -33,6 +33,7 @@ internal enum CommandChainDirtyReason
     ProfilerMode = 1 << 4,
     FrameDataRefreshFailed = 1 << 5,
     VolatileCommand = 1 << 6,
+    SecondaryCommandBufferInvalid = 1 << 7,
 }
 
 internal enum CommandChainState
@@ -125,8 +126,10 @@ internal sealed class RenderPacket(
     int targetIdentity,
     string targetName,
     RenderPacketVolatility volatility,
-    ReadOnlyMemory<DrawPacket> draws,
-    ReadOnlyMemory<DispatchPacket> dispatches,
+    DrawPacket firstDraw,
+    int drawCount,
+    DispatchPacket firstDispatch,
+    int dispatchCount,
     DescriptorBindingSnapshot descriptorSnapshot,
     ResourcePlanSnapshot resourcePlanSnapshot,
     ulong structuralSignature,
@@ -135,13 +138,57 @@ internal sealed class RenderPacket(
     int sourceCount,
     bool dynamicOverlay)
 {
+    private readonly DrawPacket[]? _draws;
+    private readonly DispatchPacket[]? _dispatches;
+
+    public RenderPacket(
+        RenderViewKey viewKey,
+        int passIndex,
+        int targetIdentity,
+        string targetName,
+        RenderPacketVolatility volatility,
+        ReadOnlyMemory<DrawPacket> draws,
+        ReadOnlyMemory<DispatchPacket> dispatches,
+        DescriptorBindingSnapshot descriptorSnapshot,
+        ResourcePlanSnapshot resourcePlanSnapshot,
+        ulong structuralSignature,
+        ulong frameDataSignature,
+        int sourceStartIndex,
+        int sourceCount,
+        bool dynamicOverlay)
+        : this(
+            viewKey,
+            passIndex,
+            targetIdentity,
+            targetName,
+            volatility,
+            draws.Length > 0 ? draws.Span[0] : default,
+            draws.Length,
+            dispatches.Length > 0 ? dispatches.Span[0] : default,
+            dispatches.Length,
+            descriptorSnapshot,
+            resourcePlanSnapshot,
+            structuralSignature,
+            frameDataSignature,
+            sourceStartIndex,
+            sourceCount,
+            dynamicOverlay)
+    {
+        if (draws.Length > 1)
+            _draws = draws.ToArray();
+        if (dispatches.Length > 1)
+            _dispatches = dispatches.ToArray();
+    }
+
     public RenderViewKey ViewKey { get; } = viewKey;
     public int PassIndex { get; } = passIndex;
     public int TargetIdentity { get; } = targetIdentity;
     public string TargetName { get; } = targetName;
     public RenderPacketVolatility Volatility { get; } = volatility;
-    public ReadOnlyMemory<DrawPacket> Draws { get; } = draws;
-    public ReadOnlyMemory<DispatchPacket> Dispatches { get; } = dispatches;
+    public DrawPacket FirstDraw { get; } = firstDraw;
+    public int DrawCount { get; } = drawCount;
+    public DispatchPacket FirstDispatch { get; } = firstDispatch;
+    public int DispatchCount { get; } = dispatchCount;
     public DescriptorBindingSnapshot DescriptorSnapshot { get; } = descriptorSnapshot;
     public ResourcePlanSnapshot ResourcePlanSnapshot { get; } = resourcePlanSnapshot;
     public ulong StructuralSignature { get; } = structuralSignature;
@@ -149,6 +196,38 @@ internal sealed class RenderPacket(
     public int SourceStartIndex { get; } = sourceStartIndex;
     public int SourceCount { get; } = sourceCount;
     public bool DynamicOverlay { get; } = dynamicOverlay;
+
+    public DrawPacket GetDraw(int index)
+    {
+        if ((uint)index >= (uint)DrawCount)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        if (_draws is null)
+        {
+            if (index == 0 && DrawCount == 1)
+                return FirstDraw;
+
+            throw new InvalidOperationException("Multi-draw render packet is missing expanded draw storage.");
+        }
+
+        return _draws[index];
+    }
+
+    public DispatchPacket GetDispatch(int index)
+    {
+        if ((uint)index >= (uint)DispatchCount)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        if (_dispatches is null)
+        {
+            if (index == 0 && DispatchCount == 1)
+                return FirstDispatch;
+
+            throw new InvalidOperationException("Multi-dispatch render packet is missing expanded dispatch storage.");
+        }
+
+        return _dispatches[index];
+    }
 }
 
 internal readonly record struct CommandChainKey(
@@ -156,6 +235,7 @@ internal readonly record struct CommandChainKey(
     RenderViewKey ViewKey,
     int PassIndex,
     int TargetIdentity,
+    bool DynamicOverlay,
     int ChainOrdinal);
 
 internal sealed class CommandChain(CommandChainKey key)
@@ -165,6 +245,7 @@ internal sealed class CommandChain(CommandChainKey key)
     public CommandBuffer SecondaryCommandBuffer { get; set; }
     public CommandPool SecondaryCommandPool { get; set; }
     public bool OwnsSecondaryCommandPool { get; set; }
+    public bool SecondaryCommandBufferExecutable { get; set; }
     public ulong SecondaryCommandBufferGeneration { get; set; }
     public ulong StructuralSignature { get; set; }
     public ulong FrameDataSignature { get; set; }
@@ -178,6 +259,9 @@ internal sealed class CommandChain(CommandChainKey key)
     public ulong InstanceCountSignature { get; set; }
     public int DescriptorSetCount { get; set; }
     public ulong DescriptorSetSignature { get; set; }
+    public bool FrameDataRefreshTouchedDescriptors { get; set; }
+    public int SourceStartIndex { get; set; } = -1;
+    public int SourceCount { get; set; }
     public int LastRecordedFrameSlot { get; set; } = -1;
     public CommandChainDirtyReason DirtyReason { get; set; }
 }

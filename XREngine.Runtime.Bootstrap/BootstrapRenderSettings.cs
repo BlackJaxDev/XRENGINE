@@ -63,6 +63,7 @@ public static class BootstrapRenderSettings
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) || requiresDesktopVrWindow)
             renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR || requiresDesktopVrWindow;
         renderSettings.VrMirrorComposeFromEyeTextures = !requiresDesktopVrWindow;
+        renderSettings.VrCopyEyePreviewTextures = settings.PreviewVRStereoViews;
 
         bool groupedRenderingSpecified = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));
         if (groupedRenderingSpecified)
@@ -78,13 +79,27 @@ public static class BootstrapRenderSettings
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowSkinning)))
             renderSettings.AllowSkinning = settings.AllowSkinning;
-        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.SinglePassStereoVR)))
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VR)))
+        {
+            renderSettings.VrViewRenderMode = settings.VR.ViewRenderMode;
+            renderSettings.VrFoveationMode = settings.VR.Foveation.Mode;
+            renderSettings.VrFoveationQualityPreset = settings.VR.Foveation.QualityPreset;
+            renderSettings.VrFoveationRequireRequested = settings.VR.Foveation.RequireRequested;
+            renderSettings.EnableVrFoveatedViewSet = settings.VR.Foveation.Mode != EVrFoveationMode.Off;
+        }
+        else if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.SinglePassStereoVR)))
+        {
             renderSettings.RenderVRSinglePassStereo = settings.SinglePassStereoVR;
+        }
         Debug.Out(
             $"[BootstrapRenderSettings] Applied AllowSkinning={renderSettings.AllowSkinning} " +
             $"AllowShaderPipelines={renderSettings.AllowShaderPipelines} " +
+            $"VrViewRenderMode={renderSettings.VrViewRenderMode} " +
+            $"VrFoveationMode={renderSettings.VrFoveationMode} " +
+            $"EnableVrFoveatedViewSet={renderSettings.EnableVrFoveatedViewSet} " +
             $"RenderWindowsWhileInVR={renderSettings.RenderWindowsWhileInVR} " +
-            $"VrMirrorComposeFromEyeTextures={renderSettings.VrMirrorComposeFromEyeTextures}");
+            $"VrMirrorComposeFromEyeTextures={renderSettings.VrMirrorComposeFromEyeTextures} " +
+            $"VrCopyEyePreviewTextures={renderSettings.VrCopyEyePreviewTextures}");
         if (settings.RenderPhysicsDebug)
             renderSettings.PhysicsVisualizeSettings.SetAllTrue();
 

@@ -49,6 +49,10 @@ namespace XREngine.Rendering.Vulkan
         private bool _supportsTransformFeedbackGeometryStreams;
         private bool _supportsTransformFeedbackQueries;
         private bool _supportsTransformFeedbackDraw;
+        private bool _supportsVulkanFragmentShadingRate;
+        private bool _supportsVulkanFragmentShadingRateAttachment;
+        private bool _supportsVulkanFragmentDensityMap;
+        private bool _supportsVulkanFragmentDensityMapDynamic;
         private bool _supportsFragmentStoresAndAtomics;
         private bool _supportsVertexPipelineStoresAndAtomics;
         private bool _supportsGeometryShader;
@@ -76,6 +80,10 @@ namespace XREngine.Rendering.Vulkan
         public bool SupportsTransformFeedbackGeometryStreams => SupportsTransformFeedback && _supportsTransformFeedbackGeometryStreams;
         public bool SupportsTransformFeedbackQueries => SupportsTransformFeedback && _supportsTransformFeedbackQueries;
         public bool SupportsTransformFeedbackDraw => SupportsTransformFeedback && _supportsTransformFeedbackDraw;
+        public bool SupportsVulkanFragmentShadingRate => _supportsVulkanFragmentShadingRate;
+        public bool SupportsVulkanFragmentShadingRateAttachment => _supportsVulkanFragmentShadingRateAttachment;
+        public bool SupportsVulkanFragmentDensityMap => _supportsVulkanFragmentDensityMap;
+        public bool SupportsVulkanFragmentDensityMapDynamic => _supportsVulkanFragmentDensityMapDynamic;
         public PhysicalDeviceTransformFeedbackPropertiesEXT TransformFeedbackProperties => _transformFeedbackProperties;
         public bool SupportsFragmentStoresAndAtomics => _supportsFragmentStoresAndAtomics;
         public bool SupportsVertexPipelineStoresAndAtomics => _supportsVertexPipelineStoresAndAtomics;
@@ -199,6 +207,8 @@ namespace XREngine.Rendering.Vulkan
             "VK_KHR_pipeline_library",
             "VK_EXT_graphics_pipeline_library",
             ExtTransformFeedback.ExtensionName,
+            "VK_KHR_fragment_shading_rate",
+            "VK_EXT_fragment_density_map",
             "VK_EXT_mesh_shader",
             "VK_NV_memory_decompression",
             "VK_NV_copy_memory_indirect"

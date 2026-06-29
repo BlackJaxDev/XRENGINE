@@ -124,10 +124,15 @@ public static class RuntimeRenderingHostServiceDefaults
 
     public const bool RenderWindowsWhileInVR = false;
     public const bool EnableOpenXrVulkanParallelRendering = true;
+    public const EVrViewRenderMode VrViewRenderMode = EVrViewRenderMode.SequentialViews;
     public const bool EnableVrFoveatedViewSet = false;
+    public const EVrFoveationMode VrFoveationMode = EVrFoveationMode.Off;
+    public const EVrFoveationQualityPreset VrFoveationQualityPreset = EVrFoveationQualityPreset.Balanced;
+    public const bool VrFoveationRequireRequested = false;
     public const bool IsInVR = false;
     public const bool IsOpenXRActive = false;
     public const bool VrMirrorComposeFromEyeTextures = false;
+    public const bool VrCopyEyePreviewTextures = false;
     public const float VrFoveationCenterU = 0.5f;
     public const float VrFoveationCenterV = 0.5f;
     public const float VrFoveationInnerRadius = 0.35f;

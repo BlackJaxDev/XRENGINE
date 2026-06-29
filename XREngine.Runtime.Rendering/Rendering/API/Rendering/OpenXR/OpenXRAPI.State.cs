@@ -73,7 +73,9 @@ public unsafe partial class OpenXRAPI
         /// <summary>Run prep at the end of the render callback after desktop viewports finish (default).</summary>
         PostRenderCallback,
         /// <summary>Run prep on a dedicated OpenXR pacing thread; the render thread only signals after xrEndFrame.</summary>
-        DedicatedThread
+        DedicatedThread,
+        /// <summary>Run prep on the engine CollectVisible thread before building OpenXR visibility buffers.</summary>
+        CollectVisibleThread
     }
 
     #region Core OpenXR state
@@ -295,6 +297,8 @@ public unsafe partial class OpenXRAPI
     // Dedicated OpenXR pacing thread (only used when OpenXrRenderPacingHandling == DedicatedThread).
     private Thread? _openXrPacingThread;
     private int _openXrPacingThreadId;
+    private int _openXrCollectVisiblePrepThreadId;
+    private int _openXrCollectVisiblePrepActive;
     private readonly ManualResetEventSlim _openXrPacingWakeEvent = new(initialState: false);
     private int _openXrPacingStopRequested;
 
@@ -357,6 +361,7 @@ public unsafe partial class OpenXRAPI
 
     public XRTexture2D? PreviewLeftEyeTexture => _previewLeftEyeTexture;
     public XRTexture2D? PreviewRightEyeTexture => _previewRightEyeTexture;
+    public XRTexture2D? DesktopMirrorTexture => _viewportMirrorColor;
 
     private uint _blitReadFbo;
     private uint _blitDrawFbo;

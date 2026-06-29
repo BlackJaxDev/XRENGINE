@@ -26,6 +26,7 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _frameSkipRender, 0);
         Volatile.Write(ref _hasLastValidViews, 0);
         StopOpenXrPacingThread();
+        ClearOpenXrCollectVisiblePrepThread();
         _openXrActionsSyncedFrameNumber = 0;
         _nextProbeUtc = DateTime.UtcNow;
     }
@@ -486,6 +487,7 @@ public unsafe partial class OpenXRAPI
         _sessionBegun = false;
         _sessionState = SessionState.Unknown;
         StopOpenXrPacingThread();
+        ClearOpenXrCollectVisiblePrepThread();
 
         if (Window?.Renderer is AbstractRenderer renderer && _graphicsBinding is not null)
         {
