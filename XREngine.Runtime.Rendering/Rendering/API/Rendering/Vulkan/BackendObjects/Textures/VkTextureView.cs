@@ -80,7 +80,7 @@ namespace XREngine.Rendering.Vulkan
                     return _view;
                 }
             }
-            ImageViewType IVkImageDescriptorSource.DescriptorViewType => ResolveViewType(Data.TextureTarget);
+            ImageViewType IVkImageDescriptorSource.DescriptorViewType => ResolveViewType(Data.TextureTarget, _arrayLayers);
             Sampler IVkImageDescriptorSource.DescriptorSampler
             {
                 get
@@ -204,7 +204,7 @@ namespace XREngine.Rendering.Vulkan
                     else
                         RefreshFromViewedTextureIfStale();
 
-                    ImageViewType actualViewType = ResolveViewType(Data.TextureTarget);
+                    ImageViewType actualViewType = ResolveViewType(Data.TextureTarget, _arrayLayers);
                     ImageView view = requestedAspectMask switch
                     {
                         ImageAspectFlags.DepthBit => GetAspectOnlyDescriptorView(ImageAspectFlags.DepthBit, ref _depthOnlyView),
@@ -229,7 +229,7 @@ namespace XREngine.Rendering.Vulkan
                         DescriptorGeneration,
                         ResolveTrackedImageLayoutNoLock(),
                         ResolveUsesAllocatorImageNoLock(),
-                        IsDescriptorReadyNoLock() && view.Handle != 0);
+                        IsDescriptorReadyNoLock() && view.Handle != 0 && Renderer.IsLiveImageView(view));
                     return snapshot.IsReady;
                 }
             }
@@ -293,7 +293,8 @@ namespace XREngine.Rendering.Vulkan
             }
 
             private bool IsDescriptorReadyNoLock()
-                => !IsDescriptorDirty && (_view.Handle != 0 || _texelBufferView.Handle != 0);
+                => !IsDescriptorDirty &&
+                    ((_view.Handle != 0 && Renderer.IsLiveImageView(_view)) || _texelBufferView.Handle != 0);
 
             private DeviceMemory TryResolveViewedDescriptorMemoryNoLock()
             {
@@ -775,8 +776,8 @@ namespace XREngine.Rendering.Vulkan
                 if (_image.Handle == 0)
                     throw new InvalidOperationException($"Viewed texture '{viewedTexture.GetDescribingName()}' has no Vulkan image handle.");
 
-                ImageViewType viewType = ResolveViewType(Data.TextureTarget);
                 ImageSubresourceRange subresourceRange = ResolveViewSubresourceRange(source, NormalizeAspectMaskForFormat(_format, _aspect));
+                ImageViewType viewType = ResolveViewType(Data.TextureTarget, subresourceRange.LayerCount);
 
                 ImageViewCreateInfo viewInfo = new()
                 {
@@ -870,8 +871,8 @@ namespace XREngine.Rendering.Vulkan
                     _aspect = NormalizeAspectMaskForFormat(_format, source.DescriptorAspect);
                     _samples = source.DescriptorSamples;
 
-                    ImageViewType viewType = ResolveViewType(Data.TextureTarget);
                     ImageSubresourceRange subresourceRange = ResolveViewSubresourceRange(source, NormalizeAspectMaskForFormat(_format, _aspect));
+                    ImageViewType viewType = ResolveViewType(Data.TextureTarget, subresourceRange.LayerCount);
 
                     ImageViewCreateInfo viewInfo = new()
                     {
@@ -1102,7 +1103,11 @@ namespace XREngine.Rendering.Vulkan
             }
 
             private static ImageViewType ResolveViewType(ETextureTarget target)
-                => target switch
+                => ResolveViewType(target, layerCount: 1u);
+
+            private static ImageViewType ResolveViewType(ETextureTarget target, uint layerCount)
+            {
+                ImageViewType viewType = target switch
                 {
                     ETextureTarget.Texture1D => ImageViewType.Type1D,
                     ETextureTarget.Texture1DArray => ImageViewType.Type1DArray,
@@ -1116,6 +1121,17 @@ namespace XREngine.Rendering.Vulkan
                     ETextureTarget.TextureCubeMapArray => ImageViewType.TypeCubeArray,
                     _ => ImageViewType.Type2D,
                 };
+
+                if (layerCount <= 1u)
+                    return viewType;
+
+                return viewType switch
+                {
+                    ImageViewType.Type1D => ImageViewType.Type1DArray,
+                    ImageViewType.Type2D => ImageViewType.Type2DArray,
+                    _ => viewType,
+                };
+            }
         }
     }
 }

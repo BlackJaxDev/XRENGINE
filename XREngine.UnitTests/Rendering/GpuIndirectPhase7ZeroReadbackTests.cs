@@ -234,6 +234,34 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     }
 
     [Test]
+    public void ForwardPlusLightCulling_ReusesBuffersByCapacityAcrossViewportSizes()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ForwardPlusLightCullingPass.cs");
+
+        string ensureBuffers = Slice(
+            source,
+            "private void EnsureBuffers",
+            "private static void DestroyBuffer",
+            StringComparison.Ordinal);
+
+        ensureBuffers.ShouldContain("GrowCapacity(ComputeForwardPlusElementCount(tileCountX, tileCountY, eyeCount, MaxLightsPerTile))");
+        ensureBuffers.ShouldContain("_visibleIndicesBuffer.ElementCount < visibleCount");
+        ensureBuffers.ShouldContain("_tileLightCountsBuffer.ElementCount < tileCount");
+        ensureBuffers.ShouldNotContain("_visibleIndicesBuffer.ElementCount != visibleCount");
+        ensureBuffers.ShouldNotContain("_tileLightCountsBuffer.ElementCount != tileCount");
+        source.ShouldNotContain("_lastTileCountX");
+        source.ShouldNotContain("_lastTileCountY");
+
+        string uploadLocalLights = Slice(
+            source,
+            "private void UploadLocalLights",
+            "internal override void DescribeRenderPass",
+            StringComparison.Ordinal);
+
+        uploadLocalLights.ShouldContain("_localLightsBuffer.PushSubData(0, uploadBytes)");
+    }
+
+    [Test]
     public void SkinnedBounds_ZeroReadbackPath_UsesGpuResidentDirectWriteWithoutWaitForGpu()
     {
         string renderableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Mesh/RenderableMesh.cs");

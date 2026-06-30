@@ -4188,19 +4188,22 @@ namespace XREngine.Rendering.Vulkan
                         // CmdClearAttachments would erase scene content composited by an earlier pipeline.
                         // Depth/stencil clears are still allowed since they don't affect composited color.
                         bool clearRecorded = false;
+                        uint clearRenderLayerCount = activeDynamicRendering
+                            ? Math.Max(activeDynamicRenderingFormats.LayerCount, 1u)
+                            : 0u;
                         if (clear.Target is null && swapchainClearedThisFrame && clear.ClearColor)
                         {
                             if (clear.ClearDepth || clear.ClearStencil)
                             {
                                 // Emit depth/stencil clear only â€” strip the color clear.
-                                RecordClearOp(commandBuffer, imageIndex, clear with { ClearColor = false }, activeRenderArea, in swapchainTarget);
+                                RecordClearOp(commandBuffer, imageIndex, clear with { ClearColor = false }, activeRenderArea, in swapchainTarget, clearRenderLayerCount);
                                 clearRecorded = true;
                             }
                             // else: pure color clear on swapchain after first pass â†’ skip entirely
                         }
                         else
                         {
-                            RecordClearOp(commandBuffer, imageIndex, clear, activeRenderArea, in swapchainTarget);
+                            RecordClearOp(commandBuffer, imageIndex, clear, activeRenderArea, in swapchainTarget, clearRenderLayerCount);
                             clearRecorded = true;
                         }
                         if (clear.Target is null && clearRecorded)
@@ -4598,7 +4601,8 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex,
             ClearOp op,
             Rect2D activeRenderArea,
-            in SwapchainRecordingTarget swapchainTarget)
+            in SwapchainRecordingTarget swapchainTarget,
+            uint activeRenderLayerCount = 0u)
         {
             _ = imageIndex;
 
@@ -4621,7 +4625,9 @@ namespace XREngine.Rendering.Vulkan
             clearTargetFrameBuffer?.EnsureCurrent();
             uint clearLayerCount = op.Target is null
                 ? 1u
-                : Math.Max(clearTargetFrameBuffer?.FramebufferLayers ?? 1u, 1u);
+                : activeRenderLayerCount > 0u
+                    ? activeRenderLayerCount
+                    : Math.Max(clearTargetFrameBuffer?.FramebufferLayers ?? 1u, 1u);
 
             ClearRect clearRect = new()
             {
@@ -5741,16 +5747,17 @@ namespace XREngine.Rendering.Vulkan
             if (vkFbo is null || vkFbo.AttachmentCount == 0)
                 return;
 
-            int barrierCapacity = Math.Min((int)vkFbo.AttachmentCount, signatures.Length);
-            if (barrierCapacity <= 0)
+            int attachmentCapacity = Math.Min((int)vkFbo.AttachmentCount, signatures.Length);
+            if (attachmentCapacity <= 0)
                 return;
 
-            ImageMemoryBarrier* barriers = stackalloc ImageMemoryBarrier[barrierCapacity];
+            int maxLayerSpan = Math.Max((int)vkFbo.FramebufferLayers, 1);
+            ImageMemoryBarrier* barriers = stackalloc ImageMemoryBarrier[checked(attachmentCapacity * maxLayerSpan)];
             uint barrierCount = 0;
             PipelineStageFlags srcStages = 0;
             PipelineStageFlags dstStages = 0;
 
-            for (int i = 0; i < barrierCapacity; i++)
+            for (int i = 0; i < attachmentCapacity; i++)
             {
                 FrameBufferAttachmentSignature signature = signatures[i];
                 ImageLayout requestedOldLayout = NormalizeFboAttachmentLayout(
@@ -5791,74 +5798,90 @@ namespace XREngine.Rendering.Vulkan
                     continue;
                 }
 
-                ImageLayout oldLayout = NormalizeFboAttachmentLayout(
-                    signature,
-                    ResolveLiveBlitOldLayout(info, requestedOldLayout));
-                if (oldLayout == newLayout)
-                    continue;
+                ResolveFboAttachmentImageLayerSpan(
+                    vkFbo,
+                    layerIndex,
+                    in info,
+                    out uint imageBaseLayer,
+                    out uint transitionLayerCount);
+                ResolveFboAttachmentTrackedLayerSpan(
+                    vkFbo,
+                    layerIndex,
+                    out uint trackedBaseLayer,
+                    out uint trackedLayerCount);
 
-                bool oldLayoutIsRenderAttachment = !beginRendering;
-                bool newLayoutIsRenderAttachment = beginRendering;
-                PipelineStageFlags srcStage = oldLayout == ImageLayout.Undefined
-                    ? PipelineStageFlags.TopOfPipeBit
-                    : ResolveFboAttachmentStage(oldLayout, signature, oldLayoutIsRenderAttachment);
-                PipelineStageFlags dstStage = ResolveFboAttachmentStage(newLayout, signature, newLayoutIsRenderAttachment);
-
-                ImageMemoryBarrier barrier = new()
+                uint layerCount = Math.Max(transitionLayerCount, 1u);
+                for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
                 {
-                    SType = StructureType.ImageMemoryBarrier,
-                    SrcAccessMask = oldLayout == ImageLayout.Undefined
-                        ? 0
-                        : ResolveFboAttachmentAccess(oldLayout, signature, oldLayoutIsRenderAttachment),
-                    DstAccessMask = ResolveFboAttachmentAccess(newLayout, signature, newLayoutIsRenderAttachment),
-                    OldLayout = oldLayout,
-                    NewLayout = newLayout,
-                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    Image = info.Image,
-                    SubresourceRange = new ImageSubresourceRange
+                    uint imageLayer = imageBaseLayer + layerOffset;
+                    int trackedLayer = checked((int)(trackedBaseLayer + Math.Min(layerOffset, Math.Max(trackedLayerCount, 1u) - 1u)));
+                    ImageLayout oldLayout = NormalizeFboAttachmentLayout(
+                        signature,
+                        ResolveFboAttachmentOldLayout(target, mipLevel, trackedLayer, requestedOldLayout));
+                    if (oldLayout == newLayout)
+                        continue;
+
+                    bool oldLayoutIsRenderAttachment = !beginRendering;
+                    bool newLayoutIsRenderAttachment = beginRendering;
+                    PipelineStageFlags srcStage = oldLayout == ImageLayout.Undefined
+                        ? PipelineStageFlags.TopOfPipeBit
+                        : ResolveFboAttachmentStage(oldLayout, signature, oldLayoutIsRenderAttachment);
+                    PipelineStageFlags dstStage = ResolveFboAttachmentStage(newLayout, signature, newLayoutIsRenderAttachment);
+
+                    ImageMemoryBarrier barrier = new()
                     {
-                        AspectMask = aspectMask,
-                        BaseMipLevel = info.MipLevel,
-                        LevelCount = 1,
-                        BaseArrayLayer = info.BaseArrayLayer,
-                        LayerCount = info.LayerCount
+                        SType = StructureType.ImageMemoryBarrier,
+                        SrcAccessMask = oldLayout == ImageLayout.Undefined
+                            ? 0
+                            : ResolveFboAttachmentAccess(oldLayout, signature, oldLayoutIsRenderAttachment),
+                        DstAccessMask = ResolveFboAttachmentAccess(newLayout, signature, newLayoutIsRenderAttachment),
+                        OldLayout = oldLayout,
+                        NewLayout = newLayout,
+                        SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                        DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                        Image = info.Image,
+                        SubresourceRange = new ImageSubresourceRange
+                        {
+                            AspectMask = aspectMask,
+                            BaseMipLevel = info.MipLevel,
+                            LevelCount = 1,
+                            BaseArrayLayer = imageLayer,
+                            LayerCount = 1
+                        }
+                    };
+
+                    if (vkFbo.MultiviewViewMask != 0u || BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(fbo.Name))
+                    {
+                        string targetName = target switch
+                        {
+                            XRTexture texture => texture.Name ?? texture.GetDescribingName(),
+                            XRRenderBuffer renderBuffer => renderBuffer.Name ?? renderBuffer.GetType().Name,
+                            _ => target.GetType().Name
+                        } ?? "<unnamed>";
+
+                        Debug.VulkanEvery(
+                            $"Vulkan.DynamicRendering.FboTransition.{fbo.Name}.{i}.{beginRendering}.{info.MipLevel}.{imageLayer}.{oldLayout}.{newLayout}",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Dynamic FBO transition fbo='{0}' begin={1} attachment={2} target='{3}' viewMask=0x{4:X} imageLayer={5}/{6} trackedLayer={7}/{8} old={9} new={10} aspect={11} image=0x{12:X}",
+                            fbo.Name ?? "<unnamed>",
+                            beginRendering,
+                            i,
+                            targetName,
+                            vkFbo.MultiviewViewMask,
+                            imageLayer,
+                            transitionLayerCount,
+                            trackedLayer,
+                            trackedLayerCount,
+                            oldLayout,
+                            newLayout,
+                            aspectMask,
+                            info.Image.Handle);
                     }
-                };
 
-                if (BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(fbo.Name))
-                {
-                    string targetName = target switch
-                    {
-                        XRTexture texture => texture.Name ?? texture.GetDescribingName(),
-                        XRRenderBuffer renderBuffer => renderBuffer.Name ?? renderBuffer.GetType().Name,
-                        _ => target.GetType().Name
-                    } ?? "<unnamed>";
-
-                    Debug.VulkanEvery(
-                        $"Vulkan.BloomDiag.FboTransition.{fbo.Name}.{i}.{beginRendering}.{info.MipLevel}.{info.BaseArrayLayer}.{oldLayout}.{newLayout}",
-                        TimeSpan.FromSeconds(1),
-                        "[BloomDiag][Vulkan] fbo='{0}' begin={1} attachment={2} target='{3}' requestedMip={4} resolvedMip={5} layer={6} old={7} new={8} aspect={9} image=0x{10:X} stages={11}->{12} access={13}->{14}",
-                        fbo.Name ?? "<unnamed>",
-                        beginRendering,
-                        i,
-                        targetName,
-                        mipLevel,
-                        info.MipLevel,
-                        info.BaseArrayLayer,
-                        oldLayout,
-                        newLayout,
-                        aspectMask,
-                        info.Image.Handle,
-                        srcStage,
-                        dstStage,
-                        barrier.SrcAccessMask,
-                        barrier.DstAccessMask);
+                    barriers[barrierCount++] = barrier;
+                    srcStages |= srcStage;
+                    dstStages |= dstStage;
                 }
-
-                barriers[barrierCount++] = barrier;
-                srcStages |= srcStage;
-                dstStages |= dstStage;
             }
 
             if (barrierCount == 0)
@@ -6013,7 +6036,7 @@ namespace XREngine.Rendering.Vulkan
                     out _,
                     out int mipLevel,
                     out int layerIndex))
-                    UpdateAttachmentTrackedLayout(target, mipLevel, layerIndex, finalLayout);
+                    UpdateAttachmentTrackedLayoutForFbo(vkFbo, target, mipLevel, layerIndex, finalLayout);
             }
         }
 
@@ -6045,8 +6068,31 @@ namespace XREngine.Rendering.Vulkan
                     out _,
                     out int mipLevel,
                     out int layerIndex))
-                    UpdateAttachmentTrackedLayout(target, mipLevel, layerIndex, layout);
+                    UpdateAttachmentTrackedLayoutForFbo(vkFbo, target, mipLevel, layerIndex, layout);
             }
+        }
+
+        private void UpdateAttachmentTrackedLayoutForFbo(
+            VkFrameBuffer vkFbo,
+            IFrameBufferAttachement target,
+            int mipLevel,
+            int layerIndex,
+            ImageLayout layout)
+        {
+            ResolveFboAttachmentTrackedLayerSpan(
+                vkFbo,
+                layerIndex,
+                out uint baseLayer,
+                out uint layerCount);
+
+            if (layerCount <= 1u)
+            {
+                UpdateAttachmentTrackedLayout(target, mipLevel, layerIndex, layout);
+                return;
+            }
+
+            for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
+                UpdateAttachmentTrackedLayout(target, mipLevel, checked((int)(baseLayer + layerOffset)), layout);
         }
 
         private void UpdateAttachmentTrackedLayout(
@@ -6070,6 +6116,112 @@ namespace XREngine.Rendering.Vulkan
                     break;
                 }
             }
+        }
+
+        private ImageLayout ResolveFboAttachmentOldLayout(
+            IFrameBufferAttachement target,
+            int mipLevel,
+            int layerIndex,
+            ImageLayout fallback)
+        {
+            ImageLayout layout = fallback;
+            switch (target)
+            {
+                case XRRenderBuffer rb:
+                {
+                    if (GetOrCreateAPIRenderObject(rb, true) is VkRenderBuffer vkRb && vkRb.PhysicalGroup is { } group)
+                        layout = group.LastKnownLayout;
+                    break;
+                }
+                case XRTexture tex:
+                {
+                    if (GetOrCreateAPIRenderObject(tex, true) is IVkFrameBufferAttachmentSource attSrc)
+                    {
+                        ImageLayout tracked = attSrc.GetAttachmentTrackedLayout(mipLevel, layerIndex);
+                        if (tracked != ImageLayout.Undefined)
+                            layout = tracked;
+                    }
+                    else if (GetOrCreateAPIRenderObject(tex, true) is IVkImageDescriptorSource imgSrc)
+                    {
+                        ImageLayout tracked = imgSrc.TrackedImageLayout;
+                        if (tracked != ImageLayout.Undefined)
+                            layout = tracked;
+                    }
+                    break;
+                }
+            }
+
+            return layout;
+        }
+
+        private static void ResolveFboAttachmentImageLayerSpan(
+            VkFrameBuffer vkFbo,
+            int layerIndex,
+            in BlitImageInfo info,
+            out uint baseLayer,
+            out uint layerCount)
+        {
+            baseLayer = info.BaseArrayLayer;
+            layerCount = Math.Max(info.LayerCount, 1u);
+
+            if (TryResolveViewMaskLayerSpan(vkFbo.MultiviewViewMask, out uint viewBaseLayer, out uint viewLayerCount))
+            {
+                baseLayer += viewBaseLayer;
+                layerCount = Math.Max(viewLayerCount, 1u);
+                return;
+            }
+
+            if (layerIndex < 0)
+            {
+                baseLayer = info.BaseArrayLayer;
+                layerCount = Math.Max(vkFbo.FramebufferLayers, layerCount);
+            }
+        }
+
+        private static void ResolveFboAttachmentTrackedLayerSpan(
+            VkFrameBuffer vkFbo,
+            int layerIndex,
+            out uint baseLayer,
+            out uint layerCount)
+        {
+            if (TryResolveViewMaskLayerSpan(vkFbo.MultiviewViewMask, out baseLayer, out layerCount))
+                return;
+
+            if (layerIndex < 0)
+            {
+                baseLayer = 0u;
+                layerCount = Math.Max(vkFbo.FramebufferLayers, 1u);
+                return;
+            }
+
+            baseLayer = (uint)Math.Max(layerIndex, 0);
+            layerCount = 1u;
+        }
+
+        private static bool TryResolveViewMaskLayerSpan(uint viewMask, out uint baseLayer, out uint layerCount)
+        {
+            baseLayer = 0u;
+            layerCount = 0u;
+            if (viewMask == 0u)
+                return false;
+
+            uint first = 32u;
+            uint last = 0u;
+            for (uint bit = 0u; bit < 32u; bit++)
+            {
+                if ((viewMask & (1u << (int)bit)) == 0u)
+                    continue;
+
+                first = Math.Min(first, bit);
+                last = Math.Max(last, bit);
+            }
+
+            if (first >= 32u)
+                return false;
+
+            baseLayer = first;
+            layerCount = last - first + 1u;
+            return true;
         }
 
         /// <summary>

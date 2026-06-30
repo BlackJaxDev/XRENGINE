@@ -334,6 +334,7 @@ public unsafe partial class VulkanRenderer
             if (submitted)
             {
                 int publishCount = eyeUploads.Count;
+                CompleteOpenXrGpuProfilerSubmission(in recorded);
                 PublishRecordedTextureUploadsAfterCompletedSubmit(eyeUploads, "OpenXR eye");
                 DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
                 if (OpenXrVulkanTraceEnabled)
@@ -421,6 +422,8 @@ public unsafe partial class VulkanRenderer
             if (submitted)
             {
                 int publishCount = CountOpenXrEyeRecordedTextureUploads();
+                CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
+                CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.PublishUploads"))
                     PublishOpenXrEyeRecordedTextureUploadsAfterCompletedSubmit("OpenXR eye batch");
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.FlushRetired"))
@@ -1425,6 +1428,16 @@ public unsafe partial class VulkanRenderer
             Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
     }
 
+    private void CompleteOpenXrGpuProfilerSubmission(in OpenXrRecordedEyeCommandBuffer recorded)
+    {
+        if (recorded.CommandBuffer.Handle == 0)
+            return;
+
+        int frameSlot = unchecked((int)Math.Min(recorded.FrameDataSlotIndex, int.MaxValue));
+        MarkVulkanGpuProfilerSubmitted(frameSlot);
+        SampleVulkanGpuProfilerQueries(frameSlot);
+    }
+
     internal bool TryRenderOpenXrEyeMirrorFrameBuffer(
         XRFrameBuffer targetFrameBuffer,
         Extent2D extent,
@@ -1462,6 +1475,7 @@ public unsafe partial class VulkanRenderer
             submitted = SubmitAndWaitOpenXrCommandBuffer(recorded.CommandBuffer, out commandBufferCompleted);
             if (submitted)
             {
+                CompleteOpenXrGpuProfilerSubmission(in recorded);
                 PublishRecordedTextureUploadsAfterCompletedSubmit(_openXrRecordedTextureUploadsForSubmit, "OpenXR eye mirror");
                 DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             }
@@ -1513,6 +1527,8 @@ public unsafe partial class VulkanRenderer
 
             if (submitted)
             {
+                CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
+                CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
                 PublishRecordedTextureUploadsAfterCompletedSubmit(_openXrRecordedTextureUploadsForSubmit, "OpenXR eye mirror batch");
                 DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             }
@@ -1593,6 +1609,8 @@ public unsafe partial class VulkanRenderer
 
             if (submitted)
             {
+                CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
+                CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
                 PublishRecordedTextureUploadsAfterCompletedSubmit(_openXrRecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch");
                 DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             }
@@ -1657,6 +1675,8 @@ public unsafe partial class VulkanRenderer
             DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             DrainCompletedRecordedTextureUploadPublications();
 
+            using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
+                CreateOpenXrPrewarmRenderStateTracker(request.Extent));
             using (EnterOpenXrResourcePlannerThreadScope(request.ResourcePlannerStateIndex))
             {
                 FrameOp[] ops = CaptureFrameOpsExcludingTextureUploads(request.EmitFrameOps, out _);
@@ -2970,7 +2990,31 @@ public unsafe partial class VulkanRenderer
             ImageAspectFlags sourceAspect = NormalizeOpenXrMirrorAspect(source.DescriptorFormat, source.DescriptorAspect);
             ImageLayout sourceOldLayout = ResolveOpenXrAttachmentLayout(source, sourceLayer);
             if (sourceOldLayout == ImageLayout.Undefined)
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.StereoBlit.SourceLayoutUndefined.{GetHashCode()}.{sourceTexture.GetHashCode()}.{sourceLayer}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Vulkan stereo blit source layer {0} of '{1}' had undefined tracked layout before publishing to '{2}'; falling back to ColorAttachmentOptimal.",
+                    sourceLayer,
+                    sourceTexture.Name ?? "<unnamed>",
+                    destinationLabel);
                 sourceOldLayout = ImageLayout.ColorAttachmentOptimal;
+            }
+
+            Debug.VulkanEvery(
+                $"OpenXR.Vulkan.StereoBlit.Source.{GetHashCode()}.{sourceTexture.GetHashCode()}.{sourceLayer}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Vulkan stereo blit source='{0}' layer={1}/{2} oldLayout={3} aspect={4} image=0x{5:X} dst='{6}' dstImage=0x{7:X} extent={8}x{9}",
+                sourceTexture.Name ?? "<unnamed>",
+                sourceLayer,
+                sourceLayerCount,
+                sourceOldLayout,
+                sourceAspect,
+                sourceImage.Handle,
+                destinationLabel,
+                destinationImage.Handle,
+                destinationExtent.Width,
+                destinationExtent.Height);
 
             using CommandScope scope = NewCommandScope();
             CommandBuffer commandBuffer = scope.CommandBuffer;

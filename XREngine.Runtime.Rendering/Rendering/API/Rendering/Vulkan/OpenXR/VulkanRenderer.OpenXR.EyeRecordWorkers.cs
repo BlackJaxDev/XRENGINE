@@ -58,6 +58,8 @@ public unsafe partial class VulkanRenderer
             if (submitted)
             {
                 int publishCount = CountOpenXrEyeRecordedTextureUploads();
+                CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
+                CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.PublishUploads"))
                     PublishOpenXrEyeRecordedTextureUploadsAfterCompletedSubmit("OpenXR eye parallel batch");
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.FlushRetired"))

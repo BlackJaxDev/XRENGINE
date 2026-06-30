@@ -995,6 +995,7 @@ namespace XREngine.Rendering.Vulkan
 
             EnsureComputeDescriptorCacheCapacity(frameDataSlotCount);
             EnsureDynamicUniformRingBufferCapacity(frameDataSlotCount);
+            EnsureFrameTimingSlotCapacity(frameDataSlotCount);
         }
 
         private void ReleaseDeferredSecondaryCommandBuffers(uint imageIndex)

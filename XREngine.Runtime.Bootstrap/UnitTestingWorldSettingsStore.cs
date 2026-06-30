@@ -21,6 +21,10 @@ public static class UnitTestingWorldSettingsStore
         XREngineEnvironmentVariables.MonadoSimulatedViewCount,
         XREngineEnvironmentVariables.MonadoCompositorScalePercentage,
         XREngineEnvironmentVariables.MonadoOpenXrViewportScalePercentage,
+        XREngineEnvironmentVariables.OpenXrEyeResolutionPreset,
+        XREngineEnvironmentVariables.OpenXrEyeResolutionScale,
+        XREngineEnvironmentVariables.OpenXrEyeResolutionWidth,
+        XREngineEnvironmentVariables.OpenXrEyeResolutionHeight,
     ];
     private static Dictionary<string, string?>? _previousMonadoSimulatedProfileEnvironment;
     private static string? _activeMonadoServiceProfileKey;
@@ -1047,6 +1051,22 @@ public static class UnitTestingWorldSettingsStore
             XREngineEnvironmentVariables.MonadoOpenXrViewportScalePercentage,
             displayProfile.OpenXrViewportScalePercentage.ToString(CultureInfo.InvariantCulture),
             EnvironmentVariableTarget.Process);
+        setEnvironmentVariable(
+            XREngineEnvironmentVariables.OpenXrEyeResolutionPreset,
+            displayProfile.Preset.ToString(),
+            EnvironmentVariableTarget.Process);
+        setEnvironmentVariable(
+            XREngineEnvironmentVariables.OpenXrEyeResolutionScale,
+            displayProfile.Scale.ToString("0.####", CultureInfo.InvariantCulture),
+            EnvironmentVariableTarget.Process);
+        setEnvironmentVariable(
+            XREngineEnvironmentVariables.OpenXrEyeResolutionWidth,
+            displayProfile.EyeWidth.ToString(CultureInfo.InvariantCulture),
+            EnvironmentVariableTarget.Process);
+        setEnvironmentVariable(
+            XREngineEnvironmentVariables.OpenXrEyeResolutionHeight,
+            displayProfile.EyeHeight.ToString(CultureInfo.InvariantCulture),
+            EnvironmentVariableTarget.Process);
     }
 
     private static void SetMonadoSimulatedDisplayProfileEnvironment(
@@ -1058,6 +1078,10 @@ public static class UnitTestingWorldSettingsStore
         environment[XREngineEnvironmentVariables.MonadoSimulatedViewCount] = "2";
         environment[XREngineEnvironmentVariables.MonadoCompositorScalePercentage] = displayProfile.CompositorScalePercentage.ToString(CultureInfo.InvariantCulture);
         environment[XREngineEnvironmentVariables.MonadoOpenXrViewportScalePercentage] = displayProfile.OpenXrViewportScalePercentage.ToString(CultureInfo.InvariantCulture);
+        environment[XREngineEnvironmentVariables.OpenXrEyeResolutionPreset] = displayProfile.Preset.ToString();
+        environment[XREngineEnvironmentVariables.OpenXrEyeResolutionScale] = displayProfile.Scale.ToString("0.####", CultureInfo.InvariantCulture);
+        environment[XREngineEnvironmentVariables.OpenXrEyeResolutionWidth] = displayProfile.EyeWidth.ToString(CultureInfo.InvariantCulture);
+        environment[XREngineEnvironmentVariables.OpenXrEyeResolutionHeight] = displayProfile.EyeHeight.ToString(CultureInfo.InvariantCulture);
     }
 
     private static void SetEnvironmentIfMissing(

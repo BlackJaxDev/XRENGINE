@@ -22,6 +22,8 @@ public unsafe partial class OpenXRAPI
     internal readonly record struct OpenXrEyeSwapchainExtent(
         uint Width,
         uint Height,
+        uint RequestedWidth,
+        uint RequestedHeight,
         uint BaseWidth,
         uint BaseHeight,
         uint RecommendedWidth,
@@ -91,24 +93,26 @@ public unsafe partial class OpenXRAPI
                 throw new InvalidOperationException($"Unsupported OpenXR eye resolution preset '{preset}'.");
         }
 
-        uint scaledWidth = ScaleDimension(baseWidth, requiredScale);
-        uint scaledHeight = ScaleDimension(baseHeight, requiredScale);
+        uint requestedWidth = ScaleDimension(baseWidth, requiredScale);
+        uint requestedHeight = ScaleDimension(baseHeight, requiredScale);
+        uint resolvedWidth = requestedWidth;
+        uint resolvedHeight = requestedHeight;
+        bool clampedWidth = maxWidth > 0 && resolvedWidth > maxWidth;
+        bool clampedHeight = maxHeight > 0 && resolvedHeight > maxHeight;
+        if (clampedWidth)
+            resolvedWidth = maxWidth;
+        if (clampedHeight)
+            resolvedHeight = maxHeight;
+
         bool exceedsRuntimeMax =
-            (maxWidth > 0 && scaledWidth > maxWidth) ||
-            (maxHeight > 0 && scaledHeight > maxHeight);
-        if (exceedsRuntimeMax)
-        {
-            string maxText = maxWidth > 0 && maxHeight > 0
-                ? $"{maxWidth}x{maxHeight}"
-                : "<unspecified>";
-            throw new InvalidOperationException(
-                $"Requested OpenXR eye resolution {scaledWidth}x{scaledHeight} from {source} at {requiredScale:F2}x exceeds reported runtime max {maxText}. " +
-                "The requested eye resolution is not being applied exactly.");
-        }
+            clampedWidth ||
+            clampedHeight;
 
         return new(
-            scaledWidth,
-            scaledHeight,
+            resolvedWidth,
+            resolvedHeight,
+            requestedWidth,
+            requestedHeight,
             baseWidth,
             baseHeight,
             recommendedWidth,
@@ -209,20 +213,30 @@ public unsafe partial class OpenXRAPI
         string reason = $"OpenXR eye resolution changed from {applied} to {current}.";
         Debug.LogWarning($"[OpenXR] {reason} Recreating OpenXR instance/session resources so the runtime receives new swapchain and view-configuration dimensions.");
 
+        bool scheduled = false;
         try
         {
             RuntimeRenderingHostServices.Current.InvokeRenderThreadTask(
                 () =>
                 {
-                    RecreateOpenXrSessionResourcesForEyeResolution(reason);
-                    return true;
+                    try
+                    {
+                        RecreateOpenXrSessionResourcesForEyeResolution(reason);
+                        return true;
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _openXrEyeResolutionRecreateQueued, 0);
+                    }
                 },
                 "OpenXR.EyeResolution.RecreateSessionResources",
                 RenderThreadJobKind.RequiresGraphicsContext);
+            scheduled = true;
         }
         finally
         {
-            Interlocked.Exchange(ref _openXrEyeResolutionRecreateQueued, 0);
+            if (!scheduled)
+                Interlocked.Exchange(ref _openXrEyeResolutionRecreateQueued, 0);
         }
     }
 
@@ -326,15 +340,15 @@ public unsafe partial class OpenXRAPI
         Debug.Out(
             $"OpenXR {backend} view[{viewIndex}] swapchain size: {extent.Width}x{extent.Height} " +
             $"source={extent.Source} preset={extent.Preset} scale={extent.Scale:F2} " +
-            $"base={extent.BaseWidth}x{extent.BaseHeight} recommended={extent.RecommendedWidth}x{extent.RecommendedHeight} " +
+            $"requested={extent.RequestedWidth}x{extent.RequestedHeight} base={extent.BaseWidth}x{extent.BaseHeight} recommended={extent.RecommendedWidth}x{extent.RecommendedHeight} " +
             $"max={maxText} exceedsRuntimeMax={extent.ExceedsRuntimeMax}");
 
         if (!extent.ExceedsRuntimeMax)
             return;
 
-        throw new InvalidOperationException(
-            $"OpenXR {backend} eye {viewIndex} resolved extent {extent.Width}x{extent.Height} from {extent.Source} at {extent.Scale:F2}x exceeds reported runtime max {maxText}. " +
-            "The requested eye resolution is not being applied exactly.");
+        Debug.LogWarning(
+            $"[OpenXR] {backend} eye {viewIndex} requested {extent.RequestedWidth}x{extent.RequestedHeight} from {extent.Source} at {extent.Scale:F2}x, " +
+            $"which exceeds reported runtime max {maxText}. Clamping swapchain extent to {extent.Width}x{extent.Height}.");
     }
 
     private static uint ScaleDimension(uint value, float scale)

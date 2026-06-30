@@ -17,6 +17,7 @@ internal sealed class RenderPipelineGpuProfiler
     public static RenderPipelineGpuProfiler Instance { get; } = new();
     private const ulong PartialPublishDelayFrames = 3;
     private const ulong StalePendingQueryFrames = 120;
+    private const ulong LiveSnapshotMergeWindowFrames = 30;
     private const ulong LiveTimingHistoryPublishIntervalFrames = 8;
     private const int MaxTimingHistoryFrameSummaries = 1200;
     private const int MaxTimestampScopesPerFrame = 512;
@@ -57,6 +58,32 @@ internal sealed class RenderPipelineGpuProfiler
         {
             TotalNanoseconds += nanoseconds;
             SampleCount++;
+        }
+
+        public NodeAccumulator Clone()
+        {
+            NodeAccumulator clone = new(Name)
+            {
+                TotalNanoseconds = TotalNanoseconds,
+                SampleCount = SampleCount
+            };
+
+            for (int i = 0; i < _children.Count; i++)
+                clone.GetOrAddChild(_children[i].Name).MergeFrom(_children[i]);
+
+            return clone;
+        }
+
+        public void MergeFrom(NodeAccumulator other)
+        {
+            TotalNanoseconds += other.TotalNanoseconds;
+            SampleCount += other.SampleCount;
+
+            for (int i = 0; i < other._children.Count; i++)
+            {
+                NodeAccumulator child = other._children[i];
+                GetOrAddChild(child.Name).MergeFrom(child);
+            }
         }
     }
 
@@ -116,6 +143,52 @@ internal sealed class RenderPipelineGpuProfiler
             NodeAccumulator root = RenderThreadTimingRoot ??= new NodeAccumulator(RenderThreadRootName);
             root.AddSample(nanoseconds);
             root.GetOrAddChild(name).AddSample(nanoseconds);
+        }
+
+        public FrameCapture CloneForSnapshot()
+        {
+            FrameCapture clone = new(FrameId)
+            {
+                PendingSamples = PendingSamples,
+                SkippedSamples = SkippedSamples,
+                HasSamples = HasSamples,
+                Supported = Supported,
+                BackendName = BackendName,
+                StatusMessage = StatusMessage,
+                RenderThreadMilliseconds = RenderThreadMilliseconds,
+                RenderThreadTimingRoot = RenderThreadTimingRoot?.Clone()
+            };
+
+            for (int i = 0; i < _roots.Count; i++)
+                clone.GetOrAddRoot(_roots[i].Name).MergeFrom(_roots[i]);
+
+            return clone;
+        }
+
+        public void MergePipelineRootsFrom(FrameCapture other)
+        {
+            if (other.HasSamples)
+                HasSamples = true;
+
+            Supported |= other.Supported;
+            BackendName = MergeDistinctText(BackendName, other.BackendName, "+");
+            StatusMessage = MergeDistinctText(StatusMessage, other.StatusMessage, "; ");
+            PendingSamples += other.PendingSamples;
+            SkippedSamples += other.SkippedSamples;
+
+            for (int i = 0; i < other._roots.Count; i++)
+                GetOrAddRoot(other._roots[i].Name).MergeFrom(other._roots[i]);
+        }
+
+        private static string MergeDistinctText(string left, string right, string separator)
+        {
+            if (string.IsNullOrWhiteSpace(left))
+                return right;
+            if (string.IsNullOrWhiteSpace(right) || string.Equals(left, right, StringComparison.Ordinal))
+                return left;
+            if (left.Contains(right, StringComparison.Ordinal))
+                return left;
+            return left + separator + right;
         }
     }
 
@@ -863,19 +936,7 @@ internal sealed class RenderPipelineGpuProfiler
 
         foreach ((ulong frameId, FrameCapture frame) in _frames)
         {
-            if (frameId >= currentFrameId)
-                continue;
-
-            if (frame.PendingSamples > 0 &&
-                !IsOlderThan(currentFrameId, frameId, PartialPublishDelayFrames))
-            {
-                continue;
-            }
-
-            if (frame.PendingSamples > 0 && !frame.HasSamples)
-                continue;
-
-            if (!frame.HasSamples)
+            if (!IsEligibleForSnapshotNoLock(currentFrameId, frameId, frame))
                 continue;
 
             if (best is null || frameId > best.FrameId)
@@ -885,31 +946,149 @@ internal sealed class RenderPipelineGpuProfiler
         if (best is null)
             return;
 
+        FrameCapture snapshotFrame = CreateMergedSnapshotFrameNoLock(currentFrameId, best);
         bool shouldPublish =
             !_hasPublishedFrame ||
+            HasSnapshotRootSetChangedNoLock(snapshotFrame) ||
             (best.FrameId > _lastPublishedFrameId &&
              best.FrameId - _lastPublishedFrameId >= LiveTimingHistoryPublishIntervalFrames);
 
         if (shouldPublish)
         {
             RecordTimingHistoryNoLock(best);
-            _latestSnapshot = CreateSnapshot(best);
+            _latestSnapshot = CreateSnapshot(snapshotFrame);
+            LogPublishedSnapshotRoots(snapshotFrame);
             if (!_hasPublishedFrame || best.FrameId > _lastPublishedFrameId)
             {
                 _lastPublishedFrameId = best.FrameId;
                 _hasPublishedFrame = true;
             }
-        }
 
-        RemoveFramesThroughNoLock(best.FrameId);
+            RemoveFramesOlderThanNoLock(best.FrameId, LiveSnapshotMergeWindowFrames);
+        }
     }
 
-    private void RemoveFramesThroughNoLock(ulong maxFrameId)
+    private bool IsEligibleForSnapshotNoLock(ulong currentFrameId, ulong frameId, FrameCapture frame)
     {
+        if (frameId >= currentFrameId)
+            return false;
+
+        if (frame.PendingSamples > 0 &&
+            !IsOlderThan(currentFrameId, frameId, PartialPublishDelayFrames))
+        {
+            return false;
+        }
+
+        if (frame.PendingSamples > 0 && !frame.HasSamples)
+            return false;
+
+        return frame.HasSamples;
+    }
+
+    private FrameCapture CreateMergedSnapshotFrameNoLock(ulong currentFrameId, FrameCapture best)
+    {
+        FrameCapture merged = best.CloneForSnapshot();
+
+        foreach ((ulong frameId, FrameCapture frame) in _frames)
+        {
+            if (frame.FrameId == best.FrameId ||
+                frame.FrameId > best.FrameId ||
+                !IsWithinLiveSnapshotMergeWindow(best.FrameId, frameId) ||
+                !IsEligibleForSnapshotNoLock(currentFrameId, frameId, frame))
+            {
+                continue;
+            }
+
+            merged.MergePipelineRootsFrom(frame);
+        }
+
+        return merged;
+    }
+
+    private bool HasSnapshotRootSetChangedNoLock(FrameCapture frame)
+    {
+        GpuPipelineTimingNodeData[] latestRoots = _latestSnapshot.Roots;
+        bool hasRenderThread = frame.RenderThreadMilliseconds > 0.0;
+        int expectedRootCount = frame.Roots.Count + (hasRenderThread ? 1 : 0);
+        if (latestRoots.Length != expectedRootCount)
+            return true;
+
+        if (hasRenderThread && !SnapshotContainsRootName(latestRoots, RenderThreadRootName))
+            return true;
+
+        for (int i = 0; i < frame.Roots.Count; i++)
+        {
+            if (!SnapshotContainsRootName(latestRoots, frame.Roots[i].Name))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool SnapshotContainsRootName(GpuPipelineTimingNodeData[] roots, string name)
+    {
+        for (int i = 0; i < roots.Length; i++)
+        {
+            if (string.Equals(roots[i].Name, name, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static void LogPublishedSnapshotRoots(FrameCapture frame)
+    {
+        Debug.RenderingEvery(
+            "GpuProfiler.LiveSnapshotRoots",
+            TimeSpan.FromSeconds(1),
+            "[GpuProfiler] Published GPU snapshot frame={0} backend={1} roots={2}",
+            frame.FrameId,
+            string.IsNullOrWhiteSpace(frame.BackendName) ? "<unknown>" : frame.BackendName,
+            DescribeSnapshotRoots(frame));
+    }
+
+    private static string DescribeSnapshotRoots(FrameCapture frame)
+    {
+        StringBuilder builder = new();
+        if (frame.RenderThreadMilliseconds > 0.0)
+            AppendSnapshotRootDescription(builder, RenderThreadRootName, frame.RenderThreadMilliseconds, 1);
+
+        for (int i = 0; i < frame.Roots.Count; i++)
+        {
+            NodeAccumulator root = frame.Roots[i];
+            AppendSnapshotRootDescription(builder, root.Name, root.TotalNanoseconds / 1_000_000.0, root.SampleCount);
+        }
+
+        return builder.Length == 0 ? "<none>" : builder.ToString();
+    }
+
+    private static void AppendSnapshotRootDescription(StringBuilder builder, string name, double elapsedMs, int sampleCount)
+    {
+        if (builder.Length > 0)
+            builder.Append(", ");
+
+        builder
+            .Append(name)
+            .Append('=')
+            .Append(elapsedMs.ToString("F3", CultureInfo.InvariantCulture))
+            .Append("ms/")
+            .Append(sampleCount)
+            .Append(" samples");
+    }
+
+    private static bool IsWithinLiveSnapshotMergeWindow(ulong latestFrameId, ulong frameId)
+        => latestFrameId >= frameId && latestFrameId - frameId <= LiveSnapshotMergeWindowFrames;
+
+    private void RemoveFramesOlderThanNoLock(ulong latestFrameId, ulong keepFrameCount)
+    {
+        ulong oldestFrameIdToKeep = latestFrameId > keepFrameCount
+            ? latestFrameId - keepFrameCount
+            : 0UL;
+
         _frameRemovalScratch.Clear();
         foreach (ulong key in _frames.Keys)
         {
-            if (key <= maxFrameId)
+            if (key < oldestFrameIdToKeep)
                 _frameRemovalScratch.Add(key);
         }
 

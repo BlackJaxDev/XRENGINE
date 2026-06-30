@@ -145,7 +145,7 @@ public partial class DefaultRenderPipeline2
                 0u, 1u,
                 0u, 2u,
                 ESizedInternalFormat.Depth24Stencil8,
-                false, false)
+                true, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,
                 MinFilter = ETexMinFilter.Nearest,
@@ -184,7 +184,7 @@ public partial class DefaultRenderPipeline2
                 0u, 1u,
                 0u, 2u,
                 ESizedInternalFormat.Depth24Stencil8,
-                false, false)
+                true, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,
                 MinFilter = ETexMinFilter.Nearest,
@@ -223,7 +223,7 @@ public partial class DefaultRenderPipeline2
                 0u, 1u,
                 0u, 2u,
                 ESizedInternalFormat.Depth24Stencil8,
-                false, false)
+                true, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Stencil,
                 MinFilter = ETexMinFilter.Nearest,
@@ -300,7 +300,7 @@ public partial class DefaultRenderPipeline2
                 0u, 1u,
                 0u, 2u,
                 ESizedInternalFormat.Depth24Stencil8,
-                false, false)
+                true, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,
                 MinFilter = ETexMinFilter.Nearest,
@@ -1315,22 +1315,13 @@ public partial class DefaultRenderPipeline2
         EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
         ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
 
-        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+        return CreatePostProcessIntermediateTexture(
+            PostProcessOutputTextureName,
             width,
             height,
             internalFormat,
-            EPixelFormat.Rgba,
             pixelType,
-            EFrameBufferAttachment.ColorAttachment0);
-        texture.Resizable = true;
-        texture.SizedInternalFormat = sized;
-        texture.MinFilter = ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
-        texture.UWrap = ETexWrapMode.ClampToEdge;
-        texture.VWrap = ETexWrapMode.ClampToEdge;
-        texture.SamplerName = PostProcessOutputTextureName;
-        texture.Name = PostProcessOutputTextureName;
-        return texture;
+            sized);
     }
 
     private XRTexture CreateFinalPostProcessOutputTexture()
@@ -1340,6 +1331,45 @@ public partial class DefaultRenderPipeline2
         EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
         ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
 
+        return CreatePostProcessIntermediateTexture(
+            FinalPostProcessOutputTextureName,
+            width,
+            height,
+            internalFormat,
+            pixelType,
+            sized);
+    }
+
+    private XRTexture CreatePostProcessIntermediateTexture(
+        string textureName,
+        uint width,
+        uint height,
+        EPixelInternalFormat internalFormat,
+        EPixelType pixelType,
+        ESizedInternalFormat sized)
+    {
+        if (Stereo)
+        {
+            XRTexture2DArray stereoTexture = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                width,
+                height,
+                internalFormat,
+                EPixelFormat.Rgba,
+                pixelType,
+                EFrameBufferAttachment.ColorAttachment0);
+            stereoTexture.Resizable = true;
+            stereoTexture.SizedInternalFormat = sized;
+            stereoTexture.OVRMultiViewParameters = new(0, 2u);
+            stereoTexture.MinFilter = ETexMinFilter.Linear;
+            stereoTexture.MagFilter = ETexMagFilter.Linear;
+            stereoTexture.UWrap = ETexWrapMode.ClampToEdge;
+            stereoTexture.VWrap = ETexWrapMode.ClampToEdge;
+            stereoTexture.SamplerName = textureName;
+            stereoTexture.Name = textureName;
+            return stereoTexture;
+        }
+
         XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
             width,
             height,
@@ -1353,8 +1383,8 @@ public partial class DefaultRenderPipeline2
         texture.MagFilter = ETexMagFilter.Linear;
         texture.UWrap = ETexWrapMode.ClampToEdge;
         texture.VWrap = ETexWrapMode.ClampToEdge;
-        texture.SamplerName = FinalPostProcessOutputTextureName;
-        texture.Name = FinalPostProcessOutputTextureName;
+        texture.SamplerName = textureName;
+        texture.Name = textureName;
         return texture;
     }
 

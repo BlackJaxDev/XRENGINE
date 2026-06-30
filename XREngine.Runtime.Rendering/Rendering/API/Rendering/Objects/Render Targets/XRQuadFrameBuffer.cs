@@ -111,13 +111,16 @@ namespace XREngine.Rendering
         private void SetUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
             => SettingUniforms?.Invoke(materialProgram);
 
-        public bool TryPrepareForRendering(bool forceNoStereo = false)
+        // Fullscreen blits must keep their screen-space vertex shader during stereo passes.
+        // The Vulkan draw is still captured as stereo by render state, so multiview broadcasts
+        // the primitive to both layers while the fragment shader can sample gl_ViewIndex.
+        public bool TryPrepareForRendering(bool forceNoStereo = true)
             => FullScreenMesh.TryPrepareForRendering(forceNoStereo);
 
         /// <summary>
         /// Renders the FBO to the entire region set by RuntimeEngine.Rendering.State.PushRenderArea().
         /// </summary>
-        public bool Render(XRFrameBuffer? target = null, bool forceNoStereo = false)
+        public bool Render(XRFrameBuffer? target = null, bool forceNoStereo = true)
         {
             target?.BindForWriting();
             try

@@ -290,6 +290,7 @@ public unsafe partial class OpenXRAPI
     // Pending OpenXR frame (WaitFrame/BeginFrame done; views located) awaiting engine CollectVisible+SwapBuffers.
     private int _pendingXrFrame;
     private int _pendingXrFrameCollected;
+    private int _pendingXrFrameUsesTrueSinglePassStereo;
 
     private int _openXrPendingFrameNumber;
     private int _openXrLifecycleFrameIndex;

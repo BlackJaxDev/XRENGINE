@@ -114,6 +114,46 @@ public unsafe partial class VulkanRenderer
         CreateVulkanGpuProfilerResources();
     }
 
+    private void EnsureFrameTimingSlotCapacity(int slotCount)
+    {
+        if (slotCount <= 0 || device.Handle == 0)
+            return;
+
+        EnsureFrameTimingQueryPoolCapacity(slotCount);
+        EnsureVulkanGpuProfilerSlotCapacity(slotCount);
+    }
+
+    private void EnsureFrameTimingQueryPoolCapacity(int slotCount)
+    {
+        if (!_frameTimingGpuEnabled ||
+            _frameTimingQueryPools is null ||
+            _frameTimingQueryReady is null ||
+            _frameTimingQueryPools.Length >= slotCount)
+        {
+            return;
+        }
+
+        int oldLength = _frameTimingQueryPools.Length;
+        Array.Resize(ref _frameTimingQueryPools, slotCount);
+        Array.Resize(ref _frameTimingQueryReady, slotCount);
+
+        QueryPoolCreateInfo createInfo = new()
+        {
+            SType = StructureType.QueryPoolCreateInfo,
+            QueryType = QueryType.Timestamp,
+            QueryCount = FrameTimingQueryCount,
+        };
+
+        for (int i = oldLength; i < slotCount; i++)
+        {
+            if (Api!.CreateQueryPool(device, ref createInfo, null, out _frameTimingQueryPools[i]) != Result.Success)
+            {
+                Debug.VulkanWarning("[Vulkan] Frame timing query pool growth failed for frame slot {0}; GPU frame timing disabled for that slot.", i);
+                _frameTimingQueryPools[i] = default;
+            }
+        }
+    }
+
     private void DestroyFrameTimingResources()
     {
         DestroyVulkanGpuProfilerResources();
@@ -249,6 +289,44 @@ public unsafe partial class VulkanRenderer
         }
 
         _vulkanGpuProfilerEnabled = true;
+    }
+
+    private void EnsureVulkanGpuProfilerSlotCapacity(int slotCount)
+    {
+        if (!_vulkanGpuProfilerEnabled ||
+            _vulkanGpuProfilerQueryPools is null ||
+            _vulkanGpuProfilerQueryReady is null ||
+            _vulkanGpuProfilerPendingScopes is null ||
+            _vulkanGpuProfilerPendingQueryCounts is null ||
+            _vulkanGpuProfilerSubmittedFrameIds is null ||
+            _vulkanGpuProfilerQueryPools.Length >= slotCount)
+        {
+            return;
+        }
+
+        int oldLength = _vulkanGpuProfilerQueryPools.Length;
+        Array.Resize(ref _vulkanGpuProfilerQueryPools, slotCount);
+        Array.Resize(ref _vulkanGpuProfilerQueryReady, slotCount);
+        Array.Resize(ref _vulkanGpuProfilerPendingScopes, slotCount);
+        Array.Resize(ref _vulkanGpuProfilerPendingQueryCounts, slotCount);
+        Array.Resize(ref _vulkanGpuProfilerSubmittedFrameIds, slotCount);
+
+        QueryPoolCreateInfo createInfo = new()
+        {
+            SType = StructureType.QueryPoolCreateInfo,
+            QueryType = QueryType.Timestamp,
+            QueryCount = VulkanGpuProfilerQueryCount,
+        };
+
+        for (int i = oldLength; i < slotCount; i++)
+        {
+            _vulkanGpuProfilerPendingScopes[i] = [];
+            if (Api!.CreateQueryPool(device, ref createInfo, null, out _vulkanGpuProfilerQueryPools[i]) != Result.Success)
+            {
+                Debug.VulkanWarning("[Vulkan] GPU pipeline profiler query pool growth failed for frame slot {0}; render-pipeline GPU timings disabled for that slot.", i);
+                _vulkanGpuProfilerQueryPools[i] = default;
+            }
+        }
     }
 
     private void DestroyVulkanGpuProfilerResources()

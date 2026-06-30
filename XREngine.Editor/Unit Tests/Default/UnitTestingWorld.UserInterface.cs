@@ -1,6 +1,7 @@
 using System;
 using Silk.NET.Input;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Numerics;
 using System.IO;
@@ -30,11 +31,11 @@ public static partial class EditorUnitTests
     public static partial class UserInterface
     {
         private static readonly bool DockFPSTopLeft = false;
-        private const float FpsOverlayWidth = 1000.0f;
-        private const float FpsOverlayHeight = 128.0f;
+        private const float FpsOverlayWidth = 1180.0f;
+        private const float FpsOverlayHeight = 210.0f;
         private const float FpsOverlayBottomMargin = 26.0f;
         private static readonly Queue<float> _fpsAvg = new();
-        private static readonly StringBuilder _fpsTextBuilder = new(512);
+        private static readonly StringBuilder _fpsTextBuilder = new(768);
         private static long _lastSampledRenderTimestampTicks = -1L;
 
         private static UIEditorComponent? _editorComponent = null;
@@ -79,11 +80,16 @@ public static partial class EditorUnitTests
             double renderMs = Engine.Time.Timer.Render.Delta * 1000.0;
             double updateMs = Engine.Time.Timer.Update.Delta * 1000.0;
             double fixedMs = Engine.Time.Timer.FixedUpdateDelta * 1000.0;
-            int drawCalls = Engine.Rendering.Stats.Frame.DrawCalls;
-            int multiDrawCalls = Engine.Rendering.Stats.Frame.MultiDrawCalls;
-            int trianglesRendered = Engine.Rendering.Stats.Frame.TrianglesRendered;
+            Engine.Rendering.Stats.RenderPassCounters frameCounters = Engine.Rendering.Stats.Frame.LastCounters;
+            Engine.Rendering.Stats.RenderPassCounters vrCounters = Engine.Rendering.Stats.Vr.VrRenderPassCounters;
+            bool vrActive = Engine.VRState.IsInVR || vrCounters.HasAny;
+            Engine.Rendering.Stats.RenderPassCounters desktopCounters = vrActive
+                ? Engine.Rendering.Stats.RenderPassCounters.SubtractClamped(frameCounters, vrCounters)
+                : frameCounters;
             double cpuFrameMs = Engine.Rendering.Stats.Vulkan.VulkanFrameTotalMs;
             double gpuCmdMs = Engine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs;
+            double vrHz = ResolveVrRenderHz();
+            double vrPassMs = Engine.Rendering.Stats.Vr.VrRenderPassTimeMs;
             int fallbackEvents = Engine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents;
             float networkingRttMs = 0.0f;
             float packetsPerSecond = 0.0f;
@@ -106,7 +112,7 @@ public static partial class EditorUnitTests
             builder.Append("/s | data ");
             builder.Append(FormatCompactRate(bytesPerSecond, 7));
 
-            builder.Append("\nrender: ");
+            builder.Append(vrActive ? "\ndesktop:" : "\nrender: ");
             AppendFixed(builder, averageHz, "F0", 3);
             builder.Append("hz ");
             AppendFixed(builder, renderMs, "F2", 6);
@@ -116,46 +122,119 @@ public static partial class EditorUnitTests
             AppendFixed(builder, gpuCmdMs, "F2", 6);
             builder.Append("ms");
 
+            if (vrActive)
+                AppendVrRenderStats(builder, vrHz, vrPassMs);
+
             builder.Append("\nloop:   update ");
             AppendFixed(builder, updateMs, "F2", 6);
             builder.Append("ms | fixed ");
             AppendFixed(builder, fixedMs, "F2", 6);
             builder.Append("ms");
 
-            builder.Append("\ndraw:   calls ");
-            builder.Append(FormatCompactCount(drawCalls, 5));
+            builder.Append(vrActive ? "\ndraw:   desk calls " : "\ndraw:   calls ");
+            builder.Append(FormatCompactCount(desktopCounters.DrawCalls, 5));
             builder.Append(" | multi ");
-            builder.Append(FormatCompactCount(multiDrawCalls, 5));
+            builder.Append(FormatCompactCount(desktopCounters.MultiDrawCalls, 5));
             builder.Append(" | tris ");
-            builder.Append(FormatCompactCount(trianglesRendered, 6));
+            builder.Append(FormatCompactCount(desktopCounters.TrianglesRendered, 6));
             builder.Append(" | cpu fallback ");
             builder.Append(FormatCompactCount(fallbackEvents, 3));
+
+            if (vrActive)
+                AppendVrDrawStats(builder, vrCounters);
 
             var videoComp = _editorComponent?.SceneNode.FindFirstDescendantComponent<UIVideoComponent>();
             if (videoComp is not null)
             {
                 string syncState = videoComp.DebugAudioSyncActive ? "on" : "off";
                 builder.Append("\nA/V: drift ");
-                builder.Append(videoComp.DebugPresentDriftMs.ToString("F1"));
+                AppendFixed(builder, videoComp.DebugPresentDriftMs, "F1", 6);
                 builder.Append("ms");
                 builder.Append("\ndebt ");
-                builder.Append(videoComp.DebugVideoDebtMs.ToString("F1"));
+                AppendFixed(builder, videoComp.DebugVideoDebtMs, "F1", 6);
                 builder.Append("ms");
                 builder.Append("\nunderruns ");
-                builder.Append(videoComp.DebugAudioUnderruns.ToString("N0"));
+                builder.Append(FormatCompactCount(videoComp.DebugAudioUnderruns, 6));
                 builder.Append(" (");
-                builder.Append(syncState);
+                AppendFixedText(builder, syncState, 3);
                 builder.Append(')');
             }
 
             string fpsText = builder.ToString();
             t.Text = fpsText;
-            t.Color = ResolveFpsOverlayColor(renderMs, cpuFrameMs, gpuCmdMs, networkingRttMs, fallbackEvents);
+            t.Color = ResolveFpsOverlayColor(renderMs, cpuFrameMs, gpuCmdMs, vrPassMs, networkingRttMs, fallbackEvents);
         }
 
-        private static ColorF4 ResolveFpsOverlayColor(double renderMs, double cpuFrameMs, double gpuCmdMs, float rttMs, int fallbackEvents)
+        private static void AppendVrRenderStats(StringBuilder builder, double vrHz, double vrPassMs)
         {
-            double primaryMs = Math.Max(renderMs, Math.Max(cpuFrameMs, gpuCmdMs));
+            builder.Append("\nvr:     ");
+            AppendFixedText(builder, ResolveVrRuntimeLabel(), 13);
+            builder.Append(' ');
+            AppendFixedOrPlaceholder(builder, vrHz, "F0", 3);
+            builder.Append("hz ");
+            AppendFixedOrPlaceholder(builder, vrPassMs, "F2", 6);
+            builder.Append("ms");
+
+            if (Engine.VRState.IsOpenXRActive)
+            {
+                builder.Append(" | wait ");
+                AppendFixedOrPlaceholder(builder, Engine.Rendering.Stats.Vr.VrXrWaitFrameBlockTimeMs, "F2", 6);
+                builder.Append("ms | end ");
+                AppendFixedOrPlaceholder(builder, Engine.Rendering.Stats.Vr.VrXrEndFrameSubmitTimeMs, "F2", 6);
+                builder.Append("ms");
+            }
+            else if (Engine.VRState.IsOpenVRActive)
+            {
+                builder.Append(" | runtime cpu ");
+                AppendFixedOrPlaceholder(builder, Engine.VRState.CpuFrametime, "F2", 6);
+                builder.Append("ms | gpu ");
+                AppendFixedOrPlaceholder(builder, Engine.VRState.GpuFrametime, "F2", 6);
+                builder.Append("ms");
+            }
+        }
+
+        private static void AppendVrDrawStats(StringBuilder builder, Engine.Rendering.Stats.RenderPassCounters vrCounters)
+        {
+            builder.Append("\nvr draw: calls ");
+            builder.Append(FormatCompactCount(vrCounters.DrawCalls, 5));
+            builder.Append(" | multi ");
+            builder.Append(FormatCompactCount(vrCounters.MultiDrawCalls, 5));
+            builder.Append(" | tris ");
+            builder.Append(FormatCompactCount(vrCounters.TrianglesRendered, 6));
+            builder.Append(" | eye L/R ");
+            builder.Append(FormatCompactCount(Engine.Rendering.Stats.Vr.VrLeftEyeVisible, 4));
+            builder.Append('/');
+            builder.Append(FormatCompactCount(Engine.Rendering.Stats.Vr.VrRightEyeVisible, 4));
+        }
+
+        private static string ResolveVrRuntimeLabel()
+        {
+            if (Engine.VRState.IsOpenXRActive)
+            {
+                string? runtimeManifest = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+                return !string.IsNullOrWhiteSpace(runtimeManifest) &&
+                    runtimeManifest.Contains("monado", StringComparison.OrdinalIgnoreCase)
+                        ? "OpenXR/Monado"
+                        : "OpenXR";
+            }
+
+            if (Engine.VRState.IsOpenVRActive)
+                return "OpenVR";
+
+            return "VR";
+        }
+
+        private static double ResolveVrRenderHz()
+        {
+            double hz = Engine.Rendering.Stats.Vr.VrRenderFrameRateHz;
+            if (hz <= 0.0 && Engine.VRState.IsOpenVRActive && Engine.VRState.Framerate > 0.0f)
+                hz = Engine.VRState.Framerate;
+            return hz;
+        }
+
+        private static ColorF4 ResolveFpsOverlayColor(double renderMs, double cpuFrameMs, double gpuCmdMs, double vrPassMs, float rttMs, int fallbackEvents)
+        {
+            double primaryMs = Math.Max(renderMs, Math.Max(vrPassMs, Math.Max(cpuFrameMs, gpuCmdMs)));
             if (fallbackEvents > 0 || primaryMs >= 33.0 || rttMs >= 120.0f)
                 return new ColorF4(1.0f, 0.82f, 0.32f, 1.0f);
             if (primaryMs >= 20.0 || rttMs >= 60.0f)
@@ -170,35 +249,151 @@ public static partial class EditorUnitTests
 
         private static string FormatCompactCount(int value, int width)
         {
-            string formatted;
-            if (value >= 1_000_000)
-                formatted = $"{value / 1_000_000.0:F2}M";
-            else if (value >= 1_000)
-                formatted = $"{value / 1_000.0:F1}K";
-            else
-                formatted = value.ToString("N0");
-
-            return width > 0 ? formatted.PadLeft(width) : formatted;
+            string formatted = FormatCompactCountValue(value, width);
+            return width > 0 ? ToFixedNumericWidth(formatted, width) : formatted;
         }
 
         private static string FormatCompactRate(int bytesPerSecond, int width)
         {
-            string formatted;
-            if (bytesPerSecond >= 1_048_576)
-                formatted = $"{bytesPerSecond / 1_048_576.0:F1}MB/s";
-            else if (bytesPerSecond >= 1024)
-                formatted = $"{bytesPerSecond / 1024.0:F1}KB/s";
-            else
-                formatted = $"{bytesPerSecond}B/s";
-
-            return formatted.PadLeft(width);
+            string formatted = FormatCompactRateValue(bytesPerSecond, width);
+            return ToFixedNumericWidth(formatted, width);
         }
 
         private static void AppendFixed(StringBuilder builder, double value, string format, int width)
-            => builder.Append(value.ToString(format).PadLeft(width));
+            => builder.Append(ToFixedNumericWidth(value.ToString(format, CultureInfo.InvariantCulture), width));
 
         private static void AppendFixed(StringBuilder builder, float value, string format, int width)
-            => builder.Append(value.ToString(format).PadLeft(width));
+            => builder.Append(ToFixedNumericWidth(value.ToString(format, CultureInfo.InvariantCulture), width));
+
+        private static void AppendFixedOrPlaceholder(StringBuilder builder, double value, string format, int width)
+        {
+            if (double.IsFinite(value) && value > 0.0)
+                AppendFixed(builder, value, format, width);
+            else
+                builder.Append(BuildZeroPlaceholder(format, width));
+        }
+
+        private static void AppendFixedText(StringBuilder builder, string value, int width)
+            => builder.Append(ToFixedWidth(value, width, alignRight: false));
+
+        private static string ToFixedWidth(string value, int width, bool alignRight)
+        {
+            if (width <= 0)
+                return value;
+
+            if (value.Length > width)
+                return new string('#', width);
+
+            return alignRight
+                ? value.PadLeft(width)
+                : value.PadRight(width);
+        }
+
+        private static string ToFixedNumericWidth(string value, int width)
+        {
+            if (width <= 0)
+                return value;
+
+            if (value.Length > width)
+                return BuildNumericOverflow(value, width);
+
+            if (value.StartsWith("-", StringComparison.Ordinal))
+                return "-" + value[1..].PadLeft(Math.Max(0, width - 1), '0');
+
+            return value.PadLeft(width, '0');
+        }
+
+        private static string BuildZeroPlaceholder(string format, int width)
+            => ToFixedNumericWidth(0.0.ToString(format, CultureInfo.InvariantCulture), width);
+
+        private static string BuildNumericOverflow(string value, int width)
+        {
+            if (width <= 0)
+                return value;
+
+            bool negative = value.StartsWith("-", StringComparison.Ordinal);
+            int decimalIndex = value.IndexOf('.');
+            if (decimalIndex < 0 || decimalIndex >= width - 1)
+                return negative && width > 1
+                    ? "-" + new string('9', width - 1)
+                    : new string('9', width);
+
+            int signWidth = negative ? 1 : 0;
+            int fractionalDigits = width - decimalIndex - 1;
+            int integerDigits = width - signWidth - fractionalDigits - 1;
+            if (integerDigits <= 0)
+                return negative && width > 1
+                    ? "-" + new string('9', width - 1)
+                    : new string('9', width);
+
+            return (negative ? "-" : string.Empty) +
+                new string('9', integerDigits) +
+                "." +
+                new string('9', fractionalDigits);
+        }
+
+        private static string FormatCompactCountValue(int value, int width)
+        {
+            double absoluteValue = Math.Abs((double)value);
+            if (width <= 0)
+            {
+                if (absoluteValue >= 1_000_000.0)
+                    return (value / 1_000_000.0).ToString("F2", CultureInfo.InvariantCulture) + "M";
+                if (absoluteValue >= 1_000.0)
+                    return (value / 1_000.0).ToString("F1", CultureInfo.InvariantCulture) + "K";
+                return value.ToString("N0", CultureInfo.InvariantCulture);
+            }
+
+            string whole = value.ToString("0", CultureInfo.InvariantCulture);
+            if (whole.Length <= width)
+                return whole;
+
+            Span<char> units = stackalloc char[] { 'B', 'M', 'K' };
+            Span<double> divisors = stackalloc double[] { 1_000_000_000.0, 1_000_000.0, 1_000.0 };
+            for (int i = 0; i < units.Length; i++)
+            {
+                if (absoluteValue < divisors[i])
+                    continue;
+
+                string? compact = TryFormatScaledFixedWidth(value / divisors[i], units[i], width);
+                if (compact is not null)
+                    return compact;
+            }
+
+            return new string('9', width);
+        }
+
+        private static string FormatCompactRateValue(int bytesPerSecond, int width)
+        {
+            double absoluteValue = Math.Abs((double)bytesPerSecond);
+            string whole = bytesPerSecond.ToString("0", CultureInfo.InvariantCulture) + "B/s";
+            if (whole.Length <= width)
+                return whole;
+
+            if (absoluteValue >= 1_073_741_824.0)
+                return TryFormatScaledFixedWidth(bytesPerSecond / 1_073_741_824.0, "GB/s", width) ?? new string('9', width);
+            if (absoluteValue >= 1_048_576.0)
+                return TryFormatScaledFixedWidth(bytesPerSecond / 1_048_576.0, "MB/s", width) ?? new string('9', width);
+            if (absoluteValue >= 1024.0)
+                return TryFormatScaledFixedWidth(bytesPerSecond / 1024.0, "KB/s", width) ?? new string('9', width);
+
+            return new string('9', width);
+        }
+
+        private static string? TryFormatScaledFixedWidth(double scaledValue, char suffix, int width)
+            => TryFormatScaledFixedWidth(scaledValue, suffix.ToString(), width);
+
+        private static string? TryFormatScaledFixedWidth(double scaledValue, string suffix, int width)
+        {
+            for (int decimals = 2; decimals >= 0; decimals--)
+            {
+                string formatted = scaledValue.ToString("F" + decimals.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture) + suffix;
+                if (formatted.Length <= width)
+                    return formatted;
+            }
+
+            return null;
+        }
 
         //Simple FPS counter in the bottom right for debugging.
         public static UITextComponent AddFPSText(FontGlyphSet? font, SceneNode parentNode)

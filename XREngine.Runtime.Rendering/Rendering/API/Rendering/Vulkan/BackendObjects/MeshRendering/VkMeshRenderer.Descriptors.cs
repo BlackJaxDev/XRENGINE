@@ -1639,6 +1639,12 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
+				if (requireImageView && !Renderer.IsLiveImageView(info.ImageView))
+				{
+					WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] references a retired image view.");
+					return false;
+				}
+
 				if (requireSampler && info.Sampler.Handle == 0)
 				{
 					WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] has no sampler.");
@@ -2132,6 +2138,16 @@ public unsafe partial class VulkanRenderer
 						out descriptorSnapshot) &&
 					descriptorSnapshot.View.Handle != 0)
 				{
+					if (!Renderer.IsLiveImageView(descriptorSnapshot.View))
+					{
+						if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-retired-image-view", out imageInfo, source))
+							return true;
+
+						WarnOnce($"Texture for descriptor binding '{binding.Name}' references a retired Vulkan image view.");
+						RecordDescriptorFailure(binding, "texture image view retired");
+						return false;
+					}
+
 					if (!TryResolveDescriptorSampler(binding, descriptorType, in descriptorSnapshot, out Sampler sampler))
 						return false;
 
@@ -2168,6 +2184,16 @@ public unsafe partial class VulkanRenderer
 
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' cannot provide expected view type '{binding.ExpectedImageViewType}'.");
 				RecordDescriptorFailure(binding, "texture view type mismatch");
+				return false;
+			}
+
+			if (!Renderer.IsLiveImageView(descriptorSnapshot.View))
+			{
+				if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-retired-image-view", out imageInfo, source))
+					return true;
+
+				WarnOnce($"Texture for descriptor binding '{binding.Name}' references a retired Vulkan image view.");
+				RecordDescriptorFailure(binding, "texture image view retired");
 				return false;
 			}
 

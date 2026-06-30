@@ -125,6 +125,7 @@ public unsafe partial class VulkanRenderer
                 (_image.Handle != 0 || _view.Handle != 0 || _sampler.Handle != 0)
                 && !IsDescriptorDirty
                 && _view.Handle != 0
+                && Renderer.IsLiveImageView(_view)
                 && (!CreateSampler || _sampler.Handle != 0);
             if (!descriptorHandlesReady)
                 return false;
@@ -228,7 +229,7 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        ImageViewType IVkImageDescriptorSource.DescriptorViewType => DefaultViewType;
+        ImageViewType IVkImageDescriptorSource.DescriptorViewType => NormalizeImageViewTypeForLayerCount(DefaultViewType, ResolvedArrayLayers);
 
         Sampler IVkImageDescriptorSource.DescriptorSampler
         {
@@ -374,12 +375,12 @@ public unsafe partial class VulkanRenderer
                     : _view
             };
             ImageLayout trackedLayout = ResolveTrackedImageLayoutNoLock();
-            bool ready = IsDescriptorReadyNoLock() && view.Handle != 0;
+            bool ready = IsDescriptorReadyNoLock() && view.Handle != 0 && Renderer.IsLiveImageView(view);
             snapshot = new(
                 _image,
                 _memory,
                 view,
-                requestedViewType ?? DefaultViewType,
+                requestedViewType ?? NormalizeImageViewTypeForLayerCount(DefaultViewType, ResolvedArrayLayers),
                 _sampler,
                 ResolvedFormat,
                 AspectFlags,
@@ -1692,7 +1693,7 @@ public unsafe partial class VulkanRenderer
             {
                 SType = StructureType.ImageViewCreateInfo,
                 Image = image,
-                ViewType = DefaultViewType,
+                ViewType = NormalizeImageViewTypeForLayerCount(DefaultViewType, arrayLayers),
                 Format = format,
                 Components = new ComponentMapping(
                     ComponentSwizzle.Identity,
@@ -1895,6 +1896,7 @@ public unsafe partial class VulkanRenderer
                 ? new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, DefaultViewType, normalizedAspect)
                 : key;
 
+            descriptor = NormalizeAttachmentViewKey(descriptor);
             _view = CreateView(descriptor);
         }
 
@@ -1916,6 +1918,7 @@ public unsafe partial class VulkanRenderer
             }
 
             ImageAspectFlags aspectMask = NormalizeAspectMaskForFormat(ResolvedFormat, descriptor.AspectMask);
+            descriptor = NormalizeAttachmentViewKey(descriptor with { AspectMask = aspectMask });
 
             ImageViewCreateInfo viewInfo = new()
             {
@@ -1973,6 +1976,27 @@ public unsafe partial class VulkanRenderer
             => format is Format.D16UnormS8Uint
                 or Format.D24UnormS8Uint
                 or Format.D32SfloatS8Uint;
+
+        private static AttachmentViewKey NormalizeAttachmentViewKey(AttachmentViewKey descriptor)
+            => descriptor with
+            {
+                LevelCount = Math.Max(descriptor.LevelCount, 1u),
+                LayerCount = Math.Max(descriptor.LayerCount, 1u),
+                ViewType = NormalizeImageViewTypeForLayerCount(descriptor.ViewType, descriptor.LayerCount),
+            };
+
+        private static ImageViewType NormalizeImageViewTypeForLayerCount(ImageViewType viewType, uint layerCount)
+        {
+            if (layerCount <= 1u)
+                return viewType;
+
+            return viewType switch
+            {
+                ImageViewType.Type1D => ImageViewType.Type1DArray,
+                ImageViewType.Type2D => ImageViewType.Type2DArray,
+                _ => viewType,
+            };
+        }
 
         /// <summary>Destroys a single image view and resets the handle to <c>default</c>.</summary>
         private void DestroyView(ref ImageView view)

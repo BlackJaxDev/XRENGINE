@@ -24,6 +24,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Local volumetric fog | Implemented + validation | [design/rendering/volumetric-fog-production-design.md](design/rendering/volumetric-fog-production-design.md) | Half-resolution scatter, temporal reprojection, bilateral upscale, and composite are in place. Production polish, XR parity, dual-lobe HG, optional powder brightening, and future froxel work are consolidated in the design. |
 | Forward depth-normal TransformId | Active | [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md) | Shared forward prepass follow-up so depth, normal, and transform ID describe the same surface. |
 | Dynamic indirect material bindings | Active | [design/rendering/dynamic-indirect-material-bindings.md](design/rendering/dynamic-indirect-material-bindings.md), [todo/rendering/optimization/material-table-and-texture-binding-ladder-todo.md](todo/rendering/optimization/material-table-and-texture-binding-ladder-todo.md) | Layout-driven material table roadmap for zero-readback indirect rendering, replacing hardcoded opaque-deferred rows with generated shader and packer layouts. |
+| Deferred+ render path | Active | [design/rendering/deferred-plus-render-path-design.md](design/rendering/deferred-plus-render-path-design.md), [todo/rendering/optimization/deferred-plus-render-path-todo.md](todo/rendering/optimization/deferred-plus-render-path-todo.md), [todo/rendering/optimization/visibility-buffer-rendering-todo.md](todo/rendering/optimization/visibility-buffer-rendering-todo.md) | Proposal for a compact visibility-buffer render path with froxel/material classification, deferred texture mapping, and material-region shading. |
 | Runtime modularization | Active | [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
 | Finalized game builds and asset cooking | Stable doc | [../user-guide/finalized-game-builds.md](../user-guide/finalized-game-builds.md) | User-facing guide for cooked AOT and explicitly non-AOT finalized game builds. |
 | Physics-chain performance | Stable doc + testing | [../developer-guides/rendering/physics-chain-performance.md](../developer-guides/rendering/physics-chain-performance.md) | Remaining validation lives in [testing/physics-chain-performance.md](testing/physics-chain-performance.md). |
@@ -86,6 +87,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/rendering/optimization/compact-zero-readback-rendering-todo.md](todo/rendering/optimization/compact-zero-readback-rendering-todo.md)
 - [todo/rendering/optimization/cpu-async-hardware-query-occlusion-todo.md](todo/rendering/optimization/cpu-async-hardware-query-occlusion-todo.md)
 - [todo/rendering/optimization/cpu-direct-fast-path-todo.md](todo/rendering/optimization/cpu-direct-fast-path-todo.md)
+- [todo/rendering/optimization/deferred-plus-render-path-todo.md](todo/rendering/optimization/deferred-plus-render-path-todo.md)
 - [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md)
 - [todo/rendering/default-pipeline-depth-of-field-todo.md](todo/rendering/default-pipeline-depth-of-field-todo.md)
 - [todo/ddgi-implementation-todo.md](todo/ddgi-implementation-todo.md)
@@ -133,6 +135,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [design/dedicated-render-thread-window-ownership-plan.md](design/dedicated-render-thread-window-ownership-plan.md)
 - [design/rendering/engine-optimization-and-avatar-optimizer-design.md](design/rendering/engine-optimization-and-avatar-optimizer-design.md)
 - [design/rendering/avatar-optimization-and-virtualized-rendering-design.md](design/rendering/avatar-optimization-and-virtualized-rendering-design.md)
+- [design/rendering/deferred-plus-render-path-design.md](design/rendering/deferred-plus-render-path-design.md)
 - [design/rendering/dynamic-indirect-material-bindings.md](design/rendering/dynamic-indirect-material-bindings.md)
 - [design/rendering/gpu-meshlet-zero-readback-rendering-design.md](design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [design/rendering/volumetric-fog-production-design.md](design/rendering/volumetric-fog-production-design.md)

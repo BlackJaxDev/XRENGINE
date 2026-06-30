@@ -953,15 +953,38 @@ public unsafe partial class OpenXRAPI
         bool leftAcquired = false;
         bool rightAcquired = false;
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+        bool trueSinglePassStereo =
+            modeResolution.EffectiveImplementationPath == EVrViewRenderImplementationPath.TrueSinglePassStereo;
 
         try
         {
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.Prewarm"))
+            bool collectedTrueSinglePassStereo =
+                Volatile.Read(ref _pendingXrFrameUsesTrueSinglePassStereo) != 0;
+            if (collectedTrueSinglePassStereo != trueSinglePassStereo)
             {
-                if (ShouldPrewarmVulkanEyeResources(0))
-                    PrewarmVulkanEyeResources(0);
-                if (ShouldPrewarmVulkanEyeResources(1))
-                    PrewarmVulkanEyeResources(1);
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.ViewRenderMode.FrameModeMismatch.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Skipping OpenXR eye submission because visibility was collected for {0} but render mode is now {1}. The next collected frame will use the new mode.",
+                    collectedTrueSinglePassStereo ? "true single-pass stereo" : "external per-eye rendering",
+                    trueSinglePassStereo ? "true single-pass stereo" : modeResolution.EffectiveMode.ToString());
+                return false;
+            }
+
+            if (trueSinglePassStereo)
+                ReleaseOpenXrExternalEyeViewportPipelinesForTrueStereo();
+            else
+                ReleaseOpenXrStereoViewportPipelineForExternalEyes();
+
+            if (!trueSinglePassStereo)
+            {
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.Prewarm"))
+                {
+                    if (ShouldPrewarmVulkanEyeResources(0))
+                        PrewarmVulkanEyeResources(0);
+                    if (ShouldPrewarmVulkanEyeResources(1))
+                        PrewarmVulkanEyeResources(1);
+                }
             }
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.AcquireWaitLeft"))
@@ -1093,9 +1116,10 @@ public unsafe partial class OpenXRAPI
             }
 
             Debug.VulkanWarningEvery(
-                $"OpenXR.Vulkan.TrueSinglePassStereo.Fallback.{GetHashCode()}",
+                $"OpenXR.Vulkan.TrueSinglePassStereo.Skipped.{GetHashCode()}",
                 TimeSpan.FromSeconds(2),
-                "[OpenXR] True SinglePassStereo failed this frame; falling back to OpenXR per-eye swapchain compatibility path.");
+                "[OpenXR] True SinglePassStereo did not render this frame; skipping eye submission instead of allocating per-eye fallback resources.");
+            return false;
         }
         else
         {
@@ -1185,17 +1209,26 @@ public unsafe partial class OpenXRAPI
         stereoViewport.WorldInstanceOverride = _openXrFrameWorld;
         stereoViewport.Camera = leftCamera;
 
-        RenderPipeline sourcePipeline = leftViewport.RenderPipeline ?? leftCamera.RenderPipeline ?? RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
+        RenderPipeline sourcePipeline =
+            leftViewport.RenderPipelineInstance.AssignedPipeline ??
+            leftCamera.RenderPipeline ??
+            RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
         RenderPipeline stereoPipeline = GetOrCreateOpenXrStereoPipeline(sourcePipeline);
         if (!ReferenceEquals(stereoViewport.RenderPipeline, stereoPipeline))
             stereoViewport.RenderPipeline = stereoPipeline;
 
-        RenderCommandCollection? sharedMeshCommands = leftViewport.MeshRenderCommandsOverride ?? _openXrSharedMeshRenderCommands;
-        if (sharedMeshCommands is not null)
+        stereoViewport.MeshRenderCommandsOverride = null;
+        var stereoMeshCommands = stereoViewport.RenderPipelineInstance.MeshRenderCommands;
+        int stereoRenderingCommands = stereoMeshCommands.GetRenderingCommandCount();
+        if (stereoRenderingCommands == 0)
         {
-            sharedMeshCommands.SetRenderPasses(stereoPipeline.PassIndicesAndSorters, stereoPipeline.PassMetadata);
-            sharedMeshCommands.SetOwnerPipeline(stereoViewport.RenderPipelineInstance);
-            stereoViewport.MeshRenderCommandsOverride = sharedMeshCommands;
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.TrueSinglePassStereo.NoRenderingCommands.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Vulkan true stereo render has no swapped mesh commands. pipeline='{0}' viewport={1}x{2}",
+                stereoPipeline.DebugName,
+                stereoViewport.InternalWidth,
+                stereoViewport.InternalHeight);
         }
 
         leftCamera.RenderPipeline = stereoPipeline;
@@ -1222,47 +1255,86 @@ public unsafe partial class OpenXRAPI
                 _openXrFrameWorld.TargetWorldName ?? "<unnamed world>");
         }
 
-        var renderRequest = new VulkanRenderer.OpenXrEyeMirrorRenderRequest(
-            target.FrameBuffer,
-            target.Extent,
-            ResourcePlannerStateIndex: 0,
-            OpenXrViewIndex: 0,
-            OpenXrImageIndex: leftImageIndex,
-            EmitFrameOps: () =>
+        var previousRenderer = AbstractRenderer.Current;
+        bool previousRendererActive = renderer.Active;
+        try
+        {
+            renderer.Active = true;
+            AbstractRenderer.Current = renderer;
+
+            var renderRequest = new VulkanRenderer.OpenXrEyeMirrorRenderRequest(
+                target.FrameBuffer,
+                target.Extent,
+                ResourcePlannerStateIndex: 0,
+                OpenXrViewIndex: 0,
+                OpenXrImageIndex: leftImageIndex,
+                EmitFrameOps: () =>
+                {
+                    stereoViewport.RenderStereo(target.FrameBuffer, leftCamera, rightCamera, _openXrFrameWorld);
+                },
+                RendersExternalSwapchainTarget: false);
+
+            bool stereoRendered = renderer.TryRenderOpenXrEyeMirrorFrameBuffer(in renderRequest);
+            if (!stereoRendered)
             {
-                stereoViewport.RenderStereo(target.FrameBuffer, leftCamera, rightCamera, _openXrFrameWorld);
-            },
-            RendersExternalSwapchainTarget: false);
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.TrueSinglePassStereo.RenderFailed.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Vulkan true stereo render failed before layer publish. fbo='{0}' color='{1}' extent={2}x{3} pipeline='{4}'",
+                    target.FrameBuffer.Name ?? "<unnamed FBO>",
+                    target.ColorArrayTexture.Name ?? "<unnamed color>",
+                    target.Extent.Width,
+                    target.Extent.Height,
+                    stereoPipeline.DebugName);
+                return false;
+            }
 
-        if (!renderer.TryRenderOpenXrEyeMirrorFrameBuffer(in renderRequest))
-            return false;
+            Debug.VulkanEvery(
+                $"OpenXR.Vulkan.TrueSinglePassStereo.Rendered.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Vulkan true stereo render completed. fbo='{0}' color='{1}' depth='{2}' extent={3}x{4} leftImage={5} rightImage={6} pipeline='{7}' commands={8}",
+                target.FrameBuffer.Name ?? "<unnamed FBO>",
+                target.ColorArrayTexture.Name ?? "<unnamed color>",
+                target.DepthArrayTexture.Name ?? "<unnamed depth>",
+                target.Extent.Width,
+                target.Extent.Height,
+                leftImageIndex,
+                rightImageIndex,
+                stereoPipeline.DebugName,
+                stereoRenderingCommands);
 
-        bool leftPublished = renderer.TryBlitTextureArrayLayerToOpenXrSwapchainImage(
-            target.ColorArrayTexture,
-            sourceLayer: 0,
-            target.LeftSwapchainImage,
-            target.LeftSwapchainFormat,
-            target.Extent,
-            $"true stereo left eye swapchain image {leftImageIndex}");
-        bool rightPublished = renderer.TryBlitTextureArrayLayerToOpenXrSwapchainImage(
-            target.ColorArrayTexture,
-            sourceLayer: 1,
-            target.RightSwapchainImage,
-            target.RightSwapchainFormat,
-            target.Extent,
-            $"true stereo right eye swapchain image {rightImageIndex}");
+            bool leftPublished = renderer.TryBlitTextureArrayLayerToOpenXrSwapchainImage(
+                target.ColorArrayTexture,
+                sourceLayer: 0,
+                target.LeftSwapchainImage,
+                target.LeftSwapchainFormat,
+                target.Extent,
+                $"true stereo left eye swapchain image {leftImageIndex}");
+            bool rightPublished = renderer.TryBlitTextureArrayLayerToOpenXrSwapchainImage(
+                target.ColorArrayTexture,
+                sourceLayer: 1,
+                target.RightSwapchainImage,
+                target.RightSwapchainFormat,
+                target.Extent,
+                $"true stereo right eye swapchain image {rightImageIndex}");
 
-        if (!leftPublished || !rightPublished)
-            return false;
+            if (!leftPublished || !rightPublished)
+                return false;
 
-        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishLeft"))
-            PublishVulkanEyeSwapchain(renderer, leftImage, leftFormat, extent, 0, leftImageIndex, width, height);
-        using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishRight"))
-            PublishVulkanEyeSwapchain(renderer, rightImage, rightFormat, extent, 1, rightImageIndex, width, height);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishLeft"))
+                PublishVulkanEyeSwapchain(renderer, leftImage, leftFormat, extent, 0, leftImageIndex, width, height);
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishRight"))
+                PublishVulkanEyeSwapchain(renderer, rightImage, rightFormat, extent, 1, rightImageIndex, width, height);
 
-        MarkVulkanEyeResourceWarmupComplete(0);
-        MarkVulkanEyeResourceWarmupComplete(1);
-        return true;
+            MarkVulkanEyeResourceWarmupComplete(0);
+            MarkVulkanEyeResourceWarmupComplete(1);
+            return true;
+        }
+        finally
+        {
+            AbstractRenderer.Current = previousRenderer;
+            renderer.Active = previousRendererActive;
+        }
     }
 
     private bool TryRenderVulkanEyeParallelCommandBufferRecordingToSwapchains(

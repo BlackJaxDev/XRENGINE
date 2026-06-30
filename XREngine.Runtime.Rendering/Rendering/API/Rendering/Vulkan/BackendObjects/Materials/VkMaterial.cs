@@ -1153,6 +1153,20 @@ namespace XREngine.Rendering.Vulkan
                     string aspectLabel = stencilOnly ? "stencil-only" : "depth-only";
                     if (aspectView.Handle != 0)
                     {
+                        if (!Renderer.IsLiveImageView(aspectView))
+                        {
+                            imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
+                            if (imageInfo.ImageView.Handle != 0)
+                            {
+                                WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' references a retired Vulkan {aspectLabel} image view for binding '{binding.Name}'. Using placeholder.");
+                                RecordDescriptorFallback(binding);
+                                return true;
+                            }
+
+                            WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' references a retired Vulkan {aspectLabel} image view for binding '{binding.Name}'.");
+                            return false;
+                        }
+
                         if (!TryResolveDescriptorSampler(binding, includeSampler, source, out Sampler sampler))
                             return false;
 
@@ -1181,6 +1195,20 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' cannot provide expected view type '{binding.ExpectedImageViewType}' for binding '{binding.Name}'.");
+                    return false;
+                }
+
+                if (!Renderer.IsLiveImageView(descriptorView))
+                {
+                    imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
+                    if (imageInfo.ImageView.Handle != 0)
+                    {
+                        WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' references a retired Vulkan image view for binding '{binding.Name}'. Using placeholder.");
+                        RecordDescriptorFallback(binding);
+                        return true;
+                    }
+
+                    WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' references a retired Vulkan image view for binding '{binding.Name}'.");
                     return false;
                 }
 

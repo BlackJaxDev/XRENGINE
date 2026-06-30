@@ -61,6 +61,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string vulkanComputeDescriptors = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.ComputeDescriptors.cs");
         string vulkanDynamicUniformRingBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
         string vulkanFrameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string renderPipelineGpuProfiler = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderPipelineGpuProfiler.cs");
         string vulkanInitialization = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
         string vulkanSwapchain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
         string unitTestUi = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs");
@@ -172,6 +173,7 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanCommandBufferState.ShouldContain("Array.Resize(ref _computeTransientResources, frameDataSlotCount);");
         vulkanCommandBufferState.ShouldContain("Array.Resize(ref _deferredSecondaryCommandBuffers, frameDataSlotCount);");
         vulkanCommandBufferState.ShouldContain("EnsureDynamicUniformRingBufferCapacity(frameDataSlotCount);");
+        vulkanCommandBufferState.ShouldContain("EnsureFrameTimingSlotCapacity(frameDataSlotCount);");
         vulkanCommandBufferState.ShouldContain("private readonly Dictionary<ulong, OwnedCommandChainSecondaryPool> _ownedCommandChainSecondaryPools = new();");
         vulkanCommandBufferState.ShouldContain("DestroyTrackedCommandChainSecondaryPools();");
         vulkanCommandBufferState.ShouldContain("DiscardDeferredSecondaryCommandBuffersForPool(pool);");
@@ -211,6 +213,12 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanComputeDescriptors.ShouldContain("Array.Resize(ref _computeDescriptorCaches, imageCount);");
         vulkanDynamicUniformRingBuffer.ShouldContain("private void EnsureDynamicUniformRingBufferCapacity");
         vulkanDynamicUniformRingBuffer.ShouldContain("Array.Resize(ref _dynamicUniformRingBuffers, count);");
+
+        renderPipelineGpuProfiler.ShouldContain("private const ulong LiveSnapshotMergeWindowFrames");
+        renderPipelineGpuProfiler.ShouldContain("FrameCapture snapshotFrame = CreateMergedSnapshotFrameNoLock(currentFrameId, best);");
+        renderPipelineGpuProfiler.ShouldContain("RecordTimingHistoryNoLock(best);");
+        renderPipelineGpuProfiler.ShouldContain("RemoveFramesOlderThanNoLock(best.FrameId, LiveSnapshotMergeWindowFrames);");
+        renderPipelineGpuProfiler.ShouldContain("!IsWithinLiveSnapshotMergeWindow(best.FrameId, frameId)");
 
         defaultPipeline.ShouldContain("State.WindowViewport is not null\n            && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null");
         defaultPipeline2.ShouldContain("State.WindowViewport is not null\n            && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null");

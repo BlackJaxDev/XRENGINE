@@ -44,8 +44,41 @@ void main()
 }
 """;
 
+    private const string StereoPresentShaderCode = """
+#version 460
+#extension GL_OVR_multiview2 : require
+
+layout(location = 0) out vec4 OutColor;
+layout(location = 0) in vec3 FragPos;
+
+uniform sampler2DArray SourceTexture;
+uniform bool FlipSourceYOnVulkan;
+
+vec2 ResolvePresentTextureUv(vec2 clipXY)
+{
+    vec2 uv = clipXY * 0.5 + 0.5;
+#ifdef XRENGINE_VULKAN
+    if (FlipSourceYOnVulkan)
+        uv.y = 1.0 - uv.y;
+#endif
+    return uv;
+}
+
+void main()
+{
+    vec2 clipXY = FragPos.xy;
+    if (clipXY.x < -1.0 || clipXY.x > 1.0 || clipXY.y < -1.0 || clipXY.y > 1.0)
+        discard;
+
+    vec2 uv = ResolvePresentTextureUv(clipXY);
+    OutColor = texture(SourceTexture, vec3(uv, gl_ViewID_OVR));
+}
+""";
+
     private XRMaterial? _material;
     private XRQuadFrameBuffer? _quad;
+    private XRMaterial? _stereoMaterial;
+    private XRQuadFrameBuffer? _stereoQuad;
     private XRTexture? _resolvedSourceTexture;
 
     public string? SourceTextureName { get; set; }
@@ -63,18 +96,7 @@ void main()
         if (_quad is not null)
             return;
 
-        _material = new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, PresentShaderCode))
-        {
-            RenderOptions = new RenderingParameters()
-            {
-                DepthTest = new DepthTest()
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = false,
-                }
-            }
-        };
+        _material ??= CreatePresentMaterial(PresentShaderCode);
 
         _quad = new XRQuadFrameBuffer(_material);
         _quad.SettingUniforms += Present_SettingUniforms;
@@ -91,6 +113,16 @@ void main()
 
         _material?.Destroy();
         _material = null;
+
+        if (_stereoQuad is not null)
+        {
+            _stereoQuad.SettingUniforms -= Present_SettingUniforms;
+            _stereoQuad.Destroy();
+            _stereoQuad = null;
+        }
+
+        _stereoMaterial?.Destroy();
+        _stereoMaterial = null;
     }
 
     protected override void Execute()
@@ -154,7 +186,10 @@ void main()
         bool isExternalSwapchainTarget = renderer.IsRenderingExternalSwapchainTarget;
         bool useBoundOutputFbo =
             instance.RenderState.OutputFBO is not null &&
-            (isExternalSwapchainTarget || windowViewport?.RendersToExternalSwapchainTarget == true);
+            (isExternalSwapchainTarget ||
+             windowViewport?.RendersToExternalSwapchainTarget == true ||
+             instance.RenderState.StereoPass ||
+             !isActiveWindowViewport);
         if (windowViewport is not null && !isActiveWindowViewport && !isExternalSwapchainTarget && !useBoundOutputFbo)
         {
             Debug.RenderingWarningEvery(
@@ -189,6 +224,34 @@ void main()
             return;
         }
 
+        bool useStereoPresent = instance.RenderState.StereoPass && IsStereoArrayTexture(sourceTexture);
+        XRQuadFrameBuffer quad = useStereoPresent ? GetOrCreateStereoQuad() : _quad;
+        if (instance.RenderState.StereoPass && !useStereoPresent)
+        {
+            Debug.RenderingWarningEvery(
+                $"RenderToWindow.StereoMonoSource.{instance.GetHashCode()}.{sourceTexture.Name}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] RenderToWindow stereo pass is presenting mono source texture '{0}' type={1}. SourceTex='{2}' SourceFBO='{3}' Pipeline={4}",
+                sourceTexture.Name ?? "<unnamed>",
+                sourceTexture.GetType().Name,
+                SourceTextureName ?? "<null>",
+                SourceFBOName ?? "<null>",
+                instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>");
+        }
+
+        if (useStereoPresent)
+        {
+            Debug.RenderingEvery(
+                $"RenderToWindow.StereoPresent.{instance.GetHashCode()}.{sourceTexture.Name}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] RenderToWindow stereo array present. Source='{0}' type={1} Region={2}x{3} Pipeline={4}",
+                sourceTexture.Name ?? "<unnamed>",
+                sourceTexture.GetType().Name,
+                region.Width,
+                region.Height,
+                instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>");
+        }
+
         if (!useBoundOutputFbo)
             RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
         if (!isExternalSwapchainTarget && !useBoundOutputFbo)
@@ -201,7 +264,7 @@ void main()
         try
         {
             _resolvedSourceTexture = sourceTexture;
-            _quad.Render(null);
+            quad.Render(null);
         }
         finally
         {
@@ -290,6 +353,34 @@ void main()
         => !string.IsNullOrWhiteSpace(SourceFBOName)
             ? instance.GetFBO<XRFrameBuffer>(SourceFBOName!)
             : instance.RenderState.OutputFBO;
+
+    private static XRMaterial CreatePresentMaterial(string fragmentShaderCode)
+        => new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, fragmentShaderCode))
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                }
+            }
+        };
+
+    private XRQuadFrameBuffer GetOrCreateStereoQuad()
+    {
+        if (_stereoQuad is not null)
+            return _stereoQuad;
+
+        _stereoMaterial ??= CreatePresentMaterial(StereoPresentShaderCode);
+        _stereoQuad = new XRQuadFrameBuffer(_stereoMaterial);
+        _stereoQuad.SettingUniforms += Present_SettingUniforms;
+        return _stereoQuad;
+    }
+
+    private static bool IsStereoArrayTexture(XRTexture texture)
+        => texture is XRTexture2DArray or XRTexture2DArrayView;
 
     private void Present_SettingUniforms(XRRenderProgram program)
     {
