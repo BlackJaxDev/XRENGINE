@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private OpenXrEyeRecordWorkerScheduler? _openXrEyeRecordWorkerScheduler;
+    private readonly object _openXrParallelEyePrimaryRecordSharedStateLock = new();
 
     private bool TryRenderOpenXrEyeSwapchainsWithParallelEyeWorkers(
         in OpenXrEyeSwapchainRenderRequest firstEye,
@@ -136,7 +137,11 @@ public unsafe partial class VulkanRenderer
         }
 
         using IDisposable currentRendererScope = AbstractRenderer.PushThreadCurrent(this);
-        return TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in prepared, out recorded);
+        // Resource-planner states are eye-scoped, but Vulkan texture/FBO wrapper
+        // layout trackers are shared objects. Keep their oldLayout bookkeeping
+        // ordered until primary recording has command-buffer-local layout state.
+        lock (_openXrParallelEyePrimaryRecordSharedStateLock)
+            return TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in prepared, out recorded);
     }
 
     private void DestroyOpenXrEyeRecordWorkers()

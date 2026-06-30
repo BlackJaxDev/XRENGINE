@@ -1230,7 +1230,8 @@ namespace XREngine.Rendering
                 screenSpaceUI,
                 false,
                 true,
-                null);
+                null,
+                meshRenderCommandsOverride: MeshRenderCommandsOverride);
 
             if (!uiThroughPipeline)
                 RenderScreenSpaceUIOverlay(targetFbo);

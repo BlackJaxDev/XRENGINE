@@ -120,6 +120,7 @@ public unsafe partial class OpenXRAPI
 
     private XRViewport? _openXrLeftViewport;
     private XRViewport? _openXrRightViewport;
+    private XRViewport? _openXrStereoViewport;
     private XRCamera? _openXrLeftEyeCamera;
     private XRCamera? _openXrRightEyeCamera;
 
@@ -263,6 +264,7 @@ public unsafe partial class OpenXRAPI
     // Sharing a pipeline instance across viewports of different sizes can cause constant FBO/cache churn.
     // We therefore keep an OpenXR-owned pipeline instance (non-stereo) and never reuse the desktop's.
     private RenderPipeline? _openXrRenderPipeline;
+    private RenderPipeline? _openXrStereoRenderPipeline;
     private RenderCommandCollection? _openXrSharedMeshRenderCommands;
     private readonly Matrix4x4[] _openXrStereoCullProjections = new Matrix4x4[2];
     private readonly Matrix4x4[] _openXrStereoCullViews = new Matrix4x4[2];
@@ -299,6 +301,7 @@ public unsafe partial class OpenXRAPI
     private int _openXrPacingThreadId;
     private int _openXrCollectVisiblePrepThreadId;
     private int _openXrCollectVisiblePrepActive;
+    private int _openXrFramePrepActive;
     private readonly ManualResetEventSlim _openXrPacingWakeEvent = new(initialState: false);
     private int _openXrPacingStopRequested;
 
@@ -354,6 +357,14 @@ public unsafe partial class OpenXRAPI
     private uint _vulkanEyeMirrorWidth;
     private uint _vulkanEyeMirrorHeight;
 
+    private XRTexture2DArray? _vulkanStereoColorArray;
+    private XRTexture2DArray? _vulkanStereoDepthArray;
+    private XRTexture2DArrayView? _vulkanStereoLeftColorView;
+    private XRTexture2DArrayView? _vulkanStereoRightColorView;
+    private XRFrameBuffer? _vulkanStereoFbo;
+    private uint _vulkanStereoWidth;
+    private uint _vulkanStereoHeight;
+
     private XRTexture2D? _previewLeftEyeTexture;
     private XRTexture2D? _previewRightEyeTexture;
     private uint _previewEyeTextureWidth;
@@ -405,6 +416,9 @@ public unsafe partial class OpenXRAPI
     private DateTime _nextProbeUtc = DateTime.MinValue;
     private TimeSpan _probeInterval = TimeSpan.FromSeconds(1.5);
     private readonly TimeSpan _graphicsDeviceFailureProbeInterval = TimeSpan.FromMinutes(1);
+    private readonly TimeSpan _intentionalOpenXrRecreateBackoffBypassDuration = TimeSpan.FromSeconds(10);
+    private readonly TimeSpan _intentionalOpenXrRecreateProbeInterval = TimeSpan.FromMilliseconds(250);
+    private DateTime _intentionalOpenXrRecreateBackoffBypassUntilUtc = DateTime.MinValue;
     private readonly object _runtimeLossLock = new();
     private int _runtimeLossPending;
     private int _sessionRunning;
@@ -440,6 +454,18 @@ public unsafe partial class OpenXRAPI
     private readonly uint[] _swapchainImageCounts = new uint[2];
 
     /// <summary>
+    /// Actual swapchain extents requested/created for each view.
+    /// </summary>
+    private readonly uint[] _swapchainWidths = new uint[2];
+    private readonly uint[] _swapchainHeights = new uint[2];
+    private EOpenXrEyeResolutionPreset _appliedOpenXrEyeResolutionPreset = RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionPreset;
+    private float _appliedOpenXrEyeResolutionScale = RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionScale;
+    private uint _appliedOpenXrCustomEyeResolutionWidth = RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionWidth;
+    private uint _appliedOpenXrCustomEyeResolutionHeight = RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionHeight;
+    private bool _renderSettingsChangedSubscribed;
+    private int _openXrEyeResolutionRecreateQueued;
+
+    /// <summary>
     /// Vulkan swapchain image pointers for each view.
     /// </summary>
     private readonly SwapchainImageVulkan2KHR*[] _swapchainImagesVK = new SwapchainImageVulkan2KHR*[2];
@@ -470,44 +496,80 @@ public unsafe partial class OpenXRAPI
     /// without sharing the source pipeline instance.
     /// </summary>
     private RenderPipeline GetOrCreateOpenXrPipeline(RenderPipeline? sourcePipeline)
+        => GetOrCreateOpenXrPipeline(sourcePipeline, stereo: false);
+
+    private RenderPipeline GetOrCreateOpenXrStereoPipeline(RenderPipeline? sourcePipeline)
+        => GetOrCreateOpenXrPipeline(sourcePipeline, stereo: true);
+
+    private RenderPipeline GetOrCreateOpenXrPipeline(RenderPipeline? sourcePipeline, bool stereo)
     {
         // Best-effort: if no source pipeline exists, fall back to a sane default.
-        sourcePipeline ??= RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
+        sourcePipeline ??= RuntimeEngine.Rendering.NewRenderPipeline(stereo);
+
+        ref RenderPipeline? openXrPipeline = ref stereo
+            ? ref _openXrStereoRenderPipeline
+            : ref _openXrRenderPipeline;
 
         // If the source pipeline type changed, recreate our dedicated instance.
-        if (_openXrRenderPipeline is null || _openXrRenderPipeline.GetType() != sourcePipeline.GetType())
+        if (openXrPipeline is null || openXrPipeline.GetType() != sourcePipeline.GetType())
         {
-            RenderPipeline created;
-            try
-            {
-                if (!RenderPipeline.TryCreateOpenXrPipeline(sourcePipeline, out RenderPipeline? registered) || registered is null)
-                {
-                    if (XRRuntimeEnvironment.IsAotRuntimeBuild)
-                        throw new InvalidOperationException($"No registered OpenXR render pipeline factory for type {sourcePipeline.GetType().FullName}.");
-
-                    created = (RenderPipeline?)Activator.CreateInstance(sourcePipeline.GetType())
-                              ?? RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
-                    created.IsShadowPass = sourcePipeline.IsShadowPass;
-                }
-                else
-                {
-                    created = registered;
-                }
-            }
-            catch when (!XRRuntimeEnvironment.IsAotRuntimeBuild)
-            {
-                created = RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
-            }
-
-            _openXrRenderPipeline = created;
+            openXrPipeline = CreateOpenXrPipeline(sourcePipeline, stereo);
         }
         else
         {
             // Keep simple flags aligned if the source changes them at runtime.
-            _openXrRenderPipeline.IsShadowPass = sourcePipeline.IsShadowPass;
+            openXrPipeline.IsShadowPass = sourcePipeline.IsShadowPass;
         }
 
-        return _openXrRenderPipeline;
+        return openXrPipeline;
+    }
+
+    private static RenderPipeline CreateOpenXrPipeline(RenderPipeline sourcePipeline, bool stereo)
+    {
+        RenderPipeline created;
+        try
+        {
+            if (stereo)
+            {
+                created = CreateStereoOpenXrPipeline(sourcePipeline);
+            }
+            else if (!RenderPipeline.TryCreateOpenXrPipeline(sourcePipeline, out RenderPipeline? registered) || registered is null)
+            {
+                if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                    throw new InvalidOperationException($"No registered OpenXR render pipeline factory for type {sourcePipeline.GetType().FullName}.");
+
+                created = (RenderPipeline?)Activator.CreateInstance(sourcePipeline.GetType())
+                          ?? RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
+            }
+            else
+            {
+                created = registered;
+            }
+        }
+        catch when (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+        {
+            created = RuntimeEngine.Rendering.NewRenderPipeline(stereo);
+        }
+
+        created.IsShadowPass = sourcePipeline.IsShadowPass;
+        return created;
+    }
+
+    private static RenderPipeline CreateStereoOpenXrPipeline(RenderPipeline sourcePipeline)
+    {
+        if (sourcePipeline is DefaultRenderPipeline)
+            return new DefaultRenderPipeline(stereo: true);
+        if (sourcePipeline is DefaultRenderPipeline2)
+            return new DefaultRenderPipeline2(stereo: true);
+
+        if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            throw new InvalidOperationException($"No registered stereo OpenXR render pipeline factory for type {sourcePipeline.GetType().FullName}.");
+
+        var constructor = sourcePipeline.GetType().GetConstructor([typeof(bool)]);
+        if (constructor is not null && constructor.Invoke([true]) is RenderPipeline reflected)
+            return reflected;
+
+        return RuntimeEngine.Rendering.NewRenderPipeline(stereo: true);
     }
 
     private RenderCommandCollection EnsureOpenXrSharedMeshRenderCommands(RenderPipeline pipeline)

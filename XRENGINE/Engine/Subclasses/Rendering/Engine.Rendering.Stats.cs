@@ -33,10 +33,15 @@ namespace XREngine
                     bool gpuPipelineProfilingEnabled = EnableTracking && Engine.EditorPreferences.Diagnostics.Profiler.EnableGpuRenderPipelineProfiling;
                     bool gpuTimestampsDenseMode = gpuPipelineProfilingEnabled && IsGpuTimestampDenseModeEnabled();
                     string activeStrategy = CaptureActiveSubmissionStrategy();
+                    VrViewRenderModeResolution activeVrViewMode = CaptureActiveVrViewRenderModeResolution();
                     RendererState.UpdateFrameContext(
                         activeStrategy,
                         CaptureActiveTextureBindingRung(),
                         CaptureActiveStereoMode(),
+                        activeVrViewMode.RequestedMode.ToString(),
+                        activeVrViewMode.EffectiveMode.ToString(),
+                        activeVrViewMode.EffectiveImplementationPath.ToString(),
+                        activeVrViewMode.TemporalHistoryPolicy.ToString(),
                         CaptureActiveRenderBackend(),
                         RuntimeEngine.Rendering.State.IsVulkan && RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled,
                         IsDebugOutputEnabled(),
@@ -100,14 +105,51 @@ namespace XREngine
 
                     if (Engine.Rendering.Settings.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo)
                     {
-                        if (RuntimeEngine.Rendering.State.HasVulkanMultiView)
+                        if (Engine.VRState.IsOpenXRActive && RuntimeEngine.Rendering.State.IsVulkan)
+                            return Engine.VRState.OpenXRApi?.CanUseTrueSinglePassStereo == true
+                                ? "openxr-true-single-pass-stereo"
+                                : "openxr-single-pass-compat-per-eye-swapchains";
+                        if (RuntimeEngine.Rendering.State.IsStereoPass && RuntimeEngine.Rendering.State.HasVulkanMultiView)
                             return "single-pass-vulkan-multiview";
-                        if (RuntimeEngine.Rendering.State.HasOvrMultiViewExtension)
+                        if (RuntimeEngine.Rendering.State.IsStereoPass && RuntimeEngine.Rendering.State.HasOvrMultiViewExtension)
                             return "single-pass-opengl-multiview";
                         return "single-pass-requested";
                     }
 
                     return RuntimeEngine.Rendering.State.IsStereoPass ? "two-pass-stereo" : "vr-desktop-mirror";
+                }
+
+                private static VrViewRenderModeResolution CaptureActiveVrViewRenderModeResolution()
+                {
+                    EVrViewRenderMode requestedMode = Engine.Rendering.Settings.VrViewRenderMode;
+                    if (!Engine.VRState.IsInVR && !RuntimeEngine.Rendering.State.IsStereoPass)
+                    {
+                        return new(
+                            requestedMode,
+                            requestedMode,
+                            EVrViewRenderImplementationPath.SequentialViews,
+                            EVrTemporalHistoryPolicy.Disabled,
+                            true,
+                            null);
+                    }
+
+                    ERenderLibrary backend = RuntimeEngine.Rendering.State.IsVulkan
+                        ? ERenderLibrary.Vulkan
+                        : ERenderLibrary.OpenGL;
+                    bool trueSinglePassStereoAvailable =
+                        requestedMode == EVrViewRenderMode.SinglePassStereo &&
+                        (Engine.VRState.IsOpenXRActive
+                            ? Engine.VRState.OpenXRApi?.CanUseTrueSinglePassStereo == true
+                            : RuntimeEngine.Rendering.State.IsStereoPass &&
+                              (RuntimeEngine.Rendering.State.HasVulkanMultiView ||
+                               RuntimeEngine.Rendering.State.HasOvrMultiViewExtension));
+
+                    return VrViewRenderModeResolver.Resolve(
+                        backend,
+                        requestedMode,
+                        RuntimeRenderingHostServices.Current.EnableOpenXrVulkanParallelRendering,
+                        trueSinglePassStereoAvailable,
+                        rendersExternalSwapchainTargets: Engine.VRState.IsOpenXRActive && !trueSinglePassStereoAvailable);
                 }
 
                 private static string CaptureActiveRenderBackend()

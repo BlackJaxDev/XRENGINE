@@ -1296,6 +1296,10 @@ public interface IRuntimeRenderingHostServices
     EVrFoveationMode VrFoveationMode { get; }
     EVrFoveationQualityPreset VrFoveationQualityPreset { get; }
     bool VrFoveationRequireRequested { get; }
+    EOpenXrEyeResolutionPreset OpenXrEyeResolutionPreset { get; }
+    float OpenXrEyeResolutionScale { get; }
+    uint OpenXrCustomEyeResolutionWidth { get; }
+    uint OpenXrCustomEyeResolutionHeight { get; }
 
     /// <summary>
     /// Gets whether the host is currently in VR mode.

@@ -145,8 +145,21 @@ public unsafe partial class VulkanRenderer
 
     internal void AllocatePhysicalImage(VulkanPhysicalImageGroup group, ref Image image, ref DeviceMemory memory)
     {
-        if (image.Handle != 0)
+        if (TryAllocatePhysicalImage(group, ref image, ref memory, out string failureReason))
             return;
+
+        throw new VulkanOutOfMemoryException(failureReason, MemoryPropertyFlags.DeviceLocalBit);
+    }
+
+    internal bool TryAllocatePhysicalImage(
+        VulkanPhysicalImageGroup group,
+        ref Image image,
+        ref DeviceMemory memory,
+        out string failureReason)
+    {
+        failureReason = string.Empty;
+        if (image.Handle != 0)
+            return true;
 
         ImageCreateInfo imageInfo = new()
         {
@@ -187,7 +200,22 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(image, MemoryPropertyFlags.DeviceLocalBit);
+            if (!TryAllocateImageMemoryWithFallback(
+                image,
+                MemoryPropertyFlags.DeviceLocalBit,
+                out VulkanMemoryAllocation allocation,
+                out failureReason))
+            {
+                if (image.Handle != 0)
+                {
+                    Api!.DestroyImage(device, image, null);
+                    image = default;
+                }
+
+                memory = default;
+                return false;
+            }
+
             _imageAllocations[image.Handle] = allocation;
             memory = allocation.Memory;
 
@@ -219,6 +247,8 @@ public unsafe partial class VulkanRenderer
 
             throw;
         }
+
+        return true;
     }
 
     internal void DestroyPhysicalImage(ref Image image, ref DeviceMemory memory)

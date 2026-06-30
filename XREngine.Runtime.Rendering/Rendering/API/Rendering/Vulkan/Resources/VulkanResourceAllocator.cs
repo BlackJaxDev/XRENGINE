@@ -204,7 +204,12 @@ internal sealed class VulkanResourceAllocator
     {
         if (TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup? group))
         {
-            group?.EnsureAllocated(renderer);
+            if (group is null || !group.TryEnsureAllocated(renderer, out _))
+            {
+                image = default;
+                return false;
+            }
+
             image = group?.Image ?? default;
             return image.Handle != 0;
         }
@@ -232,6 +237,21 @@ internal sealed class VulkanResourceAllocator
     {
         foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
             group.EnsureAllocated(renderer);
+    }
+
+    public bool TryAllocatePhysicalImages(VulkanRenderer renderer, out string failureReason)
+    {
+        failureReason = string.Empty;
+
+        foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
+        {
+            if (group.TryEnsureAllocated(renderer, out failureReason))
+                continue;
+
+            return false;
+        }
+
+        return true;
     }
 
     public void AllocatePhysicalBuffers(VulkanRenderer renderer)
@@ -1116,6 +1136,20 @@ internal sealed class VulkanPhysicalImageGroup
         renderer.AllocatePhysicalImage(this, ref _image, ref _memory);
         _allocated = true;
         LastKnownLayout = ImageLayout.Undefined;
+    }
+
+    public bool TryEnsureAllocated(VulkanRenderer renderer, out string failureReason)
+    {
+        failureReason = string.Empty;
+        if (_allocated)
+            return true;
+
+        if (!renderer.TryAllocatePhysicalImage(this, ref _image, ref _memory, out failureReason))
+            return false;
+
+        _allocated = true;
+        LastKnownLayout = ImageLayout.Undefined;
+        return true;
     }
 
     public void Destroy(VulkanRenderer renderer)

@@ -78,7 +78,9 @@ public sealed class VPRC_VolumetricFogHistoryPass : ViewportRenderCommand
 
         data = new VolumetricFogTemporalUniformData
         {
-            HistoryReady = state.HistoryReady && !state.ForceHistoryReset,
+            HistoryReady = TryUseTemporalVolumetricFogHistory(out _, out _)
+                && state.HistoryReady
+                && !state.ForceHistoryReset,
             PreviousViewProjection = state.PreviousViewProjection,
             Width = state.LastHalfWidth,
             Height = state.LastHalfHeight,
@@ -121,6 +123,20 @@ public sealed class VPRC_VolumetricFogHistoryPass : ViewportRenderCommand
             halfHeight = Math.Max(1u, (uint)viewport.InternalHeight / 2u);
         }
 
+        if (!TryUseTemporalVolumetricFogHistory(out EVrTemporalHistoryPolicy policy, out string historyDisabledReason))
+        {
+            state.LastHalfWidth = halfWidth;
+            state.LastHalfHeight = halfHeight;
+            ResetState(state);
+            Debug.RenderingEvery(
+                $"VolumetricFogHistory.VrTemporalDisabled.{policy}",
+                TimeSpan.FromSeconds(5),
+                "[VolumetricFogHistory] VR volumetric fog temporal history disabled policy={0}: {1}",
+                policy,
+                historyDisabledReason);
+            return;
+        }
+
         bool sizeChanged = halfWidth != state.LastHalfWidth || halfHeight != state.LastHalfHeight;
         if (sizeChanged)
         {
@@ -140,6 +156,9 @@ public sealed class VPRC_VolumetricFogHistoryPass : ViewportRenderCommand
 
     private static void CommitTemporalFrame()
     {
+        if (!TryUseTemporalVolumetricFogHistory(out _, out _))
+            return;
+
         if (!TryGetActiveState(out _, out VolumetricFogTemporalState? state) || !state.PreparedCurrentFrame)
             return;
 
@@ -165,6 +184,32 @@ public sealed class VPRC_VolumetricFogHistoryPass : ViewportRenderCommand
         state = TemporalStates.GetValue(camera, _ => new VolumetricFogTemporalState());
         return true;
     }
+
+    internal static bool TryUseTemporalVolumetricFogHistory(
+        out EVrTemporalHistoryPolicy policy,
+        out string reason)
+    {
+        policy = VPRC_TemporalAccumulationPass.ResolveHistoryIsolationPolicy(out string temporalReason);
+        if (IsTemporalHistoryPolicyDisabled(policy))
+        {
+            reason = temporalReason;
+            return false;
+        }
+
+        if (!RuntimeEngine.VRState.IsInVR && !RuntimeEngine.Rendering.State.IsStereoPass)
+        {
+            reason = "mono volumetric fog temporal history is keyed by camera.";
+            return true;
+        }
+
+        reason = "VR volumetric fog temporal history disabled until half-resolution fog textures and shaders are stereo array-layered.";
+        return false;
+    }
+
+    private static bool IsTemporalHistoryPolicyDisabled(EVrTemporalHistoryPolicy policy)
+        => policy is EVrTemporalHistoryPolicy.Disabled
+            or EVrTemporalHistoryPolicy.DisabledPerEyeSwapchain
+            or EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain;
 
     private static bool IsCameraCut(VolumetricFogTemporalState state)
     {

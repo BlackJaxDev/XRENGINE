@@ -539,6 +539,13 @@ This means:
 - The same timer callback slots are used regardless of runtime
 - OpenXR completely bypasses the OpenVR render target, compositor, and input code
 
+Terminology note: OpenVR `SinglePassStereo` is the engine-owned stereo-array
+path described above. OpenXR uses the same requested `EVrViewRenderMode` enum,
+but reports a separate effective implementation path. On OpenXR Vulkan,
+`SinglePassStereo` means "request true stereo when available"; the runtime may
+fall back to `OpenXrSinglePassCompatibility`, which is still per-eye swapchain
+rendering and keeps unsafe temporal history disabled.
+
 Key architectural differences between the two paths:
 
 | Aspect | OpenVR | OpenXR |

@@ -41,6 +41,12 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         public uint FramebufferLayers { get; private set; } = 1u;
 
+        /// <summary>
+        /// Dynamic-rendering multiview mask for stereo texture-array FBOs. A zero
+        /// mask means this framebuffer is layered or single-view, not multiview.
+        /// </summary>
+        public uint MultiviewViewMask { get; private set; }
+
         internal uint AttachmentCount => (uint)(_attachmentSignature?.Length ?? 0);
 
         internal void EnsureCurrent()
@@ -318,6 +324,52 @@ public unsafe partial class VulkanRenderer
             return found ? Math.Max(layers, 1u) : 1u;
         }
 
+        private static uint ResolveFramebufferMultiviewViewMask(ReadOnlySpan<AttachmentBuildInfo> attachments)
+        {
+            uint viewMask = 0u;
+            for (int i = 0; i < attachments.Length; i++)
+            {
+                uint attachmentViewMask = attachments[i].MultiviewViewMask;
+                if (attachmentViewMask == 0u)
+                    continue;
+
+                if (viewMask != 0u && viewMask != attachmentViewMask)
+                {
+                    throw new InvalidOperationException(
+                        $"Framebuffer attachments use mismatched multiview masks 0x{viewMask:X} and 0x{attachmentViewMask:X}.");
+                }
+
+                viewMask = attachmentViewMask;
+            }
+
+            if (viewMask == 0u)
+                return 0u;
+
+            uint requiredLayers = ResolveRequiredLayerCountForViewMask(viewMask);
+            for (int i = 0; i < attachments.Length; i++)
+            {
+                if (attachments[i].LayerCount < requiredLayers)
+                {
+                    throw new InvalidOperationException(
+                        $"Framebuffer attachment {i} has {attachments[i].LayerCount} layer(s), but multiview mask 0x{viewMask:X} requires at least {requiredLayers}.");
+                }
+            }
+
+            return viewMask;
+        }
+
+        private static uint ResolveRequiredLayerCountForViewMask(uint viewMask)
+        {
+            uint required = 0u;
+            for (uint bit = 0u; bit < 32u; bit++)
+            {
+                if ((viewMask & (1u << (int)bit)) != 0u)
+                    required = bit + 1u;
+            }
+
+            return Math.Max(required, 1u);
+        }
+
         private static FrameBufferAttachmentSignature[] ApplyInitialLayoutOverrides(
             FrameBufferAttachmentSignature[] signatures,
             ImageLayout[] overrides)
@@ -501,6 +553,7 @@ public unsafe partial class VulkanRenderer
             FramebufferWidth = 0;
             FramebufferHeight = 0;
             FramebufferLayers = 1u;
+            MultiviewViewMask = 0u;
             PostDeleted();
         }
 
@@ -530,6 +583,7 @@ public unsafe partial class VulkanRenderer
             }
 
             uint framebufferLayers = ResolveFramebufferLayers(attachments);
+            uint multiviewViewMask = ResolveFramebufferMultiviewViewMask(attachments);
 
             if (Renderer.UseDynamicRenderingRenderTargets)
             {
@@ -542,7 +596,8 @@ public unsafe partial class VulkanRenderer
                     extents,
                     fbWidth,
                     fbHeight,
-                    framebufferLayers);
+                    framebufferLayers,
+                    multiviewViewMask);
             }
 
             RenderPass renderPass = Renderer.GetOrCreateFrameBufferRenderPass(signatures);
@@ -574,7 +629,8 @@ public unsafe partial class VulkanRenderer
                 extents,
                 fbWidth,
                 fbHeight,
-                framebufferLayers);
+                framebufferLayers,
+                multiviewViewMask);
         }
 
         private void ActivateFrameBufferState(CachedFrameBufferState state)
@@ -588,6 +644,7 @@ public unsafe partial class VulkanRenderer
             FramebufferWidth = state.FramebufferWidth;
             FramebufferHeight = state.FramebufferHeight;
             FramebufferLayers = state.FramebufferLayers;
+            MultiviewViewMask = state.MultiviewViewMask;
         }
 
         private bool TryActivateCachedFrameBufferState(AttachmentBuildInfo[] attachments, uint fbWidth, uint fbHeight)
@@ -638,7 +695,8 @@ public unsafe partial class VulkanRenderer
                 return false;
 
             if (FramebufferWidth != fbWidth || FramebufferHeight != fbHeight ||
-                FramebufferLayers != ResolveFramebufferLayers(attachments))
+                FramebufferLayers != ResolveFramebufferLayers(attachments) ||
+                MultiviewViewMask != ResolveFramebufferMultiviewViewMask(attachments))
                 return false;
 
             for (int i = 0; i < attachments.Length; i++)
@@ -1145,7 +1203,8 @@ public unsafe partial class VulkanRenderer
                         signature,
                         slot,
                         source.Extent,
-                        source.LayerCount));
+                        source.LayerCount,
+                        source.MultiviewViewMask));
                     continue;
                 }
 
@@ -1159,7 +1218,8 @@ public unsafe partial class VulkanRenderer
                     depthSignature,
                     0,
                     source.Extent,
-                    source.LayerCount);
+                    source.LayerCount,
+                    source.MultiviewViewMask);
             }
 
             colorAttachments.Sort((a, b) => a.ColorIndex.CompareTo(b.ColorIndex));
@@ -1233,6 +1293,7 @@ public unsafe partial class VulkanRenderer
                     ? ImageUsageFlags.DepthStencilAttachmentBit
                     : ImageUsageFlags.ColorAttachmentBit,
                 1u,
+                0u,
                 vkRenderBuffer.ResolveAttachmentExtent());
         }
 
@@ -1262,12 +1323,42 @@ public unsafe partial class VulkanRenderer
             uint layerCount = layerIndex < 0
                 ? Math.Max(source.DescriptorArrayLayers, 1u)
                 : 1u;
+            uint multiviewViewMask = 0u;
+            if (layerIndex < 0 &&
+                texture is XRTexture2DArray textureArray &&
+                textureArray.OVRMultiViewParameters is { NumViews: > 1u } ovr)
+            {
+                multiviewViewMask = BuildMultiviewViewMask(ovr, layerCount);
+            }
 
             Extent2D extent = source.TryGetAttachmentExtent(mipLevel, layerIndex, out Extent2D resolvedExtent)
                 ? resolvedExtent
                 : ResolveAttachmentExtent(textureAttachment, mipLevel);
 
-            return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, aspect, usage, layerCount, extent);
+            return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, aspect, usage, layerCount, multiviewViewMask, extent);
+        }
+
+        private static uint BuildMultiviewViewMask(XRTexture2DArray.OVRMultiView multiview, uint availableLayers)
+        {
+            if (multiview.NumViews <= 1u || availableLayers == 0u)
+                return 0u;
+
+            uint firstLayer = (uint)Math.Max(multiview.Offset, 0);
+            if (firstLayer >= availableLayers)
+                return 0u;
+
+            uint viewCount = Math.Min(multiview.NumViews, availableLayers - firstLayer);
+            uint viewMask = 0u;
+            for (uint i = 0u; i < viewCount; i++)
+            {
+                uint layer = firstLayer + i;
+                if (layer >= 32u)
+                    break;
+
+                viewMask |= 1u << (int)layer;
+            }
+
+            return viewMask;
         }
 
         private static AttachmentRole ResolveAttachmentRole(EFrameBufferAttachment attachment, ImageAspectFlags aspect, Format format)
@@ -1397,7 +1488,8 @@ public unsafe partial class VulkanRenderer
             Extent2D[] attachmentExtents,
             uint framebufferWidth,
             uint framebufferHeight,
-            uint framebufferLayers)
+            uint framebufferLayers,
+            uint multiviewViewMask)
         {
             public Framebuffer FrameBuffer { get; } = frameBuffer;
             public RenderPass RenderPass { get; } = renderPass;
@@ -1408,12 +1500,14 @@ public unsafe partial class VulkanRenderer
             public uint FramebufferWidth { get; } = framebufferWidth;
             public uint FramebufferHeight { get; } = framebufferHeight;
             public uint FramebufferLayers { get; } = framebufferLayers;
+            public uint MultiviewViewMask { get; } = multiviewViewMask;
 
             public bool Matches(AttachmentBuildInfo[] attachments, uint width, uint height)
             {
                 if (FramebufferWidth != width ||
                     FramebufferHeight != height ||
                     FramebufferLayers != ResolveFramebufferLayers(attachments) ||
+                    MultiviewViewMask != ResolveFramebufferMultiviewViewMask(attachments) ||
                     AttachmentViews.Length != attachments.Length ||
                     AttachmentSignature.Length != attachments.Length ||
                     AttachmentTargets.Length != attachments.Length)
@@ -1444,6 +1538,7 @@ public unsafe partial class VulkanRenderer
             ImageAspectFlags AspectMask,
             ImageUsageFlags Usage,
             uint LayerCount,
+            uint MultiviewViewMask,
             Extent2D Extent);
 
         private readonly record struct AttachmentTargetInfo(
@@ -1458,7 +1553,8 @@ public unsafe partial class VulkanRenderer
             FrameBufferAttachmentSignature Signature,
             uint ColorIndex,
             Extent2D Extent,
-            uint LayerCount);
+            uint LayerCount,
+            uint MultiviewViewMask);
 
         protected override void DeleteObjectInternal() { }
 

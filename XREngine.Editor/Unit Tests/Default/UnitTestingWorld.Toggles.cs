@@ -109,10 +109,11 @@ public static partial class EditorUnitTests
     public class UnitTestingVrSettings
     {
         public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop; //Selects the VR launch path: Desktop, Emulated scene-only VR, Monado-backed OpenXR, vendor OpenVR, or vendor OpenXR.
-        public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.SequentialViews; //Selects how VR eye views are rendered: sequential per-view, single-pass stereo, or Vulkan-only parallel command-buffer recording.
+        public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.SequentialViews; //Requests how VR eye views are rendered. OpenXR Vulkan SinglePassStereo uses true stereo when the layered staging path is available, and otherwise reports OpenXrSinglePassCompatibility over per-eye swapchains. Diagnostics and profile captures expose the effective implementation path separately.
         public bool PreviewStereoViews { get; set; } = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active.
         public bool AllowDesktopEditing { get; set; } = true; //When a VR pawn is active, keeps a desktop editing camera/pawn available.
         public UnitTestingVrFoveationSettings Foveation { get; set; } = new(); //Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback.
+        public UnitTestingOpenXrEyeResolutionSettings OpenXrEyeResolution { get; set; } = new(); //OpenXR per-eye swapchain resolution preset, custom size, and scalar for reproducible headset-resolution testing.
         public string? OpenXrRuntimeJson { get; set; } = null; //Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes. Existing XR_RUNTIME_JSON environment values win. MonadoOpenXR auto-detects common Monado install/build locations when this is unset.
     }
 
@@ -121,6 +122,14 @@ public static partial class EditorUnitTests
         public EVrFoveationMode Mode { get; set; } = EVrFoveationMode.Off; //Requested foveated rendering mode for VR view contexts.
         public EVrFoveationQualityPreset QualityPreset { get; set; } = EVrFoveationQualityPreset.Balanced; //Quality preset used when the active backend/runtime supports foveation.
         public bool RequireRequested { get; set; } = false; //When true, unsupported requested foveation is a visible configuration failure instead of an automatic Off fallback.
+    }
+
+    public class UnitTestingOpenXrEyeResolutionSettings
+    {
+        public EOpenXrEyeResolutionPreset Preset { get; set; } = EOpenXrEyeResolutionPreset.RuntimeRecommended; //Selects the base OpenXR per-eye swapchain resolution before scale is applied.
+        public float Scale { get; set; } = 1.0f; //Scales the selected OpenXR per-eye resolution from 0.1x to 2.0x.
+        public uint CustomWidth { get; set; } = 0u; //Custom OpenXR per-eye swapchain width used when Preset is Custom; 0 falls back to the runtime recommendation.
+        public uint CustomHeight { get; set; } = 0u; //Custom OpenXR per-eye swapchain height used when Preset is Custom; 0 falls back to the runtime recommendation.
     }
 
     public class Settings

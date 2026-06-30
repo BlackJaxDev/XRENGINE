@@ -178,6 +178,134 @@ public sealed class VulkanP1ValidationTests
     }
 
     [Test]
+    public void ExternalSwapchainPlannerExtents_AreAuthoritativeOverDesktopPipelineExtents()
+    {
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs").Replace("\r\n", "\n");
+        string stateTrackingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs").Replace("\r\n", "\n");
+        string initializationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs").Replace("\r\n", "\n");
+        string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs").Replace("\r\n", "\n");
+        string openXrApiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs").Replace("\r\n", "\n");
+        string openXrVulkanApiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs").Replace("\r\n", "\n");
+        string openXrFrameLifecycleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs").Replace("\r\n", "\n");
+        string pipelineInstanceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs").Replace("\r\n", "\n");
+        string renderStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderingState.cs").Replace("\r\n", "\n");
+        string renderToWindowSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderToWindow.cs").Replace("\r\n", "\n");
+        string temporalSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs").Replace("\r\n", "\n");
+        string defaultPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        string defaultPipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        string pushMainAttributes = SliceBetween(
+            renderStateSource,
+            "public StateObject PushMainAttributes",
+            "public void PopMainAttributes");
+        string initialRenderArea = SliceBetween(
+            renderStateSource,
+            "private bool PushInitialMainRenderArea",
+            "private void PushRequiredRenderArea");
+        string captureContext = SliceBetween(
+            stateSource,
+            "internal FrameOpContext CaptureFrameOpContext()",
+            "private FrameOpContext ApplyInteractiveResizePlannerFreeze");
+        string resizeFreeze = SliceBetween(
+            stateSource,
+            "private FrameOpContext ApplyInteractiveResizePlannerFreeze",
+            "private void CaptureInteractiveResizePlannerExtents");
+        string refreshContext = SliceBetween(
+            stateSource,
+            "private FrameOpContext RefreshPlannerExtentsFromLiveContext(\n        FrameOpContext context",
+            "private static FrameOpContext SelectPrimaryPlannerContext(FrameOp[] ops)");
+        string extentContext = SliceBetween(
+            stateSource,
+            "private VulkanResourceExtentContext BuildResourceExtentContext",
+            "private RenderResourceRegistry? BuildMergedFrameOpRegistry");
+        string externalScope = SliceBetween(
+            openXrSource,
+            "internal IDisposable EnterOpenXrExternalSwapchainRenderScope",
+            "internal bool TryRenderOpenXrEyeSwapchain");
+        string fillProjectionView = SliceBetween(
+            openXrFrameLifecycleSource,
+            "private void FillProjectionView",
+            "private void ValidateProjectionViewSubImage");
+        string validateProjectionView = SliceBetween(
+            openXrFrameLifecycleSource,
+            "private void ValidateProjectionViewSubImage",
+            "private void TraceProjectionViewSubImage");
+
+        stateSource.ShouldContain("private bool TryResolveExternalSwapchainTargetExtent(out Extent2D extent)");
+        captureContext.ShouldContain("if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))");
+        captureContext.ShouldContain("displayWidth = externalExtent.Width;");
+        captureContext.ShouldContain("internalHeight = externalExtent.Height;");
+        resizeFreeze.ShouldContain("if (TryResolveExternalSwapchainTargetExtent(out _))\n            return context;");
+        refreshContext.ShouldContain("Forcing external swapchain frame-op planner extents");
+        refreshContext.ShouldContain("DisplayWidth = externalExtent.Width");
+        refreshContext.ShouldContain("InternalHeight = externalExtent.Height");
+        extentContext.ShouldContain("if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))");
+        extentContext.ShouldContain("return new VulkanResourceExtentContext(\n                externalExtent.Width,\n                externalExtent.Height,\n                externalExtent.Width,\n                externalExtent.Height);");
+        stateSource.ShouldContain("OpenXR external swapchain rendering is active, but no valid external target extent is bound.");
+        stateTrackingSource.ShouldContain("if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))\n            return externalExtent;");
+        initializationSource.ShouldContain("if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))\n                    ActiveState.SetCurrentTargetExtent(externalExtent);");
+        externalScope.ShouldContain("if (width == 0 || height == 0)");
+        externalScope.ShouldContain("exceeds supported render-region dimensions");
+        externalScope.ShouldNotContain("Math.Min");
+        openXrApiSource.ShouldContain("_openXrLeftViewport ??= new XRViewport(null)");
+        openXrApiSource.ShouldContain("_openXrRightViewport ??= new XRViewport(null)");
+        openXrApiSource.ShouldContain("_openXrLeftViewport.Window = null;");
+        openXrVulkanApiSource.ShouldContain("ValidateOpenXrEyeViewportExtent");
+        pipelineInstanceSource.ShouldContain("EnsureExternalSwapchainResourceGenerationForCurrentFrame");
+        pipelineInstanceSource.ShouldContain("ExternalSwapchainFramePrepare");
+        pushMainAttributes.ShouldContain("_mainAttributeRenderAreaPushed.Push(PushInitialMainRenderArea(viewport, target));");
+        renderStateSource.ShouldContain("if (_mainAttributeRenderAreaPushed.Count > 0 && _mainAttributeRenderAreaPushed.Pop())\n                PopRenderArea();");
+        initialRenderArea.ShouldContain("renderer?.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion) == true");
+        initialRenderArea.ShouldContain("PushRequiredRenderArea(externalRegion, \"OpenXR external swapchain target\");");
+        initialRenderArea.ShouldContain("viewport?.RendersToExternalSwapchainTarget == true");
+        initialRenderArea.ShouldContain("PushRequiredRenderArea(externalViewportRegion, \"OpenXR external swapchain viewport\");");
+        openXrFrameLifecycleSource.ShouldContain("catch (InvalidOperationException)\n        {\n            throw;\n        }");
+        openXrVulkanApiSource.ShouldContain("catch (InvalidOperationException)\n        {\n            throw;\n        }");
+        fillProjectionView.ShouldContain("uint expectedWidth = GetOpenXrSwapchainWidth(viewIndex);");
+        fillProjectionView.ShouldContain("uint expectedHeight = GetOpenXrSwapchainHeight(viewIndex);");
+        fillProjectionView.ShouldContain("ValidateProjectionViewSubImage(viewIndex, in projectionViews[viewIndex], expectedWidth, expectedHeight);");
+        validateProjectionView.ShouldContain("projectionView.SubImage.Swapchain.Handle != _swapchains[viewIndex].Handle");
+        validateProjectionView.ShouldContain("OpenXR projection view {viewIndex} sub-image does not cover the full eye swapchain");
+        validateProjectionView.ShouldContain("Expected=(0,0,{expectedWidth}x{expectedHeight});");
+        openXrSource.ShouldContain("ValidateOpenXrExternalFrameOpContexts");
+        openXrSource.ShouldContain("ValidateOpenXrExternalSwapchainWriterDrawState");
+        openXrSource.ShouldContain("ExpectedViewportScissorCount=1");
+        openXrSource.ShouldContain("captured a swapchain writer that does not cover the full eye target");
+        renderToWindowSource.ShouldContain("renderer.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion)\n            ? externalRegion\n            : useBoundOutputFbo");
+        temporalSource.ShouldContain("RuntimeRenderingHostServices.Current.CurrentRenderer as AbstractRenderer\n            ?? AbstractRenderer.Current");
+        defaultPipelineSource.ShouldContain("RuntimeRenderingHostServices.Current.CurrentRenderer as AbstractRenderer\n            ?? AbstractRenderer.Current");
+        defaultPipeline2Source.ShouldContain("RuntimeRenderingHostServices.Current.CurrentRenderer as AbstractRenderer\n            ?? AbstractRenderer.Current");
+    }
+
+    [Test]
+    public void MonadoPreviewWindow_IsResizableAndReportsEyeResolutionInTitle()
+    {
+        string source = ReadWorkspaceFile("Build/Submodules/monado/src/xrt/compositor/main/comp_window_mswin.c").Replace("\r\n", "\n");
+
+        source.ShouldContain("return WS_OVERLAPPEDWINDOW;");
+        source.ShouldNotContain("COMP_WINDOW_MSWIN_RESTORE_PREFERRED_CLIENT_SIZE");
+        source.ShouldNotContain("restoring preferred simulated HMD extent");
+        source.ShouldContain("uint32_t eye_width = ct->width > 1 ? ct->width / 2u : ct->width;");
+        source.ShouldContain("swprintf(buffer, buffer_count, L\"%ls (Windowed) - eye %ux%u\"");
+        source.ShouldContain("CreateWindowExW(ex_style, szWindowClass, window_title");
+        source.ShouldContain("comp_window_mswin_update_window_title(ct, \"Monado\");");
+        source.ShouldContain("SetWindowTextW(cwm->window, window_title)");
+    }
+
+    [Test]
+    public void EditorImGuiStyling_IsInitializedPerContext()
+    {
+        string source = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.ImGui.cs").Replace("\r\n", "\n");
+
+        source.ShouldContain("private static IntPtr _imguiStyledContext;");
+        source.ShouldContain("private static IntPtr _dockingIniReloadedContext;");
+        source.ShouldContain("IntPtr currentContext = ImGui.GetCurrentContext();");
+        source.ShouldContain("if (_imguiStyleInitialized && _imguiStyledContext == currentContext)");
+        source.ShouldContain("_imguiStyledContext = currentContext;");
+        source.ShouldContain("if (_dockingIniReloadedContext != currentContext)");
+        source.ShouldContain("_dockingIniReloadedContext = currentContext;");
+    }
+
+    [Test]
     public void ResourcePlannerMergedRegistry_ReusesPrimaryWhenOtherContextsAreCovered()
     {
         string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");

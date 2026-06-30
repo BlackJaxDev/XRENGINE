@@ -58,16 +58,25 @@ public unsafe partial class VulkanRenderer
     {
         private readonly Format[]? _colorFormats;
 
-        public DynamicRenderingFormatSignature(ReadOnlySpan<Format> colorFormats, Format depthAttachmentFormat, Format stencilAttachmentFormat)
+        public DynamicRenderingFormatSignature(
+            ReadOnlySpan<Format> colorFormats,
+            Format depthAttachmentFormat,
+            Format stencilAttachmentFormat,
+            uint viewMask = 0u,
+            uint layerCount = 1u)
         {
             _colorFormats = colorFormats.Length == 0 ? null : colorFormats.ToArray();
             DepthAttachmentFormat = depthAttachmentFormat;
             StencilAttachmentFormat = stencilAttachmentFormat;
+            ViewMask = viewMask;
+            LayerCount = ResolveDynamicRenderingLayerCount(layerCount, viewMask);
         }
 
         public uint ColorAttachmentCount => (uint)(_colorFormats?.Length ?? 0);
         public Format DepthAttachmentFormat { get; }
         public Format StencilAttachmentFormat { get; }
+        public uint ViewMask { get; }
+        public uint LayerCount { get; }
         public Format FirstColorAttachmentFormat => _colorFormats is { Length: > 0 } ? _colorFormats[0] : Format.Undefined;
 
         public Format GetColorAttachmentFormat(uint index)
@@ -100,6 +109,8 @@ public unsafe partial class VulkanRenderer
         {
             if (DepthAttachmentFormat != other.DepthAttachmentFormat ||
                 StencilAttachmentFormat != other.StencilAttachmentFormat ||
+                ViewMask != other.ViewMask ||
+                LayerCount != other.LayerCount ||
                 ColorAttachmentCount != other.ColorAttachmentCount)
             {
                 return false;
@@ -127,9 +138,14 @@ public unsafe partial class VulkanRenderer
                 hash.Add((int)GetColorAttachmentFormat(i));
             hash.Add((int)DepthAttachmentFormat);
             hash.Add((int)StencilAttachmentFormat);
+            hash.Add(ViewMask);
+            hash.Add(LayerCount);
             return hash.ToHashCode();
         }
     }
+
+    private static uint ResolveDynamicRenderingLayerCount(uint framebufferLayers, uint viewMask)
+        => viewMask == 0u ? Math.Max(framebufferLayers, 1u) : 1u;
 
     private static DynamicRenderingFormatSignature CreateSwapchainDynamicRenderingFormatSignature(Format colorFormat, Format depthFormat)
     {
@@ -153,7 +169,10 @@ public unsafe partial class VulkanRenderer
             Format.Undefined);
     }
 
-    private static DynamicRenderingFormatSignature CreateDynamicRenderingFormatSignature(FrameBufferAttachmentSignature[] signatures)
+    private static DynamicRenderingFormatSignature CreateDynamicRenderingFormatSignature(
+        FrameBufferAttachmentSignature[] signatures,
+        uint viewMask = 0u,
+        uint layerCount = 1u)
     {
         int colorCount = 0;
         Format depthFormat = Format.Undefined;
@@ -183,7 +202,7 @@ public unsafe partial class VulkanRenderer
                 colorFormats[colorIndex++] = signature.Format;
         }
 
-        return new DynamicRenderingFormatSignature(colorFormats, depthFormat, stencilFormat);
+        return new DynamicRenderingFormatSignature(colorFormats, depthFormat, stencilFormat, viewMask, layerCount);
     }
 
     private static string BuildDynamicRenderingSignature(in DynamicRenderingFormatSignature signature)
@@ -192,5 +211,7 @@ public unsafe partial class VulkanRenderer
             "RenderPass:DynamicRendering",
             $"colors={signature.DescribeColorFormats()}",
             $"depth={signature.DepthAttachmentFormat}",
-            $"stencil={signature.StencilAttachmentFormat}");
+            $"stencil={signature.StencilAttachmentFormat}",
+            $"viewMask=0x{signature.ViewMask:X}",
+            $"layers={signature.LayerCount}");
 }

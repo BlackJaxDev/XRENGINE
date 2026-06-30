@@ -99,10 +99,17 @@ public enum UnitTestingVrLaunchMode
 public class UnitTestingVrSettings
 {
     public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop;
+    /// <summary>
+    /// Requested VR eye rendering mode. OpenXR Vulkan uses true stereo when
+    /// the layered staging path is available, and otherwise reports a
+    /// compatibility path over per-eye swapchains. Logs and profile captures
+    /// report the effective implementation path.
+    /// </summary>
     public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.SequentialViews;
     public bool PreviewStereoViews { get; set; } = false;
     public bool AllowDesktopEditing { get; set; } = true;
     public UnitTestingVrFoveationSettings Foveation { get; set; } = new();
+    public UnitTestingOpenXrEyeResolutionSettings OpenXrEyeResolution { get; set; } = new();
     /// <summary>
     /// Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes.
     /// Existing XR_RUNTIME_JSON environment values win. MonadoOpenXR auto-detects
@@ -116,6 +123,14 @@ public class UnitTestingVrFoveationSettings
     public EVrFoveationMode Mode { get; set; } = EVrFoveationMode.Off;
     public EVrFoveationQualityPreset QualityPreset { get; set; } = EVrFoveationQualityPreset.Balanced;
     public bool RequireRequested { get; set; } = false;
+}
+
+public class UnitTestingOpenXrEyeResolutionSettings
+{
+    public EOpenXrEyeResolutionPreset Preset { get; set; } = EOpenXrEyeResolutionPreset.RuntimeRecommended;
+    public float Scale { get; set; } = 1.0f;
+    public uint CustomWidth { get; set; } = 0u;
+    public uint CustomHeight { get; set; } = 0u;
 }
 
 public class UnitTestingRenderSettings

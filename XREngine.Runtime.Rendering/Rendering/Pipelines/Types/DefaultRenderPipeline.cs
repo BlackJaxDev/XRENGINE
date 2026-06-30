@@ -297,6 +297,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))
             return vendorScale;
 
+        if (mode == EAntiAliasingMode.Tsr && DisableHistoryBasedVrEffects())
+            return null;
+
         return mode == EAntiAliasingMode.Tsr
             ? Math.Clamp(camera?.TsrRenderScaleOverride ?? RuntimeEngine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f)
             : null;
@@ -333,8 +336,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         && ResolveEffectiveMsaaSampleCount() > 1u;
 
     private static bool IsRenderingExternalSwapchainTarget()
-        => RuntimeRenderingHostServices.Current.CurrentRenderer is AbstractRenderer renderer
-        && renderer.IsRenderingExternalSwapchainTarget;
+    {
+        AbstractRenderer? renderer = RuntimeRenderingHostServices.Current.CurrentRenderer as AbstractRenderer
+            ?? AbstractRenderer.Current;
+        return renderer?.IsRenderingExternalSwapchainTarget == true;
+    }
 
     private static bool RuntimeEnableVendorUpscale
     {
@@ -396,12 +402,18 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     /// below 100%, meaning a dedicated upscale pass is required.
     /// </summary>
     private static bool RuntimeNeedsTsrUpscale
-        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;
+        => !RuntimeEnableVendorUpscale
+        && !DisableHistoryBasedVrEffects()
+        && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;
+
+    private static bool RuntimeNeedsTemporalAaVelocityBuffer
+        => !DisableHistoryBasedVrEffects()
+        && ResolveAntiAliasingMode() is EAntiAliasingMode.Taa or EAntiAliasingMode.Dlaa;
 
     private static bool ShouldGenerateVelocityBuffer()
         => RuntimeEnableVendorUpscale
         || RuntimeNeedsTsrUpscale
-        || ResolveAntiAliasingMode() is EAntiAliasingMode.Taa or EAntiAliasingMode.Dlaa
+        || RuntimeNeedsTemporalAaVelocityBuffer
         || ShouldUseMotionBlur();
 
     // Build-time checks: used only during command chain generation to decide
@@ -757,7 +769,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
             return true;
 
         XRShader expectedShader = XRShader.EngineShader(
-            Path.Combine(SceneShaderPath, "TemporalSuperResolution.fs"),
+            Path.Combine(SceneShaderPath, Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs"),
             EShaderType.Fragment);
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
     }
@@ -1565,12 +1577,15 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         // MotionVectors.fs is requested by the velocity / TAA / vendor-upscale
         // path on the first frame that motion vectors are needed.
         ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "MotionVectors.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "MotionVectorsStereo.fs"), EShaderType.Fragment);
         // DepthNormalPrePass.fs is the prepass material; created lazily but
         // first-touched on the render thread.
         ShaderHelper.WarmEngineShader(Path.Combine("Common", "DepthNormalPrePass.fs"), EShaderType.Fragment);
         // TemporalAccumulation.fs is first-touched when TAA prepares its history
         // material; observed at ~325 ms on the render thread on cold cache.
         ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "TemporalAccumulation.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "TemporalAccumulationStereo.fs"), EShaderType.Fragment);
+        ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "TemporalSuperResolutionStereo.fs"), EShaderType.Fragment);
         ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "FullOverdrawCount.fs"), EShaderType.Fragment);
         ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "FullOverdrawDebug.fs"), EShaderType.Fragment);
         // UI text batched shaders are first-touched the moment editor ImGui-style
@@ -1685,15 +1700,27 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         if (IsDestroyed || width <= 0 || height <= 0)
             return;
 
-        int internalWidth = Math.Max(1, instance.RenderState.WindowViewport?.InternalWidth ?? instance.LastWindowViewport?.InternalWidth ?? width);
-        int internalHeight = Math.Max(1, instance.RenderState.WindowViewport?.InternalHeight ?? instance.LastWindowViewport?.InternalHeight ?? height);
-        if (!instance.RequestResourceGeneration(width, height, internalWidth, internalHeight, "ViewportResized"))
+        XRViewport? viewport = instance.RenderState.WindowViewport ?? instance.LastWindowViewport;
+        var dimensions = XRRenderPipelineInstance.ResolveViewportResizeResourceDimensions(
+            viewport,
+            width,
+            height,
+            viewport?.InternalWidth ?? width,
+            viewport?.InternalHeight ?? height);
+
+        if (!instance.RequestResourceGeneration(
+                dimensions.DisplayWidth,
+                dimensions.DisplayHeight,
+                dimensions.InternalWidth,
+                dimensions.InternalHeight,
+                "ViewportResized"))
         {
             // Compatibility fallback for pipelines without a declared layout.
             RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);
         }
 
-        instance.RenderState.WindowViewport?.Window?.RequestRenderStateRecheck(resetCircuitBreaker: true);
+        if (viewport?.RendersToExternalSwapchainTarget != true)
+            viewport?.Window?.RequestRenderStateRecheck(resetCircuitBreaker: true);
     }
 
     private void ApplyAntiAliasingResolutionHint()

@@ -29,7 +29,16 @@ public static class RuntimeRenderingHostServices
     public static IRuntimeRenderingHostServices Current
     {
         get => _current;
-        set => _current = value ?? new DefaultRuntimeRenderingHostServices();
+        set
+        {
+            IRuntimeRenderingHostServices previous = _current;
+            IRuntimeRenderingHostServices current = value ?? new DefaultRuntimeRenderingHostServices();
+            if (ReferenceEquals(previous, current))
+                return;
+
+            _current = current;
+            RuntimeEngine.Rendering.RebindSettingsChangedHandlers(previous, current);
+        }
     }
 
     internal static bool HasConcreteHost => _current is not DefaultRuntimeRenderingHostServices;
@@ -1001,6 +1010,10 @@ public static class RuntimeRenderingHostServices
         public EVrFoveationMode VrFoveationMode => RuntimeRenderingHostServiceDefaults.VrFoveationMode;
         public EVrFoveationQualityPreset VrFoveationQualityPreset => RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
         public bool VrFoveationRequireRequested => RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
+        public EOpenXrEyeResolutionPreset OpenXrEyeResolutionPreset => RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionPreset;
+        public float OpenXrEyeResolutionScale => RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionScale;
+        public uint OpenXrCustomEyeResolutionWidth => RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionWidth;
+        public uint OpenXrCustomEyeResolutionHeight => RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionHeight;
         public bool IsInVR => RuntimeRenderingHostServiceDefaults.IsInVR;
         public bool IsOpenXRActive => RuntimeRenderingHostServiceDefaults.IsOpenXRActive;
         public bool VrMirrorComposeFromEyeTextures => RuntimeRenderingHostServiceDefaults.VrMirrorComposeFromEyeTextures;

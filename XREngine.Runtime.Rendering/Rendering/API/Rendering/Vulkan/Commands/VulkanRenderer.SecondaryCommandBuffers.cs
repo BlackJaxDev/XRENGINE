@@ -97,11 +97,15 @@ namespace XREngine.Rendering.Vulkan
             Format* colorAttachmentFormats = stackalloc Format[1];
             colorAttachmentFormats[0] = swapChainImageFormat;
 
+            DynamicRenderingFormatSignature dynamicRenderingFormats = useDynamicRendering
+                ? CreateSwapchainColorOnlyDynamicRenderingFormatSignature(swapChainImageFormat)
+                : default;
+
             CommandBufferInheritanceRenderingInfo renderingInheritanceInfo = new()
             {
                 SType = StructureType.CommandBufferInheritanceRenderingInfo,
                 Flags = 0,
-                ViewMask = 0,
+                ViewMask = dynamicRenderingFormats.ViewMask,
                 ColorAttachmentCount = 1,
                 PColorAttachmentFormats = colorAttachmentFormats,
                 DepthAttachmentFormat = Format.Undefined,
@@ -123,10 +127,6 @@ namespace XREngine.Rendering.Vulkan
                 throw new Exception("Failed to begin dynamic UI text secondary command buffer.");
 
             ResetCommandBufferBindState(secondaryCommandBuffer);
-
-            DynamicRenderingFormatSignature dynamicRenderingFormats = useDynamicRendering
-                ? CreateSwapchainColorOnlyDynamicRenderingFormatSignature(swapChainImageFormat)
-                : default;
 
             Dictionary<VkMeshRenderer, int> meshDrawSlotsByRenderer = _dynamicUiMeshDrawSlotsByRendererScratch;
             meshDrawSlotsByRenderer.Clear();

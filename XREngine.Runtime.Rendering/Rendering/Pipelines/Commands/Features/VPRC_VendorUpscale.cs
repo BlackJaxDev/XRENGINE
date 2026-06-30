@@ -37,6 +37,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private static bool _reportedXessUnavailable;
         private static bool _reportedXessFrameGenUnavailable;
         private static bool _reportedDlssFrameGenUnavailable;
+        private static bool _reportedVrVendorUpscaleUnsupported;
 
         private XRMaterial? _fallbackMaterial;
         private XRQuadFrameBuffer? _fallbackQuad;
@@ -89,6 +90,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         // MotionVectors.fs writes current-minus-previous clip-space delta in the engine's NDC convention.
         // DLSS/XeSS bridge dispatch expects a normalized clip delta, so halve the authored scale.
         private const float BridgeMotionVectorNormalizationScale = 0.5f;
+        private const string VrVendorUpscaleSupportMatrix =
+            "native NVIDIA DLSS upscale=unsupported; DLAA=unsupported; DLSS frame generation=unsupported; Intel XeSS=unsupported; Intel XeSS frame generation=unsupported; OpenGL-to-Vulkan bridge=unsupported; fallback blit=supported";
 
         private const string FallbackShaderCode = """
 #version 450
@@ -235,7 +238,16 @@ void main()
             if (ForceFallbackBlit && requestedVendorFeature)
                 FailRequestedVendorFeature("vendor upscale/frame generation", "vendor upscale bypass is active while a vendor feature is requested");
 
-            if (!ForceFallbackBlit && viewport?.Window?.Renderer is VulkanRenderer)
+            bool vendorPathAllowedInCurrentView = TryValidateVrVendorUpscaleSupport(out string vrVendorFailure);
+            if (!vendorPathAllowedInCurrentView)
+            {
+                ResetVendorHistoryForUnsupportedVr();
+                ReportVrVendorUpscaleUnsupported(vrVendorFailure);
+                if (requestedVendorFeature)
+                    FailRequestedVendorFeature("VR vendor upscale/frame generation", vrVendorFailure);
+            }
+
+            if (vendorPathAllowedInCurrentView && !ForceFallbackBlit && viewport?.Window?.Renderer is VulkanRenderer)
             {
                 if (TryRunNativeVulkanVendor(out string nativeFailure))
                     return;
@@ -245,7 +257,8 @@ void main()
 
                 ReportNativeFallback();
             }
-            else if (!ForceFallbackBlit &&
+            else if (vendorPathAllowedInCurrentView &&
+                !ForceFallbackBlit &&
                 viewport?.Window?.Renderer is OpenGLRenderer openGlRenderer &&
                 IsBridgePathRequested() &&
                 hasColorTexture &&
@@ -259,7 +272,7 @@ void main()
 
                 ReportBridgeFallback(viewport, bridgeFailure);
             }
-            else if (!ForceFallbackBlit && viewport is not null && requestedVendorFeature)
+            else if (vendorPathAllowedInCurrentView && !ForceFallbackBlit && viewport is not null && requestedVendorFeature)
             {
                 string failureReason =
                     hasColorTexture
@@ -1103,6 +1116,49 @@ void main()
 
         private static bool IsNvidiaDlaaRequested()
             => RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Dlaa;
+
+        internal static bool TryValidateVrVendorUpscaleSupport(out string failureReason)
+        {
+            if (!IsVrOrStereoVendorUpscaleContext())
+            {
+                failureReason = string.Empty;
+                return true;
+            }
+
+            failureReason = "VR vendor upscale support matrix: " +
+                VrVendorUpscaleSupportMatrix +
+                ". Vendor upscalers are disabled for headset rendering until per-eye/layer dispatch, frame generation ownership, and temporal history isolation are validated.";
+            return false;
+        }
+
+        private static bool IsVrOrStereoVendorUpscaleContext()
+            => RuntimeEngine.VRState.IsInVR
+            || RuntimeEngine.Rendering.State.IsStereoPass
+            || AbstractRenderer.Current?.IsRenderingExternalSwapchainTarget == true;
+
+        private void ResetVendorHistoryForUnsupportedVr()
+        {
+            _nativeDlssDispatchHistoryValid = false;
+            _bridgeVendorHistoryValid = false;
+            _bridgeDispatchHistoryValid = false;
+            _lastNativeDlssCamera = null;
+            _lastNativeDlssScene = null;
+            _lastBridgeCamera = null;
+            _lastBridgeScene = null;
+        }
+
+        private static void ReportVrVendorUpscaleUnsupported(string failureReason)
+        {
+            if (_reportedVrVendorUpscaleUnsupported)
+                return;
+
+            _reportedVrVendorUpscaleUnsupported = true;
+            Debug.RenderingWarningEvery(
+                "VendorUpscale.VrUnsupported",
+                TimeSpan.FromSeconds(5),
+                "[VendorUpscale] {0}",
+                failureReason);
+        }
 
         private static void FailRequestedVendorFeature(string path, string failureReason)
         {

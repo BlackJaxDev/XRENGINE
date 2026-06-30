@@ -1,6 +1,8 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using System.Globalization;
 using XREngine.Audio;
+using XREngine.Rendering;
 
 namespace XREngine.Runtime.Bootstrap;
 
@@ -9,11 +11,43 @@ public static class UnitTestingWorldSettingsStore
     public const string SettingsFileName = "UnitTestingWorldSettings.jsonc";
     private const string MonadoServiceProcessName = "monado-service";
     private const string MonadoServiceExeName = "monado-service.exe";
+    private const uint MonadoRuntimeRecommendedEyeWidth = 896u;
+    private const uint MonadoRuntimeRecommendedEyeHeight = 1007u;
+    private const uint MonadoUnitTestScalePercentage = 100u;
+    private static readonly string[] MonadoSimulatedProfileEnvironmentVariableNames =
+    [
+        XREngineEnvironmentVariables.MonadoSimulatedDisplayWidth,
+        XREngineEnvironmentVariables.MonadoSimulatedDisplayHeight,
+        XREngineEnvironmentVariables.MonadoSimulatedViewCount,
+        XREngineEnvironmentVariables.MonadoCompositorScalePercentage,
+        XREngineEnvironmentVariables.MonadoOpenXrViewportScalePercentage,
+    ];
+    private static Dictionary<string, string?>? _previousMonadoSimulatedProfileEnvironment;
+    private static string? _activeMonadoServiceProfileKey;
+    private static System.Diagnostics.Process? _activeMonadoServiceProcess;
+    private static readonly object MonadoServiceOutputLogLock = new();
+    private static bool _vrLaunchEnvironmentOverridesProcessed;
     private static readonly JsonSerializerSettings JsonSettings = new()
     {
         Formatting = Formatting.Indented,
         Converters = [new MeshSubmissionStrategyJsonConverter(), new ModelPostImportFlagsJsonConverter()]
     };
+
+    private readonly record struct MonadoSimulatedDisplayProfile(
+        bool UsesDeterministicProfile,
+        uint EyeWidth,
+        uint EyeHeight,
+        uint FullDisplayWidth,
+        uint DisplayHeight,
+        EOpenXrEyeResolutionPreset Preset,
+        float Scale,
+        uint CompositorScalePercentage,
+        uint OpenXrViewportScalePercentage)
+    {
+        public string ServiceEnvironmentKey => UsesDeterministicProfile
+            ? $"{Preset}:{Scale:F4}:{EyeWidth}x{EyeHeight}:{FullDisplayWidth}x{DisplayHeight}:xrt={CompositorScalePercentage}:oxr={OpenXrViewportScalePercentage}"
+            : nameof(EOpenXrEyeResolutionPreset.RuntimeRecommended);
+    }
 
     public static UnitTestingWorldSettings Load(bool writeBackAfterRead)
     {
@@ -285,6 +319,44 @@ public static class UnitTestingWorldSettingsStore
             applied = true;
         }
 
+        if (TryGetEnumEnv(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionPreset, out EOpenXrEyeResolutionPreset eyeResolutionPreset))
+        {
+            settings.VR.OpenXrEyeResolution.Preset = eyeResolutionPreset;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.OpenXrEyeResolution));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.OpenXrEyeResolution), nameof(UnitTestingOpenXrEyeResolutionSettings.Preset));
+            applied = true;
+        }
+
+        if (TryGetFloatEnv(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionScale, out float eyeResolutionScale))
+        {
+            settings.VR.OpenXrEyeResolution.Scale = RequireOpenXrEyeResolutionScale(
+                eyeResolutionScale,
+                XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionScale);
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.OpenXrEyeResolution));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.OpenXrEyeResolution), nameof(UnitTestingOpenXrEyeResolutionSettings.Scale));
+            applied = true;
+        }
+
+        if (TryGetUIntEnv(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionWidth, out uint eyeResolutionWidth))
+        {
+            settings.VR.OpenXrEyeResolution.CustomWidth = eyeResolutionWidth;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.OpenXrEyeResolution));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.OpenXrEyeResolution), nameof(UnitTestingOpenXrEyeResolutionSettings.CustomWidth));
+            applied = true;
+        }
+
+        if (TryGetUIntEnv(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionHeight, out uint eyeResolutionHeight))
+        {
+            settings.VR.OpenXrEyeResolution.CustomHeight = eyeResolutionHeight;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.OpenXrEyeResolution));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.OpenXrEyeResolution), nameof(UnitTestingOpenXrEyeResolutionSettings.CustomHeight));
+            applied = true;
+        }
+
         if (TryGetBoolEnv(XREngineEnvironmentVariables.UnitTestRenderWindowsWhileInVr, out bool renderWindowsWhileInVr))
         {
             settings.RenderWindowsWhileInVR = renderWindowsWhileInVr;
@@ -325,6 +397,7 @@ public static class UnitTestingWorldSettingsStore
 
         if (applied)
         {
+            _vrLaunchEnvironmentOverridesProcessed = true;
             NormalizeVrSettings(settings);
             Debug.Out(
                 "[UnitTestingWorldSettings] Applied VR launch env overrides: " +
@@ -332,7 +405,13 @@ public static class UnitTestingWorldSettingsStore
                 $"SceneOnlyVRPawn={settings.SceneOnlyVRPawn}, PreviewVRStereoViews={settings.PreviewVRStereoViews}, " +
                 $"RenderWindowsWhileInVR={settings.RenderWindowsWhileInVR}, RenderBackend={ResolveRenderBackend(settings)}, " +
                 $"ViewRenderMode={settings.VR.ViewRenderMode}, Foveation={settings.VR.Foveation.Mode}/{settings.VR.Foveation.QualityPreset}, " +
-                $"FoveationRequireRequested={settings.VR.Foveation.RequireRequested}.");
+                $"FoveationRequireRequested={settings.VR.Foveation.RequireRequested}, " +
+                $"OpenXrEyeResolution={settings.VR.OpenXrEyeResolution.Preset}x{settings.VR.OpenXrEyeResolution.Scale:F2} " +
+                $"Custom={settings.VR.OpenXrEyeResolution.CustomWidth}x{settings.VR.OpenXrEyeResolution.CustomHeight}.");
+        }
+        else
+        {
+            _vrLaunchEnvironmentOverridesProcessed = true;
         }
     }
 
@@ -474,6 +553,34 @@ public static class UnitTestingWorldSettingsStore
         return false;
     }
 
+    private static bool TryGetFloatEnv(string name, out float value)
+    {
+        value = default;
+        string? raw = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        if (float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+            return true;
+
+        Debug.Out($"Invalid {name} value '{raw}'. Expected a floating-point number.");
+        return false;
+    }
+
+    private static bool TryGetUIntEnv(string name, out uint value)
+    {
+        value = default;
+        string? raw = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        if (uint.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+            return true;
+
+        Debug.Out($"Invalid {name} value '{raw}'. Expected a non-negative integer.");
+        return false;
+    }
+
     private static bool HasExplicitLegacyVrSettings(UnitTestingWorldSettings settings)
         => HasExplicitJsonProperty(settings, "VRPawn")
         || HasExplicitJsonProperty(settings, "UseOpenXR")
@@ -495,6 +602,7 @@ public static class UnitTestingWorldSettingsStore
             PreviewStereoViews = settings.PreviewVRStereoViews,
             AllowDesktopEditing = settings.AllowEditingInVR,
             Foveation = settings.VR.Foveation,
+            OpenXrEyeResolution = settings.VR.OpenXrEyeResolution,
             OpenXrRuntimeJson = settings.VR.OpenXrRuntimeJson,
         };
 
@@ -599,7 +707,37 @@ public static class UnitTestingWorldSettingsStore
     }
 
     private static void ApplyMonadoServiceStartup(UnitTestingWorldSettings settings)
-        => _ = TryEnsureMonadoService(settings, "initial UnitTestingWorld settings normalization");
+    {
+        if (HasPendingVrLaunchEnvironmentOverrides())
+        {
+            Debug.Out("[UnitTestingWorldSettings] Deferred initial Monado service startup until VR launch environment overrides are applied.");
+            return;
+        }
+
+        _ = TryEnsureMonadoService(settings, "initial UnitTestingWorld settings normalization");
+    }
+
+    private static bool HasPendingVrLaunchEnvironmentOverrides()
+        => !_vrLaunchEnvironmentOverridesProcessed
+        && (HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrMode)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrPawn)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestUseOpenXr)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestSceneOnlyVrPawn)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestPreviewVrStereoViews)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestAllowDesktopEditingInVr)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrViewRenderMode)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrFoveationMode)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrFoveationQualityPreset)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrFoveationRequireRequested)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionPreset)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionScale)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionWidth)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionHeight)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestRenderWindowsWhileInVr)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson));
+
+    private static bool HasEnvironmentValue(string name)
+        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name));
 
     public static bool TryEnsureMonadoServiceForCurrentProcess(string reason)
     {
@@ -607,19 +745,22 @@ public static class UnitTestingWorldSettingsStore
         if (settings is null)
             return false;
 
-        return TryEnsureMonadoService(settings, reason);
+        UnitTestingOpenXrEyeResolutionSettings eyeResolution = CaptureCurrentRuntimeOpenXrEyeResolutionSettings();
+        return TryEnsureMonadoService(settings, reason, eyeResolution);
     }
 
-    private static bool TryEnsureMonadoService(UnitTestingWorldSettings settings, string reason)
+    private static bool TryEnsureMonadoService(
+        UnitTestingWorldSettings settings,
+        string reason,
+        UnitTestingOpenXrEyeResolutionSettings? eyeResolutionOverride = null)
     {
         if (settings.VR.Mode != UnitTestingVrLaunchMode.MonadoOpenXR)
             return false;
 
-        if (TryGetRunningMonadoService(out int existingPid, out string? existingPath))
-        {
-            Debug.Out($"[UnitTestingWorldSettings] Reusing running Monado service pid={existingPid} path='{existingPath ?? "<unknown>"}'. Reason={reason}");
-            return true;
-        }
+        UnitTestingOpenXrEyeResolutionSettings eyeResolution = eyeResolutionOverride ?? settings.VR.OpenXrEyeResolution;
+        MonadoSimulatedDisplayProfile displayProfile = ResolveMonadoSimulatedDisplayProfile(eyeResolution);
+        ApplyMonadoSimulatedDisplayProfileEnvironment(displayProfile);
+        string requestedServiceProfileKey = displayProfile.ServiceEnvironmentKey;
 
         string? runtimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
         if (string.IsNullOrWhiteSpace(runtimeJson))
@@ -654,6 +795,29 @@ public static class UnitTestingWorldSettingsStore
             return false;
         }
 
+        if (TryGetRunningMonadoService(out int existingPid, out string? existingPath))
+        {
+            bool profileChanged = !string.Equals(_activeMonadoServiceProfileKey, requestedServiceProfileKey, StringComparison.Ordinal);
+            if (profileChanged && ShouldRestartRunningMonadoServiceForProfile(existingPath, servicePath))
+            {
+                if (!TryStopRunningMonadoService(existingPid, existingPath, $"Monado simulated display profile changed to {requestedServiceProfileKey}"))
+                    return false;
+            }
+            else
+            {
+                if (profileChanged)
+                {
+                    throw new InvalidOperationException(
+                        $"Refusing to reuse running Monado service pid={existingPid} path='{existingPath ?? "<unknown>"}' for requested simulated display profile {requestedServiceProfileKey}. " +
+                        $"The existing process cannot be verified as restartable from '{servicePath}', so the requested eye resolution cannot be guaranteed.");
+                }
+
+                _activeMonadoServiceProfileKey = requestedServiceProfileKey;
+                Debug.Out($"[UnitTestingWorldSettings] Reusing running Monado service pid={existingPid} path='{existingPath ?? "<unknown>"}' profile={requestedServiceProfileKey}. Reason={reason}");
+                return true;
+            }
+        }
+
         string? serviceDirectory = Path.GetDirectoryName(servicePath);
         string? runtimeLibraryDirectory = Path.GetDirectoryName(runtimeLibraryPath);
         if (!string.IsNullOrWhiteSpace(runtimeLibraryDirectory))
@@ -669,6 +833,8 @@ public static class UnitTestingWorldSettingsStore
                 WorkingDirectory = serviceDirectory ?? Environment.CurrentDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
 
             startInfo.Environment[XREngineEnvironmentVariables.XrRuntimeJson] = resolvedRuntimeJson;
@@ -676,6 +842,9 @@ public static class UnitTestingWorldSettingsStore
                 Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path),
                 runtimeLibraryDirectory,
                 serviceDirectory);
+            ApplyMonadoSimulatedDisplayProfileEnvironment(startInfo.Environment, displayProfile);
+            SetEnvironmentIfMissing(startInfo.Environment, "XRT_COMPOSITOR_LOG", "debug");
+            SetEnvironmentIfMissing(startInfo.Environment, "SIMULATED_LOG", "debug");
 
             System.Diagnostics.Process? process = System.Diagnostics.Process.Start(startInfo);
             if (process is null)
@@ -684,23 +853,363 @@ public static class UnitTestingWorldSettingsStore
                 return false;
             }
 
-            using (process)
-            {
-                process.WaitForExit(750);
-                if (process.HasExited)
-                {
-                    Debug.Out($"[UnitTestingWorldSettings] Monado service exited immediately with code {process.ExitCode}: {servicePath}");
-                    return false;
-                }
+            RegisterMonadoServiceOutputCapture(process, servicePath, requestedServiceProfileKey);
+            BeginMonadoServiceOutputRead(process);
 
-                Debug.Out($"[UnitTestingWorldSettings] Started Monado service pid={process.Id}: {servicePath}. Reason={reason}");
-                return true;
+            process.WaitForExit(750);
+            if (process.HasExited)
+            {
+                int exitCode = process.ExitCode;
+                FinishMonadoServiceOutputRead(process);
+                process.Dispose();
+                Debug.Out($"[UnitTestingWorldSettings] Monado service exited immediately with code {exitCode}: {servicePath}");
+                return false;
             }
+
+            TrackActiveMonadoServiceProcess(process);
+            _activeMonadoServiceProfileKey = requestedServiceProfileKey;
+            Debug.Out($"[UnitTestingWorldSettings] Started Monado service pid={process.Id}: {servicePath} profile={requestedServiceProfileKey}. Reason={reason}");
+            return true;
         }
         catch (Exception ex)
         {
             Debug.Out($"[UnitTestingWorldSettings] Failed to start Monado service from '{servicePath}': {ex.Message}");
             return false;
+        }
+    }
+
+    private static UnitTestingOpenXrEyeResolutionSettings CaptureCurrentRuntimeOpenXrEyeResolutionSettings()
+    {
+        IRuntimeRenderingHostServices services = RuntimeRenderingHostServices.Current;
+        return new UnitTestingOpenXrEyeResolutionSettings
+        {
+            Preset = services.OpenXrEyeResolutionPreset,
+            Scale = RequireOpenXrEyeResolutionScale(services.OpenXrEyeResolutionScale, nameof(services.OpenXrEyeResolutionScale)),
+            CustomWidth = services.OpenXrCustomEyeResolutionWidth,
+            CustomHeight = services.OpenXrCustomEyeResolutionHeight,
+        };
+    }
+
+    private static MonadoSimulatedDisplayProfile ResolveMonadoSimulatedDisplayProfile(UnitTestingOpenXrEyeResolutionSettings resolution)
+    {
+        float requiredScale = RequireOpenXrEyeResolutionScale(resolution.Scale, nameof(resolution.Scale));
+
+        uint baseWidth;
+        uint baseHeight;
+        switch (resolution.Preset)
+        {
+            case EOpenXrEyeResolutionPreset.RuntimeRecommended:
+                if (Math.Abs(requiredScale - 1.0f) > 0.0001f)
+                {
+                    throw new InvalidOperationException(
+                        "Monado RuntimeRecommended OpenXR eye resolution cannot provide an exact preview for app-side scaling. " +
+                        "Use ValveIndex, QuestPro, BigscreenBeyond2, or Custom for exact 0.1x-2.0x scalar testing.");
+                }
+
+                return new(
+                    true,
+                    MonadoRuntimeRecommendedEyeWidth,
+                    MonadoRuntimeRecommendedEyeHeight,
+                    MonadoRuntimeRecommendedEyeWidth * 2u,
+                    MonadoRuntimeRecommendedEyeHeight,
+                    EOpenXrEyeResolutionPreset.RuntimeRecommended,
+                    requiredScale,
+                    MonadoUnitTestScalePercentage,
+                    MonadoUnitTestScalePercentage);
+            case EOpenXrEyeResolutionPreset.ValveIndex:
+                baseWidth = 1440u;
+                baseHeight = 1600u;
+                break;
+            case EOpenXrEyeResolutionPreset.QuestPro:
+                baseWidth = 1800u;
+                baseHeight = 1920u;
+                break;
+            case EOpenXrEyeResolutionPreset.BigscreenBeyond2:
+                baseWidth = 2560u;
+                baseHeight = 2560u;
+                break;
+            case EOpenXrEyeResolutionPreset.Custom:
+                if (resolution.CustomWidth == 0u || resolution.CustomHeight == 0u)
+                {
+                    throw new InvalidOperationException(
+                        $"Monado simulated display Custom OpenXR eye resolution requires non-zero CustomWidth and CustomHeight, got {resolution.CustomWidth}x{resolution.CustomHeight}.");
+                }
+
+                baseWidth = resolution.CustomWidth;
+                baseHeight = resolution.CustomHeight;
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported OpenXR eye resolution preset '{resolution.Preset}'.");
+        }
+
+        uint eyeWidth = ScaleMonadoSimulatedDimension(baseWidth, requiredScale);
+        uint eyeHeight = ScaleMonadoSimulatedDimension(baseHeight, requiredScale);
+        if (eyeWidth > uint.MaxValue / 2u)
+        {
+            throw new OverflowException(
+                $"Monado simulated display width would overflow when doubling eye width {eyeWidth}.");
+        }
+
+        uint fullDisplayWidth = eyeWidth * 2u;
+
+        return new(
+            true,
+            eyeWidth,
+            eyeHeight,
+            fullDisplayWidth,
+            eyeHeight,
+            resolution.Preset,
+            requiredScale,
+            MonadoUnitTestScalePercentage,
+            MonadoUnitTestScalePercentage);
+    }
+
+    private static float RequireOpenXrEyeResolutionScale(float scale, string source)
+    {
+        if (!float.IsFinite(scale) || scale < 0.1f || scale > 2.0f)
+        {
+            throw new InvalidOperationException(
+                $"{source} must be finite and in the inclusive range [0.1, 2.0], got {scale}.");
+        }
+
+        return scale;
+    }
+
+    private static uint ScaleMonadoSimulatedDimension(uint value, float scale)
+    {
+        double scaled = Math.Round(value * (double)scale, MidpointRounding.AwayFromZero);
+        if (scaled < 1.0)
+            return 1u;
+        if (scaled > int.MaxValue)
+        {
+            throw new OverflowException(
+                $"Monado simulated display dimension {value} scaled by {scale} exceeds Int32.MaxValue.");
+        }
+
+        return (uint)scaled;
+    }
+
+    private static void ApplyMonadoSimulatedDisplayProfileEnvironment(MonadoSimulatedDisplayProfile displayProfile)
+    {
+        if (displayProfile.UsesDeterministicProfile)
+        {
+            _previousMonadoSimulatedProfileEnvironment ??= CaptureProcessEnvironment(MonadoSimulatedProfileEnvironmentVariableNames);
+            ApplyMonadoSimulatedDisplayProfileEnvironment(Environment.SetEnvironmentVariable, displayProfile);
+            Debug.Out(
+                "[UnitTestingWorldSettings] Applied Monado simulated display environment: " +
+                $"{displayProfile.Preset} scale={displayProfile.Scale:F2} eye={displayProfile.EyeWidth}x{displayProfile.EyeHeight} " +
+                $"display={displayProfile.FullDisplayWidth}x{displayProfile.DisplayHeight} " +
+                $"{XREngineEnvironmentVariables.MonadoCompositorScalePercentage}={displayProfile.CompositorScalePercentage} " +
+                $"{XREngineEnvironmentVariables.MonadoOpenXrViewportScalePercentage}={displayProfile.OpenXrViewportScalePercentage}.");
+            return;
+        }
+
+        if (_previousMonadoSimulatedProfileEnvironment is null)
+            return;
+
+        foreach ((string name, string? value) in _previousMonadoSimulatedProfileEnvironment)
+            Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.Process);
+        _previousMonadoSimulatedProfileEnvironment = null;
+        Debug.Out("[UnitTestingWorldSettings] Restored process Monado simulated display environment for RuntimeRecommended eye resolution.");
+    }
+
+    private static void ApplyMonadoSimulatedDisplayProfileEnvironment(
+        System.Collections.Generic.IDictionary<string, string?> environment,
+        MonadoSimulatedDisplayProfile displayProfile)
+    {
+        if (!displayProfile.UsesDeterministicProfile)
+            return;
+
+        SetMonadoSimulatedDisplayProfileEnvironment(environment, displayProfile);
+    }
+
+    private static void ApplyMonadoSimulatedDisplayProfileEnvironment(
+        Action<string, string?, EnvironmentVariableTarget> setEnvironmentVariable,
+        MonadoSimulatedDisplayProfile displayProfile)
+    {
+        setEnvironmentVariable(
+            XREngineEnvironmentVariables.MonadoSimulatedDisplayWidth,
+            displayProfile.FullDisplayWidth.ToString(CultureInfo.InvariantCulture),
+            EnvironmentVariableTarget.Process);
+        setEnvironmentVariable(
+            XREngineEnvironmentVariables.MonadoSimulatedDisplayHeight,
+            displayProfile.DisplayHeight.ToString(CultureInfo.InvariantCulture),
+            EnvironmentVariableTarget.Process);
+        setEnvironmentVariable(
+            XREngineEnvironmentVariables.MonadoSimulatedViewCount,
+            "2",
+            EnvironmentVariableTarget.Process);
+        setEnvironmentVariable(
+            XREngineEnvironmentVariables.MonadoCompositorScalePercentage,
+            displayProfile.CompositorScalePercentage.ToString(CultureInfo.InvariantCulture),
+            EnvironmentVariableTarget.Process);
+        setEnvironmentVariable(
+            XREngineEnvironmentVariables.MonadoOpenXrViewportScalePercentage,
+            displayProfile.OpenXrViewportScalePercentage.ToString(CultureInfo.InvariantCulture),
+            EnvironmentVariableTarget.Process);
+    }
+
+    private static void SetMonadoSimulatedDisplayProfileEnvironment(
+        System.Collections.Generic.IDictionary<string, string?> environment,
+        MonadoSimulatedDisplayProfile displayProfile)
+    {
+        environment[XREngineEnvironmentVariables.MonadoSimulatedDisplayWidth] = displayProfile.FullDisplayWidth.ToString(CultureInfo.InvariantCulture);
+        environment[XREngineEnvironmentVariables.MonadoSimulatedDisplayHeight] = displayProfile.DisplayHeight.ToString(CultureInfo.InvariantCulture);
+        environment[XREngineEnvironmentVariables.MonadoSimulatedViewCount] = "2";
+        environment[XREngineEnvironmentVariables.MonadoCompositorScalePercentage] = displayProfile.CompositorScalePercentage.ToString(CultureInfo.InvariantCulture);
+        environment[XREngineEnvironmentVariables.MonadoOpenXrViewportScalePercentage] = displayProfile.OpenXrViewportScalePercentage.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static void SetEnvironmentIfMissing(
+        System.Collections.Generic.IDictionary<string, string?> environment,
+        string name,
+        string value)
+    {
+        if (environment.TryGetValue(name, out string? existing) && !string.IsNullOrWhiteSpace(existing))
+            return;
+
+        environment[name] = value;
+    }
+
+    private static Dictionary<string, string?> CaptureProcessEnvironment(IReadOnlyList<string> names)
+    {
+        Dictionary<string, string?> values = new(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < names.Count; i++)
+            values[names[i]] = Environment.GetEnvironmentVariable(names[i]);
+        return values;
+    }
+
+    private static bool ShouldRestartRunningMonadoServiceForProfile(string? existingPath, string servicePath)
+        => !string.IsNullOrWhiteSpace(existingPath) && IsSameFile(existingPath, servicePath);
+
+    private static bool TryStopRunningMonadoService(int pid, string? processPath, string reason)
+    {
+        try
+        {
+            using System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById(pid);
+            if (process.HasExited)
+                return true;
+
+            Debug.Out($"[UnitTestingWorldSettings] Stopping Monado service pid={pid} path='{processPath ?? "<unknown>"}'. Reason={reason}");
+            if (process.CloseMainWindow())
+                process.WaitForExit(1500);
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: false);
+                process.WaitForExit(3000);
+            }
+
+            _activeMonadoServiceProfileKey = null;
+            DisposeTrackedMonadoServiceProcess(pid);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[UnitTestingWorldSettings] Failed to stop Monado service pid={pid} for eye-resolution profile restart: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void RegisterMonadoServiceOutputCapture(System.Diagnostics.Process process, string servicePath, string profileKey)
+    {
+        int pid = process.Id;
+        AppendMonadoServiceOutputLog(
+            "monado-service.stdout.log",
+            $"[bootstrap] started pid={pid} path='{servicePath}' profile={profileKey}");
+
+        process.OutputDataReceived += (_, args) =>
+        {
+            if (!string.IsNullOrEmpty(args.Data))
+                AppendMonadoServiceOutputLog("monado-service.stdout.log", $"[pid {pid}] {args.Data}");
+        };
+
+        process.ErrorDataReceived += (_, args) =>
+        {
+            if (!string.IsNullOrEmpty(args.Data))
+                AppendMonadoServiceOutputLog("monado-service.stderr.log", $"[pid {pid}] {args.Data}");
+        };
+
+        process.Exited += (_, _) =>
+            AppendMonadoServiceOutputLog("monado-service.stdout.log", $"[bootstrap] exited pid={pid}");
+    }
+
+    private static void BeginMonadoServiceOutputRead(System.Diagnostics.Process process)
+    {
+        try
+        {
+            process.EnableRaisingEvents = true;
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[UnitTestingWorldSettings] Failed to begin Monado service output capture: {ex.Message}");
+        }
+    }
+
+    private static void FinishMonadoServiceOutputRead(System.Diagnostics.Process process)
+    {
+        try
+        {
+            process.WaitForExit();
+        }
+        catch
+        {
+            // Best-effort diagnostics cleanup.
+        }
+    }
+
+    private static void TrackActiveMonadoServiceProcess(System.Diagnostics.Process process)
+    {
+        System.Diagnostics.Process? previous = Interlocked.Exchange(ref _activeMonadoServiceProcess, process);
+        if (previous is null || ReferenceEquals(previous, process))
+            return;
+
+        try
+        {
+            if (previous.HasExited)
+                previous.Dispose();
+        }
+        catch
+        {
+            // Best-effort diagnostics cleanup.
+        }
+    }
+
+    private static void DisposeTrackedMonadoServiceProcess(int pid)
+    {
+        System.Diagnostics.Process? tracked = Interlocked.Exchange(ref _activeMonadoServiceProcess, null);
+        if (tracked is null)
+            return;
+
+        try
+        {
+            if (tracked.Id == pid)
+                FinishMonadoServiceOutputRead(tracked);
+        }
+        catch
+        {
+            // Best-effort diagnostics cleanup.
+        }
+        finally
+        {
+            tracked.Dispose();
+        }
+    }
+
+    private static void AppendMonadoServiceOutputLog(string fileName, string line)
+    {
+        try
+        {
+            string logDirectory = Debug.EnsureLogRunDirectory();
+            string path = Path.Combine(logDirectory, fileName);
+            string message = $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} {line}{Environment.NewLine}";
+            lock (MonadoServiceOutputLogLock)
+                File.AppendAllText(path, message);
+        }
+        catch
+        {
+            // Never allow native service diagnostics to affect startup.
         }
     }
 
@@ -851,6 +1360,18 @@ public static class UnitTestingWorldSettingsStore
     }
 
     private static bool IsSameDirectory(string left, string right)
+    {
+        try
+        {
+            return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsSameFile(string left, string right)
     {
         try
         {

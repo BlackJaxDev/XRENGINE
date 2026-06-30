@@ -210,7 +210,7 @@ void main()
     // MotionVectors.fs writes unjittered current-minus-previous NDC, so the
     // history lookup applies only the temporal jitter phase delta here.
     vec2 velocity = FindClosestVelocity(uv);
-    vec2 historyUV = uv - velocity * 0.5f + (PreviousJitterUv - CurrentJitterUv);
+    vec2 historyUV = uv - velocity * 0.5f;
 
     vec3 currentColorRaw = texture(TemporalColorInput, uv).rgb;
     vec3 currentColorFiltered = SampleCurrentReconstruction(TemporalColorInput, uv, TexelSize);

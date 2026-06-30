@@ -1672,6 +1672,28 @@ public partial class DefaultRenderPipeline
         EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
         ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
 
+        if (Stereo)
+        {
+            XRTexture2DArray stereoTexture = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                width,
+                height,
+                internalFormat,
+                EPixelFormat.Rgba,
+                pixelType,
+                EFrameBufferAttachment.ColorAttachment0);
+            stereoTexture.Resizable = true;
+            stereoTexture.SizedInternalFormat = sized;
+            stereoTexture.OVRMultiViewParameters = new(0, 2u);
+            stereoTexture.MinFilter = ETexMinFilter.Linear;
+            stereoTexture.MagFilter = ETexMagFilter.Linear;
+            stereoTexture.UWrap = ETexWrapMode.ClampToEdge;
+            stereoTexture.VWrap = ETexWrapMode.ClampToEdge;
+            stereoTexture.SamplerName = TsrOutputTextureName;
+            stereoTexture.Name = TsrOutputTextureName;
+            return stereoTexture;
+        }
+
         XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
             width,
             height,
@@ -1696,6 +1718,28 @@ public partial class DefaultRenderPipeline
         EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
         EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
         ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
+
+        if (Stereo)
+        {
+            XRTexture2DArray stereoTexture = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                width,
+                height,
+                internalFormat,
+                EPixelFormat.Rgba,
+                pixelType,
+                EFrameBufferAttachment.ColorAttachment0);
+            stereoTexture.Resizable = true;
+            stereoTexture.SizedInternalFormat = sized;
+            stereoTexture.OVRMultiViewParameters = new(0, 2u);
+            stereoTexture.MinFilter = ETexMinFilter.Linear;
+            stereoTexture.MagFilter = ETexMagFilter.Linear;
+            stereoTexture.UWrap = ETexWrapMode.ClampToEdge;
+            stereoTexture.VWrap = ETexWrapMode.ClampToEdge;
+            stereoTexture.SamplerName = TsrHistoryColorTextureName;
+            stereoTexture.Name = TsrHistoryColorTextureName;
+            return stereoTexture;
+        }
 
         XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
             width,

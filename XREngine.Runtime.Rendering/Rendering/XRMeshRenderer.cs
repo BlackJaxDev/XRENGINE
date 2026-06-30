@@ -219,7 +219,8 @@ namespace XREngine.Rendering
                     ? GetPointLightAtlasInstancedVersion()
                     : GetPointLightInstancedVersion();
 
-            bool preferNV = RuntimeEngine.Rendering.Settings.PreferNVStereo;
+            bool allowNvStereo = !RuntimeEngine.Rendering.State.IsVulkan;
+            bool preferNV = allowNvStereo && RuntimeEngine.Rendering.Settings.PreferNVStereo;
             bool hasNvMaterialVertexShader = MaterialHasMatchingVertexShader(HasNVStereoViewRendering);
             bool hasMultiViewMaterialVertexShader = MaterialHasMatchingVertexShader(HasMultiViewExtension);
             
@@ -232,7 +233,7 @@ namespace XREngine.Rendering
                     ver = GetMeshDeformNVStereoVersion();
                 else if (stereoPass && hasMultiViewMaterialVertexShader)
                     ver = GetMeshDeformOVRMultiViewVersion();
-                else if (stereoPass && hasNvMaterialVertexShader)
+                else if (stereoPass && allowNvStereo && hasNvMaterialVertexShader)
                     ver = GetMeshDeformNVStereoVersion();
                 else if (stereoPass && preferNV && RuntimeEngine.Rendering.State.IsNVIDIA)
                     ver = GetMeshDeformNVStereoVersion();
@@ -250,7 +251,7 @@ namespace XREngine.Rendering
                     ver = GetNVStereoVersion();
                 else if (stereoPass && hasMultiViewMaterialVertexShader)
                     ver = GetOVRMultiViewVersion();
-                else if (stereoPass && hasNvMaterialVertexShader)
+                else if (stereoPass && allowNvStereo && hasNvMaterialVertexShader)
                     ver = GetNVStereoVersion();
                 else if (stereoPass && preferNV && RuntimeEngine.Rendering.State.IsNVIDIA)
                     ver = GetNVStereoVersion();

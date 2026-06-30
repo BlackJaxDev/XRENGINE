@@ -351,6 +351,81 @@ Vulkan swapchain images are `VkImage` handles. The engine records render command
 
 ---
 
+## OpenXR Vulkan Stereo Mode Matrix
+
+`EVrViewRenderMode` is the requested setting. Runtime logs, smoke summaries,
+renderer stats, and profile captures also report the effective implementation
+path so `SinglePassStereo` never implies a path that was not actually used.
+
+| Requested mode | Effective path | Resource model | Temporal policy |
+|---|---|---|---|
+| `SequentialViews` | Sequential per-eye swapchains | One runtime-owned 2D swapchain image per eye. | History-based TAA/TSR is disabled for external per-eye targets. |
+| `ParallelCommandBufferRecording` | Parallel per-eye command-buffer recording | Same rendered output as `SequentialViews`; safe eye command-buffer work is prepared concurrently, then submitted through serialized Vulkan queue sections. | Same per-eye external-swapchain history policy as sequential. |
+| `SinglePassStereo` | `TrueSinglePassStereo` when staged stereo is available | Engine-owned `XRTexture2DArray` color/depth staging target with layer 0 = left eye and layer 1 = right eye, then explicit layer publish/copy to OpenXR swapchains. | Stereo array-layer history is allowed for validated stereo-aware temporal resources. |
+| `SinglePassStereo` | `OpenXrSinglePassCompatibility` fallback | Per-eye swapchain rendering in a batch, not true multiview. | External per-eye history remains disabled. |
+
+The Vulkan true-stereo path uses the engine stereo pipeline through
+`XRViewport.RenderStereo(...)`; it does not render multiview directly into an
+OpenXR array swapchain yet. The direct array-swapchain path is a future
+optimization.
+
+### Stereo Feature Policies
+
+- Auto exposure uses `EVrAutoExposurePolicy.HeadsetShared` for VR v1. A
+  stereo-array HDR source is averaged across eye layers into one 1x1 exposure
+  texture. External per-eye swapchain sources skip auto exposure with a warning
+  instead of letting the second eye win shared exposure state.
+- TAA/TSR and motion-vector history are enabled only when the active temporal
+  history policy says the resource model is stereo safe. OpenXR external
+  per-eye modes keep history-based AA disabled.
+- Atmosphere and volumetric-fog temporal history are disabled in OpenXR stereo
+  paths until their half-resolution resources and shaders are stereo arrays.
+  Mono atmosphere/fog history remains camera-keyed.
+- Vendor upscalers are intentionally unsupported for headset stereo today:
+  native NVIDIA DLSS/DLAA, DLSS frame generation, Intel XeSS, Intel XeSS frame
+  generation, and the OpenGL-to-Vulkan bridge all fail loudly when explicitly
+  requested in VR. Ordinary fallback blit remains supported.
+
+### Mode Switching And Diagnostics
+
+Pipeline resource generations include stereo state, feature masks, HDR/AA/MSAA
+state, and reserved view-count metadata. OpenXR external swapchain targets force
+same-frame resource generation for the active eye extent; if the active
+generation cannot match, the exception reports the required, active, and
+pending resource keys.
+
+Useful diagnostics:
+
+- View-mode logs from `OpenXRAPI.Vulkan.cs` report requested mode, effective
+  path, temporal history policy, parallel gate state, swapchain formats, and
+  true-stereo support.
+- `VPRC_ExposureUpdate` logs the VR exposure policy and source texture type.
+- `VPRC_VendorUpscale` logs the VR vendor support matrix before throwing for
+  explicit unsupported vendor requests.
+- `VulkanRenderer.OpenXR` logs serialized queue-submit critical-section waits
+  when parallel eye work contends on the Vulkan submit lock.
+
+### Profiling Matrix Runner
+
+Use `Tools/OpenXR/Run-OpenXrModeProfileMatrix.ps1` for repeatable CPU/GPU
+profile captures across the OpenXR mode matrix. It writes CSV and JSON summaries
+under `Build/_AgentValidation/<run>/reports/`, enables `XRE_PROFILE_CAPTURE=1`,
+and delegates each case to `Run-OpenXrMonadoSmoke.ps1` with Vulkan OpenXR
+profiling environment variables. Pass `-DryRun` to emit the matrix and report
+paths without launching an OpenXR runtime.
+
+Troubleshooting quick checks:
+
+- If TSR is disabled in an OpenXR per-eye mode, confirm the log reports
+  `DisabledExternalPerEyeSwapchain`; that is expected until per-eye TSR history
+  resources exist.
+- If true stereo is unavailable, inspect the structured view-mode diagnostic for
+  the multiview support reason and the fallback path.
+- If a vendor upscaler fails in VR, the failure is intentional unless a future
+  support matrix entry says the vendor path owns per-eye or per-layer history.
+
+---
+
 ## Frame Lifecycle
 
 ### Three-Phase Frame Model

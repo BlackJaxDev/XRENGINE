@@ -261,6 +261,7 @@ namespace XREngine.Rendering.Shaders.Generator
         public virtual bool UseDirectionalCascadeAtlasInstancedLayering => false;
         public virtual bool UsePointLightInstancedLayering => false;
         public virtual bool UsePointLightAtlasInstancedLayering => false;
+        private static string MultiviewViewIndexBuiltin => RuntimeEngine.Rendering.State.IsVulkan ? "gl_ViewIndex" : "gl_ViewID_OVR";
 
         private bool UseComputeSkinning => RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
             && !RuntimeEngine.Rendering.State.IsVulkan
@@ -1054,7 +1055,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 string projMatrixName = $"{EEngineUniform.ProjMatrix}{VertexUniformSuffix}";
                 if (UseOVRMultiView)
                 {
-                    Line("bool leftEye = gl_ViewID_OVR == 0;");
+                    Line($"bool leftEye = {MultiviewViewIndexBuiltin} == 0;");
                     Line($"mat4 {invViewMatrixName} = leftEye ? {EEngineUniform.LeftEyeInverseViewMatrix}{VertexUniformSuffix} : {EEngineUniform.RightEyeInverseViewMatrix}{VertexUniformSuffix};");
                     Line($"mat4 {projMatrixName} = leftEye ? {EEngineUniform.LeftEyeProjMatrix}{VertexUniformSuffix} : {EEngineUniform.RightEyeProjMatrix}{VertexUniformSuffix};");
                 }
@@ -1186,7 +1187,7 @@ namespace XREngine.Rendering.Shaders.Generator
             // gl_Position still gets clip-space position for rasterization.
             Line($"{FragPosName} = ({EEngineUniform.ModelMatrix} * {localInputPositionName}).xyz;");
             if (UseOVRMultiView)
-                Line($"{FragViewIndexName} = float(gl_ViewID_OVR);");
+                Line($"{FragViewIndexName} = float({MultiviewViewIndexBuiltin});");
             else
                 Line($"{FragViewIndexName} = 0.0f;");
         }

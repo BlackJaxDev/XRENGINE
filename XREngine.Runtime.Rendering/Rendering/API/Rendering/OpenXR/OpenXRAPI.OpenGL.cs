@@ -293,7 +293,7 @@ public unsafe partial class OpenXRAPI
         {
             uint rw = _viewConfigViews[i].RecommendedImageRectWidth;
             uint rh = _viewConfigViews[i].RecommendedImageRectHeight;
-            Debug.Out($"OpenXR view[{i}] recommended size: {rw}x{rh}, samples={_viewConfigViews[i].RecommendedSwapchainSampleCount}");
+            Debug.Out($"OpenXR view[{i}] recommended size: {rw}x{rh}, max={_viewConfigViews[i].MaxImageRectWidth}x{_viewConfigViews[i].MaxImageRectHeight}, samples={_viewConfigViews[i].RecommendedSwapchainSampleCount}");
 
             if (rw == 0 || rh == 0)
                 throw new Exception($"OpenXR runtime reported an invalid recommended image rect size for view {i}: {rw}x{rh}. Cannot create swapchains.");
@@ -306,8 +306,10 @@ public unsafe partial class OpenXRAPI
         // Create swapchains for each view
         for (int i = 0; i < _viewCount; i++)
         {
-            uint width = (uint)_viewConfigViews[i].RecommendedImageRectWidth;
-            uint height = (uint)_viewConfigViews[i].RecommendedImageRectHeight;
+            OpenXrEyeSwapchainExtent extent = ResolveOpenXrEyeSwapchainExtent((uint)i);
+            LogOpenXrEyeSwapchainExtent("OpenGL", (uint)i, extent);
+            uint width = extent.Width;
+            uint height = extent.Height;
             uint recommendedSamples = _viewConfigViews[i].RecommendedSwapchainSampleCount;
 
             Result lastResult = Result.Success;
@@ -344,6 +346,7 @@ public unsafe partial class OpenXRAPI
                             Debug.Out($"OpenXR swapchain[{i}] created. Format=0x{format:X}, Samples={samples}, Usage={usage}, Size={width}x{height}");
                             createdFormat = format;
                             createdSamples = samples;
+                            RecordOpenXrSwapchainExtent((uint)i, width, height);
                             created = true;
                             break;
                         }
@@ -455,8 +458,8 @@ public unsafe partial class OpenXRAPI
                 return;
             }
 
-            uint width = _viewConfigViews[viewIndex].RecommendedImageRectWidth;
-            uint height = _viewConfigViews[viewIndex].RecommendedImageRectHeight;
+            uint width = GetOpenXrSwapchainWidth(viewIndex);
+            uint height = GetOpenXrSwapchainHeight(viewIndex);
             EnsureViewportMirrorTargets(renderer, width, height);
             EnsureOpenXrPreviewTargets(renderer, width, height);
 
@@ -664,8 +667,15 @@ public unsafe partial class OpenXRAPI
     private void EnsureOpenXrViewport(uint width, uint height)
     {
         // Kept for compatibility with older call sites; prefer per-eye viewports.
-        EnsureOpenXrViewports(width, height);
+        EnsureOpenXrViewports(
+            GetOpenXrSwapchainWidth(0),
+            GetOpenXrSwapchainHeight(0),
+            GetOpenXrSwapchainWidth(1),
+            GetOpenXrSwapchainHeight(1));
     }
+
+    private void EnsureOpenXrViewports(uint width, uint height)
+        => EnsureOpenXrViewports(width, height, width, height);
 
     internal bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
     {
@@ -809,9 +819,9 @@ public unsafe partial class OpenXRAPI
         }
     }
 
-    private void EnsureOpenXrViewports(uint width, uint height)
+    private void EnsureOpenXrViewports(uint leftWidth, uint leftHeight, uint rightWidth, uint rightHeight)
     {
-        _openXrLeftViewport ??= new XRViewport(Window)
+        _openXrLeftViewport ??= new XRViewport(null)
         {
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
@@ -819,7 +829,7 @@ public unsafe partial class OpenXRAPI
             SetRenderPipelineFromCamera = false,
             RendersToExternalSwapchainTarget = true
         };
-        _openXrRightViewport ??= new XRViewport(Window)
+        _openXrRightViewport ??= new XRViewport(null)
         {
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
@@ -836,29 +846,31 @@ public unsafe partial class OpenXRAPI
         _openXrLeftViewport.CullWithFrustum = RuntimeEngine.Rendering.Settings.OpenXrCullWithFrustum;
         _openXrRightViewport.CullWithFrustum = RuntimeEngine.Rendering.Settings.OpenXrCullWithFrustum;
 
-        // Keep them independent of editor viewport layout.
+        // Keep them independent of editor viewport layout and window resize.
+        _openXrLeftViewport.Window = null;
+        _openXrRightViewport.Window = null;
         _openXrLeftViewport.SetFullScreen();
         _openXrRightViewport.SetFullScreen();
 
         // Ensure pipeline sizes track our swapchain size, but keep internal resolution exact.
-        if (_openXrLeftViewport.Width != (int)width || _openXrLeftViewport.Height != (int)height)
+        if (_openXrLeftViewport.Width != (int)leftWidth || _openXrLeftViewport.Height != (int)leftHeight)
         {
-            _openXrLeftViewport.Resize(width, height, setInternalResolution: false);
-            _openXrLeftViewport.SetInternalResolution((int)width, (int)height, correctAspect: false);
+            _openXrLeftViewport.Resize(leftWidth, leftHeight, setInternalResolution: false);
+            _openXrLeftViewport.SetInternalResolution((int)leftWidth, (int)leftHeight, correctAspect: false);
         }
-        else if (_openXrLeftViewport.InternalWidth != (int)width || _openXrLeftViewport.InternalHeight != (int)height)
+        else if (_openXrLeftViewport.InternalWidth != (int)leftWidth || _openXrLeftViewport.InternalHeight != (int)leftHeight)
         {
-            _openXrLeftViewport.SetInternalResolution((int)width, (int)height, correctAspect: false);
+            _openXrLeftViewport.SetInternalResolution((int)leftWidth, (int)leftHeight, correctAspect: false);
         }
 
-        if (_openXrRightViewport.Width != (int)width || _openXrRightViewport.Height != (int)height)
+        if (_openXrRightViewport.Width != (int)rightWidth || _openXrRightViewport.Height != (int)rightHeight)
         {
-            _openXrRightViewport.Resize(width, height, setInternalResolution: false);
-            _openXrRightViewport.SetInternalResolution((int)width, (int)height, correctAspect: false);
+            _openXrRightViewport.Resize(rightWidth, rightHeight, setInternalResolution: false);
+            _openXrRightViewport.SetInternalResolution((int)rightWidth, (int)rightHeight, correctAspect: false);
         }
-        else if (_openXrRightViewport.InternalWidth != (int)width || _openXrRightViewport.InternalHeight != (int)height)
+        else if (_openXrRightViewport.InternalWidth != (int)rightWidth || _openXrRightViewport.InternalHeight != (int)rightHeight)
         {
-            _openXrRightViewport.SetInternalResolution((int)width, (int)height, correctAspect: false);
+            _openXrRightViewport.SetInternalResolution((int)rightWidth, (int)rightHeight, correctAspect: false);
         }
     }
 

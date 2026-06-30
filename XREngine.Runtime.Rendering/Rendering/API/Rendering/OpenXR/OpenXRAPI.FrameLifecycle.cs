@@ -248,7 +248,7 @@ public unsafe partial class OpenXRAPI
                 try
                 {
                     gl.BindFramebuffer(FramebufferTarget.Framebuffer, _openXrCurrentSwapchainFramebuffer);
-                    gl.Viewport(0, 0, _viewConfigViews[viewIndex].RecommendedImageRectWidth, _viewConfigViews[viewIndex].RecommendedImageRectHeight);
+                    gl.Viewport(0, 0, GetOpenXrSwapchainWidth(viewIndex), GetOpenXrSwapchainHeight(viewIndex));
 
                     // Guard against GL state leakage between eyes (scissor/read buffers/masks are commonly left in a bad state
                     // by some passes and can make the second eye appear fully black).
@@ -280,6 +280,10 @@ public unsafe partial class OpenXRAPI
 
             return true;
         }
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             Debug.LogWarning($"OpenXR RenderEye({viewIndex}) failed: {ex.Message}");
@@ -302,6 +306,9 @@ public unsafe partial class OpenXRAPI
 
     private void FillProjectionView(uint viewIndex, CompositionLayerProjectionView* projectionViews)
     {
+        uint expectedWidth = GetOpenXrSwapchainWidth(viewIndex);
+        uint expectedHeight = GetOpenXrSwapchainHeight(viewIndex);
+
         projectionViews[viewIndex] = default;
         projectionViews[viewIndex].Type = StructureType.CompositionLayerProjectionView;
         projectionViews[viewIndex].Next = null;
@@ -314,10 +321,64 @@ public unsafe partial class OpenXRAPI
             Offset = new Offset2Di { X = 0, Y = 0 },
             Extent = new Extent2Di
             {
-                Width = (int)_viewConfigViews[viewIndex].RecommendedImageRectWidth,
-                Height = (int)_viewConfigViews[viewIndex].RecommendedImageRectHeight
+                Width = checked((int)expectedWidth),
+                Height = checked((int)expectedHeight)
             }
         };
+
+        ValidateProjectionViewSubImage(viewIndex, in projectionViews[viewIndex], expectedWidth, expectedHeight);
+        TraceProjectionViewSubImage(viewIndex, in projectionViews[viewIndex], expectedWidth, expectedHeight);
+    }
+
+    private void ValidateProjectionViewSubImage(
+        uint viewIndex,
+        in CompositionLayerProjectionView projectionView,
+        uint expectedWidth,
+        uint expectedHeight)
+    {
+        if (viewIndex >= _viewCount)
+            throw new InvalidOperationException($"OpenXR projection view index {viewIndex} exceeds active view count {_viewCount}.");
+
+        if (projectionView.SubImage.Swapchain.Handle == 0)
+            throw new InvalidOperationException($"OpenXR projection view {viewIndex} has no swapchain bound.");
+
+        if (projectionView.SubImage.Swapchain.Handle != _swapchains[viewIndex].Handle)
+        {
+            throw new InvalidOperationException(
+                $"OpenXR projection view {viewIndex} is bound to the wrong swapchain. " +
+                $"Expected=0x{_swapchains[viewIndex].Handle:X}; Actual=0x{projectionView.SubImage.Swapchain.Handle:X}.");
+        }
+
+        Rect2Di rect = projectionView.SubImage.ImageRect;
+        if (rect.Offset.X != 0 || rect.Offset.Y != 0 ||
+            rect.Extent.Width != checked((int)expectedWidth) ||
+            rect.Extent.Height != checked((int)expectedHeight))
+        {
+            throw new InvalidOperationException(
+                $"OpenXR projection view {viewIndex} sub-image does not cover the full eye swapchain. " +
+                $"Expected=(0,0,{expectedWidth}x{expectedHeight}); " +
+                $"Actual=({rect.Offset.X},{rect.Offset.Y},{rect.Extent.Width}x{rect.Extent.Height}).");
+        }
+    }
+
+    private void TraceProjectionViewSubImage(
+        uint viewIndex,
+        in CompositionLayerProjectionView projectionView,
+        uint expectedWidth,
+        uint expectedHeight)
+    {
+        if (!VulkanCaptureEyeOutputs && !OpenXrDebugLifecycle)
+            return;
+
+        int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+        if (frameNo != 0 && !ShouldLogLifecycle(frameNo))
+            return;
+
+        Rect2Di rect = projectionView.SubImage.ImageRect;
+        Debug.Out(
+            $"OpenXR[{frameNo}] ProjectionView: eye={viewIndex} swapchain=0x{projectionView.SubImage.Swapchain.Handle:X} " +
+            $"rect=({rect.Offset.X},{rect.Offset.Y},{rect.Extent.Width}x{rect.Extent.Height}) " +
+            $"expected={expectedWidth}x{expectedHeight} arrayIndex={projectionView.SubImage.ImageArrayIndex}");
     }
 
     /// <summary>
@@ -758,8 +819,10 @@ public unsafe partial class OpenXRAPI
                 return;
 
             EnsureOpenXrViewports(
-                _viewConfigViews[0].RecommendedImageRectWidth,
-                _viewConfigViews[0].RecommendedImageRectHeight);
+                GetOpenXrSwapchainWidth(0),
+                GetOpenXrSwapchainHeight(0),
+                GetOpenXrSwapchainWidth(1),
+                GetOpenXrSwapchainHeight(1));
 
             // OpenXR must not share render pipeline *instances* with the desktop viewport.
             // But it still needs a matching pipeline type/config to avoid missing lighting/post steps.
@@ -1184,96 +1247,106 @@ public unsafe partial class OpenXRAPI
         if (!_sessionBegun)
             return;
 
-        // Only one OpenXR frame can be "in flight" between BeginFrame and EndFrame.
-        if (Volatile.Read(ref _pendingXrFrame) != 0)
+        if (Interlocked.CompareExchange(ref _openXrFramePrepActive, 1, 0) != 0)
             return;
-
-        // Clear any stale publish flags.
-        Volatile.Write(ref _framePrepared, 0);
-        Volatile.Write(ref _pendingXrFrameCollected, 0);
-
-        if (!WaitFrame(out _frameState))
-            return;
-
-        if (!_sessionBegun)
-            return;
-
-        if (!BeginFrame())
-            return;
-
-        int frameNo = Interlocked.Increment(ref _openXrLifecycleFrameIndex);
-        Volatile.Write(ref _openXrPendingFrameNumber, frameNo);
-
-        if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo))
-        {
-            Debug.Out($"OpenXR[{frameNo}] Prepare: Wait+Begin ok predictedDisplayTime={_frameState.PredictedDisplayTime} shouldRender={_frameState.ShouldRender}");
-        }
-
-        if (_frameState.ShouldRender == 0)
-        {
-            Volatile.Write(ref _frameSkipRender, 1);
-            Volatile.Write(ref _pendingXrFrame, 1);
-
-            if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo))
-                Debug.Out($"OpenXR[{frameNo}] Prepare: ShouldRender=0 (will EndFrame with no layers)");
-            return;
-        }
-
-        Volatile.Write(ref _frameSkipRender, 0);
-
-        // Predicted views for the upcoming frame (used by CollectVisible + update-thread consumers).
-        if (!LocateViews(OpenXrPoseTiming.Predicted))
-        {
-            EndBegunFrameWithoutLayers(frameNo, "LocateViews failed");
-            return;
-        }
-
-        long relocateTicks = 0;
-        if (OpenXrCollectPosePolicy == OpenXrCollectVisiblePosePolicy.RelocatePredicted)
-        {
-            long relocateStart = Stopwatch.GetTimestamp();
-            if (!LocateViews(OpenXrPoseTiming.Predicted))
-            {
-                EndBegunFrameWithoutLayers(frameNo, "Relocate predicted LocateViews failed");
-                return;
-            }
-            relocateTicks = Stopwatch.GetTimestamp() - relocateStart;
-        }
-
-        RuntimeEngine.Rendering.Stats.Vr.RecordVrXrRelocatePredictedTime(
-            TimeSpan.FromSeconds(relocateTicks / (double)Stopwatch.Frequency));
 
         try
         {
-            // Predicted controller/tracker poses for the upcoming frame.
-            UpdateActionPoseCaches(OpenXrPoseTiming.Predicted);
+            // Only one OpenXR frame can be "in flight" between BeginFrame and EndFrame.
+            if (Volatile.Read(ref _pendingXrFrame) != 0)
+                return;
 
-            // The CollectVisible thread consumes this frame's predicted views and applies the
-            // app-visible predicted rig pose while it owns the visibility build. Do not publish
-            // that pose here: in DedicatedThread mode this method runs on the XR pacing thread
-            // immediately after xrEndFrame, while the render thread may still be drawing the
-            // independent desktop view.
+            // Clear any stale publish flags.
+            Volatile.Write(ref _framePrepared, 0);
+            Volatile.Write(ref _pendingXrFrameCollected, 0);
+
+            if (!WaitFrame(out _frameState))
+                return;
+
+            if (!_sessionBegun)
+                return;
+
+            if (!BeginFrame())
+                return;
+
+            int frameNo = Interlocked.Increment(ref _openXrLifecycleFrameIndex);
+            Volatile.Write(ref _openXrPendingFrameNumber, frameNo);
+
+            if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo))
+            {
+                Debug.Out($"OpenXR[{frameNo}] Prepare: Wait+Begin ok predictedDisplayTime={_frameState.PredictedDisplayTime} shouldRender={_frameState.ShouldRender}");
+            }
+
+            if (_frameState.ShouldRender == 0)
+            {
+                Volatile.Write(ref _frameSkipRender, 1);
+                Volatile.Write(ref _pendingXrFrame, 1);
+
+                if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo))
+                    Debug.Out($"OpenXR[{frameNo}] Prepare: ShouldRender=0 (will EndFrame with no layers)");
+                return;
+            }
+
+            Volatile.Write(ref _frameSkipRender, 0);
+
+            // Predicted views for the upcoming frame (used by CollectVisible + update-thread consumers).
+            if (!LocateViews(OpenXrPoseTiming.Predicted))
+            {
+                EndBegunFrameWithoutLayers(frameNo, "LocateViews failed");
+                return;
+            }
+
+            long relocateTicks = 0;
+            if (OpenXrCollectPosePolicy == OpenXrCollectVisiblePosePolicy.RelocatePredicted)
+            {
+                long relocateStart = Stopwatch.GetTimestamp();
+                if (!LocateViews(OpenXrPoseTiming.Predicted))
+                {
+                    EndBegunFrameWithoutLayers(frameNo, "Relocate predicted LocateViews failed");
+                    return;
+                }
+                relocateTicks = Stopwatch.GetTimestamp() - relocateStart;
+            }
+
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrXrRelocatePredictedTime(
+                TimeSpan.FromSeconds(relocateTicks / (double)Stopwatch.Frequency));
+
+            try
+            {
+                // Predicted controller/tracker poses for the upcoming frame.
+                UpdateActionPoseCaches(OpenXrPoseTiming.Predicted);
+
+                // The CollectVisible thread consumes this frame's predicted views and applies the
+                // app-visible predicted rig pose while it owns the visibility build. Do not publish
+                // that pose here: in DedicatedThread mode this method runs on the XR pacing thread
+                // immediately after xrEndFrame, while the render thread may still be drawing the
+                // independent desktop view.
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"OpenXR[{frameNo}] Prepare: predicted pose update failed: {ex.Message}");
+                EndBegunFrameWithoutLayers(frameNo, "Predicted pose update failed");
+                return;
+            }
+
+            _openXrPrepareTimestamp = Stopwatch.GetTimestamp();
+
+            if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo) && _views.Length >= 2)
+            {
+                var l = _views[0];
+                var r = _views[1];
+                Debug.Out(
+                    $"OpenXR[{frameNo}] Prepare: LocateViews ok " +
+                    $"L(pos={l.Pose.Position.X:F3},{l.Pose.Position.Y:F3},{l.Pose.Position.Z:F3}) " +
+                    $"R(pos={r.Pose.Position.X:F3},{r.Pose.Position.Y:F3},{r.Pose.Position.Z:F3})");
+            }
+
+            Volatile.Write(ref _pendingXrFrame, 1);
         }
-        catch (Exception ex)
+        finally
         {
-            Debug.LogWarning($"OpenXR[{frameNo}] Prepare: predicted pose update failed: {ex.Message}");
-            EndBegunFrameWithoutLayers(frameNo, "Predicted pose update failed");
-            return;
+            Volatile.Write(ref _openXrFramePrepActive, 0);
         }
-
-        _openXrPrepareTimestamp = Stopwatch.GetTimestamp();
-
-        if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo) && _views.Length >= 2)
-        {
-            var l = _views[0];
-            var r = _views[1];
-            Debug.Out(
-                $"OpenXR[{frameNo}] Prepare: LocateViews ok " +
-                $"L(pos={l.Pose.Position.X:F3},{l.Pose.Position.Y:F3},{l.Pose.Position.Z:F3}) " +
-                $"R(pos={r.Pose.Position.X:F3},{r.Pose.Position.Y:F3},{r.Pose.Position.Z:F3})");
-        }
-
-        Volatile.Write(ref _pendingXrFrame, 1);
     }
 
     private void EndBegunFrameWithoutLayers(int frameNo, string reason)

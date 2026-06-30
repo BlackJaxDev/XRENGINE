@@ -1131,6 +1131,10 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public EVrFoveationMode VrFoveationMode => Engine.Rendering.Settings.VrFoveationMode;
     public EVrFoveationQualityPreset VrFoveationQualityPreset => Engine.Rendering.Settings.VrFoveationQualityPreset;
     public bool VrFoveationRequireRequested => Engine.Rendering.Settings.VrFoveationRequireRequested;
+    public EOpenXrEyeResolutionPreset OpenXrEyeResolutionPreset => Engine.Rendering.Settings.OpenXrEyeResolutionPreset;
+    public float OpenXrEyeResolutionScale => Engine.Rendering.Settings.OpenXrEyeResolutionScale;
+    public uint OpenXrCustomEyeResolutionWidth => Engine.Rendering.Settings.OpenXrCustomEyeResolutionWidth;
+    public uint OpenXrCustomEyeResolutionHeight => Engine.Rendering.Settings.OpenXrCustomEyeResolutionHeight;
     public bool IsInVR => Engine.VRState.IsInVR;
     public bool IsOpenXRActive => Engine.VRState.IsOpenXRActive;
     public bool VrMirrorComposeFromEyeTextures => Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures;

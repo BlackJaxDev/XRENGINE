@@ -674,6 +674,10 @@ namespace XREngine
                 private EVrFoveationMode _vrFoveationMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationMode;
                 private EVrFoveationQualityPreset _vrFoveationQualityPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
                 private bool _vrFoveationRequireRequested = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
+                private EOpenXrEyeResolutionPreset _openXrEyeResolutionPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionPreset;
+                private float _openXrEyeResolutionScale = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionScale;
+                private uint _openXrCustomEyeResolutionWidth = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionWidth;
+                private uint _openXrCustomEyeResolutionHeight = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionHeight;
                 private bool _openXrCullWithFrustum = true;
                 private bool _openXrDebugGl = false;
                 private bool _openXrDebugClearOnly = false;
@@ -2001,6 +2005,50 @@ namespace XREngine
                 {
                     get => _vrFoveationRequireRequested;
                     set => SetField(ref _vrFoveationRequireRequested, value);
+                }
+
+                /// <summary>
+                /// Selects the base per-eye OpenXR swapchain resolution before scale is applied.
+                /// </summary>
+                [Category("VR")]
+                [Description("Selects the base per-eye OpenXR swapchain resolution before OpenXrEyeResolutionScale is applied.")]
+                public EOpenXrEyeResolutionPreset OpenXrEyeResolutionPreset
+                {
+                    get => _openXrEyeResolutionPreset;
+                    set => SetField(ref _openXrEyeResolutionPreset, value);
+                }
+
+                /// <summary>
+                /// Multiplies the selected OpenXR eye resolution. Valid range is 0.1x to 2.0x.
+                /// </summary>
+                [Category("VR")]
+                [Description("Multiplies the selected OpenXR eye resolution. Valid range is 0.1x to 2.0x.")]
+                public float OpenXrEyeResolutionScale
+                {
+                    get => _openXrEyeResolutionScale;
+                    set => SetField(ref _openXrEyeResolutionScale, Math.Clamp(value, 0.1f, 2.0f));
+                }
+
+                /// <summary>
+                /// Custom per-eye OpenXR swapchain width used when OpenXrEyeResolutionPreset is Custom.
+                /// </summary>
+                [Category("VR")]
+                [Description("Custom per-eye OpenXR swapchain width used when OpenXrEyeResolutionPreset is Custom. A value of 0 falls back to the runtime recommendation.")]
+                public uint OpenXrCustomEyeResolutionWidth
+                {
+                    get => _openXrCustomEyeResolutionWidth;
+                    set => SetField(ref _openXrCustomEyeResolutionWidth, value);
+                }
+
+                /// <summary>
+                /// Custom per-eye OpenXR swapchain height used when OpenXrEyeResolutionPreset is Custom.
+                /// </summary>
+                [Category("VR")]
+                [Description("Custom per-eye OpenXR swapchain height used when OpenXrEyeResolutionPreset is Custom. A value of 0 falls back to the runtime recommendation.")]
+                public uint OpenXrCustomEyeResolutionHeight
+                {
+                    get => _openXrCustomEyeResolutionHeight;
+                    set => SetField(ref _openXrCustomEyeResolutionHeight, value);
                 }
 
                 /// <summary>

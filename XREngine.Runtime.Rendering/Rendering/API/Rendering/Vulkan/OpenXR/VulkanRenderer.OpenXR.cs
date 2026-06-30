@@ -102,7 +102,8 @@ public unsafe partial class VulkanRenderer
         int ResourcePlannerStateIndex,
         uint OpenXrViewIndex,
         uint OpenXrImageIndex,
-        Action EmitFrameOps);
+        Action EmitFrameOps,
+        bool RendersExternalSwapchainTarget = true);
 
     internal readonly record struct OpenXrEyeMirrorPublishRequest(
         XRTexture2D? SourceTexture,
@@ -279,29 +280,23 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
-        if (IsRenderingExternalSwapchainTarget &&
-            swapChainExtent.Width > 0 &&
-            swapChainExtent.Height > 0)
-        {
-            region = new BoundingRectangle(
-                0,
-                0,
-                (int)Math.Min(swapChainExtent.Width, (uint)int.MaxValue),
-                (int)Math.Min(swapChainExtent.Height, (uint)int.MaxValue));
-            return true;
-        }
-
         region = default;
         return false;
     }
 
     internal IDisposable EnterOpenXrExternalSwapchainRenderScope(uint width, uint height)
     {
+        if (width == 0 || height == 0)
+            throw new InvalidOperationException("OpenXR external swapchain render scope requires a non-zero target extent.");
+
+        if (width > int.MaxValue || height > int.MaxValue)
+            throw new InvalidOperationException($"OpenXR external swapchain extent {width}x{height} exceeds supported render-region dimensions.");
+
         BoundingRectangle region = new(
             0,
             0,
-            (int)Math.Min(width, (uint)int.MaxValue),
-            (int)Math.Min(height, (uint)int.MaxValue));
+            (int)width,
+            (int)height);
 
         return new OpenXrExternalSwapchainRenderScope(this, region);
     }
@@ -581,6 +576,11 @@ public unsafe partial class VulkanRenderer
                         "[OpenXR] Vulkan eye rendering produced no frame operations.");
                     return false;
                 }
+                ValidateOpenXrExternalFrameOpContexts(
+                    ops,
+                    request.Extent,
+                    request.OpenXrViewIndex,
+                    "eye swapchain render");
 
                 ulong plannerRevision;
                 ulong frameOpsSignature;
@@ -635,6 +635,8 @@ public unsafe partial class VulkanRenderer
         {
             if (!drainedFrameOps)
                 _ = DrainFrameOpsExcludingTextureUploads(out _);
+            if (IsOpenXrStrictExtentFailure(ex))
+                throw;
 
             Debug.VulkanWarningEvery(
                 $"OpenXR.Vulkan.RenderEyeFailed.{GetHashCode()}",
@@ -1439,6 +1441,12 @@ public unsafe partial class VulkanRenderer
             openXrImageIndex,
             emitFrameOps);
 
+        return TryRenderOpenXrEyeMirrorFrameBuffer(in request);
+    }
+
+    internal bool TryRenderOpenXrEyeMirrorFrameBuffer(
+        in OpenXrEyeMirrorRenderRequest request)
+    {
         _openXrRecordedTextureUploadsForSubmit.Clear();
         bool hasRecorded = false;
         bool submitted = false;
@@ -1635,9 +1643,11 @@ public unsafe partial class VulkanRenderer
             request.ResourcePlannerStateIndex,
             swapChainImages?.Length ?? 0);
 
-        using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
-            request.Extent.Width,
-            request.Extent.Height);
+        using IDisposable? externalScope = request.RendersExternalSwapchainTarget
+            ? EnterOpenXrExternalSwapchainRenderScope(
+                request.Extent.Width,
+                request.Extent.Height)
+            : null;
 
         try
         {
@@ -1659,6 +1669,14 @@ public unsafe partial class VulkanRenderer
                         TimeSpan.FromSeconds(1),
                         "[OpenXR] Vulkan eye mirror rendering produced no frame operations.");
                     return false;
+                }
+                if (request.RendersExternalSwapchainTarget)
+                {
+                    ValidateOpenXrExternalFrameOpContexts(
+                        ops,
+                        request.Extent,
+                        request.OpenXrViewIndex,
+                        "eye mirror render");
                 }
 
                 ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
@@ -1711,6 +1729,8 @@ public unsafe partial class VulkanRenderer
         {
             if (!drainedFrameOps)
                 _ = DrainFrameOpsExcludingTextureUploads(out _);
+            if (IsOpenXrStrictExtentFailure(ex))
+                throw;
 
             Debug.VulkanWarningEvery(
                 $"OpenXR.Vulkan.RenderEyeMirrorFailed.{GetHashCode()}",
@@ -2898,6 +2918,158 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    internal bool TryBlitTextureArrayLayerToOpenXrSwapchainImage(
+        XRTexture2DArray? sourceTexture,
+        uint sourceLayer,
+        Image destinationImage,
+        Format destinationFormat,
+        Extent2D destinationExtent,
+        string destinationLabel)
+    {
+        if (sourceTexture is null || destinationImage.Handle == 0 || destinationExtent.Width == 0 || destinationExtent.Height == 0)
+            return false;
+
+        try
+        {
+            if (GetOrCreateAPIRenderObject(sourceTexture, generateNow: true) is not IVkImageDescriptorSource source)
+                return false;
+
+            uint sourceLayerCount = Math.Max(source.DescriptorArrayLayers, sourceTexture.Depth);
+            if (sourceLayer >= sourceLayerCount)
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.StereoBlit.LayerOutOfRange.{GetHashCode()}.{destinationLabel}",
+                    TimeSpan.FromSeconds(2),
+                    "[OpenXR] Vulkan stereo blit source layer {0} is out of range for '{1}' ({2} layers).",
+                    sourceLayer,
+                    sourceTexture.Name ?? "<unnamed>",
+                    sourceLayerCount);
+                return false;
+            }
+
+            if (!source.TryEnsureDescriptorReadyForUse(
+                    $"OpenXR Vulkan stereo array source blit ({destinationLabel})",
+                    AllowSynchronousResourceUploads))
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.StereoBlit.SourceNotReady.{GetHashCode()}.{destinationLabel}",
+                    TimeSpan.FromSeconds(2),
+                    "[OpenXR] Vulkan stereo blit source '{0}' is not descriptor-ready.",
+                    sourceTexture.Name ?? "<unnamed>");
+                return false;
+            }
+
+            Image sourceImage = source.DescriptorImage;
+            if (sourceImage.Handle == 0)
+                return false;
+
+            Extent2D sourceExtent = ResolveOpenXrMirrorDestinationExtent(sourceTexture, source, sourceLayer);
+            if (sourceExtent.Width == 0 || sourceExtent.Height == 0)
+                return false;
+
+            ImageAspectFlags sourceAspect = NormalizeOpenXrMirrorAspect(source.DescriptorFormat, source.DescriptorAspect);
+            ImageLayout sourceOldLayout = ResolveOpenXrAttachmentLayout(source, sourceLayer);
+            if (sourceOldLayout == ImageLayout.Undefined)
+                sourceOldLayout = ImageLayout.ColorAttachmentOptimal;
+
+            using CommandScope scope = NewCommandScope();
+            CommandBuffer commandBuffer = scope.CommandBuffer;
+
+            TransitionOpenXrMirrorImage(
+                commandBuffer,
+                sourceImage,
+                source.DescriptorFormat,
+                sourceOldLayout,
+                ImageLayout.TransferSrcOptimal,
+                sourceAspect,
+                sourceLayer,
+                1u);
+
+            TransitionOpenXrMirrorImage(
+                commandBuffer,
+                destinationImage,
+                destinationFormat,
+                ImageLayout.Undefined,
+                ImageLayout.TransferDstOptimal,
+                ImageAspectFlags.ColorBit);
+
+            ImageBlit blit = new()
+            {
+                SrcSubresource = new ImageSubresourceLayers
+                {
+                    AspectMask = sourceAspect,
+                    MipLevel = 0,
+                    BaseArrayLayer = sourceLayer,
+                    LayerCount = 1
+                },
+                DstSubresource = new ImageSubresourceLayers
+                {
+                    AspectMask = ImageAspectFlags.ColorBit,
+                    MipLevel = 0,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1
+                }
+            };
+            blit.SrcOffsets.Element0 = new Offset3D { X = 0, Y = 0, Z = 0 };
+            blit.SrcOffsets.Element1 = new Offset3D
+            {
+                X = checked((int)Math.Min(sourceExtent.Width, (uint)int.MaxValue)),
+                Y = checked((int)Math.Min(sourceExtent.Height, (uint)int.MaxValue)),
+                Z = 1
+            };
+            blit.DstOffsets.Element0 = new Offset3D { X = 0, Y = 0, Z = 0 };
+            blit.DstOffsets.Element1 = new Offset3D
+            {
+                X = checked((int)Math.Min(destinationExtent.Width, (uint)int.MaxValue)),
+                Y = checked((int)Math.Min(destinationExtent.Height, (uint)int.MaxValue)),
+                Z = 1
+            };
+
+            Api!.CmdBlitImage(
+                commandBuffer,
+                sourceImage,
+                ImageLayout.TransferSrcOptimal,
+                destinationImage,
+                ImageLayout.TransferDstOptimal,
+                1,
+                ref blit,
+                Filter.Linear);
+
+            TransitionOpenXrMirrorImage(
+                commandBuffer,
+                sourceImage,
+                source.DescriptorFormat,
+                ImageLayout.TransferSrcOptimal,
+                sourceOldLayout,
+                sourceAspect,
+                sourceLayer,
+                1u);
+
+            TransitionOpenXrMirrorImage(
+                commandBuffer,
+                destinationImage,
+                destinationFormat,
+                ImageLayout.TransferDstOptimal,
+                ImageLayout.ColorAttachmentOptimal,
+                ImageAspectFlags.ColorBit);
+
+            if (source is IVkFrameBufferAttachmentSource attachmentSource)
+                attachmentSource.UpdateAttachmentTrackedLayout(sourceOldLayout, 0, checked((int)sourceLayer));
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.StereoBlit.CopyFailed.{GetHashCode()}.{destinationLabel}",
+                TimeSpan.FromSeconds(2),
+                "[OpenXR] Vulkan stereo layer blit to '{0}' failed: {1}",
+                destinationLabel,
+                ex.Message);
+            return false;
+        }
+    }
+
     internal void PrewarmOpenXrEyeSwapchainResources(
         Format format,
         Extent2D extent,
@@ -2928,6 +3100,11 @@ public unsafe partial class VulkanRenderer
                 ops = FilterDiagnosticSkippedFrameOps(ops);
                 if (ops.Length == 0)
                     return;
+                ValidateOpenXrExternalFrameOpContexts(
+                    ops,
+                    extent,
+                    (uint)Math.Max(resourcePlannerStateIndex, 0),
+                    "eye swapchain prewarm");
 
                 ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                 _ = PrepareResourcePlannerForFrameOps(ops);
@@ -2937,6 +3114,8 @@ public unsafe partial class VulkanRenderer
         catch (Exception ex)
         {
             _ = DrainFrameOpsExcludingTextureUploads(out _);
+            if (IsOpenXrStrictExtentFailure(ex))
+                throw;
             Debug.VulkanWarningEvery(
                 $"OpenXR.Vulkan.PrewarmEyeFailed.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
@@ -2974,6 +3153,11 @@ public unsafe partial class VulkanRenderer
                 ops = FilterDiagnosticSkippedFrameOps(ops);
                 if (ops.Length == 0)
                     return;
+                ValidateOpenXrExternalFrameOpContexts(
+                    ops,
+                    extent,
+                    (uint)Math.Max(resourcePlannerStateIndex, 0),
+                    "eye mirror prewarm");
 
                 ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                 _ = PrepareResourcePlannerForFrameOps(ops);
@@ -2983,6 +3167,8 @@ public unsafe partial class VulkanRenderer
         catch (Exception ex)
         {
             _ = DrainFrameOpsExcludingTextureUploads(out _);
+            if (IsOpenXrStrictExtentFailure(ex))
+                throw;
             Debug.VulkanWarningEvery(
                 $"OpenXR.Vulkan.PrewarmEyeMirrorFailed.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
@@ -2994,6 +3180,131 @@ public unsafe partial class VulkanRenderer
             _openXrExternalSwapchainPrewarmDepth--;
         }
     }
+
+    private static bool IsOpenXrStrictExtentFailure(Exception ex)
+        => ex is InvalidOperationException &&
+           ex.Message.StartsWith("OpenXR ", StringComparison.Ordinal);
+
+    private static void ValidateOpenXrExternalFrameOpContexts(
+        FrameOp[] ops,
+        in Extent2D extent,
+        uint openXrViewIndex,
+        string phase)
+    {
+        if (extent.Width == 0 || extent.Height == 0)
+            throw new InvalidOperationException($"OpenXR {phase} eye {openXrViewIndex} requires a non-zero target extent.");
+
+        for (int i = 0; i < ops.Length; i++)
+        {
+            FrameOp op = ops[i];
+            ValidateOpenXrExternalSwapchainWriterDrawState(op, i, extent, openXrViewIndex, phase);
+
+            FrameOpContext context = op.Context;
+            if (!FrameOpContextHasPlannerResources(context))
+                continue;
+
+            if (context.DisplayWidth == extent.Width &&
+                context.DisplayHeight == extent.Height &&
+                context.InternalWidth == extent.Width &&
+                context.InternalHeight == extent.Height)
+            {
+                continue;
+            }
+
+            throw new InvalidOperationException(
+                $"OpenXR {phase} eye {openXrViewIndex} captured a frame op with non-eye resource dimensions. " +
+                $"OpIndex={i}; Op={op.GetType().Name}; " +
+                $"Expected={extent.Width}x{extent.Height}; " +
+                $"ContextDisplay={context.DisplayWidth}x{context.DisplayHeight}; " +
+                $"ContextInternal={context.InternalWidth}x{context.InternalHeight}; " +
+                $"Pipeline={context.PipelineIdentity}; Viewport={context.ViewportIdentity}.");
+        }
+    }
+
+    private static void ValidateOpenXrExternalSwapchainWriterDrawState(
+        FrameOp op,
+        int opIndex,
+        in Extent2D extent,
+        uint openXrViewIndex,
+        string phase)
+    {
+        switch (op)
+        {
+            case MeshDrawOp { Target: null } drawOp:
+                ValidateOpenXrExternalSwapchainWriterDrawState(
+                    drawOp.Draw,
+                    opIndex,
+                    nameof(MeshDrawOp),
+                    extent,
+                    openXrViewIndex,
+                    phase);
+                break;
+            case IndirectDrawOp { Target: null } indirectOp:
+                ValidateOpenXrExternalSwapchainWriterDrawState(
+                    indirectOp.Draw,
+                    opIndex,
+                    nameof(IndirectDrawOp),
+                    extent,
+                    openXrViewIndex,
+                    phase);
+                break;
+        }
+    }
+
+    private static void ValidateOpenXrExternalSwapchainWriterDrawState(
+        in PendingMeshDraw draw,
+        int opIndex,
+        string opName,
+        in Extent2D extent,
+        uint openXrViewIndex,
+        string phase)
+    {
+        if (draw.ViewportScissorCount != 1)
+        {
+            throw new InvalidOperationException(
+                $"OpenXR {phase} eye {openXrViewIndex} captured a swapchain writer with indexed viewport/scissor state. " +
+                $"OpIndex={opIndex}; Op={opName}; ExpectedViewportScissorCount=1; ActualViewportScissorCount={draw.ViewportScissorCount}; " +
+                $"Expected={extent.Width}x{extent.Height}.");
+        }
+
+        Viewport expectedViewport = CreateVulkanViewport(extent);
+        Rect2D expectedScissor = new()
+        {
+            Offset = new Offset2D(0, 0),
+            Extent = extent
+        };
+
+        if (SameOpenXrViewport(draw.Viewport, expectedViewport) &&
+            SameOpenXrScissor(draw.Scissor, expectedScissor))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"OpenXR {phase} eye {openXrViewIndex} captured a swapchain writer that does not cover the full eye target. " +
+            $"OpIndex={opIndex}; Op={opName}; Expected={extent.Width}x{extent.Height}; " +
+            $"Viewport=({draw.Viewport.X},{draw.Viewport.Y},{draw.Viewport.Width}x{draw.Viewport.Height}); " +
+            $"ExpectedViewport=({expectedViewport.X},{expectedViewport.Y},{expectedViewport.Width}x{expectedViewport.Height}); " +
+            $"Scissor=({draw.Scissor.Offset.X},{draw.Scissor.Offset.Y},{draw.Scissor.Extent.Width}x{draw.Scissor.Extent.Height}); " +
+            $"ExpectedScissor=({expectedScissor.Offset.X},{expectedScissor.Offset.Y},{expectedScissor.Extent.Width}x{expectedScissor.Extent.Height}).");
+    }
+
+    private static bool SameOpenXrViewport(Viewport actual, Viewport expected)
+        => SameOpenXrFloat(actual.X, expected.X) &&
+           SameOpenXrFloat(actual.Y, expected.Y) &&
+           SameOpenXrFloat(actual.Width, expected.Width) &&
+           SameOpenXrFloat(actual.Height, expected.Height) &&
+           SameOpenXrFloat(actual.MinDepth, expected.MinDepth) &&
+           SameOpenXrFloat(actual.MaxDepth, expected.MaxDepth);
+
+    private static bool SameOpenXrFloat(float actual, float expected)
+        => MathF.Abs(actual - expected) <= 0.001f;
+
+    private static bool SameOpenXrScissor(Rect2D actual, Rect2D expected)
+        => actual.Offset.X == expected.Offset.X &&
+           actual.Offset.Y == expected.Offset.Y &&
+           actual.Extent.Width == expected.Extent.Width &&
+           actual.Extent.Height == expected.Extent.Height;
 
     private void RefreshFrameOpResourceWrappers(
         FrameOp[] ops,
@@ -3260,8 +3571,37 @@ public unsafe partial class VulkanRenderer
             attachmentExtent.Height > 0
                 ? attachmentExtent
                 : new Extent2D(
+                Math.Max(destinationTexture.Width, 1u),
+                Math.Max(destinationTexture.Height, 1u));
+    }
+
+    private static Extent2D ResolveOpenXrMirrorDestinationExtent(
+        XRTexture2DArray destinationTexture,
+        IVkImageDescriptorSource destinationSource,
+        uint layer)
+    {
+        return destinationSource is IVkFrameBufferAttachmentSource attachmentSource &&
+            attachmentSource.TryGetAttachmentExtent(0, checked((int)layer), out Extent2D attachmentExtent) &&
+            attachmentExtent.Width > 0 &&
+            attachmentExtent.Height > 0
+                ? attachmentExtent
+                : new Extent2D(
                     Math.Max(destinationTexture.Width, 1u),
                     Math.Max(destinationTexture.Height, 1u));
+    }
+
+    private static ImageLayout ResolveOpenXrAttachmentLayout(
+        IVkImageDescriptorSource source,
+        uint layer)
+    {
+        ImageLayout layout = ImageLayout.Undefined;
+        if (source is IVkFrameBufferAttachmentSource attachmentSource)
+            layout = attachmentSource.GetAttachmentTrackedLayout(0, checked((int)layer));
+
+        if (layout == ImageLayout.Undefined)
+            layout = source.TrackedImageLayout;
+
+        return layout;
     }
 
     private static ImageLayout ResolveOpenXrMirrorDestinationLayout(IVkImageDescriptorSource destinationSource)
@@ -3292,6 +3632,25 @@ public unsafe partial class VulkanRenderer
         ImageLayout oldLayout,
         ImageLayout newLayout,
         ImageAspectFlags aspectMask)
+        => TransitionOpenXrMirrorImage(
+            commandBuffer,
+            image,
+            format,
+            oldLayout,
+            newLayout,
+            aspectMask,
+            baseArrayLayer: 0u,
+            layerCount: 1u);
+
+    private void TransitionOpenXrMirrorImage(
+        CommandBuffer commandBuffer,
+        Image image,
+        Format format,
+        ImageLayout oldLayout,
+        ImageLayout newLayout,
+        ImageAspectFlags aspectMask,
+        uint baseArrayLayer,
+        uint layerCount)
     {
         if (oldLayout == newLayout)
             return;
@@ -3314,8 +3673,8 @@ public unsafe partial class VulkanRenderer
                 AspectMask = NormalizeOpenXrMirrorAspect(format, aspectMask),
                 BaseMipLevel = 0,
                 LevelCount = 1,
-                BaseArrayLayer = 0,
-                LayerCount = 1
+                BaseArrayLayer = baseArrayLayer,
+                LayerCount = Math.Max(layerCount, 1u)
             }
         };
 
@@ -3591,6 +3950,33 @@ public unsafe partial class VulkanRenderer
 
     }
 
+    internal void ResetOpenXrRenderingResourcesForRuntimeRecreate(string reason)
+    {
+        if (_deviceLost || Api is null || device.Handle == 0)
+            return;
+
+        Debug.VulkanWarning(
+            "[OpenXR] Resetting Vulkan OpenXR render resources before runtime recreate. Reason={0}",
+            string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
+
+        try
+        {
+            DeviceWaitIdle();
+        }
+        catch (Exception ex)
+        {
+            Debug.VulkanWarning(
+                "[OpenXR] Device idle wait failed while resetting Vulkan OpenXR resources before runtime recreate. Error={0}",
+                ex.Message);
+        }
+
+        if (_deviceLost)
+            return;
+
+        DestroyOpenXrRenderingResources();
+        MarkCommandBuffersDirty(nameof(ResetOpenXrRenderingResourcesForRuntimeRecreate));
+    }
+
     private void DestroyOpenXrPrimaryCommandBufferCache()
     {
         lock (_openXrPrimaryCommandBufferVariantsLock)
@@ -3713,8 +4099,19 @@ public unsafe partial class VulkanRenderer
             long submitStart = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.QueueSubmit"))
             {
-                lock (_oneTimeSubmitLock)
+                long queueLockWaitStart = Stopwatch.GetTimestamp();
+                bool queueLockTaken = false;
+                try
+                {
+                    Monitor.Enter(_oneTimeSubmitLock, ref queueLockTaken);
+                    LogOpenXrSerializedCriticalSectionWait("QueueSubmit", queueLockWaitStart, Stopwatch.GetTimestamp());
                     submitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, fence);
+                }
+                finally
+                {
+                    if (queueLockTaken)
+                        Monitor.Exit(_oneTimeSubmitLock);
+                }
             }
             long submitEnd = Stopwatch.GetTimestamp();
 
@@ -3760,5 +4157,19 @@ public unsafe partial class VulkanRenderer
             if (fence.Handle != 0)
                 Api!.DestroyFence(device, fence, null);
         }
+    }
+
+    private static void LogOpenXrSerializedCriticalSectionWait(string sectionName, long waitStart, long waitEnd)
+    {
+        double waitMs = (waitEnd - waitStart) * 1000.0 / Stopwatch.Frequency;
+        if (waitMs < 0.25)
+            return;
+
+        Debug.VulkanEvery(
+            $"OpenXR.Vulkan.SerializedCriticalSection.{sectionName}",
+            TimeSpan.FromSeconds(1),
+            "[OpenXrVulkan] serialized critical section={0} waitMs={1:F3}",
+            sectionName,
+            waitMs);
     }
 }

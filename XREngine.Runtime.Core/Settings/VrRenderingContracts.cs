@@ -2,9 +2,49 @@ namespace XREngine;
 
 public enum EVrViewRenderMode
 {
+    /// <summary>
+    /// Render the two eye views one after the other.
+    /// </summary>
     SequentialViews,
+
+    /// <summary>
+    /// Request a stereo render path. OpenXR Vulkan uses true stereo when the
+    /// layered staging path is available, and otherwise reports a compatibility
+    /// path over per-eye swapchains.
+    /// </summary>
     SinglePassStereo,
+
+    /// <summary>
+    /// Render the same per-eye output as sequential views while preparing safe
+    /// command-buffer work concurrently where the backend supports it.
+    /// </summary>
     ParallelCommandBufferRecording,
+}
+
+public enum EVrViewRenderImplementationPath
+{
+    Unsupported,
+    SequentialViews,
+    ParallelCommandBufferRecording,
+    OpenXrSinglePassCompatibility,
+    TrueSinglePassStereo,
+}
+
+public enum EVrTemporalHistoryPolicy
+{
+    Disabled,
+    DisabledPerEyeSwapchain,
+    DisabledExternalPerEyeSwapchain,
+    PerEye,
+    StereoArrayLayer,
+    HeadsetShared,
+}
+
+public enum EVrAutoExposurePolicy
+{
+    HeadsetShared,
+    PerEye,
+    LeftEyeOnly,
 }
 
 public enum EVrFoveationMode
@@ -22,6 +62,34 @@ public enum EVrFoveationQualityPreset
     Aggressive,
 }
 
+public enum EOpenXrEyeResolutionPreset
+{
+    /// <summary>
+    /// Use the active OpenXR runtime's recommended image rect size.
+    /// </summary>
+    RuntimeRecommended,
+
+    /// <summary>
+    /// Valve Index native panel resolution, 1440 x 1600 per eye.
+    /// </summary>
+    ValveIndex,
+
+    /// <summary>
+    /// Meta Quest Pro native panel resolution, 1800 x 1920 per eye.
+    /// </summary>
+    QuestPro,
+
+    /// <summary>
+    /// Bigscreen Beyond 2 native panel resolution, 2560 x 2560 per eye.
+    /// </summary>
+    BigscreenBeyond2,
+
+    /// <summary>
+    /// Use the configured custom width and height.
+    /// </summary>
+    Custom,
+}
+
 [Flags]
 public enum EVrFoveationCapabilityPath
 {
@@ -37,6 +105,8 @@ public enum EVrFoveationCapabilityPath
 public readonly record struct VrViewRenderModeResolution(
     EVrViewRenderMode RequestedMode,
     EVrViewRenderMode EffectiveMode,
+    EVrViewRenderImplementationPath EffectiveImplementationPath,
+    EVrTemporalHistoryPolicy TemporalHistoryPolicy,
     bool IsSupported,
     string? Diagnostic);
 
@@ -64,7 +134,9 @@ public static class VrViewRenderModeResolver
     public static VrViewRenderModeResolution Resolve(
         ERenderLibrary backend,
         EVrViewRenderMode requestedMode,
-        bool enableOpenXrVulkanParallelRendering = true)
+        bool enableOpenXrVulkanParallelRendering = true,
+        bool trueSinglePassStereoAvailable = false,
+        bool rendersExternalSwapchainTargets = true)
     {
         if (requestedMode == EVrViewRenderMode.ParallelCommandBufferRecording)
         {
@@ -73,6 +145,8 @@ public static class VrViewRenderModeResolver
                 return new(
                     requestedMode,
                     requestedMode,
+                    EVrViewRenderImplementationPath.Unsupported,
+                    EVrTemporalHistoryPolicy.Disabled,
                     false,
                     "VR.ViewRenderMode=ParallelCommandBufferRecording is Vulkan-only.");
             }
@@ -82,13 +156,52 @@ public static class VrViewRenderModeResolver
                 return new(
                     requestedMode,
                     requestedMode,
+                    EVrViewRenderImplementationPath.Unsupported,
+                    EVrTemporalHistoryPolicy.Disabled,
                     false,
                     "VR.ViewRenderMode=ParallelCommandBufferRecording was requested, but OpenXR Vulkan parallel rendering is disabled by startup settings.");
             }
         }
 
-        return new(requestedMode, requestedMode, true, null);
+        EVrViewRenderImplementationPath implementationPath = ResolveImplementationPath(
+            requestedMode,
+            trueSinglePassStereoAvailable);
+
+        return new(
+            requestedMode,
+            requestedMode,
+            implementationPath,
+            ResolveTemporalHistoryPolicy(implementationPath, rendersExternalSwapchainTargets),
+            true,
+            null);
     }
+
+    private static EVrViewRenderImplementationPath ResolveImplementationPath(
+        EVrViewRenderMode requestedMode,
+        bool trueSinglePassStereoAvailable)
+        => requestedMode switch
+        {
+            EVrViewRenderMode.SequentialViews => EVrViewRenderImplementationPath.SequentialViews,
+            EVrViewRenderMode.ParallelCommandBufferRecording => EVrViewRenderImplementationPath.ParallelCommandBufferRecording,
+            EVrViewRenderMode.SinglePassStereo => trueSinglePassStereoAvailable
+                ? EVrViewRenderImplementationPath.TrueSinglePassStereo
+                : EVrViewRenderImplementationPath.OpenXrSinglePassCompatibility,
+            _ => EVrViewRenderImplementationPath.Unsupported,
+        };
+
+    private static EVrTemporalHistoryPolicy ResolveTemporalHistoryPolicy(
+        EVrViewRenderImplementationPath implementationPath,
+        bool rendersExternalSwapchainTargets)
+        => implementationPath switch
+        {
+            EVrViewRenderImplementationPath.TrueSinglePassStereo => EVrTemporalHistoryPolicy.StereoArrayLayer,
+            EVrViewRenderImplementationPath.OpenXrSinglePassCompatibility => EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain,
+            EVrViewRenderImplementationPath.SequentialViews or EVrViewRenderImplementationPath.ParallelCommandBufferRecording =>
+                rendersExternalSwapchainTargets
+                    ? EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain
+                    : EVrTemporalHistoryPolicy.DisabledPerEyeSwapchain,
+            _ => EVrTemporalHistoryPolicy.Disabled,
+        };
 }
 
 public static class VrFoveationResolver

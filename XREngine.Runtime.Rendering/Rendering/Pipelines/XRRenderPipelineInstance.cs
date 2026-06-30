@@ -554,17 +554,21 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (Pipeline is null || viewport is null)
             return true;
 
-        if (viewport.Window?.IsInteractiveResizeInProgress == true && ActiveGeneration is not null)
+        if (ShouldDeferResourceGenerationForInteractiveWindowResize(viewport) && ActiveGeneration is not null)
         {
             DiscardPendingGeneration("InteractiveResize");
             return true;
         }
 
+        var dimensions = ResolveViewportResourceDimensions(viewport);
         ResourceGenerationKey key = BuildResourceGenerationKey(
-            Math.Max(1, viewport.Width),
-            Math.Max(1, viewport.Height),
-            Math.Max(1, viewport.InternalWidth),
-            Math.Max(1, viewport.InternalHeight));
+            dimensions.DisplayWidth,
+            dimensions.DisplayHeight,
+            dimensions.InternalWidth,
+            dimensions.InternalHeight);
+
+        if (viewport.RendersToExternalSwapchainTarget)
+            return EnsureExternalSwapchainResourceGenerationForCurrentFrame(viewport, key);
 
         if (ActiveGeneration is null && PendingGeneration is null)
             RequestResourceGeneration(key, "Initial");
@@ -603,6 +607,32 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return !IsResizeOnlyGenerationDelta(ActiveGeneration.Key, key);
     }
 
+    private bool EnsureExternalSwapchainResourceGenerationForCurrentFrame(
+        XRViewport viewport,
+        ResourceGenerationKey key)
+    {
+        if (ActiveGeneration is null && PendingGeneration is null)
+            RequestResourceGeneration(key, "ExternalSwapchainInitial", force: true);
+        else if (ActiveGeneration is null || ActiveGeneration.Key != key)
+            RequestResourceGeneration(key, "ExternalSwapchainFrameProfileChanged", force: true);
+
+        TryPreparePendingGeneration(
+            "ExternalSwapchainFramePrepare",
+            forceDue: true,
+            catchUpMaxDuration: TimeSpan.MaxValue,
+            catchUpMaxSpecsPerSlice: int.MaxValue);
+
+        if (ActiveGeneration?.Key == key)
+            return true;
+
+        string active = ActiveGeneration?.Key.ToString() ?? "<none>";
+        string pending = PendingGeneration?.Key.ToString() ?? "<none>";
+        throw new InvalidOperationException(
+            "OpenXR external swapchain resources did not match the required eye extent. " +
+            $"Required={key}; Active={active}; Pending={pending}; " +
+            $"Viewport={viewport.Width}x{viewport.Height} internal={viewport.InternalWidth}x{viewport.InternalHeight}.");
+    }
+
     private static bool IsResizeOnlyGenerationDelta(ResourceGenerationKey oldKey, ResourceGenerationKey newKey)
         => string.Equals(oldKey.PipelineName, newKey.PipelineName, StringComparison.Ordinal) &&
            oldKey.OutputHDR == newKey.OutputHDR &&
@@ -616,6 +646,40 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             oldKey.DisplayHeight != newKey.DisplayHeight ||
             oldKey.InternalWidth != newKey.InternalWidth ||
             oldKey.InternalHeight != newKey.InternalHeight);
+
+    internal static (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight) ResolveViewportResourceDimensions(XRViewport viewport)
+        => ResolveViewportResizeResourceDimensions(
+            viewport,
+            viewport.Width,
+            viewport.Height,
+            viewport.InternalWidth,
+            viewport.InternalHeight);
+
+    internal static (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight) ResolveViewportResizeResourceDimensions(
+        XRViewport? viewport,
+        int displayWidth,
+        int displayHeight,
+        int internalWidth,
+        int internalHeight)
+    {
+        int resolvedDisplayWidth = Math.Max(1, displayWidth);
+        int resolvedDisplayHeight = Math.Max(1, displayHeight);
+        int resolvedInternalWidth = Math.Max(1, internalWidth > 0 ? internalWidth : resolvedDisplayWidth);
+        int resolvedInternalHeight = Math.Max(1, internalHeight > 0 ? internalHeight : resolvedDisplayHeight);
+
+        if (viewport?.RendersToExternalSwapchainTarget == true)
+            return (resolvedInternalWidth, resolvedInternalHeight, resolvedInternalWidth, resolvedInternalHeight);
+
+        return (
+            resolvedDisplayWidth,
+            resolvedDisplayHeight,
+            resolvedInternalWidth,
+            resolvedInternalHeight);
+    }
+
+    private static bool ShouldDeferResourceGenerationForInteractiveWindowResize(XRViewport viewport)
+        => !viewport.RendersToExternalSwapchainTarget &&
+           viewport.Window?.IsInteractiveResizeInProgress == true;
 
     internal bool RequestResourceGeneration(
         int displayWidth,
@@ -824,6 +888,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             _ => 0UL
         };
 
+        bool externalSwapchainTarget =
+            RenderState.WindowViewport?.RendersToExternalSwapchainTarget == true ||
+            AbstractRenderer.Current?.IsRenderingExternalSwapchainTarget == true;
+        uint reservedViewCount = stereo && !externalSwapchainTarget ? 2u : 1u;
+        uint reservedEyeIndex = 0u;
+
         return new ResourceGenerationKey(
             pipeline?.DebugName ?? DebugName,
             (uint)Math.Max(1, displayWidth),
@@ -834,7 +904,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             antiAliasingMode,
             msaaSamples,
             stereo,
-            featureMask);
+            featureMask,
+            reservedViewCount,
+            reservedEyeIndex);
     }
 
     private bool TryPreparePendingGeneration(string reason)
@@ -1002,11 +1074,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return false;
         }
 
+        var dimensions = ResolveViewportResourceDimensions(viewport);
         key = BuildResourceGenerationKey(
-            Math.Max(1, viewport.Width),
-            Math.Max(1, viewport.Height),
-            Math.Max(1, viewport.InternalWidth),
-            Math.Max(1, viewport.InternalHeight));
+            dimensions.DisplayWidth,
+            dimensions.DisplayHeight,
+            dimensions.InternalWidth,
+            dimensions.InternalHeight);
         return true;
     }
 
@@ -1105,16 +1178,19 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
 
         XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
-        if (viewport is not null
-            && RequestResourceGeneration(
-                Math.Max(1, viewport.Width),
-                Math.Max(1, viewport.Height),
-                Math.Max(1, viewport.InternalWidth),
-                Math.Max(1, viewport.InternalHeight),
+        if (viewport is not null)
+        {
+            var dimensions = ResolveViewportResourceDimensions(viewport);
+            if (RequestResourceGeneration(
+                dimensions.DisplayWidth,
+                dimensions.DisplayHeight,
+                dimensions.InternalWidth,
+                dimensions.InternalHeight,
                 "InvalidatePhysicalResources",
                 force: true))
-        {
-            return;
+            {
+                return;
+            }
         }
 
         LogDefaultRenderPipelineResourceDestruction($"InvalidatePhysicalResources (generation {ResourceGeneration} -> {ResourceGeneration + 1})");
@@ -1207,13 +1283,18 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public void InternalResolutionResized(int internalWidth, int internalHeight)
     {
         XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
-        int displayWidth = Math.Max(1, viewport?.Width ?? internalWidth);
-        int displayHeight = Math.Max(1, viewport?.Height ?? internalHeight);
+        var dimensions = ResolveViewportResizeResourceDimensions(
+            viewport,
+            viewport?.Width ?? internalWidth,
+            viewport?.Height ?? internalHeight,
+            internalWidth,
+            internalHeight);
+
         if (RequestResourceGeneration(
-            displayWidth,
-            displayHeight,
-            Math.Max(1, internalWidth),
-            Math.Max(1, internalHeight),
+            dimensions.DisplayWidth,
+            dimensions.DisplayHeight,
+            dimensions.InternalWidth,
+            dimensions.InternalHeight,
             "InternalResolutionResized"))
         {
             return;

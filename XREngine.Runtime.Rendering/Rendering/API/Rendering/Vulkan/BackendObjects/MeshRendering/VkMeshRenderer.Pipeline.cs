@@ -1054,6 +1054,7 @@ public unsafe partial class VulkanRenderer
 					PipelineRenderingCreateInfo renderingInfo = new()
 					{
 						SType = StructureType.PipelineRenderingCreateInfo,
+						ViewMask = request.DynamicRenderingFormats.ViewMask,
 						ColorAttachmentCount = request.ColorAttachmentCount,
 						PColorAttachmentFormats = request.ColorAttachmentCount > 0 ? colorFormats : null,
 						DepthAttachmentFormat = request.DynamicRenderingFormats.DepthAttachmentFormat,

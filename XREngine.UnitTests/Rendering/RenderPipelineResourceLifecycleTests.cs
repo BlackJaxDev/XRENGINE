@@ -884,6 +884,43 @@ public sealed class RenderPipelineResourceLifecycleTests
         }
     }
 
+    [Test]
+    public void ExternalSwapchainViewportResourceDimensionsUseInternalEyeExtent()
+    {
+        XRViewport viewport = new(null)
+        {
+            Width = 1920,
+            Height = 1080,
+            RendersToExternalSwapchainTarget = true
+        };
+        viewport.SetInternalResolution(1512, 1680, correctAspect: false);
+
+        var dimensions = XRRenderPipelineInstance.ResolveViewportResourceDimensions(viewport);
+
+        dimensions.DisplayWidth.ShouldBe(1512);
+        dimensions.DisplayHeight.ShouldBe(1680);
+        dimensions.InternalWidth.ShouldBe(1512);
+        dimensions.InternalHeight.ShouldBe(1680);
+    }
+
+    [Test]
+    public void WindowViewportResourceDimensionsPreserveDisplayAndInternalExtents()
+    {
+        XRViewport viewport = new(null)
+        {
+            Width = 1920,
+            Height = 1080
+        };
+        viewport.SetInternalResolution(1280, 720, correctAspect: false);
+
+        var dimensions = XRRenderPipelineInstance.ResolveViewportResourceDimensions(viewport);
+
+        dimensions.DisplayWidth.ShouldBe(1920);
+        dimensions.DisplayHeight.ShouldBe(1080);
+        dimensions.InternalWidth.ShouldBe(1280);
+        dimensions.InternalHeight.ShouldBe(720);
+    }
+
     private static void AssertGtaoScratchScale(RenderPipelineResourceLayout layout, float expectedScale)
     {
         TextureSpec raw = layout.ResourcesByName[DefaultRenderPipeline.GTAORawTextureName].ShouldBeOfType<TextureSpec>();
