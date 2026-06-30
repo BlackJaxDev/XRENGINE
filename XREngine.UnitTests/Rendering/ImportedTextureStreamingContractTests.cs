@@ -430,7 +430,7 @@ public sealed class ImportedTextureStreamingContractTests
         string commandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainLowering.cs");
 
         commandBufferSource.ShouldContain("private static bool HasTextureUploadFrameOps(FrameOp[] ops)");
-        commandBufferSource.ShouldContain("usingCommandChains && hasTextureUploadFrameOps && variant.FrameOpsSignature != frameOpsSignature");
+        commandBufferSource.ShouldContain("usingCommandChains && variant.FrameOpsSignature != frameOpsSignature");
         commandChainSource.ShouldContain("case TextureUploadFrameOp upload:");
         commandChainSource.ShouldContain("hash.Add(upload.Upload.PublicationToken);");
         commandChainSource.ShouldContain("hash.Add(upload.Upload.Request.StreamingGeneration);");

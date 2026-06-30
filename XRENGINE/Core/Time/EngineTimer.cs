@@ -567,7 +567,7 @@ namespace XREngine.Timers
                 Collect.DeltaTicks = elapsedTicks;
                 Collect.LastTimestampTicks = timestampTicks;
                 PreCollectVisible?.Invoke();
-                CollectVisible?.InvokeParallel(minParallelListeners: 2);
+                CollectVisible?.Invoke();
                 PostCollectVisible?.Invoke();
                 timestampTicks = TimeTicks();
                 Collect.ElapsedTicks = Math.Max(0L, timestampTicks - Collect.LastTimestampTicks);

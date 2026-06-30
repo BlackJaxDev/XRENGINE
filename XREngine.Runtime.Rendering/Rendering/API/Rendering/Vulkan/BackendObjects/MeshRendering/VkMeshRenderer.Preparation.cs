@@ -262,31 +262,34 @@ public unsafe partial class VulkanRenderer
 
 		private bool AreCachedBuffersReadyForRendering(out string detail, bool skipVertexAttributeBuffers = false)
 		{
-			foreach (var pair in _bufferCache)
+			lock (_bufferStateSync)
 			{
-				VkDataBuffer buffer = pair.Value;
-				if (skipVertexAttributeBuffers && buffer.Data.Target == EBufferTarget.ArrayBuffer)
-					continue;
-
-				if (!buffer.IsReadyForRendering)
+				foreach (var pair in _bufferCache)
 				{
-					detail = $"buffer='{pair.Key}' target={buffer.Data.Target} generated={buffer.IsGenerated} length={buffer.Data.Length} allocated={buffer.AllocatedByteSize}";
-					return false;
+					VkDataBuffer buffer = pair.Value;
+					if (skipVertexAttributeBuffers && buffer.Data.Target == EBufferTarget.ArrayBuffer)
+						continue;
+
+					if (!buffer.IsReadyForRendering)
+					{
+						detail = $"buffer='{pair.Key}' target={buffer.Data.Target} generated={buffer.IsGenerated} length={buffer.Data.Length} allocated={buffer.AllocatedByteSize}";
+						return false;
+					}
 				}
+
+				if (!_indexBuffersSkippedForShaderGeneratedVertices &&
+					!IsExpectedIndexBufferReady(EPrimitiveType.Triangles, _triangleIndexBuffer, "Triangles", out detail))
+					return false;
+				if (!_indexBuffersSkippedForShaderGeneratedVertices &&
+					!IsExpectedIndexBufferReady(EPrimitiveType.Lines, _lineIndexBuffer, "Lines", out detail))
+					return false;
+				if (!_indexBuffersSkippedForShaderGeneratedVertices &&
+					!IsExpectedIndexBufferReady(EPrimitiveType.Points, _pointIndexBuffer, "Points", out detail))
+					return false;
+
+				detail = string.Empty;
+				return true;
 			}
-
-			if (!_indexBuffersSkippedForShaderGeneratedVertices &&
-				!IsExpectedIndexBufferReady(EPrimitiveType.Triangles, _triangleIndexBuffer, "Triangles", out detail))
-				return false;
-			if (!_indexBuffersSkippedForShaderGeneratedVertices &&
-				!IsExpectedIndexBufferReady(EPrimitiveType.Lines, _lineIndexBuffer, "Lines", out detail))
-				return false;
-			if (!_indexBuffersSkippedForShaderGeneratedVertices &&
-				!IsExpectedIndexBufferReady(EPrimitiveType.Points, _pointIndexBuffer, "Points", out detail))
-				return false;
-
-			detail = string.Empty;
-			return true;
 		}
 
 		private bool IsExpectedIndexBufferReady(EPrimitiveType type, VkDataBuffer? buffer, string primitiveName, out string detail)

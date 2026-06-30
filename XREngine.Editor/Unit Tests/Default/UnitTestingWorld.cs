@@ -95,10 +95,13 @@ public static partial class EditorUnitTests
         bool previewVrStereoViews = groupedVrSpecified
             ? runtimeSettings.VR.PreviewStereoViews
             : Toggles.PreviewVRStereoViews;
-        bool requiresDesktopVrWindow = vrPawnRequested && (allowDesktopEditingInVr || previewVrStereoViews);
-        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) || requiresDesktopVrWindow)
-            s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresDesktopVrWindow;
-        s.VrMirrorComposeFromEyeTextures = !requiresDesktopVrWindow;
+        bool requiresIndependentDesktopWindow = vrPawnRequested && (allowDesktopEditingInVr || previewVrStereoViews);
+        bool usesRuntimeDesktopCamera = vrPawnRequested && !allowDesktopEditingInVr;
+        if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) ||
+            requiresIndependentDesktopWindow ||
+            usesRuntimeDesktopCamera)
+            s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;
+        s.VrMirrorComposeFromEyeTextures = false;
         s.VrCopyEyePreviewTextures = previewVrStereoViews;
 
         bool groupedRenderingSpecified = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));

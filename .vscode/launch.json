@@ -27,7 +27,8 @@
             "stopAtEntry": false,
             "env": {
                 "XRE_WORLD_MODE": "UnitTesting",
-                "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL": "1"
+                "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL": "1",
+                "XRE_OCCLUSION_CULLING_MODE": "Disabled"
             }
         },
         {

@@ -343,6 +343,22 @@ public sealed class VulkanP1ValidationTests
     }
 
     [Test]
+    public void DesktopWindowRenderCallback_IsNonReentrantAndUsesCapturedFrameNumber()
+    {
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+
+        drawingSource.ShouldContain("private int _windowRenderCallbackInProgress;");
+        drawingSource.ShouldContain("Interlocked.CompareExchange(ref _windowRenderCallbackInProgress, 1, 0)");
+        drawingSource.ShouldContain("Skipping reentrant desktop window render callback");
+        drawingSource.ShouldContain("ulong frameNumber = ++_vkDebugFrameCounter;");
+        drawingSource.ShouldContain("Interlocked.Exchange(ref _windowRenderCallbackInProgress, 0);");
+        drawingSource.ShouldContain("[Vulkan] Frame={0} WindowFB={1}x{2} Swapchain={3}x{4}");
+        drawingSource.ShouldContain("[Vulkan] Frame={0} InFlightSlot={1} AcquiredImage={2} LastPresented={3}");
+        drawingSource.ShouldContain("[Vulkan] Frame={0} SubmittedImage={1}");
+        drawingSource.ShouldContain("[Vulkan] Frame={0} PresentedImage={1} Result={2}");
+    }
+
+    [Test]
     public void CommandRecording_ReusesPerFrameScratchCollections()
     {
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
@@ -409,6 +425,25 @@ public sealed class VulkanP1ValidationTests
         statsSource.ShouldContain("VulkanRecordCommandBufferAllocatedBytes");
         profileCaptureSource.ShouldContain("vulkan_record_command_buffer_allocated_bytes");
         measureSource.ShouldContain("FailOnSteadyStateCommandBufferAllocations");
+    }
+
+    [Test]
+    public void SwapchainPrimaryCommandBufferReuse_IsExplicitOptInForFrameOps()
+    {
+        string envSource = ReadWorkspaceFile("XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferState.cs");
+        string recordingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string allocationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferAllocation.cs");
+
+        envSource.ShouldContain("VulkanPrimaryCommandBufferReuse = \"XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE\"");
+        stateSource.ShouldContain("VulkanPrimaryCommandBufferReuseEnabled");
+        recordingSource.ShouldContain("VulkanPrimaryCommandBufferReuseEnabled &&");
+        recordingSource.ShouldContain("bool frameOpsRequireFreshPrimary = hasStaticFrameOps && !VulkanPrimaryCommandBufferReuseEnabled;");
+        recordingSource.ShouldContain("usingCommandChains && variant.FrameOpsSignature != frameOpsSignature");
+        allocationSource.ShouldContain("variant.FrameOpsSignature == frameOpsSignature");
+        allocationSource.ShouldContain("variant.DynamicUiSignature == dynamicUiBatchTextSignature");
+        recordingSource.ShouldContain("primaryFrameStateDirty = true;");
+        recordingSource.ShouldContain("\"primary-frame-state\"");
     }
 
     [Test]

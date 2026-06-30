@@ -304,7 +304,7 @@ public class GpuRenderingBacklogTests
         coordinator.BeginPass(renderPass: 0, camera, sceneCommandCount: 1024u);
 
         for (uint i = 0; i < 1024u; i++)
-            coordinator.ShouldRender(renderPass: 0, sourceCommandIndex: i).ShouldBeTrue();
+            coordinator.ShouldRender(0, camera, i, out _).ShouldBe(ECpuOcclusionDecision.Visible);
 
         sw.Stop();
         sw.ElapsedMilliseconds.ShouldBeLessThan(5000);
@@ -314,12 +314,13 @@ public class GpuRenderingBacklogTests
     public void Occlusion_TemporalHysteresis_ReducesPopping()
     {
         var coordinator = new CpuRenderOcclusionCoordinator();
+        var camera = new XRCamera();
 
         Type coordinatorType = typeof(CpuRenderOcclusionCoordinator);
-        Type passStateType = coordinatorType.GetNestedType("PassState", BindingFlags.NonPublic)!;
         Type queryStateType = coordinatorType.GetNestedType("QueryState", BindingFlags.NonPublic)!;
 
-        object passState = Activator.CreateInstance(passStateType, nonPublic: true)!;
+        coordinator.BeginPass(0, camera, sceneCommandCount: 1u);
+        object passState = InvokeNonPublic(coordinator, "GetPassState", 0, camera).ShouldNotBeNull();
         object queryState = Activator.CreateInstance(queryStateType, nonPublic: true)!;
 
         SetNonPublicField(queryState, "LastAnySamplesPassed", false);
@@ -329,13 +330,10 @@ public class GpuRenderingBacklogTests
         IDictionary queries = (IDictionary)GetNonPublicField(passState, "Queries");
         queries[43u] = queryState;
 
-        IDictionary passStates = (IDictionary)GetNonPublicField(coordinator, "_passStates");
-        passStates[0] = passState;
-
         SetNonPublicField(queryState, "LastDecidedFrameId", ulong.MaxValue);
-        coordinator.ShouldRender(0, 43u).ShouldBeTrue();
+        coordinator.ShouldRender(0, camera, 43u, out _).ShouldBe(ECpuOcclusionDecision.Visible);
         SetNonPublicField(queryState, "LastDecidedFrameId", ulong.MaxValue);
-        coordinator.ShouldRender(0, 43u).ShouldBeFalse();
+        coordinator.ShouldRender(0, camera, 43u, out _).ShouldBe(ECpuOcclusionDecision.Skip);
     }
 
     [Test]

@@ -495,52 +495,55 @@ public unsafe partial class VulkanRenderer
 			out int vertexBufferCount,
 			out string reason)
 		{
-			vertexBufferCount = _vertexBindings.Length;
-			reason = "Ready";
-			vertexBuffers = null;
-			vertexBindings = null;
-
-			if (vertexBufferCount == 0)
-				return true;
-
-			vertexBuffers = ArrayPool<VkBufferHandle>.Shared.Rent(vertexBufferCount);
-			vertexBindings = ArrayPool<uint>.Shared.Rent(vertexBufferCount);
-
-			for (int i = 0; i < vertexBufferCount; i++)
+			lock (_bufferStateSync)
 			{
-				VertexInputBindingDescription binding = _vertexBindings[i];
-				if (!_vertexBuffersByBinding.TryGetValue(binding.Binding, out VkDataBuffer? sourceBuffer))
+				vertexBufferCount = _vertexBindings.Length;
+				reason = "Ready";
+				vertexBuffers = null;
+				vertexBindings = null;
+
+				if (vertexBufferCount == 0)
+					return true;
+
+				vertexBuffers = ArrayPool<VkBufferHandle>.Shared.Rent(vertexBufferCount);
+				vertexBindings = ArrayPool<uint>.Shared.Rent(vertexBufferCount);
+
+				for (int i = 0; i < vertexBufferCount; i++)
 				{
-					reason = $"vertex binding {binding.Binding} has no backing buffer";
-					ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
-					vertexBuffers = null;
-					vertexBindings = null;
-					return false;
+					VertexInputBindingDescription binding = _vertexBindings[i];
+					if (!_vertexBuffersByBinding.TryGetValue(binding.Binding, out VkDataBuffer? sourceBuffer))
+					{
+						reason = $"vertex binding {binding.Binding} has no backing buffer";
+						ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
+						vertexBuffers = null;
+						vertexBindings = null;
+						return false;
+					}
+
+					if (!sourceBuffer.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads))
+					{
+						reason = $"vertex binding {binding.Binding} buffer is not ready";
+						ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
+						vertexBuffers = null;
+						vertexBindings = null;
+						return false;
+					}
+
+					if (sourceBuffer.BufferHandle is not { } handle || handle.Handle == 0)
+					{
+						reason = $"vertex binding {binding.Binding} buffer is not allocated";
+						ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
+						vertexBuffers = null;
+						vertexBindings = null;
+						return false;
+					}
+
+					vertexBindings[i] = binding.Binding;
+					vertexBuffers[i] = handle;
 				}
 
-				if (!sourceBuffer.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads))
-				{
-					reason = $"vertex binding {binding.Binding} buffer is not ready";
-					ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
-					vertexBuffers = null;
-					vertexBindings = null;
-					return false;
-				}
-
-				if (sourceBuffer.BufferHandle is not { } handle || handle.Handle == 0)
-				{
-					reason = $"vertex binding {binding.Binding} buffer is not allocated";
-					ReturnRentedVertexBufferSnapshot(vertexBuffers, vertexBindings);
-					vertexBuffers = null;
-					vertexBindings = null;
-					return false;
-				}
-
-				vertexBindings[i] = binding.Binding;
-				vertexBuffers[i] = handle;
+				return true;
 			}
-
-			return true;
 		}
 
 		private static void ReturnRentedVertexBufferSnapshot(VkBufferHandle[]? vertexBuffers, uint[]? vertexBindings)
@@ -578,34 +581,37 @@ public unsafe partial class VulkanRenderer
 		/// </summary>
 		private bool BindVertexBuffersForCurrentPipeline(CommandBuffer commandBuffer)
 		{
-			if (_vertexBindings.Length == 0)
-				return true;
-
-			foreach (VertexInputBindingDescription binding in _vertexBindings)
+			lock (_bufferStateSync)
 			{
-				if (!_vertexBuffersByBinding.TryGetValue(binding.Binding, out VkDataBuffer? sourceBuffer))
+				if (_vertexBindings.Length == 0)
+					return true;
+
+				foreach (VertexInputBindingDescription binding in _vertexBindings)
 				{
-					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} has no backing buffer.");
-					return false;
+					if (!_vertexBuffersByBinding.TryGetValue(binding.Binding, out VkDataBuffer? sourceBuffer))
+					{
+						WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} has no backing buffer.");
+						return false;
+					}
+
+					if (!sourceBuffer.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads))
+					{
+						WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not ready.");
+						return false;
+					}
+
+					if (sourceBuffer.BufferHandle is not { } handle || handle.Handle == 0)
+					{
+						WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not allocated.");
+						return false;
+					}
+
+					_singleVertexBindingBuffer[0] = handle;
+					Renderer.BindVertexBuffersTracked(commandBuffer, binding.Binding, _singleVertexBindingBuffer, _singleVertexBindingOffset);
 				}
 
-				if (!sourceBuffer.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads))
-				{
-					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not ready.");
-					return false;
-				}
-
-				if (sourceBuffer.BufferHandle is not { } handle || handle.Handle == 0)
-				{
-					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not allocated.");
-					return false;
-				}
-
-				_singleVertexBindingBuffer[0] = handle;
-				Renderer.BindVertexBuffersTracked(commandBuffer, binding.Binding, _singleVertexBindingBuffer, _singleVertexBindingOffset);
+				return true;
 			}
-
-			return true;
 		}
 
 		/// <summary>

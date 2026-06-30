@@ -1062,6 +1062,7 @@ public unsafe partial class VulkanRenderer
 
     public partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.BaseVersion data) : VkObject<XRMeshRenderer.BaseVersion>(api, data), IRenderPreparationState
     {
+        private readonly object _bufferStateSync = new();
         private readonly Dictionary<string, VkDataBuffer> _bufferCache = new(StringComparer.Ordinal);
         private XRMesh.BufferCollection? _subscribedRendererBuffers;
         private XRMesh.BufferCollection? _subscribedMeshBuffers;
@@ -1086,51 +1087,54 @@ public unsafe partial class VulkanRenderer
 
         internal VulkanFrameDrawStats EstimateFrameDrawStats(in PendingMeshDraw draw)
         {
-            bool skipLinePointDraws = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
-            uint instances = draw.Instances;
-            int drawCalls = 0;
-            int trianglesRendered = 0;
-
-            uint triangleIndexCount = _triangleIndexBuffer?.Data.ElementCount ?? 0u;
-            if (triangleIndexCount > 0u)
+            lock (_bufferStateSync)
             {
-                drawCalls++;
-                trianglesRendered = AddSaturated(
-                    trianglesRendered,
-                    EstimateTriangleCount(triangleIndexCount, instances));
-            }
+                bool skipLinePointDraws = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
+                uint instances = draw.Instances;
+                int drawCalls = 0;
+                int trianglesRendered = 0;
 
-            if (!skipLinePointDraws)
-            {
-                if ((_lineIndexBuffer?.Data.ElementCount ?? 0u) > 0u)
-                    drawCalls++;
-                if ((_pointIndexBuffer?.Data.ElementCount ?? 0u) > 0u)
-                    drawCalls++;
-            }
-
-            if (drawCalls == 0 && Mesh is not null)
-            {
-                uint vertexCount = (uint)Math.Max(Mesh.VertexCount, 0);
-                PrimitiveTopology fallbackTopology = Mesh.Type switch
+                uint triangleIndexCount = _triangleIndexBuffer?.Data.ElementCount ?? 0u;
+                if (triangleIndexCount > 0u)
                 {
-                    EPrimitiveType.Points => PrimitiveTopology.PointList,
-                    EPrimitiveType.Lines => PrimitiveTopology.LineList,
-                    EPrimitiveType.LineStrip => PrimitiveTopology.LineStrip,
-                    EPrimitiveType.TriangleStrip => PrimitiveTopology.TriangleStrip,
-                    EPrimitiveType.TriangleFan => PrimitiveTopology.TriangleFan,
-                    EPrimitiveType.Patches => PrimitiveTopology.PatchList,
-                    _ => PrimitiveTopology.TriangleList,
-                };
-
-                if (vertexCount > 0u && (!skipLinePointDraws || IsTriangleClassTopology(fallbackTopology)))
-                {
-                    drawCalls = 1;
-                    if (IsTriangleClassTopology(fallbackTopology))
-                        trianglesRendered = EstimateTriangleCount(vertexCount, instances);
+                    drawCalls++;
+                    trianglesRendered = AddSaturated(
+                        trianglesRendered,
+                        EstimateTriangleCount(triangleIndexCount, instances));
                 }
-            }
 
-            return new VulkanFrameDrawStats(drawCalls, MultiDrawCalls: 0, trianglesRendered);
+                if (!skipLinePointDraws)
+                {
+                    if ((_lineIndexBuffer?.Data.ElementCount ?? 0u) > 0u)
+                        drawCalls++;
+                    if ((_pointIndexBuffer?.Data.ElementCount ?? 0u) > 0u)
+                        drawCalls++;
+                }
+
+                if (drawCalls == 0 && Mesh is not null)
+                {
+                    uint vertexCount = (uint)Math.Max(Mesh.VertexCount, 0);
+                    PrimitiveTopology fallbackTopology = Mesh.Type switch
+                    {
+                        EPrimitiveType.Points => PrimitiveTopology.PointList,
+                        EPrimitiveType.Lines => PrimitiveTopology.LineList,
+                        EPrimitiveType.LineStrip => PrimitiveTopology.LineStrip,
+                        EPrimitiveType.TriangleStrip => PrimitiveTopology.TriangleStrip,
+                        EPrimitiveType.TriangleFan => PrimitiveTopology.TriangleFan,
+                        EPrimitiveType.Patches => PrimitiveTopology.PatchList,
+                        _ => PrimitiveTopology.TriangleList,
+                    };
+
+                    if (vertexCount > 0u && (!skipLinePointDraws || IsTriangleClassTopology(fallbackTopology)))
+                    {
+                        drawCalls = 1;
+                        if (IsTriangleClassTopology(fallbackTopology))
+                            trianglesRendered = EstimateTriangleCount(vertexCount, instances);
+                    }
+                }
+
+                return new VulkanFrameDrawStats(drawCalls, MultiDrawCalls: 0, trianglesRendered);
+            }
         }
 
         private static int EstimateTriangleCount(uint vertexOrIndexCount, uint instances)
@@ -1245,11 +1249,15 @@ public unsafe partial class VulkanRenderer
             Renderer.DrainVulkanPipelineCompileJobsForOwner(this);
             DestroyPipelines();
             DestroyGeneratedPrograms();
-            _bufferCache.Clear();
-            _triangleIndexBuffer = null;
-            _lineIndexBuffer = null;
-            _pointIndexBuffer = null;
-            _indexBuffersSkippedForShaderGeneratedVertices = false;
+            lock (_bufferStateSync)
+            {
+                _bufferCache.Clear();
+                _vertexBuffersByBinding.Clear();
+                _triangleIndexBuffer = null;
+                _lineIndexBuffer = null;
+                _pointIndexBuffer = null;
+                _indexBuffersSkippedForShaderGeneratedVertices = false;
+            }
         }
 
         private void OnBuffersChanged() => InvalidateGeometryLayout("RendererBuffersChanged", collectBuffers: true);
@@ -1317,22 +1325,25 @@ public unsafe partial class VulkanRenderer
 
         private void InvalidateGeometryLayout(string reason, bool collectBuffers)
         {
-            _pipelineDirty = true;
-            _buffersDirty = true;
-            _descriptorDirty = true;
-            _lastPreparedMaterial = null;
-            _triangleIndexBuffer = null;
-            _lineIndexBuffer = null;
-            _pointIndexBuffer = null;
-            _indexBuffersSkippedForShaderGeneratedVertices = false;
-            _geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
-            _lastPrepareResult = reason;
-            _lastPrepareDetail = "Geometry layout changed.";
+            lock (_bufferStateSync)
+            {
+                _pipelineDirty = true;
+                _buffersDirty = true;
+                _descriptorDirty = true;
+                _lastPreparedMaterial = null;
+                _triangleIndexBuffer = null;
+                _lineIndexBuffer = null;
+                _pointIndexBuffer = null;
+                _indexBuffersSkippedForShaderGeneratedVertices = false;
+                _geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
+                _lastPrepareResult = reason;
+                _lastPrepareDetail = "Geometry layout changed.";
 
-            if (collectBuffers)
-                CollectBuffers();
-            else
-                Renderer.MarkCommandBuffersDirty();
+                if (collectBuffers)
+                    CollectBuffers();
+                else
+                    Renderer.MarkCommandBuffersDirty();
+            }
         }
 
         private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode)

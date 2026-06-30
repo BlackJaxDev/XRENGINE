@@ -82,7 +82,9 @@ namespace XREngine.Data.Components.Scene
                 }
             }
 
-            SetRenderMatrix(mtx * ParentRenderMatrix, true);
+            Matrix4x4 renderMatrix = mtx * ParentRenderMatrix;
+            bool isOpenXrHeadset = RuntimeVrStateServices.IsOpenXRActive && this is XREngine.Scene.Transforms.VRHeadsetTransform;
+            SetRenderMatrix(renderMatrix, recalcAllChildRenderMatrices: !isOpenXrHeadset);
         }
 
         /// <summary>

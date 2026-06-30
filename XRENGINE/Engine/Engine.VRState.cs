@@ -602,16 +602,37 @@ namespace XREngine
                 _sharedMeshRenderCommands = new RenderCommandCollection();
                 _sharedMeshRenderCommands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
 
-                // Wire the desktop viewport to share the same culled commands instead of collecting independently.
+                ConfigureDesktopViewportForVrWindow(window);
+
+                RecalculateStereoCullingFrustum();
+            }
+
+            private static void ConfigureDesktopViewportForVrWindow(XRWindow window)
+            {
                 var desktopViewport = window.Viewports.FirstOrDefault();
-                if (desktopViewport is not null)
+                if (desktopViewport is null)
+                    return;
+
+                bool shareStereoCommands = RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures;
+                bool independentDesktopView = RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR && !shareStereoCommands;
+                if (_sharedMeshRenderCommands is not null)
+                    _sharedMeshRenderCommands.IsRenderCommandSnapshotAuthority = !independentDesktopView;
+
+                if (shareStereoCommands)
                 {
+                    // Eye-texture mirror mode does not run an independent desktop scene view.
                     desktopViewport.AutomaticallyCollectVisible = false;
                     desktopViewport.AutomaticallySwapBuffers = false;
                     desktopViewport.MeshRenderCommandsOverride = _sharedMeshRenderCommands;
+                    return;
                 }
 
-                RecalculateStereoCullingFrustum();
+                // Runtime desktop/cyclopean camera mode renders a real third view, so it must not
+                // consume the stereo eye command buffer. Sharing that buffer can make deferred
+                // meshes appear/disappear as the eye-visible set is swapped for a different camera.
+                desktopViewport.MeshRenderCommandsOverride = null;
+                desktopViewport.AutomaticallyCollectVisible = true;
+                desktopViewport.AutomaticallySwapBuffers = true;
             }
 
             private static void RemakeTwoPass(XRWindow window, uint rW, uint rH, XRTexture2D left, XRTexture2D right)

@@ -24,6 +24,7 @@ public static partial class EditorUnitTests
     public static class Pawns
     {
         private const string EditorViewCameraName = "Editor View";
+        private const float FirstPersonDesktopHorizontalFieldOfView = 50.0f;
 
         public static SceneNode? CreatePlayerPawn(bool setUI, bool isServer, SceneNode rootNode)
         {
@@ -32,7 +33,7 @@ public static partial class EditorUnitTests
             {
                 if (Toggles.Locomotion)
                 {
-                    characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, setUI, out var pawn, out _, out var leftHand, out var rightHand);
+                    characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, setUI, out _, out _, out _, out _);
                     if (Toggles.AllowEditingInVR || Toggles.AddCameraVRPickup)
                     {
                         SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
@@ -40,8 +41,6 @@ public static partial class EditorUnitTests
                         if (setUI)
                             UserInterface.CreateEditorUI(rootNode, camComp, pawn2);
                     }
-                    else if (setUI) //TODO: render ui on left or right controller when opened
-                        UserInterface.CreateEditorUI(characterPawnModelParentNode, pawn.CameraComponent, pawn);
                 }
                 else
                 {
@@ -294,18 +293,10 @@ public static partial class EditorUnitTests
         private static void AddVRFirstPersonDesktopView(ref PawnComponent? pawn, SceneNode parentNode)
         {
             SceneNode firstPersonViewNode = new(parentNode) { Name = "FirstPersonViewNode" };
-            var firstPersonViewTfm = firstPersonViewNode.SetTransform<SmoothedParentConstraintTransform>();
-            firstPersonViewTfm.TranslationInterpolationSpeed = null;
-            firstPersonViewTfm.ScaleInterpolationSpeed = null;
-            firstPersonViewTfm.QuaternionInterpolationSpeed = null;
-            //firstPersonViewTfm.SplitYPR = true;
-            //firstPersonViewTfm.YawInterpolationSpeed = 5.0f;
-            //firstPersonViewTfm.PitchInterpolationSpeed = 5.0f;
-            //firstPersonViewTfm.IgnoreRoll = true;
-            //firstPersonViewTfm.UseLookAtYawPitch = true;
+            firstPersonViewNode.SetTransform<Transform>();
             var firstPersonCam = firstPersonViewNode.AddComponent<CameraComponent>()!;
             var persp = firstPersonCam.Camera.Parameters as XRPerspectiveCameraParameters;
-            persp!.HorizontalFieldOfView = 50.0f;
+            persp!.HorizontalFieldOfView = FirstPersonDesktopHorizontalFieldOfView;
             persp.NearZ = 0.1f;
             persp.FarZ = 100000.0f;
             firstPersonCam.Camera.RenderPipeline = Engine.Rendering.NewRenderPipeline(stereo: false);

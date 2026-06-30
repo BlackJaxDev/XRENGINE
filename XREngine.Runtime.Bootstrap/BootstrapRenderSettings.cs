@@ -58,11 +58,21 @@ public static class BootstrapRenderSettings
             renderSettings.RecalcChildMatricesLoopType = settings.RecalcChildMatricesType;
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.TickGroupedItemsInParallel)))
             renderSettings.TickGroupedItemsInParallel = settings.TickGroupedItemsInParallel;
+        if (settings.CameraAntiAliasingModeOverride.HasValue)
+        {
+            Engine.GameSettings.AntiAliasingModeOverride = new OverrideableSetting<EAntiAliasingMode>(
+                settings.CameraAntiAliasingModeOverride.Value,
+                hasOverride: true);
+            Engine.Rendering.ApplyAntiAliasingPreference();
+        }
 
-        bool requiresDesktopVrWindow = settings.VRPawn && (settings.AllowEditingInVR || settings.PreviewVRStereoViews);
-        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) || requiresDesktopVrWindow)
-            renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR || requiresDesktopVrWindow;
-        renderSettings.VrMirrorComposeFromEyeTextures = !requiresDesktopVrWindow;
+        bool requiresIndependentDesktopWindow = settings.VRPawn && (settings.AllowEditingInVR || settings.PreviewVRStereoViews);
+        bool usesRuntimeDesktopCamera = settings.VRPawn && !settings.AllowEditingInVR;
+        if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) ||
+            requiresIndependentDesktopWindow ||
+            usesRuntimeDesktopCamera)
+            renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;
+        renderSettings.VrMirrorComposeFromEyeTextures = false;
         renderSettings.VrCopyEyePreviewTextures = settings.PreviewVRStereoViews;
 
         bool groupedRenderingSpecified = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));
@@ -97,6 +107,7 @@ public static class BootstrapRenderSettings
             $"VrViewRenderMode={renderSettings.VrViewRenderMode} " +
             $"VrFoveationMode={renderSettings.VrFoveationMode} " +
             $"EnableVrFoveatedViewSet={renderSettings.EnableVrFoveatedViewSet} " +
+            $"EffectiveAntiAliasingMode={Engine.EffectiveSettings.AntiAliasingMode} " +
             $"RenderWindowsWhileInVR={renderSettings.RenderWindowsWhileInVR} " +
             $"VrMirrorComposeFromEyeTextures={renderSettings.VrMirrorComposeFromEyeTextures} " +
             $"VrCopyEyePreviewTextures={renderSettings.VrCopyEyePreviewTextures}");

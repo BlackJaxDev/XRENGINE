@@ -149,14 +149,14 @@ public sealed class OpenXrTimingPipelineContractTests
             vulkanRendererOpenXr,
             "private bool TryReuseOpenXrPrimaryCommandBuffer",
             "private CommandBuffer RecordOpenXrPrimaryCommandBuffer");
-        directPrimaryReuse.ShouldContain("bool requiresExactFrameOps = !usingCommandChains || HasTextureUploadFrameOps(ops);");
+        directPrimaryReuse.ShouldContain("bool requiresExactFrameOps = true;");
         directPrimaryReuse.ShouldContain("(requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature)");
         directPrimaryReuse.ShouldContain("(!usingCommandChains && variant.PlannerRevision != plannerRevision)");
         string mirrorPrimaryReuse = SliceMethod(
             vulkanRendererOpenXr,
             "private bool TryReuseOpenXrMirrorPrimaryCommandBuffer",
             "private CommandBuffer RecordOpenXrMirrorPrimaryCommandBuffer");
-        mirrorPrimaryReuse.ShouldContain("bool requiresExactFrameOps = !usingCommandChains || HasTextureUploadFrameOps(ops);");
+        mirrorPrimaryReuse.ShouldContain("bool requiresExactFrameOps = true;");
         mirrorPrimaryReuse.ShouldContain("(requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature)");
         mirrorPrimaryReuse.ShouldContain("(!usingCommandChains && variant.PlannerRevision != plannerRevision)");
         vulkanRendererOpenXr.ShouldContain("SubmitAndWaitOpenXrCommandBuffers(");
@@ -223,7 +223,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string directEyeRecord = SliceMethod(
             vulkanRendererOpenXr,
             "private bool TryRecordOpenXrEyeSwapchainCommandBuffer",
-            "private void EnsureOpenXrSingleSwapchainSlotCapacity");
+            "private bool TryReuseOpenXrPrimaryCommandBuffer");
         directEyeRecord.IndexOf("WaitForOpenXrFrameDataSlot(recordImageIndex, \"eye swapchain render\");", StringComparison.Ordinal)
             .ShouldBeLessThan(directEyeRecord.IndexOf("ResetDynamicUniformRingBuffer(recordImageIndex);", StringComparison.Ordinal));
 
@@ -456,6 +456,14 @@ public sealed class OpenXrTimingPipelineContractTests
             openGl,
             "private float UpdateOpenXrEyeCameraFromView",
             "private void ApplyOpenXrEyePoseForRenderThread");
+        string collectVisible = SliceMethod(
+            frameLifecycle,
+            "private void OpenXrCollectVisible()",
+            "private bool CollectOpenXrStereoVisible");
+        string prepareNextFrame = SliceMethod(
+            frameLifecycle,
+            "private void PrepareNextFrameForPacingOwner()",
+            "private void EndBegunFrameWithoutLayers");
 
         collectCameraUpdate.ShouldContain("lock (_openXrPoseLock)");
         collectCameraUpdate.ShouldContain("_openXrPredLeftEyeFov");
@@ -465,8 +473,13 @@ public sealed class OpenXrTimingPipelineContractTests
         state.ShouldContain("_openXrPredRightEyeLocalPose");
         collectCameraUpdate.ShouldNotContain("_views[");
 
-        frameLifecycle.ShouldContain("InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Predicted)");
-        frameLifecycle.ShouldContain("InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Late)");
+        collectVisible.ShouldContain("OpenXR.CollectVisible.ApplyPredictedVrRigPose");
+        collectVisible.ShouldContain("InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Predicted)");
+        prepareNextFrame.ShouldNotContain("InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Predicted)");
+        frameLifecycle.ShouldNotContain("InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Late)");
+        frameLifecycle.ShouldContain("ApplyOpenXrEyePoseForRenderThread instead");
+        openGl.ShouldContain("private void ApplyOpenXrEyePoseForRenderThread");
+        openGl.ShouldContain("camera.Transform.SetRenderMatrix(eyeRender, recalcAllChildRenderMatrices: false);");
         runtimeVrState.ShouldContain("Action<RuntimeVrPoseTiming>?");
         engineVrState.ShouldNotContain("PoseTimingForRecalc");
     }
@@ -583,7 +596,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void OpenXrSmokeRun_UsesStableExitCodesAndSummaryContract()
     {
-        string program = ReadWorkspaceFile("XREngine.Editor/Program.cs");
+        string program = ReadWorkspaceFile("XREngine.Editor/Program.OpenXrSmokeRunController.cs");
         string diagnostics = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SmokeDiagnostics.cs");
         string xrCalls = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs");
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
@@ -698,7 +711,7 @@ public sealed class OpenXrTimingPipelineContractTests
         store.ShouldContain("monado-service.exe");
         store.ShouldContain("openxr_monado-dev.json");
 
-        program.ShouldContain("VR.Mode=MonadoOpenXR or OpenXR");
+        store.ShouldContain("settings.VR.Mode is UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR");
 
         settings.ShouldContain("public UnitTestingVrSettings VR");
         settings.ShouldContain("MonadoOpenXR");
@@ -708,11 +721,54 @@ public sealed class OpenXrTimingPipelineContractTests
         editorUnitTestingPawns.ShouldContain("pawnComp.CameraComponent = cameraComponent");
         editorUnitTestingPawns.ShouldContain("Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();");
         bootstrapRenderSettings.ShouldContain("renderSettings.VrCopyEyePreviewTextures = settings.PreviewVRStereoViews");
+        bootstrapRenderSettings.ShouldContain("usesRuntimeDesktopCamera");
+        bootstrapRenderSettings.ShouldContain("renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;");
+        bootstrapRenderSettings.ShouldContain("renderSettings.VrMirrorComposeFromEyeTextures = false");
         bootstrapRenderSettings.ShouldContain("VrCopyEyePreviewTextures={renderSettings.VrCopyEyePreviewTextures}");
         editorUnitTestingWorld.ShouldContain("s.VrCopyEyePreviewTextures = previewVrStereoViews");
+        editorUnitTestingWorld.ShouldContain("usesRuntimeDesktopCamera");
+        editorUnitTestingWorld.ShouldContain("s.VrMirrorComposeFromEyeTextures = false");
         editorUnitTestingWorld.ShouldContain("VrCopyEyePreviewTextures={s.VrCopyEyePreviewTextures}");
         engineState.ShouldContain("XRComponent? controlledPawn = existing.ControlledPawnComponent");
         engineState.ShouldContain("replacement.ControlledPawnComponent = controlledPawn");
+    }
+
+    [Test]
+    public void RuntimeVrDesktopView_DoesNotReuseEyeCommandsOrEditorImGuiWhenDesktopEditingDisabled()
+    {
+        string vrState = ReadWorkspaceFile("XRENGINE/Engine/Engine.VRState.cs");
+        string vrDeviceTransform = ReadWorkspaceFile("XREngine.Runtime.InputIntegration/Scene/Transforms/VR/VRDeviceTransformBase.cs");
+        string openXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs");
+        string openXrState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
+        string bootstrapPawns = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapPawnFactory.cs");
+        string editorUnitTestingPawns = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Pawns.cs");
+        string editorImGui = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.ImGui.cs");
+
+        vrState.ShouldContain("ConfigureDesktopViewportForVrWindow(window);");
+        vrState.ShouldContain("bool shareStereoCommands = RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures;");
+        vrState.ShouldNotContain("!RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR ||");
+        vrState.ShouldContain("desktopViewport.MeshRenderCommandsOverride = null");
+        vrState.ShouldContain("desktopViewport.AutomaticallyCollectVisible = true");
+        vrState.ShouldContain("desktopViewport.AutomaticallySwapBuffers = true");
+        vrState.ShouldContain("_sharedMeshRenderCommands.IsRenderCommandSnapshotAuthority = !independentDesktopView;");
+        vrDeviceTransform.ShouldContain("RuntimeVrStateServices.IsOpenXRActive && this is XREngine.Scene.Transforms.VRHeadsetTransform");
+        vrDeviceTransform.ShouldContain("SetRenderMatrix(renderMatrix, recalcAllChildRenderMatrices: !isOpenXrHeadset)");
+        vrDeviceTransform.ShouldNotContain("PropagateOpenXrHeadsetRenderMatrixToNonEyeChildren");
+        vrDeviceTransform.ShouldNotContain("child.LocalMatrix * parentRenderMatrix");
+        openXrApi.ShouldContain("camera.Transform.SetRenderMatrix(localPose * rootRender, recalcAllChildRenderMatrices: false);");
+        openXrState.ShouldContain("commands.IsRenderCommandSnapshotAuthority = !HasIndependentDesktopVrView();");
+        openXrState.ShouldContain("return hostServices.RenderWindowsWhileInVR && !hostServices.VrMirrorComposeFromEyeTextures;");
+        string editorUnitTestingWorld = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.cs");
+        editorUnitTestingWorld.ShouldContain("s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;");
+        editorUnitTestingPawns.ShouldContain("firstPersonViewNode.SetTransform<Transform>();");
+        editorUnitTestingPawns.ShouldNotContain("var firstPersonViewTfm = firstPersonViewNode.SetTransform<SmoothedParentConstraintTransform>();");
+
+        bootstrapPawns.ShouldNotContain("CreateEditorUi(characterPawnModelParentNode");
+        editorUnitTestingPawns.ShouldNotContain("CreateEditorUI(characterPawnModelParentNode");
+
+        editorImGui.ShouldContain("ShouldSuppressEditorImGuiForRuntimeVrView");
+        editorImGui.ShouldContain("!EditorUnitTests.Toggles.AllowEditingInVR");
+        editorImGui.ShouldContain("Engine.Input.SetUIInputCaptured(false)");
     }
 
     [Test]
@@ -1158,6 +1214,43 @@ public sealed class OpenXrTimingPipelineContractTests
         // PaddedFrustum is the only branch that returns a non-zero padding.
         cameraUpdate.ShouldContain("OpenXrCollectVisiblePosePolicy.PaddedFrustum");
         cameraUpdate.ShouldContain("OpenXrCollectFrustumPaddingDegrees");
+    }
+
+    [Test]
+    public void VulkanOpenXr_RetiredResourceDrainCleansCompletedSlotsIncludingImages()
+    {
+        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+
+        vulkanOpenXr.ShouldContain("DrainRetiredResourcesFromCompletedSubmittedFrameSlots");
+        vulkanOpenXr.ShouldNotContain("DrainRetiredResourcesIfSubmittedFrameSlotsCompleted");
+        vulkanOpenXr.ShouldNotContain("ForceFlushCompletedNonImageRetiredResources();");
+        CountOccurrences(vulkanOpenXr, "DrainRetiredResourcesFromCompletedSubmittedFrameSlots();")
+            .ShouldBeGreaterThanOrEqualTo(8);
+
+        string drainMethod = SliceMethod(
+            vulkanOpenXr,
+            "private void DrainRetiredResourcesFromCompletedSubmittedFrameSlots",
+            "private void WaitForOpenXrFrameDataSlot");
+
+        drainMethod.ShouldContain("int frameSlotCount = Math.Min(_frameSlotTimelineValues.Length, MAX_FRAMES_IN_FLIGHT);");
+        drainMethod.ShouldContain("Volatile.Read(ref _windowRenderCallbackInProgress)");
+        drainMethod.ShouldContain("activeDesktopFrameSlot = desktopFrameActive ? currentFrame : -1");
+        drainMethod.ShouldContain("skipped retired-resource drain for active desktop frame slot");
+        drainMethod.ShouldContain("DrainRetiredPipelines(i, int.MaxValue);");
+        drainMethod.ShouldContain("DrainRetiredBuffers(i, int.MaxValue);");
+        drainMethod.ShouldContain("DrainRetiredFramebuffers(i, int.MaxValue);");
+        drainMethod.ShouldContain("DrainRetiredImages(i, int.MaxValue);");
+        drainMethod.ShouldNotContain("deferred completed-slot retired-resource drain because desktop frame");
+        drainMethod.ShouldNotContain("int savedFrameSlot = currentFrame;");
+        drainMethod.ShouldNotContain("currentFrame = i;");
+
+        string pendingSlotBranch = SliceMethod(
+            drainMethod,
+            "if (value != 0 && !HasTimelineValueCompleted(_graphicsTimelineSemaphore, value))",
+            "DrainRetiredDescriptorPools(i, int.MaxValue);");
+
+        pendingSlotBranch.ShouldContain("continue;");
+        pendingSlotBranch.ShouldNotContain("return;");
     }
 
     private static int CountOccurrences(string source, string needle)

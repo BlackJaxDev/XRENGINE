@@ -87,7 +87,15 @@ namespace XREngine.Components.Scene.Transforms
             set => SetField(ref _useLookAtYawPitch, value);
         }
 
+        private bool _useParentRenderMatrix = false;
+        public bool UseParentRenderMatrix
+        {
+            get => _useParentRenderMatrix;
+            set => SetField(ref _useParentRenderMatrix, value);
+        }
+
         private Matrix4x4 _currentMatrix = Matrix4x4.Identity;
+        private bool _hasCurrentMatrix;
 
         protected override Matrix4x4 CreateLocalMatrix()
         {
@@ -110,7 +118,14 @@ namespace XREngine.Components.Scene.Transforms
         private void CalcCurrentMatrix()
         {
             var currMatrix = _currentMatrix;
-            var destMatrix = ParentRenderMatrix;
+            var destMatrix = UseParentRenderMatrix ? ParentRenderMatrix : ParentWorldMatrix;
+
+            if (!_hasCurrentMatrix)
+            {
+                _currentMatrix = destMatrix;
+                _hasCurrentMatrix = true;
+                return;
+            }
 
             if (Matrix4x4.Decompose(currMatrix, out var currScale, out var currRot, out var currTrans))
             {
@@ -262,7 +277,7 @@ namespace XREngine.Components.Scene.Transforms
 
         protected override void OnSceneNodeActivated()
         {
-            _currentMatrix = ParentWorldMatrix;
+            _currentMatrix = UseParentRenderMatrix ? ParentRenderMatrix : ParentWorldMatrix;
             RegisterTick(ETickGroup.Normal, (int)ETickOrder.Scene, Tick);
         }
         protected override void OnSceneNodeDeactivated()

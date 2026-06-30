@@ -951,6 +951,13 @@ public unsafe partial class OpenXRAPI
         if (camera.Parameters is XROpenXRFovCameraParameters openxrParams)
             openxrParams.SetAngles(fov.Left, fov.Right, fov.Up, fov.Down);
 
+        Matrix4x4 localPose;
+        lock (_openXrPoseLock)
+            localPose = leftEye ? _openXrPredLeftEyeLocalPose : _openXrPredRightEyeLocalPose;
+
+        if (TryGetAppVrRigLocomotionRenderMatrix(camera, out Matrix4x4 rootRender))
+            camera.Transform.SetRenderMatrix(localPose * rootRender, recalcAllChildRenderMatrices: false);
+
         return paddingDegrees;
     }
 

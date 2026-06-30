@@ -1,4 +1,5 @@
 using XREngine.Extensions;
+using System.Collections;
 using System;
 using System.IO;
 using System.Numerics;
@@ -24,6 +25,169 @@ namespace XREngine.Rendering.Commands
     {
         int IComparer<RenderCommand>.Compare(RenderCommand? x, RenderCommand? y)
             => x?.CompareTo(y) ?? 0;
+    }
+
+    /// <summary>
+    /// Stores sorted render-pass membership using sort keys captured at collection time.
+    /// The render command instances are shared by desktop, VR eye, shadow, and capture
+    /// viewports; their live RenderDistance/SortOrderKey fields can be updated by another
+    /// camera while this collection is being rendered. A SortedSet over the command itself
+    /// is therefore unsafe because its comparison key mutates under the tree.
+    /// </summary>
+    internal sealed class SnapshotSortedRenderCommandCollection : ICollection<RenderCommand>
+    {
+        private readonly List<Entry> _entries = [];
+        private readonly HashSet<RenderCommand> _membership = new(ReferenceRenderCommandComparer.Instance);
+        private readonly bool _farToNear;
+        private bool _sortDirty;
+
+        public SnapshotSortedRenderCommandCollection(IComparer<RenderCommand> sorter)
+            => _farToNear = sorter.GetType() == typeof(FarToNearRenderCommandSorter);
+
+        public int Count => _entries.Count;
+        public bool IsReadOnly => false;
+
+        public void Add(RenderCommand item)
+            => Add(item, item.SortOrderKey);
+
+        public void Add(RenderCommand item, long sortOrderKey)
+        {
+            if (!_membership.Add(item))
+                return;
+
+            _entries.Add(Entry.Capture(item, sortOrderKey));
+            _sortDirty = true;
+        }
+
+        public void Clear()
+        {
+            _entries.Clear();
+            _membership.Clear();
+            _sortDirty = false;
+        }
+
+        public bool Contains(RenderCommand item)
+            => _membership.Contains(item);
+
+        public void CopyTo(RenderCommand[] array, int arrayIndex)
+        {
+            EnsureSorted();
+            for (int i = 0; i < _entries.Count; i++)
+                array[arrayIndex + i] = _entries[i].Command;
+        }
+
+        public bool Remove(RenderCommand item)
+        {
+            if (!_membership.Remove(item))
+                return false;
+
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                if (ReferenceEquals(_entries[i].Command, item))
+                {
+                    _entries.RemoveAt(i);
+                    break;
+                }
+            }
+
+            return true;
+        }
+
+        public Enumerator GetEnumerator()
+        {
+            EnsureSorted();
+            return new Enumerator(_entries);
+        }
+
+        IEnumerator<RenderCommand> IEnumerable<RenderCommand>.GetEnumerator()
+            => GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator()
+            => GetEnumerator();
+
+        private void EnsureSorted()
+        {
+            if (!_sortDirty)
+                return;
+
+            _entries.Sort(CompareEntries);
+            _sortDirty = false;
+        }
+
+        private int CompareEntries(Entry x, Entry y)
+        {
+            int result = x.RenderDistance.CompareTo(y.RenderDistance);
+            if (result == 0)
+                result = x.SortOrderKey.CompareTo(y.SortOrderKey);
+            if (result == 0)
+                result = x.IdentityHash.CompareTo(y.IdentityHash);
+
+            return _farToNear ? -result : result;
+        }
+
+        internal readonly record struct Entry(
+            RenderCommand Command,
+            float RenderDistance,
+            long SortOrderKey,
+            int IdentityHash)
+        {
+            public static Entry Capture(RenderCommand command, long sortOrderKey)
+                => new(
+                    command,
+                    GetRenderDistance(command),
+                    sortOrderKey,
+                    RuntimeHelpers.GetHashCode(command));
+
+            private static float GetRenderDistance(RenderCommand command)
+                => command switch
+                {
+                    RenderCommand3D command3D => command3D.RenderDistance,
+                    RenderCommand2D command2D => command2D.ZIndex,
+                    _ => 0.0f
+                };
+        }
+
+        private sealed class ReferenceRenderCommandComparer : IEqualityComparer<RenderCommand>
+        {
+            public static readonly ReferenceRenderCommandComparer Instance = new();
+
+            public bool Equals(RenderCommand? x, RenderCommand? y)
+                => ReferenceEquals(x, y);
+
+            public int GetHashCode(RenderCommand obj)
+                => RuntimeHelpers.GetHashCode(obj);
+        }
+
+        public struct Enumerator : IEnumerator<RenderCommand>
+        {
+            private readonly List<Entry> _entries;
+            private int _index = -1;
+
+            internal Enumerator(List<Entry> entries)
+            {
+                _entries = entries;
+            }
+
+            public readonly RenderCommand Current => _entries[_index].Command;
+            readonly object IEnumerator.Current => Current;
+
+            public bool MoveNext()
+            {
+                int nextIndex = _index + 1;
+                if (nextIndex >= _entries.Count)
+                    return false;
+
+                _index = nextIndex;
+                return true;
+            }
+
+            public void Reset()
+                => _index = -1;
+
+            public readonly void Dispose()
+            {
+            }
+        }
     }
 
     /// <summary>
@@ -56,7 +220,7 @@ namespace XREngine.Rendering.Commands
                 string ownerName = _ownerPipeline?.DebugName ?? "<no-owner>";
                 Debug.Rendering($"[RenderCommandCollection] SetRenderPasses called. Owner={ownerName} PassCount={passIndicesAndSorters.Count} Keys=[{string.Join(",", passIndicesAndSorters.Keys.OrderBy(static x => x))}]");
 
-                _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value is null ? [] : (ICollection<RenderCommand>)new SortedSet<RenderCommand>(x.Value));
+                _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => CreatePassCollection(x.Value));
                 _passSorterTypes = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value?.GetType());
                 _updatingPassSortOrderCounters = passIndicesAndSorters.Keys.ToDictionary(static key => key, static _ => 0L);
 
@@ -68,7 +232,7 @@ namespace XREngine.Rendering.Commands
                 foreach (KeyValuePair<int, ICollection<RenderCommand>> pass in _updatingPasses)
                 {
                     // Use TryAdd to safely handle any edge cases with duplicate keys
-                    _renderingPasses.TryAdd(pass.Key, []);
+                    _renderingPasses.TryAdd(pass.Key, CreatePassCollection(passIndicesAndSorters[pass.Key]));
                     
                     if (!_gpuPasses.ContainsKey(pass.Key))
                     {
@@ -82,6 +246,11 @@ namespace XREngine.Rendering.Commands
                 }
             }
         }
+
+        private static ICollection<RenderCommand> CreatePassCollection(IComparer<RenderCommand>? sorter)
+            => sorter is null
+                ? []
+                : new SnapshotSortedRenderCommandCollection(sorter);
 
         private Dictionary<int, RenderPassMetadata> BuildPassMetadata(IEnumerable<RenderPassMetadata>? passMetadata)
         {
@@ -194,13 +363,22 @@ namespace XREngine.Rendering.Commands
         private Dictionary<int, RenderPassMetadata> _passMetadata = [];
         private IRuntimeRenderPipelineDebugContext? _ownerPipeline;
 
-        // Dirty-delta swap queue. AddCPU enqueues a command only when the command is dirty AND has
-        // not already been queued for this swap cycle (RenderCommand._swapQueued). SwapBuffers
-        // walks _renderingSwapQueue exclusively and skips the per-pass walk, which previously cost
-        // up to 240 ms/frame on dense scenes. The lists keep their capacity across Clear() calls,
-        // so steady-state add+swap does not allocate.
+        // Dirty-delta swap queue. AddCPU enqueues a command only when the command is dirty and has
+        // not already been queued in this collection for this swap cycle. The queue membership must
+        // stay collection-local: the same RenderCommand instance can be collected by the desktop
+        // viewport and OpenXR eye viewports before either collection swaps. A global queued bit would
+        // make whichever collection ran first claim the only publish slot.
         private List<RenderCommand> _updatingSwapQueue = new(1024);
         private List<RenderCommand> _renderingSwapQueue = new(1024);
+        private HashSet<RenderCommand> _updatingSwapQueueMembership = new(ReferenceEqualityComparer.Instance);
+        private HashSet<RenderCommand> _renderingSwapQueueMembership = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>
+        /// When false, this collection swaps pass membership but yields shared per-command
+        /// snapshot publishing to any authoritative collection that collected the same command
+        /// this frame. It may still publish commands that no authoritative view collected.
+        /// </summary>
+        public bool IsRenderCommandSnapshotAuthority { get; set; } = true;
 
         public RenderCommandCollection() { }
         public RenderCommandCollection(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters)
@@ -228,6 +406,14 @@ namespace XREngine.Rendering.Commands
         {
             using (_lock.EnterScope())
                 return _updatingPasses.Count;
+        }
+
+        public int GetUpdatingPassCommandCount(int renderPass)
+        {
+            using (_lock.EnterScope())
+                return _updatingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list)
+                    ? list.Count
+                    : 0;
         }
 
         public int GetRenderingCommandCount()
@@ -281,9 +467,17 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
-                item.SortOrderKey = GetSortOrderKey(pass);
+                long sortOrderKey = GetSortOrderKey(pass);
                 int beforeCount = set.Count;
-                set.Add(item);
+                if (set is SnapshotSortedRenderCommandCollection snapshotSet)
+                {
+                    snapshotSet.Add(item, sortOrderKey);
+                }
+                else
+                {
+                    item.SortOrderKey = sortOrderKey;
+                    set.Add(item);
+                }
                 int afterCount = set.Count;
                 ++_numCommandsRecentlyAddedToUpdate;
                 if (ShouldLogSponzaCpuDiag(item))
@@ -293,15 +487,21 @@ namespace XREngine.Rendering.Commands
                         pass,
                         item,
                         camera: null,
-                        $"updatingPassCount={afterCount}, dirty={item._dirty}, swapQueued={item._swapQueued}");
+                        $"updatingPassCount={afterCount}, dirty={item._dirty}, queuedInCollection={_updatingSwapQueueMembership.Contains(item)}");
                 }
 
                 // Dirty-delta enqueue: only swap commands whose state has actually changed since
-                // the last publish. _swapQueued dedups across multiple AddCPU calls for the same
-                // command this frame (multi-camera, multi-pipeline, multi-pass).
-                if ((item._dirty || !item.HasSwappedBuffers) && !item._swapQueued)
+                // the last publish. Queue membership is local to this collection so another
+                // viewport cannot starve this collection before either one reaches SwapBuffers().
+                bool needsPublish = item._dirty || !item.HasSwappedBuffers;
+                if (needsPublish)
                 {
-                    item._swapQueued = true;
+                    if (IsRenderCommandSnapshotAuthority)
+                        item._authoritativePublishQueued = true;
+                }
+
+                if (needsPublish && _updatingSwapQueueMembership.Add(item))
+                {
                     _updatingSwapQueue.Add(item);
                 }
             }
@@ -486,7 +686,7 @@ namespace XREngine.Rendering.Commands
                     // cpuCmdIndex shifts on every list mutation; StableQueryKey is assigned
                     // at command construction and never changes.
                     uint queryKey = cmd.StableQueryKey;
-                    var decision = s_cpuOcclusionCoordinator.ShouldRender(renderPass, queryKey, out bool needsHardwareQuery);
+                    var decision = s_cpuOcclusionCoordinator.ShouldRender(renderPass, camera, queryKey, out bool needsHardwareQuery);
 
                     if (decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.Skip)
                     {
@@ -525,7 +725,7 @@ namespace XREngine.Rendering.Commands
                         {
                             if (CpuQueryProxyIsNearPlaneUnsafe(camera!, probeBounds.Value))
                             {
-                                s_cpuOcclusionCoordinator.ForceVisible(renderPass, queryKey);
+                                s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey);
                                 if (ShouldLogSponzaCpuDiag(cmd))
                                     LogSponzaCpuDiag("draw-cpu-query-near-plane", renderPass, cmd, camera, $"queryKey={queryKey}");
                                 RenderWithGpuScope(cmd, renderPass);
@@ -562,7 +762,7 @@ namespace XREngine.Rendering.Commands
                         cmd.CullingVolume is AABB visibleProbeBounds)
                     {
                         if (CpuQueryProxyIsNearPlaneUnsafe(camera!, visibleProbeBounds))
-                            s_cpuOcclusionCoordinator.ForceVisible(renderPass, queryKey);
+                            s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey);
                         else
                             deferredProbes!.Add(new DeferredProbe(queryKey, visibleProbeBounds));
 
@@ -579,7 +779,7 @@ namespace XREngine.Rendering.Commands
                         // occlusion culling isn't meaningful anyway and they're usually
                         // excluded via CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded).
                         if (needsHardwareQuery)
-                            s_cpuOcclusionCoordinator.BeginQuery(renderPass, queryKey);
+                            s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, queryKey);
                         try
                         {
                             if (ShouldLogSponzaCpuDiag(cmd))
@@ -589,7 +789,7 @@ namespace XREngine.Rendering.Commands
                         finally
                         {
                             if (needsHardwareQuery)
-                                s_cpuOcclusionCoordinator.EndQuery(renderPass, queryKey);
+                                s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, queryKey);
                         }
                     }
 
@@ -621,14 +821,14 @@ namespace XREngine.Rendering.Commands
             {
                 foreach (var probe in deferredProbes)
                 {
-                    s_cpuOcclusionCoordinator.BeginQuery(renderPass, probe.QueryKey);
+                    s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, probe.QueryKey);
                     try
                     {
                         XREngine.Rendering.Occlusion.CpuOcclusionProxyRenderer.Draw(probe.WorldBounds);
                     }
                     finally
                     {
-                        s_cpuOcclusionCoordinator.EndQuery(renderPass, probe.QueryKey);
+                        s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, probe.QueryKey);
                     }
                 }
                 deferredProbes.Clear();
@@ -731,6 +931,7 @@ namespace XREngine.Rendering.Commands
                 respectCpuQueryOcclusion &&
                 !RuntimeEngine.Rendering.State.IsShadowPass &&
                 RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync;
+            XRCamera? camera = useCpuQueryOcclusion ? GetActiveCpuOcclusionCamera() : null;
 
             uint cpuCmdIndex = 0;
             foreach (var cmd in list)
@@ -750,7 +951,7 @@ namespace XREngine.Rendering.Commands
                 if (useCpuQueryOcclusion && cmd is IRenderCommandMesh)
                 {
                     // C-CPU-4: stable per-command identity, matches primary RenderCPU keying.
-                    if (!s_cpuOcclusionCoordinator.PeekShouldRender(renderPass, cmd.StableQueryKey))
+                    if (!s_cpuOcclusionCoordinator.PeekShouldRender(renderPass, camera, cmd.StableQueryKey))
                     {
                         cpuCmdIndex++;
                         continue;
@@ -980,12 +1181,19 @@ namespace XREngine.Rendering.Commands
         private static XRCamera? GetActiveRightEyeCamera()
             => RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState?.StereoRightEyeCamera as XRCamera;
 
+        private static XRCamera? GetActiveCpuOcclusionCamera()
+        {
+            IRuntimeRenderCommandExecutionState? renderState = RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
+            return renderState?.RenderingCamera as XRCamera
+                ?? renderState?.SceneCamera as XRCamera;
+        }
+
         private static void ConfigureGpuViewSet(GPURenderPassCollection gpuPass, IRuntimeRenderCommandExecutionState renderState, IRuntimeRenderCamera leftCamera)
         {
             IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
             IRuntimeRenderCamera? rightCamera = renderState.StereoPass ? renderState.StereoRightEyeCamera : null;
             bool stereo = renderState.StereoPass && rightCamera is not null;
-            bool includeMirror = hostServices.RenderWindowsWhileInVR && !hostServices.VrMirrorComposeFromEyeTextures;
+            bool includeMirror = hostServices.RenderWindowsWhileInVR && hostServices.VrMirrorComposeFromEyeTextures;
             bool includeFoveated = stereo && hostServices.EnableVrFoveatedViewSet;
             float foveationOuter = Math.Clamp(
                 hostServices.VrFoveationOuterRadius + hostServices.VrFoveationVisibilityMargin,
@@ -1233,27 +1441,42 @@ namespace XREngine.Rendering.Commands
 
             (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
             (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
+            (_updatingSwapQueueMembership, _renderingSwapQueueMembership) = (_renderingSwapQueueMembership, _updatingSwapQueueMembership);
 
             using (RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers.RenderPasses"))
             {
                 // Dirty-delta publish: walk only the commands that mutated since the last swap.
-                // Skip commands whose dirty bit was already cleared by another collection sharing
-                // this command (multi-viewport scenes publish through whichever collection swaps
-                // first; subsequent collections in the same frame are no-ops because the snapshot
-                // fields live on the RenderCommand instance itself).
+                // Secondary shared-view collections yield to authoritative collections because the
+                // snapshot fields live on the RenderCommand instance itself. They still swap their
+                // own pass membership, and can publish commands that no authoritative view collected.
                 var queue = _renderingSwapQueue;
-                int queueCount = queue.Count;
-                for (int i = 0; i < queueCount; i++)
+                if (IsRenderCommandSnapshotAuthority)
                 {
-                    var cmd = queue[i];
-                    if (cmd is null)
-                        continue;
-                    if (cmd._dirty || !cmd.HasSwappedBuffers)
-                        cmd.SwapBuffers();
-                    else
-                        cmd._swapQueued = false;
+                    int queueCount = queue.Count;
+                    for (int i = 0; i < queueCount; i++)
+                    {
+                        var cmd = queue[i];
+                        if (cmd is null)
+                            continue;
+                        if (cmd._dirty || !cmd.HasSwappedBuffers)
+                            cmd.SwapBuffers();
+                        cmd._authoritativePublishQueued = false;
+                    }
+                }
+                else
+                {
+                    int queueCount = queue.Count;
+                    for (int i = 0; i < queueCount; i++)
+                    {
+                        var cmd = queue[i];
+                        if (cmd is null)
+                            continue;
+                        if (!cmd._authoritativePublishQueued && (cmd._dirty || !cmd.HasSwappedBuffers))
+                            cmd.SwapBuffers();
+                    }
                 }
                 queue.Clear();
+                _renderingSwapQueueMembership.Clear();
             }
 
             using (RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers.ClearPasses"))

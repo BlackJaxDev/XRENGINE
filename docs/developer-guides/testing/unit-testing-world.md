@@ -176,6 +176,8 @@ Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runt
 
 On Windows, `VR.Mode=MonadoOpenXR` honors the requested `Rendering.RenderBackend`. The Vulkan path queries the selected OpenXR runtime before renderer creation and enables the Vulkan instance/device extensions required by the runtime, then renders each eye into the acquired OpenXR Vulkan swapchain image.
 
+When `VR.AllowDesktopEditing=false` and `RenderWindowsWhileInVR=true`, the desktop window renders a separate mono runtime camera parented under the HMD through a smoothed transform. This viewport owns its own render commands and the Unit Testing World does not create editor UI for it, so the desktop output is a clean player/cyclopean view rather than the ImGui editor. It is not composed by stretching either eye texture. Set `RenderWindowsWhileInVR=false` for perf runs that should submit only the XR eye frames.
+
 Useful tasks:
 
 - `Install-Monado`
@@ -212,7 +214,7 @@ For script-driven launches, these process-scoped overrides select the lane witho
 - `XRE_UNIT_TEST_OPENXR_RUNTIME_JSON=C:\path\to\openxr_monado.json`
 - `XRE_UNIT_TEST_RENDER_API=OpenGL|Vulkan` maps into `Rendering.RenderBackend`
 
-For highest-framerate Monado Vulkan validation, set `XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=0`, `XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR=0`, and `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0` so the editor does not also render the desktop preview window while submitting OpenXR eye frames.
+For highest-framerate Monado Vulkan validation, set `XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=0`, `XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR=0`, and `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0` so the editor does not also render the smoothed HMD desktop camera while submitting OpenXR eye frames.
 
 ### Test networking pose sync
 

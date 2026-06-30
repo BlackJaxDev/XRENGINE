@@ -71,6 +71,7 @@ namespace XREngine.Rendering.Vulkan
             bool dynamicUiDirty = false;
             bool swapchainLifecycleDirty = false;
             bool commandChainPrimaryDirty = false;
+            bool primaryFrameStateDirty = false;
             PrimaryCommandBufferDirtyReason commandChainPrimaryDirtyReason = PrimaryCommandBufferDirtyReason.None;
             int commandBufferImageSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
             bool swapchainImageEverPresentedAtRecord = IsSwapchainImageEverPresented(imageIndex);
@@ -176,7 +177,8 @@ namespace XREngine.Rendering.Vulkan
                 return lastSwapchainWriterCommandBuffer;
             }
 
-            if (!imageForcedDirty &&
+            if (VulkanPrimaryCommandBufferReuseEnabled &&
+                !imageForcedDirty &&
                 !gpuPipelineProfilingActive &&
                 TryReuseCleanCommandChainPrimaryVariant(
                     imageIndex,
@@ -272,9 +274,16 @@ namespace XREngine.Rendering.Vulkan
             bool forcedDirty = dirty;
             bool usingCommandChains = commandChainSchedule is not null;
             bool hasTextureUploadFrameOps = hasStaticFrameOps && HasTextureUploadFrameOps(ops);
+            bool frameOpsRequireFreshPrimary = hasStaticFrameOps && !VulkanPrimaryCommandBufferReuseEnabled;
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DirtyEvaluation"))
             {
+                if (!dirty && frameOpsRequireFreshPrimary)
+                {
+                    dirty = true;
+                    primaryFrameStateDirty = true;
+                }
+
                 if (gpuProfilerCommandBufferStateDirty)
                     profilerDirty = true;
 
@@ -285,7 +294,7 @@ namespace XREngine.Rendering.Vulkan
                     frameOpSignatureDirty = true;
                 }
 
-                if (!dirty && usingCommandChains && hasTextureUploadFrameOps && variant.FrameOpsSignature != frameOpsSignature)
+                if (!dirty && usingCommandChains && variant.FrameOpsSignature != frameOpsSignature)
                 {
                     LogFrameOpSignatureDiff(imageIndex, variant, frameOpsSignature, ops);
                     dirty = true;
@@ -458,6 +467,8 @@ namespace XREngine.Rendering.Vulkan
                             ? "swapchain-lifecycle"
                         : commandChainPrimaryDirty
                             ? $"command-chain-primary:{commandChainPrimaryDirtyReason}"
+                        : primaryFrameStateDirty
+                            ? "primary-frame-state"
                             : "unknown";
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
@@ -2588,7 +2599,11 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            void RecordMeshDrawIntoCommandBuffer(CommandBuffer targetCommandBuffer, MeshDrawOp drawOp, int passIndex)
+            void RecordMeshDrawIntoCommandBuffer(
+                CommandBuffer targetCommandBuffer,
+                MeshDrawOp drawOp,
+                int passIndex,
+                int? drawUniformSlotOverride = null)
             {
                 Viewport viewport = drawOp.Draw.Viewport;
                 Rect2D scissor = drawOp.Draw.Scissor;
@@ -2628,7 +2643,7 @@ namespace XREngine.Rendering.Vulkan
                     activeDepthStencilReadOnly,
                     drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
                     drawOp.Target?.Name ?? "<swapchain>",
-                    GetMeshDrawUniformSlot(drawOp.Draw.Renderer));
+                    drawUniformSlotOverride ?? GetMeshDrawUniformSlot(drawOp.Draw.Renderer));
             }
 
             void RecordIndirectDrawIntoCommandBuffer(CommandBuffer targetCommandBuffer, IndirectDrawOp indirectOp, int passIndex)
@@ -3324,9 +3339,15 @@ namespace XREngine.Rendering.Vulkan
                         secondaryChains[i] = chain;
                         secondaryBuffers[i] = secondary;
 
-                        if (!ScheduledCommandChainSecondaryNeedsRecording(chain))
+                        int drawUniformSlot = GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
+
+                        if (!ScheduledCommandChainSecondaryNeedsRecording(chain) &&
+                            drawOp.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(
+                                frameDataImageIndex,
+                                drawOp.Draw,
+                                drawUniformSlot,
+                                refreshMaterialUniforms: true))
                         {
-                            _ = GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
                             continue;
                         }
 
@@ -3377,7 +3398,7 @@ namespace XREngine.Rendering.Vulkan
                         try
                         {
                             using IDisposable? pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(drawOp.Context.PipelineInstance);
-                            RecordMeshDrawIntoCommandBuffer(secondary, drawOp, passIndex);
+                            RecordMeshDrawIntoCommandBuffer(secondary, drawOp, passIndex, drawUniformSlot);
                         }
                         finally
                         {

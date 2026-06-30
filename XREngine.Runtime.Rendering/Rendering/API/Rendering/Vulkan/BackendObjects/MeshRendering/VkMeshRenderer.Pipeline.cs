@@ -321,87 +321,106 @@ public unsafe partial class VulkanRenderer
 		/// </remarks>
 		private void BuildVertexInputState()
 		{
-			List<VertexInputBindingDescription> bindings = [];
-			List<VertexInputAttributeDescription> attributes = [];
-			List<KeyValuePair<string, VkDataBuffer>> vertexBuffers = [];
-			List<KeyValuePair<string, XRDataBuffer>> layoutBuffers = [];
-			_vertexBuffersByBinding.Clear();
-
-			bool resolveByName = _program is not null && _program.HasReflectedVertexInputs;
-
-			uint nextBinding = 0;
-			uint nextLocation = 0;
-			HashSet<uint> usedBindings = [];
-
-			foreach (var pair in _bufferCache)
+			lock (_bufferStateSync)
 			{
-				layoutBuffers.Add(new(pair.Key, pair.Value.Data));
-				if (pair.Value.Data.Target == EBufferTarget.ArrayBuffer)
-					vertexBuffers.Add(pair);
-			}
+				List<VertexInputBindingDescription> bindings = [];
+				List<VertexInputAttributeDescription> attributes = [];
+				List<KeyValuePair<string, VkDataBuffer>> vertexBuffers = [];
+				List<KeyValuePair<string, XRDataBuffer>> layoutBuffers = [];
+				_vertexBuffersByBinding.Clear();
 
-			// A vertex stage that reflects zero input attributes (e.g. the fullscreen
-			// triangle, which builds clip positions from gl_VertexID) consumes no vertex
-			// buffers. Emitting bindings/attributes for the mesh's streams anyway makes the
-			// validation layer flag "Vertex attribute at location 0 not consumed by vertex
-			// shader" on every pipeline creation. Bind nothing and use the attribute-less
-			// draw path instead.
-			if (_program is not null
-				&& _program.TryGetVertexStageInputCount(out int vertexStageInputCount)
-				&& vertexStageInputCount == 0)
-			{
-				_vertexBindings = [];
-				_vertexAttributes = [];
-				_geometryLayoutSignature = MeshGeometryLayoutSignatureBuilder.Create(
-					Mesh,
-					MeshRenderer,
-					layoutBuffers,
-					ResolvePrimaryIndexSizeForLayout(out bool hasIndexBuffersNoInputs),
-					hasIndexBuffersNoInputs,
-					hasIndexBuffersNoInputs ? "IndexBuffer" : "VertexCount");
-				return;
-			}
+				bool resolveByName = _program is not null && _program.HasReflectedVertexInputs;
 
-			vertexBuffers.Sort(static (a, b) =>
-			{
-				uint aBinding = a.Value.Data.BindingIndexOverride ?? uint.MaxValue;
-				uint bBinding = b.Value.Data.BindingIndexOverride ?? uint.MaxValue;
-				int bindingCompare = aBinding.CompareTo(bBinding);
-				return bindingCompare != 0
-					? bindingCompare
-					: string.Compare(a.Key, b.Key, StringComparison.Ordinal);
-			});
+				uint nextBinding = 0;
+				uint nextLocation = 0;
+				HashSet<uint> usedBindings = [];
 
-			foreach (var pair in vertexBuffers)
-			{
-				string bufferName = pair.Key;
-				VkDataBuffer buffer = pair.Value;
-
-				uint binding = buffer.Data.BindingIndexOverride ?? AllocateNextVertexBinding(usedBindings, ref nextBinding);
-				if (!usedBindings.Add(binding))
+				foreach (var pair in _bufferCache)
 				{
-					WarnOnce($"Skipping duplicate Vulkan vertex binding {binding} for buffer '{bufferName}' on mesh '{Mesh?.Name ?? "UnnamedMesh"}'.");
-					continue;
+					layoutBuffers.Add(new(pair.Key, pair.Value.Data));
+					if (pair.Value.Data.Target == EBufferTarget.ArrayBuffer)
+						vertexBuffers.Add(pair);
 				}
 
-				bool interleaved = buffer.Data.InterleavedAttributes is { Length: > 0 };
-				uint stride = interleaved && Mesh is not null ? Mesh.InterleavedStride : buffer.Data.ElementSize;
-
-				bindings.Add(new VertexInputBindingDescription
+				// A vertex stage that reflects zero input attributes (e.g. the fullscreen
+				// triangle, which builds clip positions from gl_VertexID) consumes no vertex
+				// buffers. Emitting bindings/attributes for the mesh's streams anyway makes the
+				// validation layer flag "Vertex attribute at location 0 not consumed by vertex
+				// shader" on every pipeline creation. Bind nothing and use the attribute-less
+				// draw path instead.
+				if (_program is not null
+					&& _program.TryGetVertexStageInputCount(out int vertexStageInputCount)
+					&& vertexStageInputCount == 0)
 				{
-					Binding = binding,
-					Stride = stride,
-					InputRate = buffer.Data.InstanceDivisor > 0 ? VertexInputRate.Instance : VertexInputRate.Vertex
+					_vertexBindings = [];
+					_vertexAttributes = [];
+					_geometryLayoutSignature = MeshGeometryLayoutSignatureBuilder.Create(
+						Mesh,
+						MeshRenderer,
+						layoutBuffers,
+						ResolvePrimaryIndexSizeForLayout(out bool hasIndexBuffersNoInputs),
+						hasIndexBuffersNoInputs,
+						hasIndexBuffersNoInputs ? "IndexBuffer" : "VertexCount");
+					return;
+				}
+
+				vertexBuffers.Sort(static (a, b) =>
+				{
+					uint aBinding = a.Value.Data.BindingIndexOverride ?? uint.MaxValue;
+					uint bBinding = b.Value.Data.BindingIndexOverride ?? uint.MaxValue;
+					int bindingCompare = aBinding.CompareTo(bBinding);
+					return bindingCompare != 0
+						? bindingCompare
+						: string.Compare(a.Key, b.Key, StringComparison.Ordinal);
 				});
-				_vertexBuffersByBinding[binding] = buffer;
 
-				if (interleaved)
+				foreach (var pair in vertexBuffers)
 				{
-					foreach (var attr in buffer.Data.InterleavedAttributes)
+					string bufferName = pair.Key;
+					VkDataBuffer buffer = pair.Value;
+
+					uint binding = buffer.Data.BindingIndexOverride ?? AllocateNextVertexBinding(usedBindings, ref nextBinding);
+					if (!usedBindings.Add(binding))
 					{
-						if (!TryResolveVertexAttributeLocation(attr.AttributeName, attr.AttribIndexOverride, resolveByName, ref nextLocation, out uint location))
+						WarnOnce($"Skipping duplicate Vulkan vertex binding {binding} for buffer '{bufferName}' on mesh '{Mesh?.Name ?? "UnnamedMesh"}'.");
+						continue;
+					}
+
+					bool interleaved = buffer.Data.InterleavedAttributes is { Length: > 0 };
+					uint stride = interleaved && Mesh is not null ? Mesh.InterleavedStride : buffer.Data.ElementSize;
+
+					bindings.Add(new VertexInputBindingDescription
+					{
+						Binding = binding,
+						Stride = stride,
+						InputRate = buffer.Data.InstanceDivisor > 0 ? VertexInputRate.Instance : VertexInputRate.Vertex
+					});
+					_vertexBuffersByBinding[binding] = buffer;
+
+					if (interleaved)
+					{
+						foreach (var attr in buffer.Data.InterleavedAttributes)
 						{
-							WarnMissingVertexAttribute(buffer, attr.AttributeName, attr.AttribIndexOverride, buffer.Data.Normalize, interleaved: true);
+							if (!TryResolveVertexAttributeLocation(attr.AttributeName, attr.AttribIndexOverride, resolveByName, ref nextLocation, out uint location))
+							{
+								WarnMissingVertexAttribute(buffer, attr.AttributeName, attr.AttribIndexOverride, buffer.Data.Normalize, interleaved: true);
+								continue;
+							}
+
+							attributes.Add(new VertexInputAttributeDescription
+							{
+								Location = location,
+								Binding = binding,
+								Format = ToFormat(attr.Type, attr.Count, attr.Integral, buffer.Data.Normalize),
+								Offset = attr.Offset
+							});
+						}
+					}
+					else
+					{
+						if (!TryResolveVertexAttributeLocation(bufferName, null, resolveByName, ref nextLocation, out uint location))
+						{
+							WarnMissingVertexAttribute(buffer, bufferName, null, buffer.Data.Normalize, interleaved: false);
 							continue;
 						}
 
@@ -409,48 +428,32 @@ public unsafe partial class VulkanRenderer
 						{
 							Location = location,
 							Binding = binding,
-							Format = ToFormat(attr.Type, attr.Count, attr.Integral, buffer.Data.Normalize),
-							Offset = attr.Offset
+							Format = ToFormat(buffer.Data.ComponentType, buffer.Data.ComponentCount, buffer.Data.Integral, buffer.Data.Normalize),
+							Offset = 0
 						});
 					}
 				}
-				else
+
+				_vertexBindings = [.. bindings];
+				_vertexAttributes = [.. attributes];
+				_geometryLayoutSignature = MeshGeometryLayoutSignatureBuilder.Create(
+					Mesh,
+					MeshRenderer,
+					layoutBuffers,
+					ResolvePrimaryIndexSizeForLayout(out bool hasIndexBuffers),
+					hasIndexBuffers,
+					hasIndexBuffers ? "IndexBuffer" : "VertexCount");
+
+				if (_vertexBindings.Length > 0 && _vertexAttributes.Length == 0)
 				{
-					if (!TryResolveVertexAttributeLocation(bufferName, null, resolveByName, ref nextLocation, out uint location))
-					{
-						WarnMissingVertexAttribute(buffer, bufferName, null, buffer.Data.Normalize, interleaved: false);
-						continue;
-					}
-
-					attributes.Add(new VertexInputAttributeDescription
-					{
-						Location = location,
-						Binding = binding,
-						Format = ToFormat(buffer.Data.ComponentType, buffer.Data.ComponentCount, buffer.Data.Integral, buffer.Data.Normalize),
-						Offset = 0
-					});
+					Debug.VulkanWarningEvery(
+						$"Vulkan.VertexInput.NoAttributes.{_program?.Data?.Name ?? "UnknownProgram"}.{Mesh?.Name ?? "UnnamedMesh"}",
+						TimeSpan.FromSeconds(2),
+						"[Vulkan] No vertex attributes were bound for program='{0}' mesh='{1}'. layout={2}",
+						_program?.Data?.Name ?? "<unnamed program>",
+						Mesh?.Name ?? "<unnamed mesh>",
+						_geometryLayoutSignature.DebugSummary);
 				}
-			}
-
-			_vertexBindings = [.. bindings];
-			_vertexAttributes = [.. attributes];
-			_geometryLayoutSignature = MeshGeometryLayoutSignatureBuilder.Create(
-				Mesh,
-				MeshRenderer,
-				layoutBuffers,
-				ResolvePrimaryIndexSizeForLayout(out bool hasIndexBuffers),
-				hasIndexBuffers,
-				hasIndexBuffers ? "IndexBuffer" : "VertexCount");
-
-			if (_vertexBindings.Length > 0 && _vertexAttributes.Length == 0)
-			{
-				Debug.VulkanWarningEvery(
-					$"Vulkan.VertexInput.NoAttributes.{_program?.Data?.Name ?? "UnknownProgram"}.{Mesh?.Name ?? "UnnamedMesh"}",
-					TimeSpan.FromSeconds(2),
-					"[Vulkan] No vertex attributes were bound for program='{0}' mesh='{1}'. layout={2}",
-					_program?.Data?.Name ?? "<unnamed program>",
-					Mesh?.Name ?? "<unnamed mesh>",
-					_geometryLayoutSignature.DebugSummary);
 			}
 		}
 

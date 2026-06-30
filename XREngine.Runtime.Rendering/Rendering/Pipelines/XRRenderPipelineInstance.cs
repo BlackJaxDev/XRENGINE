@@ -422,9 +422,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         LastRenderingCamera = camera ?? stereoRightEyeCamera;
         LastWindowViewport = viewport;
         XRCamera? effectiveAntiAliasingCamera = camera ?? stereoRightEyeCamera;
-        EAntiAliasingMode effectiveAntiAliasingMode = ResolveEffectiveAntiAliasingMode(
-            effectiveAntiAliasingCamera,
-            hostServices);
+        EAntiAliasingMode effectiveAntiAliasingMode =
+            effectiveAntiAliasingCamera?.AntiAliasingModeOverride
+            ?? hostServices.DefaultAntiAliasingMode;
         EffectiveOutputHDRThisFrame = camera?.OutputHDROverride
             ?? (camera is null ? stereoRightEyeCamera?.OutputHDROverride : null)
             ?? hostServices.DefaultOutputHDR;
@@ -521,33 +521,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
     }
 
-    private EAntiAliasingMode ResolveEffectiveAntiAliasingMode(
-        XRCamera? effectiveAntiAliasingCamera,
-        IRuntimeRenderingHostServices hostServices)
-    {
-        EAntiAliasingMode requestedMode = effectiveAntiAliasingCamera?.AntiAliasingModeOverride
-            ?? hostServices.DefaultAntiAliasingMode;
-
-        if (hostServices.CurrentRenderer is AbstractRenderer { IsRenderingExternalSwapchainTarget: true }
-            && IsHistoryBasedAntiAliasingMode(requestedMode))
-        {
-            Debug.RenderingEvery(
-                $"OpenXR.ExternalSwapchainTemporalAADisabled.{InstanceId}",
-                TimeSpan.FromSeconds(5),
-                "[OpenXR] Disabling history-based AA for external swapchain render. Requested={0} Camera={1}",
-                requestedMode,
-                effectiveAntiAliasingCamera?.Transform.SceneNode?.Name ?? "<null>");
-            return EAntiAliasingMode.None;
-        }
-
-        return requestedMode;
-    }
-
-    private static bool IsHistoryBasedAntiAliasingMode(EAntiAliasingMode mode)
-        => mode is EAntiAliasingMode.Taa
-            or EAntiAliasingMode.Tsr
-            or EAntiAliasingMode.Dlaa;
-    
     //public void CollectVisible(VisualScene scene, XRCamera? camera, XRViewport viewport, XRFrameBuffer? targetFBO, bool shadowPass, UICanvasComponent? userInterface = null)
     //{
     //    if (Pipeline is null)

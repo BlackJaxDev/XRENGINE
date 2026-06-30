@@ -252,6 +252,27 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     }
 
     [Test]
+    public void VkMeshRenderer_SharedBufferStateIsSerializedAcrossDesktopAndOpenXrViews()
+    {
+        string mainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+        string drawingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
+        string descriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+        string preparationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Preparation.cs");
+
+        mainSource.ShouldContain("private readonly object _bufferStateSync = new();");
+        AssertMethodLocksBefore(mainSource, "private void InvalidateGeometryLayout", "_triangleIndexBuffer = null;");
+        AssertMethodLocksBefore(bufferSource, "private void CollectBuffers", "_bufferCache.Clear();");
+        AssertMethodLocksBefore(bufferSource, "private void EnsureBuffers", "foreach (var buffer in _bufferCache.Values)");
+        AssertMethodLocksBefore(preparationSource, "private bool AreCachedBuffersReadyForRendering", "foreach (var pair in _bufferCache)");
+        AssertMethodLocksBefore(pipelineSource, "private void BuildVertexInputState", "foreach (var pair in _bufferCache)");
+        AssertMethodLocksBefore(drawingSource, "private bool TryRentVertexBufferSnapshot", "_vertexBuffersByBinding.TryGetValue");
+        AssertMethodLocksBefore(descriptorSource, "private ulong ComputeCachedBufferResourceFingerprintCore", "foreach (KeyValuePair<string, VkDataBuffer> pair in _bufferCache)");
+        AssertMethodLocksBefore(descriptorSource, "private bool TryResolveCachedBufferByName", "_bufferCache.TryGetValue");
+    }
+
+    [Test]
     public void VkMeshRenderer_ResolvesGeneratedSkinningAndBlendshapeUniformsLikeOpenGl()
     {
         string vkMainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
@@ -328,6 +349,20 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
             "usePrecombinedBlendshapeDeltas" => "UsePrecombinedBlendshapeDeltasUniformName",
             _ => uniformName
         };
+
+    private static void AssertMethodLocksBefore(string source, string methodStart, string protectedAccess)
+    {
+        string normalizedSource = source.Replace("\r\n", "\n");
+        int methodIndex = normalizedSource.IndexOf(methodStart, StringComparison.Ordinal);
+        methodIndex.ShouldBeGreaterThanOrEqualTo(0, $"Expected method '{methodStart}' in source.");
+
+        int lockIndex = normalizedSource.IndexOf("lock (_bufferStateSync)", methodIndex, StringComparison.Ordinal);
+        lockIndex.ShouldBeGreaterThanOrEqualTo(methodIndex, $"Expected '{methodStart}' to lock _bufferStateSync.");
+
+        int accessIndex = normalizedSource.IndexOf(protectedAccess, methodIndex, StringComparison.Ordinal);
+        accessIndex.ShouldBeGreaterThanOrEqualTo(methodIndex, $"Expected '{protectedAccess}' in '{methodStart}'.");
+        lockIndex.ShouldBeLessThan(accessIndex, $"Expected '{methodStart}' to lock before '{protectedAccess}'.");
+    }
 
     private static string ReadWorkspaceFile(string relativePath)
     {

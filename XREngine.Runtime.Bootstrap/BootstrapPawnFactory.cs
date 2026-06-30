@@ -21,6 +21,8 @@ namespace XREngine.Runtime.Bootstrap.Builders;
 public static class BootstrapPawnFactory
 {
     private const string EditorViewCameraName = "Editor View";
+    private const float FirstPersonDesktopViewSmoothing = 24.0f;
+    private const float FirstPersonDesktopHorizontalFieldOfView = 50.0f;
 
     public static SceneNode? CreatePlayerPawn(bool setUI, bool isServer, SceneNode rootNode)
     {
@@ -31,7 +33,7 @@ public static class BootstrapPawnFactory
         {
             if (settings.Locomotion)
             {
-                characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, out var pawn, out _, out _, out _);
+                characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, out _, out _, out _, out _);
                 if (settings.AllowEditingInVR || settings.AddCameraVRPickup)
                 {
                     SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
@@ -39,8 +41,6 @@ public static class BootstrapPawnFactory
                     if (setUI)
                         BootstrapEditorBridge.Current?.CreateEditorUi(rootNode, camComp, desktopPawn);
                 }
-                else if (setUI)
-                    BootstrapEditorBridge.Current?.CreateEditorUi(characterPawnModelParentNode, null, pawn);
             }
             else
             {
@@ -220,14 +220,16 @@ public static class BootstrapPawnFactory
     {
         SceneNode firstPersonViewNode = new(parentNode) { Name = "FirstPersonViewNode" };
         var firstPersonViewTfm = firstPersonViewNode.SetTransform<SmoothedParentConstraintTransform>();
-        firstPersonViewTfm.TranslationInterpolationSpeed = null;
+        firstPersonViewTfm.TranslationInterpolationSpeed = FirstPersonDesktopViewSmoothing;
         firstPersonViewTfm.ScaleInterpolationSpeed = null;
-        firstPersonViewTfm.QuaternionInterpolationSpeed = null;
+        firstPersonViewTfm.QuaternionInterpolationSpeed = FirstPersonDesktopViewSmoothing;
         var firstPersonCam = firstPersonViewNode.AddComponent<CameraComponent>()!;
         var persp = firstPersonCam.Camera.Parameters as XRPerspectiveCameraParameters;
-        persp!.HorizontalFieldOfView = 50.0f;
+        persp!.HorizontalFieldOfView = FirstPersonDesktopHorizontalFieldOfView;
         persp.NearZ = 0.1f;
         persp.FarZ = 100000.0f;
+        firstPersonCam.Camera.RenderPipeline = Engine.Rendering.NewRenderPipeline(stereo: false);
+        firstPersonCam.Camera.RenderPipeline.OverrideProtected = true;
         firstPersonCam.CullWithFrustum = true;
         if (pawn is null)
             pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One) as PawnComponent;

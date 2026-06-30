@@ -617,7 +617,9 @@ The blit uses `glBlitFramebuffer` to copy pixels from mirror to swapchain. If th
 
 ## Desktop Mirror Composition
 
-When VR is active, the desktop window can display a mirror of what the headset sees. `TryRenderDesktopMirrorComposition()` in `OpenXRAPI.OpenGL.cs`:
+When VR is active, the desktop window can either render a separate viewport camera or display a low-cost mirror of what the headset sees. The Unit Testing World uses a separate mono desktop camera when `VR.AllowDesktopEditing=false`: the camera is parented under the HMD through a smoothed transform, owns its desktop viewport command collection, suppresses editor UI, and renders through the normal viewport path. The eye-texture composition path remains available for runtime modes that explicitly enable `VrMirrorComposeFromEyeTextures`; replacing its current one-eye blit behavior with depth-aware cyclopean reconstruction is tracked in [VR Mirror Cyclopean Reconstruction TODO](../../work/todo/rendering/vr/vr-mirror-cyclopean-reconstruction-todo.md).
+
+`TryRenderDesktopMirrorComposition()` in `OpenXRAPI.OpenGL.cs`:
 
 ```
 TryRenderDesktopMirrorComposition(targetWidth, targetHeight)

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.OpenGL;
@@ -62,8 +63,23 @@ namespace XREngine.Rendering.Occlusion
             LargeInvalidation,
         }
 
+        private readonly struct PassViewKey(int renderPass, int cameraIdentity) : IEquatable<PassViewKey>
+        {
+            public readonly int RenderPass = renderPass;
+            public readonly int CameraIdentity = cameraIdentity;
+
+            public bool Equals(PassViewKey other)
+                => RenderPass == other.RenderPass && CameraIdentity == other.CameraIdentity;
+
+            public override bool Equals(object? obj)
+                => obj is PassViewKey other && Equals(other);
+
+            public override int GetHashCode()
+                => HashCode.Combine(RenderPass, CameraIdentity);
+        }
+
         private readonly object _lock = new();
-        private readonly Dictionary<int, PassState> _passStates = new();
+        private readonly Dictionary<PassViewKey, PassState> _passStates = new();
         private readonly AsyncOcclusionQueryManager _queryManager = new();
 
         // With ProbeOnly retest (depth-only AABB), retest frames don't write color so
@@ -97,7 +113,7 @@ namespace XREngine.Rendering.Occlusion
         {
             lock (_lock)
             {
-                PassState state = GetPassState(renderPass);
+                PassState state = GetPassState(renderPass, camera);
 
                 // C-CPU-4: with stable per-command identity (RenderCommand.StableQueryKey),
                 // a scene mutation (add/remove) no longer invalidates other commands' query
@@ -119,7 +135,7 @@ namespace XREngine.Rendering.Occlusion
         }
 
         public bool ShouldRender(int renderPass, uint sourceCommandIndex)
-            => ShouldRender(renderPass, sourceCommandIndex, out _) != ECpuOcclusionDecision.Skip;
+            => ShouldRender(renderPass, null, sourceCommandIndex, out _) != ECpuOcclusionDecision.Skip;
 
         /// <summary>
         /// Tri-state CPU occlusion cull decision. <see cref="ECpuOcclusionDecision.Visible"/>
@@ -132,10 +148,13 @@ namespace XREngine.Rendering.Occlusion
         /// nothing.
         /// </summary>
         public ECpuOcclusionDecision ShouldRender(int renderPass, uint sourceCommandIndex, out bool needsHardwareQuery)
+            => ShouldRender(renderPass, null, sourceCommandIndex, out needsHardwareQuery);
+
+        public ECpuOcclusionDecision ShouldRender(int renderPass, XRCamera? camera, uint sourceCommandIndex, out bool needsHardwareQuery)
         {
             lock (_lock)
             {
-                PassState state = GetPassState(renderPass);
+                PassState state = GetPassState(renderPass, camera);
                 ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
 
                 if (!state.Queries.TryGetValue(sourceCommandIndex, out QueryState? queryState))
@@ -191,6 +210,19 @@ namespace XREngine.Rendering.Occlusion
                     return ECpuOcclusionDecision.Skip;
                 }
 
+                // A previous-frame "occluded" result is only trustworthy for a stable
+                // camera. During movement, stale query state can hide newly exposed
+                // meshes until the staggered probe happens to resolve, which presents as
+                // deferred meshes disappearing while strafing. Keep the color draw
+                // conservative-visible and refresh the proxy query in the background.
+                if (state.CameraMovedThisFrame)
+                {
+                    queryState.LastDecision = ECpuOcclusionDecision.Visible;
+                    needsHardwareQuery = true;
+                    OcclusionTelemetry.RecordCpuDecision(ECpuDecisionKind.VisibleHysteresis);
+                    return ECpuOcclusionDecision.Visible;
+                }
+
                 // Hysteresis: keep drawing for HysteresisFrames after first-detected
                 // occlusion to absorb a single-frame async-query latency hiccup.
                 if (queryState.ConsecutiveOccludedFrames < HysteresisFrames)
@@ -233,16 +265,22 @@ namespace XREngine.Rendering.Occlusion
         /// those contribute no visible pixels, so the overdraw viz must also skip them.
         /// </summary>
         public bool PeekShouldRender(int renderPass, uint sourceCommandIndex)
+            => PeekShouldRender(renderPass, null, sourceCommandIndex);
+
+        public bool PeekShouldRender(int renderPass, XRCamera? camera, uint sourceCommandIndex)
         {
             lock (_lock)
             {
-                if (!_passStates.TryGetValue(renderPass, out PassState? state))
+                PassViewKey passKey = CreatePassKey(renderPass, camera);
+                if (!_passStates.TryGetValue(passKey, out PassState? state))
                     return true;
                 if (!state.Queries.TryGetValue(sourceCommandIndex, out QueryState? queryState))
                     return true;
                 if (queryState.LastAnySamplesPassed)
                     return true;
                 if (queryState.QueryPending && queryState.PendingQueryWasVisibleDraw)
+                    return true;
+                if (state.CameraMovedThisFrame)
                     return true;
                 if (queryState.ConsecutiveOccludedFrames < HysteresisFrames)
                     return true;
@@ -255,13 +293,16 @@ namespace XREngine.Rendering.Occlusion
         }
 
         public void BeginQuery(int renderPass, uint sourceCommandIndex)
+            => BeginQuery(renderPass, null, sourceCommandIndex);
+
+        public void BeginQuery(int renderPass, XRCamera? camera, uint sourceCommandIndex)
         {
             lock (_lock)
             {
                 if (AbstractRenderer.Current is not OpenGLRenderer gl)
                     return;
 
-                PassState state = GetPassState(renderPass);
+                PassState state = GetPassState(renderPass, camera);
                 QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
 
                 // Idempotent within a frame: prepass and color pass may both wrap this
@@ -283,13 +324,16 @@ namespace XREngine.Rendering.Occlusion
         }
 
         public void EndQuery(int renderPass, uint sourceCommandIndex)
+            => EndQuery(renderPass, null, sourceCommandIndex);
+
+        public void EndQuery(int renderPass, XRCamera? camera, uint sourceCommandIndex)
         {
             lock (_lock)
             {
                 if (AbstractRenderer.Current is not OpenGLRenderer gl)
                     return;
 
-                PassState state = GetPassState(renderPass);
+                PassState state = GetPassState(renderPass, camera);
                 if (!state.Queries.TryGetValue(sourceCommandIndex, out QueryState? queryState))
                     return;
 
@@ -312,10 +356,13 @@ namespace XREngine.Rendering.Occlusion
         }
 
         public void ForceVisible(int renderPass, uint sourceCommandIndex)
+            => ForceVisible(renderPass, null, sourceCommandIndex);
+
+        public void ForceVisible(int renderPass, XRCamera? camera, uint sourceCommandIndex)
         {
             lock (_lock)
             {
-                PassState state = GetPassState(renderPass);
+                PassState state = GetPassState(renderPass, camera);
                 QueryState queryState = GetOrCreateQueryState(state, sourceCommandIndex);
                 ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
 
@@ -332,16 +379,20 @@ namespace XREngine.Rendering.Occlusion
             }
         }
 
-        private PassState GetPassState(int renderPass)
+        private PassState GetPassState(int renderPass, XRCamera? camera)
         {
-            if (!_passStates.TryGetValue(renderPass, out PassState? state))
+            PassViewKey passKey = CreatePassKey(renderPass, camera);
+            if (!_passStates.TryGetValue(passKey, out PassState? state))
             {
                 state = new PassState();
-                _passStates.Add(renderPass, state);
+                _passStates.Add(passKey, state);
             }
 
             return state;
         }
+
+        private static PassViewKey CreatePassKey(int renderPass, XRCamera? camera)
+            => new(renderPass, camera is null ? 0 : RuntimeHelpers.GetHashCode(camera));
 
         private QueryState GetOrCreateQueryState(PassState state, uint sourceCommandIndex)
         {

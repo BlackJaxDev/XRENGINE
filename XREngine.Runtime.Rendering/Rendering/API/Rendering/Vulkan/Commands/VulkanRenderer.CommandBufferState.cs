@@ -69,6 +69,8 @@ namespace XREngine.Rendering.Vulkan
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanTrace), "1", StringComparison.Ordinal);
         private static readonly bool OpenXrVulkanPrimaryReuseEnabled =
             string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanPrimaryReuse), "1", StringComparison.Ordinal);
+        private static readonly bool VulkanPrimaryCommandBufferReuseEnabled =
+            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse), "1", StringComparison.Ordinal);
         private FrameOpSignatureDebugPart[][]? _commandBufferFrameOpSignatureDebugParts;
         private int _frameOpSignatureDiffLogCount;
         private string? _vulkanDiagnosticBaseWindowTitle;

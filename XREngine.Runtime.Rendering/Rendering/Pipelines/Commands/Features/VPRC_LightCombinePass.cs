@@ -51,12 +51,6 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private static XRTexture2D? _dummyShadowMap;
         private static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);
-        private static readonly IVector4[] _directionalShadowAtlasPacked0 = new IVector4[8];
-        private static readonly Vector4[] _directionalShadowAtlasUvScaleBias = new Vector4[8];
-        private static readonly Vector4[] _directionalShadowAtlasDepthParams = new Vector4[8];
-        private static readonly IVector4[] _pointShadowAtlasPacked0 = new IVector4[PointLightComponent.ShadowFaceCount];
-        private static readonly Vector4[] _pointShadowAtlasUvScaleBias = new Vector4[PointLightComponent.ShadowFaceCount];
-        private static readonly Vector4[] _pointShadowAtlasDepthParams = new Vector4[PointLightComponent.ShadowFaceCount];
         private const string DirectionalShadowAtlasName = "DirectionalShadowAtlas";
         private const int DirectionalShadowAtlasUnit = 9;
         private const string PointShadowAtlasName = "PointShadowAtlas";
@@ -114,6 +108,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             public XRMeshRenderer? MsaaComplexPointLightRenderer;
             public XRMeshRenderer? MsaaComplexSpotLightRenderer;
             public XRMeshRenderer? MsaaComplexDirectionalLightRenderer;
+
+            public readonly IVector4[] DirectionalShadowAtlasPacked0 = new IVector4[8];
+            public readonly Vector4[] DirectionalShadowAtlasUvScaleBias = new Vector4[8];
+            public readonly Vector4[] DirectionalShadowAtlasDepthParams = new Vector4[8];
+            public readonly IVector4[] PointShadowAtlasPacked0 = new IVector4[PointLightComponent.ShadowFaceCount];
+            public readonly Vector4[] PointShadowAtlasUvScaleBias = new Vector4[PointLightComponent.ShadowFaceCount];
+            public readonly Vector4[] PointShadowAtlasDepthParams = new Vector4[PointLightComponent.ShadowFaceCount];
         }
 
         private LightRendererCache? _activeRendererCache;
@@ -281,7 +282,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
                 : default;
 
-            using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
+            using (ActivePipelineInstance.RenderState.PushRenderingCamera(ResolveActiveRenderingCamera()))
             {
                 if (msaaActive)
                     RenderLightsMsaaDeferred(lights, rendererCache);
@@ -344,6 +345,16 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private LightComponent? _currentLightComponent;
 
+        private static XRCamera? ResolveActiveRenderingCamera()
+        {
+            XRRenderPipelineInstance instance = ActivePipelineInstance;
+            return instance.RenderState.SceneCamera
+                ?? instance.RenderState.RenderingCamera
+                ?? instance.LastSceneCamera
+                ?? instance.LastRenderingCamera
+                ?? RuntimeEngine.Rendering.State.RenderingCamera;
+        }
+
         private void RenderLight(XRMeshRenderer renderer, LightComponent comp)
         {
             _currentLightComponent = comp;
@@ -379,7 +390,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            Vector3? cameraPosition = ActivePipelineInstance.RenderState.SceneCamera?.Transform?.RenderTranslation;
+            Vector3? cameraPosition = ResolveActiveRenderingCamera()?.Transform?.RenderTranslation;
             renderOptions.CullMode = cameraPosition is Vector3 position && !spotLight.OuterCone.ContainsPoint(position)
                 ? ECullMode.Back
                 : ECullMode.Front;
@@ -396,6 +407,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_currentLightComponent is null)
                 return;
 
+            LightRendererCache uniformCache = GetRendererCache();
             _currentLightComponent.SetUniforms(materialProgram);
             int deferredDebugMode = RenderDiagnosticsFlags.DeferredDebugView;
             materialProgram.Uniform("DeferredDebugMode", deferredDebugMode >= 0 && deferredDebugMode <= 14 ? deferredDebugMode : 0);
@@ -432,6 +444,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                     materialProgram,
                     directionalLight,
                     useCascadedDirectionalShadows,
+                    uniformCache.DirectionalShadowAtlasPacked0,
+                    uniformCache.DirectionalShadowAtlasUvScaleBias,
+                    uniformCache.DirectionalShadowAtlasDepthParams,
                     out directionalAtlasSampleable);
 
                 if (useDirectionalShadowAtlas && !directionalAtlasSampleable)
@@ -449,7 +464,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
             else
             {
-                BindDisabledDirectionalAtlasShadows(materialProgram);
+                BindDisabledDirectionalAtlasShadows(
+                    materialProgram,
+                    uniformCache.DirectionalShadowAtlasPacked0,
+                    uniformCache.DirectionalShadowAtlasUvScaleBias,
+                    uniformCache.DirectionalShadowAtlasDepthParams);
             }
 
             materialProgram.Uniform("UseCascadedDirectionalShadows", useCascadedDirectionalShadows);
@@ -493,9 +512,18 @@ namespace XREngine.Rendering.Pipelines.Commands
                 bool pointAtlasBound = false;
                 bool useLegacyShadowMap = !usePointAtlas && hasShadowMap;
                 if (usePointAtlas)
-                    pointAtlasBound = TryBindPointAtlasShadow(materialProgram, pointLight);
+                    pointAtlasBound = TryBindPointAtlasShadow(
+                        materialProgram,
+                        pointLight,
+                        uniformCache.PointShadowAtlasPacked0,
+                        uniformCache.PointShadowAtlasUvScaleBias,
+                        uniformCache.PointShadowAtlasDepthParams);
                 else
-                    BindDisabledPointAtlas(materialProgram);
+                    BindDisabledPointAtlas(
+                        materialProgram,
+                        uniformCache.PointShadowAtlasPacked0,
+                        uniformCache.PointShadowAtlasUvScaleBias,
+                        uniformCache.PointShadowAtlasDepthParams);
 
                 ShadowMapFormatSelection shadowFormat = pointLight.ResolveShadowMapFormat(preferredStorageFormat: pointLight.ShadowMapStorageFormat);
                 materialProgram.Uniform("ShadowMapEncoding", (int)shadowFormat.Encoding);
@@ -623,7 +651,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private static bool TryBindPointAtlasShadow(
             XRRenderProgram materialProgram,
-            PointLightComponent pointLight)
+            PointLightComponent pointLight,
+            IVector4[] pointShadowAtlasPacked0,
+            Vector4[] pointShadowAtlasUvScaleBias,
+            Vector4[] pointShadowAtlasDepthParams)
         {
             const int pointAtlasUnit = 30;
 
@@ -632,7 +663,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                 lights is not null &&
                 pointLight.CastsShadows;
 
-            ClearPointAtlasUniformData(ShadowFallbackMode.ContactOnly);
+            ClearPointAtlasUniformData(
+                ShadowFallbackMode.ContactOnly,
+                pointShadowAtlasPacked0,
+                pointShadowAtlasUvScaleBias,
+                pointShadowAtlasDepthParams);
             bool hasSampleableFace = false;
             XRTexture2DArray? atlasTexture = null;
             if (requested)
@@ -659,13 +694,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                     float texelSize = sampleResolution > 0u ? 1.0f / sampleResolution : 0.0f;
                     float resolutionScale = pointLight.GetShadowAtlasResolutionScale(sampleResolution);
 
-                    _pointShadowAtlasPacked0[faceIndex] = new IVector4(
+                    pointShadowAtlasPacked0[faceIndex] = new IVector4(
                         resident ? 1 : 0,
                         allocation.PageIndex,
                         (int)fallback,
                         recordIndex);
-                    _pointShadowAtlasUvScaleBias[faceIndex] = allocation.UvScaleBias;
-                    _pointShadowAtlasDepthParams[faceIndex] = new Vector4(
+                    pointShadowAtlasUvScaleBias[faceIndex] = allocation.UvScaleBias;
+                    pointShadowAtlasDepthParams[faceIndex] = new Vector4(
                         pointLight.ShadowNearPlaneDistance,
                         MathF.Max(pointLight.Radius, pointLight.ShadowNearPlaneDistance + 0.001f),
                         texelSize,
@@ -677,22 +712,30 @@ namespace XREngine.Rendering.Pipelines.Commands
             materialProgram.Sampler(PointShadowAtlasName, hasSampleableFace && atlasTexture is not null ? atlasTexture : DummyShadowMapArray, pointAtlasUnit);
 
             materialProgram.Uniform("PointShadowAtlasPathEnabled", requested);
-            materialProgram.Uniform("PointShadowAtlasPacked0", _pointShadowAtlasPacked0);
-            materialProgram.Uniform("PointShadowAtlasUvScaleBias", _pointShadowAtlasUvScaleBias);
-            materialProgram.Uniform("PointShadowAtlasDepthParams", _pointShadowAtlasDepthParams);
+            materialProgram.Uniform("PointShadowAtlasPacked0", pointShadowAtlasPacked0);
+            materialProgram.Uniform("PointShadowAtlasUvScaleBias", pointShadowAtlasUvScaleBias);
+            materialProgram.Uniform("PointShadowAtlasDepthParams", pointShadowAtlasDepthParams);
             return requested;
         }
 
-        private static void BindDisabledPointAtlas(XRRenderProgram materialProgram)
+        private static void BindDisabledPointAtlas(
+            XRRenderProgram materialProgram,
+            IVector4[] pointShadowAtlasPacked0,
+            Vector4[] pointShadowAtlasUvScaleBias,
+            Vector4[] pointShadowAtlasDepthParams)
         {
             const int pointAtlasUnit = 30;
-            ClearPointAtlasUniformData(ShadowFallbackMode.Legacy);
+            ClearPointAtlasUniformData(
+                ShadowFallbackMode.Legacy,
+                pointShadowAtlasPacked0,
+                pointShadowAtlasUvScaleBias,
+                pointShadowAtlasDepthParams);
             materialProgram.Sampler(PointShadowAtlasName, DummyShadowMapArray, pointAtlasUnit);
 
             materialProgram.Uniform("PointShadowAtlasPathEnabled", false);
-            materialProgram.Uniform("PointShadowAtlasPacked0", _pointShadowAtlasPacked0);
-            materialProgram.Uniform("PointShadowAtlasUvScaleBias", _pointShadowAtlasUvScaleBias);
-            materialProgram.Uniform("PointShadowAtlasDepthParams", _pointShadowAtlasDepthParams);
+            materialProgram.Uniform("PointShadowAtlasPacked0", pointShadowAtlasPacked0);
+            materialProgram.Uniform("PointShadowAtlasUvScaleBias", pointShadowAtlasUvScaleBias);
+            materialProgram.Uniform("PointShadowAtlasDepthParams", pointShadowAtlasDepthParams);
         }
 
         private static bool IsShadowAtlasAllocationSampleable(in ShadowAtlasAllocation allocation)
@@ -701,13 +744,17 @@ namespace XREngine.Rendering.Pipelines.Commands
                allocation.ActiveFallback is ShadowFallbackMode.None or ShadowFallbackMode.StaleTile &&
                allocation.PageIndex >= 0;
 
-        private static void ClearPointAtlasUniformData(ShadowFallbackMode fallbackMode)
+        private static void ClearPointAtlasUniformData(
+            ShadowFallbackMode fallbackMode,
+            IVector4[] pointShadowAtlasPacked0,
+            Vector4[] pointShadowAtlasUvScaleBias,
+            Vector4[] pointShadowAtlasDepthParams)
         {
             for (int faceIndex = 0; faceIndex < PointLightComponent.ShadowFaceCount; faceIndex++)
             {
-                _pointShadowAtlasPacked0[faceIndex] = new IVector4(0, -1, (int)fallbackMode, -1);
-                _pointShadowAtlasUvScaleBias[faceIndex] = Vector4.Zero;
-                _pointShadowAtlasDepthParams[faceIndex] = new Vector4(0.1f, 1.0f, 0.0f, 1.0f);
+                pointShadowAtlasPacked0[faceIndex] = new IVector4(0, -1, (int)fallbackMode, -1);
+                pointShadowAtlasUvScaleBias[faceIndex] = Vector4.Zero;
+                pointShadowAtlasDepthParams[faceIndex] = new Vector4(0.1f, 1.0f, 0.0f, 1.0f);
             }
         }
 
@@ -735,6 +782,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRRenderProgram materialProgram,
             DirectionalLightComponent directionalLight,
             bool useCascadedDirectionalShadows,
+            IVector4[] directionalShadowAtlasPacked0,
+            Vector4[] directionalShadowAtlasUvScaleBias,
+            Vector4[] directionalShadowAtlasDepthParams,
             out bool hasSampleableAtlasTile)
         {
             var lights = ResolveLightsForLight(directionalLight);
@@ -742,19 +792,19 @@ namespace XREngine.Rendering.Pipelines.Commands
                 lights is not null &&
                 directionalLight.CastsShadows;
 
-            Array.Clear(_directionalShadowAtlasPacked0);
-            Array.Clear(_directionalShadowAtlasUvScaleBias);
-            Array.Clear(_directionalShadowAtlasDepthParams);
+            Array.Clear(directionalShadowAtlasPacked0);
+            Array.Clear(directionalShadowAtlasUvScaleBias);
+            Array.Clear(directionalShadowAtlasDepthParams);
             hasSampleableAtlasTile = false;
             if (requested)
             {
                 directionalLight.CopyPublishedDirectionalAtlasUniformData(
                     useCascadedDirectionalShadows,
-                    _directionalShadowAtlasPacked0,
-                    _directionalShadowAtlasUvScaleBias,
-                    _directionalShadowAtlasDepthParams);
+                    directionalShadowAtlasPacked0,
+                    directionalShadowAtlasUvScaleBias,
+                    directionalShadowAtlasDepthParams);
                 hasSampleableAtlasTile = AreRequiredDirectionalAtlasTilesSampleable(
-                    _directionalShadowAtlasPacked0,
+                    directionalShadowAtlasPacked0,
                     useCascadedDirectionalShadows ? directionalLight.ActiveCascadeCount : 1);
             }
 
@@ -765,7 +815,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 hasSampleableAtlasTile =
                     lights!.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, shadowFormat.Encoding, 0, out atlasTexture) &&
                     AreRequiredDirectionalAtlasTilesSampleable(
-                        _directionalShadowAtlasPacked0,
+                        directionalShadowAtlasPacked0,
                         useCascadedDirectionalShadows ? directionalLight.ActiveCascadeCount : 1,
                         checked((int)Math.Max(1u, atlasTexture.Depth)));
             }
@@ -776,12 +826,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                 requested,
                 hasSampleableAtlasTile,
                 useCascadedDirectionalShadows,
-                lights);
+                lights,
+                directionalShadowAtlasPacked0);
 
             materialProgram.Uniform("DirectionalShadowAtlasEnabled", hasSampleableAtlasTile);
-            materialProgram.Uniform("DirectionalShadowAtlasPacked0", _directionalShadowAtlasPacked0);
-            materialProgram.Uniform("DirectionalShadowAtlasUvScaleBias", _directionalShadowAtlasUvScaleBias);
-            materialProgram.Uniform("DirectionalShadowAtlasDepthParams", _directionalShadowAtlasDepthParams);
+            materialProgram.Uniform("DirectionalShadowAtlasPacked0", directionalShadowAtlasPacked0);
+            materialProgram.Uniform("DirectionalShadowAtlasUvScaleBias", directionalShadowAtlasUvScaleBias);
+            materialProgram.Uniform("DirectionalShadowAtlasDepthParams", directionalShadowAtlasDepthParams);
             return hasSampleableAtlasTile;
         }
 
@@ -809,7 +860,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             bool requested,
             bool shaderAtlasEnabled,
             bool useCascadedDirectionalShadows,
-            Lights3DCollection? lights)
+            Lights3DCollection? lights,
+            IVector4[] directionalShadowAtlasPacked0)
         {
             if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
                 !Debug.ShouldLogEvery(
@@ -838,10 +890,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 metrics.RequestCount,
                 metrics.TilesScheduledThisFrame,
                 metrics.PageCount,
-                FormatAtlasPacked(_directionalShadowAtlasPacked0, 0),
-                FormatAtlasPacked(_directionalShadowAtlasPacked0, 1),
-                FormatAtlasPacked(_directionalShadowAtlasPacked0, 2),
-                FormatAtlasPacked(_directionalShadowAtlasPacked0, 3));
+                FormatAtlasPacked(directionalShadowAtlasPacked0, 0),
+                FormatAtlasPacked(directionalShadowAtlasPacked0, 1),
+                FormatAtlasPacked(directionalShadowAtlasPacked0, 2),
+                FormatAtlasPacked(directionalShadowAtlasPacked0, 3));
         }
 
         private static string FormatAtlasPacked(IVector4[] packed0, int index)
@@ -853,17 +905,21 @@ namespace XREngine.Rendering.Pipelines.Commands
             return $"({value.X},{value.Y},{value.Z},{value.W})";
         }
 
-        private static void BindDisabledDirectionalAtlasShadows(XRRenderProgram materialProgram)
+        private static void BindDisabledDirectionalAtlasShadows(
+            XRRenderProgram materialProgram,
+            IVector4[] directionalShadowAtlasPacked0,
+            Vector4[] directionalShadowAtlasUvScaleBias,
+            Vector4[] directionalShadowAtlasDepthParams)
         {
             materialProgram.Sampler(DirectionalShadowAtlasName, DummyShadowMapArray, DirectionalShadowAtlasUnit);
 
-            Array.Clear(_directionalShadowAtlasPacked0);
-            Array.Clear(_directionalShadowAtlasUvScaleBias);
-            Array.Clear(_directionalShadowAtlasDepthParams);
+            Array.Clear(directionalShadowAtlasPacked0);
+            Array.Clear(directionalShadowAtlasUvScaleBias);
+            Array.Clear(directionalShadowAtlasDepthParams);
             materialProgram.Uniform("DirectionalShadowAtlasEnabled", false);
-            materialProgram.Uniform("DirectionalShadowAtlasPacked0", _directionalShadowAtlasPacked0);
-            materialProgram.Uniform("DirectionalShadowAtlasUvScaleBias", _directionalShadowAtlasUvScaleBias);
-            materialProgram.Uniform("DirectionalShadowAtlasDepthParams", _directionalShadowAtlasDepthParams);
+            materialProgram.Uniform("DirectionalShadowAtlasPacked0", directionalShadowAtlasPacked0);
+            materialProgram.Uniform("DirectionalShadowAtlasUvScaleBias", directionalShadowAtlasUvScaleBias);
+            materialProgram.Uniform("DirectionalShadowAtlasDepthParams", directionalShadowAtlasDepthParams);
         }
 
         private void CreateLightRenderers(

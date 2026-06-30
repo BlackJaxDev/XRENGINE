@@ -378,15 +378,15 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
-    public void RenderScheduledTiles_RendersDirtyDirectionalCascadeGroupPastTileBudget()
+    public void RenderScheduledTiles_RendersNeverRenderedDirectionalCascadeGroupPastTileBudget()
     {
         ShadowAtlasManager manager = CreateManager(pageSize: 2048u, maxPages: 1, maxTiles: 1);
         DirectionalLightComponent light = CreateDirectionalLight(2048u);
         ShadowMapRequest[] requests =
         [
-            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 0, 1024u, 128u, 10000.0f, 1u),
-            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 1, 1024u, 128u, 9900.0f, 2u),
-            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 2, 1024u, 128u, 9800.0f, 3u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 0, 1024u, 128u, 10000.0f, 1u, dirtyReason: ShadowDirtyReason.FirstSubmission | ShadowDirtyReason.NeverRendered),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 1, 1024u, 128u, 9900.0f, 2u, dirtyReason: ShadowDirtyReason.FirstSubmission | ShadowDirtyReason.NeverRendered),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 2, 1024u, 128u, 9800.0f, 3u, dirtyReason: ShadowDirtyReason.FirstSubmission | ShadowDirtyReason.NeverRendered),
         ];
 
         manager.BeginFrame(1u, activeCameraCount: 1);
@@ -405,6 +405,44 @@ public sealed class ShadowAtlasManagerPhaseTests
             frameData.TryGetAllocation(requests[i].Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
             allocation.LastRenderedFrame.ShouldBe(1u);
             allocation.ActiveFallback.ShouldBe(ShadowFallbackMode.None);
+        }
+    }
+
+    [Test]
+    public void RenderScheduledTiles_DefersDirectionalCameraFitRefreshPastTileBudgetWhenStaleTilesExist()
+    {
+        ShadowAtlasManager manager = CreateManager(pageSize: 2048u, maxPages: 1, maxTiles: 1);
+        DirectionalLightComponent light = CreateDirectionalLight(2048u);
+        ShadowMapRequest[] firstRequests =
+        [
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 0, 1024u, 128u, 10000.0f, 1u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 1, 1024u, 128u, 9900.0f, 2u),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 2, 1024u, 128u, 9800.0f, 3u),
+        ];
+        RunFrameAndMarkRendered(manager, 1u, firstRequests);
+
+        ShadowMapRequest[] movedRequests =
+        [
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 0, 1024u, 128u, 10000.0f, 11u, dirtyReason: ShadowDirtyReason.ContentChanged | ShadowDirtyReason.ProjectionOrCameraFitChanged),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 1, 1024u, 128u, 9900.0f, 12u, dirtyReason: ShadowDirtyReason.ContentChanged | ShadowDirtyReason.ProjectionOrCameraFitChanged),
+            CreateRequest(light, EShadowProjectionType.DirectionalCascade, 2, 1024u, 128u, 9800.0f, 13u, dirtyReason: ShadowDirtyReason.ContentChanged | ShadowDirtyReason.ProjectionOrCameraFitChanged),
+        ];
+
+        manager.BeginFrame(2u, activeCameraCount: 1);
+        for (int i = 0; i < movedRequests.Length; i++)
+            manager.Submit(movedRequests[i]).ShouldBeTrue();
+
+        manager.SolveAllocations();
+        manager.RenderScheduledTiles().ShouldBe(0);
+        manager.PublishFrameData();
+
+        ShadowAtlasFrameData frameData = manager.PublishedFrameData;
+        for (int i = 0; i < movedRequests.Length; i++)
+        {
+            frameData.TryGetAllocation(movedRequests[i].Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
+            allocation.LastRenderedFrame.ShouldBe(1u);
+            allocation.ActiveFallback.ShouldBe(ShadowFallbackMode.StaleTile);
+            allocation.SkipReason.ShouldBe(SkipReason.StaleTileReused);
         }
     }
 

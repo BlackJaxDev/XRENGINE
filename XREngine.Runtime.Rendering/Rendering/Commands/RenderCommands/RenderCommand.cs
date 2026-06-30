@@ -68,20 +68,17 @@ namespace XREngine.Rendering.Commands
         //
         // _dirty: any property change marks this true via OnPropertyChanged. Cleared at the end of
         // SwapBuffers() once the per-command publish has run. The render-side snapshot fields
-        // (RenderEnabled / per-derived-class snapshot copies) are owned by the command instance,
-        // so once a clean publish has run, subsequent collections that share this command can skip
-        // their per-command SwapBuffers without losing data.
+        // (RenderEnabled / per-derived-class snapshot copies) are owned by the command instance.
+        // Collections that share commands with an independent authoritative viewport should set
+        // RenderCommandCollection.IsRenderCommandSnapshotAuthority=false so they do not clear
+        // _dirty before that viewport publishes the shared snapshot.
         //
-        // _swapQueued: dedup bit for RenderCommandCollection._updatingSwapQueue. AddCPU may be
-        // called multiple times per frame for the same command (e.g. multiple cameras or shadow
-        // viewports). The queue uses this bit to add each dirty command at most once per swap.
-        // Cleared inside SwapBuffers() after the publish runs.
-        //
-        // Both fields are mutated under the RenderCommandCollection._lock during AddCPU and during
-        // the synchronized SwapBuffers window. They are read without locking by the gate inside
-        // SwapBuffers, so they are marked volatile to keep that read coherent.
+        // RenderCommandCollection keeps dirty-queue membership per collection. Do not keep a global
+        // queue-membership bit here: desktop, OpenXR eye, shadow, and capture viewports can collect
+        // the same command into different collections before any of them swaps. The authority flag
+        // below is only a yield marker for non-authoritative collections, not membership in a queue.
         internal volatile bool _dirty = true;
-        internal volatile bool _swapQueued = false;
+        internal volatile bool _authoritativePublishQueued = false;
 
         internal bool HasSwappedBuffers => _hasSwappedBuffers;
 
@@ -158,7 +155,7 @@ namespace XREngine.Rendering.Commands
             // same frame can short-circuit, and so the next frame only re-publishes if a
             // property actually mutated in the interim.
             _dirty = false;
-            _swapQueued = false;
+            _authoritativePublishQueued = false;
         }
 
         /// <summary>

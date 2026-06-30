@@ -514,7 +514,14 @@ public unsafe partial class OpenXRAPI
     {
         RenderCommandCollection commands = _openXrSharedMeshRenderCommands ??= new RenderCommandCollection();
         commands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
+        commands.IsRenderCommandSnapshotAuthority = !HasIndependentDesktopVrView();
         return commands;
+    }
+
+    private static bool HasIndependentDesktopVrView()
+    {
+        IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+        return hostServices.RenderWindowsWhileInVR && !hostServices.VrMirrorComposeFromEyeTextures;
     }
 
     /// <summary>
