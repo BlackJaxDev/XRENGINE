@@ -250,6 +250,7 @@ namespace XREngine.Rendering.Shaders.Generator
         private const string ModelViewMatrixName = "mvMatrix";
         private const string ModelViewProjMatrixName = "mvpMatrix";
         private const string NormalMatrixName = "normalMatrix";
+        private static string MultiviewViewIndexBuiltin => RuntimeEngine.Rendering.State.IsVulkan ? "gl_ViewIndex" : "gl_ViewID_OVR";
 
         public const string VertexUniformSuffix = "_VTX";
 
@@ -596,7 +597,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
                 if (UseOVRMultiView)
                 {
-                    Line("bool leftEye = gl_ViewID_OVR == 0;");
+                    Line($"bool leftEye = {MultiviewViewIndexBuiltin} == 0;");
                     Line($"mat4 {invViewMatrixName} = leftEye ? {EEngineUniform.LeftEyeInverseViewMatrix}{VertexUniformSuffix} : {EEngineUniform.RightEyeInverseViewMatrix}{VertexUniformSuffix};");
                     Line($"mat4 {projMatrixName} = leftEye ? {EEngineUniform.LeftEyeProjMatrix}{VertexUniformSuffix} : {EEngineUniform.RightEyeProjMatrix}{VertexUniformSuffix};");
                 }
@@ -637,7 +638,7 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             Line($"{FragPosName} = ({EEngineUniform.ModelMatrix} * {localInputPositionName}).xyz;");
             if (UseOVRMultiView)
-                Line($"{FragViewIndexName} = float(gl_ViewID_OVR);");
+                Line($"{FragViewIndexName} = float({MultiviewViewIndexBuiltin});");
             else
                 Line($"{FragViewIndexName} = 0.0f;");
         }

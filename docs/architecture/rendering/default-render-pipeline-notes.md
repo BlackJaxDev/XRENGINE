@@ -588,3 +588,37 @@ That includes Vulkan `RegisterImGuiTexture(...)` calls and OpenGL
 Pure inspection of an already-resolved wrapper may stay local when the caller is
 already on the render thread, but new preview/readback helpers should keep the
 renderer mutation/readback setup behind the same service boundary.
+
+---
+
+## 29. OpenXR Stereo Temporal Isolation
+
+**Rule:** OpenXR stereo features must either use a proven per-eye/layer resource
+model or be disabled with an explicit policy diagnostic. Do not hide an unsafe
+headset path behind a mono or CPU fallback.
+
+Current policy:
+
+- `EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain` keeps TAA/TSR and
+  other history-based effects disabled for OpenXR external per-eye swapchain
+  targets.
+- `EVrTemporalHistoryPolicy.StereoArrayLayer` is the only OpenXR VR policy that
+  may use history-based temporal resources, and only for resources/shaders that
+  are stereo arrays.
+- Auto exposure uses `EVrAutoExposurePolicy.HeadsetShared`: stereo-array HDR
+  sources are averaged across both eye layers into one shared exposure value.
+  Per-eye external swapchain sources skip auto exposure to avoid last-eye-wins
+  mutation of the shared 1x1 exposure texture.
+- Atmosphere and volumetric-fog temporal history stay mono-only until their
+  half-resolution color/depth/history resources and reprojection/upscale shaders
+  are stereo-array aware.
+- Vendor upscalers and frame generation are unsupported in headset stereo until
+  their sessions, history-valid flags, color/depth/motion/exposure inputs, and
+  outputs are isolated per eye or per stereo layer. Explicit DLSS/DLAA/XeSS
+  requests in VR must fail loudly; fallback blit is allowed when no vendor path
+  was requested.
+
+Resource-generation diagnostics must include stereo state, reserved view count,
+feature mask, HDR, AA, MSAA, and dimensions so mode toggles explain whether the
+pipeline rebuilt for mono, per-eye external swapchain, or true stereo-array
+rendering.

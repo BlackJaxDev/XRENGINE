@@ -13,6 +13,8 @@ public unsafe partial class OpenXRAPI
 {
     internal void EnableRuntimeMonitoring()
     {
+        SubscribeOpenXrRenderSettingsChanged();
+        RecordAppliedOpenXrEyeResolutionSettings();
         _runtimeMonitoringEnabled = true;
         ResetSmokeDiagnostics();
         SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
@@ -34,6 +36,7 @@ public unsafe partial class OpenXRAPI
     internal void DisableRuntimeMonitoring()
     {
         _runtimeMonitoringEnabled = false;
+        UnsubscribeOpenXrRenderSettingsChanged();
         MarkRuntimeLoss(OpenXrRuntimeLossReason.ShutdownRequested);
     }
 
@@ -60,7 +63,7 @@ public unsafe partial class OpenXRAPI
         bool destroyInstance = renderer is VulkanRenderer || _instanceOwnedByRenderer;
         TearDownSessionResourcesOnOwningThread(destroyInstance);
 
-        ScheduleProbeRetry(_graphicsDeviceFailureProbeInterval);
+        ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
         SetRuntimeState(_runtimeMonitoringEnabled ? OpenXrRuntimeState.RecreatePending : OpenXrRuntimeState.DesktopOnly);
     }
 
@@ -188,7 +191,7 @@ public unsafe partial class OpenXRAPI
         if (renderer.IsDeviceLost)
         {
             Debug.LogWarning("OpenXR session init skipped because the active renderer device is lost.");
-            ScheduleProbeRetry(_graphicsDeviceFailureProbeInterval);
+            ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
             TearDownSessionResourcesOnOwningThread(true);
             SetRuntimeState(OpenXrRuntimeState.RecreatePending);
             return;
@@ -204,7 +207,7 @@ public unsafe partial class OpenXRAPI
         if (selectedBinding is null)
         {
             Debug.LogWarning("OpenXR: no compatible graphics binding for the active renderer.");
-            ScheduleProbeRetry(_graphicsDeviceFailureProbeInterval);
+            ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
             TearDownSessionResourcesOnOwningThread(true);
             SetRuntimeState(OpenXrRuntimeState.RecreatePending);
             return;
@@ -220,7 +223,7 @@ public unsafe partial class OpenXRAPI
         if (_graphicsBinding is null || !_graphicsBinding.IsCompatible(renderer))
         {
             Debug.LogWarning("OpenXR: no compatible graphics binding for the active renderer.");
-            ScheduleProbeRetry(_graphicsDeviceFailureProbeInterval);
+            ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
             TearDownSessionResourcesOnOwningThread(true);
             SetRuntimeState(OpenXrRuntimeState.RecreatePending);
             return;
@@ -328,8 +331,13 @@ public unsafe partial class OpenXRAPI
                 Result: Result.ErrorGraphicsDeviceInvalid
                     or Result.ErrorValidationFailure
             }
-            ? _graphicsDeviceFailureProbeInterval
+            ? GetGraphicsDeviceFailureProbeDelay()
             : _probeInterval;
+
+    private TimeSpan GetGraphicsDeviceFailureProbeDelay()
+        => DateTime.UtcNow <= _intentionalOpenXrRecreateBackoffBypassUntilUtc
+            ? _intentionalOpenXrRecreateProbeInterval
+            : _graphicsDeviceFailureProbeInterval;
 
     private void ScheduleProbeRetry()
         => ScheduleProbeRetry(_probeInterval);

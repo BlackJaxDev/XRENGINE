@@ -47,6 +47,7 @@ public unsafe partial class VulkanRenderer
         DestroyCachedDescriptorSetLayouts();
         DestroyVulkanPipelineCache();
         DestroyCanonicalImmutableSamplers();
+        DestroyRemainingTrackedSamplers();
         Api!.DestroyDevice(device, null);
         device = default;
         graphicsQueue = default;

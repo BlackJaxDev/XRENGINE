@@ -43,6 +43,63 @@ namespace XREngine.Rendering.Pipelines.Commands
             return "restricted";
         }
 
+        internal static bool TryUseAutoExposureSource(
+            XRTexture sourceTexture,
+            out EVrAutoExposurePolicy policy,
+            out string reason)
+        {
+            policy = EVrAutoExposurePolicy.HeadsetShared;
+
+            if (!IsVrOrStereoExposureContext())
+            {
+                reason = "mono rendering uses the normal shared exposure target.";
+                return true;
+            }
+
+            if (sourceTexture is XRTexture2DArray stereoArray && stereoArray.Depth >= 2u)
+            {
+                reason = "HeadsetShared auto exposure averages the stereo array layers into one 1x1 exposure texture.";
+                return true;
+            }
+
+            reason = "VR HeadsetShared auto exposure requires a stereo array source; external per-eye swapchain targets are skipped to avoid last-eye-wins exposure state.";
+            return false;
+        }
+
+        private static bool IsVrOrStereoExposureContext()
+            => RuntimeEngine.VRState.IsInVR
+            || RuntimeEngine.Rendering.State.IsStereoPass
+            || AbstractRenderer.Current?.IsRenderingExternalSwapchainTarget == true;
+
+        private static void ReportVrAutoExposurePolicy(
+            EVrAutoExposurePolicy policy,
+            XRTexture sourceTexture,
+            string reason)
+        {
+            if (!IsVrOrStereoExposureContext())
+                return;
+
+            Debug.RenderingEvery(
+                $"ExposureUpdate.VrPolicy.{policy}.{sourceTexture.GetType().Name}",
+                TimeSpan.FromSeconds(5),
+                "[ExposureUpdate] VR auto exposure policy={0} source={1} reason={2}",
+                policy,
+                sourceTexture.GetType().Name,
+                reason);
+        }
+
+        private static void ReportSkippedVrAutoExposure(
+            EVrAutoExposurePolicy policy,
+            XRTexture sourceTexture,
+            string reason)
+            => Debug.RenderingWarningEvery(
+                $"ExposureUpdate.VrPolicySkipped.{policy}.{sourceTexture.GetType().Name}",
+                TimeSpan.FromSeconds(1),
+                "[ExposureUpdate] Skipping VR auto exposure policy={0} source={1}: {2}",
+                policy,
+                sourceTexture.GetType().Name,
+                reason);
+
         protected override void Execute()
         {
             int passIndex = ResolvePassIndex(nameof(VPRC_ExposureUpdate));
@@ -86,6 +143,14 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Debug.Rendering($"[ExposureUpdate] Source texture '{HDRSceneTextureName}' not found");
                 return;
             }
+
+            if (!TryUseAutoExposureSource(sourceTexture, out EVrAutoExposurePolicy exposurePolicy, out string exposurePolicyReason))
+            {
+                ReportSkippedVrAutoExposure(exposurePolicy, sourceTexture, exposurePolicyReason);
+                return;
+            }
+
+            ReportVrAutoExposurePolicy(exposurePolicy, sourceTexture, exposurePolicyReason);
 
             var renderer = AbstractRenderer.Current;
             if (renderer?.SupportsGpuAutoExposure == true)

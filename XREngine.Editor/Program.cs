@@ -587,6 +587,8 @@ internal partial class Program
 
     private static void ApplyStartupProfilerPreferences()
     {
+        ApplyProfileCaptureProfilerPreferences();
+
         if (!Engine.EditorPreferences.Debug.StartExternalProfilerOnStartup)
             return;
 
@@ -607,6 +609,43 @@ internal partial class Program
             EngineDebug.LogWarning(error);
             WriteBootstrapTrace($"External profiler launch requested but failed: {error}");
         }
+    }
+
+    private static void ApplyProfileCaptureProfilerPreferences()
+    {
+        if (!IsEnabledEnvironmentFlag(XREngineEnvironmentVariables.ProfileCapture)
+            && !IsEnabledEnvironmentFlag(XREngineEnvironmentVariables.ProfileAutoDump))
+        {
+            return;
+        }
+
+        if (!Engine.EditorPreferences.Debug.EnableProfilerFrameLogging)
+        {
+            Engine.EditorPreferences.Debug.EnableProfilerFrameLogging = true;
+            WriteBootstrapTrace("Enabled profiler frame logging for profile capture.");
+        }
+
+        if (!Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking)
+        {
+            Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking = true;
+            WriteBootstrapTrace("Enabled render statistics tracking for profile capture.");
+        }
+
+        if (!Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling)
+        {
+            Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling = true;
+            WriteBootstrapTrace("Enabled GPU render-pipeline profiling for profile capture.");
+        }
+    }
+
+    private static bool IsEnabledEnvironmentFlag(string name)
+    {
+        string? value = Environment.GetEnvironmentVariable(name);
+        return value is not null
+            && (value == "1"
+                || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("on", StringComparison.OrdinalIgnoreCase));
     }
 
     private static void UnitTest_VerifyPlayModeStart()

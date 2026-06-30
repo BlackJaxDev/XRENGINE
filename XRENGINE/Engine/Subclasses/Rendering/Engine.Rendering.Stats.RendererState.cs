@@ -84,6 +84,10 @@ namespace XREngine
                     private static readonly object _contextLock = new();
                     private static string _activeTextureBindingRung = "unknown";
                     private static string _activeStereoMode = "mono";
+                    private static string _activeVrViewRenderModeRequested = "unknown";
+                    private static string _activeVrViewRenderModeEffective = "unknown";
+                    private static string _activeVrViewRenderImplementationPath = "unknown";
+                    private static string _activeVrTemporalHistoryPolicy = "unknown";
                     private static string _activeSubmissionStrategy = "unknown";
                     private static string _activeRenderBackend = "unknown";
                     private static bool _validationLayersEnabled;
@@ -92,6 +96,10 @@ namespace XREngine
 
                     private static string _lastFrameActiveTextureBindingRung = "unknown";
                     private static string _lastFrameActiveStereoMode = "mono";
+                    private static string _lastFrameActiveVrViewRenderModeRequested = "unknown";
+                    private static string _lastFrameActiveVrViewRenderModeEffective = "unknown";
+                    private static string _lastFrameActiveVrViewRenderImplementationPath = "unknown";
+                    private static string _lastFrameActiveVrTemporalHistoryPolicy = "unknown";
                     private static string _lastFrameActiveSubmissionStrategy = "unknown";
                     private static string _lastFrameActiveRenderBackend = "unknown";
                     private static bool _lastFrameValidationLayersEnabled;
@@ -133,6 +141,10 @@ namespace XREngine
                     public static int UnknownStrategyDrawCalls => _lastFrameUnknownStrategyDrawCalls;
                     public static string ActiveTextureBindingRung => _lastFrameActiveTextureBindingRung;
                     public static string ActiveStereoMode => _lastFrameActiveStereoMode;
+                    public static string ActiveVrViewRenderModeRequested => _lastFrameActiveVrViewRenderModeRequested;
+                    public static string ActiveVrViewRenderModeEffective => _lastFrameActiveVrViewRenderModeEffective;
+                    public static string ActiveVrViewRenderImplementationPath => _lastFrameActiveVrViewRenderImplementationPath;
+                    public static string ActiveVrTemporalHistoryPolicy => _lastFrameActiveVrTemporalHistoryPolicy;
                     public static string ActiveSubmissionStrategy => _lastFrameActiveSubmissionStrategy;
                     public static string ActiveRenderBackend => _lastFrameActiveRenderBackend;
                     public static bool ValidationLayersEnabled => _lastFrameValidationLayersEnabled;
@@ -179,6 +191,10 @@ namespace XREngine
                         {
                             _lastFrameActiveTextureBindingRung = _activeTextureBindingRung;
                             _lastFrameActiveStereoMode = _activeStereoMode;
+                            _lastFrameActiveVrViewRenderModeRequested = _activeVrViewRenderModeRequested;
+                            _lastFrameActiveVrViewRenderModeEffective = _activeVrViewRenderModeEffective;
+                            _lastFrameActiveVrViewRenderImplementationPath = _activeVrViewRenderImplementationPath;
+                            _lastFrameActiveVrTemporalHistoryPolicy = _activeVrTemporalHistoryPolicy;
                             _lastFrameActiveSubmissionStrategy = _activeSubmissionStrategy;
                             _lastFrameActiveRenderBackend = _activeRenderBackend;
                             _lastFrameValidationLayersEnabled = _validationLayersEnabled;
@@ -191,6 +207,10 @@ namespace XREngine
                         string? submissionStrategy,
                         string? textureBindingRung,
                         string? stereoMode,
+                        string? vrViewRenderModeRequested,
+                        string? vrViewRenderModeEffective,
+                        string? vrViewRenderImplementationPath,
+                        string? vrTemporalHistoryPolicy,
                         string? renderBackend,
                         bool validationLayersEnabled,
                         bool debugOutputEnabled,
@@ -201,6 +221,10 @@ namespace XREngine
                             _activeSubmissionStrategy = string.IsNullOrWhiteSpace(submissionStrategy) ? "unknown" : submissionStrategy!;
                             _activeTextureBindingRung = string.IsNullOrWhiteSpace(textureBindingRung) ? "unknown" : textureBindingRung!;
                             _activeStereoMode = string.IsNullOrWhiteSpace(stereoMode) ? "mono" : stereoMode!;
+                            _activeVrViewRenderModeRequested = string.IsNullOrWhiteSpace(vrViewRenderModeRequested) ? "unknown" : vrViewRenderModeRequested!;
+                            _activeVrViewRenderModeEffective = string.IsNullOrWhiteSpace(vrViewRenderModeEffective) ? "unknown" : vrViewRenderModeEffective!;
+                            _activeVrViewRenderImplementationPath = string.IsNullOrWhiteSpace(vrViewRenderImplementationPath) ? "unknown" : vrViewRenderImplementationPath!;
+                            _activeVrTemporalHistoryPolicy = string.IsNullOrWhiteSpace(vrTemporalHistoryPolicy) ? "unknown" : vrTemporalHistoryPolicy!;
                             _activeRenderBackend = string.IsNullOrWhiteSpace(renderBackend) ? "unknown" : renderBackend!;
                             _validationLayersEnabled = validationLayersEnabled;
                             _debugOutputEnabled = debugOutputEnabled;

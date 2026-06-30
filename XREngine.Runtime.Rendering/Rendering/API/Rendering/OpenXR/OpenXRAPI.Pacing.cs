@@ -32,11 +32,14 @@ public unsafe partial class OpenXRAPI
     /// </summary>
     private void EnsureOpenXrPacingThreadStarted()
     {
+        if (OpenXrRenderPacingHandling != OpenXrRenderPacingMode.DedicatedThread)
+        {
+            StopOpenXrPacingThread();
+            return;
+        }
         if (_openXrPacingThread is not null)
             return;
         if (!_sessionBegun)
-            return;
-        if (OpenXrRenderPacingHandling != OpenXrRenderPacingMode.DedicatedThread)
             return;
 
         Volatile.Write(ref _openXrPacingStopRequested, 0);
@@ -76,24 +79,34 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _openXrPacingStopRequested, 1);
         _openXrPacingWakeEvent.Set();
 
+        bool exited = false;
         try
         {
-            // Give the thread a bounded window to drain; if it does not exit we simply abandon
-            // the reference (the loop checks _openXrPacingStopRequested after each wake).
-            if (!thread.Join(TimeSpan.FromMilliseconds(250)))
-                Debug.LogWarning("OpenXR pacing thread did not exit within 250ms; abandoning reference.");
+            // Give the thread a bounded window to drain. If it is currently inside xrWaitFrame,
+            // keep the reference and stop flag intact so it exits when the runtime releases it.
+            exited = thread.Join(TimeSpan.FromMilliseconds(250));
+            if (!exited)
+                Debug.LogWarning("OpenXR pacing thread did not exit within 250ms; it will retire after xrWaitFrame returns.");
         }
         catch
         {
             // best-effort cleanup
         }
-        finally
+
+        if (exited)
+            ClearOpenXrPacingThreadAfterExit(thread);
+    }
+
+    private void ClearOpenXrPacingThreadAfterExit(Thread thread)
+    {
+        if (ReferenceEquals(_openXrPacingThread, thread))
         {
             _openXrPacingThread = null;
-            ClearOpenXrPacingThread();
             _openXrPacingWakeEvent.Reset();
             Volatile.Write(ref _openXrPacingStopRequested, 0);
         }
+
+        ClearOpenXrPacingThread();
     }
 
     private void OpenXrPacingLoop()
@@ -113,6 +126,9 @@ public unsafe partial class OpenXRAPI
 
                 // Consume the signal so the next iteration parks until the render thread signals again.
                 _openXrPacingWakeEvent.Reset();
+
+                if (OpenXrRenderPacingHandling != OpenXrRenderPacingMode.DedicatedThread)
+                    break;
 
                 RuntimeEngine.Rendering.Stats.Vr.RecordVrXrPacingThreadIdleTime(
                     TimeSpan.FromSeconds((idleEnd - idleStart) / (double)Stopwatch.Frequency));
@@ -138,7 +154,7 @@ public unsafe partial class OpenXRAPI
         }
         finally
         {
-            ClearOpenXrPacingThread();
+            ClearOpenXrPacingThreadAfterExit(Thread.CurrentThread);
         }
     }
 }

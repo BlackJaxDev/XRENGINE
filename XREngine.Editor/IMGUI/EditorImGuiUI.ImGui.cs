@@ -83,7 +83,8 @@ public static partial class EditorImGuiUI
 
         private static bool _renameInputFocusRequested;
         private static bool _imguiStyleInitialized;
-        private static bool _dockingIniReloaded;
+        private static IntPtr _imguiStyledContext;
+        private static IntPtr _dockingIniReloadedContext;
         private static Vector4? _imguiBaseWindowBg;
         private static Vector4? _imguiBaseChildBg;
         private static Vector4? _imguiBaseDockingEmptyBg;
@@ -1826,7 +1827,8 @@ public static partial class EditorImGuiUI
 
         private static void EnsureProfessionalImGuiStyling()
         {
-            if (_imguiStyleInitialized)
+            IntPtr currentContext = ImGui.GetCurrentContext();
+            if (_imguiStyleInitialized && _imguiStyledContext == currentContext)
                 return;
 
             var io = ImGui.GetIO();
@@ -1938,6 +1940,7 @@ public static partial class EditorImGuiUI
             _imguiBaseChildBg = colors[(int)ImGuiCol.ChildBg];
             _imguiBaseDockingEmptyBg = colors[(int)ImGuiCol.DockingEmptyBg];
 
+            _imguiStyledContext = currentContext;
             _imguiStyleInitialized = true;
 
             // The ImGuiController's constructor (OpenGL) calls NewFrame() before
@@ -1946,9 +1949,9 @@ public static partial class EditorImGuiUI
             // controller creation and DockContextInitialize ran on the most recent
             // NewFrame().  Reload the INI so the [Docking][Data] section is parsed
             // and the saved dock layout is restored.
-            if (!_dockingIniReloaded)
+            if (_dockingIniReloadedContext != currentContext)
             {
-                _dockingIniReloaded = true;
+                _dockingIniReloadedContext = currentContext;
                 LoadPanelVisibilityFromImGuiIniIfNeeded();
 
                 string? iniFilename = _ownedImGuiIniFilename;

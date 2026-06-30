@@ -83,7 +83,9 @@ public sealed class VPRC_AtmosphereHistoryPass : ViewportRenderCommand
 
         data = new AtmosphereTemporalUniformData
         {
-            HistoryReady = state.HistoryReady && !state.ForceHistoryReset,
+            HistoryReady = TryUseTemporalAtmosphereHistory(out _, out _)
+                && state.HistoryReady
+                && !state.ForceHistoryReset,
             PreviousViewProjection = state.PreviousViewProjection,
             Width = state.LastHalfWidth,
             Height = state.LastHalfHeight,
@@ -126,6 +128,20 @@ public sealed class VPRC_AtmosphereHistoryPass : ViewportRenderCommand
             halfHeight = Math.Max(1u, (uint)viewport.InternalHeight / 2u);
         }
 
+        if (!TryUseTemporalAtmosphereHistory(out EVrTemporalHistoryPolicy policy, out string historyDisabledReason))
+        {
+            state.LastHalfWidth = halfWidth;
+            state.LastHalfHeight = halfHeight;
+            ResetState(state);
+            Debug.RenderingEvery(
+                $"AtmosphereHistory.VrTemporalDisabled.{policy}",
+                TimeSpan.FromSeconds(5),
+                "[AtmosphereHistory] VR atmosphere temporal history disabled policy={0}: {1}",
+                policy,
+                historyDisabledReason);
+            return;
+        }
+
         bool sizeChanged = halfWidth != state.LastHalfWidth || halfHeight != state.LastHalfHeight;
         if (sizeChanged)
         {
@@ -152,6 +168,9 @@ public sealed class VPRC_AtmosphereHistoryPass : ViewportRenderCommand
 
     private static void CommitTemporalFrame()
     {
+        if (!TryUseTemporalAtmosphereHistory(out _, out _))
+            return;
+
         if (!TryGetActiveState(out _, out AtmosphereTemporalState? state) || !state.PreparedCurrentFrame)
             return;
 
@@ -179,6 +198,32 @@ public sealed class VPRC_AtmosphereHistoryPass : ViewportRenderCommand
         state = TemporalStates.GetValue(camera, _ => new AtmosphereTemporalState());
         return true;
     }
+
+    internal static bool TryUseTemporalAtmosphereHistory(
+        out EVrTemporalHistoryPolicy policy,
+        out string reason)
+    {
+        policy = VPRC_TemporalAccumulationPass.ResolveHistoryIsolationPolicy(out string temporalReason);
+        if (IsTemporalHistoryPolicyDisabled(policy))
+        {
+            reason = temporalReason;
+            return false;
+        }
+
+        if (!RuntimeEngine.VRState.IsInVR && !RuntimeEngine.Rendering.State.IsStereoPass)
+        {
+            reason = "mono atmosphere temporal history is keyed by camera.";
+            return true;
+        }
+
+        reason = "VR atmosphere temporal history disabled until half-resolution atmosphere textures and shaders are stereo array-layered.";
+        return false;
+    }
+
+    private static bool IsTemporalHistoryPolicyDisabled(EVrTemporalHistoryPolicy policy)
+        => policy is EVrTemporalHistoryPolicy.Disabled
+            or EVrTemporalHistoryPolicy.DisabledPerEyeSwapchain
+            or EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain;
 
     private static bool IsCameraCut(AtmosphereTemporalState state)
     {

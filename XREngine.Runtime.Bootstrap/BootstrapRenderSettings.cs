@@ -96,6 +96,10 @@ public static class BootstrapRenderSettings
             renderSettings.VrFoveationQualityPreset = settings.VR.Foveation.QualityPreset;
             renderSettings.VrFoveationRequireRequested = settings.VR.Foveation.RequireRequested;
             renderSettings.EnableVrFoveatedViewSet = settings.VR.Foveation.Mode != EVrFoveationMode.Off;
+            renderSettings.OpenXrEyeResolutionPreset = settings.VR.OpenXrEyeResolution.Preset;
+            renderSettings.OpenXrEyeResolutionScale = settings.VR.OpenXrEyeResolution.Scale;
+            renderSettings.OpenXrCustomEyeResolutionWidth = settings.VR.OpenXrEyeResolution.CustomWidth;
+            renderSettings.OpenXrCustomEyeResolutionHeight = settings.VR.OpenXrEyeResolution.CustomHeight;
         }
         else if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.SinglePassStereoVR)))
         {
@@ -106,6 +110,8 @@ public static class BootstrapRenderSettings
             $"AllowShaderPipelines={renderSettings.AllowShaderPipelines} " +
             $"VrViewRenderMode={renderSettings.VrViewRenderMode} " +
             $"VrFoveationMode={renderSettings.VrFoveationMode} " +
+            $"OpenXrEyeResolution={renderSettings.OpenXrEyeResolutionPreset}x{renderSettings.OpenXrEyeResolutionScale:F2} " +
+            $"OpenXrCustomEyeResolution={renderSettings.OpenXrCustomEyeResolutionWidth}x{renderSettings.OpenXrCustomEyeResolutionHeight} " +
             $"EnableVrFoveatedViewSet={renderSettings.EnableVrFoveatedViewSet} " +
             $"EffectiveAntiAliasingMode={Engine.EffectiveSettings.AntiAliasingMode} " +
             $"RenderWindowsWhileInVR={renderSettings.RenderWindowsWhileInVR} " +

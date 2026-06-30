@@ -169,11 +169,11 @@ void main()
             return;
         }
 
-        BoundingRectangle region = useBoundOutputFbo
-            ? ResolveOutputFboRegion(instance)
-            : isExternalSwapchainTarget &&
+        BoundingRectangle region = isExternalSwapchainTarget &&
                                    renderer.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion)
-                ? externalRegion
+            ? externalRegion
+            : useBoundOutputFbo
+                ? ResolveOutputFboRegion(instance)
                 : ResolveTargetRegion(instance, targetWindow);
         if (region.Width <= 0 || region.Height <= 0)
         {

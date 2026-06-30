@@ -49,27 +49,41 @@ public unsafe partial class VulkanRenderer
     {
         XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingViewport;
-        Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
-        uint displayWidth = ResolvePositiveDimension(
-            pipeline?.ResourceDisplayWidth,
-            viewport?.Width,
-            fallbackExtent.Width,
-            1u);
-        uint displayHeight = ResolvePositiveDimension(
-            pipeline?.ResourceDisplayHeight,
-            viewport?.Height,
-            fallbackExtent.Height,
-            1u);
-        uint internalWidth = ResolvePositiveDimension(
-            pipeline?.ResourceInternalWidth,
-            viewport?.InternalWidth,
-            displayWidth,
-            1u);
-        uint internalHeight = ResolvePositiveDimension(
-            pipeline?.ResourceInternalHeight,
-            viewport?.InternalHeight,
-            displayHeight,
-            1u);
+        uint displayWidth;
+        uint displayHeight;
+        uint internalWidth;
+        uint internalHeight;
+        if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
+        {
+            displayWidth = externalExtent.Width;
+            displayHeight = externalExtent.Height;
+            internalWidth = externalExtent.Width;
+            internalHeight = externalExtent.Height;
+        }
+        else
+        {
+            Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
+            displayWidth = ResolvePositiveDimension(
+                pipeline?.ResourceDisplayWidth,
+                viewport?.Width,
+                fallbackExtent.Width,
+                1u);
+            displayHeight = ResolvePositiveDimension(
+                pipeline?.ResourceDisplayHeight,
+                viewport?.Height,
+                fallbackExtent.Height,
+                1u);
+            internalWidth = ResolvePositiveDimension(
+                pipeline?.ResourceInternalWidth,
+                viewport?.InternalWidth,
+                displayWidth,
+                1u);
+            internalHeight = ResolvePositiveDimension(
+                pipeline?.ResourceInternalHeight,
+                viewport?.InternalHeight,
+                displayHeight,
+                1u);
+        }
 
         FrameOpContext context = new(
             pipeline?.GetHashCode() ?? 0,
@@ -91,6 +105,9 @@ public unsafe partial class VulkanRenderer
 
     private FrameOpContext ApplyInteractiveResizePlannerFreeze(in FrameOpContext context)
     {
+        if (TryResolveExternalSwapchainTargetExtent(out _))
+            return context;
+
         if (!XRWindow.IsInteractiveResizeInProgress)
         {
             ResetInteractiveResizePlannerFreeze();
@@ -162,27 +179,41 @@ public unsafe partial class VulkanRenderer
         XRRenderPipelineInstance pipeline,
         XRViewport? viewport)
     {
-        Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
-        uint displayWidth = ResolvePositiveDimension(
-            pipeline.ResourceDisplayWidth,
-            viewport?.Width,
-            fallbackExtent.Width,
-            1u);
-        uint displayHeight = ResolvePositiveDimension(
-            pipeline.ResourceDisplayHeight,
-            viewport?.Height,
-            fallbackExtent.Height,
-            1u);
-        uint internalWidth = ResolvePositiveDimension(
-            pipeline.ResourceInternalWidth,
-            viewport?.InternalWidth,
-            displayWidth,
-            1u);
-        uint internalHeight = ResolvePositiveDimension(
-            pipeline.ResourceInternalHeight,
-            viewport?.InternalHeight,
-            displayHeight,
-            1u);
+        uint displayWidth;
+        uint displayHeight;
+        uint internalWidth;
+        uint internalHeight;
+        if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
+        {
+            displayWidth = externalExtent.Width;
+            displayHeight = externalExtent.Height;
+            internalWidth = externalExtent.Width;
+            internalHeight = externalExtent.Height;
+        }
+        else
+        {
+            Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
+            displayWidth = ResolvePositiveDimension(
+                pipeline.ResourceDisplayWidth,
+                viewport?.Width,
+                fallbackExtent.Width,
+                1u);
+            displayHeight = ResolvePositiveDimension(
+                pipeline.ResourceDisplayHeight,
+                viewport?.Height,
+                fallbackExtent.Height,
+                1u);
+            internalWidth = ResolvePositiveDimension(
+                pipeline.ResourceInternalWidth,
+                viewport?.InternalWidth,
+                displayWidth,
+                1u);
+            internalHeight = ResolvePositiveDimension(
+                pipeline.ResourceInternalHeight,
+                viewport?.InternalHeight,
+                displayHeight,
+                1u);
+        }
 
         FrameOpContext context = new(
             pipeline.GetHashCode(),
@@ -648,6 +679,36 @@ public unsafe partial class VulkanRenderer
         bool filterByPlannerKey,
         in FrameOpPlannerStateKey plannerKey)
     {
+        if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
+        {
+            if (context.DisplayWidth == externalExtent.Width &&
+                context.DisplayHeight == externalExtent.Height &&
+                context.InternalWidth == externalExtent.Width &&
+                context.InternalHeight == externalExtent.Height)
+            {
+                return context;
+            }
+
+            Debug.VulkanEvery(
+                $"Vulkan.ResourcePlanner.ExternalFrameOpExtents.{context.PipelineIdentity}.{context.ViewportIdentity}",
+                TimeSpan.FromSeconds(1),
+                "[VulkanResourcePlanner] Forcing external swapchain frame-op planner extents. Old={0}x{1}/{2}x{3} External={4}x{5}.",
+                context.DisplayWidth,
+                context.DisplayHeight,
+                context.InternalWidth,
+                context.InternalHeight,
+                externalExtent.Width,
+                externalExtent.Height);
+
+            return context with
+            {
+                DisplayWidth = externalExtent.Width,
+                DisplayHeight = externalExtent.Height,
+                InternalWidth = externalExtent.Width,
+                InternalHeight = externalExtent.Height
+            };
+        }
+
         if (XRWindow.IsInteractiveResizeInProgress)
             return ApplyInteractiveResizePlannerFreeze(context);
 
@@ -838,20 +899,23 @@ public unsafe partial class VulkanRenderer
 
     private Extent2D ResolveFrameOpContextFallbackExtent()
     {
-        if (TryGetExternalSwapchainTargetRegion(out BoundingRectangle region) &&
-            region.Width > 0 &&
-            region.Height > 0)
-        {
-            return new Extent2D(
-                (uint)region.Width,
-                (uint)region.Height);
-        }
+        if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
+            return externalExtent;
 
         return swapChainExtent;
     }
 
     private VulkanResourceExtentContext BuildResourceExtentContext(in FrameOpContext context)
     {
+        if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
+        {
+            return new VulkanResourceExtentContext(
+                externalExtent.Width,
+                externalExtent.Height,
+                externalExtent.Width,
+                externalExtent.Height);
+        }
+
         Extent2D fallbackExtent = ResolveFrameOpContextFallbackExtent();
         uint displayWidth = context.DisplayWidth > 0
             ? context.DisplayWidth
@@ -871,6 +935,25 @@ public unsafe partial class VulkanRenderer
             displayHeight,
             internalWidth,
             internalHeight);
+    }
+
+    private bool TryResolveExternalSwapchainTargetExtent(out Extent2D extent)
+    {
+        if (TryGetExternalSwapchainTargetRegion(out BoundingRectangle region) &&
+            region.Width > 0 &&
+            region.Height > 0)
+        {
+            extent = new Extent2D(
+                (uint)region.Width,
+                (uint)region.Height);
+            return true;
+        }
+
+        if (IsRenderingExternalSwapchainTarget)
+            throw new InvalidOperationException("OpenXR external swapchain rendering is active, but no valid external target extent is bound.");
+
+        extent = default;
+        return false;
     }
 
     private RenderResourceRegistry? BuildMergedFrameOpRegistry(
@@ -1460,13 +1543,24 @@ public unsafe partial class VulkanRenderer
                 activePassMetadata,
                 pendingPlanner,
                 extentContext);
-            pendingAllocator.AllocatePhysicalImages(this);
+            if (!pendingAllocator.TryAllocatePhysicalImages(this, out string imageAllocationFailureReason))
+            {
+                Debug.VulkanWarning(
+                    "[VulkanResourcePlanner] Pending physical image allocation failed. Keeping active plan revision={0}. Reason={1}",
+                    ActiveResourcePlannerRevision,
+                    imageAllocationFailureReason);
+                pendingAllocator.DestroyPhysicalImages(this);
+                pendingAllocator.DestroyPhysicalBuffers(this);
+                pendingAllocator = null;
+                return false;
+            }
+
             pendingAllocator.AllocatePhysicalBuffers(this);
         }
         catch (Exception ex)
         {
-            pendingAllocator.DestroyPhysicalImages(this);
-            pendingAllocator.DestroyPhysicalBuffers(this);
+            pendingAllocator?.DestroyPhysicalImages(this);
+            pendingAllocator?.DestroyPhysicalBuffers(this);
             pendingAllocator = null;
             Debug.VulkanWarning(
                 "[VulkanResourcePlanner] Pending physical resource plan failed. Keeping active plan revision={0}. Reason={1}",

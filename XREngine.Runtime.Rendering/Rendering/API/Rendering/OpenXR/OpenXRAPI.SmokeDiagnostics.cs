@@ -35,6 +35,8 @@ public sealed class OpenXrSmokeSummary
     public string ReferenceSpaceType { get; set; } = string.Empty;
     public string ViewRenderModeRequested { get; set; } = string.Empty;
     public string ViewRenderModeEffective { get; set; } = string.Empty;
+    public string ViewRenderImplementationPath { get; set; } = string.Empty;
+    public string ViewRenderTemporalHistoryPolicy { get; set; } = string.Empty;
     public bool ViewRenderModeSupported { get; set; }
     public string? ViewRenderModeDiagnostic { get; set; }
     public string FoveationRequestedMode { get; set; } = string.Empty;
@@ -135,6 +137,8 @@ public unsafe partial class OpenXRAPI
                 ReferenceSpaceType = _smokeReferenceSpaceType,
                 ViewRenderModeRequested = _smokeViewRenderModeResolution.RequestedMode.ToString(),
                 ViewRenderModeEffective = _smokeViewRenderModeResolution.EffectiveMode.ToString(),
+                ViewRenderImplementationPath = _smokeViewRenderModeResolution.EffectiveImplementationPath.ToString(),
+                ViewRenderTemporalHistoryPolicy = _smokeViewRenderModeResolution.TemporalHistoryPolicy.ToString(),
                 ViewRenderModeSupported = _smokeViewRenderModeResolution.IsSupported,
                 ViewRenderModeDiagnostic = _smokeViewRenderModeResolution.Diagnostic,
                 FoveationRequestedMode = _smokeFoveationResolution.RequestedMode.ToString(),

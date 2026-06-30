@@ -581,9 +581,7 @@ internal sealed class VulkanBarrierPlanner
         {
             ERenderPassResourceType.ColorAttachment or ERenderPassResourceType.ResolveAttachment => ImageLayout.ColorAttachmentOptimal,
             ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment => ImageLayout.DepthStencilAttachmentOptimal,
-            ERenderPassResourceType.SampledTexture => IsDepthOrStencilGroup(group)
-                ? ImageLayout.DepthStencilReadOnlyOptimal
-                : ImageLayout.ShaderReadOnlyOptimal,
+            ERenderPassResourceType.SampledTexture => ResolveSampledTextureLayout(group),
             ERenderPassResourceType.StorageTexture => ImageLayout.General,
             ERenderPassResourceType.TransferSource => ImageLayout.TransferSrcOptimal,
             ERenderPassResourceType.TransferDestination => ImageLayout.TransferDstOptimal,
@@ -787,9 +785,7 @@ internal sealed class VulkanBarrierPlanner
             RenderGraphImageLayout.Undefined => ImageLayout.Undefined,
             RenderGraphImageLayout.ColorAttachment => ImageLayout.ColorAttachmentOptimal,
             RenderGraphImageLayout.DepthStencilAttachment => ImageLayout.DepthStencilAttachmentOptimal,
-            RenderGraphImageLayout.ShaderReadOnly => IsDepthOrStencilGroup(group)
-                ? ImageLayout.DepthStencilReadOnlyOptimal
-                : ImageLayout.ShaderReadOnlyOptimal,
+            RenderGraphImageLayout.ShaderReadOnly => ResolveSampledTextureLayout(group),
             RenderGraphImageLayout.General => ImageLayout.General,
             RenderGraphImageLayout.TransferSource => ImageLayout.TransferSrcOptimal,
             RenderGraphImageLayout.TransferDestination => ImageLayout.TransferDstOptimal,
@@ -807,6 +803,19 @@ internal sealed class VulkanBarrierPlanner
         }
 
         return ImageAspectFlags.ColorBit;
+    }
+
+    private static ImageLayout ResolveSampledTextureLayout(VulkanPhysicalImageGroup? group)
+    {
+        if (IsDepthOrStencilGroup(group))
+            return ImageLayout.DepthStencilReadOnlyOptimal;
+
+        ImageUsageFlags usage = group?.Usage ?? ImageUsageFlags.None;
+        bool sampled = (usage & ImageUsageFlags.SampledBit) != 0;
+        bool storage = (usage & ImageUsageFlags.StorageBit) != 0;
+        return sampled && storage
+            ? ImageLayout.General
+            : ImageLayout.ShaderReadOnlyOptimal;
     }
 
     private static bool IsDepthFormat(Format format)

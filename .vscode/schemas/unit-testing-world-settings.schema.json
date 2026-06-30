@@ -774,7 +774,7 @@
         },
         "ViewRenderMode": {
           "$ref": "#/definitions/EVrViewRenderMode",
-          "description": "Selects how VR eye views are rendered: sequential per-view, single-pass stereo, or Vulkan-only parallel command-buffer recording.",
+          "description": "Requests how VR eye views are rendered. OpenXR Vulkan SinglePassStereo uses true stereo when the layered staging path is available, and otherwise reports OpenXrSinglePassCompatibility over per-eye swapchains. Diagnostics and profile captures expose the effective implementation path separately.",
           "markdownDescription": "Supported values: `SequentialViews`, `SinglePassStereo`, `ParallelCommandBufferRecording`."
         },
         "PreviewStereoViews": {
@@ -788,6 +788,10 @@
         "Foveation": {
           "$ref": "#/definitions/UnitTestingVrFoveationSettings",
           "description": "Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback."
+        },
+        "OpenXrEyeResolution": {
+          "$ref": "#/definitions/UnitTestingOpenXrEyeResolutionSettings",
+          "description": "OpenXR per-eye swapchain resolution preset, custom size, and scalar for reproducible headset-resolution testing."
         },
         "OpenXrRuntimeJson": {
           "type": [
@@ -856,6 +860,40 @@
         "Aggressive"
       ],
       "markdownDescription": "Supported values: `Conservative`, `Balanced`, `Aggressive`."
+    },
+    "UnitTestingOpenXrEyeResolutionSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Preset": {
+          "$ref": "#/definitions/EOpenXrEyeResolutionPreset",
+          "markdownDescription": "Supported values: `RuntimeRecommended`, `ValveIndex`, `QuestPro`, `BigscreenBeyond2`, `Custom`.",
+          "description": "Selects the Preset enum value."
+        },
+        "Scale": {
+          "type": "number",
+          "description": "Generated from Scale on UnitTestingOpenXrEyeResolutionSettings."
+        },
+        "CustomWidth": {
+          "type": "integer",
+          "description": "Generated from CustomWidth on UnitTestingOpenXrEyeResolutionSettings."
+        },
+        "CustomHeight": {
+          "type": "integer",
+          "description": "Generated from CustomHeight on UnitTestingOpenXrEyeResolutionSettings."
+        }
+      }
+    },
+    "EOpenXrEyeResolutionPreset": {
+      "type": "string",
+      "enum": [
+        "RuntimeRecommended",
+        "ValveIndex",
+        "QuestPro",
+        "BigscreenBeyond2",
+        "Custom"
+      ],
+      "markdownDescription": "Supported values: `RuntimeRecommended`, `ValveIndex`, `QuestPro`, `BigscreenBeyond2`, `Custom`."
     },
     "LightProbeMode": {
       "type": "string",

@@ -132,11 +132,13 @@ public sealed class DirectionalShadowAtlasFallbackTests
         string commandBufferSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
 
         framebufferSource.ShouldContain("public uint FramebufferLayers { get; private set; } = 1u;");
-        framebufferSource.ShouldContain("FramebufferLayers = ResolveFramebufferLayers(attachments);");
-        framebufferSource.ShouldContain("Layers = FramebufferLayers");
+        framebufferSource.ShouldContain("uint framebufferLayers = ResolveFramebufferLayers(attachments);");
+        framebufferSource.ShouldContain("FramebufferLayers = state.FramebufferLayers;");
+        framebufferSource.ShouldContain("Layers = framebufferLayers");
         framebufferSource.ShouldContain("layerIndex < 0");
         framebufferSource.ShouldContain("Math.Max(source.DescriptorArrayLayers, 1u)");
-        commandBufferSource.ShouldContain("LayerCount = Math.Max(vkFrameBuffer.FramebufferLayers, 1u)");
+        commandBufferSource.ShouldContain("ResolveDynamicRenderingLayerCount(vkFrameBuffer.FramebufferLayers, fboViewMask)");
+        commandBufferSource.ShouldContain("LayerCount = targetDynamicRenderingFormats.LayerCount");
         commandBufferSource.ShouldContain("clearLayerCount = op.Target is null");
     }
 

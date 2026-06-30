@@ -455,24 +455,48 @@ internal static class VulkanShaderCompiler
         if (string.IsNullOrWhiteSpace(source))
             return source;
 
+        bool hadOvrMultiview =
+            OvrMultiviewExtensionRegex.IsMatch(source) ||
+            OvrMultiviewBaseExtensionRegex.IsMatch(source) ||
+            OvrViewIdBuiltinRegex.IsMatch(source);
         bool hadNvStereo = NvStereoExtensionRegex.IsMatch(source);
 
+        string beforeMultiviewRewrite = source;
         source = RewriteLegacyMultiviewExtensionsForVulkan(source);
+        if (hadOvrMultiview &&
+            !string.Equals(beforeMultiviewRewrite, source, StringComparison.Ordinal))
+        {
+            LogVulkanStereoRewrite(shaderName, "OVR_multiview/gl_ViewID_OVR", "GL_EXT_multiview/gl_ViewIndex");
+        }
 
         if (hadNvStereo)
         {
+            string beforeNvRewrite = source;
             source = NvStereoExtensionRegex.Replace(source, string.Empty);
             source = EnsureExtMultiviewDirective(source);
             source = NvSecondaryPositionAssignRegex.Replace(source, string.Empty);
             source = NvViewportMaskAssignRegex.Replace(source, string.Empty);
             source = NvSecondaryViewOffsetLayerDeclarationRegex.Replace(source, string.Empty);
             source = NvLayerAssignmentRegex.Replace(source, string.Empty);
+            if (!string.Equals(beforeNvRewrite, source, StringComparison.Ordinal))
+                LogVulkanStereoRewrite(shaderName, "NV_stereo_view_rendering", "GL_EXT_multiview-compatible shader");
         }
 
         source = ReservedBuiltinDeclarationRegex.Replace(source, string.Empty);
         source = RemoveGeneratedGlPerVertexBlocksForVulkan(source);
         ValidateUnsupportedVulkanStereoSemantics(source, shaderName);
         return source;
+    }
+
+    private static void LogVulkanStereoRewrite(string shaderName, string sourceSemantics, string targetSemantics)
+    {
+        Debug.VulkanEvery(
+            $"Vulkan.Shader.StereoRewrite.{shaderName}.{sourceSemantics}",
+            TimeSpan.FromSeconds(2),
+            "[VulkanShaderCompiler] Rewrote stereo shader '{0}' from {1} to {2}.",
+            shaderName,
+            sourceSemantics,
+            targetSemantics);
     }
 
     private static string RemoveGeneratedGlPerVertexBlocksForVulkan(string source)

@@ -70,6 +70,22 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     [Test]
+    public void BuildRenderViewKey_SinglePassStereoPrefersMultiviewSentinelOverEyeCamera()
+    {
+        XRCamera leftCamera = new(new Transform(), new XROVRCameraParameters(true, 0.1f, 1000.0f));
+        VulkanRenderer.MeshDrawOp op = CreateMeshDrawOp(default(VulkanRenderer.PendingMeshDraw) with
+        {
+            Camera = leftCamera,
+            IsStereoPass = true
+        });
+
+        RenderViewKey key = VulkanRenderer.BuildRenderViewKey(op, dynamicOverlay: false);
+
+        key.Kind.ShouldBe(RenderViewKind.VREye);
+        key.ViewIndex.ShouldBe(VulkanRenderer.CommandChainStereoMultiviewViewIndex);
+    }
+
+    [Test]
     public void OpenXrEyeRenderTargetContext_SeparatesLeftAndRightTargetIdentity()
     {
         Extent2D extent = new(2160, 2160);
@@ -536,9 +552,159 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     [Test]
+    public void OpenXrExternalSwapchainTargets_DisableHistoryBasedAaAndTsrScaling()
+    {
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        string postProcessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+        string postProcess2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
+        string temporalSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs").Replace("\r\n", "\n");
+
+        foreach (string source in new[] { pipelineSource, pipeline2Source })
+        {
+            source.ShouldContain("if (mode == EAntiAliasingMode.Tsr && DisableHistoryBasedVrEffects())\n            return null;");
+            source.ShouldContain("&& !DisableHistoryBasedVrEffects()\n        && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;");
+            source.ShouldContain("private static bool RuntimeNeedsTemporalAaVelocityBuffer");
+            source.ShouldContain("=> !DisableHistoryBasedVrEffects()\n        && ResolveAntiAliasingMode() is EAntiAliasingMode.Taa or EAntiAliasingMode.Dlaa;");
+            source.ShouldContain("|| RuntimeNeedsTemporalAaVelocityBuffer");
+        }
+
+        foreach (string source in new[] { postProcessSource, postProcess2Source })
+        {
+            source.ShouldContain("private static bool DisableHistoryBasedVrEffects()\n        => !VPRC_TemporalAccumulationPass.TryUseHistoryBasedVrEffects(out _, out _);");
+        }
+
+        temporalSource.ShouldContain("ShouldDisableHistoryBasedVrAntiAliasing()");
+        temporalSource.ShouldContain("internal static EVrTemporalHistoryPolicy ResolveHistoryIsolationPolicy(out string reason)");
+        temporalSource.ShouldContain("EVrTemporalHistoryPolicy.StereoArrayLayer => \"true single-pass stereo array-layer history\"");
+        temporalSource.ShouldContain("EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain => \"external per-eye swapchain targets\"");
+        temporalSource.ShouldContain("VrViewRenderModeResolver.Resolve");
+    }
+
+    [Test]
+    public void OpenXrStereoTemporalHistory_UsesPerViewStateAndArrayShaders()
+    {
+        string temporalSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs").Replace("\r\n", "\n");
+        string texturesSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.Textures.cs").Replace("\r\n", "\n");
+        string textures2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.Textures.cs").Replace("\r\n", "\n");
+        string fboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs").Replace("\r\n", "\n");
+        string fbo2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs").Replace("\r\n", "\n");
+        string temporalStereoShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/TemporalAccumulationStereo.fs").Replace("\r\n", "\n");
+        string tsrStereoShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/TemporalSuperResolutionStereo.fs").Replace("\r\n", "\n");
+        string motionVectorStereoShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/MotionVectorsStereo.fs").Replace("\r\n", "\n");
+        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs").Replace("\r\n", "\n");
+        string meshUniformsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs").Replace("\r\n", "\n");
+
+        temporalSource.ShouldContain("internal readonly record struct TemporalViewKey");
+        temporalSource.ShouldContain("private static readonly Dictionary<TemporalViewKey, TemporalState> TemporalStates");
+        temporalSource.ShouldContain("public TemporalEyeState LeftEye { get; } = new();");
+        temporalSource.ShouldContain("public TemporalEyeState RightEye { get; } = new();");
+        temporalSource.ShouldContain("RightEyePrevViewProjectionUnjittered");
+        temporalSource.ShouldNotContain("ConditionalWeakTable<XRCamera, TemporalState>");
+
+        foreach (string source in new[] { texturesSource, textures2Source })
+        {
+            source.ShouldContain("XRTexture2DArray stereoTexture = XRTexture2DArray.CreateFrameBufferTexture");
+            source.ShouldContain("stereoTexture.SamplerName = TsrOutputTextureName;");
+            source.ShouldContain("stereoTexture.SamplerName = TsrHistoryColorTextureName;");
+            source.ShouldContain("stereoTexture.OVRMultiViewParameters = new(0, 2u);");
+        }
+
+        foreach (string source in new[] { fboSource, fbo2Source })
+        {
+            source.ShouldContain("Stereo ? \"TemporalSuperResolutionStereo.fs\" : \"TemporalSuperResolution.fs\"");
+            source.ShouldContain("Stereo ? \"TemporalAccumulationStereo.fs\" : \"TemporalAccumulation.fs\"");
+        }
+
+        temporalStereoShader.ShouldContain("uniform sampler2DArray TemporalColorInput;");
+        temporalStereoShader.ShouldContain("uniform sampler2DArray HistoryColor;");
+        temporalStereoShader.ShouldContain("gl_ViewID_OVR");
+        tsrStereoShader.ShouldContain("uniform sampler2DArray TsrHistoryColor;");
+        tsrStereoShader.ShouldContain("uniform usampler2DArray StencilView;");
+        tsrStereoShader.ShouldContain("gl_ViewID_OVR");
+        motionVectorStereoShader.ShouldContain("uniform mat4 CurrViewProjectionStereo[2];");
+        motionVectorStereoShader.ShouldContain("uniform mat4 PrevViewProjectionStereo[2];");
+        motionVectorStereoShader.ShouldContain("int eyeIndex = int(gl_ViewID_OVR);");
+
+        meshSource.ShouldContain("Matrix4x4 PreviousRightEyeViewMatrix");
+        meshSource.ShouldContain("previousRightEyeProjectionMatrixSnapshot = temporalData.RightEyePrevProjection;");
+        meshUniformsSource.ShouldContain("case nameof(EEngineUniform.PrevRightEyeViewMatrix):\n\t\t\t\t\tvalue = draw.PreviousRightEyeViewMatrix;");
+        meshUniformsSource.ShouldContain("case nameof(EEngineUniform.PrevRightEyeProjMatrix):\n\t\t\t\t\treturn UploadUniform(buffer, draw.PreviousRightEyeProjectionMatrix);");
+
+        fboSource.ShouldContain("Stereo ? \"MotionVectorsStereo.fs\" : \"MotionVectors.fs\"");
+        fboSource.ShouldContain("program.Uniform(\"CurrViewProjectionStereo\", _motionVectorCurrViewProjectionStereo);");
+        fbo2Source.ShouldContain("Stereo ? \"MotionVectorsStereo.fs\" : \"MotionVectors.fs\"");
+        fbo2Source.ShouldContain("program.Uniform(\"PrevViewProjectionStereo\", _motionVectorPrevViewProjectionStereo);");
+    }
+
+    [Test]
+    public void VulkanStereoVariantSelection_DoesNotUseNvStereoSemantics()
+    {
+        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRMeshRenderer.cs");
+        string uiBatchSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/UI/UIBatchCollector.cs");
+        string defaultGeneratorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Shaders/Generator/DefaultVertexShaderGenerator.cs");
+        string deformGeneratorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Shaders/Generator/MeshDeformVertexShaderGenerator.cs");
+        string shaderCompilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderCompiler.cs");
+
+        meshSource.ShouldContain("bool allowNvStereo = !RuntimeEngine.Rendering.State.IsVulkan;");
+        meshSource.ShouldContain("bool preferNV = allowNvStereo && RuntimeEngine.Rendering.Settings.PreferNVStereo;");
+        meshSource.ShouldContain("stereoPass && allowNvStereo && hasNvMaterialVertexShader");
+        uiBatchSource.ShouldContain("if (!RuntimeEngine.Rendering.State.IsVulkan");
+
+        defaultGeneratorSource.ShouldContain("RuntimeEngine.Rendering.State.IsVulkan");
+        defaultGeneratorSource.ShouldContain("Line(\"#extension GL_EXT_multiview : require\");");
+        defaultGeneratorSource.ShouldContain("Line(\"#extension GL_NV_stereo_view_rendering : require\");");
+        defaultGeneratorSource.ShouldContain("RuntimeEngine.Rendering.State.IsVulkan ? \"gl_ViewIndex\" : \"gl_ViewID_OVR\"");
+        deformGeneratorSource.ShouldContain("RuntimeEngine.Rendering.State.IsVulkan");
+        deformGeneratorSource.ShouldContain("Line(\"#extension GL_EXT_multiview : require\");");
+        deformGeneratorSource.ShouldContain("Line(\"#extension GL_NV_stereo_view_rendering : require\");");
+        deformGeneratorSource.ShouldContain("RuntimeEngine.Rendering.State.IsVulkan ? \"gl_ViewIndex\" : \"gl_ViewID_OVR\"");
+        shaderCompilerSource.ShouldContain("LogVulkanStereoRewrite(shaderName, \"OVR_multiview/gl_ViewID_OVR\", \"GL_EXT_multiview/gl_ViewIndex\")");
+        shaderCompilerSource.ShouldContain("LogVulkanStereoRewrite(shaderName, \"NV_stereo_view_rendering\", \"GL_EXT_multiview-compatible shader\")");
+        shaderCompilerSource.ShouldContain("[VulkanShaderCompiler] Rewrote stereo shader");
+    }
+
+    [Test]
+    public void VulkanDynamicRenderingMultiviewContracts_PropagateViewMaskAcrossBeginInheritanceAndPipeline()
+    {
+        string renderTargetModeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
+        string framebufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string secondarySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.SecondaryCommandBuffers.cs");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+        string openXrApiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
+
+        renderTargetModeSource.ShouldContain("public uint ViewMask { get; }");
+        renderTargetModeSource.ShouldContain("public uint LayerCount { get; }");
+        renderTargetModeSource.ShouldContain("private static uint ResolveDynamicRenderingLayerCount(uint framebufferLayers, uint viewMask)");
+        renderTargetModeSource.ShouldContain("viewMask=0x{signature.ViewMask:X}");
+        renderTargetModeSource.ShouldContain("layers={signature.LayerCount}");
+
+        framebufferSource.ShouldContain("public uint MultiviewViewMask { get; private set; }");
+        framebufferSource.ShouldContain("ResolveFramebufferMultiviewViewMask(attachments)");
+        framebufferSource.ShouldContain("OVRMultiViewParameters is { NumViews: > 1u }");
+        framebufferSource.ShouldContain("BuildMultiviewViewMask(ovr, layerCount)");
+        framebufferSource.ShouldContain("MultiviewViewMask = state.MultiviewViewMask;");
+
+        commandBufferSource.ShouldContain("DynamicRenderingFormatSignature targetDynamicRenderingFormats = CreateDynamicRenderingFormatSignature(");
+        commandBufferSource.ShouldContain("fboLayerCount);");
+        commandBufferSource.ShouldContain("ViewMask = targetDynamicRenderingFormats.ViewMask");
+        commandBufferSource.ShouldContain("LayerCount = targetDynamicRenderingFormats.LayerCount");
+        commandBufferSource.ShouldContain("ViewMask = inheritedDynamicRenderingFormats.ViewMask");
+        commandBufferSource.ShouldContain("ResolveDynamicRenderingLayerCount(vkFrameBuffer.FramebufferLayers, fboViewMask)");
+        commandBufferSource.ShouldContain("viewMask=0x{9:X}");
+
+        secondarySource.ShouldContain("ViewMask = dynamicRenderingFormats.ViewMask");
+        pipelineSource.ShouldContain("ViewMask = request.DynamicRenderingFormats.ViewMask");
+        openXrApiSource.ShouldContain("Vulkan dynamic rendering is required for OpenXR true single-pass stereo multiview");
+        openXrApiSource.ShouldContain("dynamicRendering={(Window?.Renderer is VulkanRenderer renderer && renderer.UseDynamicRenderingRenderTargets)}");
+    }
+
+    [Test]
     public void OpenXrParallelEyeRecording_UsesBoundedWorkersAndDeterministicFailureHandling()
     {
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrApiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
         string workerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.EyeRecordWorkers.cs");
 
         workerSource.ShouldContain("private OpenXrEyeRecordWorkerScheduler? _openXrEyeRecordWorkerScheduler;");
@@ -559,15 +725,17 @@ public sealed class VulkanCommandChainDataModelTests
         openXrSource.ShouldContain("EnterOpenXrResourcePlannerThreadScope(OpenXrViewResourcePlannerContextKey.FromTarget(in targetContext))");
         workerSource.ShouldContain("TryRecordOpenXrEyeSwapchainCommandBufferFromWorker");
         workerSource.ShouldContain("thread-scoped prepared primary record");
-        workerSource.ShouldNotContain("openXrEyePrimaryRecordingStateLock");
-        workerSource.ShouldNotContain("serialized planner/global-state gate");
-        workerSource.ShouldNotContain("lock (");
+        workerSource.ShouldContain("private readonly object _openXrParallelEyePrimaryRecordSharedStateLock = new();");
+        workerSource.ShouldContain("lock (_openXrParallelEyePrimaryRecordSharedStateLock)");
+        workerSource.ShouldContain("shared objects");
+        workerSource.ShouldContain("command-buffer-local layout state");
         workerSource.ShouldContain("leftSuccess={0} rightSuccess={1}");
         workerSource.ShouldContain("if (!hasFirst || !hasSecond)");
         workerSource.ShouldContain("LogOpenXrEyeRecordWorkerFailure(workerBatch);");
         workerSource.ShouldContain("SubmitAndWaitOpenXrCommandBuffers(");
         workerSource.ShouldContain("DestroyOpenXrEyeRecordWorkers()");
         openXrSource.ShouldContain("DestroyOpenXrEyeRecordWorkers();");
+        openXrApiSource.ShouldContain("serialized shared Vulkan layout-state recording");
         workerSource.ShouldNotContain("Task.Run");
     }
 
@@ -1223,23 +1391,39 @@ public sealed class VulkanCommandChainDataModelTests
     {
         RenderViewKey leftEye = new(1, 2, VulkanRenderer.CommandChainLeftEyeViewIndex, RenderViewKind.VREye, 0, -1);
         RenderViewKey rightEye = leftEye with { ViewIndex = VulkanRenderer.CommandChainRightEyeViewIndex };
+        RenderViewKey multiviewEye = leftEye with { ViewIndex = VulkanRenderer.CommandChainStereoMultiviewViewIndex };
         CommandChainSchedule validVr = new(
             structuralSignature: 0x100,
             resourcePlanRevision: 0x200,
             groups: new[] { CreateGroupForKeys(new CommandChainKey(0, leftEye, 0, 0, false, 0), new CommandChainKey(0, rightEye, 0, 0, false, 1)) });
-        CommandChainSchedule invalidVr = new(
+        CommandChainSchedule validMultiviewVr = new(
             structuralSignature: 0x101,
             resourcePlanRevision: 0x200,
+            groups: new[] { CreateGroupForKeys(new CommandChainKey(0, multiviewEye, 0, 0, false, 0)) });
+        CommandChainSchedule invalidVr = new(
+            structuralSignature: 0x102,
+            resourcePlanRevision: 0x200,
             groups: new[] { CreateGroupForKeys(new CommandChainKey(0, rightEye, 0, 0, false, 0), new CommandChainKey(0, leftEye, 0, 0, false, 1)) });
+        CommandChainSchedule invalidMixedVr = new(
+            structuralSignature: 0x103,
+            resourcePlanRevision: 0x200,
+            groups: new[]
+            {
+                CreateGroupForKeys(new CommandChainKey(0, multiviewEye, 0, 0, false, 0)),
+                CreateGroupForKeys(new CommandChainKey(0, leftEye, 0, 0, false, 1), new CommandChainKey(0, rightEye, 0, 0, false, 2)),
+            });
         RenderViewKey invalidShadow = new(1, 2, 0, RenderViewKind.Shadow, 0, -1);
         CommandChainSchedule invalidShadowSchedule = new(
-            structuralSignature: 0x102,
+            structuralSignature: 0x104,
             resourcePlanRevision: 0x200,
             groups: new[] { CreateGroupForKeys(new CommandChainKey(0, invalidShadow, 0, 0, false, 0)) });
 
         Should.NotThrow(() => VulkanRenderer.ValidateCommandChainViewSpecialization(validVr));
+        Should.NotThrow(() => VulkanRenderer.ValidateCommandChainViewSpecialization(validMultiviewVr));
         Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateCommandChainViewSpecialization(invalidVr))
             .Message.ShouldContain("left eye before right eye");
+        Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateCommandChainViewSpecialization(invalidMixedVr))
+            .Message.ShouldContain("mixes");
         Should.Throw<InvalidOperationException>(() => VulkanRenderer.ValidateCommandChainViewSpecialization(invalidShadowSchedule))
             .Message.ShouldContain("shadow key");
     }

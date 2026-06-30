@@ -773,7 +773,9 @@ public sealed class UIBatchCollector : IDisposable
     {
         if (RuntimeEngine.Rendering.State.IsStereoPass)
         {
-            if (RuntimeEngine.Rendering.Settings.PreferNVStereo && RuntimeEngine.Rendering.State.IsNVIDIA)
+            if (!RuntimeEngine.Rendering.State.IsVulkan
+                && RuntimeEngine.Rendering.Settings.PreferNVStereo
+                && RuntimeEngine.Rendering.State.IsNVIDIA)
                 return mesh.GetNVStereoVersion();
 
             if (RuntimeEngine.Rendering.State.HasAnyMultiViewExtension)

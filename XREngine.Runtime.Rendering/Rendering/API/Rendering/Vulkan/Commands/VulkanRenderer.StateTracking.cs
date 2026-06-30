@@ -879,6 +879,9 @@ public unsafe partial class VulkanRenderer
         if (fbo is not null)
             return ResolveFrameBufferDrawExtent(fbo);
 
+        if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
+            return externalExtent;
+
         return ActiveState.GetCurrentTargetExtent();
     }
 

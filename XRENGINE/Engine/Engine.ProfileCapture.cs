@@ -367,6 +367,10 @@ public static partial class Engine
                 RenderScale: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileRenderScale) ??
                     CaptureString(() => Engine.Rendering.Settings.TsrRenderScale.ToString(CultureInfo.InvariantCulture)),
                 StereoMode: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveStereoMode),
+                VrViewRenderModeRequested: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveVrViewRenderModeRequested),
+                VrViewRenderModeEffective: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveVrViewRenderModeEffective),
+                VrViewRenderImplementationPath: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveVrViewRenderImplementationPath),
+                VrTemporalHistoryPolicy: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveVrTemporalHistoryPolicy),
                 ValidationLayersEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.ValidationLayersEnabled ? "true" : "false"),
                 DebugOutputEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.DebugOutputEnabled ? "true" : "false"),
                 DeferredDebugView: CaptureString(() => global::XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView.ToString(CultureInfo.InvariantCulture)),
@@ -445,6 +449,10 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "p3_logging", metadata.P3Logging, ref first);
             AppendStringField(s_lineBuilder, "active_texture_binding_rung", Engine.Rendering.Stats.RendererState.ActiveTextureBindingRung, ref first);
             AppendStringField(s_lineBuilder, "active_stereo_mode", Engine.Rendering.Stats.RendererState.ActiveStereoMode, ref first);
+            AppendStringField(s_lineBuilder, "vr_view_render_mode_requested", Engine.Rendering.Stats.RendererState.ActiveVrViewRenderModeRequested, ref first);
+            AppendStringField(s_lineBuilder, "vr_view_render_mode_effective", Engine.Rendering.Stats.RendererState.ActiveVrViewRenderModeEffective, ref first);
+            AppendStringField(s_lineBuilder, "vr_view_render_implementation_path", Engine.Rendering.Stats.RendererState.ActiveVrViewRenderImplementationPath, ref first);
+            AppendStringField(s_lineBuilder, "vr_temporal_history_policy", Engine.Rendering.Stats.RendererState.ActiveVrTemporalHistoryPolicy, ref first);
             AppendStringField(s_lineBuilder, "active_render_backend", Engine.Rendering.Stats.RendererState.ActiveRenderBackend, ref first);
             AppendBoolField(s_lineBuilder, "validation_layers_enabled", Engine.Rendering.Stats.RendererState.ValidationLayersEnabled, ref first);
             AppendBoolField(s_lineBuilder, "debug_output_enabled", Engine.Rendering.Stats.RendererState.DebugOutputEnabled, ref first);
@@ -1039,6 +1047,10 @@ public static partial class Engine
             string Viewport,
             string RenderScale,
             string StereoMode,
+            string VrViewRenderModeRequested,
+            string VrViewRenderModeEffective,
+            string VrViewRenderImplementationPath,
+            string VrTemporalHistoryPolicy,
             string ValidationLayersEnabled,
             string DebugOutputEnabled,
             string DeferredDebugView,

@@ -262,7 +262,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     public void DefaultRenderPipelines_RequestVendorRenderScaleEveryFrame()
     {
         string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        pipelineSource.ShouldContain("if (TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
+        pipelineSource.ShouldContain("if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
         pipelineSource.ShouldContain("if (mode == EAntiAliasingMode.Dlaa)\n            return 1.0f;");
         pipelineSource.ShouldContain("RequestedInternalResolution = 1.0f;");
         pipelineSource.ShouldContain("RequestedInternalResolution = vendorScale;");
@@ -270,7 +270,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         pipelineSource.ShouldContain("IntelXessManager.GetRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
-        pipeline2Source.ShouldContain("if (TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
+        pipeline2Source.ShouldContain("if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
         pipeline2Source.ShouldContain("if (mode == EAntiAliasingMode.Dlaa)\n            return 1.0f;");
         pipeline2Source.ShouldContain("RequestedInternalResolution = 1.0f;");
         pipeline2Source.ShouldContain("RequestedInternalResolution = vendorScale;");
@@ -294,14 +294,14 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         pipelineSource.ShouldContain("|| ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa");
         pipelineSource.ShouldContain("private static bool RuntimeEnableFxaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;");
         pipelineSource.ShouldContain("private static bool RuntimeEnableSmaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;");
-        pipelineSource.ShouldContain("private static bool RuntimeNeedsTsrUpscale\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;");
+        pipelineSource.ShouldContain("private static bool RuntimeNeedsTsrUpscale\n        => !RuntimeEnableVendorUpscale\n        && !DisableHistoryBasedVrEffects()\n        && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;");
 
         string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
         pipeline2Source.ShouldContain("private static bool RuntimeEnableVendorUpscale");
         pipeline2Source.ShouldContain("|| ResolveAntiAliasingMode() == EAntiAliasingMode.Dlaa");
         pipeline2Source.ShouldContain("private static bool RuntimeEnableFxaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;");
         pipeline2Source.ShouldContain("private static bool RuntimeEnableSmaa\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;");
-        pipeline2Source.ShouldContain("private static bool RuntimeNeedsTsrUpscale\n        => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;");
+        pipeline2Source.ShouldContain("private static bool RuntimeNeedsTsrUpscale\n        => !RuntimeEnableVendorUpscale\n        && !DisableHistoryBasedVrEffects()\n        && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;");
 
         string vendorUpscaleSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs").Replace("\r\n", "\n");
         vendorUpscaleSource.ShouldContain("private static bool IsNvidiaDlssFeatureRequested()");

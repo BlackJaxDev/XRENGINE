@@ -2,6 +2,7 @@ using NUnit.Framework;
 using Shouldly;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.UnitTests.Rendering;
@@ -12,9 +13,21 @@ public sealed class VrViewRenderModeContractTests
     [Test]
     public void ViewRenderModeResolver_ExposesBackendSupportMatrix()
     {
-        VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.SequentialViews).IsSupported.ShouldBeTrue();
-        VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.SinglePassStereo).IsSupported.ShouldBeTrue();
-        VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.ParallelCommandBufferRecording).IsSupported.ShouldBeTrue();
+        VrViewRenderModeResolution vulkanSequential =
+            VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.SequentialViews);
+        VrViewRenderModeResolution vulkanSinglePass =
+            VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.SinglePassStereo);
+        VrViewRenderModeResolution vulkanParallel =
+            VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.ParallelCommandBufferRecording);
+
+        vulkanSequential.IsSupported.ShouldBeTrue();
+        vulkanSequential.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.SequentialViews);
+        vulkanSequential.TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain);
+        vulkanSinglePass.IsSupported.ShouldBeTrue();
+        vulkanSinglePass.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.OpenXrSinglePassCompatibility);
+        vulkanSinglePass.TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain);
+        vulkanParallel.IsSupported.ShouldBeTrue();
+        vulkanParallel.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.ParallelCommandBufferRecording);
 
         VrViewRenderModeResolver.Resolve(ERenderLibrary.OpenGL, EVrViewRenderMode.SequentialViews).IsSupported.ShouldBeTrue();
         VrViewRenderModeResolver.Resolve(ERenderLibrary.OpenGL, EVrViewRenderMode.SinglePassStereo).IsSupported.ShouldBeTrue();
@@ -22,7 +35,30 @@ public sealed class VrViewRenderModeContractTests
         VrViewRenderModeResolution openGlParallel =
             VrViewRenderModeResolver.Resolve(ERenderLibrary.OpenGL, EVrViewRenderMode.ParallelCommandBufferRecording);
         openGlParallel.IsSupported.ShouldBeFalse();
+        openGlParallel.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.Unsupported);
+        openGlParallel.TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.Disabled);
         openGlParallel.Diagnostic!.ShouldContain("Vulkan-only");
+    }
+
+    [Test]
+    public void ViewRenderModeResolver_SeparatesRequestedModeFromTrueStereoImplementation()
+    {
+        VrViewRenderModeResolution compatibility = VrViewRenderModeResolver.Resolve(
+            ERenderLibrary.Vulkan,
+            EVrViewRenderMode.SinglePassStereo,
+            trueSinglePassStereoAvailable: false);
+        compatibility.EffectiveMode.ShouldBe(EVrViewRenderMode.SinglePassStereo);
+        compatibility.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.OpenXrSinglePassCompatibility);
+        compatibility.TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain);
+
+        VrViewRenderModeResolution trueStereo = VrViewRenderModeResolver.Resolve(
+            ERenderLibrary.Vulkan,
+            EVrViewRenderMode.SinglePassStereo,
+            trueSinglePassStereoAvailable: true,
+            rendersExternalSwapchainTargets: false);
+        trueStereo.EffectiveMode.ShouldBe(EVrViewRenderMode.SinglePassStereo);
+        trueStereo.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.TrueSinglePassStereo);
+        trueStereo.TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.StereoArrayLayer);
     }
 
     [Test]
@@ -34,6 +70,7 @@ public sealed class VrViewRenderModeContractTests
             enableOpenXrVulkanParallelRendering: false);
 
         resolution.IsSupported.ShouldBeFalse();
+        resolution.EffectiveImplementationPath.ShouldBe(EVrViewRenderImplementationPath.Unsupported);
         resolution.Diagnostic!.ShouldContain("disabled by startup settings");
     }
 
@@ -151,6 +188,121 @@ public sealed class VrViewRenderModeContractTests
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrFoveationMode, previousMode);
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrFoveationQualityPreset, previousQuality);
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrFoveationRequireRequested, previousRequire);
+        }
+    }
+
+    [Test]
+    public void OpenXrEyeResolutionResolver_UsesPresetsScaleAndRejectsRuntimeMaxMismatch()
+    {
+        OpenXRAPI.OpenXrEyeSwapchainExtent valveIndex =
+            OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
+                EOpenXrEyeResolutionPreset.ValveIndex,
+                1.25f,
+                customWidth: 0u,
+                customHeight: 0u,
+                recommendedWidth: 896u,
+                recommendedHeight: 1007u,
+                maxWidth: 4000u,
+                maxHeight: 4000u);
+
+        valveIndex.Width.ShouldBe(1800u);
+        valveIndex.Height.ShouldBe(2000u);
+        valveIndex.Source.ShouldContain("Valve");
+        valveIndex.ExceedsRuntimeMax.ShouldBeFalse();
+
+        OpenXRAPI.OpenXrEyeSwapchainExtent questPro =
+            OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
+                EOpenXrEyeResolutionPreset.QuestPro,
+                0.5f,
+                customWidth: 0u,
+                customHeight: 0u,
+                recommendedWidth: 896u,
+                recommendedHeight: 1007u,
+                maxWidth: 4000u,
+                maxHeight: 4000u);
+
+        questPro.Width.ShouldBe(900u);
+        questPro.Height.ShouldBe(960u);
+
+        InvalidOperationException beyond2ExceedsRuntimeMax = Should.Throw<InvalidOperationException>(
+            () => OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
+                EOpenXrEyeResolutionPreset.BigscreenBeyond2,
+                2.0f,
+                customWidth: 0u,
+                customHeight: 0u,
+                recommendedWidth: 896u,
+                recommendedHeight: 1007u,
+                maxWidth: 3000u,
+                maxHeight: 2800u));
+
+        beyond2ExceedsRuntimeMax.Message.ShouldContain("5120x5120");
+        beyond2ExceedsRuntimeMax.Message.ShouldContain("exceeds reported runtime max 3000x2800");
+        beyond2ExceedsRuntimeMax.Message.ShouldContain("not being applied exactly");
+
+        OpenXRAPI.OpenXrEyeSwapchainExtent custom =
+            OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
+                EOpenXrEyeResolutionPreset.Custom,
+                0.5f,
+                customWidth: 2048u,
+                customHeight: 1600u,
+                recommendedWidth: 896u,
+                recommendedHeight: 1007u,
+                maxWidth: 0u,
+                maxHeight: 0u);
+
+        custom.Width.ShouldBe(1024u);
+        custom.Height.ShouldBe(800u);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void UnitTestingWorld_OpenXrEyeResolutionEnvOverridesAreApplied()
+    {
+        string? previousPreset = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionPreset);
+        string? previousScale = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionScale);
+        string? previousWidth = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionWidth);
+        string? previousHeight = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionHeight);
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionPreset,
+                nameof(EOpenXrEyeResolutionPreset.Custom));
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionScale, "1.5");
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionWidth, "2048");
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionHeight, "2048");
+
+            UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.ParseJsonc(
+                """
+                {
+                  "VR": {
+                    "Mode": "MonadoOpenXR",
+                    "OpenXrEyeResolution": {
+                      "Preset": "RuntimeRecommended",
+                      "Scale": 1.0,
+                      "CustomWidth": 0,
+                      "CustomHeight": 0
+                    }
+                  }
+                }
+                """);
+
+            UnitTestingWorldSettingsStore.ApplyVrLaunchOverrides(settings);
+
+            settings.VR.OpenXrEyeResolution.Preset.ShouldBe(EOpenXrEyeResolutionPreset.Custom);
+            settings.VR.OpenXrEyeResolution.Scale.ShouldBe(1.5f);
+            settings.VR.OpenXrEyeResolution.CustomWidth.ShouldBe(2048u);
+            settings.VR.OpenXrEyeResolution.CustomHeight.ShouldBe(2048u);
+            settings.IsJsonPropertyPathSpecified(
+                nameof(UnitTestingWorldSettings.VR),
+                nameof(UnitTestingVrSettings.OpenXrEyeResolution),
+                nameof(UnitTestingOpenXrEyeResolutionSettings.Preset)).ShouldBeTrue();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionPreset, previousPreset);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionScale, previousScale);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionWidth, previousWidth);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionHeight, previousHeight);
         }
     }
 
@@ -437,23 +589,89 @@ public sealed class VrViewRenderModeContractTests
         string settings = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/UnitTestingWorldSettings.cs");
         string store = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/UnitTestingWorldSettingsStore.cs");
         string bootstrap = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapRenderSettings.cs");
+        string contracts = ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VrRenderingContracts.cs");
         string openXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
+        string openXrResolution = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Resolution.cs");
+        string openXrRuntimeState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs");
+        string openXrState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
         string openXrFoveation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Foveation.cs");
+        string environment = ReadWorkspaceFile("XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
         string smoke = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SmokeDiagnostics.cs");
         string engineVrState = ReadWorkspaceFile("XRENGINE/Engine/Engine.VRState.cs");
         string engineStats = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs");
+        string rendererState = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.RendererState.cs");
+        string profileCapture = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string schema = ReadWorkspaceFile(".vscode/schemas/unit-testing-world-settings.schema.json");
+        string xrViewport = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRViewport.cs");
         string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs");
         string temporalAccumulation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs");
 
         settings.ShouldContain("public EVrViewRenderMode ViewRenderMode");
         settings.ShouldContain("public UnitTestingVrFoveationSettings Foveation");
+        settings.ShouldContain("public UnitTestingOpenXrEyeResolutionSettings OpenXrEyeResolution");
+        settings.ShouldContain("public EOpenXrEyeResolutionPreset Preset");
+        settings.ShouldContain("OpenXR Vulkan uses true stereo when");
         store.ShouldContain("IsJsonPropertyPathSpecified");
         store.ShouldContain("UnitTestVrViewRenderMode");
         store.ShouldContain("UnitTestVrFoveationMode");
+        store.ShouldContain("UnitTestOpenXrEyeResolutionPreset");
+        store.ShouldContain("ResolveMonadoSimulatedDisplayProfile");
+        store.ShouldContain("ApplyMonadoSimulatedDisplayProfileEnvironment");
+        store.ShouldContain("MonadoRuntimeRecommendedEyeWidth = 896u");
+        store.ShouldContain("Monado RuntimeRecommended OpenXR eye resolution cannot provide an exact preview");
+        store.ShouldContain("displayProfile.CompositorScalePercentage");
+        store.ShouldContain("CaptureCurrentRuntimeOpenXrEyeResolutionSettings");
+        store.ShouldContain("TryStopRunningMonadoService");
+        store.ShouldContain("Monado simulated display profile changed");
+        environment.ShouldContain("SIMULATED_DISPLAY_WIDTH");
+        environment.ShouldContain("SIMULATED_DISPLAY_HEIGHT");
+        environment.ShouldContain("XRT_COMPOSITOR_SCALE_PERCENTAGE");
+        environment.ShouldContain("OXR_VIEWPORT_SCALE_PERCENTAGE");
         bootstrap.ShouldContain("renderSettings.VrViewRenderMode = settings.VR.ViewRenderMode");
         bootstrap.ShouldContain("renderSettings.EnableVrFoveatedViewSet = settings.VR.Foveation.Mode != EVrFoveationMode.Off");
+        bootstrap.ShouldContain("renderSettings.OpenXrEyeResolutionPreset = settings.VR.OpenXrEyeResolution.Preset");
         openXr.ShouldContain("VrViewRenderModeResolver.Resolve");
         openXr.ShouldContain("EVrViewRenderMode.SequentialViews");
+        openXr.ShouldContain("GetOpenXrSwapchainWidth");
+        openXrResolution.ShouldContain("EOpenXrEyeResolutionPreset.ValveIndex");
+        openXrResolution.ShouldContain("EOpenXrEyeResolutionPreset.QuestPro");
+        openXrResolution.ShouldContain("EOpenXrEyeResolutionPreset.BigscreenBeyond2");
+        openXrResolution.ShouldContain("RecordOpenXrSwapchainExtent");
+        openXrResolution.ShouldContain("ExceedsRuntimeMax");
+        openXrResolution.ShouldContain("not being applied exactly");
+        openXrResolution.ShouldContain("RuntimeEngine.Rendering.SettingsChanged += HandleOpenXrRenderSettingsChanged");
+        openXrResolution.ShouldContain("QueueOpenXrEyeResolutionSessionRecreate");
+        openXrResolution.ShouldContain("RecreateOpenXrSessionResourcesForEyeResolution");
+        openXrResolution.ShouldContain("TearDownSessionResourcesWithCurrentContext(destroyInstance: true)");
+        openXrResolution.ShouldContain("RuntimeRenderingHostServices.Current.TryEnsureOpenXrRuntimeService(serviceReason)");
+        openXrResolution.ShouldContain("SetRuntimeState(OpenXrRuntimeState.DesktopOnly)");
+        openXrRuntimeState.ShouldContain("GetGraphicsDeviceFailureProbeDelay");
+        openXrState.ShouldContain("_appliedOpenXrEyeResolutionPreset");
+        openXrState.ShouldContain("_openXrEyeResolutionRecreateQueued");
+        openXrState.ShouldContain("_intentionalOpenXrRecreateBackoffBypassUntilUtc");
+        openXr.ShouldContain("LogOpenXrViewRenderModeResolution");
+        openXr.ShouldContain("requested={0} effective={1} backend={2} supported={3} path={4} temporalHistoryPolicy={5} parallelGate={6} swapchainFormats={7} trueStereoMultiviewSupport={8}");
+        openXr.ShouldContain("DescribeOpenXrSwapchainFormats");
+        openXr.ShouldContain("DescribeOpenXrTrueStereoMultiviewSupport");
+        openXr.ShouldContain("EffectiveImplementationPath");
+        openXr.ShouldContain("TemporalHistoryPolicy");
+        openXr.ShouldContain("OpenXrStereoRenderTarget");
+        openXr.ShouldContain("TryRenderVulkanTrueSinglePassStereoToSwapchains");
+        openXr.ShouldContain("TryEnsureVulkanStereoRenderTarget");
+        openXr.ShouldContain("OpenXR] True SinglePassStereo failed this frame; falling back");
+        openXr.ShouldContain("stereoViewport.RenderStereo");
+        openXr.ShouldContain("RendersExternalSwapchainTarget: false");
+        openXrState.ShouldContain("_openXrStereoViewport");
+        openXrState.ShouldContain("_openXrStereoRenderPipeline");
+        openXrState.ShouldContain("_vulkanStereoColorArray");
+        openXrState.ShouldContain("_vulkanStereoDepthArray");
+        openXrState.ShouldContain("GetOrCreateOpenXrStereoPipeline");
+        xrViewport.ShouldContain("meshRenderCommandsOverride: MeshRenderCommandsOverride");
+        contracts.ShouldContain("EVrViewRenderImplementationPath");
+        contracts.ShouldContain("EVrTemporalHistoryPolicy");
+        contracts.ShouldContain("EOpenXrEyeResolutionPreset");
+        contracts.ShouldContain("OpenXrSinglePassCompatibility");
+        contracts.ShouldContain("DisabledExternalPerEyeSwapchain");
         openXrFoveation.ShouldContain("BuildOpenXrFoveationBackendCapabilities");
         openXrFoveation.ShouldContain("CreateOpenXrEyeFoveationContext");
         openXrFoveation.ShouldContain("BuildOpenXrFoveationResourceKey");
@@ -461,8 +679,23 @@ public sealed class VrViewRenderModeContractTests
         openXr.ShouldContain("Foveation: CreateOpenXrEyeFoveationContext(1)");
         smoke.ShouldContain("FoveationEffectiveMode");
         smoke.ShouldContain("ViewRenderModeEffective");
+        smoke.ShouldContain("ViewRenderImplementationPath");
+        smoke.ShouldContain("ViewRenderTemporalHistoryPolicy");
+        rendererState.ShouldContain("ActiveVrViewRenderModeRequested");
+        rendererState.ShouldContain("ActiveVrViewRenderModeEffective");
+        rendererState.ShouldContain("ActiveVrViewRenderImplementationPath");
+        rendererState.ShouldContain("ActiveVrTemporalHistoryPolicy");
+        profileCapture.ShouldContain("vr_view_render_mode_requested");
+        profileCapture.ShouldContain("vr_view_render_mode_effective");
+        profileCapture.ShouldContain("vr_view_render_implementation_path");
+        profileCapture.ShouldContain("vr_temporal_history_policy");
+        schema.ShouldContain("OpenXR Vulkan SinglePassStereo uses true stereo when the layered staging path is available");
+        schema.ShouldContain("Diagnostics and profile captures expose the effective implementation path separately");
 
         string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        vulkanOpenXr.ShouldContain("TryBlitTextureArrayLayerToOpenXrSwapchainImage");
+        vulkanOpenXr.ShouldContain("BaseArrayLayer = sourceLayer");
+        vulkanOpenXr.ShouldContain("RendersExternalSwapchainTarget = true");
         vulkanOpenXr.ShouldContain("ViewFoveationContext Foveation");
         vulkanOpenXr.ShouldContain("FoveationResourceKey: request.Foveation.BackendResourceKey");
         vulkanOpenXr.ShouldContain("FoveationAttachmentKind: request.Foveation.Attachment.Kind");
@@ -471,8 +704,9 @@ public sealed class VrViewRenderModeContractTests
 
         engineVrState.ShouldContain("VrViewRenderMode == EVrViewRenderMode.SinglePassStereo");
         engineStats.ShouldContain("VrViewRenderMode == EVrViewRenderMode.SinglePassStereo");
-        defaultPipeline.ShouldContain("VrViewRenderMode != EVrViewRenderMode.SinglePassStereo");
-        temporalAccumulation.ShouldContain("VrViewRenderMode != EVrViewRenderMode.SinglePassStereo");
+        defaultPipeline.ShouldContain("VPRC_TemporalAccumulationPass.TryUseHistoryBasedVrEffects");
+        temporalAccumulation.ShouldContain("VrViewRenderModeResolver.Resolve");
+        temporalAccumulation.ShouldContain("EVrTemporalHistoryPolicy.StereoArrayLayer");
         engineVrState.ShouldNotContain("RenderVRSinglePassStereo");
         engineStats.ShouldNotContain("RenderVRSinglePassStereo");
         defaultPipeline.ShouldNotContain("RenderVRSinglePassStereo");

@@ -10,6 +10,9 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline2
 {
+    private readonly Matrix4x4[] _motionVectorCurrViewProjectionStereo = new Matrix4x4[2];
+    private readonly Matrix4x4[] _motionVectorPrevViewProjectionStereo = new Matrix4x4[2];
+
     //private XRFrameBuffer CreateUserInterfaceFBO()
     //{
     //    var hudTexture = GetTexture<XRTexture>(UserInterfaceTextureName)!;
@@ -347,7 +350,9 @@ public partial class DefaultRenderPipeline2
         XRTexture historyColorTexture = GetTexture<XRTexture>(TsrHistoryColorTextureName)!;
         XRTexture stencilTexture = GetTexture<XRTexture>(StencilViewTextureName)!;
         XRTexture outputTexture = GetTexture<XRTexture>(TsrOutputTextureName)!;
-        XRShader upscaleShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "TemporalSuperResolution.fs"), EShaderType.Fragment);
+        XRShader upscaleShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs"),
+            EShaderType.Fragment);
         XRMaterial upscaleMaterial = new([sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture, stencilTexture], upscaleShader)
         {
             RenderOptions = new RenderingParameters()
@@ -714,7 +719,9 @@ public partial class DefaultRenderPipeline2
 
     private XRMaterial CreateMotionVectorsMaterial()
     {
-        XRShader shader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "MotionVectors.fs"), EShaderType.Fragment);
+        XRShader shader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, Stereo ? "MotionVectorsStereo.fs" : "MotionVectors.fs"),
+            EShaderType.Fragment);
         XRMaterial material = new(Array.Empty<XRTexture?>(), shader)
         {
             RenderOptions = new RenderingParameters()
@@ -789,6 +796,21 @@ public partial class DefaultRenderPipeline2
         if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporal))
         {
             //Debug.Out($"[Velocity] Using temporal uniforms. HistoryReady={temporal.HistoryReady}, ExposureReady={temporal.HistoryExposureReady}, Size={temporal.Width}x{temporal.Height}");
+            if (Stereo)
+            {
+                _motionVectorCurrViewProjectionStereo[0] = temporal.CurrViewProjectionUnjittered;
+                _motionVectorCurrViewProjectionStereo[1] = temporal.RightEyeCurrViewProjectionUnjittered;
+                _motionVectorPrevViewProjectionStereo[0] = temporal.HistoryReady
+                    ? temporal.PrevViewProjectionUnjittered
+                    : temporal.CurrViewProjectionUnjittered;
+                _motionVectorPrevViewProjectionStereo[1] = temporal.HistoryReady
+                    ? temporal.RightEyePrevViewProjectionUnjittered
+                    : temporal.RightEyeCurrViewProjectionUnjittered;
+                program.Uniform("CurrViewProjectionStereo", _motionVectorCurrViewProjectionStereo);
+                program.Uniform("PrevViewProjectionStereo", _motionVectorPrevViewProjectionStereo);
+                return;
+            }
+
             program.Uniform("CurrViewProjection", temporal.CurrViewProjectionUnjittered);
             program.Uniform(
                 "PrevViewProjection",
@@ -808,6 +830,17 @@ public partial class DefaultRenderPipeline2
                 "Velocity.V2.NoTemporalData",
                 TimeSpan.FromSeconds(2),
                 "[Velocity] Temporal data unavailable; using current camera matrices for motion vectors.");
+            if (Stereo)
+            {
+                _motionVectorCurrViewProjectionStereo[0] = viewProj;
+                _motionVectorCurrViewProjectionStereo[1] = viewProj;
+                _motionVectorPrevViewProjectionStereo[0] = viewProj;
+                _motionVectorPrevViewProjectionStereo[1] = viewProj;
+                program.Uniform("CurrViewProjectionStereo", _motionVectorCurrViewProjectionStereo);
+                program.Uniform("PrevViewProjectionStereo", _motionVectorPrevViewProjectionStereo);
+                return;
+            }
+
             program.Uniform("CurrViewProjection", viewProj);
             program.Uniform("PrevViewProjection", viewProj);
         }
@@ -817,6 +850,17 @@ public partial class DefaultRenderPipeline2
                 "Velocity.V2.NoCamera",
                 TimeSpan.FromSeconds(2),
                 "[Velocity] No camera available; motion vectors will be zeroed.");
+            if (Stereo)
+            {
+                _motionVectorCurrViewProjectionStereo[0] = Matrix4x4.Identity;
+                _motionVectorCurrViewProjectionStereo[1] = Matrix4x4.Identity;
+                _motionVectorPrevViewProjectionStereo[0] = Matrix4x4.Identity;
+                _motionVectorPrevViewProjectionStereo[1] = Matrix4x4.Identity;
+                program.Uniform("CurrViewProjectionStereo", _motionVectorCurrViewProjectionStereo);
+                program.Uniform("PrevViewProjectionStereo", _motionVectorPrevViewProjectionStereo);
+                return;
+            }
+
             program.Uniform("CurrViewProjection", Matrix4x4.Identity);
             program.Uniform("PrevViewProjection", Matrix4x4.Identity);
         }
@@ -888,7 +932,9 @@ public partial class DefaultRenderPipeline2
         ];
 
         XRMaterial material = new(references,
-            XRShader.EngineShader(Path.Combine(SceneShaderPath, "TemporalAccumulation.fs"), EShaderType.Fragment))
+            XRShader.EngineShader(
+                Path.Combine(SceneShaderPath, Stereo ? "TemporalAccumulationStereo.fs" : "TemporalAccumulation.fs"),
+                EShaderType.Fragment))
         {
             RenderOptions = new RenderingParameters()
             {

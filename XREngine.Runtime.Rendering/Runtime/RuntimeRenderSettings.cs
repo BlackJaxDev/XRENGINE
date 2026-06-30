@@ -48,6 +48,10 @@ internal sealed class RuntimeRenderSettings
     private EVrFoveationMode _vrFoveationMode = RuntimeRenderingHostServiceDefaults.VrFoveationMode;
     private EVrFoveationQualityPreset _vrFoveationQualityPreset = RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
     private bool _vrFoveationRequireRequested = RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
+    private EOpenXrEyeResolutionPreset _openXrEyeResolutionPreset = RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionPreset;
+    private float _openXrEyeResolutionScale = RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionScale;
+    private uint _openXrCustomEyeResolutionWidth = RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionWidth;
+    private uint _openXrCustomEyeResolutionHeight = RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionHeight;
 
     private bool _allowBinaryProgramCaching = RuntimeRenderingHostServiceDefaults.AllowBinaryProgramCaching;
     public bool AllowBinaryProgramCaching
@@ -405,6 +409,34 @@ internal sealed class RuntimeRenderSettings
             ? services.VrFoveationRequireRequested
             : _vrFoveationRequireRequested;
         set => _vrFoveationRequireRequested = value;
+    }
+    public EOpenXrEyeResolutionPreset OpenXrEyeResolutionPreset
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrEyeResolutionPreset
+            : _openXrEyeResolutionPreset;
+        set => _openXrEyeResolutionPreset = value;
+    }
+    public float OpenXrEyeResolutionScale
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrEyeResolutionScale
+            : _openXrEyeResolutionScale;
+        set => _openXrEyeResolutionScale = Math.Clamp(value, 0.1f, 2.0f);
+    }
+    public uint OpenXrCustomEyeResolutionWidth
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrCustomEyeResolutionWidth
+            : _openXrCustomEyeResolutionWidth;
+        set => _openXrCustomEyeResolutionWidth = value;
+    }
+    public uint OpenXrCustomEyeResolutionHeight
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrCustomEyeResolutionHeight
+            : _openXrCustomEyeResolutionHeight;
+        set => _openXrCustomEyeResolutionHeight = value;
     }
     public int ShaderConfigVersion
     {

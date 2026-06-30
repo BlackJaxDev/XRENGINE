@@ -173,6 +173,29 @@ internal static partial class RuntimeEngine
             }
         }
 
+        internal static void RebindSettingsChangedHandlers(
+            IRuntimeRenderingHostServices previous,
+            IRuntimeRenderingHostServices current)
+        {
+            RebindHandlers(SettingsChangedHandlers, previous.UnsubscribeRenderingSettingsChanged, current.SubscribeRenderingSettingsChanged);
+            RebindHandlers(AntiAliasingSettingsChangedHandlers, previous.UnsubscribeAntiAliasingSettingsChanged, current.SubscribeAntiAliasingSettingsChanged);
+        }
+
+        private static void RebindHandlers(Action? handlers, Action<Action> unsubscribe, Action<Action> subscribe)
+        {
+            if (handlers is null)
+                return;
+
+            foreach (Delegate handler in handlers.GetInvocationList())
+            {
+                if (handler is not Action action)
+                    continue;
+
+                unsubscribe(action);
+                subscribe(action);
+            }
+        }
+
         public static string VulkanUpscaleBridgeEnvVar => XREngineEnvironmentVariables.EnableVulkanUpscaleBridge;
         public static bool VulkanUpscaleBridgeRequested => IsEnvFlagEnabled(VulkanUpscaleBridgeEnvVar, defaultValue: true);
         public static VulkanUpscaleBridgeCapabilitySnapshot VulkanUpscaleBridgeSnapshot { get; } = new();

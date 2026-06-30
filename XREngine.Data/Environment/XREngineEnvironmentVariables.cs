@@ -24,6 +24,11 @@ public static class XREngineEnvironmentVariables
     public const string XrRuntimeJson = "XR_RUNTIME_JSON";
     public const string MonadoRuntimeJson = "MONADO_RUNTIME_JSON";
     public const string MonadoInstallDir = "MONADO_INSTALL_DIR";
+    public const string MonadoSimulatedDisplayWidth = "SIMULATED_DISPLAY_WIDTH";
+    public const string MonadoSimulatedDisplayHeight = "SIMULATED_DISPLAY_HEIGHT";
+    public const string MonadoSimulatedViewCount = "SIMULATED_VIEW_COUNT";
+    public const string MonadoCompositorScalePercentage = "XRT_COMPOSITOR_SCALE_PERCENTAGE";
+    public const string MonadoOpenXrViewportScalePercentage = "OXR_VIEWPORT_SCALE_PERCENTAGE";
 
     public const string WorldMode = "XRE_WORLD_MODE";
     public const string NetMode = "XRE_NET_MODE";
@@ -63,6 +68,10 @@ public static class XREngineEnvironmentVariables
     public const string UnitTestVrFoveationMode = "XRE_UNIT_TEST_VR_FOVEATION_MODE";
     public const string UnitTestVrFoveationQualityPreset = "XRE_UNIT_TEST_VR_FOVEATION_QUALITY_PRESET";
     public const string UnitTestVrFoveationRequireRequested = "XRE_UNIT_TEST_VR_FOVEATION_REQUIRE_REQUESTED";
+    public const string UnitTestOpenXrEyeResolutionPreset = "XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_PRESET";
+    public const string UnitTestOpenXrEyeResolutionScale = "XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_SCALE";
+    public const string UnitTestOpenXrEyeResolutionWidth = "XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_WIDTH";
+    public const string UnitTestOpenXrEyeResolutionHeight = "XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_HEIGHT";
     public const string UnitTestRenderWindowsWhileInVr = "XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR";
     public const string UnitTestOpenXrRuntimeJson = "XRE_UNIT_TEST_OPENXR_RUNTIME_JSON";
     public const string UnitTestRenderApi = "XRE_UNIT_TEST_RENDER_API";

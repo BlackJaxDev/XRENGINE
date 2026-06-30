@@ -596,7 +596,12 @@ function Copy-MonadoRuntimeDependencies {
 
     if (-not [string]::IsNullOrWhiteSpace($OpenXrLoaderPath) -and (Test-Path -LiteralPath $OpenXrLoaderPath -PathType Leaf)) {
         $destination = Join-Path $installBin "openxr_loader.dll"
-        Copy-Item -LiteralPath $OpenXrLoaderPath -Destination $destination -Force
+        if (-not [string]::Equals(
+            [System.IO.Path]::GetFullPath($OpenXrLoaderPath),
+            [System.IO.Path]::GetFullPath($destination),
+            [System.StringComparison]::OrdinalIgnoreCase)) {
+            Copy-Item -LiteralPath $OpenXrLoaderPath -Destination $destination -Force
+        }
         $copied.Add([System.IO.Path]::GetFullPath($destination))
     }
 

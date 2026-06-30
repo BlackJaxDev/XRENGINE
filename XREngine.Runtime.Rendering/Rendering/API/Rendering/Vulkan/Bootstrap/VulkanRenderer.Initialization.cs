@@ -377,30 +377,51 @@ namespace XREngine.Rendering.Vulkan
         internal VulkanMemoryAllocation AllocateImageMemoryWithFallback(
             Image image, MemoryPropertyFlags requiredProperties)
         {
+            if (TryAllocateImageMemoryWithFallback(image, requiredProperties, out VulkanMemoryAllocation allocation, out string failureReason))
+                return allocation;
+
+            throw new VulkanOutOfMemoryException(failureReason, requiredProperties);
+        }
+
+        internal bool TryAllocateImageMemoryWithFallback(
+            Image image,
+            MemoryPropertyFlags requiredProperties,
+            out VulkanMemoryAllocation allocation,
+            out string failureReason)
+        {
             IVulkanMemoryAllocator alloc = MemoryAllocator;
+            allocation = VulkanMemoryAllocation.Null;
+            MemoryPropertyFlags originalProperties = requiredProperties;
+            failureReason = string.Empty;
 
             // Strip lazy if device doesn't support it, to avoid guaranteed first-try failure.
             if (requiredProperties.HasFlag(MemoryPropertyFlags.LazilyAllocatedBit) && !SupportsLazyAllocation)
                 requiredProperties &= ~MemoryPropertyFlags.LazilyAllocatedBit;
 
-            if (alloc.TryAllocateForImage(Api!, device, image, requiredProperties, out VulkanMemoryAllocation allocation))
-                return allocation;
+            if (alloc.TryAllocateForImage(Api!, device, image, requiredProperties, out allocation))
+            {
+                failureReason = string.Empty;
+                return true;
+            }
 
             // If lazy was requested, retry without it (device-local only).
             if (requiredProperties.HasFlag(MemoryPropertyFlags.LazilyAllocatedBit))
             {
                 MemoryPropertyFlags withoutLazy = requiredProperties & ~MemoryPropertyFlags.LazilyAllocatedBit;
                 if (alloc.TryAllocateForImage(Api!, device, image, withoutLazy, out allocation))
-                    return allocation;
+                {
+                    failureReason = string.Empty;
+                    return true;
+                }
             }
 
             if (requiredProperties.HasFlag(MemoryPropertyFlags.DeviceLocalBit))
                 Debug.VulkanWarning(
                     $"[Vulkan] Image allocation failed for {requiredProperties}; no host-visible fallback is attempted for Vulkan images.");
 
-            throw new VulkanOutOfMemoryException(
-                $"Vulkan image allocation failed with no viable fallback. Requested={requiredProperties}",
-                requiredProperties);
+            allocation = VulkanMemoryAllocation.Null;
+            failureReason = $"Vulkan image allocation failed with no viable fallback. Requested={originalProperties}";
+            return false;
         }
 
         /// <summary>Frees a memory allocation through the active allocator.</summary>
@@ -605,9 +626,16 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (_boundDrawFrameBuffer is null)
-                ActiveState.SetCurrentTargetExtent(swapChainExtent);
+            {
+                if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
+                    ActiveState.SetCurrentTargetExtent(externalExtent);
+                else
+                    ActiveState.SetCurrentTargetExtent(swapChainExtent);
+            }
             else
+            {
                 ActiveState.SetCurrentTargetExtent(new Extent2D(Math.Max(_boundDrawFrameBuffer.Width, 1u), Math.Max(_boundDrawFrameBuffer.Height, 1u)));
+            }
 
             if (fbo is not null)
             {

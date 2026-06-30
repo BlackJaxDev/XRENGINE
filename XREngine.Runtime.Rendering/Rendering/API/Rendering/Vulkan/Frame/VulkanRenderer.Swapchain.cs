@@ -113,6 +113,16 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
+            if (!IsSurfacePresentableForSwapchain(out string surfaceUnavailableReason))
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.RecreateDeferredForSurfaceCapabilities",
+                    TimeSpan.FromMilliseconds(500),
+                    "[Vulkan] Deferring swapchain recreation because the surface capabilities are not presentable. Reason={0}",
+                    surfaceUnavailableReason);
+                return false;
+            }
+
             DisableStreamlineFrameGenerationBeforeSwapchainMutation("swapchain recreation");
             DeviceWaitIdle();
             DestroyAllSwapChainObjects();
@@ -328,7 +338,8 @@ public unsafe partial class VulkanRenderer
         var swapChainSupport = QuerySwapChainSupport(_physicalDevice);
         var surfaceFormat = ChooseSwapSurfaceFormat(swapChainSupport.Formats);
         var presentMode = ChoosePresentMode(swapChainSupport.PresentModes);
-        var extent = ChooseSwapExtent(swapChainSupport.Capabilities);
+        if (!TryChooseSwapExtent(swapChainSupport.Capabilities, out Extent2D extent, out string unavailableReason))
+            throw new InvalidOperationException($"Cannot create Vulkan swapchain while the surface is not presentable: {unavailableReason}");
 
         var imageCount = swapChainSupport.Capabilities.MinImageCount + 1;
         if (swapChainSupport.Capabilities.MaxImageCount > 0 && imageCount > swapChainSupport.Capabilities.MaxImageCount)
@@ -529,32 +540,75 @@ public unsafe partial class VulkanRenderer
         return FallbackPresentMode;
     }
 
-    private Extent2D ChooseSwapExtent(SurfaceCapabilitiesKHR capabilities)
+    private bool IsSurfacePresentableForSwapchain(out string reason)
+    {
+        var swapChainSupport = QuerySwapChainSupport(_physicalDevice);
+        if (swapChainSupport.Formats.Length == 0)
+        {
+            reason = "surface reported no formats";
+            return false;
+        }
+
+        if (swapChainSupport.PresentModes.Length == 0)
+        {
+            reason = "surface reported no present modes";
+            return false;
+        }
+
+        return TryChooseSwapExtent(swapChainSupport.Capabilities, out _, out reason);
+    }
+
+    private bool TryChooseSwapExtent(
+        SurfaceCapabilitiesKHR capabilities,
+        out Extent2D extent,
+        out string reason)
     {
         if (capabilities.CurrentExtent.Width != uint.MaxValue)
-            return capabilities.CurrentExtent;
-        else
         {
-            Vector2D<int> framebufferSize = XRWindow.EffectiveFramebufferSize;
-            Vector2D<int> windowSize = Window.Size;
-
-            // Prefer the larger non-zero size signal. Some desktop configurations report a
-            // framebuffer size that reflects logical coordinates while the visible window is larger.
-            // Using the larger signal prevents persistent right/bottom black borders.
-            uint width = (uint)Math.Max(Math.Max(framebufferSize.X, windowSize.X), 1);
-            uint height = (uint)Math.Max(Math.Max(framebufferSize.Y, windowSize.Y), 1);
-
-            Extent2D actualExtent = new()
+            extent = capabilities.CurrentExtent;
+            if (extent.Width == 0 || extent.Height == 0)
             {
-                Width = width,
-                Height = height
-            };
+                reason = $"surface current extent is {extent.Width}x{extent.Height}";
+                return false;
+            }
 
-            actualExtent.Width = Math.Clamp(actualExtent.Width, capabilities.MinImageExtent.Width, capabilities.MaxImageExtent.Width);
-            actualExtent.Height = Math.Clamp(actualExtent.Height, capabilities.MinImageExtent.Height, capabilities.MaxImageExtent.Height);
-
-            return actualExtent;
+            reason = string.Empty;
+            return true;
         }
+
+        Vector2D<int> framebufferSize = XRWindow.EffectiveFramebufferSize;
+        Vector2D<int> windowSize = Window.Size;
+
+        if ((framebufferSize.X <= 0 || framebufferSize.Y <= 0) &&
+            (windowSize.X <= 0 || windowSize.Y <= 0))
+        {
+            extent = default;
+            reason = $"window/framebuffer extents are {windowSize.X}x{windowSize.Y}/{framebufferSize.X}x{framebufferSize.Y}";
+            return false;
+        }
+
+        // Prefer the larger non-zero size signal. Some desktop configurations report a
+        // framebuffer size that reflects logical coordinates while the visible window is larger.
+        // Using the larger signal prevents persistent right/bottom black borders.
+        uint width = (uint)Math.Max(Math.Max(framebufferSize.X, windowSize.X), 1);
+        uint height = (uint)Math.Max(Math.Max(framebufferSize.Y, windowSize.Y), 1);
+
+        extent = new()
+        {
+            Width = Math.Clamp(width, capabilities.MinImageExtent.Width, capabilities.MaxImageExtent.Width),
+            Height = Math.Clamp(height, capabilities.MinImageExtent.Height, capabilities.MaxImageExtent.Height)
+        };
+
+        if (extent.Width == 0 || extent.Height == 0)
+        {
+            reason =
+                $"surface clamp produced {extent.Width}x{extent.Height} from window/framebuffer " +
+                $"{windowSize.X}x{windowSize.Y}/{framebufferSize.X}x{framebufferSize.Y}";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
     }
 
     private SwapChainSupportDetails QuerySwapChainSupport(PhysicalDevice physicalDevice)

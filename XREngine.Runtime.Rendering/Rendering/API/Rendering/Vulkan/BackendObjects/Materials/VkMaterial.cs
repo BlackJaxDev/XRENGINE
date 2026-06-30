@@ -10,6 +10,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -1391,13 +1392,27 @@ namespace XREngine.Rendering.Vulkan
                         return true;
                     case EEngineUniform.ViewMatrix:
                     case EEngineUniform.LeftEyeViewMatrix:
-                    case EEngineUniform.PrevViewMatrix:
-                    case EEngineUniform.PrevLeftEyeViewMatrix:
                         value = new ProgramUniformValue(EShaderVarType._mat4, camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity, false);
                         return true;
+                    case EEngineUniform.PrevViewMatrix:
+                    case EEngineUniform.PrevLeftEyeViewMatrix:
+                        value = new ProgramUniformValue(
+                            EShaderVarType._mat4,
+                            VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalViewData) && temporalViewData.HistoryReady
+                                ? temporalViewData.PrevViewMatrix
+                                : camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity,
+                            false);
+                        return true;
                     case EEngineUniform.RightEyeViewMatrix:
-                    case EEngineUniform.PrevRightEyeViewMatrix:
                         value = new ProgramUniformValue(EShaderVarType._mat4, rightCamera?.Transform.InverseRenderMatrix ?? camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity, false);
+                        return true;
+                    case EEngineUniform.PrevRightEyeViewMatrix:
+                        value = new ProgramUniformValue(
+                            EShaderVarType._mat4,
+                            VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalRightViewData) && temporalRightViewData.HistoryReady
+                                ? temporalRightViewData.RightEyePrevViewMatrix
+                                : rightCamera?.Transform.InverseRenderMatrix ?? camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity,
+                            false);
                         return true;
                     case EEngineUniform.InverseViewMatrix:
                     case EEngineUniform.LeftEyeInverseViewMatrix:
@@ -1421,14 +1436,28 @@ namespace XREngine.Rendering.Vulkan
                         value = new ProgramUniformValue(EShaderVarType._mat4, rightCamera?.ViewProjectionMatrix ?? camera?.ViewProjectionMatrix ?? Matrix4x4.Identity, false);
                         return true;
                     case EEngineUniform.ProjMatrix:
-                    case EEngineUniform.PrevProjMatrix:
                     case EEngineUniform.LeftEyeProjMatrix:
-                    case EEngineUniform.PrevLeftEyeProjMatrix:
                         value = new ProgramUniformValue(EShaderVarType._mat4, camera?.ProjectionMatrix ?? Matrix4x4.Identity, false);
                         return true;
+                    case EEngineUniform.PrevProjMatrix:
+                    case EEngineUniform.PrevLeftEyeProjMatrix:
+                        value = new ProgramUniformValue(
+                            EShaderVarType._mat4,
+                            VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalProjectionData) && temporalProjectionData.HistoryReady
+                                ? temporalProjectionData.PrevProjection
+                                : camera?.ProjectionMatrix ?? Matrix4x4.Identity,
+                            false);
+                        return true;
                     case EEngineUniform.RightEyeProjMatrix:
-                    case EEngineUniform.PrevRightEyeProjMatrix:
                         value = new ProgramUniformValue(EShaderVarType._mat4, rightCamera?.ProjectionMatrix ?? camera?.ProjectionMatrix ?? Matrix4x4.Identity, false);
+                        return true;
+                    case EEngineUniform.PrevRightEyeProjMatrix:
+                        value = new ProgramUniformValue(
+                            EShaderVarType._mat4,
+                            VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalRightProjectionData) && temporalRightProjectionData.HistoryReady
+                                ? temporalRightProjectionData.RightEyePrevProjection
+                                : rightCamera?.ProjectionMatrix ?? camera?.ProjectionMatrix ?? Matrix4x4.Identity,
+                            false);
                         return true;
                     case EEngineUniform.CameraPosition:
                         value = new ProgramUniformValue(EShaderVarType._vec3, camera?.Transform.RenderTranslation ?? Vector3.Zero, false);

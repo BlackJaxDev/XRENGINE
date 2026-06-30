@@ -141,11 +141,16 @@ public sealed partial class XRRenderPipelineInstance
             if (SceneCamera is not null)
                 _renderingCameras.Push(SceneCamera);
 
+            _mainAttributeRenderAreaPushed.Push(PushInitialMainRenderArea(viewport, target));
+
             return StateObject.New(PopMainAttributes);
         }
 
         public void PopMainAttributes()
         {
+            if (_mainAttributeRenderAreaPushed.Count > 0 && _mainAttributeRenderAreaPushed.Pop())
+                PopRenderArea();
+
             if (WindowViewport is not null)
                 _renderingViewports.Pop();
 
@@ -173,6 +178,75 @@ public sealed partial class XRRenderPipelineInstance
             GlobalMaterialOverride = null;
             ScreenSpaceUserInterface = null;
             MeshRenderCommands = null;
+        }
+
+        private readonly Stack<bool> _mainAttributeRenderAreaPushed = new();
+
+        private bool PushInitialMainRenderArea(XRViewport? viewport, XRFrameBuffer? target)
+        {
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer?.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion) == true)
+            {
+                PushRequiredRenderArea(externalRegion, "OpenXR external swapchain target");
+                return true;
+            }
+
+            if (renderer?.IsRenderingExternalSwapchainTarget == true ||
+                viewport?.RendersToExternalSwapchainTarget == true)
+            {
+                BoundingRectangle externalViewportRegion = viewport?.InternalResolutionRegion ?? default;
+                PushRequiredRenderArea(externalViewportRegion, "OpenXR external swapchain viewport");
+                return true;
+            }
+
+            if (target is not null)
+            {
+                BoundingRectangle targetRegion = CreateFrameBufferRenderArea(target);
+                if (targetRegion.Width > 0 && targetRegion.Height > 0)
+                {
+                    PushRenderArea(targetRegion);
+                    return true;
+                }
+            }
+
+            if (viewport is null)
+                return false;
+
+            BoundingRectangle viewportRegion = viewport.InternalResolutionRegion;
+            if (viewportRegion.Width <= 0 || viewportRegion.Height <= 0)
+                viewportRegion = viewport.Region;
+
+            if (viewportRegion.Width <= 0 || viewportRegion.Height <= 0)
+                return false;
+
+            PushRenderArea(viewportRegion);
+            return true;
+        }
+
+        private void PushRequiredRenderArea(BoundingRectangle region, string reason)
+        {
+            if (region.Width <= 0 || region.Height <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"{reason} requires a non-zero render area before frame-op capture. " +
+                    $"Region={region.X},{region.Y},{region.Width}x{region.Height}.");
+            }
+
+            PushRenderArea(region);
+        }
+
+        private static BoundingRectangle CreateFrameBufferRenderArea(XRFrameBuffer target)
+        {
+            if (target.Width == 0u || target.Height == 0u)
+                return default;
+
+            if (target.Width > int.MaxValue || target.Height > int.MaxValue)
+            {
+                throw new InvalidOperationException(
+                    $"Framebuffer render area {target.Width}x{target.Height} exceeds supported render-region dimensions.");
+            }
+
+            return new BoundingRectangle(0, 0, (int)target.Width, (int)target.Height);
         }
 
         private int _directionalCascadeLayeredShadowPassDepth;

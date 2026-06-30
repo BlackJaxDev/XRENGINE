@@ -451,6 +451,19 @@ function Invoke-EditorSmoke {
         }
         catch {
         }
+        if (-not $process.HasExited) {
+            try {
+                $process.Kill($true)
+            }
+            catch {
+                $process.Kill()
+            }
+            try {
+                $process.WaitForExit(5000) | Out-Null
+            }
+            catch {
+            }
+        }
     }
     elseif (-not $process.HasExited) {
         try {
@@ -462,10 +475,18 @@ function Invoke-EditorSmoke {
         throw "Editor smoke process timed out after $($TimeoutSeconds + 30)s."
     }
 
-    $stdoutTask.Wait()
-    $stderrTask.Wait()
-    $stdoutTask.Result | Set-Content -LiteralPath $StdoutPath -Encoding UTF8
-    $stderrTask.Result | Set-Content -LiteralPath $StderrPath -Encoding UTF8
+    if ($stdoutTask.Wait(5000)) {
+        $stdoutTask.Result | Set-Content -LiteralPath $StdoutPath -Encoding UTF8
+    }
+    else {
+        "stdout capture did not complete after process shutdown." | Set-Content -LiteralPath $StdoutPath -Encoding UTF8
+    }
+    if ($stderrTask.Wait(5000)) {
+        $stderrTask.Result | Set-Content -LiteralPath $StderrPath -Encoding UTF8
+    }
+    else {
+        "stderr capture did not complete after process shutdown." | Set-Content -LiteralPath $StderrPath -Encoding UTF8
+    }
     $exitCode = if ($process.HasExited) { $process.ExitCode } else { 0 }
     return [pscustomobject]@{
         ExitCode               = $exitCode

@@ -1243,12 +1243,12 @@ public unsafe partial class VulkanRenderer
 
     private static int ResolveStereoViewIndex(in PendingMeshDraw draw)
     {
+        if (draw.IsStereoPass)
+            return CommandChainStereoMultiviewViewIndex;
+
         bool? cameraEyeLeft = draw.Camera?.StereoEyeLeft;
         if (cameraEyeLeft.HasValue)
             return cameraEyeLeft.Value ? CommandChainLeftEyeViewIndex : CommandChainRightEyeViewIndex;
-
-        if (draw.IsStereoPass)
-            return CommandChainStereoMultiviewViewIndex;
 
         if (draw.StereoRightEyeCamera is not null && ReferenceEquals(draw.Camera, draw.StereoRightEyeCamera))
             return CommandChainRightEyeViewIndex;

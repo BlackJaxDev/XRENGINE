@@ -2250,14 +2250,15 @@ namespace XREngine.Rendering.Vulkan
                         {
                             SType = StructureType.RenderingInfo,
                             Flags = secondaryContents ? RenderingFlags.ContentsSecondaryCommandBuffersBit : 0,
-                            RenderArea = new Rect2D
-                            {
-                                Offset = new Offset2D(0, 0),
-                                Extent = swapchainTarget.Extent
-                            },
-                            LayerCount = 1,
-                            ColorAttachmentCount = 1,
-                            PColorAttachments = &colorAttachment,
+                        RenderArea = new Rect2D
+                        {
+                            Offset = new Offset2D(0, 0),
+                            Extent = swapchainTarget.Extent
+                        },
+                        ViewMask = 0,
+                        LayerCount = 1,
+                        ColorAttachmentCount = 1,
+                        PColorAttachments = &colorAttachment,
                             PDepthAttachment = &depthAttachment,
                         };
 
@@ -2499,12 +2500,20 @@ namespace XREngine.Rendering.Vulkan
                         }
                     }
 
+                    uint fboViewMask = vkFrameBuffer.MultiviewViewMask;
+                    uint fboLayerCount = ResolveDynamicRenderingLayerCount(vkFrameBuffer.FramebufferLayers, fboViewMask);
+                    DynamicRenderingFormatSignature targetDynamicRenderingFormats = CreateDynamicRenderingFormatSignature(
+                        fboSignature,
+                        fboViewMask,
+                        fboLayerCount);
+
                     RenderingInfo renderingInfo = new()
                     {
                         SType = StructureType.RenderingInfo,
                         Flags = secondaryContents ? RenderingFlags.ContentsSecondaryCommandBuffersBit : 0,
                         RenderArea = fboRenderArea,
-                        LayerCount = Math.Max(vkFrameBuffer.FramebufferLayers, 1u),
+                        ViewMask = targetDynamicRenderingFormats.ViewMask,
+                        LayerCount = targetDynamicRenderingFormats.LayerCount,
                         ColorAttachmentCount = colorAttachmentCount,
                         PColorAttachments = colorAttachmentCount > 0 ? colorAttachments : null,
                         PDepthAttachment = hasDepthAttachment ? &depthAttachment : null,
@@ -2518,14 +2527,14 @@ namespace XREngine.Rendering.Vulkan
                     activeTarget = target;
                     activeRenderPass = default;
                     activeFramebuffer = default;
-                    activeDynamicRenderingFormats = CreateDynamicRenderingFormatSignature(fboSignature);
+                    activeDynamicRenderingFormats = targetDynamicRenderingFormats;
                     activeFboAttachmentSignature = fboSignature;
                     activeRenderArea = renderingInfo.RenderArea;
                     activeDepthStencilReadOnly = passDepthStencilReadOnly;
                     if (TargetTraceEnabled)
                     {
                         Debug.Vulkan(
-                            "[VulkanTarget] begin target='{0}' targetId={1} pass={2} passName='{3}' dynamic=true framebuffer=0x{4:X} attachments={5} extent={6}x{7} layers={8} formats={9} secondary={10}",
+                            "[VulkanTarget] begin target='{0}' targetId={1} pass={2} passName='{3}' dynamic=true framebuffer=0x{4:X} attachments={5} extent={6}x{7} layers={8} viewMask=0x{9:X} formats={10} secondary={11}",
                             fboName,
                             target.GetHashCode(),
                             passIndex,
@@ -2535,6 +2544,7 @@ namespace XREngine.Rendering.Vulkan
                             renderingInfo.RenderArea.Extent.Width,
                             renderingInfo.RenderArea.Extent.Height,
                             renderingInfo.LayerCount,
+                            renderingInfo.ViewMask,
                             activeDynamicRenderingFormats,
                             secondaryContents);
                     }
@@ -2906,7 +2916,11 @@ namespace XREngine.Rendering.Vulkan
                 if (UseDynamicRenderingRenderTargets)
                 {
                     inheritedDynamicRendering = true;
-                    inheritedDynamicRenderingFormats = CreateDynamicRenderingFormatSignature(fboSignature);
+                    uint fboViewMask = vkFrameBuffer.MultiviewViewMask;
+                    inheritedDynamicRenderingFormats = CreateDynamicRenderingFormatSignature(
+                        fboSignature,
+                        fboViewMask,
+                        ResolveDynamicRenderingLayerCount(vkFrameBuffer.FramebufferLayers, fboViewMask));
                     inheritedFboAttachmentSignature = fboSignature;
                     inheritedSamples = ResolveDynamicRenderingSamples(fboSignature);
                     return true;
@@ -3096,7 +3110,7 @@ namespace XREngine.Rendering.Vulkan
                                 {
                                     SType = StructureType.CommandBufferInheritanceRenderingInfo,
                                     Flags = 0,
-                                    ViewMask = 0,
+                                    ViewMask = inheritedDynamicRenderingFormats.ViewMask,
                                     ColorAttachmentCount = inheritedDynamicRenderingFormats.ColorAttachmentCount,
                                     PColorAttachmentFormats = inheritedDynamicRenderingFormats.ColorAttachmentCount > 0 ? colorAttachmentFormats : null,
                                     DepthAttachmentFormat = inheritedDynamicRenderingFormats.DepthAttachmentFormat,
@@ -3295,7 +3309,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         SType = StructureType.CommandBufferInheritanceRenderingInfo,
                         Flags = 0,
-                        ViewMask = 0,
+                        ViewMask = inheritedDynamicRenderingFormats.ViewMask,
                         ColorAttachmentCount = inheritedDynamicRenderingFormats.ColorAttachmentCount,
                         PColorAttachmentFormats = inheritedDynamicRenderingFormats.ColorAttachmentCount > 0 ? scheduledColorAttachmentFormats : null,
                         DepthAttachmentFormat = inheritedDynamicRenderingFormats.DepthAttachmentFormat,
@@ -3537,7 +3551,7 @@ namespace XREngine.Rendering.Vulkan
                         {
                             SType = StructureType.CommandBufferInheritanceRenderingInfo,
                             Flags = 0,
-                            ViewMask = 0,
+                            ViewMask = inheritedDynamicRenderingFormats.ViewMask,
                             ColorAttachmentCount = inheritedDynamicRenderingFormats.ColorAttachmentCount,
                             PColorAttachmentFormats = inheritedDynamicRenderingFormats.ColorAttachmentCount > 0 ? colorAttachmentFormats : null,
                             DepthAttachmentFormat = inheritedDynamicRenderingFormats.DepthAttachmentFormat,
@@ -3730,12 +3744,13 @@ namespace XREngine.Rendering.Vulkan
                             Flags = RenderingFlags.ContentsSecondaryCommandBuffersBit,
                             RenderArea = new Rect2D
                             {
-                                Offset = new Offset2D(0, 0),
-                                Extent = swapchainTarget.Extent
-                            },
-                            LayerCount = 1,
-                            ColorAttachmentCount = 1,
-                            PColorAttachments = &colorAttachment,
+                            Offset = new Offset2D(0, 0),
+                            Extent = swapchainTarget.Extent
+                        },
+                        ViewMask = 0,
+                        LayerCount = 1,
+                        ColorAttachmentCount = 1,
+                        PColorAttachments = &colorAttachment,
                             PDepthAttachment = &depthAttachment,
                         };
 
@@ -4886,15 +4901,15 @@ namespace XREngine.Rendering.Vulkan
                     if (info.DescriptorSource is { } descriptorSource)
                     {
                         ImageUsageFlags usage = descriptorSource.DescriptorUsage;
+                        if ((usage & ImageUsageFlags.StorageBit) != 0)
+                            return ImageLayout.General;
+
                         if ((usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0)
                         {
                             return IsDepthOrStencilAspect(info.AspectMask)
                                 ? ImageLayout.DepthStencilReadOnlyOptimal
                                 : ImageLayout.ShaderReadOnlyOptimal;
                         }
-
-                        if ((usage & ImageUsageFlags.StorageBit) != 0)
-                            return ImageLayout.General;
                     }
 
                     if (info.PreferredLayout != ImageLayout.Undefined)

@@ -742,15 +742,15 @@ namespace XREngine.Rendering.Vulkan
             if (info.DescriptorSource is { } descriptorSource)
             {
                 ImageUsageFlags usage = descriptorSource.DescriptorUsage;
+                if ((usage & ImageUsageFlags.StorageBit) != 0)
+                    return ImageLayout.General;
+
                 if ((usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0)
                 {
                     return IsDepthOrStencilAspect(info.AspectMask)
                         ? ImageLayout.DepthStencilReadOnlyOptimal
                         : ImageLayout.ShaderReadOnlyOptimal;
                 }
-
-                if ((usage & ImageUsageFlags.StorageBit) != 0)
-                    return ImageLayout.General;
             }
 
             if (info.PreferredLayout != ImageLayout.Undefined)

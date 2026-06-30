@@ -34,4 +34,30 @@ public unsafe partial class VulkanRenderer
         lock (_samplerLifetimeLock)
             return _liveSamplerHandles.Contains(sampler.Handle);
     }
+
+    private void DestroyRemainingTrackedSamplers()
+    {
+        ulong[] handles;
+        lock (_samplerLifetimeLock)
+        {
+            if (_liveSamplerHandles.Count == 0)
+                return;
+
+            handles = [.. _liveSamplerHandles];
+            _liveSamplerHandles.Clear();
+        }
+
+        for (int i = 0; i < handles.Length; i++)
+        {
+            Sampler sampler = new() { Handle = handles[i] };
+            Debug.Vulkan(
+                "[Vulkan] Destroying remaining tracked sampler 0x{0:X} during renderer shutdown.",
+                handles[i]);
+            Api!.DestroySampler(device, sampler, null);
+        }
+
+        Debug.Vulkan(
+            "[Vulkan] Destroyed {0} remaining tracked sampler(s) during renderer shutdown.",
+            handles.Length);
+    }
 }

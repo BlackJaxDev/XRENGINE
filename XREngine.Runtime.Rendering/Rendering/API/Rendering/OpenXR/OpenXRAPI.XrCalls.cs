@@ -132,9 +132,13 @@ public unsafe partial class OpenXRAPI
     {
         AssertOpenXrRenderThread(nameof(BeginFrame));
         var frameBeginInfo = new FrameBeginInfo { Type = StructureType.FrameBeginInfo };
-        if (CheckResult(Api.BeginFrame(_session, in frameBeginInfo), "xrBeginFrame") != Result.Success)
+        Result result = CheckResult(Api.BeginFrame(_session, in frameBeginInfo), "xrBeginFrame");
+        if (result != Result.Success)
         {
-            Debug.LogWarning("Failed to begin OpenXR frame.");
+            Debug.LogWarning(
+                $"Failed to begin OpenXR frame. Result={result} " +
+                $"PacingMode={OpenXrRenderPacingHandling} SessionBegun={_sessionBegun} " +
+                $"PendingFrame={Volatile.Read(ref _pendingXrFrame)} PrepActive={Volatile.Read(ref _openXrFramePrepActive)}");
             return false;
         }
         return true;
@@ -151,9 +155,13 @@ public unsafe partial class OpenXRAPI
         var frameWaitInfo = new FrameWaitInfo { Type = StructureType.FrameWaitInfo };
         frameState = new FrameState { Type = StructureType.FrameState };
         long waitStart = Stopwatch.GetTimestamp();
-        if (CheckResult(Api.WaitFrame(_session, in frameWaitInfo, ref frameState), "xrWaitFrame") != Result.Success)
+        Result result = CheckResult(Api.WaitFrame(_session, in frameWaitInfo, ref frameState), "xrWaitFrame");
+        if (result != Result.Success)
         {
-            Debug.LogWarning("Failed to wait for OpenXR frame.");
+            Debug.LogWarning(
+                $"Failed to wait for OpenXR frame. Result={result} " +
+                $"PacingMode={OpenXrRenderPacingHandling} SessionBegun={_sessionBegun} " +
+                $"PendingFrame={Volatile.Read(ref _pendingXrFrame)} PrepActive={Volatile.Read(ref _openXrFramePrepActive)}");
             return false;
         }
         long waitEnd = Stopwatch.GetTimestamp();
@@ -579,6 +587,7 @@ public unsafe partial class OpenXRAPI
             _viewportMirrorColor?.Destroy();
             _viewportMirrorColor = null;
             DestroyVulkanEyeMirrorTargets();
+            DestroyVulkanStereoRenderTarget();
             DestroyOpenXrPreviewTargets();
         }
         catch
@@ -641,6 +650,8 @@ public unsafe partial class OpenXRAPI
 
             _swapchainFramebuffers[i] = null;
             _swapchainImageCounts[i] = 0;
+            _swapchainWidths[i] = 0;
+            _swapchainHeights[i] = 0;
             _swapchains[i] = default;
         }
 

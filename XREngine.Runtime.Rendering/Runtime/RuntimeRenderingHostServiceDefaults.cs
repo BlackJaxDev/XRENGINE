@@ -129,6 +129,10 @@ public static class RuntimeRenderingHostServiceDefaults
     public const EVrFoveationMode VrFoveationMode = EVrFoveationMode.Off;
     public const EVrFoveationQualityPreset VrFoveationQualityPreset = EVrFoveationQualityPreset.Balanced;
     public const bool VrFoveationRequireRequested = false;
+    public const EOpenXrEyeResolutionPreset OpenXrEyeResolutionPreset = EOpenXrEyeResolutionPreset.RuntimeRecommended;
+    public const float OpenXrEyeResolutionScale = 1.0f;
+    public const uint OpenXrCustomEyeResolutionWidth = 0u;
+    public const uint OpenXrCustomEyeResolutionHeight = 0u;
     public const bool IsInVR = false;
     public const bool IsOpenXRActive = false;
     public const bool VrMirrorComposeFromEyeTextures = false;

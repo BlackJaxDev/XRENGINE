@@ -1747,8 +1747,7 @@ public partial class DefaultRenderPipeline2
     }
 
     private static bool DisableHistoryBasedVrEffects()
-        => IsRenderingExternalSwapchainTarget()
-        || (RuntimeEngine.VRState.IsInVR && RuntimeEngine.Rendering.Settings.VrViewRenderMode != EVrViewRenderMode.SinglePassStereo);
+        => !VPRC_TemporalAccumulationPass.TryUseHistoryBasedVrEffects(out _, out _);
 
     private static bool ShouldUseMotionBlur()
         => !IsLightProbePass

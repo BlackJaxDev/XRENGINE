@@ -446,6 +446,10 @@ public sealed class RuntimeRenderingHostServicesTests
         public EVrFoveationMode VrFoveationMode => RuntimeRenderingHostServiceDefaults.VrFoveationMode;
         public EVrFoveationQualityPreset VrFoveationQualityPreset => RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
         public bool VrFoveationRequireRequested => RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
+        public EOpenXrEyeResolutionPreset OpenXrEyeResolutionPreset => RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionPreset;
+        public float OpenXrEyeResolutionScale => RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionScale;
+        public uint OpenXrCustomEyeResolutionWidth => RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionWidth;
+        public uint OpenXrCustomEyeResolutionHeight => RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionHeight;
         public bool IsInVR => false;
         public bool IsOpenXRActive => false;
         public bool VrMirrorComposeFromEyeTextures => false;

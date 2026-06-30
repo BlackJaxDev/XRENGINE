@@ -120,6 +120,12 @@ public unsafe partial class VulkanRenderer
             }
             layerCount = (int)Math.Max(source2DArray.Depth, 1u);
             program = _autoExposureComputeProgram2DArray;
+            Debug.VulkanEvery(
+                $"Vulkan.AutoExposure.HeadsetSharedArray.{source2DArray.Name ?? source2DArray.SamplerName ?? "<unnamed>"}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] Auto exposure policy=HeadsetShared source='{0}' layers={1}; luminance is averaged across stereo array layers.",
+                source2DArray.Name ?? source2DArray.SamplerName ?? "<unnamed>",
+                layerCount);
         }
         else
         {
