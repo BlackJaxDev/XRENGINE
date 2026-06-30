@@ -644,6 +644,7 @@ Validation:
 
 - `dotnet build .\XREngine.Editor\XREngine.Editor.csproj` passed on 2026-06-26 with only existing Magick.NET advisory warnings.
 - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~ResourcePlanner_SwitchesPerFrameOpContextDuringPrimaryRecording"` passed on 2026-06-26 with only existing Magick.NET advisory warnings.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-build --filter OpenXrTimingPipelineContractTests` passed 24/24 on 2026-06-26. The first build-backed attempt hit a transient SourceLink file lock on `XREngine.Editor.sourcelink.json`, so the already-built test assembly was rerun with `--no-build`.
 - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter VulkanP1ValidationTests` was also run, but the bucket is not green because several pre-existing source-contract assertions still look for planner/push-constant code in files where it no longer lives. The new per-context planner guard itself passes.
 
 Validation still needed:

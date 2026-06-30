@@ -107,7 +107,11 @@ namespace XREngine.Rendering.Vulkan
 
         private void DrainRetiredPipelines(int maxItems = RetiredPipelineDrainLimitPerFrame)
         {
-            int frameSlot = currentFrame;
+            DrainRetiredPipelines(currentFrame, maxItems);
+        }
+
+        private void DrainRetiredPipelines(int frameSlot, int maxItems)
+        {
             Pipeline[] retired;
             int remaining;
 
@@ -278,7 +282,11 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private void DrainRetiredFramebuffers(int maxItems = RetiredFramebufferDrainLimitPerFrame)
         {
-            int frameSlot = currentFrame;
+            DrainRetiredFramebuffers(currentFrame, maxItems);
+        }
+
+        private void DrainRetiredFramebuffers(int frameSlot, int maxItems)
+        {
             Framebuffer[] retired;
             int remaining;
             lock (_retiredResourceLock)
@@ -353,7 +361,11 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private void DrainRetiredBuffers(int maxItems = RetiredBufferDrainLimitPerFrame)
         {
-            int frameSlot = currentFrame;
+            DrainRetiredBuffers(currentFrame, maxItems);
+        }
+
+        private void DrainRetiredBuffers(int frameSlot, int maxItems)
+        {
             (Silk.NET.Vulkan.Buffer Buffer, DeviceMemory Memory)[] retired;
             int remaining;
 
@@ -560,7 +572,11 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private void DrainRetiredImages(int maxItems = RetiredImageDrainLimitPerFrame)
         {
-            int frameSlot = currentFrame;
+            DrainRetiredImages(currentFrame, maxItems);
+        }
+
+        private void DrainRetiredImages(int frameSlot, int maxItems)
+        {
             RetiredImageResources[] retired;
             int remaining;
 
@@ -690,17 +706,14 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         internal void ForceFlushAllRetiredResources()
         {
-            int saved = currentFrame;
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             {
-                currentFrame = i;
-                DrainRetiredDescriptorPools(currentFrame, int.MaxValue);
-                DrainRetiredPipelines(int.MaxValue);
-                DrainRetiredBuffers(int.MaxValue);
-                DrainRetiredFramebuffers(int.MaxValue);
-                DrainRetiredImages(int.MaxValue);
+                DrainRetiredDescriptorPools(i, int.MaxValue);
+                DrainRetiredPipelines(i, int.MaxValue);
+                DrainRetiredBuffers(i, int.MaxValue);
+                DrainRetiredFramebuffers(i, int.MaxValue);
+                DrainRetiredImages(i, int.MaxValue);
             }
-            currentFrame = saved;
         }
 
         /// <summary>
@@ -710,16 +723,13 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         internal void ForceFlushCompletedNonImageRetiredResources()
         {
-            int saved = currentFrame;
             for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             {
-                currentFrame = i;
-                DrainRetiredDescriptorPools(currentFrame, int.MaxValue);
-                DrainRetiredPipelines(int.MaxValue);
-                DrainRetiredBuffers(int.MaxValue);
-                DrainRetiredFramebuffers(int.MaxValue);
+                DrainRetiredDescriptorPools(i, int.MaxValue);
+                DrainRetiredPipelines(i, int.MaxValue);
+                DrainRetiredBuffers(i, int.MaxValue);
+                DrainRetiredFramebuffers(i, int.MaxValue);
             }
-            currentFrame = saved;
         }
     }
 }

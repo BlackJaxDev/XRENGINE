@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -137,6 +138,7 @@ namespace XREngine.Rendering.Vulkan
         private int currentFrame = 0;
         private ulong _vkDebugFrameCounter = 0;
         internal ulong VulkanFrameCounter => _vkDebugFrameCounter;
+        private int _windowRenderCallbackInProgress;
         private long _swapchainRecreateRequestedAt;
         private long _swapchainResizeLastChangedAt;
         private uint _pendingSurfaceWidth;
@@ -451,10 +453,23 @@ namespace XREngine.Rendering.Vulkan
 
         protected override void WindowRenderCallback(double delta)
         {
+            if (Interlocked.CompareExchange(ref _windowRenderCallbackInProgress, 1, 0) != 0)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.ReentrantWindowRenderSkipped",
+                    TimeSpan.FromMilliseconds(250),
+                    "[Vulkan] Skipping reentrant desktop window render callback while a previous desktop frame is still active. ActiveFrame={0} CurrentFrameSlot={1}",
+                    _vkDebugFrameCounter,
+                    currentFrame);
+                return;
+            }
+
+            try
+            {
             if (_deviceLost)
                 throw CreateDeviceLostException("RenderWindow", Result.ErrorDeviceLost);
 
-            _vkDebugFrameCounter++;
+            ulong frameNumber = ++_vkDebugFrameCounter;
 
             long frameStartTimestamp = Stopwatch.GetTimestamp();
 
@@ -466,7 +481,7 @@ namespace XREngine.Rendering.Vulkan
                 if (gap > TimeSpan.FromSeconds(5))
                 {
                     Debug.VulkanWarning(
-                        $"[Vulkan] Frame {_vkDebugFrameCounter}: {gap.TotalSeconds:F1}s gap since last frame completed. " +
+                        $"[Vulkan] Frame {frameNumber}: {gap.TotalSeconds:F1}s gap since last frame completed. " +
                         $"Slot={currentFrame} SlotTimelineValue={_frameSlotTimelineValues?[currentFrame]}");
                 }
             }
@@ -689,7 +704,7 @@ namespace XREngine.Rendering.Vulkan
                 $"Vulkan.Frame.{GetHashCode()}.Sizes",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Frame={0} WindowFB={1}x{2} Swapchain={3}x{4}",
-                _vkDebugFrameCounter,
+                frameNumber,
                 liveFramebufferSize.X,
                 liveFramebufferSize.Y,
                 swapChainExtent.Width,
@@ -728,7 +743,7 @@ namespace XREngine.Rendering.Vulkan
                 $"Vulkan.Frame.{GetHashCode()}.Acquire",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Frame={0} InFlightSlot={1} AcquiredImage={2} LastPresented={3}",
-                _vkDebugFrameCounter,
+                frameNumber,
                 currentFrame,
                 imageIndex,
                 _lastPresentedImageIndex);
@@ -1132,7 +1147,7 @@ namespace XREngine.Rendering.Vulkan
                 $"Vulkan.Frame.{GetHashCode()}.Submit",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Frame={0} SubmittedImage={1}",
-                _vkDebugFrameCounter,
+                frameNumber,
                 imageIndex);
 
             // 6. Present the image
@@ -1184,7 +1199,7 @@ namespace XREngine.Rendering.Vulkan
                 $"Vulkan.Frame.{GetHashCode()}.Present",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Frame={0} PresentedImage={1} Result={2}",
-                _vkDebugFrameCounter,
+                frameNumber,
                 imageIndex,
                 result);
 
@@ -1230,6 +1245,11 @@ namespace XREngine.Rendering.Vulkan
                     acquireBridgeSubmitTime,
                     waitSwapchainImageTime,
                     resetDynamicUniformRingTime);
+            }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _windowRenderCallbackInProgress, 0);
             }
         }
     }

@@ -279,6 +279,16 @@ public static partial class EditorImGuiUI
             Engine.WindowCloseRequested = HandleWindowCloseRequested;
         }
 
+        private static bool ShouldSuppressEditorImGuiForRuntimeVrView()
+        {
+            var host = RuntimeRenderingHostServices.Current;
+            return Engine.IsEditor &&
+                EditorUnitTests.Toggles.VRPawn &&
+                !EditorUnitTests.Toggles.AllowEditingInVR &&
+                host.IsInVR &&
+                host.RenderWindowsWhileInVR;
+        }
+
         internal static void ForceAllowWindowCloseForShutdown()
         {
             _forceAllowWindowCloseForShutdown = true;
@@ -331,6 +341,9 @@ public static partial class EditorImGuiUI
         private static void RenderEditorScenePanelMode()
         {
             using var profilerScope = Engine.Profiler.Start("EditorImGuiUI.RenderEditorScenePanelMode");
+
+            if (ShouldSuppressEditorImGuiForRuntimeVrView())
+                return;
 
             if (Engine.EditorPreferences.ViewportPresentationMode != EditorPreferences.EViewportPresentationMode.UseViewportPanel)
                 return;
@@ -537,6 +550,12 @@ public static partial class EditorImGuiUI
         public static void RenderEditor()
         {
             using var profilerScope = Engine.Profiler.Start("EditorImGuiUI.RenderEditor");
+
+            if (ShouldSuppressEditorImGuiForRuntimeVrView())
+            {
+                Engine.Input.SetUIInputCaptured(false);
+                return;
+            }
 
             // In play mode, don't let ImGui capture keyboard input - let the game pawn receive it
             bool inPlayMode =

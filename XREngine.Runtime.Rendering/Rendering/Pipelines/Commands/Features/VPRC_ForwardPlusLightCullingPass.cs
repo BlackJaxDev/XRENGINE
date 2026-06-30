@@ -122,6 +122,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             int tileCountX = (width + TileSize - 1) / TileSize;
             int tileCountY = (height + TileSize - 1) / TileSize;
 
+            int passIndex = ResolvePassIndex(nameof(VPRC_ForwardPlusLightCullingPass));
+            using IDisposable? renderGraphPassScope = passIndex != int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                : null;
+
             EnsureBuffers(lightCount, tileCountX, tileCountY, stereo ? 2 : 1);
 
             // Upload local lights (CPU->GPU). Visible-indices buffer is written by compute.
@@ -343,6 +348,21 @@ namespace XREngine.Rendering.Pipelines.Commands
             builder.ReadWriteBuffer("ForwardPlusLocalLights");
             builder.ReadWriteBuffer("ForwardPlusVisibleIndices");
             builder.ReadWriteBuffer("ForwardPlusTileLightCounts");
+        }
+
+        private int ResolvePassIndex(string passName)
+        {
+            var metadata = ParentPipeline?.PassMetadata;
+            if (metadata is null)
+                return int.MinValue;
+
+            foreach (RenderPassMetadata pass in metadata)
+            {
+                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
+                    return pass.PassIndex;
+            }
+
+            return int.MinValue;
         }
     }
 }

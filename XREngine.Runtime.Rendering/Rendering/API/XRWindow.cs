@@ -1723,7 +1723,25 @@ namespace XREngine.Rendering
         #region Public Methods - Viewport Management
 
         public XRViewport GetOrAddViewportForPlayer(IPawnController controller, bool autoSizeAllViewports)
-            => (controller.Viewport as XRViewport) ?? AddViewportForPlayer(controller, autoSizeAllViewports);
+        {
+            if (controller.Viewport is XRViewport existingViewport)
+            {
+                if (Viewports.Contains(existingViewport))
+                    return existingViewport;
+
+                controller.Viewport = null;
+            }
+
+            var existingByIndex = Viewports.FirstOrDefault(vp => vp.AssociatedPlayer?.LocalPlayerIndex == controller.LocalPlayerIndex);
+            if (existingByIndex is not null)
+                return existingByIndex;
+
+            var unassigned = Viewports.FirstOrDefault(vp => vp.AssociatedPlayer is null);
+            if (unassigned is not null)
+                return unassigned;
+
+            return AddViewportForPlayer(controller, autoSizeAllViewports);
+        }
 
         /// <summary>
         /// Remakes all viewports in order of active local player indices.

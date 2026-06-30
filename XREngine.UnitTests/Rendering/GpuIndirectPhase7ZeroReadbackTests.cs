@@ -116,6 +116,40 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     }
 
     [Test]
+    public void CpuQueryAsyncOcclusion_KeepsResolvedOccludedCommandsVisibleDuringCameraMotion()
+    {
+        string occlusionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
+
+        string cpuQueryAsync = Slice(
+            occlusionSource,
+            "private void ApplyCpuQueryAsyncOcclusion",
+            "private static bool HasSignificantCameraChange",
+            StringComparison.Ordinal);
+
+        cpuQueryAsync.ShouldContain("out cameraMoved");
+        cpuQueryAsync.ShouldContain("SubmitCpuOcclusionQueryBatch(scene, camera, candidates, cameraMoved);");
+        cpuQueryAsync.ShouldContain("ApplyTemporalCpuOcclusionFilter(candidates, cameraMoved, ref temporalOverrides, ref falsePositiveRecoveries);");
+
+        string submit = Slice(
+            occlusionSource,
+            "private void SubmitCpuOcclusionQueryBatch",
+            "private uint ApplyTemporalCpuOcclusionFilter",
+            StringComparison.Ordinal);
+
+        submit.ShouldContain("int retestPeriod = cameraMoved ? 1 : Math.Max(1, TemporalOcclusionHysteresisFrames * 3);");
+
+        string filter = Slice(
+            occlusionSource,
+            "private uint ApplyTemporalCpuOcclusionFilter",
+            "private void ResolveCpuOcclusionQueryResults",
+            StringComparison.Ordinal);
+
+        filter.ShouldContain("if (cameraMoved)");
+        filter.ShouldContain("temporalOverrides++;");
+        filter.ShouldContain("else if (state.ConsecutiveOccludedFrames >= TemporalOcclusionHysteresisFrames)");
+    }
+
+    [Test]
     public void MeshletPass_DoesNotRunCpuRenderBeforeGpuMeshlets()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs");
@@ -174,6 +208,29 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         source.ShouldContain("IsGpuPathCpuFallbackMesh(mesh)");
         source.ShouldContain("commands.RenderGPU(pass, overdrawStrategy);");
         source.ShouldContain("return meshCommand.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;");
+    }
+
+    [Test]
+    public void ForwardPlusLightCulling_ExecutesInsideDeclaredRenderGraphPass()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ForwardPlusLightCullingPass.cs");
+
+        string execute = Slice(
+            source,
+            "protected override void Execute()",
+            "private static List<ForwardPlusLocalLight> BuildLocalLights",
+            StringComparison.Ordinal);
+
+        execute.ShouldContain("ResolvePassIndex(nameof(VPRC_ForwardPlusLightCullingPass))");
+        execute.ShouldContain("RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)");
+
+        string describe = Slice(
+            source,
+            "internal override void DescribeRenderPass",
+            "private int ResolvePassIndex",
+            StringComparison.Ordinal);
+
+        describe.ShouldContain("context.GetOrCreateSyntheticPass(nameof(VPRC_ForwardPlusLightCullingPass), ERenderGraphPassStage.Compute)");
     }
 
     [Test]

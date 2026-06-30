@@ -539,6 +539,7 @@ namespace XREngine.Rendering
         public void Destroy()
         {
             RuntimeEngine.Rendering.ReleaseVulkanUpscaleBridge(this, "viewport destroyed");
+            AssociatedPlayer = null;
             Camera = null;
             CameraComponent = null;
         }
@@ -864,6 +865,8 @@ namespace XREngine.Rendering
 */
             }
 
+            WriteDeferredPassCountDiagnostic("CollectVisible", commandCollection, camera, renderingBuffer: false);
+
             if (allowScreenSpaceUICollectVisible)
                 CollectVisible_ScreenSpaceUI();
         }
@@ -965,11 +968,48 @@ namespace XREngine.Rendering
                 commandCollection.SwapBuffers();
             }
 
+            WriteDeferredPassCountDiagnostic("SwapBuffers", commandCollection, ActiveCamera, renderingBuffer: true);
+
             if (allowScreenSpaceUISwap)
             {
                 using var uiSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.SwapBuffers.ScreenSpaceUI");
                 SwapBuffers_ScreenSpaceUI();
             }
+        }
+
+        private void WriteDeferredPassCountDiagnostic(
+            string phase,
+            RenderCommandCollection commandCollection,
+            XRCamera? camera,
+            bool renderingBuffer)
+        {
+            if (!DeferredLightingDiagnostics.Enabled)
+                return;
+
+            static int Count(RenderCommandCollection commands, int pass, bool rendering)
+                => rendering
+                    ? commands.GetRenderingPassCommandCount(pass)
+                    : commands.GetUpdatingPassCommandCount(pass);
+
+            int background = Count(commandCollection, (int)EDefaultRenderPass.Background, renderingBuffer);
+            int opaqueDeferred = Count(commandCollection, (int)EDefaultRenderPass.OpaqueDeferred, renderingBuffer);
+            int deferredDecals = Count(commandCollection, (int)EDefaultRenderPass.DeferredDecals, renderingBuffer);
+            int opaqueForward = Count(commandCollection, (int)EDefaultRenderPass.OpaqueForward, renderingBuffer);
+            int maskedForward = Count(commandCollection, (int)EDefaultRenderPass.MaskedForward, renderingBuffer);
+            int transparentForward = Count(commandCollection, (int)EDefaultRenderPass.TransparentForward, renderingBuffer);
+            int total = renderingBuffer
+                ? commandCollection.GetRenderingCommandCount()
+                : commandCollection.GetUpdatingCommandCount();
+
+            DeferredLightingDiagnostics.Write(
+                "[XRViewport][PassCounts] " +
+                $"phase={phase} vp={Index} size={Width}x{Height}/internal={InternalWidth}x{InternalHeight} " +
+                $"buffer={(renderingBuffer ? "rendering" : "updating")} total={total} " +
+                $"background={background} opaqueDeferred={opaqueDeferred} deferredDecals={deferredDecals} " +
+                $"opaqueForward={opaqueForward} maskedForward={maskedForward} transparentForward={transparentForward} " +
+                $"autoCollect={AutomaticallyCollectVisible} autoSwap={AutomaticallySwapBuffers} " +
+                $"overrideCommands={MeshRenderCommandsOverride is not null} suppress3D={Suppress3DSceneRendering} " +
+                $"world='{World?.TargetWorldName ?? "<null>"}' camera='{camera?.Transform?.SceneNode?.Name ?? "<null>"}'");
         }
 
         /// <summary>

@@ -209,6 +209,7 @@ public static class XREngineEnvironmentVariables
     public const string VulkanParallelPacketBuild = "XRE_VULKAN_PARALLEL_PACKET_BUILD";
     public const string VulkanCommandChainMultiQueue = "XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE";
     public const string VulkanCommandChainMeshSecondaryNoop = "XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP";
+    public const string VulkanPrimaryCommandBufferReuse = "XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE";
     public const string VulkanValidation = "XRE_VULKAN_VALIDATION";
     public const string VulkanFrameOpTrace = "XRE_VULKAN_FRAMEOP_TRACE";
     public const string VulkanTargetTrace = "XRE_VULKAN_TARGET_TRACE";

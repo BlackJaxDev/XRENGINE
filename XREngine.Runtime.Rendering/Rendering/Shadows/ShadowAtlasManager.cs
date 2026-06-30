@@ -1589,7 +1589,7 @@ public sealed class ShadowAtlasManager
         if (!IsDirectionalRequest(request) || !request.IsDirty)
             return false;
 
-        return HasCriticalDirtyReason(request);
+        return HasHardBudgetBypassDirtyReason(request);
     }
 
     private static bool ShouldRenderFreshTileBeforeStale(ShadowMapRequest request)
@@ -1617,10 +1617,20 @@ public sealed class ShadowAtlasManager
             return false;
 
         if (IsDirectionalRequest(request))
-            return HasCriticalDirtyReason(request);
+            return HasHardBudgetBypassDirtyReason(request);
 
         return request.ProjectionType is EShadowProjectionType.PointFace or EShadowProjectionType.SpotPrimary
             && HasCriticalDirtyReason(request);
+    }
+
+    private static bool HasHardBudgetBypassDirtyReason(ShadowMapRequest request)
+    {
+        const ShadowDirtyReason noUsableTileReasons =
+            ShadowDirtyReason.FirstSubmission |
+            ShadowDirtyReason.AllocationMissing |
+            ShadowDirtyReason.NeverRendered;
+
+        return (request.DirtyReason & noUsableTileReasons) != 0;
     }
 
     private static bool HasCriticalDirtyReason(ShadowMapRequest request)

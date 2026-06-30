@@ -190,6 +190,8 @@ namespace XREngine.Rendering.Vulkan
                     if (variant.CommandChainScheduleSignature == commandChainSchedule!.StructuralSignature &&
                         variant.CommandChainPrimaryGroupSignature == commandChainPrimaryGroupSignature &&
                         variant.CommandChainPrimaryGroupCount == commandChainPrimaryGroupCount &&
+                        variant.FrameOpsSignature == frameOpsSignature &&
+                        variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
                         variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay &&
                         (variant.DynamicUiOpCount > 0) == hasDynamicUiBatchTextOverlay)
                     {

@@ -1,4 +1,7 @@
 # Cyclopean “Middle View” Reconstruction (Stereo → Single 2D) — OpenGL / Vulkan
+
+Implementation tracker: [VR Mirror Cyclopean Reconstruction TODO](../../todo/rendering/vr/vr-mirror-cyclopean-reconstruction-todo.md).
+
 We synthesize a convincing **cyclopean (middle) view** from **left/right eye color + depth** without rendering a third camera. This is meant for a **2D spectator / preview window**.
 
 With per-eye depth available, we can do a much stronger approach than “shift + blend”: we **reconstruct world-space points from each eye depth**, then **reproject into the middle camera**, and resolve conflicts (occlusion / ghosting) with depth-aware rules.

@@ -396,12 +396,12 @@ public unsafe partial class OpenXRAPI
                 }
             }
 
-            // Match OpenVR timing: allow the engine to update any VR/locomotion transforms right before rendering.
-            // (OpenXR runs its own render callback path, so we need to invoke the same hook here.)
-            using (var recalcSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.RenderCallback.RecalcMatrixOnDraw"))
-            {
-                RuntimeEngine.VRState.InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Late);
-            }
+            // Do not publish late OpenXR poses through the scene-wide render-matrix hook here.
+            // XRWindow renders the independent desktop viewport immediately after this callback,
+            // while the collect thread may already be building the next desktop visible set.
+            // Mutating shared HMD/controller render matrices at this point can make desktop
+            // collect/render observe different camera state. Eye rendering consumes the late
+            // pose directly in ApplyOpenXrEyePoseForRenderThread instead.
 
             if (!_sessionBegun)
                 return;
@@ -660,6 +660,11 @@ public unsafe partial class OpenXRAPI
         try
         {
             int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+            using (var predictedPoseSample = RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.CollectVisible.ApplyPredictedVrRigPose"))
+            {
+                RuntimeEngine.VRState.InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Predicted);
+            }
+
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
             {
                 double msSinceLocate = MsSince(_openXrPrepareTimestamp);
@@ -1243,10 +1248,11 @@ public unsafe partial class OpenXRAPI
             // Predicted controller/tracker poses for the upcoming frame.
             UpdateActionPoseCaches(OpenXrPoseTiming.Predicted);
 
-            // The CollectVisible thread will consume this frame's predicted views.
-            // Update the VR rig immediately after LocateViews so any VRState-provided cameras/transforms
-            // reflect the same predicted pose when building visibility buffers.
-            RuntimeEngine.VRState.InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming.Predicted);
+            // The CollectVisible thread consumes this frame's predicted views and applies the
+            // app-visible predicted rig pose while it owns the visibility build. Do not publish
+            // that pose here: in DedicatedThread mode this method runs on the XR pacing thread
+            // immediately after xrEndFrame, while the render thread may still be drawing the
+            // independent desktop view.
         }
         catch (Exception ex)
         {

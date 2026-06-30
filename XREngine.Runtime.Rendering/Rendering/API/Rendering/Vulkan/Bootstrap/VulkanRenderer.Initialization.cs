@@ -533,17 +533,19 @@ namespace XREngine.Rendering.Vulkan
             }
 
             FrameOpContext context = CaptureFrameOpContextOrLastActive();
+            string programName = string.IsNullOrWhiteSpace(program.Name) ? "UnnamedProgram" : program.Name;
+            string opName = $"DispatchCompute:{programName}";
             int passIndex = EnsureValidPassIndex(
                 RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
-                "DispatchCompute",
+                opName,
                 context.PassMetadata);
             if (passIndex == int.MinValue)
             {
                 Debug.VulkanWarningEvery(
-                    $"Vulkan.DispatchCompute.NoPass.{program.Name ?? "UnnamedProgram"}",
+                    $"Vulkan.DispatchCompute.NoPass.{programName}",
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] DispatchCompute skipped for '{0}' because no active render-graph pass could be resolved.",
-                    program.Name ?? "UnnamedProgram");
+                    programName);
                 return;
             }
 

@@ -1208,16 +1208,19 @@ public unsafe partial class VulkanRenderer
 
 		private ulong ComputeCachedBufferResourceFingerprintCore()
 		{
-			ulong xor = 0;
-			ulong sum = 0;
-			foreach (KeyValuePair<string, VkDataBuffer> pair in _bufferCache)
-				AddUnorderedFingerprintItem(ref xor, ref sum, ComputeCachedBufferResourceFingerprintItem(pair.Key, pair.Value));
+			lock (_bufferStateSync)
+			{
+				ulong xor = 0;
+				ulong sum = 0;
+				foreach (KeyValuePair<string, VkDataBuffer> pair in _bufferCache)
+					AddUnorderedFingerprintItem(ref xor, ref sum, ComputeCachedBufferResourceFingerprintItem(pair.Key, pair.Value));
 
-			HashCode hash = new();
-			hash.Add(_bufferCache.Count);
-			hash.Add(xor);
-			hash.Add(sum);
-			return unchecked((ulong)hash.ToHashCode());
+				HashCode hash = new();
+				hash.Add(_bufferCache.Count);
+				hash.Add(xor);
+				hash.Add(sum);
+				return unchecked((ulong)hash.ToHashCode());
+			}
 		}
 
 		private static ulong ComputeCachedBufferResourceFingerprintItem(string name, VkDataBuffer buffer)
@@ -1735,13 +1738,16 @@ public unsafe partial class VulkanRenderer
 					if (TryResolveProgramBoundBuffer(binding, out buffer))
 						goto BufferResolved;
 
-					foreach (VkDataBuffer candidate in _bufferCache.Values)
+					lock (_bufferStateSync)
 					{
-						if (IsStorageBufferCompatibleTarget(candidate.Data.Target) &&
-							candidate.Data.BindingIndexOverride == binding.Binding)
+						foreach (VkDataBuffer candidate in _bufferCache.Values)
 						{
-							buffer = candidate;
-							break;
+							if (IsStorageBufferCompatibleTarget(candidate.Data.Target) &&
+								candidate.Data.BindingIndexOverride == binding.Binding)
+							{
+								buffer = candidate;
+								break;
+							}
 						}
 					}
 				}
@@ -1763,12 +1769,15 @@ public unsafe partial class VulkanRenderer
 				// is compatible with the descriptor's expected type.
 				if (binding.DescriptorType == DescriptorType.UniformBuffer)
 				{
-					foreach (VkDataBuffer candidate in _bufferCache.Values)
+					lock (_bufferStateSync)
 					{
-						if (candidate.Data.Target == EBufferTarget.UniformBuffer)
+						foreach (VkDataBuffer candidate in _bufferCache.Values)
 						{
-							buffer = candidate;
-							break;
+							if (candidate.Data.Target == EBufferTarget.UniformBuffer)
+							{
+								buffer = candidate;
+								break;
+							}
 						}
 					}
 				}
@@ -1779,7 +1788,10 @@ public unsafe partial class VulkanRenderer
 				if (binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.StorageBuffer)
 					return TryResolveFallbackDescriptorBuffer(binding, frameIndex, drawUniformSlot, out bufferInfo);
 
-				WarnOnce($"[BufferResolve] Failed to resolve buffer for binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}). Cache keys: [{string.Join(", ", _bufferCache.Keys)}]");
+				string cacheKeys;
+				lock (_bufferStateSync)
+					cacheKeys = string.Join(", ", _bufferCache.Keys);
+				WarnOnce($"[BufferResolve] Failed to resolve buffer for binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}). Cache keys: [{cacheKeys}]");
 				return false;
 			}
 
@@ -1928,35 +1940,38 @@ public unsafe partial class VulkanRenderer
 
 		private bool TryResolveCachedBufferByName(string bindingName, out VkDataBuffer? buffer)
 		{
-			if (_bufferCache.TryGetValue(bindingName, out buffer))
-				return true;
-
-			string trimmedName = TrimDescriptorBufferSuffix(bindingName);
-			if (!string.Equals(trimmedName, bindingName, StringComparison.Ordinal) &&
-				_bufferCache.TryGetValue(trimmedName, out buffer))
-				return true;
-
-			string aliasName = string.Empty;
-			if (TryGetDebugPrimitiveBufferAlias(bindingName, out aliasName) &&
-				_bufferCache.TryGetValue(aliasName, out buffer))
-				return true;
-
-			foreach (VkDataBuffer candidate in _bufferCache.Values)
+			lock (_bufferStateSync)
 			{
-				string attributeName = candidate.Data.AttributeName;
-				if (string.Equals(attributeName, bindingName, StringComparison.Ordinal) ||
-					(!string.Equals(trimmedName, bindingName, StringComparison.Ordinal) &&
-					 string.Equals(attributeName, trimmedName, StringComparison.Ordinal)) ||
-					(!string.IsNullOrEmpty(aliasName) &&
-					 string.Equals(attributeName, aliasName, StringComparison.Ordinal)))
-				{
-					buffer = candidate;
+				if (_bufferCache.TryGetValue(bindingName, out buffer))
 					return true;
-				}
-			}
 
-			buffer = null;
-			return false;
+				string trimmedName = TrimDescriptorBufferSuffix(bindingName);
+				if (!string.Equals(trimmedName, bindingName, StringComparison.Ordinal) &&
+					_bufferCache.TryGetValue(trimmedName, out buffer))
+					return true;
+
+				string aliasName = string.Empty;
+				if (TryGetDebugPrimitiveBufferAlias(bindingName, out aliasName) &&
+					_bufferCache.TryGetValue(aliasName, out buffer))
+					return true;
+
+				foreach (VkDataBuffer candidate in _bufferCache.Values)
+				{
+					string attributeName = candidate.Data.AttributeName;
+					if (string.Equals(attributeName, bindingName, StringComparison.Ordinal) ||
+						(!string.Equals(trimmedName, bindingName, StringComparison.Ordinal) &&
+						 string.Equals(attributeName, trimmedName, StringComparison.Ordinal)) ||
+						(!string.IsNullOrEmpty(aliasName) &&
+						 string.Equals(attributeName, aliasName, StringComparison.Ordinal)))
+					{
+						buffer = candidate;
+						return true;
+					}
+				}
+
+				buffer = null;
+				return false;
+			}
 		}
 
 		private static bool TryGetDebugPrimitiveBufferAlias(string bindingName, out string aliasName)

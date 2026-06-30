@@ -167,6 +167,7 @@ namespace XREngine.Rendering.Commands
         }
 
         private const int TemporalOcclusionHysteresisFrames = 2;
+        private const float TemporalCameraMotionDistanceEpsilon = 0.0001f;
         private const float TemporalCameraJumpDistance = 2.0f;
         private const float TemporalProjectionDeltaThreshold = 0.125f;
         private const int CpuOcclusionMaxQueriesPerFrame = 64;
@@ -768,7 +769,8 @@ namespace XREngine.Rendering.Commands
                 camera,
                 ref _gpuHiZHasCameraState,
                 ref _gpuHiZLastCameraPosition,
-                ref _gpuHiZLastProjection);
+                ref _gpuHiZLastProjection,
+                out _);
 
             return sceneChanged || cameraChanged;
         }
@@ -1132,21 +1134,23 @@ namespace XREngine.Rendering.Commands
                 ResetTemporalOcclusionState();
             }
 
+            bool cameraMoved;
             if (HasSignificantCameraChange(
                 camera,
                 ref _cpuOcclusionHasCameraState,
                 ref _cpuOcclusionLastCameraPosition,
-                ref _cpuOcclusionLastProjection))
+                ref _cpuOcclusionLastProjection,
+                out cameraMoved))
             {
                 temporalOverrides += (uint)_temporalOcclusion.Count;
                 ResetTemporalOcclusionState();
             }
 
             ResolveCpuOcclusionQueryResults();
-            SubmitCpuOcclusionQueryBatch(scene, camera, candidates);
+            SubmitCpuOcclusionQueryBatch(scene, camera, candidates, cameraMoved);
 
             uint falsePositiveRecoveries = 0u;
-            uint occluded = ApplyTemporalCpuOcclusionFilter(candidates, ref temporalOverrides, ref falsePositiveRecoveries);
+            uint occluded = ApplyTemporalCpuOcclusionFilter(candidates, cameraMoved, ref temporalOverrides, ref falsePositiveRecoveries);
             RecordOcclusionFrameStats(candidates, occluded, falsePositiveRecoveries, temporalOverrides);
 
             if (occluded > 0u)
@@ -1169,7 +1173,8 @@ namespace XREngine.Rendering.Commands
             XRCamera camera,
             ref bool hasCameraState,
             ref Vector3 lastCameraPosition,
-            ref Matrix4x4 lastProjection)
+            ref Matrix4x4 lastProjection,
+            out bool cameraMoved)
         {
             Vector3 position = camera.Transform.RenderTranslation;
             Matrix4x4 projection = camera.ProjectionMatrix;
@@ -1179,10 +1184,13 @@ namespace XREngine.Rendering.Commands
                 hasCameraState = true;
                 lastCameraPosition = position;
                 lastProjection = projection;
+                cameraMoved = false;
                 return false;
             }
 
-            bool movedFar = Vector3.DistanceSquared(lastCameraPosition, position) > (TemporalCameraJumpDistance * TemporalCameraJumpDistance);
+            float distanceSq = Vector3.DistanceSquared(lastCameraPosition, position);
+            bool movedAny = distanceSq > (TemporalCameraMotionDistanceEpsilon * TemporalCameraMotionDistanceEpsilon);
+            bool movedFar = distanceSq > (TemporalCameraJumpDistance * TemporalCameraJumpDistance);
 
             float projDelta =
                 MathF.Abs(lastProjection.M11 - projection.M11) +
@@ -1191,6 +1199,7 @@ namespace XREngine.Rendering.Commands
 
             lastCameraPosition = position;
             lastProjection = projection;
+            cameraMoved = movedAny || projectionChanged;
             return movedFar || projectionChanged;
         }
 
@@ -1200,7 +1209,7 @@ namespace XREngine.Rendering.Commands
             _cpuOcclusionLastResolved.Clear();
         }
 
-        private void SubmitCpuOcclusionQueryBatch(GPUScene scene, XRCamera camera, uint candidates)
+        private void SubmitCpuOcclusionQueryBatch(GPUScene scene, XRCamera camera, uint candidates, bool cameraMoved)
         {
             _ = candidates;
 
@@ -1239,7 +1248,7 @@ namespace XREngine.Rendering.Commands
             }
 
             ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-            int retestPeriod = Math.Max(1, TemporalOcclusionHysteresisFrames * 3);
+            int retestPeriod = cameraMoved ? 1 : Math.Max(1, TemporalOcclusionHysteresisFrames * 3);
             int submissionBudget = Math.Max(0, CpuOcclusionMaxQueriesPerFrame - _cpuOcclusionPending.Count);
             if (submissionBudget == 0)
                 return;
@@ -1297,7 +1306,7 @@ namespace XREngine.Rendering.Commands
             _ = camera; // Camera state is observed via the caller's HasSignificantCameraChange bookkeeping.
         }
 
-        private uint ApplyTemporalCpuOcclusionFilter(uint candidates, ref uint temporalOverrides, ref uint falsePositiveRecoveries)
+        private uint ApplyTemporalCpuOcclusionFilter(uint candidates, bool cameraMoved, ref uint temporalOverrides, ref uint falsePositiveRecoveries)
         {
             if (CulledSceneToRenderBuffer is null || _culledCountBuffer is null)
                 return 0u;
@@ -1343,7 +1352,11 @@ namespace XREngine.Rendering.Commands
                     else
                     {
                         state.ConsecutiveOccludedFrames++;
-                        if (state.ConsecutiveOccludedFrames >= TemporalOcclusionHysteresisFrames)
+                        if (cameraMoved)
+                        {
+                            temporalOverrides++;
+                        }
+                        else if (state.ConsecutiveOccludedFrames >= TemporalOcclusionHysteresisFrames)
                         {
                             keepVisible = false;
                             occludedAccepted++;

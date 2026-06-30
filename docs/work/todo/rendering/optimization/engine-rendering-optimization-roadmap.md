@@ -25,6 +25,7 @@ every performance result.
 This roadmap is the coordination document. Detailed implementation lives in:
 
 - [CPU Direct Fast Path TODO](cpu-direct-fast-path-todo.md)
+- [CPU Async Hardware Query Occlusion TODO](cpu-async-hardware-query-occlusion-todo.md)
 - [Compact Zero-Readback Rendering TODO](compact-zero-readback-rendering-todo.md)
 - [Material Table And Texture Binding Ladder TODO](material-table-and-texture-binding-ladder-todo.md)
 - [Visibility Buffer Rendering TODO](visibility-buffer-rendering-todo.md)
