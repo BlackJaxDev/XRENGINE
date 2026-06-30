@@ -1828,7 +1828,7 @@ public static partial class EditorImGuiUI
         private static void EnsureProfessionalImGuiStyling()
         {
             IntPtr currentContext = ImGui.GetCurrentContext();
-            if (_imguiStyleInitialized && _imguiStyledContext == currentContext)
+            if (IsProfessionalImGuiStylingCurrent(currentContext))
                 return;
 
             var io = ImGui.GetIO();
@@ -1959,6 +1959,39 @@ public static partial class EditorImGuiUI
                     ImGui.LoadIniSettingsFromDisk(iniFilename);
             }
         }
+
+        private static bool IsProfessionalImGuiStylingCurrent(IntPtr currentContext)
+        {
+            if (!_imguiStyleInitialized || _imguiStyledContext != currentContext || currentContext == IntPtr.Zero)
+                return false;
+
+            var io = ImGui.GetIO();
+            var style = ImGui.GetStyle();
+            var colors = style.Colors;
+
+            float expectedWindowRounding = (io.ConfigFlags & ImGuiConfigFlags.ViewportsEnable) != 0
+                ? 0.0f
+                : 8.0f;
+
+            return NearlyEqual(style.WindowRounding, expectedWindowRounding) &&
+                   NearlyEqual(style.FrameRounding, 6.0f) &&
+                   NearlyEqual(style.FramePadding, new Vector2(10.0f, 6.0f)) &&
+                   NearlyEqual(style.ItemSpacing, new Vector2(10.0f, 8.0f)) &&
+                   NearlyEqual(colors[(int)ImGuiCol.Text], new Vector4(0.92f, 0.94f, 0.97f, 1.00f)) &&
+                   NearlyEqual(colors[(int)ImGuiCol.Button], new Vector4(0.18f, 0.19f, 0.22f, 1.00f));
+        }
+
+        private static bool NearlyEqual(float left, float right)
+            => MathF.Abs(left - right) <= 0.001f;
+
+        private static bool NearlyEqual(Vector2 left, Vector2 right)
+            => NearlyEqual(left.X, right.X) && NearlyEqual(left.Y, right.Y);
+
+        private static bool NearlyEqual(Vector4 left, Vector4 right)
+            => NearlyEqual(left.X, right.X) &&
+               NearlyEqual(left.Y, right.Y) &&
+               NearlyEqual(left.Z, right.Z) &&
+               NearlyEqual(left.W, right.W);
 
         private static void ApplyViewportModeImGuiBackgroundAlpha()
         {

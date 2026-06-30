@@ -36,6 +36,9 @@ internal static class VulkanShaderCompiler
     private static readonly Regex VersionDirectiveRegex = new(
         @"^\s*#\s*version\b[^\r\n]*(?:\r?\n)?",
         RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex MultiviewNumViewsLayoutDeclarationRegex = new(
+        @"^\s*layout\s*\([^)]*\bnum_views\s*=\s*[^)]*\)\s*in\s*;\s*(?:\r?\n)?",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     private static readonly Regex ReservedBuiltinDeclarationRegex = new(
         @"^\s*(?:layout\s*\([^)]*\)\s*)?(?:in|out|uniform|attribute|varying)\s+(?:highp|mediump|lowp\s+)?(?:[A-Za-z_]\w*\s+)*gl_[A-Za-z_]\w*(?:\s*\[[^\]]*\])?\s*;\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
@@ -110,6 +113,9 @@ internal static class VulkanShaderCompiler
         AutoUniformRewriteResult rewrite = VulkanShaderAutoUniforms.Rewrite(source, shader.Type, useVulkanClipDepthRemap);
         string transformFeedbackSource = VulkanShaderTransformFeedback.Rewrite(rewrite.Source, shader.Type, transformFeedbackPlan);
         string rewrittenSource = InjectVulkanBackendDefine(transformFeedbackSource);
+        rewrittenSource = RemoveVulkanMultiviewNumViewsLayout(rewrittenSource);
+        if (RequiresExtMultiviewDirective(rewrittenSource))
+            rewrittenSource = EnsureExtMultiviewDirective(rewrittenSource);
         return new PreparedSource(entryPoint, shader.Source?.Text ?? string.Empty, source, rewrittenSource, rewrite.BlockInfo);
     }
 
@@ -484,6 +490,9 @@ internal static class VulkanShaderCompiler
 
         source = ReservedBuiltinDeclarationRegex.Replace(source, string.Empty);
         source = RemoveGeneratedGlPerVertexBlocksForVulkan(source);
+        source = RemoveVulkanMultiviewNumViewsLayout(source);
+        if (RequiresExtMultiviewDirective(source))
+            source = EnsureExtMultiviewDirective(source);
         ValidateUnsupportedVulkanStereoSemantics(source, shaderName);
         return source;
     }
@@ -526,6 +535,12 @@ internal static class VulkanShaderCompiler
         string directive = "#extension GL_EXT_multiview : require\n";
         return source.Insert(versionMatch.Index + versionMatch.Length, directive);
     }
+
+    private static string RemoveVulkanMultiviewNumViewsLayout(string source)
+        => MultiviewNumViewsLayoutDeclarationRegex.Replace(source, string.Empty);
+
+    private static bool RequiresExtMultiviewDirective(string source)
+        => source.Contains("gl_ViewIndex", StringComparison.Ordinal);
 
     private static void ValidateUnsupportedVulkanStereoSemantics(string source, string shaderName)
     {

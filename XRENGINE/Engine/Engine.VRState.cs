@@ -796,7 +796,10 @@ namespace XREngine
 
                 if (IsOpenXRActive)
                 {
+                    var beforeVrRender = Engine.Rendering.Stats.Frame.CurrentCounters;
+                    long vrRenderStartTicks = Stopwatch.GetTimestamp();
                     OpenXRApi?.EngineRenderTick();
+                    RecordVrRenderPass(beforeVrRender, vrRenderStartTicks);
                     return;
                 }
 
@@ -837,13 +840,25 @@ namespace XREngine
                 if (_openVrRuntimeActiveForRender && IsOpenVRActive)
                     IsPowerSaving = OpenVRApi.CVR.ShouldApplicationReduceRenderingWork();
 
+                var beforeVrPass = Engine.Rendering.Stats.Frame.CurrentCounters;
+                long vrPassStartTicks = Stopwatch.GetTimestamp();
                 if (Stereo)
                     RenderSinglePass();
                 else
                     RenderTwoPass();
+                RecordVrRenderPass(beforeVrPass, vrPassStartTicks);
 
                 if (_openVrRuntimeActiveForRender && IsOpenVRActive && Rendering.Settings.LogVRFrameTimes)
                     ReadStats();
+            }
+
+            private static void RecordVrRenderPass(Engine.Rendering.Stats.RenderPassCounters before, long startTicks)
+            {
+                long elapsedTicks = Stopwatch.GetTimestamp() - startTicks;
+                Engine.Rendering.Stats.Vr.RecordVrRenderPass(
+                    before,
+                    Engine.Rendering.Stats.Frame.CurrentCounters,
+                    TimeSpan.FromSeconds(elapsedTicks / (double)Stopwatch.Frequency));
             }
 
             private static void PostRender()
@@ -1111,12 +1126,14 @@ namespace XREngine
                 var comp = Valve.VR.OpenVR.Compositor;
 
                 _eyeTex.handle = leftEyeHandle;
-                CheckError(comp.Submit(EVREye.Eye_Left, ref _eyeTex, ref _singleTexBounds, flags));
+                bool leftSubmitFailed = CheckError(comp.Submit(EVREye.Eye_Left, ref _eyeTex, ref _singleTexBounds, flags));
 
                 _eyeTex.handle = rightEyeHandle;
-                CheckError(comp.Submit(EVREye.Eye_Right, ref _eyeTex, ref _singleTexBounds, flags));
+                bool rightSubmitFailed = CheckError(comp.Submit(EVREye.Eye_Right, ref _eyeTex, ref _singleTexBounds, flags));
 
                 comp.PostPresentHandoff();
+                if (!leftSubmitFailed && !rightSubmitFailed)
+                    Engine.Rendering.Stats.Vr.RecordVrRenderFramePresented();
             }
 
             //public static void SubmitRender(

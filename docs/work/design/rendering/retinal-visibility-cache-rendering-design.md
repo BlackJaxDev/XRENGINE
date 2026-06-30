@@ -1,6 +1,6 @@
 # Retinal Visibility Cache Rendering Design
 
-Last Updated: 2026-06-16
+Last Updated: 2026-06-30
 Status: design proposal
 Scope: advanced quad-view foveated VR rendering for opaque geometry, shared lighting, transparency fallback, and staged integration with XREngine's current OpenXR and GPU-driven renderer work.
 
@@ -31,6 +31,7 @@ Scope: advanced quad-view foveated VR rendering for opaque geometry, shared ligh
 - Decoupled Sampling for Graphics Pipelines: <https://people.csail.mit.edu/jrk/decoupledsampling/ds.pdf>
 - Analytic texture gradients from barycentric partials (visibility-buffer material reconstruction): <https://momentsingraphics.de/ToyRenderer3RenderingBasics.html>
 - Texture Level of Detail Strategies for Real-Time Ray Tracing (ray cones), Akenine-Moller et al.: <https://www.jcgt.org/published/0010/01/01/>
+- Nanite macro rendering overview, Lopez: <https://www.elopezr.com/a-macro-view-of-nanite/>
 
 ## 1. Summary
 
@@ -261,6 +262,39 @@ LOD selection must be foveation-aware but stereo-stable:
 | Near UI/hands/controllers | Force high quality regardless of gaze region. |
 
 LOD must not pop differently between eyes. Use a cyclopean/head-space metric for base LOD, then allow only conservative foveation refinements. Prefer continuous/cluster-based LOD (Nanite-style selection) where available, because discrete LOD swaps that fire on one eye before the other are visible as eye-dominance flicker. If only discrete LOD is available, bind LOD hysteresis to head-space distance and apply the same decision to both eyes of a stereo pair.
+
+### 11.1 Visibility And Occlusion Lessons From Nanite
+
+Nanite's useful lesson for RVC is not that XREngine should clone Unreal's
+renderer. The portable lesson is the shape of the visibility work:
+
+```text
+conservative main cull/raster using previous or early depth
+  -> build fresher current-frame HZB from accepted visibility/depth
+  -> post cull/raster for ambiguous, newly visible, or disocclusion-prone work
+  -> compact visibility buffer consumed by material reconstruction
+```
+
+RVC should adopt that contract for high-detail opaque and virtual-geometry
+content once the baseline visibility path is correct:
+
+- Use a conservative previous-frame or early-frame HZB only when reprojection,
+  view identity, and dynamic-object rules make the test safe.
+- Build a fresher per-view HZB after the first visibility/depth slice, including
+  fallback opaque depth where available, then run a post-validation pass for
+  clusters that were newly visible, near HZB uncertainty edges, or rejected by
+  stale depth.
+- In VR, any disagreement between stereo eyes or wide/inset views should route
+  the candidate to the post pass or local per-view shading, not to an occlusion
+  drop.
+- Keep visible, culled, uncertain, page-request, and raster-lane counters in GPU
+  buffers with delayed readback for streaming and diagnostics.
+- Split candidate output by execution lane: hardware raster first, meshlet or
+  mesh-shader expansion where supported, and a later tiny-triangle software
+  raster lane only after captures prove it is needed.
+
+This gives RVC a concrete answer for head-motion disocclusion and streaming
+feedback without reintroducing same-frame CPU occlusion queries.
 
 ## 12. Pass 1: Quad-View Visibility
 

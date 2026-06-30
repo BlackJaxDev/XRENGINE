@@ -192,7 +192,7 @@ public sealed class VrViewRenderModeContractTests
     }
 
     [Test]
-    public void OpenXrEyeResolutionResolver_UsesPresetsScaleAndRejectsRuntimeMaxMismatch()
+    public void OpenXrEyeResolutionResolver_UsesPresetsScaleAndClampsRuntimeMaxMismatch()
     {
         OpenXRAPI.OpenXrEyeSwapchainExtent valveIndex =
             OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
@@ -224,8 +224,8 @@ public sealed class VrViewRenderModeContractTests
         questPro.Width.ShouldBe(900u);
         questPro.Height.ShouldBe(960u);
 
-        InvalidOperationException beyond2ExceedsRuntimeMax = Should.Throw<InvalidOperationException>(
-            () => OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
+        OpenXRAPI.OpenXrEyeSwapchainExtent beyond2 =
+            OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
                 EOpenXrEyeResolutionPreset.BigscreenBeyond2,
                 2.0f,
                 customWidth: 0u,
@@ -233,11 +233,13 @@ public sealed class VrViewRenderModeContractTests
                 recommendedWidth: 896u,
                 recommendedHeight: 1007u,
                 maxWidth: 3000u,
-                maxHeight: 2800u));
+                maxHeight: 2800u);
 
-        beyond2ExceedsRuntimeMax.Message.ShouldContain("5120x5120");
-        beyond2ExceedsRuntimeMax.Message.ShouldContain("exceeds reported runtime max 3000x2800");
-        beyond2ExceedsRuntimeMax.Message.ShouldContain("not being applied exactly");
+        beyond2.RequestedWidth.ShouldBe(5120u);
+        beyond2.RequestedHeight.ShouldBe(5120u);
+        beyond2.Width.ShouldBe(3000u);
+        beyond2.Height.ShouldBe(2800u);
+        beyond2.ExceedsRuntimeMax.ShouldBeTrue();
 
         OpenXRAPI.OpenXrEyeSwapchainExtent custom =
             OpenXRAPI.ResolveOpenXrEyeSwapchainExtentForSettings(
@@ -591,6 +593,7 @@ public sealed class VrViewRenderModeContractTests
         string bootstrap = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapRenderSettings.cs");
         string contracts = ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VrRenderingContracts.cs");
         string openXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
+        string openXrFrameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string openXrResolution = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Resolution.cs");
         string openXrRuntimeState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs");
         string openXrState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
@@ -627,6 +630,10 @@ public sealed class VrViewRenderModeContractTests
         environment.ShouldContain("SIMULATED_DISPLAY_HEIGHT");
         environment.ShouldContain("XRT_COMPOSITOR_SCALE_PERCENTAGE");
         environment.ShouldContain("OXR_VIEWPORT_SCALE_PERCENTAGE");
+        environment.ShouldContain("XRE_OPENXR_EYE_RESOLUTION_PRESET");
+        environment.ShouldContain("XRE_OPENXR_EYE_RESOLUTION_SCALE");
+        environment.ShouldContain("XRE_OPENXR_EYE_RESOLUTION_WIDTH");
+        environment.ShouldContain("XRE_OPENXR_EYE_RESOLUTION_HEIGHT");
         bootstrap.ShouldContain("renderSettings.VrViewRenderMode = settings.VR.ViewRenderMode");
         bootstrap.ShouldContain("renderSettings.EnableVrFoveatedViewSet = settings.VR.Foveation.Mode != EVrFoveationMode.Off");
         bootstrap.ShouldContain("renderSettings.OpenXrEyeResolutionPreset = settings.VR.OpenXrEyeResolution.Preset");
@@ -638,7 +645,7 @@ public sealed class VrViewRenderModeContractTests
         openXrResolution.ShouldContain("EOpenXrEyeResolutionPreset.BigscreenBeyond2");
         openXrResolution.ShouldContain("RecordOpenXrSwapchainExtent");
         openXrResolution.ShouldContain("ExceedsRuntimeMax");
-        openXrResolution.ShouldContain("not being applied exactly");
+        openXrResolution.ShouldContain("Clamping swapchain extent");
         openXrResolution.ShouldContain("RuntimeEngine.Rendering.SettingsChanged += HandleOpenXrRenderSettingsChanged");
         openXrResolution.ShouldContain("QueueOpenXrEyeResolutionSessionRecreate");
         openXrResolution.ShouldContain("RecreateOpenXrSessionResourcesForEyeResolution");
@@ -658,11 +665,27 @@ public sealed class VrViewRenderModeContractTests
         openXr.ShouldContain("OpenXrStereoRenderTarget");
         openXr.ShouldContain("TryRenderVulkanTrueSinglePassStereoToSwapchains");
         openXr.ShouldContain("TryEnsureVulkanStereoRenderTarget");
-        openXr.ShouldContain("OpenXR] True SinglePassStereo failed this frame; falling back");
+        openXr.ShouldContain("True SinglePassStereo did not render this frame; skipping eye submission");
+        openXr.ShouldContain("FrameModeMismatch");
+        openXr.ShouldNotContain("True SinglePassStereo failed this frame; falling back");
         openXr.ShouldContain("stereoViewport.RenderStereo");
+        openXr.ShouldContain("stereoViewport.MeshRenderCommandsOverride = null");
+        openXr.ShouldNotContain("stereoViewport.MeshRenderCommandsOverride = sharedMeshCommands");
         openXr.ShouldContain("RendersExternalSwapchainTarget: false");
+        openXrFrameLifecycle.ShouldContain("useTrueSinglePassStereo");
+        openXrFrameLifecycle.ShouldContain("EnsureOpenXrStereoViewport");
+        openXrFrameLifecycle.ShouldContain("ReleaseOpenXrExternalEyeViewportPipelinesForTrueStereo");
+        openXrFrameLifecycle.ShouldContain("ReleaseOpenXrStereoViewportPipelineForExternalEyes");
+        openXrFrameLifecycle.ShouldContain("ApplyOpenXrEyeCameraRenderSettings");
+        openXrFrameLifecycle.ShouldContain("ResolveOpenXrEyeAntiAliasingMode");
+        openXrFrameLifecycle.ShouldContain("eyeCamera.AntiAliasingModeOverride = antiAliasingMode");
+        openXrFrameLifecycle.ShouldContain("EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain");
+        openXrFrameLifecycle.ShouldContain("collectViewport = _openXrStereoViewport");
+        openXrFrameLifecycle.ShouldContain("collectViewport.RenderPipeline = collectPipeline");
+        openXrFrameLifecycle.ShouldContain("stereoViewport.SwapBuffers(stereoMeshCommands");
         openXrState.ShouldContain("_openXrStereoViewport");
         openXrState.ShouldContain("_openXrStereoRenderPipeline");
+        openXrState.ShouldContain("_pendingXrFrameUsesTrueSinglePassStereo");
         openXrState.ShouldContain("_vulkanStereoColorArray");
         openXrState.ShouldContain("_vulkanStereoDepthArray");
         openXrState.ShouldContain("GetOrCreateOpenXrStereoPipeline");
@@ -693,9 +716,11 @@ public sealed class VrViewRenderModeContractTests
         schema.ShouldContain("Diagnostics and profile captures expose the effective implementation path separately");
 
         string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        openXr.ShouldContain("if (!trueSinglePassStereo)");
         vulkanOpenXr.ShouldContain("TryBlitTextureArrayLayerToOpenXrSwapchainImage");
         vulkanOpenXr.ShouldContain("BaseArrayLayer = sourceLayer");
         vulkanOpenXr.ShouldContain("RendersExternalSwapchainTarget = true");
+        vulkanOpenXr.ShouldContain("CreateOpenXrPrewarmRenderStateTracker(request.Extent)");
         vulkanOpenXr.ShouldContain("ViewFoveationContext Foveation");
         vulkanOpenXr.ShouldContain("FoveationResourceKey: request.Foveation.BackendResourceKey");
         vulkanOpenXr.ShouldContain("FoveationAttachmentKind: request.Foveation.Attachment.Kind");
@@ -711,6 +736,28 @@ public sealed class VrViewRenderModeContractTests
         engineStats.ShouldNotContain("RenderVRSinglePassStereo");
         defaultPipeline.ShouldNotContain("RenderVRSinglePassStereo");
         temporalAccumulation.ShouldNotContain("RenderVRSinglePassStereo");
+    }
+
+    [Test]
+    public void VulkanSinglePassStereo_FinalShaderAndLayeredViewContractsStayWired()
+    {
+        string compiler = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderCompiler.cs");
+        string imageTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string textureView = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
+
+        compiler.ShouldContain("MultiviewNumViewsLayoutDeclarationRegex");
+        compiler.ShouldContain("rewrittenSource = RemoveVulkanMultiviewNumViewsLayout(rewrittenSource);");
+        compiler.ShouldContain("if (RequiresExtMultiviewDirective(rewrittenSource))");
+        compiler.ShouldContain("rewrittenSource = EnsureExtMultiviewDirective(rewrittenSource);");
+        compiler.ShouldContain("private static string RemoveVulkanMultiviewNumViewsLayout(string source)");
+        compiler.ShouldContain(@"\bnum_views\s*=");
+
+        imageTexture.ShouldContain("NormalizeImageViewTypeForLayerCount(DefaultViewType, ResolvedArrayLayers)");
+        imageTexture.ShouldContain("descriptor = NormalizeAttachmentViewKey(descriptor);");
+        imageTexture.ShouldContain("ViewType = NormalizeImageViewTypeForLayerCount(descriptor.ViewType, descriptor.LayerCount)");
+
+        textureView.ShouldContain("ResolveViewType(Data.TextureTarget, _arrayLayers)");
+        textureView.ShouldContain("ResolveViewType(Data.TextureTarget, subresourceRange.LayerCount)");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

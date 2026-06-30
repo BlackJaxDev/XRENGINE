@@ -1951,7 +1951,10 @@ public unsafe partial class VulkanRenderer
             descriptorSampler = GetPlaceholderSampler();
 
         descriptorLayout = ResolveDescriptorImageLayout(source, DescriptorType.CombinedImageSampler);
-        return descriptorView.Handle != 0 && descriptorSampler.Handle != 0 && IsLiveSampler(descriptorSampler);
+        return descriptorView.Handle != 0 &&
+            IsLiveImageView(descriptorView) &&
+            descriptorSampler.Handle != 0 &&
+            IsLiveSampler(descriptorSampler);
     }
 
     private void TryUploadImGuiTextureIfUninitialized(XRTexture texture, ref IVkImageDescriptorSource source)

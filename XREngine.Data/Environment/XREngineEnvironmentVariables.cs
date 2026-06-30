@@ -29,6 +29,10 @@ public static class XREngineEnvironmentVariables
     public const string MonadoSimulatedViewCount = "SIMULATED_VIEW_COUNT";
     public const string MonadoCompositorScalePercentage = "XRT_COMPOSITOR_SCALE_PERCENTAGE";
     public const string MonadoOpenXrViewportScalePercentage = "OXR_VIEWPORT_SCALE_PERCENTAGE";
+    public const string OpenXrEyeResolutionPreset = "XRE_OPENXR_EYE_RESOLUTION_PRESET";
+    public const string OpenXrEyeResolutionScale = "XRE_OPENXR_EYE_RESOLUTION_SCALE";
+    public const string OpenXrEyeResolutionWidth = "XRE_OPENXR_EYE_RESOLUTION_WIDTH";
+    public const string OpenXrEyeResolutionHeight = "XRE_OPENXR_EYE_RESOLUTION_HEIGHT";
 
     public const string WorldMode = "XRE_WORLD_MODE";
     public const string NetMode = "XRE_NET_MODE";

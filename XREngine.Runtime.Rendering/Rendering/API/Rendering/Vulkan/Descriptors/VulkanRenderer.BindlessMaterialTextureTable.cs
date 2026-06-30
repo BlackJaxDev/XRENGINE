@@ -441,6 +441,12 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        if (!IsLiveImageView(descriptorView))
+        {
+            reason = $"Texture '{texture.Name ?? "<unnamed>"}' references a retired Vulkan image view for material semantic '{semantic}'.";
+            return false;
+        }
+
         Sampler descriptorSampler = source.DescriptorSampler;
         if (descriptorSampler.Handle != 0 && !IsLiveSampler(descriptorSampler))
             descriptorSampler = default;

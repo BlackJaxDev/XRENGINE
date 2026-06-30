@@ -2503,6 +2503,16 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
+            if (!Renderer.IsLiveImageView(descriptorView))
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Descriptor.RetiredImageView.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Skipping descriptor bind for texture '{0}' because its Vulkan image view has been retired.",
+                    texture.Name ?? texture.GetDescribingName());
+                return false;
+            }
+
             if (!TryResolveComputeDescriptorSampler(includeSampler, binding, source, out Sampler sampler))
                 return false;
 

@@ -714,6 +714,8 @@ public unsafe partial class OpenXRAPI
         if (Interlocked.CompareExchange(ref _pendingXrFrameCollected, 2, 0) != 0)
             return;
 
+        Volatile.Write(ref _pendingXrFrameUsesTrueSinglePassStereo, 0);
+
         if (Volatile.Read(ref _frameSkipRender) != 0)
             return;
 
@@ -818,6 +820,22 @@ public unsafe partial class OpenXRAPI
             if (!EnsureOpenXrEyeCameras(_openXrFrameBaseCamera))
                 return;
 
+            if (!TryResolveOpenXrViewRenderModeForCurrentBackend(out VrViewRenderModeResolution viewModeResolution))
+                return;
+
+            ApplyOpenXrEyeCameraRenderSettings(
+                postProcessSourceCamera,
+                _openXrLeftEyeCamera!,
+                _openXrRightEyeCamera!,
+                viewModeResolution);
+
+            bool useTrueSinglePassStereo =
+                viewModeResolution.EffectiveImplementationPath == EVrViewRenderImplementationPath.TrueSinglePassStereo;
+            if (useTrueSinglePassStereo)
+                ReleaseOpenXrExternalEyeViewportPipelinesForTrueStereo();
+            else
+                ReleaseOpenXrStereoViewportPipelineForExternalEyes();
+
             EnsureOpenXrViewports(
                 GetOpenXrSwapchainWidth(0),
                 GetOpenXrSwapchainHeight(0),
@@ -827,20 +845,56 @@ public unsafe partial class OpenXRAPI
             // OpenXR must not share render pipeline *instances* with the desktop viewport.
             // But it still needs a matching pipeline type/config to avoid missing lighting/post steps.
             var sourcePipeline = sourceViewport?.RenderPipeline ?? postProcessSourceCamera.RenderPipeline;
-            var desiredPipeline = GetOrCreateOpenXrPipeline(sourcePipeline);
 
-            if (!ReferenceEquals(_openXrLeftViewport!.RenderPipeline, desiredPipeline))
-                _openXrLeftViewport.RenderPipeline = desiredPipeline;
-            if (!ReferenceEquals(_openXrRightViewport!.RenderPipeline, desiredPipeline))
-                _openXrRightViewport.RenderPipeline = desiredPipeline;
+            XRViewport collectViewport = _openXrLeftViewport!;
+            RenderPipeline collectPipeline;
+            RenderCommandCollection collectMeshCommands;
 
-            RenderCommandCollection sharedMeshCommands = EnsureOpenXrSharedMeshRenderCommands(desiredPipeline);
-            sharedMeshCommands.SetOwnerPipeline(_openXrLeftViewport.RenderPipelineInstance);
-            _openXrLeftViewport.MeshRenderCommandsOverride = sharedMeshCommands;
-            _openXrRightViewport.MeshRenderCommandsOverride = sharedMeshCommands;
+            if (useTrueSinglePassStereo)
+            {
+                EnsureOpenXrStereoViewport(GetOpenXrSwapchainWidth(0), GetOpenXrSwapchainHeight(0));
+                if (_openXrStereoViewport is null)
+                {
+                    Debug.RenderingWarningEvery(
+                        "OpenXR.CollectVisible.NoStereoViewport",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] CollectVisible skipped: true single-pass stereo was selected, but no stereo viewport is available.");
+                    return;
+                }
 
-            _openXrLeftEyeCamera!.RenderPipeline = desiredPipeline;
-            _openXrRightEyeCamera!.RenderPipeline = desiredPipeline;
+                collectViewport = _openXrStereoViewport;
+                collectPipeline = GetOrCreateOpenXrStereoPipeline(sourcePipeline);
+                collectViewport.WorldInstanceOverride = resolvedWorld;
+                collectViewport.Camera = _openXrLeftEyeCamera;
+                collectViewport.MeshRenderCommandsOverride = null;
+                if (!ReferenceEquals(collectViewport.RenderPipeline, collectPipeline))
+                    collectViewport.RenderPipeline = collectPipeline;
+
+                collectMeshCommands = collectViewport.RenderPipelineInstance.MeshRenderCommands;
+                collectMeshCommands.SetOwnerPipeline(collectViewport.RenderPipelineInstance);
+                _openXrLeftViewport!.MeshRenderCommandsOverride = null;
+                _openXrRightViewport!.MeshRenderCommandsOverride = null;
+            }
+            else
+            {
+                RenderPipeline desiredPipeline = GetOrCreateOpenXrPipeline(sourcePipeline);
+                collectPipeline = desiredPipeline;
+                if (!ReferenceEquals(_openXrLeftViewport!.RenderPipeline, desiredPipeline))
+                    _openXrLeftViewport.RenderPipeline = desiredPipeline;
+                if (!ReferenceEquals(_openXrRightViewport!.RenderPipeline, desiredPipeline))
+                    _openXrRightViewport.RenderPipeline = desiredPipeline;
+
+                RenderCommandCollection sharedMeshCommands = EnsureOpenXrSharedMeshRenderCommands(desiredPipeline);
+                sharedMeshCommands.SetOwnerPipeline(_openXrLeftViewport.RenderPipelineInstance);
+                _openXrLeftViewport.MeshRenderCommandsOverride = sharedMeshCommands;
+                _openXrRightViewport.MeshRenderCommandsOverride = sharedMeshCommands;
+                collectMeshCommands = sharedMeshCommands;
+            }
+
+            Volatile.Write(ref _pendingXrFrameUsesTrueSinglePassStereo, useTrueSinglePassStereo ? 1 : 0);
+
+            _openXrLeftEyeCamera!.RenderPipeline = collectPipeline;
+            _openXrRightEyeCamera!.RenderPipeline = collectPipeline;
 
             // Copy post-process parameters from the base camera into the per-eye cameras, but keyed by the
             // respective pipelines (desktop source pipeline -> OpenXR desired pipeline). This keeps exposure/
@@ -850,8 +904,8 @@ public unsafe partial class OpenXRAPI
                 var postSourcePipeline = postProcessSourceCamera.RenderPipeline ?? sourcePipeline;
                 if (postSourcePipeline is not null)
                 {
-                    CopyPostProcessState(postSourcePipeline, desiredPipeline, postProcessSourceCamera, _openXrLeftEyeCamera);
-                    CopyPostProcessState(postSourcePipeline, desiredPipeline, postProcessSourceCamera, _openXrRightEyeCamera);
+                    CopyPostProcessState(postSourcePipeline, collectPipeline, postProcessSourceCamera, _openXrLeftEyeCamera);
+                    CopyPostProcessState(postSourcePipeline, collectPipeline, postProcessSourceCamera, _openXrRightEyeCamera);
                 }
             }
 
@@ -872,17 +926,18 @@ public unsafe partial class OpenXRAPI
                     resolvedWorld,
                     _openXrLeftEyeCamera,
                     _openXrRightEyeCamera,
-                    sharedMeshCommands,
-                    out int sharedAdded,
-                    out long sharedBuildTicks))
+                    collectViewport,
+                    collectMeshCommands,
+                    out int collectedAdded,
+                    out long collectedBuildTicks))
             {
                 return;
             }
 
-            leftAdded = sharedAdded;
-            rightAdded = sharedAdded;
-            leftBuildTicks = sharedBuildTicks;
-            rightBuildTicks = sharedBuildTicks;
+            leftAdded = collectedAdded;
+            rightAdded = collectedAdded;
+            leftBuildTicks = collectedBuildTicks;
+            rightBuildTicks = collectedBuildTicks;
 
             RuntimeEngine.Rendering.Stats.Vr.RecordVrPerViewVisibleCounts(
                 (uint)Math.Max(0, leftAdded),
@@ -911,6 +966,8 @@ public unsafe partial class OpenXRAPI
         }
         finally
         {
+            if (!success)
+                Volatile.Write(ref _pendingXrFrameUsesTrueSinglePassStereo, 0);
             Volatile.Write(ref _pendingXrFrameCollected, success ? 1 : 0);
         }
     }
@@ -919,12 +976,13 @@ public unsafe partial class OpenXRAPI
         IRuntimeRenderWorld world,
         XRCamera leftCamera,
         XRCamera rightCamera,
-        RenderCommandCollection sharedMeshCommands,
-        out int sharedAdded,
-        out long sharedBuildTicks)
+        XRViewport collectViewport,
+        RenderCommandCollection meshCommands,
+        out int commandsAdded,
+        out long buildTicks)
     {
-        sharedAdded = 0;
-        sharedBuildTicks = 0;
+        commandsAdded = 0;
+        buildTicks = 0;
 
         var hmdNode = RuntimeEngine.VRState.ViewInformation.HMDNode;
         if (hmdNode is null)
@@ -936,12 +994,12 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
-        if (_openXrLeftViewport is null)
+        if (collectViewport is null)
         {
             Debug.RenderingWarningEvery(
-                "OpenXR.CollectVisible.NoLeftViewportForStereoCull",
+                "OpenXR.CollectVisible.NoViewportForStereoCull",
                 TimeSpan.FromSeconds(1),
-                "[OpenXR] CollectVisible skipped: no left eye viewport is available for combined stereo culling.");
+                "[OpenXR] CollectVisible skipped: no viewport is available for combined stereo culling.");
             return false;
         }
 
@@ -977,17 +1035,118 @@ public unsafe partial class OpenXRAPI
         IVolume combinedWorldFrustum = combinedLocalFrustum.TransformedBy(hmdNode.Transform.RenderMatrix);
 
         long started = Stopwatch.GetTimestamp();
-        _openXrLeftViewport.CollectVisible(
+        collectViewport.CollectVisible(
             collectMirrors: true,
             worldOverride: world,
             cameraOverride: leftCamera,
-            renderCommandsOverride: sharedMeshCommands,
+            renderCommandsOverride: meshCommands,
             allowScreenSpaceUICollectVisible: false,
             collectionVolumeOverride: combinedWorldFrustum);
-        sharedBuildTicks = Stopwatch.GetTimestamp() - started;
-        sharedAdded = sharedMeshCommands.GetCommandsAddedCount();
+        buildTicks = Stopwatch.GetTimestamp() - started;
+        commandsAdded = meshCommands.GetCommandsAddedCount();
 
         return true;
+    }
+
+    private static void ApplyOpenXrEyeCameraRenderSettings(
+        XRCamera sourceCamera,
+        XRCamera leftEyeCamera,
+        XRCamera rightEyeCamera,
+        VrViewRenderModeResolution viewModeResolution)
+    {
+        EAntiAliasingMode sourceAntiAliasingMode =
+            sourceCamera.AntiAliasingModeOverride
+            ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
+        EAntiAliasingMode antiAliasingMode = ResolveOpenXrEyeAntiAliasingMode(
+            sourceAntiAliasingMode,
+            viewModeResolution);
+
+        ApplyOpenXrEyeCameraRenderSettings(sourceCamera, leftEyeCamera, antiAliasingMode);
+        ApplyOpenXrEyeCameraRenderSettings(sourceCamera, rightEyeCamera, antiAliasingMode);
+    }
+
+    private static void ApplyOpenXrEyeCameraRenderSettings(
+        XRCamera sourceCamera,
+        XRCamera eyeCamera,
+        EAntiAliasingMode antiAliasingMode)
+    {
+        eyeCamera.AntiAliasingModeOverride = antiAliasingMode;
+        eyeCamera.MsaaSampleCountOverride = antiAliasingMode == EAntiAliasingMode.Msaa
+            ? sourceCamera.MsaaSampleCountOverride
+            : null;
+        eyeCamera.OutputHDROverride = sourceCamera.OutputHDROverride;
+        eyeCamera.TsrRenderScaleOverride = antiAliasingMode == EAntiAliasingMode.Tsr
+            ? sourceCamera.TsrRenderScaleOverride
+            : null;
+    }
+
+    private static EAntiAliasingMode ResolveOpenXrEyeAntiAliasingMode(
+        EAntiAliasingMode sourceAntiAliasingMode,
+        VrViewRenderModeResolution viewModeResolution)
+    {
+        if (IsOpenXrTemporalHistoryPolicyDisabled(viewModeResolution.TemporalHistoryPolicy) &&
+            IsHistoryBasedOpenXrAntiAliasingMode(sourceAntiAliasingMode))
+        {
+            return EAntiAliasingMode.None;
+        }
+
+        return sourceAntiAliasingMode;
+    }
+
+    private static bool IsHistoryBasedOpenXrAntiAliasingMode(EAntiAliasingMode mode)
+        => mode is EAntiAliasingMode.Taa
+            or EAntiAliasingMode.Tsr
+            or EAntiAliasingMode.Dlaa;
+
+    private static bool IsOpenXrTemporalHistoryPolicyDisabled(EVrTemporalHistoryPolicy policy)
+        => policy is EVrTemporalHistoryPolicy.Disabled
+            or EVrTemporalHistoryPolicy.DisabledPerEyeSwapchain
+            or EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain;
+
+    private void ReleaseOpenXrExternalEyeViewportPipelinesForTrueStereo()
+    {
+        ReleaseOpenXrExternalEyeViewportPipelineForTrueStereo(_openXrLeftViewport, 0);
+        ReleaseOpenXrExternalEyeViewportPipelineForTrueStereo(_openXrRightViewport, 1);
+    }
+
+    private static void ReleaseOpenXrExternalEyeViewportPipelineForTrueStereo(XRViewport? viewport, int eyeIndex)
+    {
+        if (viewport is null)
+            return;
+
+        viewport.MeshRenderCommandsOverride = null;
+        if (viewport.RenderPipelineInstance.AssignedPipeline is null)
+            return;
+
+        string pipelineName = viewport.RenderPipelineInstance.DebugName;
+        viewport.RenderPipeline = null;
+
+        Debug.RenderingEvery(
+            $"OpenXR.TrueStereo.ReleaseExternalEyePipeline.{eyeIndex}",
+            TimeSpan.FromSeconds(1),
+            "[OpenXR] Released external per-eye pipeline '{0}' for eye {1} because true single-pass stereo owns VR rendering resources this frame.",
+            pipelineName,
+            eyeIndex);
+    }
+
+    private void ReleaseOpenXrStereoViewportPipelineForExternalEyes()
+    {
+        XRViewport? viewport = _openXrStereoViewport;
+        if (viewport is null)
+            return;
+
+        viewport.MeshRenderCommandsOverride = null;
+        if (viewport.RenderPipelineInstance.AssignedPipeline is null)
+            return;
+
+        string pipelineName = viewport.RenderPipelineInstance.DebugName;
+        viewport.RenderPipeline = null;
+
+        Debug.RenderingEvery(
+            $"OpenXR.ExternalEyes.ReleaseStereoPipeline.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[OpenXR] Released true single-pass stereo pipeline '{0}' because external per-eye rendering owns VR resources this frame.",
+            pipelineName);
     }
 
     private void EnsureOpenXrParallelCollectWorkers()
@@ -1219,7 +1378,29 @@ public unsafe partial class OpenXRAPI
 
         _openXrSwapTimestamp = Stopwatch.GetTimestamp();
 
-        if (_openXrSharedMeshRenderCommands is null)
+        if (Volatile.Read(ref _pendingXrFrameUsesTrueSinglePassStereo) != 0)
+        {
+            XRViewport? stereoViewport = _openXrStereoViewport;
+            RenderCommandCollection? stereoMeshCommands = stereoViewport?.RenderPipelineInstance.MeshRenderCommands;
+            if (stereoViewport is null || stereoMeshCommands is null)
+            {
+                Debug.RenderingWarningEvery(
+                    "OpenXR.SwapBuffers.NoStereoMeshCommands",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] SwapBuffers skipped: true single-pass stereo command collection was not created.");
+                return;
+            }
+
+            int updatingCount = stereoMeshCommands.GetUpdatingCommandCount();
+            stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
+            Debug.RenderingEvery(
+                $"OpenXR.SwapBuffers.TrueStereoCommands.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] SwapBuffers published true single-pass stereo commands. updating={0} rendering={1}",
+                updatingCount,
+                stereoMeshCommands.GetRenderingCommandCount());
+        }
+        else if (_openXrSharedMeshRenderCommands is null)
         {
             Debug.RenderingWarningEvery(
                 "OpenXR.SwapBuffers.NoSharedMeshCommands",
@@ -1227,8 +1408,10 @@ public unsafe partial class OpenXRAPI
                 "[OpenXR] SwapBuffers skipped: combined stereo command collection was not created.");
             return;
         }
-
-        _openXrSharedMeshRenderCommands.SwapBuffers();
+        else
+        {
+            _openXrSharedMeshRenderCommands.SwapBuffers();
+        }
 
         Interlocked.Exchange(ref _framePrepared, 1);
 
@@ -1259,6 +1442,7 @@ public unsafe partial class OpenXRAPI
             // Clear any stale publish flags.
             Volatile.Write(ref _framePrepared, 0);
             Volatile.Write(ref _pendingXrFrameCollected, 0);
+            Volatile.Write(ref _pendingXrFrameUsesTrueSinglePassStereo, 0);
 
             if (!WaitFrame(out _frameState))
                 return;

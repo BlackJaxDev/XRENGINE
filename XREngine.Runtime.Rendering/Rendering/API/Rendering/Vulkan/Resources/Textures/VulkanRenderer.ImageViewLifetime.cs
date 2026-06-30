@@ -15,6 +15,9 @@ public unsafe partial class VulkanRenderer
             _liveImageViewHandles[imageView.Handle] = owner;
     }
 
+    internal bool IsLiveImageView(ImageView imageView)
+        => imageView.Handle != 0 && _liveImageViewHandles.ContainsKey(imageView.Handle);
+
     internal bool TryBeginDestroyImageView(ImageView imageView, string owner)
     {
         if (imageView.Handle == 0)

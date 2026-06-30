@@ -14,6 +14,23 @@ namespace XREngine
             /// </summary>
             public static partial class Stats
             {
+                public readonly record struct RenderPassCounters(int DrawCalls, int MultiDrawCalls, int TrianglesRendered)
+                {
+                    public bool HasAny => DrawCalls != 0 || MultiDrawCalls != 0 || TrianglesRendered != 0;
+
+                    public static RenderPassCounters Delta(RenderPassCounters before, RenderPassCounters after)
+                        => new(
+                            Math.Max(0, after.DrawCalls - before.DrawCalls),
+                            Math.Max(0, after.MultiDrawCalls - before.MultiDrawCalls),
+                            Math.Max(0, after.TrianglesRendered - before.TrianglesRendered));
+
+                    public static RenderPassCounters SubtractClamped(RenderPassCounters total, RenderPassCounters subtract)
+                        => new(
+                            Math.Max(0, total.DrawCalls - subtract.DrawCalls),
+                            Math.Max(0, total.MultiDrawCalls - subtract.MultiDrawCalls),
+                            Math.Max(0, total.TrianglesRendered - subtract.TrianglesRendered));
+                }
+
                 /// <summary>
                 /// When false, disables all per-frame statistics tracking to reduce overhead.
                 /// VRAM tracking remains enabled as it's not per-frame.
@@ -201,6 +218,15 @@ namespace XREngine
                     /// The number of multi-draw indirect calls in the last completed frame.
                     /// </summary>
                     public static int MultiDrawCalls => _lastFrameMultiDrawCalls;
+
+                    public static RenderPassCounters CurrentCounters
+                        => new(
+                            Volatile.Read(ref _drawCalls),
+                            Volatile.Read(ref _multiDrawCalls),
+                            Volatile.Read(ref _trianglesRendered));
+
+                    public static RenderPassCounters LastCounters
+                        => new(_lastFrameDrawCalls, _lastFrameMultiDrawCalls, _lastFrameTrianglesRendered);
 
                     internal static void SnapshotAndReset()
                     {

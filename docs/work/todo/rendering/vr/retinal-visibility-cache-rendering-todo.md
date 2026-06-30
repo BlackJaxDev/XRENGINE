@@ -1,6 +1,6 @@
 # Retinal Visibility Cache Rendering TODO
 
-Last Updated: 2026-06-16
+Last Updated: 2026-06-30
 Owner: Rendering / XR
 Status: Proposed
 Target Branch: `rendering-rvc-quad-view-foundation`
@@ -8,6 +8,7 @@ Target Branch: `rendering-rvc-quad-view-foundation`
 Design source:
 
 - [Retinal Visibility Cache Rendering Design](../../../design/rendering/retinal-visibility-cache-rendering-design.md)
+- [Nanite Macro Rendering Overview](https://www.elopezr.com/a-macro-view-of-nanite/)
 - [OpenXR VR Rendering](../../../../architecture/rendering/openxr-vr-rendering.md)
 - [OpenXR Future Work TODO](openxr-future-work-todo.md)
 - [VR Rendering Performance Contract TODO](../optimization/vr-rendering-performance-contract-todo.md)
@@ -221,6 +222,15 @@ Acceptance criteria:
   materials on clustered Forward+.
 - [ ] Add visualizers for depth, visibility ID, primitive ID, material ID,
   reconstruction error, and fallback classes.
+- [ ] Define the conservative HZB contract for RVC visibility: previous/early
+  depth may reject only when reprojection and dynamic-object state are safe.
+- [ ] Add a current-frame HZB/post-validation pass for newly visible,
+  uncertain, HZB-edge, or cross-view-disagreement candidates.
+- [ ] Split visibility candidates by execution lane: hardware raster first,
+  meshlet/mesh-shader expansion where supported, and later tiny-triangle
+  software raster only after profiling proves it useful.
+- [ ] Record visible, culled, uncertain, post-pass, page-request, and raster-lane
+  counters through delayed GPU readback.
 
 Acceptance criteria:
 
@@ -229,6 +239,8 @@ Acceptance criteria:
 - [ ] Unsupported material classes fall back visibly and correctly.
 - [ ] Visibility output can be inspected in RenderDoc or equivalent tooling and
   every visible opaque pixel maps to a valid source record.
+- [ ] Rapid head-motion and stereo disocclusion validation does not show
+  one-eye holes from stale HZB rejection.
 
 ## Phase 4 - Foveated Shadelets And Material Cache
 
@@ -366,7 +378,8 @@ Acceptance criteria:
   backend parity.
 - [ ] Add source-contract tests for view-set packing, view enumeration,
   visibility payload packing, shadelet hashing, shader layout compatibility,
-  cluster aggregation, reservoir math, and temporal hash-grid lookup.
+  HZB post-pass routing, cluster aggregation, reservoir math, and temporal
+  hash-grid lookup.
 - [ ] Add GPU validation flows using MCP screenshots, logs, and RenderDoc
   captures for visibility, shadelet maps, shared lighting, and final resolve.
 - [ ] Document any final payload format, settings, diagnostics, and fallback

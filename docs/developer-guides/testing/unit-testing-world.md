@@ -176,6 +176,8 @@ Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runt
 
 On Windows, `VR.Mode=MonadoOpenXR` honors the requested `Rendering.RenderBackend`. The Vulkan path queries the selected OpenXR runtime before renderer creation and enables the Vulkan instance/device extensions required by the runtime, then renders each eye into the acquired OpenXR Vulkan swapchain image.
 
+The repo-staged Windows Monado preview window has a right-click simulated HMD pose menu. It can switch between the default figure-eight transform test and a user-input HMD mode. In user-input mode, `W`/`S` move forward/back, `A`/`D` move left/right, `Q` moves up, `E` moves down, up/down arrows control elastic pitch, left/right arrows add persistent yaw, and `,`/`.` control elastic roll. Hold Shift while yawing to turn faster. Position, pitch, and roll ease back to their rest values when released.
+
 When `VR.AllowDesktopEditing=false` and `RenderWindowsWhileInVR=true`, the desktop window renders a separate mono runtime camera parented under the HMD through a smoothed transform. This viewport owns its own render commands and the Unit Testing World does not create editor UI for it, so the desktop output is a clean player/cyclopean view rather than the ImGui editor. It is not composed by stretching either eye texture. Set `RenderWindowsWhileInVR=false` for perf runs that should submit only the XR eye frames.
 
 Useful tasks:
