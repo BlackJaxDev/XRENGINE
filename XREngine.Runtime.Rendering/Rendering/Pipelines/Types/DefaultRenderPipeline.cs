@@ -157,6 +157,27 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         return fallbackCamera?.OutputHDROverride ?? RuntimeEngine.Rendering.Settings.OutputHDR;
     }
 
+    private static XRCamera? ResolveCurrentSettingsCamera(XRRenderPipelineInstance? pipeline = null)
+    {
+        pipeline ??= RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        IRuntimeRenderCommandExecutionState? activeState = RuntimeEngine.Rendering.State.ActiveRenderCommandExecutionState;
+        if (pipeline is not null)
+        {
+            return pipeline.RenderState.SceneCamera
+                ?? RuntimeEngine.Rendering.State.RenderingCamera
+                ?? pipeline.RenderState.RenderingCamera
+                ?? (activeState?.SceneCamera as XRCamera)
+                ?? (activeState?.RenderingCamera as XRCamera)
+                ?? pipeline.LastSceneCamera
+                ?? pipeline.LastRenderingCamera;
+        }
+
+        return RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera
+            ?? (activeState?.SceneCamera as XRCamera)
+            ?? (activeState?.RenderingCamera as XRCamera)
+            ?? RuntimeEngine.Rendering.State.RenderingCamera;
+    }
+
     private static EPixelInternalFormat ResolveOutputInternalFormat()
         => ResolveOutputHDR() ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
 
@@ -3656,19 +3677,19 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     {
         var currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         var renderState = currentPipeline?.RenderState;
-        var camera = renderState?.SceneCamera
-            ?? renderState?.RenderingCamera
-            ?? currentPipeline?.LastSceneCamera
-            ?? currentPipeline?.LastRenderingCamera;
+        var camera = ResolveCurrentSettingsCamera(currentPipeline);
 
         if (camera is null)
         {
+            var activeState = RuntimeEngine.Rendering.State.ActiveRenderCommandExecutionState;
             Debug.RenderingEvery("AO.V1.Resolve.NoCamera", TimeSpan.FromSeconds(2),
-                "[AO][Diag][V1] ResolveAOSettings: camera=null (Scene={0},Rendering={1},LastScene={2},LastRendering={3})",
+                "[AO][Diag][V1] ResolveAOSettings: camera=null (Scene={0},Rendering={1},LastScene={2},LastRendering={3},ActiveScene={4},ActiveRendering={5})",
                 renderState?.SceneCamera is null ? "null" : "set",
                 renderState?.RenderingCamera is null ? "null" : "set",
                 currentPipeline?.LastSceneCamera is null ? "null" : "set",
-                currentPipeline?.LastRenderingCamera is null ? "null" : "set");
+                currentPipeline?.LastRenderingCamera is null ? "null" : "set",
+                activeState?.SceneCamera is null ? "null" : "set",
+                activeState?.RenderingCamera is null ? "null" : "set");
             return null;
         }
 

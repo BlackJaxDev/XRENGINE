@@ -171,6 +171,7 @@ internal readonly record struct VulkanAllocationRequest(TextureResourceDescripto
     public RenderResourceMipPolicy MipPolicy
         => Descriptor.MipPolicy with { MipLevelCount = Math.Max(1u, Descriptor.MipPolicy.MipLevelCount) };
     public bool IsStereoCompatible => Descriptor.StereoCompatible;
+    public VulkanTransientAttachmentPolicy TransientAttachmentPolicy => ResolveTransientAttachmentPolicy(Descriptor);
     // Temporarily disable physical image aliasing in Vulkan.
     // Aliased transient images can carry incompatible layout expectations across
     // logical resources (e.g. COLOR_ATTACHMENT_OPTIMAL vs SHADER_READ_ONLY_OPTIMAL),
@@ -187,6 +188,31 @@ internal readonly record struct VulkanAllocationRequest(TextureResourceDescripto
         Descriptor.ArrayLayers,
         Descriptor.StereoCompatible,
         Descriptor.RequiresStorageUsage);
+
+    private static VulkanTransientAttachmentPolicy ResolveTransientAttachmentPolicy(TextureResourceDescriptor descriptor)
+    {
+        if (descriptor.Lifetime != RenderResourceLifetime.Transient)
+            return VulkanTransientAttachmentPolicy.None;
+
+        RenderPipelineResourceUsage usage = descriptor.Usage;
+        bool isAttachment = (usage & (RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)) != 0;
+        bool requiresPersistentShaderOrTransferAccess =
+            (usage & (RenderPipelineResourceUsage.SampledTexture |
+                      RenderPipelineResourceUsage.StorageImage |
+                      RenderPipelineResourceUsage.TransferSource |
+                      RenderPipelineResourceUsage.TransferDestination |
+                      RenderPipelineResourceUsage.PresentSource)) != 0;
+
+        return isAttachment && !requiresPersistentShaderOrTransferAccess
+            ? VulkanTransientAttachmentPolicy.PreferLazilyAllocated
+            : VulkanTransientAttachmentPolicy.None;
+    }
+}
+
+internal enum VulkanTransientAttachmentPolicy
+{
+    None,
+    PreferLazilyAllocated,
 }
 
 internal readonly record struct VulkanBufferAllocationRequest(BufferResourceDescriptor Descriptor)

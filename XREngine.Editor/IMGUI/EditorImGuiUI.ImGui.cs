@@ -63,6 +63,7 @@ public static partial class EditorImGuiUI
         private static bool _showUserSettings;
         private static bool _showBuildSettings;
         private static bool _showStatePanel;
+        private static bool _showPlayerCameras;
         private static bool _showRenderPipelineGraph;
         private static bool _showShaderGraphPanel;
         private static int _probePreviewLayer;
@@ -234,6 +235,7 @@ public static partial class EditorImGuiUI
             bool Console,
             bool RenderPipelineGraph,
             bool EngineState,
+            bool PlayerCameras,
             bool Profiler,
             bool RenderApiObjects,
             bool RenderApiErrors,
@@ -661,6 +663,11 @@ public static partial class EditorImGuiUI
             {
                 using (Engine.Profiler.Start("UI.DrawStatePanel"))
                     DrawStatePanel();
+            }
+            if (_showPlayerCameras)
+            {
+                using (Engine.Profiler.Start("UI.DrawPlayerCamerasPanel"))
+                    DrawPlayerCamerasPanel();
             }
             if (_showOpenGLApiObjects)
             {
@@ -1381,6 +1388,7 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Console", null, ref _showConsole);
                 ImGui.MenuItem("Render Pipeline Graph", null, ref _showRenderPipelineGraph);
                 ImGui.MenuItem("Engine State", null, ref _showStatePanel);
+                ImGui.MenuItem("Player Cameras", null, ref _showPlayerCameras);
                 ImGui.MenuItem("Profiler", "F11", ref _showProfiler);
                 ImGui.MenuItem("Occlusion", null, ref _showOcclusionPanel);
                 ImGui.MenuItem("Render API Objects", null, ref _showOpenGLApiObjects);
@@ -2274,6 +2282,7 @@ public static partial class EditorImGuiUI
                 Console: _showConsole,
                 RenderPipelineGraph: _showRenderPipelineGraph,
                 EngineState: _showStatePanel,
+                PlayerCameras: _showPlayerCameras,
                 Profiler: _showProfiler,
                 RenderApiObjects: _showOpenGLApiObjects,
                 RenderApiErrors: _showOpenGLErrors,
@@ -2328,6 +2337,9 @@ public static partial class EditorImGuiUI
                 case "EngineState":
                     _showStatePanel = value;
                     break;
+                case "PlayerCameras":
+                    _showPlayerCameras = value;
+                    break;
                 case "Profiler":
                     _showProfiler = value;
                     break;
@@ -2380,6 +2392,7 @@ public static partial class EditorImGuiUI
             builder.AppendLine($"Console={FormatIniBoolean(state.Console)}");
             builder.AppendLine($"RenderPipelineGraph={FormatIniBoolean(state.RenderPipelineGraph)}");
             builder.AppendLine($"EngineState={FormatIniBoolean(state.EngineState)}");
+            builder.AppendLine($"PlayerCameras={FormatIniBoolean(state.PlayerCameras)}");
             builder.AppendLine($"Profiler={FormatIniBoolean(state.Profiler)}");
             builder.AppendLine($"RenderApiObjects={FormatIniBoolean(state.RenderApiObjects)}");
             builder.AppendLine($"RenderApiErrors={FormatIniBoolean(state.RenderApiErrors)}");

@@ -56,7 +56,26 @@ namespace XREngine.Rendering.Vulkan
         private bool _supportsFragmentStoresAndAtomics;
         private bool _supportsVertexPipelineStoresAndAtomics;
         private bool _supportsGeometryShader;
+        private bool _supportsVulkan14;
+        private bool _supportsDynamicRenderingLocalRead;
+        private bool _supportsDynamicRenderingLocalReadStorageResources;
+        private bool _supportsDynamicRenderingLocalReadColorAttachments;
+        private bool _supportsDynamicRenderingLocalReadDepthStencilAttachments;
+        private bool _supportsDynamicRenderingLocalReadMultisampledAttachments;
+        private bool _supportsMaintenance4;
+        private bool _supportsMaintenance5;
+        private bool _supportsExtendedFlags;
+        private bool _supportsDescriptorHeap;
+        private bool _supportsShaderObject;
+        private bool _supportsMemoryBudget;
+        private bool _supportsMemoryPriority;
+        private bool _supportsAccelerationStructure;
+        private bool _supportsRayTracingPipeline;
+        private bool _supportsRayQuery;
+        private bool _supportsDeviceGeneratedCommands;
         private PhysicalDeviceTransformFeedbackPropertiesEXT _transformFeedbackProperties;
+        private PhysicalDeviceVulkan14Properties _vulkan14Properties;
+        private PhysicalDeviceShaderObjectPropertiesEXT _shaderObjectProperties;
         private readonly Dictionary<ulong, uint> _renderPassColorAttachmentCounts = new();
         private readonly Dictionary<ulong, Format[]> _renderPassColorAttachmentFormats = new();
         private readonly Dictionary<ulong, string> _renderPassSemanticSignatures = new();
@@ -88,6 +107,23 @@ namespace XREngine.Rendering.Vulkan
         public bool SupportsFragmentStoresAndAtomics => _supportsFragmentStoresAndAtomics;
         public bool SupportsVertexPipelineStoresAndAtomics => _supportsVertexPipelineStoresAndAtomics;
         public bool SupportsGeometryShader => _supportsGeometryShader;
+        public bool SupportsVulkan14 => _supportsVulkan14;
+        public bool SupportsDynamicRenderingLocalRead => _supportsDynamicRenderingLocalRead;
+        public bool SupportsDynamicRenderingLocalReadStorageResources => _supportsDynamicRenderingLocalReadStorageResources;
+        public bool SupportsDynamicRenderingLocalReadColorAttachments => _supportsDynamicRenderingLocalReadColorAttachments;
+        public bool SupportsDynamicRenderingLocalReadDepthStencilAttachments => _supportsDynamicRenderingLocalReadDepthStencilAttachments;
+        public bool SupportsDynamicRenderingLocalReadMultisampledAttachments => _supportsDynamicRenderingLocalReadMultisampledAttachments;
+        public bool SupportsMaintenance4 => _supportsMaintenance4;
+        public bool SupportsMaintenance5 => _supportsMaintenance5;
+        public bool SupportsExtendedFlags => _supportsExtendedFlags;
+        public bool SupportsDescriptorHeap => _supportsDescriptorHeap;
+        public bool SupportsShaderObject => _supportsShaderObject;
+        public bool SupportsMemoryBudget => _supportsMemoryBudget;
+        public bool SupportsMemoryPriority => _supportsMemoryPriority;
+        public bool SupportsAccelerationStructure => _supportsAccelerationStructure;
+        public bool SupportsRayTracingPipeline => _supportsRayTracingPipeline;
+        public bool SupportsRayQuery => _supportsRayQuery;
+        public bool SupportsDeviceGeneratedCommands => _supportsDeviceGeneratedCommands;
         public MemoryDecompressionMethodFlagsNV NvMemoryDecompressionMethods => _nvMemoryDecompressionMethods;
         public ulong NvMaxMemoryDecompressionIndirectCount => _nvMaxMemoryDecompressionIndirectCount;
         public ulong NvCopyMemoryIndirectSupportedQueues => _nvCopyMemoryIndirectSupportedQueues;
@@ -200,9 +236,14 @@ namespace XREngine.Rendering.Vulkan
             "VK_EXT_shader_viewport_index_layer",
             "VK_EXT_index_type_uint8",
             "VK_EXT_descriptor_indexing",
+            VulkanDescriptorHeapExt.ExtensionName,
+            VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName,
             "VK_KHR_buffer_device_address",
             "VK_KHR_dynamic_rendering",
+            "VK_KHR_dynamic_rendering_local_read",
             "VK_KHR_maintenance4",
+            "VK_KHR_maintenance5",
+            "VK_KHR_extended_flags",
             VulkanDepthClipControlExt.ExtensionName,
             "VK_KHR_pipeline_library",
             "VK_EXT_graphics_pipeline_library",
@@ -210,6 +251,51 @@ namespace XREngine.Rendering.Vulkan
             "VK_KHR_fragment_shading_rate",
             "VK_EXT_fragment_density_map",
             "VK_EXT_mesh_shader",
+            "VK_EXT_shader_object",
+            "VK_EXT_memory_budget",
+            "VK_EXT_memory_priority",
+            "VK_NV_memory_decompression",
+            "VK_NV_copy_memory_indirect"
+        ];
+
+        internal static readonly string[] ReportedModernCapabilityExtensionNames =
+        [
+            "VK_KHR_multiview",
+            "VK_KHR_external_memory",
+            "VK_KHR_external_semaphore",
+            "VK_KHR_external_memory_win32",
+            "VK_KHR_external_semaphore_win32",
+            "VK_KHR_draw_indirect_count",
+            "VK_KHR_synchronization2",
+            "VK_KHR_shader_draw_parameters",
+            "VK_EXT_shader_viewport_index_layer",
+            "VK_EXT_index_type_uint8",
+            "VK_KHR_index_type_uint8",
+            "VK_EXT_descriptor_indexing",
+            "VK_EXT_descriptor_heap",
+            "VK_KHR_shader_untyped_pointers",
+            "VK_EXT_descriptor_buffer",
+            "VK_EXT_shader_object",
+            "VK_KHR_buffer_device_address",
+            "VK_KHR_dynamic_rendering",
+            "VK_KHR_dynamic_rendering_local_read",
+            "VK_KHR_maintenance4",
+            "VK_KHR_maintenance5",
+            "VK_KHR_extended_flags",
+            "VK_EXT_depth_clip_control",
+            "VK_KHR_pipeline_library",
+            "VK_EXT_graphics_pipeline_library",
+            "VK_EXT_transform_feedback",
+            "VK_KHR_fragment_shading_rate",
+            "VK_EXT_fragment_density_map",
+            "VK_EXT_mesh_shader",
+            "VK_EXT_memory_budget",
+            "VK_EXT_memory_priority",
+            "VK_KHR_acceleration_structure",
+            "VK_KHR_ray_tracing_pipeline",
+            "VK_KHR_ray_query",
+            "VK_KHR_deferred_host_operations",
+            "VK_EXT_device_generated_commands",
             "VK_NV_memory_decompression",
             "VK_NV_copy_memory_indirect"
         ];

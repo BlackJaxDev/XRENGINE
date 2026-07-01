@@ -26,6 +26,12 @@ namespace XREngine.Rendering.Vulkan
                 public required DescriptorSet[][] DescriptorSets { get; init; }
 
                 /// <summary>
+                /// Per-frame descriptor heap push-data payloads. Populated alongside descriptor
+                /// set writes and used only when <c>VK_EXT_descriptor_heap</c> is active.
+                /// </summary>
+                public DescriptorHeapPushDataPayload[] DescriptorHeapPushData { get; init; } = [];
+
+                /// <summary>
                 /// Uniform buffer resources keyed by <c>(set, binding)</c>.
                 /// Only material-owned uniform bindings appear here; engine-managed uniforms are excluded.
                 /// </summary>

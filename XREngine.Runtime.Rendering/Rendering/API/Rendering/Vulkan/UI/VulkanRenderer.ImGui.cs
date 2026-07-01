@@ -33,6 +33,7 @@ public unsafe partial class VulkanRenderer
     private DescriptorSet _imguiFontDescriptorSet;
     private const uint ImGuiDescriptorPoolMaxSets = 256;
     private readonly Dictionary<nint, DescriptorSet> _imguiTextureDescriptorSets = [];
+    private readonly Dictionary<nint, DescriptorHeapPushDataPayload> _imguiTextureDescriptorHeapPushData = [];
     private readonly Dictionary<XRTexture, ImGuiTextureRegistration> _imguiRegisteredTextures = [];
     private readonly Dictionary<nint, XRTexture> _imguiTexturesById = [];
     private nint _nextImGuiTextureId = 2;
@@ -760,6 +761,7 @@ public unsafe partial class VulkanRenderer
 
         _imguiFontDescriptorSet = default;
         _imguiTextureDescriptorSets.Clear();
+        _imguiTextureDescriptorHeapPushData.Clear();
         _imguiRegisteredTextures.Clear();
         _imguiTexturesById.Clear();
         _nextImGuiTextureId = 2;
@@ -871,7 +873,7 @@ public unsafe partial class VulkanRenderer
 
         if (Api.CreateImageView(device, ref viewInfo, null, out _imguiFontImageView) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui font image view.");
-        TrackLiveImageView(_imguiFontImageView, "ImGui.FontAtlas");
+        TrackLiveImageView(_imguiFontImageView, in viewInfo, "ImGui.FontAtlas");
 
         SamplerCreateInfo samplerInfo = new()
         {
@@ -896,7 +898,7 @@ public unsafe partial class VulkanRenderer
         if (Api.CreateSampler(device, ref samplerInfo, null, out _imguiFontSampler) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui font sampler.");
 
-        RegisterLiveSampler(_imguiFontSampler);
+        RegisterLiveSampler(_imguiFontSampler, in samplerInfo);
     }
 
     private void CreateImGuiFontDescriptorResources()
@@ -973,6 +975,7 @@ public unsafe partial class VulkanRenderer
         };
 
         Api.UpdateDescriptorSets(device, 1, &write, 0, null);
+        UpdateImGuiDescriptorHeapPayload((nint)1, imageInfo);
     }
 
     private void TransitionImGuiFontImage(CommandBuffer commandBuffer, ImageLayout oldLayout, ImageLayout newLayout)
@@ -1138,6 +1141,46 @@ public unsafe partial class VulkanRenderer
             PName = (byte*)Silk.NET.Core.Native.SilkMarshal.StringToPtr("main"),
         };
 
+        DescriptorSetAndBindingMappingEXTNative imguiHeapMapping = default;
+        ShaderDescriptorSetAndBindingMappingInfoEXTNative imguiHeapMappingInfo = default;
+        if (IsDescriptorHeapDrawBindingActive)
+        {
+            imguiHeapMapping = new DescriptorSetAndBindingMappingEXTNative
+            {
+                SType = VulkanDescriptorHeapExt.DescriptorSetAndBindingMappingSType,
+                PNext = null,
+                DescriptorSet = 0,
+                FirstBinding = 0,
+                BindingCount = 1,
+                ResourceMask = VulkanSpirvResourceTypeFlagsEXT.All,
+                Source = VulkanDescriptorMappingSourceEXT.HeapWithPushIndex,
+                SourceData = new DescriptorMappingSourceDataEXTNative
+                {
+                    PushIndex = new DescriptorMappingSourcePushIndexEXTNative
+                    {
+                        HeapOffset = 0,
+                        PushOffset = 0,
+                        HeapIndexStride = DescriptorHeapSampledImageStride,
+                        HeapArrayStride = DescriptorHeapSampledImageStride,
+                        EmbeddedSampler = null,
+                        UseCombinedImageSamplerIndex = Vk.False,
+                        SamplerHeapOffset = 0,
+                        SamplerPushOffset = sizeof(uint),
+                        SamplerHeapIndexStride = DescriptorHeapSamplerStride,
+                        SamplerHeapArrayStride = DescriptorHeapSamplerStride,
+                    },
+                },
+            };
+            imguiHeapMappingInfo = new ShaderDescriptorSetAndBindingMappingInfoEXTNative
+            {
+                SType = VulkanDescriptorHeapExt.ShaderDescriptorSetAndBindingMappingInfoSType,
+                PNext = stages[1].PNext,
+                MappingCount = 1,
+                Mappings = &imguiHeapMapping,
+            };
+            stages[1].PNext = &imguiHeapMappingInfo;
+        }
+
         try
         {
             VertexInputBindingDescription binding = new()
@@ -1294,6 +1337,18 @@ public unsafe partial class VulkanRenderer
                 };
 
                 pipelineInfo.PNext = &renderingInfo;
+            }
+
+            PipelineCreateFlags2CreateInfoNative imguiHeapFlags2 = default;
+            if (IsDescriptorHeapDrawBindingActive)
+            {
+                imguiHeapFlags2 = new PipelineCreateFlags2CreateInfoNative
+                {
+                    SType = VulkanDescriptorHeapExt.PipelineCreateFlags2CreateInfoSType,
+                    PNext = pipelineInfo.PNext,
+                    Flags = unchecked((ulong)pipelineInfo.Flags) | VulkanDescriptorHeapExt.PipelineCreate2DescriptorHeapBit,
+                };
+                pipelineInfo.PNext = &imguiHeapFlags2;
             }
 
             if (Api.CreateGraphicsPipelines(device, default, 1, ref pipelineInfo, null, out _imguiPipeline) != Result.Success)
@@ -1684,10 +1739,11 @@ public unsafe partial class VulkanRenderer
             UnmapBufferMemory(buffers.VertexBuffer, buffers.VertexBufferMemory);
         }
 
-        Api.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, _imguiPipeline);
+        BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, _imguiPipeline);
 
         DescriptorSet boundDescriptorSet = default;
         bool hasBoundDescriptorSet = false;
+        DescriptorHeapPushDataPayload? boundDescriptorHeapPayload = null;
 
         Buffer vertexBuffer = buffers.VertexBuffer;
         ulong vertexOffset = 0;
@@ -1732,13 +1788,39 @@ public unsafe partial class VulkanRenderer
                 if (drawCmd.HasUserCallback)
                     continue;
 
-                DescriptorSet drawDescriptorSet = ResolveImGuiDescriptorSet(drawCmd.TextureId);
-                if (!hasBoundDescriptorSet || drawDescriptorSet.Handle != boundDescriptorSet.Handle)
+                if (IsDescriptorHeapDrawBindingActive)
                 {
-                    DescriptorSet setToBind = drawDescriptorSet;
-                    Api.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics, _imguiPipelineLayout, 0, 1, &setToBind, 0, null);
-                    boundDescriptorSet = drawDescriptorSet;
-                    hasBoundDescriptorSet = true;
+                    DescriptorHeapPushDataPayload? payload = ResolveImGuiDescriptorHeapPayload(drawCmd.TextureId);
+                    if (payload is null)
+                    {
+                        Debug.VulkanWarning("[Vulkan.ImGui] Skipping draw because descriptor heap payload is missing for textureId={0}.", drawCmd.TextureId);
+                        continue;
+                    }
+
+                    if (!ReferenceEquals(payload, boundDescriptorHeapPayload))
+                    {
+                        fixed (uint* data = payload.Dwords)
+                        {
+                            if (!TryPushDescriptorHeapData(commandBuffer, 0, data, (uint)(payload.Dwords.Length * sizeof(uint)), out string reason))
+                            {
+                                Debug.VulkanWarning("[Vulkan.ImGui] Skipping draw because descriptor heap push failed for textureId={0}: {1}", drawCmd.TextureId, reason);
+                                continue;
+                            }
+                        }
+
+                        boundDescriptorHeapPayload = payload;
+                    }
+                }
+                else
+                {
+                    DescriptorSet drawDescriptorSet = ResolveImGuiDescriptorSet(drawCmd.TextureId);
+                    if (!hasBoundDescriptorSet || drawDescriptorSet.Handle != boundDescriptorSet.Handle)
+                    {
+                        DescriptorSet setToBind = drawDescriptorSet;
+                        Api.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics, _imguiPipelineLayout, 0, 1, &setToBind, 0, null);
+                        boundDescriptorSet = drawDescriptorSet;
+                        hasBoundDescriptorSet = true;
+                    }
                 }
 
                 Vector4 clipRect = drawCmd.ClipRect;
@@ -1833,6 +1915,12 @@ public unsafe partial class VulkanRenderer
         }
 
         UpdateImGuiDescriptorSet(descriptorSet, descriptorView, descriptorSampler, descriptorLayout);
+        UpdateImGuiDescriptorHeapPayload(textureId, new DescriptorImageInfo
+        {
+            Sampler = descriptorSampler,
+            ImageView = descriptorView,
+            ImageLayout = descriptorLayout,
+        });
         registration.DescriptorSet = descriptorSet;
         registration.ImageViewHandle = descriptorView.Handle;
         registration.SamplerHandle = descriptorSampler.Handle;
@@ -1868,6 +1956,12 @@ public unsafe partial class VulkanRenderer
                     || registration.ImageLayout != descriptorLayout)
                 {
                     UpdateImGuiDescriptorSet(liveDescriptorSet, descriptorView, descriptorSampler, descriptorLayout);
+                    UpdateImGuiDescriptorHeapPayload(registration.Id, new DescriptorImageInfo
+                    {
+                        Sampler = descriptorSampler,
+                        ImageView = descriptorView,
+                        ImageLayout = descriptorLayout,
+                    });
                     registration.ImageViewHandle = descriptorView.Handle;
                     registration.SamplerHandle = descriptorSampler.Handle;
                     registration.ImageLayout = descriptorLayout;
@@ -1884,6 +1978,12 @@ public unsafe partial class VulkanRenderer
 
         nint id = _nextImGuiTextureId++;
         _imguiTextureDescriptorSets[id] = descriptorSet;
+        UpdateImGuiDescriptorHeapPayload(id, new DescriptorImageInfo
+        {
+            Sampler = descriptorSampler,
+            ImageView = descriptorView,
+            ImageLayout = descriptorLayout,
+        });
         _imguiTexturesById[id] = texture;
         _imguiRegisteredTextures[texture] = new ImGuiTextureRegistration
         {
@@ -1906,6 +2006,7 @@ public unsafe partial class VulkanRenderer
             return false;
 
         _imguiTextureDescriptorSets.Remove(id);
+        _imguiTextureDescriptorHeapPushData.Remove(id);
         _imguiTexturesById.Remove(id);
 
         XRTexture? keyToRemove = null;
@@ -2029,6 +2130,36 @@ public unsafe partial class VulkanRenderer
         };
 
         Api!.UpdateDescriptorSets(device, 1, &write, 0, null);
+    }
+
+    private bool UpdateImGuiDescriptorHeapPayload(nint textureId, DescriptorImageInfo imageInfo)
+    {
+        if (!IsDescriptorHeapDrawBindingActive)
+            return true;
+
+        DescriptorHeapPushDataPayload payload = new(new uint[2]);
+        if (!TryWriteDescriptorHeapCombinedImageSamplerPayload(imageInfo, payload, out string reason))
+        {
+            Debug.VulkanWarning("[Vulkan.ImGui] Failed to write descriptor heap payload for textureId={0}: {1}", textureId, reason);
+            return false;
+        }
+
+        _imguiTextureDescriptorHeapPushData[textureId] = payload;
+        return true;
+    }
+
+    private DescriptorHeapPushDataPayload? ResolveImGuiDescriptorHeapPayload(nint textureId)
+    {
+        if (textureId != 0)
+            RefreshImGuiRegisteredTexture(textureId);
+
+        if (_imguiTextureDescriptorHeapPushData.TryGetValue(textureId, out DescriptorHeapPushDataPayload? payload))
+            return payload;
+
+        if (_imguiTextureDescriptorHeapPushData.TryGetValue((nint)1, out payload))
+            return payload;
+
+        return null;
     }
 
     internal void DestroySwapchainImGuiResources()

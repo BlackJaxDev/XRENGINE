@@ -99,6 +99,9 @@ public sealed class AmbientOcclusionShaderUvConventionTests
     {
         string source = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/AOCommon.glsl").Replace("\r\n", "\n");
 
+        source.ShouldContain("uniform float ScreenWidth;");
+        source.ShouldContain("uniform float ScreenHeight;");
+        source.ShouldContain("uniform vec2 ScreenOrigin;");
         source.ShouldContain("uniform int ClipSpaceYDirection;");
         source.ShouldContain("uniform int ClipDepthRange;");
         source.ShouldContain("float AODepthToClipZ(float depth)");
@@ -106,6 +109,7 @@ public sealed class AmbientOcclusionShaderUvConventionTests
         source.ShouldContain("if (FramebufferTextureYDirection == 1)");
         source.ShouldContain("vec2 AOClipDirectionFromTextureDirection(vec2 textureDirection)");
         source.ShouldContain("textureDirection.y = -textureDirection.y;");
+        source.ShouldContain("(gl_FragCoord.xy - ScreenOrigin) / max(vec2(ScreenWidth, ScreenHeight), vec2(1.0f))");
         source.ShouldContain("AODepthToClipZ(depth)");
         source.ShouldNotContain("vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f)");
     }

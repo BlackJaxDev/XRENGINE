@@ -35,6 +35,49 @@ public enum EVulkanBindlessMaterialCapabilityTier
     BindlessMaterialDrawPathReady,
 }
 
+public enum EVulkanCapabilityTier
+{
+    Vulkan13Production = 0,
+    Vulkan14OptInBaseline,
+    Vulkan14Experimental,
+}
+
+public enum EVulkanDescriptorBackend
+{
+    DescriptorSets = 0,
+    DescriptorIndexing,
+    DescriptorHeap,
+}
+
+public enum EVulkanProgramBindingBackend
+{
+    PipelineObjects = 0,
+    ShaderObjects,
+}
+
+public enum EVulkanFoveationBackend
+{
+    Off = 0,
+    FragmentShadingRate,
+    FragmentDensityMap,
+}
+
+public enum EVulkanRayTracingBackend
+{
+    Off = 0,
+    RayTracingPipeline,
+    RayQuery,
+}
+
+public enum EVulkanCapabilityState
+{
+    Unavailable = 0,
+    AvailableDisabled,
+    EnabledUnused,
+    EnabledActive,
+    ExplicitlyRequiredMissing,
+}
+
 public readonly record struct VulkanBindlessMaterialCapability(
     EVulkanBindlessMaterialMode Mode,
     EVulkanBindlessMaterialCapabilityTier Tier,
@@ -58,6 +101,11 @@ public static class VulkanFeatureProfile
 {
     public const string BindlessMaterialModeEnvVar = XREngineEnvironmentVariables.VulkanBindlessMaterialMode;
     public const string GpuBvhCullingEnvVar = XREngineEnvironmentVariables.VulkanGpuBvhCulling;
+    public const string CapabilityTierEnvVar = XREngineEnvironmentVariables.VkCapabilityTier;
+    public const string DescriptorBackendEnvVar = XREngineEnvironmentVariables.VkDescriptorBackend;
+    public const string ProgramBindingBackendEnvVar = XREngineEnvironmentVariables.VkProgramBindingBackend;
+    public const string FoveationBackendEnvVar = XREngineEnvironmentVariables.VkFoveationBackend;
+    public const string RayTracingBackendEnvVar = XREngineEnvironmentVariables.VkRayTracingBackend;
     private static readonly bool VulkanGpuBvhCullingEnabled =
         ResolveVulkanGpuBvhCullingPolicy(Environment.GetEnvironmentVariable(GpuBvhCullingEnvVar));
 
@@ -249,12 +297,33 @@ public static class VulkanFeatureProfile
 
     private static bool TryGetBindlessMaterialModeEnvOverride(out EVulkanBindlessMaterialMode mode)
     {
-        mode = EVulkanBindlessMaterialMode.Auto;
-        string? raw = Environment.GetEnvironmentVariable(BindlessMaterialModeEnvVar);
+        return TryGetEnumEnvOverride(BindlessMaterialModeEnvVar, out mode);
+    }
+
+    public static bool TryGetCapabilityTierEnvOverride(out EVulkanCapabilityTier tier)
+        => TryGetEnumEnvOverride(CapabilityTierEnvVar, out tier);
+
+    public static bool TryGetDescriptorBackendEnvOverride(out EVulkanDescriptorBackend backend)
+        => TryGetEnumEnvOverride(DescriptorBackendEnvVar, out backend);
+
+    public static bool TryGetProgramBindingBackendEnvOverride(out EVulkanProgramBindingBackend backend)
+        => TryGetEnumEnvOverride(ProgramBindingBackendEnvVar, out backend);
+
+    public static bool TryGetFoveationBackendEnvOverride(out EVulkanFoveationBackend backend)
+        => TryGetEnumEnvOverride(FoveationBackendEnvVar, out backend);
+
+    public static bool TryGetRayTracingBackendEnvOverride(out EVulkanRayTracingBackend backend)
+        => TryGetEnumEnvOverride(RayTracingBackendEnvVar, out backend);
+
+    private static bool TryGetEnumEnvOverride<TEnum>(string environmentVariable, out TEnum value)
+        where TEnum : struct, Enum
+    {
+        value = default;
+        string? raw = Environment.GetEnvironmentVariable(environmentVariable);
         if (string.IsNullOrWhiteSpace(raw))
             return false;
 
-        return Enum.TryParse(raw.Trim(), ignoreCase: true, out mode);
+        return Enum.TryParse(raw.Trim(), ignoreCase: true, out value);
     }
 
     private static bool TryParseEnabled(string? raw, out bool enabled)
@@ -361,6 +430,31 @@ public static class VulkanFeatureProfile
 
     public static bool EnableDescriptorIndexing
         => ResolveDescriptorIndexingPreference(RuntimeEngine.EffectiveSettings.EnableVulkanDescriptorIndexing);
+
+    public static EVulkanCapabilityTier RequestedCapabilityTier
+        => TryGetCapabilityTierEnvOverride(out EVulkanCapabilityTier tier)
+            ? tier
+            : EVulkanCapabilityTier.Vulkan13Production;
+
+    public static EVulkanDescriptorBackend RequestedDescriptorBackend
+        => TryGetDescriptorBackendEnvOverride(out EVulkanDescriptorBackend backend)
+            ? backend
+            : EVulkanDescriptorBackend.DescriptorHeap;
+
+    public static EVulkanProgramBindingBackend RequestedProgramBindingBackend
+        => TryGetProgramBindingBackendEnvOverride(out EVulkanProgramBindingBackend backend)
+            ? backend
+            : EVulkanProgramBindingBackend.PipelineObjects;
+
+    public static EVulkanFoveationBackend RequestedFoveationBackend
+        => TryGetFoveationBackendEnvOverride(out EVulkanFoveationBackend backend)
+            ? backend
+            : EVulkanFoveationBackend.Off;
+
+    public static EVulkanRayTracingBackend RequestedRayTracingBackend
+        => TryGetRayTracingBackendEnvOverride(out EVulkanRayTracingBackend backend)
+            ? backend
+            : EVulkanRayTracingBackend.Off;
 
     public static EVulkanBindlessMaterialMode ActiveBindlessMaterialMode
         => ResolveBindlessMaterialMode(

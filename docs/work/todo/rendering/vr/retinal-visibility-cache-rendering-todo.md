@@ -1,6 +1,6 @@
 # Retinal Visibility Cache Rendering TODO
 
-Last Updated: 2026-06-30
+Last Updated: 2026-07-01
 Owner: Rendering / XR
 Status: Proposed
 Target Branch: `rendering-rvc-quad-view-foundation`
@@ -14,6 +14,7 @@ Design source:
 - [VR Rendering Performance Contract TODO](../optimization/vr-rendering-performance-contract-todo.md)
 - [Visibility Buffer Rendering TODO](../optimization/visibility-buffer-rendering-todo.md)
 - [GPU Meshlet Zero-Readback Rendering Design](../../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
+- [Vulkan Descriptor Heap Optimization Design](../../../design/rendering/vulkan-descriptor-heap-optimization-design.md)
 - [Production Rendering Pipeline Roadmap](../gpu/production-rendering-pipeline-roadmap.md)
 
 ## Goal
@@ -36,6 +37,8 @@ oracle for later visibility, shadelet, and shared-lighting stages.
 - Frame-graph/resource-lifetime foundation required before RVC pass work.
 - Opaque visibility buffers, material reconstruction, shadelets, and per-view
   resolve.
+- Descriptor heap backed Vulkan material/resource tables for shadelet and
+  shared-lighting resources, with descriptor indexing as fallback.
 - Head-space light clustering, light aggregation, and optional reservoir-backed
   shared lighting.
 - Inset/wide, stereo, and temporal shadelet reuse with conservative validation.
@@ -72,6 +75,9 @@ oracle for later visibility, shadelet, and shared-lighting stages.
   `XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO`,
   `XR_VARJO_foveated_rendering`, depth layers, visibility masks, multiview, and
   Vulkan fragment-shading-rate features.
+- [ ] Inventory Vulkan descriptor heap support alongside descriptor indexing so
+  RVC can report the selected material/resource binding backend before cache
+  work begins.
 - [ ] Define the `RenderFrameViewSet` contract: stable view identity, parent
   eye, wide/inset relationship, projection, viewport, recommended image size,
   foveation metadata, previous-view state, and mirror/debug views.
@@ -143,6 +149,9 @@ the [design open questions](../../../design/rendering/retinal-visibility-cache-r
   engine-owned or an existing abstraction (blocks Phase 2).
 - [ ] Decide the first material class admitted into RVC: unlit, opaque PBR, or
   generated material-table shaders only (blocks Phase 3).
+- [ ] Decide the RVC resource binding contract: descriptor heap as the preferred
+  Vulkan top rung, descriptor indexing as fallback, and no shadelet keys that
+  depend on backend descriptor-set handles.
 - [ ] Decide the shadelet cache key basis: primitive barycentrics, UVs,
   world-space position, or a hybrid (blocks Phase 4/8).
 - [ ] Decide whether the shared lighting cache adopts reservoirs at Phase 5 or
@@ -193,6 +202,8 @@ Acceptance criteria:
 - [ ] Introduce `RvcRenderPipeline` as a sibling pipeline selectable by setting,
   while sharing scene, culling, material table, light buffer, and Forward+
   fallback services.
+- [ ] Share the renderer descriptor heap/material resource table service rather
+  than creating RVC-specific descriptor set pools or duplicate texture tables.
 - [ ] Keep the existing Forward+ path as a pixel-for-pixel correctness oracle.
 - [ ] Add pipeline-level fallback when required frame-graph, visibility target,
   or backend capabilities are missing.
@@ -216,6 +227,8 @@ Acceptance criteria:
   visibility paths where those source paths are already production-capable.
 - [ ] Reconstruct attributes from visibility identity: position, normal, tangent,
   UV, material row, previous position, and velocity inputs.
+- [ ] Keep visibility payloads backend-neutral: store draw/material identity,
+  not descriptor set handles or backend descriptor objects.
 - [ ] Route alpha-test materials through the visibility path only when coverage
   is deterministic and cheap; send expensive alpha logic to Forward+ fallback.
 - [ ] Keep transparent, refractive, glass, water, particles, and order-dependent
@@ -252,6 +265,10 @@ Acceptance criteria:
   materials not yet ported to compute-side material reconstruction.
 - [ ] Sort or bin shadelets by material before shading to avoid divergent
   compute-side material evaluation.
+- [ ] Store material row IDs/resource generations in shadelet records and load
+  descriptor heap resource/sampler indices from GPU-visible material rows.
+- [ ] Keep descriptor indexing rows semantically identical to descriptor heap
+  rows so the fallback path validates the same material/shadelet logic.
 - [ ] Implement analytic derivatives or another documented derivative strategy
   for texture LOD and normal mapping.
 - [ ] Add edge-aware rejection at depth, normal, material, primitive, and
@@ -275,6 +292,8 @@ Acceptance criteria:
   light lists per view.
 - [ ] Reuse existing Forward+ light metadata and buffers where layout and
   lifetime make that safe.
+- [ ] Store shadow maps, cookies, probes, and clustered-light buffers as
+  heap-backed resource references where Vulkan descriptor heap is active.
 - [ ] Keep the old per-view Forward+ tile grid as a debug comparison and
   fallback.
 - [ ] Add foveation-specific light budgets for fovea, guard band, mid-field, and
@@ -297,6 +316,8 @@ Acceptance criteria:
 - [ ] Share material shadelets between eyes only when the match is conservative:
   primitive, barycentric or world-space key, material, normal, roughness bucket,
   deformation version, and LOD all pass validation.
+- [ ] Include material/resource generation in reuse validation so stale heap
+  references invalidate shadelets instead of being shared across views.
 - [ ] Exclude parallax occlusion, virtual displacement, refraction, sharp
   specular, and other strongly view-dependent materials from stereo reuse unless
   they have an explicit safe key.
@@ -367,9 +388,10 @@ Acceptance criteria:
 
 ## Phase 9 - Production Vulkan Hardening
 
-- [ ] Validate Vulkan multiview, dynamic rendering, descriptor indexing,
-  fragment shading rate, synchronization2, timeline semaphore handoff, explicit
-  barriers, and OpenXR Vulkan swapchain image integration.
+- [ ] Validate Vulkan multiview, dynamic rendering, descriptor heap, descriptor
+  indexing fallback, fragment shading rate, synchronization2, timeline
+  semaphore handoff, explicit barriers, and OpenXR Vulkan swapchain image
+  integration.
 - [ ] Validate `VK_EXT_mesh_shader` for meshlet expansion where supported and
   keep the Vulkan indirect/compute meshlet path as the visible fallback.
 - [ ] Keep OpenGL limited to correctness slices and visibly report missing RVC
@@ -378,8 +400,9 @@ Acceptance criteria:
   backend parity.
 - [ ] Add source-contract tests for view-set packing, view enumeration,
   visibility payload packing, shadelet hashing, shader layout compatibility,
-  HZB post-pass routing, cluster aggregation, reservoir math, and temporal
-  hash-grid lookup.
+  descriptor backend selection, heap-backed material resource generations, HZB
+  post-pass routing, cluster aggregation, reservoir math, and temporal hash-grid
+  lookup.
 - [ ] Add GPU validation flows using MCP screenshots, logs, and RenderDoc
   captures for visibility, shadelet maps, shared lighting, and final resolve.
 - [ ] Document any final payload format, settings, diagnostics, and fallback
@@ -405,8 +428,9 @@ Acceptance criteria:
   mono, stereo, and quad-view fallback modes.
 - [ ] Capture side-by-side Forward+ versus RVC images and profiler captures for
   all target validation scenes.
-- [ ] Capture RenderDoc analysis for visibility, shadelet generation, shared
-  lighting, transparency overlay, and final resolve on Vulkan.
+- [ ] Capture RenderDoc analysis for visibility, shadelet generation,
+  descriptor heap/resource table state where available, shared lighting,
+  transparency overlay, and final resolve on Vulkan.
 - [ ] Update design, architecture, launch/settings, and developer docs for any
   final API, setting, runtime, or workflow changes.
 - [ ] Merge branch `rendering-rvc-quad-view-foundation` back into `main` after

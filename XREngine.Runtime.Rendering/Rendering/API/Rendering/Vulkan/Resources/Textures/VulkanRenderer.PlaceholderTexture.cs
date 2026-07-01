@@ -188,7 +188,7 @@ public unsafe partial class VulkanRenderer
             Debug.VulkanWarning("[Vulkan] Failed to create placeholder image view.");
             return;
         }
-        TrackLiveImageView(_placeholderImageView, "Placeholder.Texture2D");
+        TrackLiveImageView(_placeholderImageView, in viewInfo, "Placeholder.Texture2D");
 
         // ── Sampler ──────────────────────────────────────────────────────
         SamplerCreateInfo samplerInfo = new()
@@ -217,7 +217,7 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        RegisterLiveSampler(_placeholderSampler);
+        RegisterLiveSampler(_placeholderSampler, in samplerInfo);
         _placeholderTextureReady = true;
     }
 
@@ -281,7 +281,7 @@ public unsafe partial class VulkanRenderer
 
         if (Api!.CreateImageView(device, ref viewInfo, null, out imageView) == Result.Success)
         {
-            TrackLiveImageView(imageView, "Placeholder.TextureVariant");
+            TrackLiveImageView(imageView, in viewInfo, "Placeholder.TextureVariant");
             return true;
         }
 

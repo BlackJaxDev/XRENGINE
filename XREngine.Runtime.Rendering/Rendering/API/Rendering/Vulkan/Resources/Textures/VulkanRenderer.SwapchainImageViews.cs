@@ -53,7 +53,7 @@ public unsafe partial class VulkanRenderer
             if (Api!.CreateImageView(device, ref createInfo, null, out swapChainImageViews[i]) != Result.Success)
                 throw new Exception("Failed to create image views.");
 
-            TrackLiveImageView(swapChainImageViews[i], "Swapchain.Color");
+            TrackLiveImageView(swapChainImageViews[i], in createInfo, "Swapchain.Color");
         }
     }
 }

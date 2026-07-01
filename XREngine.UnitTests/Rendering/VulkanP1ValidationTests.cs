@@ -641,6 +641,25 @@ public sealed class VulkanP1ValidationTests
         workflowSource.ShouldContain("VulkanTodoP2ValidationTests");
     }
 
+    [Test]
+    public void OpenXrExternalIndirectDrawSnapshots_PrepareDescriptorsWhenPrewarmMisses()
+    {
+        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs")
+            .Replace("\r\n", "\n");
+        string method = SliceBetween(
+            meshSource,
+            "internal bool TryCreatePreparedIndirectDrawSnapshot",
+            "XRFrameBuffer? effectiveTarget");
+        string externalTargetBranch = SliceBetween(
+            method,
+            "else if (Renderer.IsRenderingExternalSwapchainTarget)",
+            "else\n            {");
+
+        externalTargetBranch.ShouldContain("Renderer.BlockSynchronousResourceUploads(\"IndirectDrawSnapshot\")");
+        externalTargetBranch.ShouldContain("TryReuseCapturedProgramForIndirectDrawSnapshot");
+        externalTargetBranch.ShouldContain("if (!preparedForIndirect)\n                        preparedForIndirect = TryPrepareCapturedProgramForRecording");
+    }
+
     private static string SliceBetween(string source, string startToken, string endToken)
     {
         int start = source.IndexOf(startToken, StringComparison.Ordinal);

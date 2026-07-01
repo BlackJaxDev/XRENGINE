@@ -241,6 +241,7 @@ namespace XREngine.Rendering.Vulkan
             public ulong ComputePipeline;
             public ulong GraphicsDescriptorSignature;
             public ulong ComputeDescriptorSignature;
+            public ulong DescriptorHeapSignature;
             public ulong VertexBufferSignature;
             public ulong ViewportScissorSignature;
             public ulong IndexBuffer;
@@ -254,6 +255,29 @@ namespace XREngine.Rendering.Vulkan
             ulong key = (ulong)commandBuffer.Handle;
             lock (_commandBindStateLock)
                 _commandBindStates[key] = default;
+        }
+
+        private void InvalidateDescriptorHeapBindingState(CommandBuffer commandBuffer)
+        {
+            ulong key = (ulong)commandBuffer.Handle;
+            lock (_commandBindStateLock)
+            {
+                _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
+                state.DescriptorHeapSignature = 0;
+                _commandBindStates[key] = state;
+            }
+        }
+
+        private void InvalidateDescriptorSetBindingState(CommandBuffer commandBuffer)
+        {
+            ulong key = (ulong)commandBuffer.Handle;
+            lock (_commandBindStateLock)
+            {
+                _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
+                state.GraphicsDescriptorSignature = 0;
+                state.ComputeDescriptorSignature = 0;
+                _commandBindStates[key] = state;
+            }
         }
 
         private void RegisterCommandBufferImageIndex(CommandBuffer commandBuffer, uint imageIndex)
@@ -325,6 +349,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
+            TryBindDescriptorHeapsTracked(commandBuffer);
             Api!.CmdBindPipeline(commandBuffer, bindPoint, pipeline);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pipelineBinds: 1);
         }
@@ -487,6 +512,7 @@ namespace XREngine.Rendering.Vulkan
             fixed (uint* offsetPtr = dynamicOffsets)
                 Api!.CmdBindDescriptorSets(commandBuffer, bindPoint, layout, firstSet, (uint)sets.Length, setPtr, (uint)dynamicOffsets.Length, offsetPtr);
 
+            InvalidateDescriptorHeapBindingState(commandBuffer);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(descriptorBinds: 1);
         }
 
@@ -508,6 +534,7 @@ namespace XREngine.Rendering.Vulkan
                 offset,
                 (uint)sizeof(T),
                 &localValue);
+            InvalidateDescriptorHeapBindingState(commandBuffer);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pushConstantWrites: 1);
         }
 

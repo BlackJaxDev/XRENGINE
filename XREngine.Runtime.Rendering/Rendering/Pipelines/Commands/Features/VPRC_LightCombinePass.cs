@@ -17,6 +17,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_LightCombinePass : ViewportRenderCommand
     {
         private const string MsaaDeferredDefine = "XRENGINE_MSAA_DEFERRED";
+        private const string StereoDeferredDefine = "XRENGINE_STEREO_DEFERRED";
 
         /// <summary>
         /// A 1x1x1 dummy depth texture array bound to the ShadowMapArray sampler
@@ -363,7 +364,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ConfigureLightVolumeCullMode(renderer, comp);
 
                 if (comp is DirectionalLightComponent)
-                    renderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null);
+                    renderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, forceNoStereo: true);
                 else
                     renderer.Render(comp.LightMeshMatrix, comp.LightMeshMatrix, null);
             }
@@ -419,14 +420,18 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_currentLightComponent is DirectionalLightComponent directionalLight)
             {
                 ShadowMapFormatSelection directionalShadowFormat = directionalLight.ResolveShadowMapFormat(preferredStorageFormat: null);
-                XRTexture2DArray? directionalCascadeReceiverTexture = directionalLight.CascadedShadowReceiverTexture;
+                XRCamera? activeRenderingCamera = ResolveActiveRenderingCamera();
+                XRTexture2DArray? directionalCascadeReceiverTexture = directionalLight.GetCascadedShadowReceiverTexture(activeRenderingCamera);
+                int activeCascadeCount = directionalLight.GetActiveCascadeCount(activeRenderingCamera);
                 useDirectionalShadowAtlas = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding && directionalLight.CastsShadows;
-                bool viewportPrefersCascades = ActiveViewportPrefersCascadedDirectionalShadows();
+                bool viewportPrefersCascades = ActiveViewportPrefersCascadedDirectionalShadows(activeRenderingCamera);
+                bool cascadeSourceMatchesActiveView = directionalLight.PublishedCascadesMatchCamera(activeRenderingCamera);
                 useCascadedDirectionalShadows =
                     viewportPrefersCascades &&
+                    cascadeSourceMatchesActiveView &&
                     directionalLight.EnableCascadedShadows &&
                     (useDirectionalShadowAtlas || directionalCascadeReceiverTexture is not null) &&
-                    directionalLight.ActiveCascadeCount > 0;
+                    activeCascadeCount > 0;
 
                 materialProgram.Uniform("ShadowMapEncoding", (int)directionalShadowFormat.Encoding);
                 materialProgram.Uniform("ShadowMomentParams0", new Vector4(
@@ -443,6 +448,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 BindDirectionalAtlasShadows(
                     materialProgram,
                     directionalLight,
+                    activeRenderingCamera,
                     useCascadedDirectionalShadows,
                     uniformCache.DirectionalShadowAtlasPacked0,
                     uniformCache.DirectionalShadowAtlasUvScaleBias,
@@ -595,16 +601,24 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
         }
 
-        private bool ActiveViewportPrefersCascadedDirectionalShadows()
+        private bool ActiveViewportPrefersCascadedDirectionalShadows(XRCamera? renderingCamera)
         {
             XRViewport? viewport = ActivePipelineInstance.RenderState.WindowViewport;
             if (viewport is null)
                 return false;
 
-            if (viewport.CameraComponent is { } cameraComponent)
+            if (viewport.CameraComponent is { } cameraComponent &&
+                (renderingCamera is null || ReferenceEquals(cameraComponent.Camera, renderingCamera)))
+            {
                 return cameraComponent.DirectionalShadowRenderingMode == global::XREngine.Components.EDirectionalShadowRenderingMode.Cascaded;
+            }
 
-            return viewport.RendersToExternalSwapchainTarget && viewport.ActiveCamera is not null;
+            if (DirectionalLightComponent.IsHmdEyeCameraForDirectionalCascades(renderingCamera))
+                return true;
+
+            return viewport.RendersToExternalSwapchainTarget &&
+                viewport.ActiveCamera is not null &&
+                (renderingCamera is null || ReferenceEquals(viewport.ActiveCamera, renderingCamera));
         }
 
         private static bool TryBindSpotAtlasShadow(
@@ -781,6 +795,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private static bool BindDirectionalAtlasShadows(
             XRRenderProgram materialProgram,
             DirectionalLightComponent directionalLight,
+            XRCamera? activeRenderingCamera,
             bool useCascadedDirectionalShadows,
             IVector4[] directionalShadowAtlasPacked0,
             Vector4[] directionalShadowAtlasUvScaleBias,
@@ -799,13 +814,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (requested)
             {
                 directionalLight.CopyPublishedDirectionalAtlasUniformData(
+                    activeRenderingCamera,
                     useCascadedDirectionalShadows,
                     directionalShadowAtlasPacked0,
                     directionalShadowAtlasUvScaleBias,
                     directionalShadowAtlasDepthParams);
                 hasSampleableAtlasTile = AreRequiredDirectionalAtlasTilesSampleable(
                     directionalShadowAtlasPacked0,
-                    useCascadedDirectionalShadows ? directionalLight.ActiveCascadeCount : 1);
+                    useCascadedDirectionalShadows ? directionalLight.GetActiveCascadeCount(activeRenderingCamera) : 1);
             }
 
             XRTexture2DArray? atlasTexture = null;
@@ -816,13 +832,14 @@ namespace XREngine.Rendering.Pipelines.Commands
                     lights!.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, shadowFormat.Encoding, 0, out atlasTexture) &&
                     AreRequiredDirectionalAtlasTilesSampleable(
                         directionalShadowAtlasPacked0,
-                        useCascadedDirectionalShadows ? directionalLight.ActiveCascadeCount : 1,
+                        useCascadedDirectionalShadows ? directionalLight.GetActiveCascadeCount(activeRenderingCamera) : 1,
                         checked((int)Math.Max(1u, atlasTexture.Depth)));
             }
             materialProgram.Sampler(DirectionalShadowAtlasName, atlasTexture ?? DummyShadowMapArray, DirectionalShadowAtlasUnit);
 
             LogDeferredDirectionalShadowBinding(
                 directionalLight,
+                activeRenderingCamera,
                 requested,
                 hasSampleableAtlasTile,
                 useCascadedDirectionalShadows,
@@ -857,6 +874,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private static void LogDeferredDirectionalShadowBinding(
             DirectionalLightComponent light,
+            XRCamera? activeRenderingCamera,
             bool requested,
             bool shaderAtlasEnabled,
             bool useCascadedDirectionalShadows,
@@ -872,20 +890,23 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             ShadowAtlasMetrics metrics = lights?.ShadowAtlas.PublishedFrameData.Metrics ?? default;
+            ShadowRequestSource source = DirectionalLightComponent.GetCascadeSourceForCamera(activeRenderingCamera);
+            int activeCascadeCount = light.GetActiveCascadeCount(source);
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
-                "[DirectionalShadowAudit][DeferredBind] frame={0} light='{1}' requestedAtlas={2} shaderAtlasEnabled={3} cascades={4} activeCascades={5} shadowMap={6} cascadeColorTex={7} cascadeRasterDepthTex={8} cascadeReceiverTex={9} useRasterCascadeReceiver={10} atlasRequests={11} atlasRenderedThisFrame={12} atlasPages={13} c0={14} c1={15} c2={16} c3={17}",
+                "[DirectionalShadowAudit][DeferredBind] frame={0} light='{1}' source={2} requestedAtlas={3} shaderAtlasEnabled={4} cascades={5} activeCascades={6} shadowMap={7} cascadeColorTex={8} cascadeRasterDepthTex={9} cascadeReceiverTex={10} useRasterCascadeReceiver={11} atlasRequests={12} atlasRenderedThisFrame={13} atlasPages={14} c0={15} c1={16} c2={17} c3={18}",
                 RuntimeEngine.Rendering.State.RenderFrameId,
                 light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
+                source,
                 requested,
                 shaderAtlasEnabled,
                 useCascadedDirectionalShadows,
-                light.ActiveCascadeCount,
+                activeCascadeCount,
                 light.ShadowMap is not null,
-                light.HasCascadeColorTexture,
-                light.HasCascadeRasterDepthTexture,
-                light.CascadedShadowReceiverTexture is not null,
+                light.HasCascadeColorTextureForSource(source),
+                light.HasCascadeRasterDepthTextureForSource(source),
+                light.GetCascadedShadowReceiverTexture(source) is not null,
                 light.UsesCascadeRasterDepthReceiver,
                 metrics.RequestCount,
                 metrics.TilesScheduledThisFrame,
@@ -938,9 +959,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 //shadow map texture
             ];
 
-            XRShader pointLightShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "DeferredLightingPoint.fs"), EShaderType.Fragment);
-            XRShader spotLightShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "DeferredLightingSpot.fs"), EShaderType.Fragment);
-            XRShader dirLightShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "DeferredLightingDir.fs"), EShaderType.Fragment);
+            bool stereoDeferred = IsStereoDeferredLighting();
+            XRShader pointLightShader = CreateDeferredLightingShader("DeferredLightingPoint.fs", stereoDeferred);
+            XRShader spotLightShader = CreateDeferredLightingShader("DeferredLightingSpot.fs", stereoDeferred);
+            XRShader dirLightShader = CreateDeferredLightingShader("DeferredLightingDir.fs", stereoDeferred);
 
             XRMaterial pointLightMat = new(lightRefs, pointLightShader) { RenderOptions = GetAdditiveParameters(), RenderPass = (int)EDefaultRenderPass.OpaqueForward };
             XRMaterial spotLightMat = new(lightRefs, spotLightShader) { RenderOptions = GetAdditiveParameters(), RenderPass = (int)EDefaultRenderPass.OpaqueForward };
@@ -977,6 +999,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             cache.MsaaComplexPointLightRenderer = null;
             cache.MsaaComplexSpotLightRenderer = null;
             cache.MsaaComplexDirectionalLightRenderer = null;
+        }
+
+        private static bool IsStereoDeferredLighting()
+            => ActivePipelineInstance.Pipeline is DefaultRenderPipeline { Stereo: true } or DefaultRenderPipeline2 { Stereo: true };
+
+        private static XRShader CreateDeferredLightingShader(string shaderName, bool stereoDeferred)
+        {
+            XRShader shader = XRShader.EngineShader(Path.Combine(SceneShaderPath, shaderName), EShaderType.Fragment);
+            return stereoDeferred
+                ? ShaderHelper.CreateDefinedShaderVariant(shader, StereoDeferredDefine) ?? shader
+                : shader;
         }
 
         private bool EnsureMsaaRenderers(LightRendererCache cache)
@@ -1151,7 +1184,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 //Render only the backside so that the light still shows if the camera is inside of the volume
                 //and the light does not add itself twice for the front and back faces.
                 CullMode = ECullMode.Front,
-                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy,
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
                 BlendModeAllDrawBuffers = new()
                 {
                     //Add the previous and current light colors together using FuncAdd with each mesh render
@@ -1210,7 +1243,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             return new RenderingParameters
             {
                 CullMode = ECullMode.Front,
-                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy,
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
                 BlendModeAllDrawBuffers = new()
                 {
                     Enabled = ERenderParamUsage.Enabled,

@@ -8,11 +8,33 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, string> _liveImageViewHandles = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, ImageViewCreateInfo> _descriptorHeapImageViewCreateInfos = new();
 
     internal void TrackLiveImageView(ImageView imageView, string owner = "unknown")
     {
         if (imageView.Handle != 0)
             _liveImageViewHandles[imageView.Handle] = owner;
+    }
+
+    internal void TrackLiveImageView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner = "unknown")
+    {
+        if (imageView.Handle == 0)
+            return;
+
+        _liveImageViewHandles[imageView.Handle] = owner;
+        _descriptorHeapImageViewCreateInfos[imageView.Handle] = createInfo with { PNext = null };
+    }
+
+    internal bool TryGetDescriptorHeapImageViewCreateInfo(ImageView imageView, out ImageViewCreateInfo createInfo)
+    {
+        if (imageView.Handle != 0 &&
+            _descriptorHeapImageViewCreateInfos.TryGetValue(imageView.Handle, out createInfo))
+        {
+            return true;
+        }
+
+        createInfo = default;
+        return false;
     }
 
     internal bool IsLiveImageView(ImageView imageView)
@@ -24,7 +46,10 @@ public unsafe partial class VulkanRenderer
             return false;
 
         if (_liveImageViewHandles.TryRemove(imageView.Handle, out _))
+        {
+            _descriptorHeapImageViewCreateInfos.TryRemove(imageView.Handle, out _);
             return true;
+        }
 
         Debug.VulkanEvery(
             $"Vulkan.ImageView.SkipStaleDestroy.{GetHashCode()}.{owner}.{imageView.Handle}",
@@ -43,6 +68,7 @@ public unsafe partial class VulkanRenderer
             if (!_liveImageViewHandles.TryRemove(pair.Key, out string? owner))
                 continue;
 
+            _descriptorHeapImageViewCreateInfos.TryRemove(pair.Key, out _);
             ImageView imageView = new() { Handle = pair.Key };
             Debug.Vulkan(
                 "[Vulkan] Destroying remaining tracked image view 0x{0:X} owner={1} during renderer shutdown.",

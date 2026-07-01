@@ -126,14 +126,14 @@ public unsafe partial class VulkanRenderer
 					uniformsNotified = true;
 				}
 
+				PushPerDrawConstants(commandBuffer, material, drawCopy);
+
 				if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot))
 				{
 					if (verboseTrace)
 						Debug.MeshesWarning("[DrawTrace] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
 					return false;
 				}
-
-				PushPerDrawConstants(commandBuffer, material, drawCopy);
 
 				if (verboseTrace)
 					Debug.MeshesWarning("[DrawTrace] {0}: CmdDrawIndexed({1}) pass={2} target={3} dynRender={4} dsReadOnly={5} pipeline=0x{6:X} topology={7} cull={8} blend={9} blendOps={10}/{11} blendFactors={12},{13},{14},{15} alphaToCoverage={16} depthTest={17} depthWrite={18} depthCmp={19} colorWrite={20} viewport=({21},{22},{23},{24}) scissor=({25},{26},{27},{28}) prog={29}",
@@ -216,10 +216,10 @@ public unsafe partial class VulkanRenderer
 						uniformsNotified = true;
 					}
 
+					PushPerDrawConstants(commandBuffer, material, drawCopy);
+
 					if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot))
 						return false;
-
-					PushPerDrawConstants(commandBuffer, material, drawCopy);
 
 					if (verboseTrace)
 						Debug.MeshesWarning("[DrawTrace] {0}: CmdDraw({1}) pass={2} target={3} dynRender={4} dsReadOnly={5} pipeline=0x{6:X} topology={7} cull={8} blend={9} blendOps={10}/{11} blendFactors={12},{13},{14},{15} alphaToCoverage={16} depthTest={17} depthWrite={18} depthCmp={19} colorWrite={20} viewport=({21},{22},{23},{24}) scissor=({25},{26},{27},{28}) prog={29}",
@@ -335,6 +335,7 @@ public unsafe partial class VulkanRenderer
 			Pipeline Pipeline,
 			PipelineLayout PipelineLayout,
 			DescriptorSet[]? DescriptorSets,
+			DescriptorHeapPushDataPayload? DescriptorHeapPushData,
 			VkBufferHandle[]? VertexBuffers,
 			uint[]? VertexBindings,
 			int VertexBufferCount,
@@ -394,6 +395,7 @@ public unsafe partial class VulkanRenderer
 					NotifyDrawUniforms(material, programData, draw);
 
 				DescriptorSet[]? descriptorSets = null;
+				DescriptorHeapPushDataPayload? descriptorHeapPushData = null;
 				bool requiresDescriptors = program.DescriptorSetLayouts.Count > 0 && program.DescriptorBindings.Count > 0;
 				if (requiresDescriptors)
 				{
@@ -429,6 +431,12 @@ public unsafe partial class VulkanRenderer
 						vertexBindings = null;
 						return false;
 					}
+
+					if (_activeDescriptorAllocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
+						(uint)descriptorSlotIndex < (uint)heapPayloads.Length)
+					{
+						descriptorHeapPushData = heapPayloads[descriptorSlotIndex];
+					}
 				}
 
 				recordingState = new IndirectDrawRecordingState(
@@ -436,6 +444,7 @@ public unsafe partial class VulkanRenderer
 					pipeline,
 					program.PipelineLayout,
 					descriptorSets,
+					descriptorHeapPushData,
 					vertexBuffers,
 					vertexBindings,
 					vertexBufferCount,
@@ -472,15 +481,23 @@ public unsafe partial class VulkanRenderer
 					Renderer.BindVertexBufferTracked(commandBuffer, recordingState.VertexBindings[i], recordingState.VertexBuffers[i], 0);
 			}
 
-			if (recordingState.DescriptorSets is { Length: > 0 } descriptorSets)
-				Renderer.BindDescriptorSetsTracked(commandBuffer, PipelineBindPoint.Graphics, recordingState.PipelineLayout, 0, descriptorSets);
-
 			Renderer.PushConstantsTracked(
 				commandBuffer,
 				recordingState.PipelineLayout,
 				CommonPushConstantStageFlags,
 				0,
 				recordingState.PushConstants);
+
+			if (Renderer.IsDescriptorHeapDrawBindingActive)
+			{
+				if (!Renderer.TryPushDescriptorHeapProgramData(commandBuffer, recordingState.Program, recordingState.DescriptorHeapPushData, out string heapReason))
+				{
+					WarnOnce($"Skipping prepared draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because descriptor heap push failed: {heapReason}");
+					return false;
+				}
+			}
+			else if (recordingState.DescriptorSets is { Length: > 0 } descriptorSets)
+				Renderer.BindDescriptorSetsTracked(commandBuffer, PipelineBindPoint.Graphics, recordingState.PipelineLayout, 0, descriptorSets);
 
 			Renderer.BindIndexBufferTracked(commandBuffer, recordingState.IndexBuffer, 0, recordingState.IndexType);
 			return true;
@@ -700,6 +717,30 @@ public unsafe partial class VulkanRenderer
 					skippedDispatch: false,
 					$"mesh={meshName} descriptor set array at imageIndex {imageIndex}, drawSlot {drawUniformSlot} is empty");
 				return false;
+			}
+
+			if (Renderer.IsDescriptorHeapDrawBindingActive)
+			{
+				DescriptorHeapPushDataPayload? payload = _activeDescriptorAllocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
+					(uint)descriptorSlotIndex < (uint)heapPayloads.Length
+						? heapPayloads[descriptorSlotIndex]
+						: null;
+				if (!Renderer.TryPushDescriptorHeapProgramData(commandBuffer, _program, payload, out string heapReason))
+				{
+					WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor heap push failed: {heapReason}");
+					RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
+						programName,
+						"descriptor-heap",
+						materialName,
+						0,
+						0,
+						skippedDraw: true,
+						skippedDispatch: false,
+						$"mesh={meshName} descriptor heap push failed: {heapReason}");
+					return false;
+				}
+
+				return true;
 			}
 
 			Renderer.BindDescriptorSetsTracked(commandBuffer, PipelineBindPoint.Graphics, _program.PipelineLayout, 0, sets);

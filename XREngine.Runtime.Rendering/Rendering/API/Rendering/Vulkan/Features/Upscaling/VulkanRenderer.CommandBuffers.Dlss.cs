@@ -34,6 +34,8 @@ public unsafe partial class VulkanRenderer
             Debug.RenderingError($"Requested NVIDIA DLSS upscale failed during Vulkan command recording: {message}");
             throw new InvalidOperationException($"Requested NVIDIA DLSS upscale failed during Vulkan command recording: {message}");
         }
+
+        MakeStreamlineOutputVisibleForSampling(commandBuffer, outputColor);
     }
 
     private void RecordDlssFrameGenerationOp(CommandBuffer commandBuffer, DlssFrameGenerationOp op)
@@ -106,6 +108,46 @@ public unsafe partial class VulkanRenderer
 
         image.LayoutTracker?.UpdateTrackedLayout(ImageLayout.General);
         return image with { Layout = ImageLayout.General };
+    }
+
+    private void MakeStreamlineOutputVisibleForSampling(CommandBuffer commandBuffer, in VulkanStreamlineImage image)
+    {
+        if (image.Image.Handle == 0)
+            return;
+
+        ImageMemoryBarrier barrier = new()
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            SrcAccessMask = AccessFlags.MemoryWriteBit | AccessFlags.ShaderWriteBit,
+            DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.ShaderReadBit,
+            OldLayout = ImageLayout.General,
+            NewLayout = ImageLayout.General,
+            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            Image = image.Image,
+            SubresourceRange = new ImageSubresourceRange
+            {
+                AspectMask = image.Aspect == ImageAspectFlags.None ? ImageAspectFlags.ColorBit : image.Aspect,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1,
+            },
+        };
+
+        CmdPipelineBarrierTracked(
+            commandBuffer,
+            PipelineStageFlags.AllCommandsBit,
+            PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+            DependencyFlags.None,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &barrier);
+
+        image.LayoutTracker?.UpdateTrackedLayout(ImageLayout.General);
     }
 
     private static AccessFlags ResolveStreamlineAccessMask(ImageLayout layout)

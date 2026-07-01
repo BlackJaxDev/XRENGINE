@@ -32,11 +32,18 @@ public unsafe partial class VulkanRenderer
 
         protected override AttachmentViewKey BuildAttachmentViewKey(int mipLevel, int layerIndex)
         {
+            uint baseMip = ClampAttachmentMipLevel(mipLevel);
+
             if (layerIndex >= 0)
             {
                 uint baseLayer = ClampAttachmentLayerIndex(layerIndex);
-                uint baseMip = ClampAttachmentMipLevel(mipLevel);
                 return new AttachmentViewKey(baseMip, 1, baseLayer, 1, ImageViewType.Type2D, AspectFlags);
+            }
+
+            if (baseMip != 0 || ResolvedMipLevels > 1)
+            {
+                uint layerCount = Math.Max(ResolvedArrayLayers, 1u);
+                return new AttachmentViewKey(baseMip, 1, 0, layerCount, ImageViewType.Type2DArray, AspectFlags);
             }
 
             return default;

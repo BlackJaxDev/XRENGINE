@@ -123,7 +123,7 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         light.CascadedShadowMapTexture.ShouldNotBeNull();
         light.CascadedShadowMapTexture!.AutoGenerateMipmaps.ShouldBeTrue();
         light.CascadedShadowMapTexture.SmallestAllowedMipmapLevel.ShouldBe(expectedSmallestMip);
-        (light.CascadedShadowMapTexture.Name ?? string.Empty).ShouldContain(".Cascade.ColorArray");
+        (light.CascadedShadowMapTexture.Name ?? string.Empty).ShouldContain(".Cascade.Desktop.ColorArray");
 
         string vkTexture2D = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "Vulkan", "Objects", "Types", "Textures", "VkTexture2D.cs"));
         string vkTexture2DArray = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "Vulkan", "Objects", "Types", "Textures", "VkTexture2DArray.cs"));
@@ -245,13 +245,13 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         string forwardLighting = LoadShaderSource("Snippets/ForwardLighting.glsl");
         string deferredDirectional = LoadShaderSource("Scene3D/DeferredLightingDir.fs");
 
-        cascadeSource.ShouldContain("private XRTexture2DArray? _cascadeRasterDepthTexture;");
-        cascadeSource.ShouldContain("(_cascadeRasterDepthTexture!, EFrameBufferAttachment.DepthAttachment");
-        cascadeSource.ShouldContain("GetCascadeShadowResourceName(\"ColorArray\")");
-        cascadeSource.ShouldContain("GetCascadeShadowResourceName(\"RasterDepthArray\")");
-        cascadeSource.ShouldContain("GetCascadeShadowResourceName($\"Layer{i}Fbo\")");
-        cascadeSource.ShouldContain("GenerateCascadeMomentShadowMipmapsIfNeeded();");
-        forEachCascadeSource.ShouldContain("light.CascadedShadowReceiverTexture");
+        cascadeSource.ShouldContain("public XRTexture2DArray? RasterDepthTexture;");
+        cascadeSource.ShouldContain("(state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment");
+        cascadeSource.ShouldContain("GetCascadeShadowResourceName(source, \"ColorArray\")");
+        cascadeSource.ShouldContain("GetCascadeShadowResourceName(source, \"RasterDepthArray\")");
+        cascadeSource.ShouldContain("GetCascadeShadowResourceName(source, $\"Layer{i}Fbo\")");
+        cascadeSource.ShouldContain("GenerateCascadeMomentShadowMipmapsIfNeeded(source);");
+        forEachCascadeSource.ShouldContain("light.GetCascadedShadowReceiverTexture(source)");
         forEachCascadeSource.ShouldNotContain("light.CascadedShadowMapTexture");
 
         forwardLighting.ShouldContain("XRENGINE_SampleShadowMoment2DArray(");
@@ -280,7 +280,7 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         shadowCollectionSource.ShouldContain("renderCascades = needsCascadeAtlas;");
 
         deferredBindings.ShouldContain("useDirectionalShadowAtlas = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding && directionalLight.CastsShadows;");
-        deferredBindings.ShouldContain("XRTexture2DArray? directionalCascadeReceiverTexture = directionalLight.CascadedShadowReceiverTexture;");
+        deferredBindings.ShouldContain("XRTexture2DArray? directionalCascadeReceiverTexture = directionalLight.GetCascadedShadowReceiverTexture(activeRenderingCamera);");
         deferredBindings.ShouldNotContain("!directionalMomentSingleMap &&");
         deferredBindings.ShouldContain("if (useCascadedDirectionalShadows && directionalCascadeReceiverTexture is not null)");
         deferredBindings.ShouldContain("directionalHasShadowMap |= !useDirectionalShadowAtlas && hasShadowMap;");
@@ -307,12 +307,13 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         cascadeSource.ShouldContain("sequential per-tile renders");
         cascadeSource.ShouldNotContain("if (IsVulkanDirectionalShadowBackend())\r\n                return false;");
         cascadeSource.ShouldContain("private void RenderCascadeShadowMaps(");
-        cascadeSource.ShouldContain("DirectionalCascadeShadowRenderPlan plan = CreateLegacyCascadeShadowRenderPlan(cascadeCount);");
+        cascadeSource.ShouldContain("DirectionalCascadeShadowRenderPlan plan = CreateLegacyCascadeShadowRenderPlan(source, cascadeCount);");
         cascadeSource.IndexOf("requestedMode == EDirectionalCascadeShadowRenderMode.Sequential", StringComparison.Ordinal)
-            .ShouldBeLessThan(cascadeSource.IndexOf("DirectionalCascadeShadowFallbackReason.VulkanLayeredRenderingDisabled", StringComparison.Ordinal));
+            .ShouldBeLessThan(cascadeSource.IndexOf("DirectionalCascadeShadowFallbackReason.UnsupportedLayeredFramebuffer", StringComparison.Ordinal));
 
         forwardBindings.ShouldContain("if (perLightUseCascades)");
-        forwardBindings.ShouldContain("perLightCascadeTex = dirLight.CascadedShadowReceiverTexture;");
+        forwardBindings.ShouldContain("XRTexture2DArray? perLightCascadeReceiverTexture = dirLight.GetCascadedShadowReceiverTexture(directionalShadowCamera);");
+        forwardBindings.ShouldContain("perLightCascadeTex = perLightCascadeReceiverTexture;");
         forwardBindings.ShouldNotContain("if (perLightUseCascades && !perLightUseAtlas)");
 
         deferredBindings.ShouldContain("if (useCascadedDirectionalShadows && directionalCascadeReceiverTexture is not null)");

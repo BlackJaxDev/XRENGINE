@@ -118,8 +118,15 @@ internal sealed class VulkanResourceAllocator
             ImageUsageFlags usage = InferImageUsage(group, format, usageProfiles, planner);
             uint mipLevels = ResolveMipLevelCount(group, extent, usage, planner);
             SampleCountFlags samples = ResolveSampleCount(group.CreateInfoTemplate.Samples);
+            VulkanTransientAttachmentPolicy transientAttachmentPolicy = ResolveTransientAttachmentPolicy(group);
+            MemoryPropertyFlags memoryProperties = ResolveImageMemoryProperties(transientAttachmentPolicy);
+            if (transientAttachmentPolicy == VulkanTransientAttachmentPolicy.PreferLazilyAllocated)
+            {
+                usage |= ImageUsageFlags.TransientAttachmentBit;
+                usage &= ~(ImageUsageFlags.SampledBit | ImageUsageFlags.StorageBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.TransferDstBit);
+            }
 
-            VulkanPhysicalImageGroup physicalGroup = new(group, extent, format, usage, mipLevels, samples);
+            VulkanPhysicalImageGroup physicalGroup = new(group, extent, format, usage, mipLevels, samples, memoryProperties, transientAttachmentPolicy);
             foreach (VulkanImageAllocation allocation in group.Allocations)
             {
                 physicalGroup.AddLogical(allocation);
@@ -661,6 +668,27 @@ internal sealed class VulkanResourceAllocator
         return flags;
     }
 
+    private static VulkanTransientAttachmentPolicy ResolveTransientAttachmentPolicy(VulkanImageAliasGroup group)
+    {
+        bool hasLazyCandidate = false;
+        foreach (VulkanImageAllocation allocation in group.Allocations)
+        {
+            if (allocation.Request.TransientAttachmentPolicy != VulkanTransientAttachmentPolicy.PreferLazilyAllocated)
+                return VulkanTransientAttachmentPolicy.None;
+
+            hasLazyCandidate = true;
+        }
+
+        return hasLazyCandidate
+            ? VulkanTransientAttachmentPolicy.PreferLazilyAllocated
+            : VulkanTransientAttachmentPolicy.None;
+    }
+
+    private static MemoryPropertyFlags ResolveImageMemoryProperties(VulkanTransientAttachmentPolicy transientAttachmentPolicy)
+        => transientAttachmentPolicy == VulkanTransientAttachmentPolicy.PreferLazilyAllocated
+            ? MemoryPropertyFlags.DeviceLocalBit | MemoryPropertyFlags.LazilyAllocatedBit
+            : MemoryPropertyFlags.DeviceLocalBit;
+
     private static BufferUsageFlags InferBufferUsage(
         VulkanBufferAliasGroup group,
         IReadOnlyDictionary<string, VulkanUsageProfile> usageProfiles,
@@ -1020,7 +1048,9 @@ internal sealed class VulkanPhysicalImageGroup
         Format format,
         ImageUsageFlags usage,
         uint mipLevels,
-        SampleCountFlags samples)
+        SampleCountFlags samples,
+        MemoryPropertyFlags memoryProperties,
+        VulkanTransientAttachmentPolicy transientAttachmentPolicy)
     {
         Key = logicalGroup.Key;
         AllowsAliasing = logicalGroup.AllowsAliasing;
@@ -1030,6 +1060,8 @@ internal sealed class VulkanPhysicalImageGroup
         Usage = usage;
         MipLevels = Math.Max(1u, mipLevels);
         Samples = samples;
+        MemoryProperties = memoryProperties;
+        TransientAttachmentPolicy = transientAttachmentPolicy;
     }
 
     public VulkanAliasGroupKey Key { get; }
@@ -1040,6 +1072,8 @@ internal sealed class VulkanPhysicalImageGroup
     public ImageUsageFlags Usage { get; }
     public uint MipLevels { get; }
     public SampleCountFlags Samples { get; }
+    public MemoryPropertyFlags MemoryProperties { get; }
+    public VulkanTransientAttachmentPolicy TransientAttachmentPolicy { get; }
     public IReadOnlyList<VulkanImageAllocation> LogicalResources => _logicalResources;
     public bool IsAllocated => _allocated;
     public Image Image => _image;

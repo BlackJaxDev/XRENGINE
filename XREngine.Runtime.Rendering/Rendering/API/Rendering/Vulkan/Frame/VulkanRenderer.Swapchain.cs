@@ -62,6 +62,7 @@ public unsafe partial class VulkanRenderer
     private bool[]? _swapchainImageEverPresented;
     private uint _lastPresentedImageIndex;
     private bool _streamlineFrameGenerationSwapchainActive;
+    private bool _streamlineFrameGenerationSwapchainIncludesDlss;
     //private VkBuffer<UniformBufferObject>[]? uniformBuffers;
     private Format swapChainImageFormat;
     private ColorSpaceKHR swapChainImageColorSpace;
@@ -75,6 +76,7 @@ public unsafe partial class VulkanRenderer
     private int _recreateSwapChainInProgress;
 
     internal bool StreamlineFrameGenerationSwapchainActive => _streamlineFrameGenerationSwapchainActive;
+    internal bool StreamlineFrameGenerationSwapchainIncludesDlss => _streamlineFrameGenerationSwapchainIncludesDlss;
     internal uint SwapchainImageCount => (uint)(swapChainImages?.Length ?? 0);
     internal Format SwapchainImageFormat => swapChainImageFormat;
     internal Extent2D SwapchainExtent => swapChainExtent;
@@ -284,7 +286,7 @@ public unsafe partial class VulkanRenderer
         if (Api!.CreateImageView(device, ref viewInfo, null, out _swapchainDepthView) != Result.Success)
             throw new Exception("Failed to create swapchain depth view.");
 
-        TrackLiveImageView(_swapchainDepthView, "Swapchain.Depth");
+        TrackLiveImageView(_swapchainDepthView, in viewInfo, "Swapchain.Depth");
     }
 
     private static bool IsDepthStencilFormat(Format format)
@@ -331,6 +333,7 @@ public unsafe partial class VulkanRenderer
         swapChainImages = null;
         _swapchainImageEverPresented = null;
         _streamlineFrameGenerationSwapchainActive = false;
+        _streamlineFrameGenerationSwapchainIncludesDlss = false;
     }
 
     private void CreateSwapChain()
@@ -387,10 +390,12 @@ public unsafe partial class VulkanRenderer
             throw new NotSupportedException("VK_KHR_swapchain extension not found.");
 
         bool requestStreamlineFrameGeneration = NvidiaDlssManager.IsFrameGenerationRequested;
+        bool requestStreamlineFrameGenerationDlss = requestStreamlineFrameGeneration
+            && NvidiaDlssManager.Native.ShouldLoadDlssFeatureForFrameGenerationRuntime;
         Result createResult;
         if (requestStreamlineFrameGeneration)
         {
-            if (!NvidiaDlssManager.Native.TryCreateProxySwapchain(this, ref createInfo, out swapChain, out createResult, out string failureReason))
+            if (!NvidiaDlssManager.Native.TryCreateProxySwapchain(this, ref createInfo, requestStreamlineFrameGenerationDlss, out swapChain, out createResult, out string failureReason))
                 throw new InvalidOperationException($"Requested NVIDIA DLSS frame generation could not create a Streamline proxy swapchain: {failureReason}");
         }
         else
@@ -402,6 +407,7 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException($"Failed to create swap chain ({createResult}){(requestStreamlineFrameGeneration ? " through Streamline for NVIDIA DLSS frame generation" : string.Empty)}.");
 
         _streamlineFrameGenerationSwapchainActive = requestStreamlineFrameGeneration;
+        _streamlineFrameGenerationSwapchainIncludesDlss = requestStreamlineFrameGenerationDlss;
 
         Result getImagesResult;
         if (_streamlineFrameGenerationSwapchainActive)

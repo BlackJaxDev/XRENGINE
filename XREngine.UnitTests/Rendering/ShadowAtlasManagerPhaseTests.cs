@@ -87,10 +87,15 @@ public sealed class ShadowAtlasManagerPhaseTests
             EShadowProjectionType.DirectionalCascade,
             1,
             EShadowMapEncoding.ExponentialVariance4);
+        ShadowRequestKey cascadeOneHmd = light.CreateShadowRequestKey(
+            EShadowProjectionType.DirectionalCascade,
+            1,
+            source: ShadowRequestSource.Hmd);
 
         pointFace.ShouldNotBe(spot);
         cascadeOne.ShouldNotBe(spot);
         cascadeOneEvsm.ShouldNotBe(cascadeOne);
+        cascadeOneHmd.ShouldNotBe(cascadeOne);
         spot.LightId.ShouldBe(light.ID);
     }
 

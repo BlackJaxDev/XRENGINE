@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
 using Format = Silk.NET.Vulkan.Format;
 
 namespace XREngine.Rendering.Vulkan;
@@ -74,7 +75,8 @@ public unsafe partial class VulkanRenderer
             int passIndex,
             IReadOnlyCollection<RenderPassMetadata>? passMetadata,
             ImageLayout[]? initialLayoutOverrides = null,
-            RenderGraphSynchronizationInfo? synchronization = null)
+            RenderGraphSynchronizationInfo? synchronization = null,
+            bool preserveTrackedClearLoads = false)
         {
             if (_attachmentSignature is null || _attachmentSignature.Length == 0)
                 return [];
@@ -90,7 +92,7 @@ public unsafe partial class VulkanRenderer
                     return _attachmentSignature;
 
                 // No metadata but we have layout overrides — apply them to the base signature.
-                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
+                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!, preserveTrackedClearLoads);
             }
 
             string? frameBufferName = Data.Name;
@@ -98,7 +100,7 @@ public unsafe partial class VulkanRenderer
             {
                 if (!hasLayoutOverrides)
                     return _attachmentSignature;
-                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
+                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!, preserveTrackedClearLoads);
             }
 
             RenderPassMetadata? pass = null;
@@ -115,7 +117,7 @@ public unsafe partial class VulkanRenderer
             {
                 if (!hasLayoutOverrides)
                     return _attachmentSignature;
-                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
+                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!, preserveTrackedClearLoads);
             }
 
             bool referencesFrameBuffer = false;
@@ -136,14 +138,14 @@ public unsafe partial class VulkanRenderer
             {
                 if (!hasLayoutOverrides)
                     return _attachmentSignature;
-                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
+                return ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!, preserveTrackedClearLoads);
             }
 
             FrameBufferAttachmentSignature[] planned = BuildPlannedAttachmentSignature(pass, frameBufferName, synchronization);
 
             // Apply per-frame initial-layout overrides on top of metadata-driven planning.
             if (hasLayoutOverrides)
-                planned = ApplyInitialLayoutOverrides(planned, initialLayoutOverrides!);
+                planned = ApplyInitialLayoutOverrides(planned, initialLayoutOverrides!, preserveTrackedClearLoads);
 
             return planned;
         }
@@ -152,26 +154,36 @@ public unsafe partial class VulkanRenderer
             int passIndex,
             IReadOnlyCollection<RenderPassMetadata>? passMetadata,
             ImageLayout[]? initialLayoutOverrides = null,
-            RenderGraphSynchronizationInfo? synchronization = null)
+            RenderGraphSynchronizationInfo? synchronization = null,
+            bool preserveTrackedClearLoads = false)
         {
             if (_attachmentSignature is null || _attachmentSignature.Length == 0)
                 return _renderPass;
 
-            FrameBufferAttachmentSignature[] planned = ResolveAttachmentSignatureForPass(passIndex, passMetadata, initialLayoutOverrides, synchronization);
+            FrameBufferAttachmentSignature[] planned = ResolveAttachmentSignatureForPass(
+                passIndex,
+                passMetadata,
+                initialLayoutOverrides,
+                synchronization,
+                preserveTrackedClearLoads);
             if (planned.Length == 0 || SignatureEquals(_attachmentSignature, planned))
                 return _renderPass;
 
             return Renderer.GetOrCreateFrameBufferRenderPass(planned);
         }
 
-        internal bool UsesReadOnlyDepthStencilForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata, ImageLayout[]? initialLayoutOverrides = null)
+        internal bool UsesReadOnlyDepthStencilForPass(
+            int passIndex,
+            IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+            ImageLayout[]? initialLayoutOverrides = null,
+            bool preserveTrackedClearLoads = false)
         {
             if (_attachmentSignature is null || _attachmentSignature.Length == 0)
                 return false;
 
             bool hasLayoutOverrides = initialLayoutOverrides is not null && initialLayoutOverrides.Length == _attachmentSignature.Length;
             FrameBufferAttachmentSignature[] BaseSignature() => hasLayoutOverrides
-                ? ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!)
+                ? ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!, preserveTrackedClearLoads)
                 : _attachmentSignature;
 
             if (passMetadata is null || passMetadata.Count == 0)
@@ -213,7 +225,7 @@ public unsafe partial class VulkanRenderer
 
             FrameBufferAttachmentSignature[] planned = BuildPlannedAttachmentSignature(pass, frameBufferName, synchronization: null);
             if (hasLayoutOverrides)
-                planned = ApplyInitialLayoutOverrides(planned, initialLayoutOverrides!);
+                planned = ApplyInitialLayoutOverrides(planned, initialLayoutOverrides!, preserveTrackedClearLoads);
 
             return UsesReadOnlyDepthStencil(planned);
         }
@@ -372,7 +384,8 @@ public unsafe partial class VulkanRenderer
 
         private static FrameBufferAttachmentSignature[] ApplyInitialLayoutOverrides(
             FrameBufferAttachmentSignature[] signatures,
-            ImageLayout[] overrides)
+            ImageLayout[] overrides,
+            bool preserveClearLoads = false)
         {
             FrameBufferAttachmentSignature[] result = (FrameBufferAttachmentSignature[])signatures.Clone();
             int count = Math.Min(result.Length, overrides.Length);
@@ -391,12 +404,10 @@ public unsafe partial class VulkanRenderer
                 // pass preserves that content instead of discarding it.  Passes that
                 // intend to clear still issue an explicit CmdClearAttachments, which
                 // overrides the loaded content, so this is safe for clearing passes.
-                AttachmentLoadOp preservedLoadOp = existing.LoadOp == AttachmentLoadOp.DontCare
-                    ? AttachmentLoadOp.Load
-                    : existing.LoadOp;
-                AttachmentLoadOp preservedStencilLoadOp = existing.StencilLoadOp == AttachmentLoadOp.DontCare
-                    ? AttachmentLoadOp.Load
-                    : existing.StencilLoadOp;
+                // preserveClearLoads is only used for FBO re-entry after an explicit clear
+                // command has had the chance to define the intended contents.
+                AttachmentLoadOp preservedLoadOp = PreserveTrackedLoadOp(existing.LoadOp, preserveClearLoads);
+                AttachmentLoadOp preservedStencilLoadOp = PreserveTrackedLoadOp(existing.StencilLoadOp, preserveClearLoads);
 
                 result[i] = new FrameBufferAttachmentSignature(
                     existing.Format,
@@ -415,6 +426,14 @@ public unsafe partial class VulkanRenderer
             return result;
         }
 
+        private static AttachmentLoadOp PreserveTrackedLoadOp(AttachmentLoadOp loadOp, bool preserveClearLoads)
+            => loadOp switch
+            {
+                AttachmentLoadOp.DontCare => AttachmentLoadOp.Load,
+                AttachmentLoadOp.Clear when preserveClearLoads => AttachmentLoadOp.Load,
+                _ => loadOp
+            };
+
         internal void WriteClearValues(ClearValue* destination, uint clearValueCount)
             => WriteClearValues(destination, clearValueCount, _attachmentSignature);
 
@@ -431,7 +450,7 @@ public unsafe partial class VulkanRenderer
             for (uint i = 0; i < count; i++)
             {
                 var sig = signatures[i];
-                if (sig.Role == AttachmentRole.Color)
+                if (IsColorLikeAttachmentRole(sig.Role))
                 {
                     destination[i] = new ClearValue
                     {
@@ -799,6 +818,15 @@ public unsafe partial class VulkanRenderer
 
                     FrameBufferAttachmentSignature updated = usage.ResourceType switch
                     {
+                        ERenderPassResourceType.ResolveAttachment => WithRoleAndColorIndex(
+                            WithOps(
+                                existing,
+                                AttachmentLoadOp.DontCare,
+                                storeOp,
+                                existing.StencilLoadOp,
+                                existing.StencilStoreOp),
+                            AttachmentRole.Resolve,
+                            ResolveResolveSourceColorIndex(planned, index, slot, usage, pass)),
                         ERenderPassResourceType.StencilAttachment => WithOps(
                             existing,
                             existing.LoadOp,
@@ -825,6 +853,7 @@ public unsafe partial class VulkanRenderer
             }
 
             ValidateAttachmentSampleCounts(planned, touchedAttachments, pass, frameBufferName);
+            ValidateResolveAttachmentPairings(planned, pass, frameBufferName);
             return planned;
         }
 
@@ -863,6 +892,31 @@ public unsafe partial class VulkanRenderer
             RenderPassResourceUsage usage,
             RenderPassMetadata pass)
         {
+            if (slot.StartsWith("resolve", StringComparison.OrdinalIgnoreCase))
+            {
+                if (usage.ResourceType != ERenderPassResourceType.ResolveAttachment)
+                {
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for slot '{slot}', but resolve slots require resolve usage.");
+                }
+
+                if (slot.Length <= 7 || !uint.TryParse(slot.AsSpan(7), out uint resolveTargetColorIndex))
+                {
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' references invalid resolve slot '{slot}'. Use 'resolveN' where N is the target color attachment index.");
+                }
+
+                for (int i = 0; i < signatures.Length; i++)
+                {
+                    FrameBufferAttachmentSignature signature = signatures[i];
+                    if (signature.Role == AttachmentRole.Color && signature.ColorIndex == resolveTargetColorIndex)
+                        return [i];
+                }
+
+                throw new InvalidOperationException(
+                    $"Render pass '{pass.Name}' references resolve slot '{resolveTargetColorIndex}' but framebuffer has no matching color attachment target.");
+            }
+
             if (slot.StartsWith("color", StringComparison.OrdinalIgnoreCase))
             {
                 if (usage.ResourceType is not ERenderPassResourceType.ColorAttachment and not ERenderPassResourceType.ResolveAttachment)
@@ -968,7 +1022,65 @@ public unsafe partial class VulkanRenderer
             }
 
             throw new InvalidOperationException(
-                $"Render pass '{pass.Name}' references unsupported framebuffer slot '{slot}'. Expected color/depth/stencil.");
+                $"Render pass '{pass.Name}' references unsupported framebuffer slot '{slot}'. Expected color/resolve/depth/stencil.");
+        }
+
+        private static uint ResolveResolveSourceColorIndex(
+            FrameBufferAttachmentSignature[] signatures,
+            int resolveTargetAttachmentIndex,
+            string slot,
+            RenderPassResourceUsage usage,
+            RenderPassMetadata pass)
+        {
+            if (usage.ResolveSourceColorIndex is { } explicitSource)
+                return explicitSource;
+
+            if (slot.StartsWith("resolve", StringComparison.OrdinalIgnoreCase))
+            {
+                if (slot.Length > 7 && uint.TryParse(slot.AsSpan(7), out uint parsedSource))
+                    return parsedSource;
+            }
+
+            if (slot.StartsWith("color", StringComparison.OrdinalIgnoreCase) &&
+                slot.Length > 5 &&
+                uint.TryParse(slot.AsSpan(5), out uint colorSlot))
+            {
+                return colorSlot;
+            }
+
+            FrameBufferAttachmentSignature resolveTarget = signatures[resolveTargetAttachmentIndex];
+            uint inferredSource = 0;
+            bool foundSource = false;
+            for (int i = 0; i < signatures.Length; i++)
+            {
+                if (i == resolveTargetAttachmentIndex)
+                    continue;
+
+                FrameBufferAttachmentSignature candidate = signatures[i];
+                if (candidate.Role != AttachmentRole.Color ||
+                    candidate.Samples == SampleCountFlags.Count1Bit ||
+                    candidate.Format != resolveTarget.Format)
+                {
+                    continue;
+                }
+
+                if (foundSource)
+                {
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' resolve attachment '{usage.ResourceName}' is ambiguous. Use UseResolveAttachment(resourceName, sourceColorIndex, ...) to select the multisampled color source.");
+                }
+
+                inferredSource = candidate.ColorIndex;
+                foundSource = true;
+            }
+
+            if (!foundSource)
+            {
+                throw new InvalidOperationException(
+                    $"Render pass '{pass.Name}' resolve attachment '{usage.ResourceName}' has no explicit source color index and no unique multisampled color source could be inferred.");
+            }
+
+            return inferredSource;
         }
 
         private static void ValidateAttachmentSampleCounts(
@@ -986,6 +1098,9 @@ public unsafe partial class VulkanRenderer
             foreach (int index in touchedAttachments)
             {
                 FrameBufferAttachmentSignature signature = signatures[index];
+                if (signature.Role == AttachmentRole.Resolve)
+                    continue;
+
                 if (!hasBaseline)
                 {
                     baseline = signature.Samples;
@@ -997,6 +1112,55 @@ public unsafe partial class VulkanRenderer
                 {
                     throw new InvalidOperationException(
                         $"Render pass '{pass.Name}' references framebuffer '{frameBufferName}' attachments with mismatched sample counts ({baseline} vs {signature.Samples}).");
+                }
+            }
+        }
+
+        private static void ValidateResolveAttachmentPairings(
+            FrameBufferAttachmentSignature[] signatures,
+            RenderPassMetadata pass,
+            string frameBufferName)
+        {
+            for (int i = 0; i < signatures.Length; i++)
+            {
+                FrameBufferAttachmentSignature resolve = signatures[i];
+                if (resolve.Role != AttachmentRole.Resolve)
+                    continue;
+
+                int sourceIndex = -1;
+                for (int j = 0; j < signatures.Length; j++)
+                {
+                    if (signatures[j].Role == AttachmentRole.Color &&
+                        signatures[j].ColorIndex == resolve.ColorIndex)
+                    {
+                        sourceIndex = j;
+                        break;
+                    }
+                }
+
+                if (sourceIndex < 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' framebuffer '{frameBufferName}' has a resolve attachment for color {resolve.ColorIndex}, but no matching color source.");
+                }
+
+                FrameBufferAttachmentSignature source = signatures[sourceIndex];
+                if (source.Samples == SampleCountFlags.Count1Bit)
+                {
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' framebuffer '{frameBufferName}' resolve source color {resolve.ColorIndex} is single-sampled. Vulkan resolve sources must be multisampled.");
+                }
+
+                if (resolve.Samples != SampleCountFlags.Count1Bit)
+                {
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' framebuffer '{frameBufferName}' resolve target for color {resolve.ColorIndex} is {resolve.Samples}. Vulkan resolve targets must be single-sampled.");
+                }
+
+                if (source.Format != resolve.Format || source.AspectMask != resolve.AspectMask)
+                {
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' framebuffer '{frameBufferName}' resolve target for color {resolve.ColorIndex} has format/aspect {resolve.Format}/{resolve.AspectMask}, but source has {source.Format}/{source.AspectMask}.");
                 }
             }
         }
@@ -1055,6 +1219,24 @@ public unsafe partial class VulkanRenderer
                 finalLayout,
                 signature.ReferenceLayout);
 
+        private static FrameBufferAttachmentSignature WithRoleAndColorIndex(
+            FrameBufferAttachmentSignature signature,
+            AttachmentRole role,
+            uint colorIndex)
+            => new(
+                signature.Format,
+                signature.Samples,
+                signature.AspectMask,
+                role,
+                colorIndex,
+                signature.LoadOp,
+                signature.StoreOp,
+                signature.StencilLoadOp,
+                signature.StencilStoreOp,
+                signature.InitialLayout,
+                signature.FinalLayout,
+                signature.ReferenceLayout);
+
         private static ImageLayout ResolveAttachmentFinalLayoutFromNextConsumer(
             RenderGraphSynchronizationInfo? synchronization,
             RenderPassMetadata pass,
@@ -1107,13 +1289,14 @@ public unsafe partial class VulkanRenderer
             FrameBufferAttachmentSignature signature)
             => layout switch
             {
-                RenderGraphImageLayout.ColorAttachment => signature.Role == AttachmentRole.Color
+                RenderGraphImageLayout.ColorAttachment => IsColorLikeAttachmentRole(signature.Role)
                     ? ImageLayout.ColorAttachmentOptimal
                     : ImageLayout.DepthStencilAttachmentOptimal,
-                RenderGraphImageLayout.DepthStencilAttachment => signature.Role == AttachmentRole.Color
+                RenderGraphImageLayout.DepthStencilAttachment => IsColorLikeAttachmentRole(signature.Role)
                     ? ImageLayout.ColorAttachmentOptimal
                     : ImageLayout.DepthStencilAttachmentOptimal,
-                RenderGraphImageLayout.ShaderReadOnly => signature.Role == AttachmentRole.Color
+                RenderGraphImageLayout.RenderingLocalRead => ImageLayout.RenderingLocalRead,
+                RenderGraphImageLayout.ShaderReadOnly => IsColorLikeAttachmentRole(signature.Role)
                     ? ImageLayout.ShaderReadOnlyOptimal
                     : ImageLayout.DepthStencilReadOnlyOptimal,
                 RenderGraphImageLayout.General => ImageLayout.General,
@@ -1127,7 +1310,7 @@ public unsafe partial class VulkanRenderer
             FrameBufferAttachmentSignature signature,
             RenderPassResourceUsage usage,
             bool passHasWriteCapableDepthStencilUsage)
-            => signature.Role == AttachmentRole.Color
+            => IsColorLikeAttachmentRole(signature.Role)
                 ? ImageLayout.ColorAttachmentOptimal
                 : usage.Access == ERenderGraphAccess.Read && !passHasWriteCapableDepthStencilUsage
                 ? ImageLayout.DepthStencilReadOnlyOptimal
@@ -1162,7 +1345,7 @@ public unsafe partial class VulkanRenderer
         {
             foreach (FrameBufferAttachmentSignature signature in signatures)
             {
-                if (signature.Role == AttachmentRole.Color)
+                if (IsColorLikeAttachmentRole(signature.Role))
                     continue;
 
                 if (signature.ReferenceLayout is ImageLayout.DepthStencilReadOnlyOptimal or ImageLayout.DepthReadOnlyOptimal)
@@ -1324,11 +1507,30 @@ public unsafe partial class VulkanRenderer
                 ? Math.Max(source.DescriptorArrayLayers, 1u)
                 : 1u;
             uint multiviewViewMask = 0u;
-            if (layerIndex < 0 &&
-                texture is XRTexture2DArray textureArray &&
-                textureArray.OVRMultiViewParameters is { NumViews: > 1u } ovr)
+            if (layerIndex < 0 && IsTextureArrayAttachment(texture))
             {
-                multiviewViewMask = BuildMultiviewViewMask(ovr, layerCount);
+                if (TryGetTextureArrayMultiviewParameters(texture, out XRTexture2DArray.OVRMultiView? ovr))
+                {
+                    multiviewViewMask = BuildMultiviewViewMask(ovr.Offset, ovr.NumViews, layerCount);
+                }
+                else if (IsStereoCompatibleTextureArrayAttachment(texture, layerCount))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Framebuffer.RecoveredStereoMultiview.{texture.Name ?? texture.GetDescribingName()}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Recovering stereo multiview mask for texture-array framebuffer attachment '{0}' from its stereo-compatible resource descriptor because OVR multiview metadata is missing.",
+                        texture.Name ?? texture.GetDescribingName());
+                    multiviewViewMask = BuildMultiviewViewMask(0, 2u, layerCount);
+                }
+                else if (layerCount >= 2u && RuntimeEngine.Rendering.State.IsStereoPass)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Framebuffer.RecoveredStereoMultiview.State.{texture.Name ?? texture.GetDescribingName()}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Recovering stereo multiview mask for texture-array framebuffer attachment '{0}' because render state is stereo but OVR multiview metadata is missing.",
+                        texture.Name ?? texture.GetDescribingName());
+                    multiviewViewMask = BuildMultiviewViewMask(0, 2u, layerCount);
+                }
             }
 
             Extent2D extent = source.TryGetAttachmentExtent(mipLevel, layerIndex, out Extent2D resolvedExtent)
@@ -1339,15 +1541,72 @@ public unsafe partial class VulkanRenderer
         }
 
         private static uint BuildMultiviewViewMask(XRTexture2DArray.OVRMultiView multiview, uint availableLayers)
+            => BuildMultiviewViewMask(multiview.Offset, multiview.NumViews, availableLayers);
+
+        private static bool IsTextureArrayAttachment(XRTexture texture)
+            => texture is XRTexture2DArray or XRTexture2DArrayView;
+
+        private static bool TryGetTextureArrayMultiviewParameters(
+            XRTexture texture,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out XRTexture2DArray.OVRMultiView? multiview)
         {
-            if (multiview.NumViews <= 1u || availableLayers == 0u)
+            multiview = texture switch
+            {
+                XRTexture2DArray textureArray => textureArray.OVRMultiViewParameters,
+                XRTexture2DArrayView textureArrayView => textureArrayView.ViewedTexture.OVRMultiViewParameters,
+                _ => null
+            };
+
+            return multiview is { NumViews: > 1u };
+        }
+
+        internal static bool IsStereoCompatibleTextureArrayAttachment(XRTexture texture, uint layerCount)
+        {
+            uint effectiveLayerCount = layerCount;
+            XRTexture descriptorTexture = texture;
+            if (texture is XRTexture2DArray textureArray)
+            {
+                effectiveLayerCount = Math.Max(effectiveLayerCount, textureArray.Depth);
+            }
+            else if (texture is XRTexture2DArrayView textureArrayView)
+            {
+                descriptorTexture = textureArrayView.ViewedTexture;
+                effectiveLayerCount = Math.Max(effectiveLayerCount, textureArrayView.NumLayers);
+            }
+            else
+            {
+                return false;
+            }
+
+            if (effectiveLayerCount < 2u)
+                return false;
+
+            string? textureName = descriptorTexture.Name ?? texture.Name;
+            if (string.IsNullOrWhiteSpace(textureName))
+                return false;
+
+            RenderResourceRegistry? registry = RuntimeEngine.Rendering.State.CurrentResourceRegistry;
+            if (registry is null)
+                return false;
+
+            if (!registry.TextureRecords.TryGetValue(textureName, out RenderTextureResource? record))
+                return false;
+
+            TextureResourceDescriptor descriptor = record.Descriptor;
+            uint descriptorLayers = Math.Max(descriptor.ArrayLayers, descriptor.LayerCount);
+            return descriptor.StereoCompatible && descriptorLayers >= 2u;
+        }
+
+        private static uint BuildMultiviewViewMask(int offset, uint numViews, uint availableLayers)
+        {
+            if (numViews <= 1u || availableLayers == 0u)
                 return 0u;
 
-            uint firstLayer = (uint)Math.Max(multiview.Offset, 0);
+            uint firstLayer = (uint)Math.Max(offset, 0);
             if (firstLayer >= availableLayers)
                 return 0u;
 
-            uint viewCount = Math.Min(multiview.NumViews, availableLayers - firstLayer);
+            uint viewCount = Math.Min(numViews, availableLayers - firstLayer);
             uint viewMask = 0u;
             for (uint i = 0u; i < viewCount; i++)
             {
@@ -1420,7 +1679,7 @@ public unsafe partial class VulkanRenderer
             // Sampled attachments must leave the pass in a descriptor-compatible
             // layout. Render-graph passes can infer this from declared consumers,
             // but off-graph FBOs such as shadow maps still need a safe default.
-            ImageLayout finalLayout = role == AttachmentRole.Color
+            ImageLayout finalLayout = IsColorLikeAttachmentRole(role)
                 ? (source.Usage & ImageUsageFlags.SampledBit) != 0
                     ? ImageLayout.ShaderReadOnlyOptimal
                     : ImageLayout.ColorAttachmentOptimal
@@ -1440,7 +1699,7 @@ public unsafe partial class VulkanRenderer
             // so subsequent sampled descriptors match the image layout. Passes that genuinely
             // require read-only depth (sampling the same depth they test against) opt in via
             // render-pass metadata, which overrides this reference layout to read-only.
-            ImageLayout referenceLayout = role == AttachmentRole.Color
+            ImageLayout referenceLayout = IsColorLikeAttachmentRole(role)
                 ? ImageLayout.ColorAttachmentOptimal
                 : ImageLayout.DepthStencilAttachmentOptimal;
 

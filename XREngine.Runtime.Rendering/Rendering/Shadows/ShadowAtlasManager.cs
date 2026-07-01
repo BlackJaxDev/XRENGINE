@@ -111,12 +111,14 @@ public sealed class ShadowAtlasManager
     private readonly record struct DirectionalGroupReservationFailure(
         Guid LightId,
         ShadowRequestDomain Domain,
+        ShadowRequestSource Source,
         EShadowMapEncoding Encoding,
         string Reason);
 
     private readonly record struct DirectionalCascadeGroupKey(
         Guid LightId,
         ShadowRequestDomain Domain,
+        ShadowRequestSource Source,
         EShadowMapEncoding Encoding,
         int AtlasId,
         int PageIndex);
@@ -768,6 +770,7 @@ public sealed class ShadowAtlasManager
             DirectionalCascadeGroupKey key = new(
                 request.Key.LightId,
                 request.Key.Domain,
+                request.Key.Source,
                 request.Encoding,
                 allocation.AtlasId,
                 allocation.PageIndex);
@@ -810,6 +813,7 @@ public sealed class ShadowAtlasManager
             _directionalCascadeGroups.Add(new ShadowAtlasGroupedDirectionalCascadeAllocation(
                 key.LightId,
                 key.Domain,
+                key.Source,
                 key.Encoding,
                 EShadowAtlasKind.Directional,
                 key.AtlasId,
@@ -1300,6 +1304,7 @@ public sealed class ShadowAtlasManager
         => y.ProjectionType == EShadowProjectionType.DirectionalCascade &&
            x.Key.LightId == y.Key.LightId &&
            x.Key.Domain == y.Key.Domain &&
+           x.Key.Source == y.Key.Source &&
            x.Encoding == y.Encoding;
 
     private uint CalculateDirectionalCascadeGroupResolutionCap(int cascadeCount)
@@ -2154,6 +2159,7 @@ public sealed class ShadowAtlasManager
             ShadowAtlasGroupedDirectionalCascadeAllocation candidate = _directionalCascadeGroups[i];
             if (candidate.LightId != request.Key.LightId ||
                 candidate.Domain != request.Key.Domain ||
+                candidate.Source != request.Key.Source ||
                 candidate.Encoding != request.Encoding ||
                 candidate.Members is null ||
                 candidate.Members.Length == 0 ||
@@ -2181,6 +2187,7 @@ public sealed class ShadowAtlasManager
             if (candidate.ProjectionType != EShadowProjectionType.DirectionalCascade ||
                 candidate.Key.LightId != group.LightId ||
                 candidate.Key.Domain != group.Domain ||
+                candidate.Key.Source != group.Source ||
                 candidate.Encoding != group.Encoding ||
                 !DirectionalCascadeGroupContainsCascade(group, candidate.FaceOrCascadeIndex))
             {
@@ -2316,7 +2323,7 @@ public sealed class ShadowAtlasManager
                 return false;
             }
 
-            if (!light.RenderCascadeShadowAtlasTile(request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow))
+            if (!light.RenderCascadeShadowAtlasTile(request.Key.Source, request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow))
                 return false;
 
             renderedAny = true;
@@ -2460,10 +2467,13 @@ public sealed class ShadowAtlasManager
         ShadowMapRequest request,
         DirectionalLightComponent light)
     {
-        int activeCascadeCount = light.ActiveCascadeCount;
+        ShadowRequestSource source = request.Key.Source == ShadowRequestSource.Default
+            ? ShadowRequestSource.Desktop
+            : request.Key.Source;
+        int activeCascadeCount = light.GetActiveCascadeCount(source);
         if (activeCascadeCount <= 1 ||
             string.Equals(light.CascadeShadowRenderFallbackReason, "SequentialRequested", StringComparison.Ordinal) ||
-            !light.CanUseLegacyLayeredDirectionalCascadeShadowRendering(activeCascadeCount))
+            !light.CanUseLegacyLayeredDirectionalCascadeShadowRendering(source, activeCascadeCount))
         {
             return;
         }
@@ -2555,7 +2565,7 @@ public sealed class ShadowAtlasManager
             EShadowProjectionType.DirectionalPrimary when request.Light is DirectionalLightComponent primaryDirectionalLight
                 => primaryDirectionalLight.RenderPrimaryShadowAtlasTile(page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
             EShadowProjectionType.DirectionalCascade when request.Light is DirectionalLightComponent cascadeDirectionalLight
-                => cascadeDirectionalLight.RenderCascadeShadowAtlasTile(request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
+                => cascadeDirectionalLight.RenderCascadeShadowAtlasTile(request.Key.Source, request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
             EShadowProjectionType.PointFace when request.Light is PointLightComponent pointLight
                 => pointLight.RenderShadowAtlasFaceTile(request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow),
             _ => false,
@@ -2796,6 +2806,7 @@ public sealed class ShadowAtlasManager
             DirectionalGroupReservationFailure failure = _directionalGroupReservationFailures[i];
             if (failure.LightId == seed.Key.LightId &&
                 failure.Domain == seed.Key.Domain &&
+                failure.Source == seed.Key.Source &&
                 failure.Encoding == seed.Encoding)
             {
                 return;
@@ -2805,6 +2816,7 @@ public sealed class ShadowAtlasManager
         _directionalGroupReservationFailures.Add(new DirectionalGroupReservationFailure(
             seed.Key.LightId,
             seed.Key.Domain,
+            seed.Key.Source,
             seed.Encoding,
             reason));
     }

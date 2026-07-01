@@ -239,38 +239,24 @@ public unsafe partial class VulkanRenderer
 			buffer = default;
 			memory = default;
 			size = Math.Max(size, 1u);
-
-			BufferCreateInfo bufferInfo = new()
-			{
-				SType = StructureType.BufferCreateInfo,
-				Size = size,
-				Usage = usage,
-				SharingMode = SharingMode.Exclusive,
-			};
-
-			if (Api!.CreateBuffer(Device, ref bufferInfo, null, out buffer) != Result.Success)
-			{
-				WarnOnce($"Failed to create engine uniform buffer '{size}' bytes.");
-				return false;
-			}
-			Renderer.TrackLiveBuffer(buffer);
-
+			bool enableDeviceAddress = Renderer.IsDescriptorHeapDrawBindingActive;
+			if (enableDeviceAddress)
+				usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
 			MemoryPropertyFlags props = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-			if (!Renderer.MemoryAllocator.TryAllocateForBuffer(Api!, Device, buffer, props, out VulkanMemoryAllocation allocation))
+			try
 			{
-				if (Renderer.TryBeginDestroyBuffer(buffer, "VkMeshRenderer.CreateHostVisibleBuffer.AllocateFailure"))
-					Api.DestroyBuffer(Device, buffer, null);
-				WarnOnce("Failed to allocate memory for engine uniform buffer.");
+				(buffer, memory) = Renderer.CreateBufferRaw(size, usage, props, enableDeviceAddress);
+				Renderer.TrackMeshUniformBuffer(buffer, memory);
+				return true;
+			}
+			catch (Exception ex)
+			{
+				WarnOnce($"Failed to create engine uniform buffer '{size}' bytes: {ex.Message}");
 				buffer = default;
+				memory = default;
 				return false;
 			}
-
-			Renderer._bufferAllocations[buffer.Handle] = allocation;
-			memory = allocation.Memory;
-			Api.BindBufferMemory(Device, buffer, memory, allocation.Offset);
-			Renderer.TrackMeshUniformBuffer(buffer, memory);
-			return true;
 		}
 
 		#endregion // Uniform Buffer Allocation

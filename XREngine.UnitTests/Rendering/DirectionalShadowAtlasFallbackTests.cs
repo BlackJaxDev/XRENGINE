@@ -76,8 +76,10 @@ public sealed class DirectionalShadowAtlasFallbackTests
             "internal void ClearCascadeShadows()",
             "internal void UpdateCascadeShadows");
 
-        clearCascadeShadowsBody.ShouldContain("Array.Clear(_cascadeAtlasSlots);");
+        clearCascadeShadowsBody.ShouldContain("ClearCascadeShadows(ShadowRequestSource.Desktop);");
+        clearCascadeShadowsBody.ShouldContain("ClearCascadeShadows(ShadowRequestSource.Hmd);");
         clearCascadeShadowsBody.ShouldNotContain("_primaryAtlasSlot = default;");
+        directionalSource.ShouldContain("Array.Clear(state.AtlasSlots);");
         directionalSource.ShouldContain("internal void ClearDirectionalAtlasSlots()");
         lightsSource.ShouldContain("DynamicDirectionalLights[i].ClearDirectionalAtlasSlots();");
     }
@@ -169,7 +171,7 @@ public sealed class DirectionalShadowAtlasFallbackTests
 
         atlasManagerSource.ShouldContain("TryRenderDirectionalCascadeGroupSequentially");
         atlasManagerSource.ShouldContain("usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(light, group, collectVisibleNow);");
-        atlasManagerSource.ShouldContain("light.RenderCascadeShadowAtlasTile(request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow)");
+        atlasManagerSource.ShouldContain("light.RenderCascadeShadowAtlasTile(request.Key.Source, request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow)");
         atlasManagerSource.ShouldContain("_directionalSequentialFallbackFrame = true;");
         atlasManagerSource.ShouldContain("FallbackReason: usedSequentialFallback ? \"GroupedAtlasRenderFailed\" : light.CascadeShadowRenderFallbackReason");
         atlasManagerSource.ShouldContain("sequential fallback also failed, leaving atlas tiles stale.");

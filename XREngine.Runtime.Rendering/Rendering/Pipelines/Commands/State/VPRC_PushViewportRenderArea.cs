@@ -26,7 +26,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 res = externalRegion;
             }
-            else if (UseInternalResolution)
+            else if (UseInternalResolution || vp.RendersToExternalSwapchainTarget)
             {
                 res = vp.InternalResolutionRegion;
             }

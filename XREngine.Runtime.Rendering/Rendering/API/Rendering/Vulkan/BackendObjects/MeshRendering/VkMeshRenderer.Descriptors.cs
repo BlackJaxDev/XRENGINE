@@ -116,6 +116,7 @@ public unsafe partial class VulkanRenderer
 				? VulkanBindlessMaterialDescriptors.BuildVariableDescriptorCounts(bindings, layoutArray.Length)
 				: [];
 			DescriptorSet[][] descriptorSets = new DescriptorSet[descriptorFrameSlotCount][];
+			DescriptorHeapPushDataPayload[] descriptorHeapPushData = new DescriptorHeapPushDataPayload[descriptorFrameSlotCount];
 			DescriptorAllocation allocation = new()
 			{
 				Program = _program,
@@ -125,6 +126,7 @@ public unsafe partial class VulkanRenderer
 				SetCount = setCount,
 				Pool = descriptorPool,
 				Sets = descriptorSets,
+				DescriptorHeapPushData = descriptorHeapPushData,
 				SchemaFingerprint = schemaFingerprint,
 				ResourceFingerprint = resourceFingerprint
 			};
@@ -165,6 +167,7 @@ public unsafe partial class VulkanRenderer
 
 					int descriptorSlotIndex = ResolveUniformBufferIndex(frame, drawSlot, descriptorSets.Length);
 					descriptorSets[descriptorSlotIndex] = frameSets;
+					descriptorHeapPushData[descriptorSlotIndex] = Renderer.CreateDescriptorHeapPushDataPayload(_program.DescriptorHeapLayout);
 
 					if (!WriteDescriptorSets(frameSets, bindings, material, frame, drawSlot, allocation, descriptorSlotIndex))
 					{
@@ -1012,6 +1015,25 @@ public unsafe partial class VulkanRenderer
 						return false;
 					}
 
+					if (Renderer.IsDescriptorHeapDrawBindingActive)
+					{
+						DescriptorHeapPushDataPayload? payload = allocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
+							(uint)descriptorSlotIndex < (uint)heapPayloads.Length
+								? heapPayloads[descriptorSlotIndex]
+								: null;
+						if (payload is null || _program is null)
+						{
+							reason = $"descriptor heap frame-source payload missing for '{binding.Name}'";
+							return false;
+						}
+
+						if (!Renderer.TryWriteDescriptorHeapBinding(_program, binding, payload, null, imageInfoPtr, null, descriptorCount, out string heapReason))
+						{
+							reason = $"descriptor heap frame-source sampler '{binding.Name}' update failed: {heapReason}";
+							return false;
+						}
+					}
+
 					Api!.UpdateDescriptorSets(Device, 1, &write, 0, null);
 				}
 
@@ -1450,9 +1472,9 @@ public unsafe partial class VulkanRenderer
 			List<DescriptorBufferInfo> bufferInfos = [];
 			List<DescriptorImageInfo> imageInfos = [];
 			List<BufferView> texelBufferViews = [];
-			List<(int writeIndex, int bufferIndex)> bufferMap = [];
+			List<(int writeIndex, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount)> bufferMap = [];
 			List<(int writeIndex, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount)> imageMap = [];
-			List<(int writeIndex, int texelIndex)> texelMap = [];
+			List<(int writeIndex, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount)> texelMap = [];
 
 			foreach (DescriptorBindingInfo binding in bindings)
 			{
@@ -1475,7 +1497,7 @@ public unsafe partial class VulkanRenderer
 							return false;
 						}
 
-						bufferMap.Add((writes.Count, bufferStart));
+						bufferMap.Add((writes.Count, bufferStart, binding, descriptorCount));
 						writes.Add(new WriteDescriptorSet
 						{
 							SType = StructureType.WriteDescriptorSet,
@@ -1517,7 +1539,7 @@ public unsafe partial class VulkanRenderer
 							return false;
 						}
 
-						texelMap.Add((writes.Count, texelStart));
+						texelMap.Add((writes.Count, texelStart, binding, descriptorCount));
 						writes.Add(new WriteDescriptorSet
 						{
 							SType = StructureType.WriteDescriptorSet,
@@ -1544,19 +1566,83 @@ public unsafe partial class VulkanRenderer
 			fixed (BufferView* texelPtr = texelArray)
 			fixed (WriteDescriptorSet* writePtr = writeArray)
 			{
-				foreach (var (writeIndex, bufferIndex) in bufferMap)
+				foreach (var (writeIndex, bufferIndex, _, _) in bufferMap)
 					writePtr[writeIndex].PBufferInfo = bufferPtr + bufferIndex;
 
 				foreach (var (writeIndex, imageIndex, _, _) in imageMap)
 					writePtr[writeIndex].PImageInfo = imagePtr + imageIndex;
 
-				foreach (var (writeIndex, texelIndex) in texelMap)
+				foreach (var (writeIndex, texelIndex, _, _) in texelMap)
 					writePtr[writeIndex].PTexelBufferView = texelPtr + texelIndex;
 
 				if (writeArray.Length > 0)
 				{
 					if (!ValidateDescriptorWrites(writePtr, writeArray.Length))
 						return false;
+
+					if (Renderer.IsDescriptorHeapDrawBindingActive)
+					{
+						DescriptorHeapPushDataPayload? payload = allocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
+							(uint)descriptorSlotIndex < (uint)heapPayloads.Length
+								? heapPayloads[descriptorSlotIndex]
+								: null;
+						if (payload is null)
+						{
+							WarnOnce($"Skipping descriptor heap update for mesh '{Mesh?.Name ?? "?"}' because descriptor slot {descriptorSlotIndex} has no heap push payload.");
+							return false;
+						}
+
+						foreach (var (_, bufferIndex, binding, descriptorCount) in bufferMap)
+						{
+							if (_program is null)
+							{
+								WarnOnce($"[WriteDescHeap] FAILED buffer binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': program missing");
+								RecordDescriptorFailure(binding, "descriptor heap buffer write failed: program missing");
+								return false;
+							}
+
+							if (!Renderer.TryWriteDescriptorHeapBinding(_program, binding, payload, bufferPtr + bufferIndex, null, null, descriptorCount, out string heapReason))
+							{
+								WarnOnce($"[WriteDescHeap] FAILED buffer binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': {heapReason}");
+								RecordDescriptorFailure(binding, $"descriptor heap buffer write failed: {heapReason}");
+								return false;
+							}
+						}
+
+						foreach (var (_, imageIndex, binding, descriptorCount) in imageMap)
+						{
+							if (_program is null)
+							{
+								WarnOnce($"[WriteDescHeap] FAILED image binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': program missing");
+								RecordDescriptorFailure(binding, "descriptor heap image write failed: program missing");
+								return false;
+							}
+
+							if (!Renderer.TryWriteDescriptorHeapBinding(_program, binding, payload, null, imagePtr + imageIndex, null, descriptorCount, out string heapReason))
+							{
+								WarnOnce($"[WriteDescHeap] FAILED image binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': {heapReason}");
+								RecordDescriptorFailure(binding, $"descriptor heap image write failed: {heapReason}");
+								return false;
+							}
+						}
+
+						foreach (var (_, texelIndex, binding, descriptorCount) in texelMap)
+						{
+							if (_program is null)
+							{
+								WarnOnce($"[WriteDescHeap] FAILED texel binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': program missing");
+								RecordDescriptorFailure(binding, "descriptor heap texel write failed: program missing");
+								return false;
+							}
+
+							if (!Renderer.TryWriteDescriptorHeapBinding(_program, binding, payload, null, null, texelPtr + texelIndex, descriptorCount, out string heapReason))
+							{
+								WarnOnce($"[WriteDescHeap] FAILED texel binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': {heapReason}");
+								RecordDescriptorFailure(binding, $"descriptor heap texel write failed: {heapReason}");
+								return false;
+							}
+						}
+					}
 
 					if (!TryUpdateDescriptorSetsWithTemplates(frameSets, writeArray))
 						Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);

@@ -28,6 +28,13 @@ public enum ShadowRequestDomain
     Capture = 3,
 }
 
+public enum ShadowRequestSource
+{
+    Default = 0,
+    Desktop = 1,
+    Hmd = 2,
+}
+
 public enum ShadowFallbackMode
 {
     None = 0,
@@ -102,6 +109,7 @@ public enum ShadowDirtyReason
 public readonly record struct ShadowRequestKey(
     Guid LightId,
     ShadowRequestDomain Domain,
+    ShadowRequestSource Source,
     EShadowProjectionType ProjectionType,
     int FaceOrCascadeIndex,
     EShadowMapEncoding Encoding) : IComparable<ShadowRequestKey>
@@ -113,6 +121,10 @@ public readonly record struct ShadowRequestKey(
             return result;
 
         result = ProjectionType.CompareTo(other.ProjectionType);
+        if (result != 0)
+            return result;
+
+        result = Source.CompareTo(other.Source);
         if (result != 0)
             return result;
 
@@ -176,6 +188,7 @@ public readonly record struct ShadowAtlasGroupedAllocationMember(
 public readonly record struct ShadowAtlasGroupedDirectionalCascadeAllocation(
     Guid LightId,
     ShadowRequestDomain Domain,
+    ShadowRequestSource Source,
     EShadowMapEncoding Encoding,
     EShadowAtlasKind AtlasKind,
     int AtlasId,

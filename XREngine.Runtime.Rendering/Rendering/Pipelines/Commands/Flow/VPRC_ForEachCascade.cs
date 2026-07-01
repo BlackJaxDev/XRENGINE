@@ -2,6 +2,7 @@ using System;
 using XREngine.Components.Lights;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -15,6 +16,7 @@ public sealed class VPRC_ForEachCascade : ViewportRenderCommand
 
     public string? DirectionalLightName { get; set; }
     public int DirectionalLightIndex { get; set; }
+    public ShadowRequestSource CascadeSource { get; set; } = ShadowRequestSource.Default;
     public bool BindCascadeFrameBuffer { get; set; }
     public bool BindForWriting { get; set; } = true;
     public bool ClearColor { get; set; }
@@ -50,7 +52,8 @@ public sealed class VPRC_ForEachCascade : ViewportRenderCommand
         if (light is null)
             return;
 
-        int cascadeCount = light.ActiveCascadeCount;
+        ShadowRequestSource source = ResolveCascadeSource();
+        int cascadeCount = light.GetActiveCascadeCount(source);
         if (cascadeCount <= 0)
             return;
 
@@ -60,22 +63,22 @@ public sealed class VPRC_ForEachCascade : ViewportRenderCommand
         for (int cascadeIndex = 0; cascadeIndex < cascadeCount; cascadeIndex++)
         {
             variables.Set(CascadeIndexVariableName, cascadeIndex);
-            variables.Set(CascadeSplitVariableName, light.GetCascadeSplit(cascadeIndex));
-            variables.Set(CascadeMatrixVariableName, light.GetCascadeMatrix(cascadeIndex));
-            variables.Set(CascadeCenterVariableName, light.GetCascadeCenter(cascadeIndex));
-            variables.Set(CascadeHalfExtentsVariableName, light.GetCascadeHalfExtents(cascadeIndex));
+            variables.Set(CascadeSplitVariableName, light.GetCascadeSplit(source, cascadeIndex));
+            variables.Set(CascadeMatrixVariableName, light.GetCascadeMatrix(source, cascadeIndex));
+            variables.Set(CascadeCenterVariableName, light.GetCascadeCenter(source, cascadeIndex));
+            variables.Set(CascadeHalfExtentsVariableName, light.GetCascadeHalfExtents(source, cascadeIndex));
 
-            XRFrameBuffer? cascadeFbo = light.GetCascadeFrameBuffer(cascadeIndex);
-            XRCamera? cascadeCamera = light.GetCascadeCamera(cascadeIndex);
-            XRViewport? cascadeViewport = light.GetCascadeViewport(cascadeIndex);
+            XRFrameBuffer? cascadeFbo = light.GetCascadeFrameBuffer(source, cascadeIndex);
+            XRCamera? cascadeCamera = light.GetCascadeCamera(source, cascadeIndex);
+            XRViewport? cascadeViewport = light.GetCascadeViewport(source, cascadeIndex);
 
             if (cascadeFbo is not null)
                 variables.SetFrameBuffer(CascadeFrameBufferVariableName, cascadeFbo);
             else
                 variables.Remove(CascadeFrameBufferVariableName);
 
-            if (light.CascadedShadowReceiverTexture is not null)
-                variables.SetTexture(CascadeTextureVariableName, light.CascadedShadowReceiverTexture);
+            if (light.GetCascadedShadowReceiverTexture(source) is XRTexture2DArray cascadeReceiverTexture)
+                variables.SetTexture(CascadeTextureVariableName, cascadeReceiverTexture);
             else
                 variables.Remove(CascadeTextureVariableName);
 
@@ -149,6 +152,18 @@ public sealed class VPRC_ForEachCascade : ViewportRenderCommand
         return DirectionalLightIndex >= 0 && DirectionalLightIndex < lights.Count
             ? lights[DirectionalLightIndex]
             : null;
+    }
+
+    private ShadowRequestSource ResolveCascadeSource()
+    {
+        if (CascadeSource != ShadowRequestSource.Default)
+            return CascadeSource;
+
+        XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera
+            ?? ActivePipelineInstance.RenderState.RenderingCamera
+            ?? ActivePipelineInstance.LastRenderingCamera
+            ?? ActivePipelineInstance.RenderState.SceneCamera;
+        return DirectionalLightComponent.GetCascadeSourceForCamera(camera);
     }
 
     private void AttachPipeline(ViewportRenderCommandContainer? container)

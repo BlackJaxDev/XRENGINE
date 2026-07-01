@@ -28,7 +28,8 @@ public sealed class RenderPassResourceUsage
         ERenderGraphAccess access,
         ERenderPassLoadOp loadOp = ERenderPassLoadOp.Load,
         ERenderPassStoreOp storeOp = ERenderPassStoreOp.Store,
-        RenderGraphSubresourceRange? subresourceRange = null)
+        RenderGraphSubresourceRange? subresourceRange = null,
+        uint? resolveSourceColorIndex = null)
     {
         ResourceName = resourceName;
         ResourceType = resourceType;
@@ -36,6 +37,7 @@ public sealed class RenderPassResourceUsage
         LoadOp = loadOp;
         StoreOp = storeOp;
         SubresourceRange = Normalize(subresourceRange ?? RenderGraphSubresourceRange.Full);
+        ResolveSourceColorIndex = resolveSourceColorIndex;
     }
 
     public string ResourceName { get; }
@@ -44,6 +46,7 @@ public sealed class RenderPassResourceUsage
     public ERenderPassLoadOp LoadOp { get; }
     public ERenderPassStoreOp StoreOp { get; }
     public RenderGraphSubresourceRange SubresourceRange { get; }
+    public uint? ResolveSourceColorIndex { get; }
 
     public bool IsAttachment => ResourceType
         is ERenderPassResourceType.ColorAttachment

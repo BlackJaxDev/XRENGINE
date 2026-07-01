@@ -89,9 +89,9 @@ public sealed class LightShadowMapStorageFormatTests
         (shadowMap.Name ?? string.Empty).ShouldContain(".PrimaryColor");
         light.CascadedShadowMapTexture.ShouldNotBeNull();
         light.CascadedShadowMapTexture!.SizedInternalFormat.ShouldBe(ESizedInternalFormat.R16f);
-        (light.CascadedShadowMapTexture.Name ?? string.Empty).ShouldContain(".Cascade.ColorArray");
+        (light.CascadedShadowMapTexture.Name ?? string.Empty).ShouldContain(".Cascade.Desktop.ColorArray");
         light.GetCascadeFrameBuffer(0).ShouldNotBeNull();
-        (light.GetCascadeFrameBuffer(0)!.Name ?? string.Empty).ShouldContain(".Cascade.Layer0Fbo");
+        (light.GetCascadeFrameBuffer(0)!.Name ?? string.Empty).ShouldContain(".Cascade.Desktop.Layer0Fbo");
 
         bool previousIsVulkan = RuntimeEngine.Rendering.State.IsVulkan;
         try
@@ -99,7 +99,7 @@ public sealed class LightShadowMapStorageFormatTests
             RuntimeEngine.Rendering.State.IsVulkan = true;
             light.CascadedShadowReceiverTexture.ShouldNotBeNull();
             light.CascadedShadowReceiverTexture!.SizedInternalFormat.ShouldBe(ESizedInternalFormat.DepthComponent32f);
-            (light.CascadedShadowReceiverTexture.Name ?? string.Empty).ShouldContain(".Cascade.RasterDepthArray");
+            (light.CascadedShadowReceiverTexture.Name ?? string.Empty).ShouldContain(".Cascade.Desktop.RasterDepthArray");
         }
         finally
         {

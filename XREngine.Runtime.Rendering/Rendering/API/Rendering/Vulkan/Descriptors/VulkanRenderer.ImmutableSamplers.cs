@@ -76,7 +76,7 @@ public unsafe partial class VulkanRenderer
         if (Api!.CreateSampler(device, ref info, null, out Sampler handle) == Result.Success)
         {
             _canonicalImmutableSamplers[index] = handle;
-            RegisterLiveSampler(handle);
+            RegisterLiveSampler(handle, in info);
         }
         else
             Debug.VulkanWarning($"[Vulkan] Failed to create canonical immutable sampler '{sampler}'.");

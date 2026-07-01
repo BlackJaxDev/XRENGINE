@@ -1,6 +1,6 @@
 # Deferred+ Render Path TODO
 
-Last Updated: 2026-06-30
+Last Updated: 2026-07-01
 Owner: Rendering
 Status: Proposed
 Target Branch: `rendering-deferred-plus-render-path`
@@ -12,6 +12,7 @@ Design source:
 - [Material Table And Texture Binding Ladder TODO](material-table-and-texture-binding-ladder-todo.md)
 - [Clustered Light Binning And Deferred MSAA Design](../../../design/rendering/clustered-light-binning-and-deferred-msaa-design.md)
 - [Dynamic Indirect Material Bindings](../../../design/rendering/dynamic-indirect-material-bindings.md)
+- [Vulkan Descriptor Heap Optimization Design](../../../design/rendering/vulkan-descriptor-heap-optimization-design.md)
 - [GPU Meshlet Zero-Readback Rendering Design](../../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [XRE Virtual Geometry Design](../../../design/rendering/xre-virtual-geometry-design.md)
 
@@ -37,7 +38,8 @@ diagnostics are stable.
 - Compatibility material resolve into `AlbedoOpacity`, `Normal`, and `RMSE`.
 - Native material-region shading for standard opaque PBR, then more material
   families.
-- Texture binding through the material table and active texture binding rung.
+- Texture binding through the material table and active texture binding rung;
+  on Vulkan, prefer descriptor heap over descriptor indexing when available.
 - Meshlet, zero-readback indirect, and future virtual-geometry integration.
 - Debug views, profiler counters, RenderDoc-friendly resources, and validation
   scenes.
@@ -71,6 +73,12 @@ diagnostics are stable.
   barycentrics, or conservative LOD bias.
 - [ ] Define fallback behavior for unsupported payload formats, unsupported
   material classes, missing texture binding rungs, and bounded-list overflow.
+- [ ] Define the Deferred+ binding ladder:
+  `DescriptorHeap`, `DescriptorIndexing`, `OpenGLBindless`, homogeneous
+  `TextureArray`, then coarse fallback.
+- [ ] Record that descriptor heap does not merge incompatible render states;
+  Deferred+ batching is one draw/dispatch per compatible material kernel,
+  layout, and render state class.
 - [ ] Add planned diagnostics fields before shader bring-up.
 
 Acceptance criteria:
@@ -122,8 +130,8 @@ Acceptance criteria:
 - [ ] Fail visibly or report selected fallback when a requested Deferred+ mode
   lacks required backend features.
 - [ ] Add profile capture fields for selected Deferred+ mode, region backend,
-  payload format, derivative mode, texture binding rung, fallback reason, and
-  GPU timings.
+  payload format, derivative mode, descriptor backend, texture binding rung,
+  fallback reason, and GPU timings.
 
 Acceptance criteria:
 
@@ -164,6 +172,9 @@ Acceptance criteria:
 - [ ] Group material work by shader compatibility first:
   `shadingKernelId + materialLayoutHash + materialStateClass`, with optional
   `MaterialId` only when needed.
+- [ ] Ensure material classification never groups by descriptor set object;
+  descriptor heap and descriptor indexing paths must both group by stable
+  kernel/layout/material-row data.
 - [ ] Build `DeferredPlusMaterialTileList` for active screen tiles grouped by
   material kernel and optional material ID.
 - [ ] Build `DeferredPlusPixelList` for high-diversity or high-overdraw tiles
@@ -213,7 +224,13 @@ Acceptance criteria:
 
 - [ ] Add a standard opaque PBR material resolve kernel.
 - [ ] Fetch material constants from the material table.
-- [ ] Fetch texture references through the active texture binding rung.
+- [ ] Fetch texture references through the active texture binding rung,
+  preferring descriptor heap resource/sampler heap indices on Vulkan.
+- [ ] Store material texture references as backend-neutral resource binding
+  refs so descriptor indexing can remain the fallback encoding.
+- [ ] Do not rely on CPU-pushed per-material descriptor indices inside the
+  resolve; the shader must load texture/resource indices from material rows or
+  pass-resource tables.
 - [ ] Resolve material textures after visibility is known.
 - [ ] Reconstruct `AlbedoOpacity`, `Normal`, and `RMSE` outputs.
 - [ ] Preserve `TransformId`, depth, and velocity inputs needed by downstream
@@ -236,6 +253,9 @@ Acceptance criteria:
 - [ ] Add direct HDR or lighting-output path for the standard PBR kernel.
 - [ ] Consume `ClusteredFroxelLightGrid` from the material kernel for local
   point and spot lights.
+- [ ] Bind descriptor heaps once per command-buffer scope where supported, then
+  shade material regions through material-row heap indices rather than
+  descriptor-set binds per material.
 - [ ] Keep shared light records, shadow maps, probes, and froxel lists as the
   common lighting inputs.
 - [ ] Add unlit/emissive native kernel.
@@ -280,6 +300,8 @@ Acceptance criteria:
   available.
 - [ ] Require classic, meshlet, and virtual-geometry visibility producers to
   write the same Deferred+ payload contract.
+- [ ] Require GPU-driven Deferred+ material paths to resolve descriptor heap
+  indices from draw/material GPU data, not from CPU push data per indirect draw.
 - [ ] Avoid CPU readbacks for material region counts, visible cluster counts,
   and dispatch counts in production mode.
 - [ ] Add delayed-readback diagnostics only for counters and debugging.
@@ -324,11 +346,12 @@ Acceptance criteria:
 - [ ] Capture RenderDoc or equivalent GPU evidence for visibility payload,
   froxel grid, material region buffers, range map, optional material mask/depth
   target, reconstructed attributes, material texture descriptors, material
-  resolve outputs, and native lighting output.
+  resolve outputs, descriptor heap/resource table state where available, and
+  native lighting output.
 - [ ] Capture performance comparison against current deferred and Forward+:
   geometry bandwidth estimate, geometry pass GPU time, classification GPU time,
   material shading GPU time, lighting GPU time, material region count, overdraw,
-  and fallback pixel count.
+  descriptor backend, descriptor bind/push count, and fallback pixel count.
 - [ ] Update design, architecture, settings, diagnostics, and developer docs for
   final payload format, settings, fallback policy, validation scenes, and known
   limitations.

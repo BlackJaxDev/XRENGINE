@@ -9,6 +9,7 @@ using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
+using XREngine.Rendering.Shadows;
 
 namespace XREngine.Scene
 {
@@ -44,14 +45,21 @@ namespace XREngine.Scene
             return viewport.RendersToExternalSwapchainTarget && viewport.ActiveCamera is not null;
         }
 
-        private bool HasActiveCascadedDirectionalShadowViewport()
+        private bool HasActiveCascadedDirectionalShadowViewport(ShadowRequestSource source)
         {
             bool Matches(XRViewport? viewport)
-                => viewport is not null
-                    && ViewportTargetsWorld(viewport, World)
-                    && !viewport.Suppress3DSceneRendering
-                    && viewport.ActiveCamera is not null
-                    && ViewportPrefersCascadedDirectionalShadows(viewport);
+            {
+                if (viewport is null ||
+                    !ViewportTargetsWorld(viewport, World) ||
+                    viewport.Suppress3DSceneRendering ||
+                    viewport.ActiveCamera is not XRCamera camera ||
+                    !ViewportPrefersCascadedDirectionalShadows(viewport))
+                {
+                    return false;
+                }
+
+                return DirectionalLightComponent.GetCascadeSourceForCamera(camera) == source;
+            }
 
             foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
                 if (Matches(viewport))
@@ -73,7 +81,10 @@ namespace XREngine.Scene
                     return false;
 
                 sawRelevantViewport = true;
-                return !ViewportPrefersCascadedDirectionalShadows(viewport);
+                if (!ViewportPrefersCascadedDirectionalShadows(viewport))
+                    return true;
+
+                return false;
             }
 
             foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
@@ -86,7 +97,7 @@ namespace XREngine.Scene
             return !sawRelevantViewport;
         }
 
-        private XRCamera? ResolveDirectionalShadowSourceCamera()
+        private XRCamera? ResolveDirectionalShadowSourceCamera(ShadowRequestSource source)
         {
             XRCamera? preferredCascaded = null;
             XRCamera? preferredFallback = null;
@@ -100,6 +111,9 @@ namespace XREngine.Scene
 
                 XRCamera? camera = viewport.ActiveCamera;
                 if (camera is null)
+                    return;
+
+                if (DirectionalLightComponent.GetCascadeSourceForCamera(camera) != source)
                     return;
 
                 if (ViewportPrefersCascadedDirectionalShadows(viewport))
@@ -129,38 +143,56 @@ namespace XREngine.Scene
             if (cascadedFallback is not null)
                 return cascadedFallback;
 
-            if (RuntimeEngine.VRState.LeftEyeViewport is XRViewport leftEye)
-                ConsiderViewport(leftEye);
-            if (preferredCascaded is not null)
-                return preferredCascaded;
+            if (source == ShadowRequestSource.Hmd)
+            {
+                if (RuntimeEngine.VRState.LeftEyeViewport is XRViewport leftEye)
+                    ConsiderViewport(leftEye);
+                if (preferredCascaded is not null)
+                    return preferredCascaded;
 
-            if (RuntimeEngine.VRState.RightEyeViewport is XRViewport rightEye)
-                ConsiderViewport(rightEye);
+                if (RuntimeEngine.VRState.RightEyeViewport is XRViewport rightEye)
+                    ConsiderViewport(rightEye);
+            }
 
             return preferredCascaded ?? cascadedFallback ?? preferredFallback ?? fallback;
         }
 
         private void PrepareDirectionalShadowMaps()
         {
-            bool wantsCascades = HasActiveCascadedDirectionalShadowViewport();
-            XRCamera? cascadeCamera = wantsCascades ? ResolveDirectionalShadowSourceCamera() : null;
-            LogDirectionalShadowSourceAudit(wantsCascades, cascadeCamera);
+            bool wantsDesktopCascades = HasActiveCascadedDirectionalShadowViewport(ShadowRequestSource.Desktop);
+            bool wantsHmdCascades = HasActiveCascadedDirectionalShadowViewport(ShadowRequestSource.Hmd);
+            XRCamera? desktopCascadeCamera = wantsDesktopCascades ? ResolveDirectionalShadowSourceCamera(ShadowRequestSource.Desktop) : null;
+            XRCamera? hmdCascadeCamera = wantsHmdCascades ? ResolveDirectionalShadowSourceCamera(ShadowRequestSource.Hmd) : null;
+            LogDirectionalShadowSourceAudit(wantsDesktopCascades || wantsHmdCascades, desktopCascadeCamera, hmdCascadeCamera);
 
             int lightCount = DynamicDirectionalLights.Count;
             for (int i = 0; i < lightCount; i++)
             {
                 DirectionalLightComponent light = DynamicDirectionalLights[i];
                 if (!light.IsActiveInHierarchy)
+                {
+                    light.ClearCascadeShadows();
                     continue;
+                }
 
-                if (wantsCascades && cascadeCamera is not null && light.CastsShadows && light.EnableCascadedShadows)
-                    light.UpdateCascadeShadows(cascadeCamera);
+                if (light.CastsShadows && light.EnableCascadedShadows)
+                {
+                    if (desktopCascadeCamera is not null)
+                        light.UpdateCascadeShadows(ShadowRequestSource.Desktop, desktopCascadeCamera);
+                    else
+                        light.ClearCascadeShadows(ShadowRequestSource.Desktop);
+
+                    if (hmdCascadeCamera is not null)
+                        light.UpdateCascadeShadows(ShadowRequestSource.Hmd, hmdCascadeCamera);
+                    else
+                        light.ClearCascadeShadows(ShadowRequestSource.Hmd);
+                }
                 else
                     light.ClearCascadeShadows();
             }
         }
 
-        private void LogDirectionalShadowSourceAudit(bool wantsCascades, XRCamera? cascadeCamera)
+        private void LogDirectionalShadowSourceAudit(bool wantsCascades, XRCamera? desktopCascadeCamera, XRCamera? hmdCascadeCamera)
         {
             if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
                 !Debug.ShouldLogEvery(
@@ -177,7 +209,7 @@ namespace XREngine.Scene
                 RuntimeEngine.Rendering.State.RenderFrameId,
                 RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas,
                 wantsCascades,
-                DescribeDirectionalShadowCamera(cascadeCamera),
+                $"desktop={DescribeDirectionalShadowCamera(desktopCascadeCamera)} hmd={DescribeDirectionalShadowCamera(hmdCascadeCamera)}",
                 DynamicDirectionalLights.Count);
 
             int ordinal = 0;

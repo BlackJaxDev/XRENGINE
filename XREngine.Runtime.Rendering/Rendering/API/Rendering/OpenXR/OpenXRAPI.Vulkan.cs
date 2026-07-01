@@ -722,15 +722,20 @@ public unsafe partial class OpenXRAPI
 
     private void EnsureOpenXrStereoViewport(uint width, uint height)
     {
-        _openXrStereoViewport ??= new XRViewport(Window)
+        _openXrStereoViewport ??= new XRViewport(null)
         {
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
             SetRenderPipelineFromCamera = false,
-            RendersToExternalSwapchainTarget = false
+            RendersToExternalSwapchainTarget = true
         };
 
+        // The true single-pass stereo viewport renders into a renderer-owned array
+        // staging FBO, but its extent is dictated by the OpenXR runtime. Treat it
+        // as an external target so resource generation catches up synchronously
+        // before the array layers are published to acquired swapchain images.
+        _openXrStereoViewport.RendersToExternalSwapchainTarget = true;
         _openXrStereoViewport.CullWithFrustum = RuntimeEngine.Rendering.Settings.OpenXrCullWithFrustum;
         _openXrStereoViewport.SetFullScreen();
         if (_openXrStereoViewport.Width != (int)width || _openXrStereoViewport.Height != (int)height)
@@ -1289,6 +1294,19 @@ public unsafe partial class OpenXRAPI
                 return false;
             }
 
+            if (stereoViewport.RenderPipelineInstance.SkippedResizeCatchUpThisFrame)
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.TrueSinglePassStereo.ResizeCatchUpSkipped.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Vulkan true stereo render skipped during resource resize catch-up; not publishing unrendered stereo array layers. fbo='{0}' extent={1}x{2} pipeline='{3}'",
+                    target.FrameBuffer.Name ?? "<unnamed FBO>",
+                    target.Extent.Width,
+                    target.Extent.Height,
+                    stereoPipeline.DebugName);
+                return false;
+            }
+
             Debug.VulkanEvery(
                 $"OpenXR.Vulkan.TrueSinglePassStereo.Rendered.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
@@ -1309,14 +1327,16 @@ public unsafe partial class OpenXRAPI
                 target.LeftSwapchainImage,
                 target.LeftSwapchainFormat,
                 target.Extent,
-                $"true stereo left eye swapchain image {leftImageIndex}");
+                $"true stereo left eye swapchain image {leftImageIndex}",
+                flipY: false);
             bool rightPublished = renderer.TryBlitTextureArrayLayerToOpenXrSwapchainImage(
                 target.ColorArrayTexture,
                 sourceLayer: 1,
                 target.RightSwapchainImage,
                 target.RightSwapchainFormat,
                 target.Extent,
-                $"true stereo right eye swapchain image {rightImageIndex}");
+                $"true stereo right eye swapchain image {rightImageIndex}",
+                flipY: false);
 
             if (!leftPublished || !rightPublished)
                 return false;

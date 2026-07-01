@@ -46,6 +46,7 @@ public unsafe partial class VulkanRenderer
         {
             if (_view.Handle != 0)
             {
+                Renderer.UntrackDescriptorHeapBufferView(_view);
                 Api!.DestroyBufferView(Device, _view, null);
                 _view = default;
             }
@@ -198,6 +199,8 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.CreateBufferView(Device, ref createInfo, null, out _view) != Result.Success)
                 throw new Exception($"Failed to create Vulkan buffer view for texture buffer '{Data.Name ?? "<unnamed>"}'.");
+
+            Renderer.TrackDescriptorHeapBufferView(_view, in createInfo);
         }
 
         /// <summary>

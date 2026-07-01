@@ -191,6 +191,22 @@ public unsafe partial class VulkanRenderer
         public ImageLayout ResolveImageLayout { get; }
         public bool HasResolveAttachment => ResolveMode != default && ResolveImageView.Handle != 0;
 
+        public DynamicRenderingAttachmentPlan WithResolve(in DynamicRenderingAttachmentPlan resolveAttachment, ResolveModeFlags resolveMode)
+            => new(
+                Image,
+                ImageView,
+                Format,
+                AspectMask,
+                InitialLayout,
+                RenderingLayout,
+                FinalLayout,
+                LoadOp,
+                StoreOp,
+                ClearValue,
+                resolveAttachment.ImageView,
+                resolveMode,
+                resolveAttachment.RenderingLayout);
+
         public RenderingAttachmentInfo ToRenderingAttachmentInfo()
             => new()
             {
@@ -204,6 +220,31 @@ public unsafe partial class VulkanRenderer
                 StoreOp = StoreOp,
                 ClearValue = ClearValue,
             };
+    }
+
+    internal readonly ref struct DynamicRenderingLocalReadPlan
+    {
+        public DynamicRenderingLocalReadPlan(
+            ReadOnlySpan<uint> colorAttachmentLocations,
+            ReadOnlySpan<uint> colorInputAttachmentIndices,
+            uint? depthInputAttachmentIndex = null,
+            uint? stencilInputAttachmentIndex = null)
+        {
+            ColorAttachmentLocations = colorAttachmentLocations;
+            ColorInputAttachmentIndices = colorInputAttachmentIndices;
+            DepthInputAttachmentIndex = depthInputAttachmentIndex;
+            StencilInputAttachmentIndex = stencilInputAttachmentIndex;
+        }
+
+        public ReadOnlySpan<uint> ColorAttachmentLocations { get; }
+        public ReadOnlySpan<uint> ColorInputAttachmentIndices { get; }
+        public uint? DepthInputAttachmentIndex { get; }
+        public uint? StencilInputAttachmentIndex { get; }
+        public bool Enabled =>
+            ColorAttachmentLocations.Length > 0 ||
+            ColorInputAttachmentIndices.Length > 0 ||
+            DepthInputAttachmentIndex.HasValue ||
+            StencilInputAttachmentIndex.HasValue;
     }
 
     internal readonly ref struct DynamicRenderingScopePlan
@@ -220,6 +261,35 @@ public unsafe partial class VulkanRenderer
             bool depthStencilReadOnly,
             DynamicRenderingFormatSignature formatSignature,
             SampleCountFlags sampleCount)
+            : this(
+                renderArea,
+                layerCount,
+                viewMask,
+                colorAttachments,
+                depthAttachment,
+                hasDepthAttachment,
+                stencilAttachment,
+                hasStencilAttachment,
+                depthStencilReadOnly,
+                formatSignature,
+                sampleCount,
+                default)
+        {
+        }
+
+        public DynamicRenderingScopePlan(
+            Rect2D renderArea,
+            uint layerCount,
+            uint viewMask,
+            ReadOnlySpan<DynamicRenderingAttachmentPlan> colorAttachments,
+            DynamicRenderingAttachmentPlan depthAttachment,
+            bool hasDepthAttachment,
+            DynamicRenderingAttachmentPlan stencilAttachment,
+            bool hasStencilAttachment,
+            bool depthStencilReadOnly,
+            DynamicRenderingFormatSignature formatSignature,
+            SampleCountFlags sampleCount,
+            DynamicRenderingLocalReadPlan localRead)
         {
             RenderArea = renderArea;
             LayerCount = ResolveDynamicRenderingLayerCount(layerCount, viewMask);
@@ -232,6 +302,7 @@ public unsafe partial class VulkanRenderer
             DepthStencilReadOnly = depthStencilReadOnly;
             FormatSignature = formatSignature;
             SampleCount = sampleCount;
+            LocalRead = localRead;
         }
 
         public Rect2D RenderArea { get; }
@@ -246,6 +317,7 @@ public unsafe partial class VulkanRenderer
         public DynamicRenderingFormatSignature FormatSignature { get; }
         public DynamicRenderingFormatSignature SemanticSignature => FormatSignature;
         public SampleCountFlags SampleCount { get; }
+        public DynamicRenderingLocalReadPlan LocalRead { get; }
     }
 
     private static uint ResolveDynamicRenderingLayerCount(uint framebufferLayers, uint viewMask)

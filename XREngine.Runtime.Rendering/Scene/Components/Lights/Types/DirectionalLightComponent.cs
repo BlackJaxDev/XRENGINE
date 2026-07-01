@@ -41,7 +41,7 @@ namespace XREngine.Components.Lights
         public DirectionalLightComponent()
             : base(EShadowMapStorageFormat.Depth24)
         {
-            _cascadeAabbView = new(this);
+            _cascadeAabbView = new(this, ShadowRequestSource.Desktop);
 
             // Match the tuned runtime defaults used for live shadow-map rendering.
             SetShadowMapResolution(2048u, 2048u);
@@ -244,6 +244,7 @@ namespace XREngine.Components.Lights
             float[] cascadeReceiverOffsets = _uniformCascadeReceiverOffsets;
             Matrix4x4[] cascadeMatrices = _uniformCascadeMatrices;
             CopyPublishedCascadeUniformData(
+                RuntimeEngine.Rendering.State.RenderingCamera,
                 cascadeSplits,
                 cascadeBlendWidths,
                 cascadeBiasMins,
@@ -301,9 +302,10 @@ namespace XREngine.Components.Lights
             int cascadeCount;
             lock (_cascadeDataLock)
             {
-                cascadeCount = Math.Min(_cascadeShadowSlices.Count, MaxCascadeRenderCount);
+                DirectionalCascadeSourceState cascadeState = GetCascadeSourceState(ResolveCurrentCascadeRenderSource());
+                cascadeCount = Math.Min(cascadeState.Slices.Count, MaxCascadeRenderCount);
                 for (int i = 0; i < cascadeCount; i++)
-                    program.Uniform(CascadeViewProjectionMatrixUniformNames[i], _cascadeShadowSlices[i].WorldToLightSpaceMatrix);
+                    program.Uniform(CascadeViewProjectionMatrixUniformNames[i], cascadeState.Slices[i].WorldToLightSpaceMatrix);
             }
 
             program.Uniform("CascadeLayerCount", cascadeCount);

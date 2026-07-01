@@ -888,10 +888,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             _ => 0UL
         };
 
-        bool externalSwapchainTarget =
-            RenderState.WindowViewport?.RendersToExternalSwapchainTarget == true ||
-            AbstractRenderer.Current?.IsRenderingExternalSwapchainTarget == true;
-        uint reservedViewCount = stereo && !externalSwapchainTarget ? 2u : 1u;
+        uint reservedViewCount = stereo ? 2u : 1u;
         uint reservedEyeIndex = 0u;
 
         return new ResourceGenerationKey(

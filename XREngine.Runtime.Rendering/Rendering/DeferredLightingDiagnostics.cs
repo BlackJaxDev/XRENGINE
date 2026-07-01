@@ -17,7 +17,9 @@ internal static class DeferredLightingDiagnostics
     }
 
     public static bool IsWatchedFrameBufferName(string? name)
-        => string.Equals(name, DefaultRenderPipeline.LightingAccumFBOName, StringComparison.Ordinal)
+        => string.Equals(name, DefaultRenderPipeline.DeferredGBufferFBOName, StringComparison.Ordinal)
+        || string.Equals(name, DefaultRenderPipeline.MsaaGBufferFBOName, StringComparison.Ordinal)
+        || string.Equals(name, DefaultRenderPipeline.LightingAccumFBOName, StringComparison.Ordinal)
         || string.Equals(name, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal)
         || string.Equals(name, DefaultRenderPipeline.MsaaLightCombineFBOName, StringComparison.Ordinal)
         || string.Equals(name, DefaultRenderPipeline.ForwardPassFBOName, StringComparison.Ordinal);
