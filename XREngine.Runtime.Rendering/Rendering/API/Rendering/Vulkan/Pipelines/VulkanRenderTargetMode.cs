@@ -144,6 +144,110 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    internal readonly struct DynamicRenderingAttachmentPlan
+    {
+        public DynamicRenderingAttachmentPlan(
+            Image image,
+            ImageView imageView,
+            Format format,
+            ImageAspectFlags aspectMask,
+            ImageLayout initialLayout,
+            ImageLayout renderingLayout,
+            ImageLayout finalLayout,
+            AttachmentLoadOp loadOp,
+            AttachmentStoreOp storeOp,
+            ClearValue clearValue,
+            ImageView resolveImageView = default,
+            ResolveModeFlags resolveMode = default,
+            ImageLayout resolveImageLayout = ImageLayout.Undefined)
+        {
+            Image = image;
+            ImageView = imageView;
+            Format = format;
+            AspectMask = aspectMask;
+            InitialLayout = initialLayout;
+            RenderingLayout = renderingLayout;
+            FinalLayout = finalLayout;
+            LoadOp = loadOp;
+            StoreOp = storeOp;
+            ClearValue = clearValue;
+            ResolveImageView = resolveImageView;
+            ResolveMode = resolveMode;
+            ResolveImageLayout = resolveImageLayout;
+        }
+
+        public Image Image { get; }
+        public ImageView ImageView { get; }
+        public Format Format { get; }
+        public ImageAspectFlags AspectMask { get; }
+        public ImageLayout InitialLayout { get; }
+        public ImageLayout RenderingLayout { get; }
+        public ImageLayout FinalLayout { get; }
+        public AttachmentLoadOp LoadOp { get; }
+        public AttachmentStoreOp StoreOp { get; }
+        public ClearValue ClearValue { get; }
+        public ImageView ResolveImageView { get; }
+        public ResolveModeFlags ResolveMode { get; }
+        public ImageLayout ResolveImageLayout { get; }
+        public bool HasResolveAttachment => ResolveMode != default && ResolveImageView.Handle != 0;
+
+        public RenderingAttachmentInfo ToRenderingAttachmentInfo()
+            => new()
+            {
+                SType = StructureType.RenderingAttachmentInfo,
+                ImageView = ImageView,
+                ImageLayout = RenderingLayout,
+                ResolveMode = ResolveMode,
+                ResolveImageView = ResolveImageView,
+                ResolveImageLayout = ResolveImageLayout,
+                LoadOp = LoadOp,
+                StoreOp = StoreOp,
+                ClearValue = ClearValue,
+            };
+    }
+
+    internal readonly ref struct DynamicRenderingScopePlan
+    {
+        public DynamicRenderingScopePlan(
+            Rect2D renderArea,
+            uint layerCount,
+            uint viewMask,
+            ReadOnlySpan<DynamicRenderingAttachmentPlan> colorAttachments,
+            DynamicRenderingAttachmentPlan depthAttachment,
+            bool hasDepthAttachment,
+            DynamicRenderingAttachmentPlan stencilAttachment,
+            bool hasStencilAttachment,
+            bool depthStencilReadOnly,
+            DynamicRenderingFormatSignature formatSignature,
+            SampleCountFlags sampleCount)
+        {
+            RenderArea = renderArea;
+            LayerCount = ResolveDynamicRenderingLayerCount(layerCount, viewMask);
+            ViewMask = viewMask;
+            ColorAttachments = colorAttachments;
+            DepthAttachment = depthAttachment;
+            HasDepthAttachment = hasDepthAttachment;
+            StencilAttachment = stencilAttachment;
+            HasStencilAttachment = hasStencilAttachment;
+            DepthStencilReadOnly = depthStencilReadOnly;
+            FormatSignature = formatSignature;
+            SampleCount = sampleCount;
+        }
+
+        public Rect2D RenderArea { get; }
+        public uint LayerCount { get; }
+        public uint ViewMask { get; }
+        public ReadOnlySpan<DynamicRenderingAttachmentPlan> ColorAttachments { get; }
+        public DynamicRenderingAttachmentPlan DepthAttachment { get; }
+        public bool HasDepthAttachment { get; }
+        public DynamicRenderingAttachmentPlan StencilAttachment { get; }
+        public bool HasStencilAttachment { get; }
+        public bool DepthStencilReadOnly { get; }
+        public DynamicRenderingFormatSignature FormatSignature { get; }
+        public DynamicRenderingFormatSignature SemanticSignature => FormatSignature;
+        public SampleCountFlags SampleCount { get; }
+    }
+
     private static uint ResolveDynamicRenderingLayerCount(uint framebufferLayers, uint viewMask)
         => viewMask == 0u ? Math.Max(framebufferLayers, 1u) : 1u;
 

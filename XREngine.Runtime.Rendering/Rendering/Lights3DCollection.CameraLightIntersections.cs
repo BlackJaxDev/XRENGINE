@@ -119,19 +119,6 @@ namespace XREngine.Scene
                 fallback ??= camera;
             }
 
-            if (RuntimeEngine.VRState.IsInVR)
-            {
-                if (RuntimeEngine.VRState.LeftEyeViewport is XRViewport leftEye)
-                    ConsiderViewport(leftEye);
-                if (RuntimeEngine.VRState.RightEyeViewport is XRViewport rightEye)
-                    ConsiderViewport(rightEye);
-
-                if (preferredCascaded is not null)
-                    return preferredCascaded;
-                if (cascadedFallback is not null)
-                    return cascadedFallback;
-            }
-
             foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
             {
                 ConsiderViewport(viewport);
@@ -139,13 +126,16 @@ namespace XREngine.Scene
                     return preferredCascaded;
             }
 
-            if (RuntimeEngine.VRState.LeftEyeViewport is XRViewport vrLeftEye)
-                ConsiderViewport(vrLeftEye);
+            if (cascadedFallback is not null)
+                return cascadedFallback;
+
+            if (RuntimeEngine.VRState.LeftEyeViewport is XRViewport leftEye)
+                ConsiderViewport(leftEye);
             if (preferredCascaded is not null)
                 return preferredCascaded;
 
-            if (RuntimeEngine.VRState.RightEyeViewport is XRViewport vrRightEye)
-                ConsiderViewport(vrRightEye);
+            if (RuntimeEngine.VRState.RightEyeViewport is XRViewport rightEye)
+                ConsiderViewport(rightEye);
 
             return preferredCascaded ?? cascadedFallback ?? preferredFallback ?? fallback;
         }

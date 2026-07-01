@@ -31,6 +31,26 @@ public class ProjectionMatrixCombinerTests
     }
 
     [Test]
+    public void TryCombineProjectionMatrices_StereoPair_EnclosesSourceFrusta()
+    {
+        Matrix4x4 leftProjection = CreatePerspective(65.0f);
+        Matrix4x4 rightProjection = CreatePerspective(65.0f);
+        Matrix4x4 leftView = Matrix4x4.CreateTranslation(0.032f, 0.0f, 0.0f);
+        Matrix4x4 rightView = Matrix4x4.CreateTranslation(-0.032f, 0.0f, 0.0f);
+
+        bool combined = ProjectionMatrixCombiner.TryCombineProjectionMatrices(
+            leftProjection,
+            leftView,
+            rightProjection,
+            rightView,
+            out Matrix4x4 combinedProjection);
+
+        Assert.That(combined, Is.True);
+        AssertFrustumContained(combinedProjection, GetFrustumCorners(leftProjection, leftView));
+        AssertFrustumContained(combinedProjection, GetFrustumCorners(rightProjection, rightView));
+    }
+
+    [Test]
     public void CombineProjectionMatrices_ThreeFrusta_EnclosesAllSourceFrusta()
     {
         Matrix4x4 leftProjection = CreatePerspective(65.0f);

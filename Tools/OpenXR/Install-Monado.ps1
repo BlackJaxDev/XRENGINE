@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter()]
-    [string]$SourceUrl = "https://gitlab.freedesktop.org/monado/monado.git",
+    [string]$SourceUrl = "https://github.com/BlackJaxDev/Monado.git",
 
     [Parameter()]
     [string]$Ref = "main",
@@ -54,6 +54,9 @@ param(
     [switch]$SkipBuild,
 
     [Parameter()]
+    [switch]$BuildOnly,
+
+    [Parameter()]
     [switch]$SkipInstall,
 
     [Parameter()]
@@ -73,6 +76,9 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $script:CMakePath = $null
 $script:NinjaPath = $null
 $script:PythonPath = $null
+$script:DefaultMonadoSourceUrl = "https://github.com/BlackJaxDev/Monado.git"
+$script:DefaultMonadoSubmodulePath = "Build/Submodules/monado"
+$script:DefaultMonadoSourceDir = "Build\Submodules\monado"
 
 function Resolve-FullPath {
     param([Parameter(Mandatory)][string]$Path)
@@ -83,6 +89,45 @@ function Resolve-FullPath {
     }
 
     return [System.IO.Path]::GetFullPath((Join-Path $repoRoot $expanded))
+}
+
+function ConvertTo-RepositoryKey {
+    param([string]$Url)
+
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        return ""
+    }
+
+    $trimmed = $Url.Trim()
+    if ($trimmed -match "github\.com[:/](?<owner>[^/]+)/(?<repo>[^/?#]+)") {
+        $repoName = $Matches.repo -replace "\.git$", ""
+        return ("{0}/{1}" -f $Matches.owner, $repoName).ToLowerInvariant()
+    }
+
+    return ($trimmed.TrimEnd("/") -replace "\.git$", "").ToLowerInvariant()
+}
+
+function Test-SameRepositoryUrl {
+    param(
+        [string]$Left,
+        [string]$Right
+    )
+
+    return [string]::Equals((ConvertTo-RepositoryKey $Left), (ConvertTo-RepositoryKey $Right), [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-DefaultMonadoSource {
+    param(
+        [Parameter(Mandatory)][string]$SourceRoot,
+        [Parameter(Mandatory)][string]$RepositoryUrl
+    )
+
+    $defaultSourceRoot = Resolve-FullPath $script:DefaultMonadoSourceDir
+    return [string]::Equals(
+        [System.IO.Path]::GetFullPath($SourceRoot),
+        $defaultSourceRoot,
+        [System.StringComparison]::OrdinalIgnoreCase) -and
+        (Test-SameRepositoryUrl -Left $RepositoryUrl -Right $script:DefaultMonadoSourceUrl)
 }
 
 function Quote-CmdArgument {
@@ -338,6 +383,129 @@ function Remove-RepoLocalDirectoryTree {
     Remove-Item -LiteralPath $fullPath -Recurse -Force
 }
 
+function Stop-RepoLocalMonadoProcesses {
+    param(
+        [Parameter(Mandatory)][string]$RootPath,
+        [Parameter(Mandatory)][string]$Reason
+    )
+
+    if (-not (Test-Path -LiteralPath $RootPath -PathType Container)) {
+        return
+    }
+
+    $rootFullPath = [System.IO.Path]::GetFullPath($RootPath).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar)
+    $rootPrefix = $rootFullPath + [System.IO.Path]::DirectorySeparatorChar
+    $processNames = @("monado-service.exe", "monado-gui.exe", "monado-cli.exe")
+
+    foreach ($processName in $processNames) {
+        $query = "Name = '$processName'"
+        foreach ($processInfo in @(Get-CimInstance Win32_Process -Filter $query -ErrorAction SilentlyContinue)) {
+            $executablePath = [string]$processInfo.ExecutablePath
+            if ([string]::IsNullOrWhiteSpace($executablePath)) {
+                continue
+            }
+
+            try {
+                $executableFullPath = [System.IO.Path]::GetFullPath($executablePath)
+            }
+            catch {
+                continue
+            }
+
+            $isUnderRoot = $executableFullPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+                [string]::Equals($executableFullPath, $rootFullPath, [System.StringComparison]::OrdinalIgnoreCase)
+            if (-not $isUnderRoot) {
+                continue
+            }
+
+            $process = Get-Process -Id ([int]$processInfo.ProcessId) -ErrorAction SilentlyContinue
+            if ($null -eq $process) {
+                continue
+            }
+
+            Write-Warning "Stopping repo-local $processName from $Reason before rebuilding Monado: $executableFullPath"
+            Stop-Process -Id $process.Id -Force
+            try {
+                $process.WaitForExit(5000) | Out-Null
+            }
+            catch {
+            }
+        }
+    }
+}
+
+function Test-GitRepository {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return $false
+    }
+
+    & git -C $Path rev-parse --is-inside-work-tree *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+function Get-GitRemoteUrl {
+    param(
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string]$RemoteName
+    )
+
+    $remoteUrl = & git -C $RepositoryRoot remote get-url $RemoteName 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    return [string]$remoteUrl
+}
+
+function Ensure-GitRemote {
+    param(
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string]$RemoteName,
+        [Parameter(Mandatory)][string]$RepositoryUrl
+    )
+
+    $currentUrl = Get-GitRemoteUrl -RepositoryRoot $RepositoryRoot -RemoteName $RemoteName
+    if ([string]::IsNullOrWhiteSpace($currentUrl)) {
+        Invoke-Native -FilePath "git" -Arguments @("-C", $RepositoryRoot, "remote", "add", $RemoteName, $RepositoryUrl)
+        return
+    }
+
+    if (-not [string]::Equals($currentUrl.Trim(), $RepositoryUrl.Trim(), [System.StringComparison]::OrdinalIgnoreCase)) {
+        Invoke-Native -FilePath "git" -Arguments @("-C", $RepositoryRoot, "remote", "set-url", $RemoteName, $RepositoryUrl)
+    }
+}
+
+function Test-GitRefExists {
+    param(
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string]$Ref
+    )
+
+    & git -C $RepositoryRoot rev-parse --verify --quiet $Ref *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+function Checkout-MonadoRevision {
+    param(
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string]$RemoteName,
+        [Parameter(Mandatory)][string]$Revision,
+        [Parameter(Mandatory)][bool]$FetchAllowed
+    )
+
+    $remoteBranch = "$RemoteName/$Revision"
+    if ($FetchAllowed -and (Test-GitRefExists -RepositoryRoot $RepositoryRoot -Ref $remoteBranch)) {
+        Invoke-Native -FilePath "git" -Arguments @("-C", $RepositoryRoot, "checkout", "-B", $Revision, $remoteBranch)
+        return
+    }
+
+    Invoke-Native -FilePath "git" -Arguments @("-C", $RepositoryRoot, "checkout", $Revision)
+}
+
 function Reset-StaleCMakeBuildCache {
     param(
         [Parameter(Mandatory)][string]$BuildRoot,
@@ -383,19 +551,44 @@ function Sync-MonadoSource {
         [Parameter(Mandatory)][string]$Revision
     )
 
+    $useRepoSubmodule = Test-DefaultMonadoSource -SourceRoot $SourceRoot -RepositoryUrl $RepositoryUrl
+
     if ($ForceClone -and (Test-Path -LiteralPath $SourceRoot)) {
-        Remove-Item -LiteralPath $SourceRoot -Recurse -Force
+        Remove-RepoLocalDirectoryTree -Path $SourceRoot -Reason "existing Monado source directory"
     }
 
     if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
         [System.IO.Directory]::CreateDirectory((Split-Path -Parent $SourceRoot)) | Out-Null
-        Invoke-Native -FilePath "git" -Arguments @("clone", "--recursive", $RepositoryUrl, $SourceRoot)
+        if ($useRepoSubmodule) {
+            try {
+                Invoke-Native -FilePath "git" -Arguments @("submodule", "sync", "--", $script:DefaultMonadoSubmodulePath)
+                Invoke-Native -FilePath "git" -Arguments @("submodule", "update", "--init", "--recursive", "--", $script:DefaultMonadoSubmodulePath)
+            }
+            catch {
+                Write-Warning "Could not initialize the Monado git submodule; falling back to clone from $RepositoryUrl. $($_.Exception.Message)"
+            }
+        }
+
+        if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
+            Invoke-Native -FilePath "git" -Arguments @("clone", "--recursive", $RepositoryUrl, $SourceRoot)
+        }
     }
-    elseif (-not $NoFetch) {
-        Invoke-Native -FilePath "git" -Arguments @("-C", $SourceRoot, "fetch", "--tags", "origin")
+    elseif ($useRepoSubmodule) {
+        Invoke-Native -FilePath "git" -Arguments @("submodule", "sync", "--", $script:DefaultMonadoSubmodulePath)
     }
 
-    Invoke-Native -FilePath "git" -Arguments @("-C", $SourceRoot, "checkout", $Revision)
+    if (-not (Test-GitRepository -Path $SourceRoot)) {
+        throw "Monado source path exists but is not a git repository: $SourceRoot"
+    }
+
+    $remoteName = if ($useRepoSubmodule) { "blackjaxdev" } else { "origin" }
+    Ensure-GitRemote -RepositoryRoot $SourceRoot -RemoteName $remoteName -RepositoryUrl $RepositoryUrl
+
+    if (-not $NoFetch) {
+        Invoke-Native -FilePath "git" -Arguments @("-C", $SourceRoot, "fetch", "--tags", $remoteName)
+    }
+
+    Checkout-MonadoRevision -RepositoryRoot $SourceRoot -RemoteName $remoteName -Revision $Revision -FetchAllowed (-not $NoFetch)
     if (-not $NoFetch) {
         Invoke-Native -FilePath "git" -Arguments @("-C", $SourceRoot, "submodule", "update", "--init", "--recursive")
     }
@@ -625,6 +818,11 @@ $installFullPath = Resolve-FullPath $InstallDir
 $vcpkgFullPath = Resolve-FullPath $VcpkgDir
 $vcVars64 = Find-VcVars64
 
+Stop-RepoLocalMonadoProcesses -RootPath $buildFullPath -Reason "the Monado build directory"
+if (-not $BuildOnly -or $Clean) {
+    Stop-RepoLocalMonadoProcesses -RootPath $installFullPath -Reason "the Monado install directory"
+}
+
 if ($Clean) {
     foreach ($path in @($buildFullPath, $installFullPath)) {
         if (Test-Path -LiteralPath $path) {
@@ -641,10 +839,10 @@ if (-not (Test-Path -LiteralPath $toolchain -PathType Leaf)) {
 
 Reset-StaleCMakeBuildCache -BuildRoot $buildFullPath -ExpectedToolchain $toolchain
 
-if (-not $SkipBuild) {
-    [System.IO.Directory]::CreateDirectory($buildFullPath) | Out-Null
-    [System.IO.Directory]::CreateDirectory($installFullPath) | Out-Null
+[System.IO.Directory]::CreateDirectory($buildFullPath) | Out-Null
+[System.IO.Directory]::CreateDirectory($installFullPath) | Out-Null
 
+if (-not $SkipBuild) {
     # Monado uses __cplusplus to choose <filesystem>; MSVC needs this flag to report the active C++ standard.
     $cmakeArgs = @(
         "-S", $sourceFullPath,
@@ -661,10 +859,30 @@ if (-not $SkipBuild) {
 
     Invoke-VsNative -VcVars64Bat $vcVars64 -Command $script:CMakePath -Arguments $cmakeArgs -WorkingDirectory $repoRoot
     Invoke-VsNative -VcVars64Bat $vcVars64 -Command $script:CMakePath -Arguments @("--build", $buildFullPath, "--config", $Configuration) -WorkingDirectory $repoRoot
+}
 
-    if (-not $SkipInstall) {
-        Invoke-VsNative -VcVars64Bat $vcVars64 -Command $script:CMakePath -Arguments @("--install", $buildFullPath, "--config", $Configuration) -WorkingDirectory $repoRoot
+if (-not $SkipInstall -and -not $BuildOnly) {
+    Invoke-VsNative -VcVars64Bat $vcVars64 -Command $script:CMakePath -Arguments @("--install", $buildFullPath, "--config", $Configuration) -WorkingDirectory $repoRoot
+}
+
+$commit = & git -C $sourceFullPath rev-parse HEAD
+if ($BuildOnly) {
+    $buildInfo = [pscustomobject]@{
+        SourceUrl     = $SourceUrl
+        Ref           = $Ref
+        Commit        = $commit
+        SourceDir     = $sourceFullPath
+        BuildDir      = $buildFullPath
+        VcpkgDir      = $vcpkgFullPath
+        Configuration = $Configuration
+        BuildOnly     = $true
     }
+
+    Write-Host "Monado build completed." -ForegroundColor Green
+    Write-Host "Source: $sourceFullPath" -ForegroundColor Cyan
+    Write-Host "Build: $buildFullPath" -ForegroundColor Cyan
+    $buildInfo
+    return
 }
 
 $runtimeInfo = Find-MonadoManifest -InstallRoot $installFullPath -BuildRoot $buildFullPath
@@ -687,7 +905,6 @@ if ($SetUserEnvironment) {
     [Environment]::SetEnvironmentVariable("MONADO_RUNTIME_JSON", [string]$runtimeInfo.RuntimeJson, [EnvironmentVariableTarget]::User)
 }
 
-$commit = & git -C $sourceFullPath rev-parse HEAD
 $installInfo = [pscustomobject]@{
     SourceUrl          = $SourceUrl
     Ref                = $Ref

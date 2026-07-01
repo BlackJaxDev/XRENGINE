@@ -46,6 +46,36 @@ namespace XREngine
             bool highSpeedMode = false)
             => SolveMinimalEnclosingFrustum(projections, views, farBoundsSourceCount, highSpeedMode: highSpeedMode).Projection;
 
+        public static bool TryCombineProjectionMatrices(
+            Matrix4x4 projection0,
+            Matrix4x4 view0,
+            Matrix4x4 projection1,
+            Matrix4x4 view1,
+            out Matrix4x4 combinedProjection)
+        {
+            Span<Vector3> points = stackalloc Vector3[32];
+            Span<Vector3> farPoints = stackalloc Vector3[32];
+            int pointCount = 0;
+            int farPointCount = 0;
+
+            if (!AppendClippedFrustumPoints(points, ref pointCount, farPoints, ref farPointCount, projection0, view0) ||
+                !AppendClippedFrustumPoints(points, ref pointCount, farPoints, ref farPointCount, projection1, view1) ||
+                pointCount <= 0)
+            {
+                combinedProjection = Matrix4x4.Identity;
+                return false;
+            }
+
+            if (farPointCount <= 0)
+            {
+                points[..pointCount].CopyTo(farPoints);
+                farPointCount = pointCount;
+            }
+
+            combinedProjection = CreateMinimalEnclosingProjection(points[..pointCount], farPoints[..farPointCount]);
+            return true;
+        }
+
         public static FrustumPointCloud BuildFrustumPointCloud(
             IReadOnlyList<Matrix4x4> projections,
             IReadOnlyList<Matrix4x4>? views = null,
@@ -182,6 +212,72 @@ namespace XREngine
                 points.Add(clippedPoint);
                 farPoints?.Add(clippedPoint);
             }
+        }
+
+        private static bool AppendClippedFrustumPoints(
+            Span<Vector3> points,
+            ref int pointCount,
+            Span<Vector3> farPoints,
+            ref int farPointCount,
+            Matrix4x4 proj,
+            Matrix4x4 view)
+        {
+            if (!Matrix4x4.Invert(view * proj, out Matrix4x4 invViewProj))
+                return false;
+
+            Span<Vector3> corners = stackalloc Vector3[8];
+            GetFrustumCornersInReferenceSpace(invViewProj, corners);
+
+            for (int i = 0; i < corners.Length; i++)
+            {
+                Vector3 corner = corners[i];
+                if (IsInFrontOfEye(corner))
+                {
+                    AddSpanPoint(points, ref pointCount, corner);
+                    AddSpanPoint(farPoints, ref farPointCount, corner);
+                }
+            }
+
+            foreach ((int start, int end) in FrustumEdges)
+            {
+                Vector3 a = corners[start];
+                Vector3 b = corners[end];
+                bool aInFront = IsInFrontOfEye(a);
+                bool bInFront = IsInFrontOfEye(b);
+                if (aInFront == bInFront)
+                    continue;
+
+                float t = (-MinNearDistance - a.Z) / (b.Z - a.Z);
+                Vector3 clippedPoint = Vector3.Lerp(a, b, t);
+                AddSpanPoint(points, ref pointCount, clippedPoint);
+                AddSpanPoint(farPoints, ref farPointCount, clippedPoint);
+            }
+
+            return true;
+        }
+
+        private static void GetFrustumCornersInReferenceSpace(Matrix4x4 invViewProj, Span<Vector3> corners)
+        {
+            int index = 0;
+            for (int x = -1; x <= 1; x += 2)
+            {
+                for (int y = -1; y <= 1; y += 2)
+                {
+                    for (int z = 0; z <= 1; z++)
+                    {
+                        Vector4 point = Vector4.Transform(new Vector4(x, y, z, 1.0f), invViewProj);
+                        corners[index++] = new Vector3(point.X / point.W, point.Y / point.W, point.Z / point.W);
+                    }
+                }
+            }
+        }
+
+        private static void AddSpanPoint(Span<Vector3> points, ref int count, Vector3 point)
+        {
+            if ((uint)count >= (uint)points.Length)
+                return;
+
+            points[count++] = point;
         }
 
         private static bool IsInFrontOfEye(Vector3 point)

@@ -67,7 +67,7 @@ Khronos OpenXR loader behavior gives us the correct integration point:
 
 Monado is a suitable first mock runtime target because it is an open-source OpenXR runtime for Linux, Windows, and Android. Its own developer site currently notes that Windows support is mostly simulated HMD and controller drivers, which aligns with our no-HMD test goal.
 
-Windows setup is source-build based. Upstream does not publish a generic Windows binary installer, so XREngine provides `Tools/OpenXR/Install-Monado.ps1` to clone Monado, bootstrap/use vcpkg, configure CMake/Ninja, stage the result under `Build/Deps/Monado`, and copy `openxr_loader.dll` into the editor build output when available. The script still uses per-process/runtime-manifest selection only; it does not write `HKLM\SOFTWARE\Khronos\OpenXR\1\ActiveRuntime`.
+Windows setup is source-build based. Upstream does not publish a generic Windows binary installer, so XREngine tracks the BlackJaxDev Monado fork as `Build/Submodules/monado`. `Tools/OpenXR/Build-Monado.ps1` initializes/updates that submodule and builds Monado in place. `Tools/OpenXR/Install-Monado.ps1` uses the same source path, bootstraps/uses vcpkg, configures CMake/Ninja, stages the result under `Build/Deps/Monado`, and copies `openxr_loader.dll` into the editor build output when available. The scripts still use per-process/runtime-manifest selection only; they do not write `HKLM\SOFTWARE\Khronos\OpenXR\1\ActiveRuntime`.
 
 ## Current XREngine Hooks
 

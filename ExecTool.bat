@@ -23,6 +23,7 @@ call :AddSep
 call :AddTool "Build" "Tools\Build-DocFx.bat" "Build the DocFX API documentation site"
 call :AddTool "Build" "Tools\Build-Submodules.bat" "Compile third-party submodules (Debug by default)"
 call :AddTool "Build" "Tools\Build-VulkanMemoryAllocatorBridge.ps1" "Build the Vulkan Memory Allocator native bridge"
+call :AddTool "Build" "Tools\OpenXR\Build-Monado.ps1 -InstallPrerequisites" "Build Monado from the BlackJaxDev submodule for OpenXR testing"
 call :AddTool "Build" "Tools\Test-CookCommonAssets.ps1" "Cook CommonAssets into a .pak archive (builds editor first)"
 call :AddTool "Build" "Tools\Get-PixelFurnaceTextures.ps1" "Download free Pixel-Furnace texture ZIPs into Build\CommonAssets\Textures\Samples"
 call :AddTool "Build" "Tools\Get-FreePbrTextures.ps1" "Download FreePBR BL texture ZIPs into Build\CommonAssets\Textures\Samples\FreePBR"
@@ -59,7 +60,7 @@ call :AddTool "Deps" "Tools\Dependencies\Get-StreamlineSdk.ps1" "Download NVIDIA
 call :AddTool "Deps" "Tools\Dependencies\Get-Phonon.ps1" "Download Steam Audio (Phonon) native library"
 call :AddTool "Deps" "Tools\Dependencies\Get-UltralightResources.ps1" "Download Ultralight runtime resources (icudt67l.dat, cacert.pem)"
 call :AddTool "Deps" "Tools\Dependencies\Get-YtDlp.ps1" "Download yt-dlp for YouTube URL extraction"
-call :AddTool "Deps" "Tools\OpenXR\Install-Monado.ps1 -InstallPrerequisites" "Clone, build, and stage Monado for OpenXR no-HMD testing"
+call :AddTool "Deps" "Tools\OpenXR\Install-Monado.ps1 -InstallPrerequisites" "Build and stage Monado from the BlackJaxDev submodule for OpenXR no-HMD testing"
 call :AddRunAll "Deps"
 
 REM ── Handle arguments ──────────────────────────────────────────────────────

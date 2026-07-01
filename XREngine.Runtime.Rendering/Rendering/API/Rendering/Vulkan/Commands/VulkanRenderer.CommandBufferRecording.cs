@@ -2140,7 +2140,51 @@ namespace XREngine.Rendering.Vulkan
                 activeDepthStencilReadOnly = false;
             }
 
+            void BeginDynamicRenderingScope(in DynamicRenderingScopePlan plan, bool secondaryContents)
+            {
+                ReadOnlySpan<DynamicRenderingAttachmentPlan> colorPlans = plan.ColorAttachments;
+                RenderingAttachmentInfo* colorAttachments = stackalloc RenderingAttachmentInfo[Math.Max(colorPlans.Length, 1)];
+                for (int i = 0; i < colorPlans.Length; i++)
+                    colorAttachments[i] = colorPlans[i].ToRenderingAttachmentInfo();
+
+                RenderingAttachmentInfo depthAttachment = plan.HasDepthAttachment
+                    ? plan.DepthAttachment.ToRenderingAttachmentInfo()
+                    : default;
+                RenderingAttachmentInfo stencilAttachment = plan.HasStencilAttachment
+                    ? plan.StencilAttachment.ToRenderingAttachmentInfo()
+                    : default;
+
+                RenderingInfo renderingInfo = new()
+                {
+                    SType = StructureType.RenderingInfo,
+                    Flags = secondaryContents ? RenderingFlags.ContentsSecondaryCommandBuffersBit : 0,
+                    RenderArea = plan.RenderArea,
+                    ViewMask = plan.ViewMask,
+                    LayerCount = plan.LayerCount,
+                    ColorAttachmentCount = (uint)colorPlans.Length,
+                    PColorAttachments = colorPlans.Length > 0 ? colorAttachments : null,
+                    PDepthAttachment = plan.HasDepthAttachment ? &depthAttachment : null,
+                    PStencilAttachment = plan.HasStencilAttachment ? &stencilAttachment : null,
+                };
+
+                Api!.CmdBeginRendering(commandBuffer, &renderingInfo);
+            }
+
+            static SampleCountFlags ResolveDynamicRenderingSampleCount(FrameBufferAttachmentSignature[] signatures)
+            {
+                for (int i = 0; i < signatures.Length; i++)
+                {
+                    if (signatures[i].Samples != default)
+                        return signatures[i].Samples;
+                }
+
+                return SampleCountFlags.Count1Bit;
+            }
+
             void BeginRenderPassForTarget(XRFrameBuffer? target, int passIndex, in FrameOpContext context, bool secondaryContents = false)
+                => BeginRenderingForTarget(target, passIndex, in context, secondaryContents);
+
+            void BeginRenderingForTarget(XRFrameBuffer? target, int passIndex, in FrameOpContext context, bool secondaryContents = false)
             {
                 // Assumes no active render pass.
                 if (target is null)
@@ -2226,43 +2270,51 @@ namespace XREngine.Rendering.Vulkan
                         ClearValue* dynamicClearValues = stackalloc ClearValue[2];
                         ActiveState.WriteClearValues(dynamicClearValues, 2);
 
-                        RenderingAttachmentInfo colorAttachment = new()
-                        {
-                            SType = StructureType.RenderingAttachmentInfo,
-                            ImageView = swapchainTarget.ImageView,
-                            ImageLayout = ImageLayout.ColorAttachmentOptimal,
-                            LoadOp = colorLoadOp,
-                            StoreOp = AttachmentStoreOp.Store,
-                            ClearValue = dynamicClearValues[0],
-                        };
+                        Span<DynamicRenderingAttachmentPlan> colorAttachmentPlans = stackalloc DynamicRenderingAttachmentPlan[1];
+                        colorAttachmentPlans[0] = new DynamicRenderingAttachmentPlan(
+                            swapchainTarget.Image,
+                            swapchainTarget.ImageView,
+                            swapchainTarget.ImageFormat,
+                            ImageAspectFlags.ColorBit,
+                            colorOldLayout,
+                            ImageLayout.ColorAttachmentOptimal,
+                            ImageLayout.PresentSrcKhr,
+                            colorLoadOp,
+                            AttachmentStoreOp.Store,
+                            dynamicClearValues[0]);
 
-                        RenderingAttachmentInfo depthAttachment = new()
-                        {
-                            SType = StructureType.RenderingAttachmentInfo,
-                            ImageView = swapchainTarget.DepthView,
-                            ImageLayout = ImageLayout.DepthStencilAttachmentOptimal,
-                            LoadOp = depthLoadOp,
-                            StoreOp = AttachmentStoreOp.DontCare,
-                            ClearValue = dynamicClearValues[1],
-                        };
+                        DynamicRenderingAttachmentPlan depthAttachmentPlan = new(
+                            swapchainTarget.DepthImage,
+                            swapchainTarget.DepthView,
+                            swapchainTarget.DepthFormat,
+                            swapchainTarget.DepthAspect,
+                            ImageLayout.Undefined,
+                            ImageLayout.DepthStencilAttachmentOptimal,
+                            ImageLayout.DepthStencilAttachmentOptimal,
+                            depthLoadOp,
+                            AttachmentStoreOp.DontCare,
+                            dynamicClearValues[1]);
 
-                        RenderingInfo renderingInfo = new()
-                        {
-                            SType = StructureType.RenderingInfo,
-                            Flags = secondaryContents ? RenderingFlags.ContentsSecondaryCommandBuffersBit : 0,
-                        RenderArea = new Rect2D
-                        {
-                            Offset = new Offset2D(0, 0),
-                            Extent = swapchainTarget.Extent
-                        },
-                        ViewMask = 0,
-                        LayerCount = 1,
-                        ColorAttachmentCount = 1,
-                        PColorAttachments = &colorAttachment,
-                            PDepthAttachment = &depthAttachment,
-                        };
+                        DynamicRenderingFormatSignature swapchainDynamicRenderingFormats =
+                            CreateSwapchainDynamicRenderingFormatSignature(swapchainTarget.ImageFormat, swapchainTarget.DepthFormat);
+                        DynamicRenderingScopePlan scopePlan = new(
+                            new Rect2D
+                            {
+                                Offset = new Offset2D(0, 0),
+                                Extent = swapchainTarget.Extent
+                            },
+                            1u,
+                            0u,
+                            colorAttachmentPlans,
+                            depthAttachmentPlan,
+                            true,
+                            default,
+                            false,
+                            false,
+                            swapchainDynamicRenderingFormats,
+                            SampleCountFlags.Count1Bit);
 
-                        Api!.CmdBeginRendering(commandBuffer, &renderingInfo);
+                        BeginDynamicRenderingScope(in scopePlan, secondaryContents);
 
                         renderPassActive = true;
                         activeDynamicRendering = true;
@@ -2272,9 +2324,9 @@ namespace XREngine.Rendering.Vulkan
                         activeTarget = null;
                         activeRenderPass = default;
                         activeFramebuffer = default;
-                        activeDynamicRenderingFormats = CreateSwapchainDynamicRenderingFormatSignature(swapchainTarget.ImageFormat, swapchainTarget.DepthFormat);
+                        activeDynamicRenderingFormats = scopePlan.FormatSignature;
                         activeFboAttachmentSignature = null;
-                        activeRenderArea = renderingInfo.RenderArea;
+                        activeRenderArea = scopePlan.RenderArea;
                         activeDepthStencilReadOnly = false;
                         swapchainClearedThisFrame = true;
                         if (TargetTraceEnabled)
@@ -2456,10 +2508,10 @@ namespace XREngine.Rendering.Vulkan
                             colorAttachmentCount++;
                     }
 
-                    RenderingAttachmentInfo* colorAttachments = stackalloc RenderingAttachmentInfo[(int)Math.Max(colorAttachmentCount, 1u)];
+                    Span<DynamicRenderingAttachmentPlan> colorAttachmentPlans = stackalloc DynamicRenderingAttachmentPlan[(int)Math.Max(colorAttachmentCount, 1u)];
                     uint colorAttachmentIndex = 0;
-                    RenderingAttachmentInfo depthAttachment = default;
-                    RenderingAttachmentInfo stencilAttachment = default;
+                    DynamicRenderingAttachmentPlan depthAttachmentPlan = default;
+                    DynamicRenderingAttachmentPlan stencilAttachmentPlan = default;
                     bool hasDepthAttachment = false;
                     bool hasStencilAttachment = false;
 
@@ -2469,33 +2521,61 @@ namespace XREngine.Rendering.Vulkan
                             throw new InvalidOperationException($"Framebuffer '{fboName}' attachment {i} has no valid Vulkan image view.");
 
                         FrameBufferAttachmentSignature signature = fboSignature[i];
-                        RenderingAttachmentInfo attachmentInfo = new()
+                        Image attachmentImage = default;
+                        if (vkFrameBuffer.TryGetAttachmentTarget(
+                                i,
+                                out IFrameBufferAttachement? attachmentTarget,
+                                out _,
+                                out int attachmentMipLevel,
+                                out int attachmentLayerIndex) &&
+                            TryResolveAttachmentImage(
+                                attachmentTarget,
+                                attachmentMipLevel,
+                                attachmentLayerIndex,
+                                NormalizeBarrierAspectMask(signature.Format, signature.AspectMask),
+                                out BlitImageInfo imageInfo) &&
+                            imageInfo.Image.Handle != 0)
                         {
-                            SType = StructureType.RenderingAttachmentInfo,
-                            ImageView = view,
-                            ImageLayout = signature.ReferenceLayout,
-                            LoadOp = signature.LoadOp,
-                            StoreOp = signature.StoreOp,
-                            ClearValue = dynamicClearValuesFbo[i],
-                        };
+                            attachmentImage = imageInfo.Image;
+                        }
+
+                        DynamicRenderingAttachmentPlan attachmentPlan = new(
+                            attachmentImage,
+                            view,
+                            signature.Format,
+                            signature.AspectMask,
+                            signature.InitialLayout,
+                            signature.ReferenceLayout,
+                            signature.FinalLayout,
+                            signature.LoadOp,
+                            signature.StoreOp,
+                            dynamicClearValuesFbo[i]);
 
                         if (signature.Role == AttachmentRole.Color)
                         {
-                            colorAttachments[colorAttachmentIndex++] = attachmentInfo;
+                            colorAttachmentPlans[(int)colorAttachmentIndex++] = attachmentPlan;
                             continue;
                         }
 
                         if ((signature.AspectMask & ImageAspectFlags.DepthBit) != 0)
                         {
-                            depthAttachment = attachmentInfo;
+                            depthAttachmentPlan = attachmentPlan;
                             hasDepthAttachment = true;
                         }
 
                         if ((signature.AspectMask & ImageAspectFlags.StencilBit) != 0)
                         {
-                            stencilAttachment = attachmentInfo;
-                            stencilAttachment.LoadOp = signature.StencilLoadOp;
-                            stencilAttachment.StoreOp = signature.StencilStoreOp;
+                            stencilAttachmentPlan = new DynamicRenderingAttachmentPlan(
+                                attachmentImage,
+                                view,
+                                signature.Format,
+                                signature.AspectMask,
+                                signature.InitialLayout,
+                                signature.ReferenceLayout,
+                                signature.FinalLayout,
+                                signature.StencilLoadOp,
+                                signature.StencilStoreOp,
+                                dynamicClearValuesFbo[i]);
                             hasStencilAttachment = true;
                         }
                     }
@@ -2507,29 +2587,29 @@ namespace XREngine.Rendering.Vulkan
                         fboViewMask,
                         fboLayerCount);
 
-                    RenderingInfo renderingInfo = new()
-                    {
-                        SType = StructureType.RenderingInfo,
-                        Flags = secondaryContents ? RenderingFlags.ContentsSecondaryCommandBuffersBit : 0,
-                        RenderArea = fboRenderArea,
-                        ViewMask = targetDynamicRenderingFormats.ViewMask,
-                        LayerCount = targetDynamicRenderingFormats.LayerCount,
-                        ColorAttachmentCount = colorAttachmentCount,
-                        PColorAttachments = colorAttachmentCount > 0 ? colorAttachments : null,
-                        PDepthAttachment = hasDepthAttachment ? &depthAttachment : null,
-                        PStencilAttachment = hasStencilAttachment ? &stencilAttachment : null,
-                    };
+                    DynamicRenderingScopePlan scopePlan = new(
+                        fboRenderArea,
+                        fboLayerCount,
+                        fboViewMask,
+                        colorAttachmentPlans[..(int)colorAttachmentCount],
+                        depthAttachmentPlan,
+                        hasDepthAttachment,
+                        stencilAttachmentPlan,
+                        hasStencilAttachment,
+                        passDepthStencilReadOnly,
+                        targetDynamicRenderingFormats,
+                        ResolveDynamicRenderingSampleCount(fboSignature));
 
-                    Api!.CmdBeginRendering(commandBuffer, &renderingInfo);
+                    BeginDynamicRenderingScope(in scopePlan, secondaryContents);
 
                     renderPassActive = true;
                     activeDynamicRendering = true;
                     activeTarget = target;
                     activeRenderPass = default;
                     activeFramebuffer = default;
-                    activeDynamicRenderingFormats = targetDynamicRenderingFormats;
+                    activeDynamicRenderingFormats = scopePlan.FormatSignature;
                     activeFboAttachmentSignature = fboSignature;
-                    activeRenderArea = renderingInfo.RenderArea;
+                    activeRenderArea = scopePlan.RenderArea;
                     activeDepthStencilReadOnly = passDepthStencilReadOnly;
                     if (TargetTraceEnabled)
                     {
@@ -2541,10 +2621,10 @@ namespace XREngine.Rendering.Vulkan
                             ResolvePassName(context.PassMetadata, passIndex),
                             vkFrameBuffer.FrameBuffer.Handle,
                             fboSignature.Length,
-                            renderingInfo.RenderArea.Extent.Width,
-                            renderingInfo.RenderArea.Extent.Height,
-                            renderingInfo.LayerCount,
-                            renderingInfo.ViewMask,
+                            scopePlan.RenderArea.Extent.Width,
+                            scopePlan.RenderArea.Extent.Height,
+                            scopePlan.LayerCount,
+                            scopePlan.ViewMask,
                             activeDynamicRenderingFormats,
                             secondaryContents);
                     }
@@ -3718,43 +3798,51 @@ namespace XREngine.Rendering.Vulkan
                         ClearValue* dynamicClearValues = stackalloc ClearValue[2];
                         ActiveState.WriteClearValues(dynamicClearValues, 2);
 
-                        RenderingAttachmentInfo colorAttachment = new()
-                        {
-                            SType = StructureType.RenderingAttachmentInfo,
-                            ImageView = swapchainTarget.ImageView,
-                            ImageLayout = ImageLayout.ColorAttachmentOptimal,
-                            LoadOp = colorLoadOp,
-                            StoreOp = AttachmentStoreOp.Store,
-                            ClearValue = dynamicClearValues[0],
-                        };
+                        Span<DynamicRenderingAttachmentPlan> colorAttachmentPlans = stackalloc DynamicRenderingAttachmentPlan[1];
+                        colorAttachmentPlans[0] = new DynamicRenderingAttachmentPlan(
+                            swapchainTarget.Image,
+                            swapchainTarget.ImageView,
+                            swapchainTarget.ImageFormat,
+                            ImageAspectFlags.ColorBit,
+                            colorOldLayout,
+                            ImageLayout.ColorAttachmentOptimal,
+                            ImageLayout.PresentSrcKhr,
+                            colorLoadOp,
+                            AttachmentStoreOp.Store,
+                            dynamicClearValues[0]);
 
-                        RenderingAttachmentInfo depthAttachment = new()
-                        {
-                            SType = StructureType.RenderingAttachmentInfo,
-                            ImageView = swapchainTarget.DepthView,
-                            ImageLayout = ImageLayout.DepthStencilAttachmentOptimal,
-                            LoadOp = AttachmentLoadOp.Clear,
-                            StoreOp = AttachmentStoreOp.DontCare,
-                            ClearValue = dynamicClearValues[1],
-                        };
+                        DynamicRenderingAttachmentPlan depthAttachmentPlan = new(
+                            swapchainTarget.DepthImage,
+                            swapchainTarget.DepthView,
+                            swapchainTarget.DepthFormat,
+                            swapchainTarget.DepthAspect,
+                            ImageLayout.Undefined,
+                            ImageLayout.DepthStencilAttachmentOptimal,
+                            ImageLayout.DepthStencilAttachmentOptimal,
+                            AttachmentLoadOp.Clear,
+                            AttachmentStoreOp.DontCare,
+                            dynamicClearValues[1]);
 
-                        RenderingInfo renderingInfo = new()
-                        {
-                            SType = StructureType.RenderingInfo,
-                            Flags = RenderingFlags.ContentsSecondaryCommandBuffersBit,
-                            RenderArea = new Rect2D
+                        DynamicRenderingFormatSignature swapchainDynamicRenderingFormats =
+                            CreateSwapchainDynamicRenderingFormatSignature(swapchainTarget.ImageFormat, swapchainTarget.DepthFormat);
+                        DynamicRenderingScopePlan scopePlan = new(
+                            new Rect2D
                             {
-                            Offset = new Offset2D(0, 0),
-                            Extent = swapchainTarget.Extent
-                        },
-                        ViewMask = 0,
-                        LayerCount = 1,
-                        ColorAttachmentCount = 1,
-                        PColorAttachments = &colorAttachment,
-                            PDepthAttachment = &depthAttachment,
-                        };
+                                Offset = new Offset2D(0, 0),
+                                Extent = swapchainTarget.Extent
+                            },
+                            1u,
+                            0u,
+                            colorAttachmentPlans,
+                            depthAttachmentPlan,
+                            true,
+                            default,
+                            false,
+                            false,
+                            swapchainDynamicRenderingFormats,
+                            SampleCountFlags.Count1Bit);
 
-                        Api!.CmdBeginRendering(commandBuffer, &renderingInfo);
+                        BeginDynamicRenderingScope(in scopePlan, secondaryContents: true);
                         Api!.CmdExecuteCommands(commandBuffer, 1, &secondaryCommandBuffer);
                         Api!.CmdEndRendering(commandBuffer);
 

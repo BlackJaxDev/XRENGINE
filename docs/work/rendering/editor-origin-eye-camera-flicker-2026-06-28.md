@@ -785,6 +785,44 @@ Expected next live-run signal:
 - With the directional light enabled, desktop deferred meshes should no longer alternate between lit/visible and missing due to cross-view directional shadow uniform data.
 - If flicker persists, the next target is directional shadow atlas publication itself: compare `CopyPublishedDirectionalAtlasUniformData`, atlas allocation `LastRenderedFrame`, and `ShadowAtlas.PublishedFrameData` between desktop and eye render timing.
 
+### 2026-06-30 Directional Cascade POV Source Fix
+
+User narrowed the remaining symptom: directional cascades need explicit desktop and HMD POV support. Instanced and geometry-shader cascade paths appeared stable, but sequential cascade rendering made desktop deferred meshes flicker in and out; with directional atlas enabled, shadow application looked like it toggled off on some frames.
+
+Root-cause finding:
+
+- Directional cascade preparation still resolved one global "shadow source camera".
+- In VR, `ResolveDirectionalShadowSourceCamera` considered eye viewports before active desktop/editor viewports, so a left/right eye could become the primary cascade source even while the desktop deferred pass was the view sampling the cascades.
+- `DirectionalLightComponent.CopyCascadeSourceFrusta` then only built cascade bounds from that primary camera plus the other eye. It did not include the active desktop/editor frustum and did not publish a combined HMD frustum.
+- Sequential cascade rendering is the most visible failure mode because each cascade renders from its own published viewport/cull volume. When those volumes are HMD-biased while the desktop deferred pass samples them with desktop view depth, desktop receivers and casters can fall outside the expected cascade/cull coverage from frame to frame.
+- The layered instanced and geometry-shader paths looked better because they render from the shared published cascade set in one grouped pass and can hide some per-cascade cull timing, but they were still using the wrong source contract.
+- With atlas enabled, the same bad source contract can make the desktop receiver path observe cascade atlas data that is not resident/current for the desktop view's required cascade coverage, which presents as shadows toggling off rather than as only caster/receiver mismatch.
+
+Implemented fix:
+
+- Changed directional shadow primary selection so active cascaded viewports are considered before VR eyes. A desktop/editor cascaded viewport now wins over left/right eye fallback, while VR-only rendering still falls back to the eye viewports.
+- Expanded cascade source frusta from the old primary-plus-eyes model to a bounded source set:
+  - selected primary camera,
+  - every active viewport that targets this world and prefers cascaded directional shadows,
+  - left and right HMD eye viewports,
+  - a combined HMD frustum built from both eye projection/view matrices and transformed by the HMD render matrix.
+- Added duplicate camera filtering so the primary/desktop/eye passes do not add the same camera twice.
+- Added `ProjectionMatrixCombiner.TryCombineProjectionMatrices(...)`, a span/stackalloc two-frustum combiner for the HMD combined frustum path so cascade preparation does not use the existing allocating point-cloud API.
+- This updates the common published cascade cameras, matrices, cull volumes, and atlas requests before render, so the same POV contract feeds sequential, single-pass stereo layered modes, and parallel recording.
+
+Validation:
+
+- `dotnet test XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~DirectionalCascadeSourceCamera_PrefersPlayerAssociatedCascadedViewport|FullyQualifiedName~DirectionalCascadeSourceFrusta_IncludeDesktopEyesAndCombinedHmd|FullyQualifiedName~TryCombineProjectionMatrices_StereoPair_EnclosesSourceFrusta" -v:minimal` passed: 3 tests.
+- `dotnet test XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~ProjectionMatrixCombinerTests" -v:minimal` passed: 6 tests.
+- The broader `CascadedShadowDefaultsAndForwardShaderTests` class still has unrelated pre-existing source-contract failures in forward/shadow-atlas assertions plus a constructor-time services failure. It did compile and run.
+- Restore/build still report existing Magick.NET advisory warnings; these are unrelated.
+
+Expected next live-run signal:
+
+- Desktop deferred meshes should remain visible when directional cascades are enabled because the desktop frustum now contributes to cascade bounds and primary split selection.
+- Directional atlas shadows should stop toggling off due to mismatched desktop-vs-eye cascade source data.
+- If a flicker remains, the next check is the atlas residency/publish path itself: compare directional cascade request keys, `AreRequiredDirectionalAtlasTilesSampleable`, and `DirectionalCascadeAtlasSlot.LastRenderedFrame` across desktop and eye render timing.
+
 ## Active Questions
 
 - Does flicker show up in saved viewport screenshots, or only live in the editor window?

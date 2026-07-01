@@ -13,3 +13,7 @@
 [submodule "Build/Submodules/OpenVR.NET"]
 	path = Build/Submodules/OpenVR.NET
 	url = https://github.com/BlackJaxDev/OpenVR.NET.git
+
+[submodule "monado"]
+	path = Build/Submodules/monado
+	url = https://github.com/BlackJaxDev/Monado.git
