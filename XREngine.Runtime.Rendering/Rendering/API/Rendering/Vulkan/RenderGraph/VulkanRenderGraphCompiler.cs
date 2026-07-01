@@ -179,7 +179,8 @@ public unsafe partial class VulkanRenderer
         /// Sorts frame operations deterministically by:
         /// 1) compiled pass topological order,
         /// 2) canonical opaque mesh draw order when both operations are safe to reorder,
-        /// 3) original index for all dependency-carrying operations.
+        /// 3) original index for all dependency-carrying operations,
+        /// 4) same-pass target clear-before-use normalization.
         /// </summary>
         /// <remarks>
         /// Pass order must dominate scheduling groups so consumers cannot be recorded before
@@ -187,8 +188,9 @@ public unsafe partial class VulkanRenderer
         /// rank is resolved from the compiled frame graph first; per-context metadata is only
         /// a fallback for nested work that is absent from the active graph.
         /// Same-pass operations preserve original enqueue order unless both are canonicalizable
-        /// opaque mesh draws; compute, barrier, and indirect draw operations must not cross each
-        /// other because they can share GPU-written counters and buffers.
+        /// opaque mesh draws. After sorting, target clears are lifted just far enough to precede
+        /// earlier uses of the same scheduling context and exact target; this keeps clears from
+        /// landing after desktop/HMD work when simultaneous render contexts interleave.
         /// </remarks>
         /// <param name="ops">Operations to sort.</param>
         /// <param name="graph">Compiled pass-order metadata.</param>
@@ -225,10 +227,13 @@ public unsafe partial class VulkanRenderer
                     break;
                 }
 
-                if (alreadySorted)
+                if (!alreadySorted)
+                    Array.Sort(sortKeys, 0, opCount, FrameOpSortKeyComparer.Instance);
+
+                bool movedTargetClear = MoveTargetClearsBeforeFirstSameTargetUse(sortKeys, opCount);
+                if (alreadySorted && !movedTargetClear)
                     return ops;
 
-                Array.Sort(sortKeys, 0, opCount, FrameOpSortKeyComparer.Instance);
                 for (int i = 0; i < opCount; i++)
                     ops[i] = sortKeys[i].Operation;
 
@@ -240,6 +245,47 @@ public unsafe partial class VulkanRenderer
                     ArrayPool<FrameOpSortKey>.Shared.Return(sortKeys, clearArray: true);
             }
         }
+
+        private static bool MoveTargetClearsBeforeFirstSameTargetUse(FrameOpSortKey[] sortKeys, int opCount)
+        {
+            bool moved = false;
+            for (int i = 1; i < opCount; i++)
+            {
+                FrameOpSortKey clearKey = sortKeys[i];
+                if (clearKey.Operation is not ClearOp clear)
+                    continue;
+
+                int insertIndex = i;
+                for (int j = i - 1; j >= 0; j--)
+                {
+                    FrameOpSortKey previous = sortKeys[j];
+                    if (previous.PassOrder != clearKey.PassOrder)
+                        break;
+
+                    if (IsSameSchedulingTarget(clear, previous.Operation) &&
+                        IsTargetUseThatClearMustPrecede(previous.Operation))
+                    {
+                        insertIndex = j;
+                    }
+                }
+
+                if (insertIndex == i)
+                    continue;
+
+                Array.Copy(sortKeys, insertIndex, sortKeys, insertIndex + 1, i - insertIndex);
+                sortKeys[insertIndex] = clearKey;
+                moved = true;
+            }
+
+            return moved;
+        }
+
+        private static bool IsSameSchedulingTarget(FrameOp x, FrameOp y)
+            => x.Context.SchedulingIdentity == y.Context.SchedulingIdentity &&
+               ReferenceEquals(x.Target, y.Target);
+
+        private static bool IsTargetUseThatClearMustPrecede(FrameOp op)
+            => op is MeshDrawOp or BlitOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp or TransformFeedbackOp;
 
         private static int ResolvePassOrder(FrameOp op, VulkanCompiledRenderGraph graph)
         {

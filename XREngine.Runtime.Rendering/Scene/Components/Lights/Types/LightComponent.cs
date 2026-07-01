@@ -306,8 +306,9 @@ namespace XREngine.Components.Capture.Lights.Types
             EShadowProjectionType projectionType,
             int faceOrCascadeIndex,
             EShadowMapEncoding encoding = EShadowMapEncoding.Depth,
-            ShadowRequestDomain domain = ShadowRequestDomain.Live)
-            => new(ID, domain, projectionType, faceOrCascadeIndex, encoding);
+            ShadowRequestDomain domain = ShadowRequestDomain.Live,
+            ShadowRequestSource source = ShadowRequestSource.Default)
+            => new(ID, domain, source, projectionType, faceOrCascadeIndex, encoding);
 
         /// <summary>
         /// Enables live shadow-map creation and rendering for this light.

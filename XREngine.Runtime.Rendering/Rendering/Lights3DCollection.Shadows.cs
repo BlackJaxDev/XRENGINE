@@ -480,30 +480,14 @@ namespace XREngine.Scene
 
                 ShadowMapFormatSelection shadowFormat = light.ResolveShadowMapFormat(preferredStorageFormat: null);
                 EShadowMapEncoding encoding = shadowFormat.Encoding;
-                int activeCascadeCount = light.ActiveCascadeCount;
-                bool useCascadeAtlas = light.EnableCascadedShadows &&
-                    light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(activeCascadeCount);
-                if (useCascadeAtlas)
-                {
-                    for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
-                    {
-                        XRCamera? cascadeCamera = light.GetCascadeCamera(cascadeIndex);
-                        if (cascadeCamera is null)
-                            continue;
+                SubmitDirectionalCascadeShadowAtlasRequests(light, ShadowRequestSource.Desktop, encoding);
+                SubmitDirectionalCascadeShadowAtlasRequests(light, ShadowRequestSource.Hmd, encoding);
 
-                        SubmitShadowAtlasRequest(
-                            light,
-                            EShadowProjectionType.DirectionalCascade,
-                            cascadeIndex,
-                            cascadeCamera,
-                            priority: 10000.0f - cascadeIndex * 100.0f,
-                            fallback: ShadowFallbackMode.StaleTile,
-                            encoding: encoding);
-                    }
-                }
-
+                bool hasAnyDirectionalCascades =
+                    light.HasPublishedCascades(ShadowRequestSource.Desktop) ||
+                    light.HasPublishedCascades(ShadowRequestSource.Hmd);
                 bool submitPrimary = !light.EnableCascadedShadows ||
-                    activeCascadeCount <= 0 ||
+                    !hasAnyDirectionalCascades ||
                     NeedsPrimaryDirectionalShadowMap();
                 if (submitPrimary && light.ShadowCamera is XRCamera primaryCamera)
                 {
@@ -516,6 +500,35 @@ namespace XREngine.Scene
                         fallback: ShadowFallbackMode.Legacy,
                         encoding: encoding);
                 }
+            }
+        }
+
+        private void SubmitDirectionalCascadeShadowAtlasRequests(
+            DirectionalLightComponent light,
+            ShadowRequestSource source,
+            EShadowMapEncoding encoding)
+        {
+            int activeCascadeCount = light.GetActiveCascadeCount(source);
+            bool useCascadeAtlas = light.EnableCascadedShadows &&
+                light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(activeCascadeCount);
+            if (!useCascadeAtlas)
+                return;
+
+            for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
+            {
+                XRCamera? cascadeCamera = light.GetCascadeCamera(source, cascadeIndex);
+                if (cascadeCamera is null)
+                    continue;
+
+                SubmitShadowAtlasRequest(
+                    light,
+                    EShadowProjectionType.DirectionalCascade,
+                    cascadeIndex,
+                    cascadeCamera,
+                    priority: 10000.0f - cascadeIndex * 100.0f + (source == ShadowRequestSource.Hmd ? 25.0f : 0.0f),
+                    fallback: ShadowFallbackMode.StaleTile,
+                    encoding: encoding,
+                    source: source);
             }
         }
 
@@ -594,9 +607,10 @@ namespace XREngine.Scene
             ShadowFallbackMode fallback,
             EShadowMapEncoding encoding = EShadowMapEncoding.Depth,
             uint? desiredResolutionOverride = null,
-            SkipReason forcedSkipReason = SkipReason.None)
+            SkipReason forcedSkipReason = SkipReason.None,
+            ShadowRequestSource source = ShadowRequestSource.Default)
         {
-            ShadowRequestKey key = light.CreateShadowRequestKey(projectionType, faceOrCascadeIndex, encoding);
+            ShadowRequestKey key = light.CreateShadowRequestKey(projectionType, faceOrCascadeIndex, encoding, source: source);
             Matrix4x4 view = camera.Transform.InverseRenderMatrix;
             Matrix4x4 projection = camera.ProjectionMatrix;
             float projNear = MathF.Max(0.0f, camera.NearZ);
@@ -752,11 +766,14 @@ namespace XREngine.Scene
         private bool ShouldRenderLegacyDirectionalShadowMap(DirectionalLightComponent light, out bool renderCascades)
         {
             renderCascades = true;
-            int activeCascadeCount = light.ActiveCascadeCount;
-            bool needsCascadeAtlas = light.EnableCascadedShadows && activeCascadeCount > 0;
+            int desktopCascadeCount = light.GetActiveCascadeCount(ShadowRequestSource.Desktop);
+            int hmdCascadeCount = light.GetActiveCascadeCount(ShadowRequestSource.Hmd);
+            int activeCascadeCount = Math.Max(desktopCascadeCount, hmdCascadeCount);
+            bool needsCascadeAtlas = light.EnableCascadedShadows && (desktopCascadeCount > 0 || hmdCascadeCount > 0);
             bool cascadeAtlasUnsupported = light.UsesDirectionalShadowAtlasForCurrentEncoding &&
                 needsCascadeAtlas &&
-                !light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(activeCascadeCount);
+                ((desktopCascadeCount > 0 && !light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(desktopCascadeCount)) ||
+                 (hmdCascadeCount > 0 && !light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(hmdCascadeCount)));
             if (!light.UsesDirectionalShadowAtlasForCurrentEncoding || cascadeAtlasUnsupported)
             {
                 renderCascades = light.EnableCascadedShadows && activeCascadeCount > 0;
@@ -769,12 +786,14 @@ namespace XREngine.Scene
                     renderCascades,
                     needsLegacyCascades: renderCascades,
                     needsLegacyPrimary: light.ShadowMap is not null,
-                    activeCascadeCount);
+                    desktopCascadeCount,
+                    hmdCascadeCount);
                 return true;
             }
 
             bool directionalAtlasReady = needsCascadeAtlas
-                ? HasSampleableDirectionalCascadeAtlas(light, activeCascadeCount)
+                ? (desktopCascadeCount <= 0 || HasSampleableDirectionalCascadeAtlas(light, ShadowRequestSource.Desktop, desktopCascadeCount)) &&
+                  (hmdCascadeCount <= 0 || HasSampleableDirectionalCascadeAtlas(light, ShadowRequestSource.Hmd, hmdCascadeCount))
                 : HasSampleableDirectionalPrimaryAtlas(light);
             if (!directionalAtlasReady)
             {
@@ -788,7 +807,8 @@ namespace XREngine.Scene
                     renderCascades,
                     needsLegacyCascades: renderCascades,
                     needsLegacyPrimary: light.ShadowMap is not null,
-                    activeCascadeCount);
+                    desktopCascadeCount,
+                    hmdCascadeCount);
                 return true;
             }
 
@@ -799,7 +819,8 @@ namespace XREngine.Scene
                 renderCascades: false,
                 needsLegacyCascades: false,
                 needsLegacyPrimary: false,
-                activeCascadeCount);
+                desktopCascadeCount,
+                hmdCascadeCount);
             renderCascades = false;
             return false;
         }
@@ -813,7 +834,7 @@ namespace XREngine.Scene
                    IsSampleableDirectionalAtlasSlot(slot, pageCount);
         }
 
-        private bool HasSampleableDirectionalCascadeAtlas(DirectionalLightComponent light, int activeCascadeCount)
+        private bool HasSampleableDirectionalCascadeAtlas(DirectionalLightComponent light, ShadowRequestSource source, int activeCascadeCount)
         {
             if (!TryGetDirectionalAtlasPageCount(light, out int pageCount))
                 return false;
@@ -824,7 +845,7 @@ namespace XREngine.Scene
 
             for (int i = 0; i < count; i++)
             {
-                if (!light.TryGetCascadeAtlasSlot(i, out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot) ||
+                if (!light.TryGetCascadeAtlasSlot(source, i, out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot) ||
                     !IsSampleableDirectionalAtlasSlot(slot, pageCount))
                 {
                     return false;
@@ -1017,6 +1038,7 @@ namespace XREngine.Scene
                 if (request.ProjectionType == EShadowProjectionType.DirectionalCascade)
                 {
                     directionalLight.SetCascadeAtlasSlot(
+                        request.Key.Source,
                         request.FaceOrCascadeIndex,
                         allocation,
                         recordIndex,
@@ -1148,7 +1170,8 @@ namespace XREngine.Scene
             bool renderCascades,
             bool needsLegacyCascades,
             bool needsLegacyPrimary,
-            int activeCascadeCount)
+            int desktopCascadeCount,
+            int hmdCascadeCount)
         {
             if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
                 !Debug.ShouldLogEvery(
@@ -1161,7 +1184,7 @@ namespace XREngine.Scene
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
-                "[DirectionalShadowAudit][LegacyDecision] frame={0} light='{1}' reason={2} useDirAtlas={3} legacyRender={4} renderCascades={5} needsLegacyCascades={6} needsLegacyPrimary={7} casts={8} cascadesEnabled={9} activeCascades={10} shadowMap={11} cascadeColorTex={12} cascadeRasterDepthTex={13} cascadeReceiverTex={14} useRasterCascadeReceiver={15} slots={16}",
+                "[DirectionalShadowAudit][LegacyDecision] frame={0} light='{1}' reason={2} useDirAtlas={3} legacyRender={4} renderCascades={5} needsLegacyCascades={6} needsLegacyPrimary={7} casts={8} cascadesEnabled={9} desktopCascades={10} hmdCascades={11} shadowMap={12} desktopColorTex={13} hmdColorTex={14} desktopRasterDepthTex={15} hmdRasterDepthTex={16} useRasterCascadeReceiver={17} desktopSlots={18} hmdSlots={19}",
                 RuntimeEngine.Rendering.State.RenderFrameId,
                 light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
                 reason,
@@ -1172,16 +1195,19 @@ namespace XREngine.Scene
                 needsLegacyPrimary,
                 light.CastsShadows,
                 light.EnableCascadedShadows,
-                activeCascadeCount,
+                desktopCascadeCount,
+                hmdCascadeCount,
                 light.ShadowMap is not null,
-                light.HasCascadeColorTexture,
-                light.HasCascadeRasterDepthTexture,
-                light.CascadedShadowReceiverTexture is not null,
+                light.HasCascadeColorTextureForSource(ShadowRequestSource.Desktop),
+                light.HasCascadeColorTextureForSource(ShadowRequestSource.Hmd),
+                light.HasCascadeRasterDepthTextureForSource(ShadowRequestSource.Desktop),
+                light.HasCascadeRasterDepthTextureForSource(ShadowRequestSource.Hmd),
                 light.UsesCascadeRasterDepthReceiver,
-                DescribeDirectionalCascadeSlots(light, activeCascadeCount));
+                DescribeDirectionalCascadeSlots(light, ShadowRequestSource.Desktop, desktopCascadeCount),
+                DescribeDirectionalCascadeSlots(light, ShadowRequestSource.Hmd, hmdCascadeCount));
         }
 
-        private static string DescribeDirectionalCascadeSlots(DirectionalLightComponent light, int activeCascadeCount)
+        private static string DescribeDirectionalCascadeSlots(DirectionalLightComponent light, ShadowRequestSource source, int activeCascadeCount)
         {
             int count = Math.Clamp(activeCascadeCount, 0, 4);
             if (count == 0)
@@ -1191,7 +1217,7 @@ namespace XREngine.Scene
             for (int i = 0; i < count; i++)
             {
                 string entry;
-                if (light.TryGetCascadeAtlasSlot(i, out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot))
+                if (light.TryGetCascadeAtlasSlot(source, i, out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot))
                 {
                     entry = $"c{i}:alloc={slot.HasAllocation},resident={slot.IsResident},page={slot.PageIndex},rec={slot.RecordIndex},fb={slot.Fallback},last={slot.LastRenderedFrame},rect={FormatRect(slot.InnerPixelRect)}";
                 }
@@ -1264,9 +1290,17 @@ namespace XREngine.Scene
             int cascadeIndex,
             out ShadowAtlasAllocation allocation,
             out int shadowRecordIndex)
+            => TryGetDirectionalCascadeShadowAtlasAllocation(light, ShadowRequestSource.Desktop, cascadeIndex, out allocation, out shadowRecordIndex);
+
+        internal bool TryGetDirectionalCascadeShadowAtlasAllocation(
+            DirectionalLightComponent light,
+            ShadowRequestSource source,
+            int cascadeIndex,
+            out ShadowAtlasAllocation allocation,
+            out int shadowRecordIndex)
         {
             EShadowMapEncoding encoding = light.ResolveShadowMapFormat(preferredStorageFormat: null).Encoding;
-            ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalCascade, cascadeIndex, encoding);
+            ShadowRequestKey key = light.CreateShadowRequestKey(EShadowProjectionType.DirectionalCascade, cascadeIndex, encoding, source: source);
             if (ShadowAtlas.PublishedFrameData.TryGetAllocationIndex(key, out shadowRecordIndex, out allocation))
                 return true;
 

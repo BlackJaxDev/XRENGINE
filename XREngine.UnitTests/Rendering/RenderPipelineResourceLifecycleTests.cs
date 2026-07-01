@@ -551,6 +551,50 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void DefaultRenderPipeline_MsaaLightCombineFactory_EnsuresSampleTexturesDuringProfileChurn()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            TestContext.CurrentContext.TestDirectory,
+            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs"))
+            .Replace("\r\n", "\n");
+
+        source.ShouldContain("private XRTexture EnsurePipelineTexture(string textureName, Func<XRTexture> factory)");
+        source.ShouldContain("_ = EnsurePipelineTexture(MsaaDepthStencilTextureName, CreateMsaaDepthStencilTexture);");
+        source.ShouldContain("EnsurePipelineTexture(MsaaLightingTextureName, CreateMsaaLightingTexture)");
+        source.ShouldContain("EnsurePipelineTexture(MsaaDepthViewTextureName, CreateMsaaDepthViewTexture)");
+        source.ShouldNotContain("GetTexture<XRTexture>(MsaaLightingTextureName)!");
+    }
+
+    [Test]
+    public void DefaultRenderPipeline_StereoPostProcessSettingsUseEffectiveCamera()
+    {
+        string pipelineSource = File.ReadAllText(Path.Combine(
+            TestContext.CurrentContext.TestDirectory,
+            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs"))
+            .Replace("\r\n", "\n");
+        string postProcessSource = File.ReadAllText(Path.Combine(
+            TestContext.CurrentContext.TestDirectory,
+            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs"))
+            .Replace("\r\n", "\n");
+        string bloomSource = File.ReadAllText(Path.Combine(
+            TestContext.CurrentContext.TestDirectory,
+            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_BloomPass.cs"))
+            .Replace("\r\n", "\n");
+
+        pipelineSource.ShouldContain("private static XRCamera? ResolveCurrentSettingsCamera");
+        pipelineSource.ShouldContain("RuntimeEngine.Rendering.State.RenderingCamera");
+        pipelineSource.ShouldContain("var camera = ResolveCurrentSettingsCamera(currentPipeline);");
+
+        postProcessSource.ShouldContain("ResolveCurrentSettingsCamera()?.GetPostProcessStageState<BloomSettings>()");
+        postProcessSource.ShouldContain("ResolveCurrentSettingsCamera()?.GetActivePostProcessState()");
+        postProcessSource.ShouldNotContain("RenderingPipelineState?.SceneCamera?.GetActivePostProcessState()");
+
+        bloomSource.ShouldContain("private static BloomSettings? ResolveBloomSettings(XRRenderPipelineInstance instance)");
+        bloomSource.ShouldContain("?? instance.LastRenderingCamera");
+        bloomSource.ShouldNotContain("var camera = instance.RenderState.SceneCamera;\n            var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();");
+    }
+
+    [Test]
     public void DefaultRenderPipeline_GtaoScratchResources_FollowResolutionFeatureMask()
     {
         DefaultRenderPipeline pipeline = new();

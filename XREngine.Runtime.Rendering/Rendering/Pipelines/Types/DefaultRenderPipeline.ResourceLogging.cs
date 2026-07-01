@@ -180,12 +180,13 @@ public partial class DefaultRenderPipeline
         return builder.ToString();
     }
 
-    private static string DescribeAttachment(IFrameBufferAttachement attachment)
+    private static string DescribeAttachment(IFrameBufferAttachement? attachment)
         => attachment switch
         {
             XRTexture texture => DescribeTexture(texture),
             XRRenderBuffer renderBuffer => DescribeRenderBuffer(renderBuffer),
-            _ => $"{attachment.GetType().Name}#{attachment.GetHashCode()} size={attachment.Width}x{attachment.Height}"
+            null => "<null>",
+            IFrameBufferAttachement other => $"{other.GetType().Name}#{other.GetHashCode()} size={other.Width}x{other.Height}"
         };
 
     private static string DescribeRenderBuffer(XRRenderBuffer renderBuffer)
@@ -201,8 +202,11 @@ public partial class DefaultRenderPipeline
         return builder.ToString();
     }
 
-    private static string DescribeTexture(XRTexture texture)
+    private static string DescribeTexture(XRTexture? texture)
     {
+        if (texture is null)
+            return "<null>";
+
         Vector3 size = texture.WidthHeightDepth;
         uint width = (uint)size.X;
         uint height = (uint)size.Y;

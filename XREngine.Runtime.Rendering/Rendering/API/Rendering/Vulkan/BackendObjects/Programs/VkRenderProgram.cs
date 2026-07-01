@@ -86,6 +86,7 @@ public unsafe partial class VulkanRenderer
         private readonly ConcurrentDictionary<string, byte> _computeWarnings = new(StringComparer.Ordinal);
         private readonly Dictionary<ComputeUniformBufferKey, ComputeUniformBuffer> _computeUniformBuffers = new();
         private Pipeline _computePipeline;
+        private DescriptorHeapProgramLayout? _descriptorHeapLayout;
         private bool _descriptorSetsRequireUpdateAfterBind;
         private bool _descriptorSetsRequireVariableDescriptorCount;
         private int _linkedShaderConfigVersion = -1;
@@ -108,6 +109,7 @@ public unsafe partial class VulkanRenderer
             }
         }
         public PipelineLayout PipelineLayout => _pipelineLayout;
+        internal DescriptorHeapProgramLayout? DescriptorHeapLayout => _descriptorHeapLayout;
         public IReadOnlyList<DescriptorSetLayout> DescriptorSetLayouts => _descriptorSetLayouts;
         public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _programDescriptorBindings;
         public IReadOnlyDictionary<string, AutoUniformBlockInfo> AutoUniformBlocks => _autoUniformBlocks;
@@ -1109,6 +1111,17 @@ public unsafe partial class VulkanRenderer
             _programDescriptorBindings.AddRange(result.Bindings);
             _descriptorSetsRequireUpdateAfterBind = result.RequiresUpdateAfterBind;
             _descriptorSetsRequireVariableDescriptorCount = result.RequiresVariableDescriptorCount;
+            _descriptorHeapLayout = null;
+            if (Renderer.IsDescriptorHeapDrawBindingActive)
+            {
+                _descriptorHeapLayout = Renderer.CreateDescriptorHeapProgramLayout(
+                    _programDescriptorBindings,
+                    programName,
+                    out string descriptorHeapReason);
+                if (_descriptorHeapLayout is null)
+                    throw new InvalidOperationException($"Failed to create Vulkan descriptor heap mapping for program '{programName}': {descriptorHeapReason}");
+            }
+
             _autoUniformBlocks.Clear();
             foreach (VkShader shader in _shaderCache.Values)
             {
@@ -1238,6 +1251,7 @@ public unsafe partial class VulkanRenderer
                 DestroyPipelineLayout("VkRenderProgram.DestroyLayouts");
 
             _programDescriptorBindings.Clear();
+            _descriptorHeapLayout = null;
             _descriptorSetsRequireUpdateAfterBind = false;
             _descriptorSetsRequireVariableDescriptorCount = false;
             IsLinked = false;
@@ -1405,7 +1419,69 @@ public unsafe partial class VulkanRenderer
                 pipelineInfo.PStages = stagesPtr;
                 pipelineInfo.Layout = _pipelineLayout;
 
-                Result result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline pipeline);
+                Result result;
+                DescriptorHeapProgramLayout? descriptorHeapLayout = _descriptorHeapLayout;
+                if (Renderer.IsDescriptorHeapDrawBindingActive)
+                {
+                    void* originalPipelinePNext = pipelineInfo.PNext;
+                    PipelineCreateFlags2CreateInfoNative flags2 = new()
+                    {
+                        SType = VulkanDescriptorHeapExt.PipelineCreateFlags2CreateInfoSType,
+                        PNext = originalPipelinePNext,
+                        Flags = unchecked((ulong)pipelineInfo.Flags) | VulkanDescriptorHeapExt.PipelineCreate2DescriptorHeapBit,
+                    };
+                    pipelineInfo.PNext = &flags2;
+
+                    if (descriptorHeapLayout is { Mappings.Length: > 0 })
+                    {
+                        fixed (DescriptorSetAndBindingMappingEXTNative* mappingPtr = descriptorHeapLayout.Mappings)
+                        {
+                            void** originalStagePNext = stackalloc void*[stages.Length];
+                            ShaderDescriptorSetAndBindingMappingInfoEXTNative* mappingInfos = stackalloc ShaderDescriptorSetAndBindingMappingInfoEXTNative[stages.Length];
+                            for (int i = 0; i < stages.Length; i++)
+                            {
+                                originalStagePNext[i] = stagesPtr[i].PNext;
+                                mappingInfos[i] = new ShaderDescriptorSetAndBindingMappingInfoEXTNative
+                                {
+                                    SType = VulkanDescriptorHeapExt.ShaderDescriptorSetAndBindingMappingInfoSType,
+                                    PNext = originalStagePNext[i],
+                                    MappingCount = (uint)descriptorHeapLayout.Mappings.Length,
+                                    Mappings = mappingPtr,
+                                };
+                                stagesPtr[i].PNext = mappingInfos + i;
+                            }
+
+                            result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline mappedHeapPipeline);
+                            for (int i = 0; i < stages.Length; i++)
+                                stagesPtr[i].PNext = originalStagePNext[i];
+
+                            pipelineInfo.PNext = originalPipelinePNext;
+
+                            if (result != Result.Success)
+                            {
+                                WriteShaderDiagnostics($"vkCreateGraphicsPipelines failed result={result}");
+                                throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
+                            }
+
+                            Renderer.NotifyVulkanPipelineCreated("graphics");
+                            return mappedHeapPipeline;
+                        }
+                    }
+
+                    result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline heapPipeline);
+                    pipelineInfo.PNext = originalPipelinePNext;
+
+                    if (result != Result.Success)
+                    {
+                        WriteShaderDiagnostics($"vkCreateGraphicsPipelines failed result={result}");
+                        throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
+                    }
+
+                    Renderer.NotifyVulkanPipelineCreated("graphics");
+                    return heapPipeline;
+                }
+
+                result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline pipeline);
                 if (result != Result.Success)
                 {
                     WriteShaderDiagnostics($"vkCreateGraphicsPipelines failed result={result}");
@@ -1432,7 +1508,53 @@ public unsafe partial class VulkanRenderer
             pipelineInfo.Stage = computeStage;
             pipelineInfo.Layout = _pipelineLayout;
 
-            Result result = Api!.CreateComputePipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline pipeline);
+            Result result;
+            DescriptorHeapProgramLayout? descriptorHeapLayout = _descriptorHeapLayout;
+            if (Renderer.IsDescriptorHeapDrawBindingActive)
+            {
+                void* originalPipelinePNext = pipelineInfo.PNext;
+                PipelineCreateFlags2CreateInfoNative flags2 = new()
+                {
+                    SType = VulkanDescriptorHeapExt.PipelineCreateFlags2CreateInfoSType,
+                    PNext = originalPipelinePNext,
+                    Flags = unchecked((ulong)pipelineInfo.Flags) | VulkanDescriptorHeapExt.PipelineCreate2DescriptorHeapBit,
+                };
+                pipelineInfo.PNext = &flags2;
+
+                if (descriptorHeapLayout is { Mappings.Length: > 0 })
+                {
+                    fixed (DescriptorSetAndBindingMappingEXTNative* mappingPtr = descriptorHeapLayout.Mappings)
+                    {
+                        void* originalStagePNext = pipelineInfo.Stage.PNext;
+                        ShaderDescriptorSetAndBindingMappingInfoEXTNative mappingInfo = new()
+                        {
+                            SType = VulkanDescriptorHeapExt.ShaderDescriptorSetAndBindingMappingInfoSType,
+                            PNext = originalStagePNext,
+                            MappingCount = (uint)descriptorHeapLayout.Mappings.Length,
+                            Mappings = mappingPtr,
+                        };
+                        pipelineInfo.Stage.PNext = &mappingInfo;
+                        result = Api!.CreateComputePipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline mappedHeapPipeline);
+                        pipelineInfo.Stage.PNext = originalStagePNext;
+                        pipelineInfo.PNext = originalPipelinePNext;
+                        if (result != Result.Success)
+                            throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
+
+                        Renderer.NotifyVulkanPipelineCreated("compute");
+                        return mappedHeapPipeline;
+                    }
+                }
+
+                result = Api!.CreateComputePipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline heapPipeline);
+                pipelineInfo.PNext = originalPipelinePNext;
+                if (result != Result.Success)
+                    throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
+
+                Renderer.NotifyVulkanPipelineCreated("compute");
+                return heapPipeline;
+            }
+
+            result = Api!.CreateComputePipelines(Device, pipelineCache, 1, ref pipelineInfo, null, out Pipeline pipeline);
             if (result != Result.Success)
                 throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 
@@ -1458,6 +1580,8 @@ public unsafe partial class VulkanRenderer
             }
 
             hash.Add(_descriptorSetLayouts.Length);
+            hash.Add(Renderer.ActiveDescriptorBackend);
+            hash.Add(_descriptorHeapLayout?.PushByteCount ?? 0u);
             DescriptorBindingInfo[] bindings = _programDescriptorBindings
                 .OrderBy(static binding => binding.Set)
                 .ThenBy(static binding => binding.Binding)
@@ -1488,6 +1612,8 @@ public unsafe partial class VulkanRenderer
             }
 
             hash.Add(_descriptorSetLayouts.Length);
+            hash.Add(Renderer.ActiveDescriptorBackend);
+            hash.Add(_descriptorHeapLayout?.PushByteCount ?? 0u);
             foreach (DescriptorBindingInfo binding in _programDescriptorBindings
                 .OrderBy(static binding => binding.Set)
                 .ThenBy(static binding => binding.Binding))
@@ -1662,6 +1788,61 @@ public unsafe partial class VulkanRenderer
             DescriptorBufferInfo[] bufferArray = bufferInfos.ToArray();
             DescriptorImageInfo[] imageArray = imageInfos.ToArray();
             BufferView[] texelArray = texelBufferViews.ToArray();
+
+            if (Renderer.IsDescriptorHeapDrawBindingActive)
+            {
+                DescriptorHeapPushDataPayload payload = Renderer.CreateDescriptorHeapPushDataPayload(_descriptorHeapLayout);
+                fixed (DescriptorBufferInfo* bufferPtr = bufferArray)
+                fixed (DescriptorImageInfo* imagePtr = imageArray)
+                fixed (BufferView* texelPtr = texelArray)
+                {
+                    for (int i = 0; i < pendingWriteArray.Length; i++)
+                    {
+                        PendingDescriptorWrite pending = pendingWriteArray[i];
+                        DescriptorBindingInfo binding = FindDescriptorBinding(pending.Set, pending.Binding, pending.DescriptorType);
+                        bool wrote;
+                        string heapReason;
+                        switch (pending.Source)
+                        {
+                            case PendingDescriptorSource.Buffer:
+                                wrote = Renderer.TryWriteDescriptorHeapBinding(this, binding, payload, bufferPtr + pending.SourceStartIndex, null, null, pending.DescriptorCount, out heapReason);
+                                break;
+                            case PendingDescriptorSource.Image:
+                                wrote = Renderer.TryWriteDescriptorHeapBinding(this, binding, payload, null, imagePtr + pending.SourceStartIndex, null, pending.DescriptorCount, out heapReason);
+                                break;
+                            case PendingDescriptorSource.TexelBuffer:
+                                wrote = Renderer.TryWriteDescriptorHeapBinding(this, binding, payload, null, null, texelPtr + pending.SourceStartIndex, pending.DescriptorCount, out heapReason);
+                                break;
+                            default:
+                                wrote = false;
+                                heapReason = "unsupported compute descriptor source.";
+                                break;
+                        }
+
+                        if (!wrote)
+                        {
+                            RecordComputeDescriptorFailure(binding, $"descriptor heap write failed: {heapReason}", skippedDispatch: true);
+                            return false;
+                        }
+                    }
+
+                    if (!Renderer.TryPushDescriptorHeapProgramData(commandBuffer, this, payload, out string pushReason))
+                    {
+                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
+                            Data.Name,
+                            "descriptor-heap",
+                            "<compute-push>",
+                            0,
+                            0,
+                            skippedDraw: false,
+                            skippedDispatch: true,
+                            pushReason);
+                        return false;
+                    }
+                }
+
+                return true;
+            }
 
             bool cacheable = tempUniformBuffers.Count == 0;
             DescriptorSet[] descriptorSets;
@@ -1930,6 +2111,18 @@ public unsafe partial class VulkanRenderer
 
             public static PendingDescriptorWrite Texel(uint set, uint binding, DescriptorType descriptorType, uint descriptorCount, int sourceStartIndex)
                 => new(set, binding, descriptorType, descriptorCount, PendingDescriptorSource.TexelBuffer, sourceStartIndex);
+        }
+
+        private DescriptorBindingInfo FindDescriptorBinding(uint set, uint binding, DescriptorType descriptorType)
+        {
+            for (int i = 0; i < _programDescriptorBindings.Count; i++)
+            {
+                DescriptorBindingInfo candidate = _programDescriptorBindings[i];
+                if (candidate.Set == set && candidate.Binding == binding)
+                    return candidate;
+            }
+
+            return new DescriptorBindingInfo(set, binding, descriptorType, ShaderStageFlags.ComputeBit, 1u, string.Empty);
         }
 
         private static string GetDescriptorBindingClass(DescriptorType descriptorType)
@@ -2311,9 +2504,12 @@ public unsafe partial class VulkanRenderer
 
             (Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) = Renderer.CreateBuffer(
                 size,
-                BufferUsageFlags.UniformBufferBit,
+                Renderer.IsDescriptorHeapDrawBindingActive
+                    ? BufferUsageFlags.UniformBufferBit | BufferUsageFlags.ShaderDeviceAddressBit
+                    : BufferUsageFlags.UniformBufferBit,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                null);
+                null,
+                Renderer.IsDescriptorHeapDrawBindingActive);
 
             if (buffer.Handle == 0 || memory.Handle == 0)
             {

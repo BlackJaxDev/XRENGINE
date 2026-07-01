@@ -287,7 +287,7 @@ namespace XREngine.Rendering.Vulkan
                     if (Api!.CreateImageView(Device, ref depthViewInfo, null, out cached) != Result.Success)
                         return default;
 
-                    Renderer.TrackLiveImageView(cached, "VkTextureView.AspectOnlyDescriptor");
+                    Renderer.TrackLiveImageView(cached, in depthViewInfo, "VkTextureView.AspectOnlyDescriptor");
                     return cached;
                 }
             }
@@ -790,7 +790,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
                     throw new InvalidOperationException("Failed to create Vulkan texture view.");
-                Renderer.TrackLiveImageView(_view, "VkTextureView.View");
+                Renderer.TrackLiveImageView(_view, in viewInfo, "VkTextureView.View");
 
                 // For depth/stencil formats with both aspects, create a depth-only view for
                 // sampled descriptors (Vulkan requires exactly one aspect in that case).
@@ -806,7 +806,7 @@ namespace XREngine.Rendering.Vulkan
                     };
                     if (Api!.CreateImageView(Device, ref depthOnlyViewInfo, null, out _depthOnlyView) != Result.Success)
                         throw new InvalidOperationException("Failed to create depth-only descriptor view for texture view.");
-                    Renderer.TrackLiveImageView(_depthOnlyView, "VkTextureView.DepthOnlyDescriptor");
+                    Renderer.TrackLiveImageView(_depthOnlyView, in depthOnlyViewInfo, "VkTextureView.DepthOnlyDescriptor");
                 }
 
                 CreateSampler();
@@ -886,7 +886,7 @@ namespace XREngine.Rendering.Vulkan
                     if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
                         _view = default;
                     else
-                        Renderer.TrackLiveImageView(_view, "VkTextureView.RefreshedView");
+                        Renderer.TrackLiveImageView(_view, in viewInfo, "VkTextureView.RefreshedView");
 
                     bool hasStencil = _format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
                     if (_view.Handle != 0 && hasStencil && (_usage & ImageUsageFlags.SampledBit) != 0)
@@ -901,7 +901,7 @@ namespace XREngine.Rendering.Vulkan
                         if (Api!.CreateImageView(Device, ref depthOnlyViewInfo, null, out _depthOnlyView) != Result.Success)
                             _depthOnlyView = default;
                         else
-                            Renderer.TrackLiveImageView(_depthOnlyView, "VkTextureView.RefreshedDepthOnlyDescriptor");
+                            Renderer.TrackLiveImageView(_depthOnlyView, in depthOnlyViewInfo, "VkTextureView.RefreshedDepthOnlyDescriptor");
                     }
 
                     if (_view.Handle != 0 && _sampler.Handle == 0)
@@ -1061,7 +1061,7 @@ namespace XREngine.Rendering.Vulkan
                 if (Api!.CreateSampler(Device, ref samplerInfo, null, out _sampler) != Result.Success)
                     throw new Exception("Failed to create Vulkan texture-view sampler.");
 
-                Renderer.RegisterLiveSampler(_sampler);
+                Renderer.RegisterLiveSampler(_sampler, in samplerInfo);
             }
 
             private void DestroySampler()

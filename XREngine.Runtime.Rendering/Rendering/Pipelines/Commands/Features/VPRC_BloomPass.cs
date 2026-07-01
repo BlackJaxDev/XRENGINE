@@ -4,6 +4,8 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 using System;
 using System.Collections.Generic;
+using System.Numerics;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -714,13 +716,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (instance is null)
             {
                 LogGuardFailure(nameof(DownsampleLevel1_SettingUniforms), "No active pipeline instance; using safe defaults.");
+                SetBloomViewportUniforms(program, null);
                 SetDefaultDownsampleUniforms(program, true);
                 return;
             }
 
-            var camera = instance.RenderState.SceneCamera;
-            var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
-            if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
+            SetBloomViewportUniforms(program, instance);
+            BloomSettings? bloom = ResolveBloomSettings(instance);
+            if (bloom is not null)
             {
                 bloom.SetDownsampleUniforms(program, firstLevel: true);
                 program.Uniform("DebugSolidOutput", BloomDebugSolidOutput);
@@ -739,13 +742,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (instance is null)
             {
                 LogGuardFailure(nameof(DownsampleLevelN_SettingUniforms), "No active pipeline instance; using safe defaults.");
+                SetBloomViewportUniforms(program, null);
                 SetDefaultDownsampleUniforms(program, false);
                 return;
             }
 
-            var camera = instance.RenderState.SceneCamera;
-            var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
-            if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
+            SetBloomViewportUniforms(program, instance);
+            BloomSettings? bloom = ResolveBloomSettings(instance);
+            if (bloom is not null)
             {
                 // SourceLOD stays at zero because each material samples through a one-mip view.
                 bloom.SetDownsampleUniforms(program, firstLevel: false);
@@ -769,21 +773,48 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("DebugSolidOutput", BloomDebugSolidOutput);
         }
 
+        private static BloomSettings? ResolveBloomSettings(XRRenderPipelineInstance instance)
+        {
+            var renderState = RuntimeEngine.Rendering.State.ActiveRenderCommandExecutionState;
+            var camera = instance.RenderState.SceneCamera
+                ?? RuntimeEngine.Rendering.State.RenderingCamera
+                ?? instance.RenderState.RenderingCamera
+                ?? (renderState?.SceneCamera as XRCamera)
+                ?? (renderState?.RenderingCamera as XRCamera)
+                ?? instance.LastSceneCamera
+                ?? instance.LastRenderingCamera;
+
+            var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
+            return bloomStage?.TryGetBacking(out BloomSettings? bloom) == true ? bloom : null;
+        }
+
+        private static void SetBloomViewportUniforms(XRRenderProgram program, XRRenderPipelineInstance? instance)
+        {
+            var area = instance?.RenderState.CurrentRenderRegion ?? RuntimeEngine.Rendering.State.RenderArea;
+            if (area.Width <= 0 || area.Height <= 0)
+                area = RuntimeEngine.Rendering.State.RenderArea;
+
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), Math.Max(area.Width, 1));
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), Math.Max(area.Height, 1));
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
+        }
+
         private void UpsampleFbo_SettingUniforms(XRRenderProgram program)
         {
             var instance = ActivePipelineInstance;
             if (instance is null)
             {
                 LogGuardFailure(nameof(UpsampleFbo_SettingUniforms), "No active pipeline instance; using safe defaults.");
+                SetBloomViewportUniforms(program, null);
                 // SourceLOD stays at zero because each material samples through a one-mip view.
                 program.Uniform("Radius", 1.0f);
                 program.Uniform("Scatter", 0.7f);
                 return;
             }
 
-            var camera = instance.RenderState.SceneCamera;
-            var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
-            if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
+            SetBloomViewportUniforms(program, instance);
+            BloomSettings? bloom = ResolveBloomSettings(instance);
+            if (bloom is not null)
             {
                 bloom.SetUpsampleUniforms(program);
                 return;
@@ -796,6 +827,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void BloomCopy_SettingUniforms(XRRenderProgram program)
         {
+            SetBloomViewportUniforms(program, ActivePipelineInstance);
             if (_bloomCopySourceTexture is not null)
                 program.Sampler(BloomSourceSamplerName, _bloomCopySourceTexture, 0);
         }

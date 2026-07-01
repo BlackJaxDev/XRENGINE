@@ -1249,8 +1249,8 @@ public unsafe partial class VulkanRenderer
 				GraphicsPipelineLibrarySubset.PreRasterizationShaders or
 				GraphicsPipelineLibrarySubset.FragmentShader or
 				GraphicsPipelineLibrarySubset.FragmentOutputInterface;
-			bool hasDynamicRenderingFormatIdentity = subset == GraphicsPipelineLibrarySubset.FragmentOutputInterface;
 			bool usesDynamicRenderingIdentity = hasRenderPassIdentity && pipeline.UseDynamicRendering;
+			DynamicRenderingFormatSignature dynamicRenderingFormats = CreateGraphicsPipelineLibraryDynamicRenderingFormatSignature(subset, pipeline);
 			bool hasTopology = subset == GraphicsPipelineLibrarySubset.VertexInputInterface;
 			bool hasProgram = subset is GraphicsPipelineLibrarySubset.PreRasterizationShaders or GraphicsPipelineLibrarySubset.FragmentShader;
 			bool hasVertexLayout = subset == GraphicsPipelineLibrarySubset.VertexInputInterface;
@@ -1263,7 +1263,7 @@ public unsafe partial class VulkanRenderer
 				subset,
 				usesDynamicRenderingIdentity,
 				hasRenderPassIdentity && !pipeline.UseDynamicRendering ? pipeline.RenderPassHandle : 0UL,
-				hasDynamicRenderingFormatIdentity && pipeline.UseDynamicRendering ? pipeline.DynamicRenderingFormats : default,
+				usesDynamicRenderingIdentity ? dynamicRenderingFormats : default,
 				hasTopology ? pipeline.Topology : default,
 				hasProgram ? pipeline.ProgramPipelineHash : 0UL,
 				hasVertexLayout ? pipeline.VertexLayoutHash : 0UL,
@@ -1292,6 +1292,27 @@ public unsafe partial class VulkanRenderer
 				hasRasterState && pipeline.NativeNegativeOneToOneDepth);
 		}
 
+		private static DynamicRenderingFormatSignature CreateGraphicsPipelineLibraryDynamicRenderingFormatSignature(
+			GraphicsPipelineLibrarySubset subset,
+			in PipelineKey pipeline)
+		{
+			if (!pipeline.UseDynamicRendering)
+				return default;
+
+			return subset switch
+			{
+				GraphicsPipelineLibrarySubset.PreRasterizationShaders or
+				GraphicsPipelineLibrarySubset.FragmentShader => new DynamicRenderingFormatSignature(
+					ReadOnlySpan<Format>.Empty,
+					Format.Undefined,
+					Format.Undefined,
+					pipeline.DynamicRenderingFormats.ViewMask,
+					pipeline.DynamicRenderingFormats.LayerCount),
+				GraphicsPipelineLibrarySubset.FragmentOutputInterface => pipeline.DynamicRenderingFormats,
+				_ => default,
+			};
+		}
+
 		private Pipeline EnsureGraphicsPipelineLibrary(
 			GraphicsPipelineBuildRequest request,
 			GraphicsPipelineLibraryKey key,
@@ -1305,13 +1326,32 @@ public unsafe partial class VulkanRenderer
 
 			fixed (PipelineShaderStageCreateInfo* stagesPtr = stages)
 			{
-				bool includeDynamicRenderingInfo =
-					!key.UseDynamicRendering ||
-					key.Subset == GraphicsPipelineLibrarySubset.FragmentOutputInterface;
+				bool includeDynamicRenderingInfo = key.UseDynamicRendering;
+				PipelineRenderingCreateInfo libraryRenderingInfo = default;
+				uint libraryColorAttachmentCount = includeDynamicRenderingInfo
+					? key.DynamicRenderingFormats.ColorAttachmentCount
+					: 0u;
+				Format* libraryColorFormats = stackalloc Format[(int)Math.Max(libraryColorAttachmentCount, 1u)];
+				if (libraryColorAttachmentCount > 0u)
+					key.DynamicRenderingFormats.CopyColorAttachmentFormats(libraryColorFormats, libraryColorAttachmentCount);
+
+				if (includeDynamicRenderingInfo)
+				{
+					libraryRenderingInfo = new PipelineRenderingCreateInfo
+					{
+						SType = StructureType.PipelineRenderingCreateInfo,
+						ViewMask = key.DynamicRenderingFormats.ViewMask,
+						ColorAttachmentCount = libraryColorAttachmentCount,
+						PColorAttachmentFormats = libraryColorAttachmentCount > 0u ? libraryColorFormats : null,
+						DepthAttachmentFormat = key.DynamicRenderingFormats.DepthAttachmentFormat,
+						StencilAttachmentFormat = key.DynamicRenderingFormats.StencilAttachmentFormat,
+					};
+				}
+
 				GraphicsPipelineLibraryCreateInfoEXT libraryInfo = new()
 				{
 					SType = StructureType.GraphicsPipelineLibraryCreateInfoExt,
-					PNext = includeDynamicRenderingInfo ? baseInfo.PNext : null,
+					PNext = includeDynamicRenderingInfo ? &libraryRenderingInfo : null,
 					Flags = libraryFlags,
 				};
 
@@ -1322,7 +1362,7 @@ public unsafe partial class VulkanRenderer
 				libraryPipelineInfo.PStages = stages.Length > 0 ? stagesPtr : null;
 				libraryPipelineInfo.Layout = request.PipelineLayout;
 
-				ApplyGraphicsPipelineLibrarySubset(ref libraryPipelineInfo, key.Subset, key.UseDynamicRendering);
+				ApplyGraphicsPipelineLibrarySubset(ref libraryPipelineInfo, key.Subset);
 
 				long createStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
 				Result result = Api!.CreateGraphicsPipelines(Device, pipelineCache, 1, ref libraryPipelineInfo, null, out Pipeline library);
@@ -1372,42 +1412,30 @@ public unsafe partial class VulkanRenderer
 
 		private static void ApplyGraphicsPipelineLibrarySubset(
 			ref GraphicsPipelineCreateInfo pipelineInfo,
-			GraphicsPipelineLibrarySubset subset,
-			bool useDynamicRendering)
+			GraphicsPipelineLibrarySubset subset)
 		{
-			// When dynamic rendering state is chained, validation still requires the
-			// attachment-dependent structs to remain valid on subset libraries.
-			bool preserveDynamicRenderingAttachmentState = useDynamicRendering;
 			switch (subset)
 			{
 				case GraphicsPipelineLibrarySubset.VertexInputInterface:
 					pipelineInfo.PViewportState = null;
 					pipelineInfo.PRasterizationState = null;
-					if (!preserveDynamicRenderingAttachmentState)
-					{
-						pipelineInfo.PMultisampleState = null;
-						pipelineInfo.PDepthStencilState = null;
-						pipelineInfo.PColorBlendState = null;
-					}
+					pipelineInfo.PMultisampleState = null;
+					pipelineInfo.PDepthStencilState = null;
+					pipelineInfo.PColorBlendState = null;
 					pipelineInfo.PDynamicState = null;
 					break;
 				case GraphicsPipelineLibrarySubset.PreRasterizationShaders:
 					pipelineInfo.PVertexInputState = null;
 					pipelineInfo.PInputAssemblyState = null;
-					if (!preserveDynamicRenderingAttachmentState)
-					{
-						pipelineInfo.PMultisampleState = null;
-						pipelineInfo.PDepthStencilState = null;
-						pipelineInfo.PColorBlendState = null;
-					}
+					pipelineInfo.PDepthStencilState = null;
+					pipelineInfo.PColorBlendState = null;
 					break;
 				case GraphicsPipelineLibrarySubset.FragmentShader:
 					pipelineInfo.PVertexInputState = null;
 					pipelineInfo.PInputAssemblyState = null;
 					pipelineInfo.PViewportState = null;
 					pipelineInfo.PRasterizationState = null;
-					if (!preserveDynamicRenderingAttachmentState)
-						pipelineInfo.PColorBlendState = null;
+					pipelineInfo.PColorBlendState = null;
 					pipelineInfo.PDynamicState = null;
 					break;
 				case GraphicsPipelineLibrarySubset.FragmentOutputInterface:

@@ -25,6 +25,7 @@ public unsafe partial class VulkanRenderer
     {
         AttachmentDescription[] descriptions = new AttachmentDescription[signature.Length];
         int colorCount = 0;
+        int resolveCount = 0;
 
         for (int i = 0; i < signature.Length; i++)
         {
@@ -33,6 +34,8 @@ public unsafe partial class VulkanRenderer
 
             if (attachment.Role == AttachmentRole.Color)
                 colorCount++;
+            else if (attachment.Role == AttachmentRole.Resolve)
+                resolveCount++;
         }
 
         AttachmentReference[] colorRefs = colorCount > 0
@@ -41,6 +44,18 @@ public unsafe partial class VulkanRenderer
         Format[] colorFormats = colorCount > 0
             ? new Format[colorCount]
             : Array.Empty<Format>();
+
+        AttachmentReference[] resolveRefs = resolveCount > 0 && colorCount > 0
+            ? new AttachmentReference[colorCount]
+            : Array.Empty<AttachmentReference>();
+        for (int i = 0; i < resolveRefs.Length; i++)
+        {
+            resolveRefs[i] = new AttachmentReference
+            {
+                Attachment = uint.MaxValue,
+                Layout = ImageLayout.ColorAttachmentOptimal
+            };
+        }
 
         AttachmentReference depthRef = default;
         bool depthAssigned = false;
@@ -54,15 +69,46 @@ public unsafe partial class VulkanRenderer
                 colorFormats[colorIndex] = attachment.Format;
                 colorRefs[colorIndex++] = attachment.ToAttachmentReference((uint)i);
             }
-            else if (!depthAssigned)
+            else if ((attachment.Role is AttachmentRole.Depth or AttachmentRole.DepthStencil or AttachmentRole.Stencil) && !depthAssigned)
             {
                 depthRef = attachment.ToAttachmentReference((uint)i);
                 depthAssigned = true;
             }
         }
 
+        if (resolveRefs.Length > 0)
+        {
+            for (int i = 0; i < signature.Length; i++)
+            {
+                FrameBufferAttachmentSignature attachment = signature[i];
+                if (attachment.Role != AttachmentRole.Resolve)
+                    continue;
+
+                int subpassColorIndex = -1;
+                for (int colorRefIndex = 0; colorRefIndex < colorRefs.Length; colorRefIndex++)
+                {
+                    uint attachmentIndex = colorRefs[colorRefIndex].Attachment;
+                    if (attachmentIndex < signature.Length &&
+                        signature[(int)attachmentIndex].ColorIndex == attachment.ColorIndex)
+                    {
+                        subpassColorIndex = colorRefIndex;
+                        break;
+                    }
+                }
+
+                if (subpassColorIndex < 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Framebuffer render pass has a resolve attachment for color {attachment.ColorIndex}, but no matching color attachment.");
+                }
+
+                resolveRefs[subpassColorIndex] = attachment.ToAttachmentReference((uint)i);
+            }
+        }
+
         fixed (AttachmentDescription* descPtr = descriptions)
         fixed (AttachmentReference* colorPtr = colorRefs)
+        fixed (AttachmentReference* resolvePtr = resolveRefs)
         {
             AttachmentReference depthCopy = depthRef;
             AttachmentReference* depthPtr = depthAssigned ? &depthCopy : null;
@@ -72,6 +118,7 @@ public unsafe partial class VulkanRenderer
                 PipelineBindPoint = PipelineBindPoint.Graphics,
                 ColorAttachmentCount = (uint)colorRefs.Length,
                 PColorAttachments = colorRefs.Length > 0 ? colorPtr : null,
+                PResolveAttachments = resolveRefs.Length > 0 ? resolvePtr : null,
                 PDepthStencilAttachment = depthPtr,
             };
 
@@ -264,8 +311,12 @@ public unsafe partial class VulkanRenderer
     internal enum AttachmentRole
     {
         Color,
+        Resolve,
         Depth,
         DepthStencil,
         Stencil,
     }
+
+    private static bool IsColorLikeAttachmentRole(AttachmentRole role)
+        => role is AttachmentRole.Color or AttachmentRole.Resolve;
 }

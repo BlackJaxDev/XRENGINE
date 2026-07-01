@@ -101,6 +101,7 @@ public sealed class RenderCommandCollectionOrderingTests
         string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommand.cs");
 
         source.ShouldContain("SnapshotSortedRenderCommandCollection");
+        source.ShouldContain("SnapshotSortedRenderCommandCollection : ICollection<RenderCommand>, IReadOnlyCollection<RenderCommand>");
         source.ShouldContain("Entry.Capture(item, sortOrderKey)");
         source.ShouldContain("snapshotSet.Add(item, sortOrderKey)");
         source.ShouldNotContain("_entries.Add(Entry.Capture(item));");
@@ -111,6 +112,45 @@ public sealed class RenderCommandCollectionOrderingTests
         source.ShouldContain("public bool IsRenderCommandSnapshotAuthority");
         source.ShouldContain("if (IsRenderCommandSnapshotAuthority)");
         commandSource.ShouldContain("RenderCommandCollection.IsRenderCommandSnapshotAuthority=false");
+    }
+
+    [Test]
+    public void SortedRenderPasses_AreExposedThroughRenderingPassCommandLookup()
+    {
+        const int pass = (int)EDefaultRenderPass.OpaqueDeferred;
+        RenderCommandCollection commands = new(new Dictionary<int, IComparer<RenderCommand>?>
+        {
+            [pass] = new NearToFarRenderCommandSorter()
+        });
+        List<string> rendered = [];
+        TestRenderCommand3D far = new(pass, 100.0f, "far", rendered);
+        TestRenderCommand3D near = new(pass, 1.0f, "near", rendered);
+        far.SetInitialDistance();
+        near.SetInitialDistance();
+
+        commands.AddCPU(far);
+        commands.AddCPU(near);
+        commands.SwapBuffers();
+
+        bool found = commands.TryGetRenderingPassCommands(pass, out IReadOnlyCollection<RenderCommand>? passCommands);
+
+        found.ShouldBeTrue();
+        passCommands.ShouldNotBeNull();
+        passCommands.Count.ShouldBe(2);
+        passCommands.ToArray().ShouldBe(new RenderCommand[] { near, far });
+    }
+
+    [Test]
+    public void AddCpu_LooksUpUpdatingPassAfterCollectionLockIsHeld()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
+        string method = SliceBetween(source, "public void AddCPU(RenderCommand item)", "private long GetSortOrderKey");
+
+        int lockIndex = method.IndexOf("using (_lock.EnterScope())", StringComparison.Ordinal);
+        int lookupIndex = method.IndexOf("_updatingPasses.TryGetValue(pass, out var set)", StringComparison.Ordinal);
+
+        lockIndex.ShouldBeGreaterThanOrEqualTo(0);
+        lookupIndex.ShouldBeGreaterThan(lockIndex);
     }
 
     [Test]
@@ -278,6 +318,17 @@ public sealed class RenderCommandCollectionOrderingTests
         string fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(fullPath).ShouldBeTrue($"Expected workspace file to exist: {relativePath}");
         return File.ReadAllText(fullPath).Replace("\r\n", "\n");
+    }
+
+    private static string SliceBetween(string source, string startToken, string endToken)
+    {
+        int start = source.IndexOf(startToken, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, $"Expected to find start token '{startToken}'.");
+
+        int end = source.IndexOf(endToken, start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, $"Expected to find end token '{endToken}' after '{startToken}'.");
+
+        return source[start..end];
     }
 
     private static string ResolveWorkspaceRoot()

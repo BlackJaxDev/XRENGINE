@@ -38,6 +38,7 @@ namespace XREngine.Rendering.Vulkan
             CreateSyncObjects();
             CreateFrameTimingResources();
             InitializeSynchronizationBackend();
+            LogStartupCapabilitySnapshot();
             InitializeDynamicUniformRingBuffers();
             ReserveOpenXrFrameDataSlotsIfRequired("initialization");
             FlushPendingDeviceReadyProgramLinks();
@@ -410,6 +411,8 @@ namespace XREngine.Rendering.Vulkan
                 MemoryPropertyFlags withoutLazy = requiredProperties & ~MemoryPropertyFlags.LazilyAllocatedBit;
                 if (alloc.TryAllocateForImage(Api!, device, image, withoutLazy, out allocation))
                 {
+                    Debug.VulkanWarning(
+                        $"[Vulkan] Image allocation requested {requiredProperties} but lazy allocation failed; falling back to {withoutLazy}.");
                     failureReason = string.Empty;
                     return true;
                 }

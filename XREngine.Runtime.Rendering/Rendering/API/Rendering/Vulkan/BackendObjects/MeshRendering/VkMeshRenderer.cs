@@ -1599,11 +1599,13 @@ public unsafe partial class VulkanRenderer
             ComputeDispatchSnapshot? programBindingSnapshot = CaptureProgramBindingSnapshot(effectiveMaterial, shadowUniformState);
             IndexedViewportScissorSnapshot indexedViewportScissors = Renderer.GetCurrentIndexedViewportScissorSnapshot();
             uint viewportScissorCount = indexedViewportScissors.Count > 1 ? indexedViewportScissors.Count : 1u;
+            Viewport viewportSnapshot = Renderer.GetCurrentViewport();
+            Rect2D scissorSnapshot = Renderer.GetCurrentScissor();
 
             var draw = new PendingMeshDraw(
                 this,
-                Renderer.GetCurrentViewport(),
-                Renderer.GetCurrentScissor(),
+                viewportSnapshot,
+                scissorSnapshot,
                 viewportScissorCount > 1 ? indexedViewportScissors.Viewports : null,
                 viewportScissorCount > 1 ? indexedViewportScissors.Scissors : null,
                 viewportScissorCount,
@@ -1699,6 +1701,8 @@ public unsafe partial class VulkanRenderer
                 using (Renderer.BlockSynchronousResourceUploads("IndirectDrawSnapshot"))
                 {
                     preparedForIndirect = TryReuseCapturedProgramForIndirectDrawSnapshot(effectiveMaterial, preparedProgram, preparedProgramIdentity, programBindingSnapshot, 0, out reason);
+                    if (!preparedForIndirect)
+                        preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, programBindingSnapshot, 0, out reason);
                 }
             }
             else
@@ -1797,11 +1801,14 @@ public unsafe partial class VulkanRenderer
             LayeredShadowUniformState shadowUniformState = LayeredShadowUniformState.CaptureFromCurrentRenderingState();
             IndexedViewportScissorSnapshot indexedViewportScissors = Renderer.GetCurrentIndexedViewportScissorSnapshot();
             uint viewportScissorCount = indexedViewportScissors.Count > 1 ? indexedViewportScissors.Count : 1u;
+            Viewport viewportSnapshot = Renderer.GetCurrentViewport();
+            Rect2D scissorSnapshot = Renderer.GetCurrentScissor();
+            FrontFace frontFaceSnapshot = Renderer.GetFrontFace();
 
             draw = new PendingMeshDraw(
                 this,
-                Renderer.GetCurrentViewport(),
-                Renderer.GetCurrentScissor(),
+                viewportSnapshot,
+                scissorSnapshot,
                 viewportScissorCount > 1 ? indexedViewportScissors.Viewports : null,
                 viewportScissorCount > 1 ? indexedViewportScissors.Scissors : null,
                 viewportScissorCount,
@@ -1815,7 +1822,7 @@ public unsafe partial class VulkanRenderer
                 Renderer.GetStencilWriteMask(),
                 Renderer.GetColorWriteMask(),
                 Renderer.GetCullMode(),
-                Renderer.GetFrontFace(),
+                frontFaceSnapshot,
                 Renderer.GetBlendEnabled(),
                 alphaToCoverageEnabled,
                 Renderer.GetColorBlendOp(),

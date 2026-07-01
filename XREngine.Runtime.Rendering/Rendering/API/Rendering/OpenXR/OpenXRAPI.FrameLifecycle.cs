@@ -805,7 +805,6 @@ public unsafe partial class OpenXRAPI
             IRuntimeRenderWorld resolvedWorld = world!;
             _openXrFrameBaseCamera = baseCamera;
             _openXrFrameWorld = resolvedWorld;
-            var postProcessSourceCamera = sourceCamera ?? baseCamera;
 
             // IMPORTANT: RuntimeEngine.Rendering.State.RenderingWorld (and various pipeline passes) resolve the active
             // world through RenderState.WindowViewport.World. When we pass worldOverride into CollectVisible/Render,
@@ -824,7 +823,6 @@ public unsafe partial class OpenXRAPI
                 return;
 
             ApplyOpenXrEyeCameraRenderSettings(
-                postProcessSourceCamera,
                 _openXrLeftEyeCamera!,
                 _openXrRightEyeCamera!,
                 viewModeResolution);
@@ -844,7 +842,7 @@ public unsafe partial class OpenXRAPI
 
             // OpenXR must not share render pipeline *instances* with the desktop viewport.
             // But it still needs a matching pipeline type/config to avoid missing lighting/post steps.
-            var sourcePipeline = sourceViewport?.RenderPipeline ?? postProcessSourceCamera.RenderPipeline;
+            var sourcePipeline = sourceViewport?.RenderPipeline ?? baseCamera.RenderPipeline;
 
             XRViewport collectViewport = _openXrLeftViewport!;
             RenderPipeline collectPipeline;
@@ -895,19 +893,6 @@ public unsafe partial class OpenXRAPI
 
             _openXrLeftEyeCamera!.RenderPipeline = collectPipeline;
             _openXrRightEyeCamera!.RenderPipeline = collectPipeline;
-
-            // Copy post-process parameters from the base camera into the per-eye cameras, but keyed by the
-            // respective pipelines (desktop source pipeline -> OpenXR desired pipeline). This keeps exposure/
-            // tonemapping consistent without sharing the pipeline instance.
-            if (postProcessSourceCamera is not null)
-            {
-                var postSourcePipeline = postProcessSourceCamera.RenderPipeline ?? sourcePipeline;
-                if (postSourcePipeline is not null)
-                {
-                    CopyPostProcessState(postSourcePipeline, collectPipeline, postProcessSourceCamera, _openXrLeftEyeCamera);
-                    CopyPostProcessState(postSourcePipeline, collectPipeline, postProcessSourceCamera, _openXrRightEyeCamera);
-                }
-            }
 
             float leftFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0);
             float rightFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1);
@@ -1048,35 +1033,65 @@ public unsafe partial class OpenXRAPI
         return true;
     }
 
-    private static void ApplyOpenXrEyeCameraRenderSettings(
-        XRCamera sourceCamera,
+    private void ApplyOpenXrEyeCameraRenderSettings(
         XRCamera leftEyeCamera,
         XRCamera rightEyeCamera,
         VrViewRenderModeResolution viewModeResolution)
     {
-        EAntiAliasingMode sourceAntiAliasingMode =
+        XRCamera sourceCamera = ReferenceEquals(_openXrEyeSettingsSourceCamera, rightEyeCamera)
+            ? rightEyeCamera
+            : leftEyeCamera;
+        XRCamera secondaryCamera = ReferenceEquals(sourceCamera, leftEyeCamera)
+            ? rightEyeCamera
+            : leftEyeCamera;
+
+        EAntiAliasingMode? sourceAntiAliasingOverride =
             sourceCamera.AntiAliasingModeOverride
-            ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
+            ?? secondaryCamera.AntiAliasingModeOverride;
+        EAntiAliasingMode sourceAntiAliasingMode =
+            sourceAntiAliasingOverride ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
         EAntiAliasingMode antiAliasingMode = ResolveOpenXrEyeAntiAliasingMode(
             sourceAntiAliasingMode,
             viewModeResolution);
 
-        ApplyOpenXrEyeCameraRenderSettings(sourceCamera, leftEyeCamera, antiAliasingMode);
-        ApplyOpenXrEyeCameraRenderSettings(sourceCamera, rightEyeCamera, antiAliasingMode);
+        EAntiAliasingMode? antiAliasingOverride =
+            sourceAntiAliasingOverride.HasValue || antiAliasingMode != sourceAntiAliasingMode
+                ? antiAliasingMode
+                : null;
+        uint? msaaSampleCountOverride = antiAliasingOverride is EAntiAliasingMode.Msaa
+            ? sourceCamera.MsaaSampleCountOverride ?? secondaryCamera.MsaaSampleCountOverride
+            : null;
+        float? tsrRenderScaleOverride = antiAliasingOverride is EAntiAliasingMode.Tsr
+            ? sourceCamera.TsrRenderScaleOverride ?? secondaryCamera.TsrRenderScaleOverride
+            : null;
+        bool? outputHdrOverride = sourceCamera.OutputHDROverride;
+
+        try
+        {
+            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 1);
+            ApplyOpenXrEyeCameraRenderSettings(leftEyeCamera, antiAliasingOverride, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
+            ApplyOpenXrEyeCameraRenderSettings(rightEyeCamera, antiAliasingOverride, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
+        }
+        finally
+        {
+            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 0);
+        }
     }
 
     private static void ApplyOpenXrEyeCameraRenderSettings(
-        XRCamera sourceCamera,
         XRCamera eyeCamera,
-        EAntiAliasingMode antiAliasingMode)
+        EAntiAliasingMode? antiAliasingMode,
+        uint? msaaSampleCountOverride,
+        bool? outputHdrOverride,
+        float? tsrRenderScaleOverride)
     {
         eyeCamera.AntiAliasingModeOverride = antiAliasingMode;
-        eyeCamera.MsaaSampleCountOverride = antiAliasingMode == EAntiAliasingMode.Msaa
-            ? sourceCamera.MsaaSampleCountOverride
+        eyeCamera.MsaaSampleCountOverride = antiAliasingMode is EAntiAliasingMode.Msaa
+            ? msaaSampleCountOverride
             : null;
-        eyeCamera.OutputHDROverride = sourceCamera.OutputHDROverride;
-        eyeCamera.TsrRenderScaleOverride = antiAliasingMode == EAntiAliasingMode.Tsr
-            ? sourceCamera.TsrRenderScaleOverride
+        eyeCamera.OutputHDROverride = outputHdrOverride;
+        eyeCamera.TsrRenderScaleOverride = antiAliasingMode is EAntiAliasingMode.Tsr
+            ? tsrRenderScaleOverride
             : null;
     }
 

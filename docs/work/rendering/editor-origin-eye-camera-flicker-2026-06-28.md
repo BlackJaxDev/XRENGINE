@@ -823,6 +823,176 @@ Expected next live-run signal:
 - Directional atlas shadows should stop toggling off due to mismatched desktop-vs-eye cascade source data.
 - If a flicker remains, the next check is the atlas residency/publish path itself: compare directional cascade request keys, `AreRequiredDirectionalAtlasTilesSampleable`, and `DirectionalCascadeAtlasSlot.LastRenderedFrame` across desktop and eye render timing.
 
+### 2026-07-01 Directional Cascade Source-Family Guard
+
+User report after the mixed desktop/HMD cascade source patch: not fixed; most combinations of directional atlas usage and cascade render mode became worse.
+
+Correction:
+
+- The previous fix mixed desktop, left-eye, right-eye, and combined HMD frusta into one published cascade set.
+- That is wrong for the current architecture because directional cascade state is still light-owned: `_cascadeShadowSlices`, `_cascadeAabbs`, `_cascadeAtlasSlots`, `ActiveCascadeCount`, and the cascade uniform copy path publish one set for all receivers.
+- Directional atlas request keys are also light/cascade keyed rather than receiver-POV keyed, so one frame's HMD cascade publication can replace the desktop cascade atlas slots, and the desktop deferred pass can then sample the wrong family of cascade matrices/tiles.
+- This explains why instanced and geometry paths could look less broken while sequential got worse: the grouped paths reduce some per-cascade timing exposure, but all paths were still sharing the same non-POV-keyed publication.
+
+Implemented correction under test:
+
+- Added a published cascade source family (`Desktop` or `Hmd`) to `DirectionalLightComponent`.
+- `CopyCascadeSourceFrusta` no longer mixes desktop and HMD frusta. Desktop cascade publication stays desktop-only; HMD publication includes the selected eye, both HMD eye viewports, and the cyclopean combined HMD frustum.
+- Deferred and forward receivers now only enable cascaded directional shadows when their active rendering camera matches the published cascade source family.
+- If desktop and HMD cascaded receivers coexist, `NeedsPrimaryDirectionalShadowMap()` requests a primary directional shadow fallback. That prevents the non-published family from sampling mismatched cascades while preserving shadows until a future source-keyed cascade resource model exists.
+
+Validation:
+
+- `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore -v:minimal` succeeded.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~DirectionalCascadeSourceCamera_PrefersPlayerAssociatedCascadedViewport|FullyQualifiedName~DirectionalCascadeSourceFrusta_DoNotMixDesktopAndHmdSources|FullyQualifiedName~TryCombineProjectionMatrices_StereoPair_EnclosesSourceFrusta" -v:minimal` passed: 3 tests.
+- `DirectionalPrimaryShadowAtlas_IsSubmittedRenderedBoundAndPreviewed` compiled, but the current harness skipped it under the targeted filter.
+- Restore/build still report existing Magick.NET advisory warnings; these are unrelated.
+
+Remaining architectural follow-up:
+
+- True simultaneous desktop and HMD cascaded shadows require source-keyed directional cascade state and source-keyed atlas requests/slots. The current correction is the stable v1 boundary for the existing single-publication design: one cascade family is published, matching receivers use it, and the other family falls back to the primary directional shadow map instead of sampling stale or wrong cascades.
+
+### 2026-07-01 True Simultaneous Directional Cascade Sources
+
+User direction: keep working on true simultaneous desktop and HMD cascades, not a fallback patch.
+
+Root-cause refinement:
+
+- The source-family guard proved the failure was cross-POV publication, but it was still architecturally incomplete.
+- A true fix must allow desktop and HMD directional cascade families to be prepared, atlas-allocated, rendered, and sampled in the same frame without sharing cascade slots or matrices.
+- Sequential rendering exposed the bug most severely because every cascade tile or legacy layer reads the currently published per-cascade viewport/camera. When desktop and HMD alternated through one light-owned cascade state, sequential passes could render or sample the wrong cascade family. Atlas mode then looked like shadows toggled off because receiver uniforms could point at non-resident or stale slots for the active POV.
+
+Implemented:
+
+- Added `ShadowRequestSource` (`Default`, `Desktop`, `Hmd`) to directional shadow request keys and grouped directional cascade allocation metadata.
+- Split `DirectionalLightComponent` directional cascade state into desktop and HMD source states, each with independent:
+  - published cascade slices and AABBs,
+  - atlas slots,
+  - color/moment and raster-depth texture arrays,
+  - layered and per-cascade framebuffers,
+  - shadow cameras and viewports.
+- Directional cascade preparation now publishes both source families when both are active:
+  - desktop source stays desktop-only,
+  - HMD source includes the selected eye, both eye viewport frusta, and the cyclopean combined HMD frustum.
+- Directional atlas requests are now source-keyed, so desktop cascade 0 and HMD cascade 0 no longer alias in `ShadowAtlasFrameData`.
+- Directional atlas grouped reservations, sequential fallback rendering, and individual tile rendering all carry `request.Key.Source` into the render call.
+- Legacy texture-array cascade rendering now renders desktop and HMD source arrays separately, including sequential, instanced-layered, and geometry-shader plans.
+- Forward and deferred receivers select cascade matrices, receiver textures, atlas slots, and active cascade counts from the active rendering camera's source family.
+- `VPRC_ForEachCascade` now has a `CascadeSource` selector. `Default` infers from the active rendering camera; explicit `Desktop`/`Hmd` lets render graphs iterate one family intentionally.
+- Removed the primary-shadow fallback requirement for mere desktop/HMD coexistence. Primary directional shadows are still requested only when a relevant viewport actually wants primary shadows or no cascade family is published.
+
+Validation:
+
+- `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore -v:minimal` succeeded.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "Name=ClearingCascadeBounds_LeavesPrimaryDirectionalAtlasSlotIntact|Name=GroupedDirectionalCascadeAtlasFailure_RendersSequentialAtlasTiles|Name=DirectionalDepthCascadeAtlasFallbacks_KeepReceiverArrayBound|Name=DirectionalMomentAtlas_UsesResolvedEncodingAndKeepsCascades|Name=DirectionalCascadeMomentPath_UsesColorArrayDepthAttachmentAndScalarBlend|Name=DirectionalCascadeAtlasGroupedPath_UsesAtlasBackendAndLayeredRendering" -v:minimal` passed: 5 tests.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "Name=ShadowRequestKey_IncludesProjectionFaceAndEncoding|Name=DirectionalLight_UsesSelectedDepthShadowStorageFormat" -v:minimal` passed: 2 tests.
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "Name=DirectionalCascadeSourceCamera_PrefersPlayerAssociatedCascadedViewport|Name=DirectionalCascadeSourceFrusta_DoNotMixDesktopAndHmdSources" -v:minimal` passed: 2 tests.
+- A broader rendering-filter test run still includes unrelated pre-existing shader/source-contract failures and Magick.NET advisory warnings. The targeted tests above cover the touched directional-cascade source and atlas contracts.
+
+Expected next live-run signal:
+
+- Desktop deferred meshes should stay visible while HMD eye cascades are also active because desktop receivers no longer sample HMD-published matrices or atlas slots.
+- Directional atlas shadows should stop toggling off between frames because desktop and HMD cascade requests no longer collide under the same light/cascade key.
+- If flicker remains, the next target is live GPU validation of atlas residency and render-pass ordering per source family: compare `ShadowRequestKey.Source`, `DirectionalCascadeAtlasSlot.LastRenderedFrame`, and the final bound atlas metadata for desktop vs HMD receivers in one frame.
+
+### 2026-07-01 Desktop Mesh Pass Abort From Render-Command Swap Race
+
+User report after the true simultaneous cascade source work: neither forward nor deferred meshes render in the desktop editor view, even when the directional light is deactivated.
+
+Latest log evidence:
+
+- Session inspected before the fix: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-01_00-26-30_pid40504`.
+- `log_rendering.log` recorded `VPRC_RenderMeshesPass` throwing from the desktop render path:
+  - `System.InvalidOperationException: Collection was modified; enumeration operation may not execute.`
+  - Throw site: `RenderCommandCollection.RenderCPU(...)`.
+- This explains why disabling the directional light did not help: the mesh pass was aborting before light/shadow state was relevant.
+
+Source finding:
+
+- `RenderCommandCollection.RenderCPU`, mesh-only render, filtered CPU render, GPU render, and mesh enumeration read the published `_renderingPasses`.
+- `RenderCommandCollection.SwapBuffers()` can run concurrently for another desktop/HMD collection cadence, swap the updating/rendering dictionaries, and clear the old rendering collections.
+- That means a desktop render could enumerate a published pass list while another path clears or swaps that same list. True simultaneous desktop/HMD rendering made the timing window much easier to hit.
+
+Implemented fix:
+
+- Added a rendering-buffer reader/writer gate to `RenderCommandCollection`.
+- Render-side enumeration and query paths now hold a read scope while inspecting `_renderingPasses`.
+- `SwapBuffers()` and pass-layout mutation hold a write scope around the publish/clear/reset sequence.
+- Collection into the updating buffer still uses the existing update-side lock, so the normal collect/render overlap remains; only the publish boundary is serialized against active render enumeration.
+- Inactive directional lights now call `ClearCascadeShadows()` during directional shadow preparation so disabling a light cannot leave stale desktop/HMD cascade state published.
+
+Validation:
+
+- `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore -v:minimal` succeeded.
+- `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore -v:minimal` succeeded.
+- `git diff --check` succeeded with line-ending warnings only.
+- Editor smoke run with Unit Testing World, Vulkan, OpenXR, MCP:
+  - Session: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-01_00-34-00_pid34800`.
+  - `log_rendering.log` had no `VPRC_RenderMeshesPass threw`, no `Collection was modified`, and no `InvalidOperationException`.
+- Deferred-lighting diagnostic smoke run:
+  - Session: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-01_00-37-08_pid37824`.
+  - `log_rendering.log` again had no mesh-pass collection exception.
+  - Desktop `Editor View` pass counts stayed stable and nonzero at collect/swap: `total=18`, `opaqueDeferred=15`, `opaqueForward=1`.
+
+Interpretation:
+
+- The immediate "no forward or deferred meshes" regression was a render-command publication race, not a directional-light cascade bug.
+- If a live viewport still appears blank after this fix, command collection is no longer the first suspect. The next split should be Vulkan dynamic-rendering pipeline state or the G-buffer/light-combine/present path, because the desktop viewport is collecting and publishing both deferred and forward mesh commands.
+
+### 2026-07-01 Desktop G-Buffer Late Clear / FBO Re-Entry
+
+User report after the render-command publication fix: no luck; the desktop editor view still failed in practice.
+
+New live evidence:
+
+- Run root: `Build/_AgentValidation/20260701-022920-vulkan-fbo-reentry`.
+- Before this fix, MCP captures showed the failure shape directly:
+  - viewport screenshot: sky only,
+  - `AlbedoOpacity`: all RGB zero,
+  - `Normal`: all RGB zero with alpha 1,
+  - `LightingAccumTexture`: all RGB zero,
+  - `HDRSceneTex`: sky content.
+- The same run's Vulkan log showed a standalone desktop `DeferredGBufferFBO` clear landing after useful desktop G-buffer work had already been recorded. That late `CmdClearAttachments` wiped deferred outputs, which explains why the desktop view could show sky/post output while deferred and forward scene content vanished.
+- HMD single-pass stereo G-buffer draws still recorded successfully, which is why the issue looked desktop-specific.
+
+Root cause:
+
+- `VulkanRenderGraphCompiler.SortFrameOps` sorted by compiled pass order, canonical opaque mesh draw order, and original index.
+- Canonical mesh sorting can move same-pass G-buffer mesh draws ahead of their target clear when desktop, HMD, shadow, and post-process contexts enqueue overlapping work.
+- Separately, Vulkan FBO re-entry used tracked image layouts but could still preserve an attachment signature with `LoadOp.Clear`. A later same-command-buffer render pass for the same FBO could therefore clear data that had already been explicitly cleared and drawn.
+
+Implemented fix:
+
+- Kept the main frame-op sort conservative, then added a post-sort normalization pass that moves a `ClearOp` just far enough to precede earlier uses of the same pass, same scheduling context, and exact render target.
+- This avoids a non-transitive comparator while still fixing clear-before-use for sequential, single-pass stereo, and parallel/secondary recording because all three paths consume `SortFrameOps`.
+- Added `preserveTrackedClearLoads` through `VkFrameBuffer.ResolveAttachmentSignatureForPass`, `ResolveRenderPassForPass`, and `UsesReadOnlyDepthStencilForPass`.
+- Command-buffer recording now detects FBO re-entry in the same command buffer and preserves tracked `Clear` load ops as `Load` after the explicit clear has defined contents.
+- Removed the Vulkan front-face viewport flip from captured mesh state. The desktop Vulkan viewport is negative-height, but the pipeline front-face should remain the engine/material front-face; flipping it made culling dependent on viewport orientation.
+- Scheduled mesh secondary recording now preallocates and reuses the exact uniform slot that primary scheduling consumed, so refreshed or re-recorded secondaries do not drift from the primary slot accounting.
+
+Validation:
+
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "Name=VulkanFrameOpSort_LiftsSameTargetClearBeforeFirstUse|Name=VulkanFboReentry_PreservesTrackedClearLoadsAfterFirstUse|Name=VulkanFrameOpSort_UsesRenderGraphPassOrderBeforeDependencySafeOriginalOrder" --logger "console;verbosity=normal"` passed: 3 tests.
+- `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore -v:minimal` passed after closing the live MCP editor process; it still reports the existing Magick.NET advisory warnings.
+- Live Vulkan/OpenXR/MCP validation with the rebuilt editor:
+  - Session: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-01_02-39-14_pid26712`.
+  - Desktop viewport capture `Screenshot_20260701_024010.png` showed Sponza meshes again.
+  - `AlbedoOpacity` stats changed from all-zero to `minRgb=0`, `maxRgb=0.99215686`, `averageRgb=0.65593934`.
+  - `Normal` stats changed from all-zero RGB to `maxRgb=1`, `averageRgb=0.413769`.
+  - `LightingAccumTexture` changed from all-zero RGB to `maxRgb=1.796875`, `averageRgb=0.05058589`.
+  - Three additional captures spaced over several seconds stayed stable:
+    - `Screenshot_20260701_024115.png`
+    - `Screenshot_20260701_024119.png`
+    - `Screenshot_20260701_024123.png`
+    - albedo averages stayed around `0.656`.
+- Vulkan validation still emits startup/layer-header warnings for newer extension structs and existing Magick.NET advisories during build/test; these are unrelated to this render-order fix.
+
+Interpretation:
+
+- The "no luck" failure at this stage was no longer directional-cascade source selection. It was Vulkan frame-op target ordering plus FBO re-entry load semantics.
+- Desktop meshes were being drawn, then erased. The HMD path survived because its grouped stereo draw order happened not to hit the same late desktop clear window.
+- The current live evidence shows desktop deferred outputs are present and stable across repeated captures. The remaining visual issue in the capture is exposure/lighting brightness, not the blank/sky-only mesh disappearance.
+
 ## Active Questions
 
 - Does flicker show up in saved viewport screenshots, or only live in the editor window?

@@ -1463,7 +1463,8 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (commandChainSchedule is null)
                 {
-                    // Always sort frame ops by (PassOrder, safe draw order, OriginalIndex).
+                    // Always sort frame ops by (PassOrder, safe draw order, OriginalIndex)
+                    // and then normalize same-target clears before first same-target use.
                     // Render graph pass order preserves cross-pass dependencies, while same-pass
                     // compute/barrier/indirect operations stay in enqueue order so GPU-produced
                     // counters are written before the draw commands that consume them.
@@ -1505,12 +1506,24 @@ namespace XREngine.Rendering.Vulkan
                     _ = TryRefreshReusableCommandBufferFrameData(frameDataImageIndex, ops);
             }
 
+            int swapchainPresentTransitions = 0;
+            bool usedSwapchainDynamicRendering = false;
+            bool swapchainInColorAttachmentLayout = false;
+            ImageLayout swapchainFinalTargetLayout = transitionSwapchainToPresent
+                ? ImageLayout.PresentSrcKhr
+                : ImageLayout.ColorAttachmentOptimal;
+            ImageLayout swapchainFinalLayout = imageWasEverPresentedAtRecordStart
+                ? ImageLayout.PresentSrcKhr
+                : ImageLayout.Undefined;
+
             // Ensure swapchain resources are transitioned appropriately before any rendering.
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.FrameStartBarriers"))
             {
                 CmdBeginLabel(commandBuffer, "SwapchainBarriers");
+                var plannedSwapchainBarriers = BarrierPlanner.GetSwapchainBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
                 var swapchainImageBarriers = BarrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
                 var swapchainBufferBarriers = BarrierPlanner.GetBufferBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+                EmitPlannedSwapchainBarriers(commandBuffer, plannedSwapchainBarriers);
                 EmitPlannedImageBarriers(commandBuffer, swapchainImageBarriers);
                 EmitPlannedBufferBarriers(commandBuffer, swapchainBufferBarriers);
                 CmdEndLabel(commandBuffer);
@@ -1871,23 +1884,9 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<XRFrameBuffer, ImageLayout[]> fboLayoutTracking = recordingScratch.FboLayoutTracking;
             fboLayoutTracking.Clear();
             fboLayoutTracking.EnsureCapacity(Math.Max(1, recordingScratch.RecordFboLayoutCapacityHint));
-            int swapchainPresentTransitions = 0;
-            bool usedSwapchainDynamicRendering = false;
-            bool swapchainInColorAttachmentLayout = false;
-            ImageLayout swapchainFinalTargetLayout = transitionSwapchainToPresent
-                ? ImageLayout.PresentSrcKhr
-                : ImageLayout.ColorAttachmentOptimal;
-            ImageLayout swapchainFinalLayout = swapchainFinalTargetLayout;
 
             ImageLayout ResolveCurrentSwapchainColorLayout()
-            {
-                if (swapchainInColorAttachmentLayout)
-                    return ImageLayout.ColorAttachmentOptimal;
-
-                return imageWasEverPresentedAtRecordStart
-                    ? ImageLayout.PresentSrcKhr
-                    : ImageLayout.Undefined;
-            }
+                => swapchainFinalLayout;
 
             static PipelineStageFlags ResolveSwapchainLayoutStage(ImageLayout layout)
                 => layout switch
@@ -1909,6 +1908,64 @@ namespace XREngine.Rendering.Vulkan
                     ImageLayout.PresentSrcKhr => 0,
                     _ => AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
                 };
+
+            void EmitPlannedSwapchainBarriers(
+                CommandBuffer targetCommandBuffer,
+                IReadOnlyList<VulkanBarrierPlanner.PlannedSwapchainBarrier>? plannedBarriers)
+            {
+                if (plannedBarriers is null || plannedBarriers.Count == 0 || !swapchainTarget.IsValid)
+                    return;
+
+                for (int i = 0; i < plannedBarriers.Count; i++)
+                {
+                    VulkanBarrierPlanner.PlannedSwapchainBarrier planned = plannedBarriers[i];
+                    ImageLayout liveOldLayout = ResolveCurrentSwapchainColorLayout();
+                    ImageLayout nextLayout = planned.Next.Layout;
+
+                    if (nextLayout == ImageLayout.Undefined)
+                        continue;
+
+                    if (liveOldLayout != nextLayout)
+                    {
+                        PipelineStageFlags srcStages = ResolveSwapchainLayoutStage(liveOldLayout);
+                        PipelineStageFlags dstStages = NormalizePipelineStages(planned.Next.StageMask);
+                        ImageMemoryBarrier barrier = new()
+                        {
+                            SType = StructureType.ImageMemoryBarrier,
+                            SrcAccessMask = FilterAccessFlagsForStages(ResolveSwapchainLayoutAccess(liveOldLayout), srcStages),
+                            DstAccessMask = FilterAccessFlagsForStages(planned.Next.AccessMask, dstStages),
+                            OldLayout = liveOldLayout,
+                            NewLayout = nextLayout,
+                            SrcQueueFamilyIndex = planned.SrcQueueFamilyIndex,
+                            DstQueueFamilyIndex = planned.DstQueueFamilyIndex,
+                            Image = swapchainTarget.Image,
+                            SubresourceRange = new ImageSubresourceRange
+                            {
+                                AspectMask = ImageAspectFlags.ColorBit,
+                                BaseMipLevel = 0,
+                                LevelCount = 1,
+                                BaseArrayLayer = 0,
+                                LayerCount = 1
+                            }
+                        };
+
+                        CmdPipelineBarrierTracked(
+                            targetCommandBuffer,
+                            srcStages,
+                            dstStages,
+                            DependencyFlags.None,
+                            0,
+                            null,
+                            0,
+                            null,
+                            1,
+                            &barrier);
+                    }
+
+                    swapchainInColorAttachmentLayout = nextLayout == ImageLayout.ColorAttachmentOptimal;
+                    swapchainFinalLayout = nextLayout;
+                }
+            }
 
             void ApplyPipelineOverride(in FrameOpContext context)
             {
@@ -2167,6 +2224,32 @@ namespace XREngine.Rendering.Vulkan
                     PStencilAttachment = plan.HasStencilAttachment ? &stencilAttachment : null,
                 };
 
+                if (plan.LocalRead.Enabled && SupportsDynamicRenderingLocalRead)
+                {
+                    DynamicRenderingLocalReadPlan localRead = plan.LocalRead;
+                    RenderingAttachmentLocationInfo localReadAttachmentLocations = default;
+                    RenderingInputAttachmentIndexInfo localReadInputIndices = default;
+                    uint* colorAttachmentLocations = stackalloc uint[Math.Max(colorPlans.Length, 1)];
+                    uint* colorInputAttachmentIndices = stackalloc uint[Math.Max(colorPlans.Length, 1)];
+                    uint* depthInputAttachmentIndex = stackalloc uint[1];
+                    uint* stencilInputAttachmentIndex = stackalloc uint[1];
+                    void* localReadPNext = renderingInfo.PNext;
+
+                    if (TryAppendDynamicRenderingLocalReadPNext(
+                        in localRead,
+                        (uint)colorPlans.Length,
+                        ref localReadPNext,
+                        &localReadAttachmentLocations,
+                        &localReadInputIndices,
+                        colorAttachmentLocations,
+                        colorInputAttachmentIndices,
+                        depthInputAttachmentIndex,
+                        stencilInputAttachmentIndex))
+                    {
+                        renderingInfo.PNext = localReadPNext;
+                    }
+                }
+
                 Api!.CmdBeginRendering(commandBuffer, &renderingInfo);
             }
 
@@ -2174,7 +2257,13 @@ namespace XREngine.Rendering.Vulkan
             {
                 for (int i = 0; i < signatures.Length; i++)
                 {
-                    if (signatures[i].Samples != default)
+                    if (signatures[i].Role == AttachmentRole.Color && signatures[i].Samples != default)
+                        return signatures[i].Samples;
+                }
+
+                for (int i = 0; i < signatures.Length; i++)
+                {
+                    if (signatures[i].Role != AttachmentRole.Resolve && signatures[i].Samples != default)
                         return signatures[i].Samples;
                 }
 
@@ -2252,8 +2341,10 @@ namespace XREngine.Rendering.Vulkan
                         };
 
                         ImageMemoryBarrier* preRenderingBarriers = stackalloc ImageMemoryBarrier[2];
-                        preRenderingBarriers[0] = colorBarrier;
-                        preRenderingBarriers[1] = depthBarrier;
+                        uint preRenderingBarrierCount = 0;
+                        if (colorOldLayout != ImageLayout.ColorAttachmentOptimal)
+                            preRenderingBarriers[preRenderingBarrierCount++] = colorBarrier;
+                        preRenderingBarriers[preRenderingBarrierCount++] = depthBarrier;
 
                         CmdPipelineBarrierTracked(
                             commandBuffer,
@@ -2264,7 +2355,7 @@ namespace XREngine.Rendering.Vulkan
                             null,
                             0,
                             null,
-                            2,
+                            preRenderingBarrierCount,
                             preRenderingBarriers);
 
                         ClearValue* dynamicClearValues = stackalloc ClearValue[2];
@@ -2428,13 +2519,23 @@ namespace XREngine.Rendering.Vulkan
                 // forward meshes, gizmo) would fail.  Querying the per-image tracked
                 // layout also accounts for barrier-planner transitions or blits that
                 // changed the actual image layout since the last render pass ended.
+                bool targetReenteredThisCommandBuffer = fboLayoutTracking.ContainsKey(target);
                 ImageLayout[]? trackedLayouts = QueryCurrentAttachmentLayouts(target, vkFrameBuffer);
                 // Update the tracking dict so that subsequent users see the
                 // same layouts we resolved here.
                 if (trackedLayouts is not null)
                     fboLayoutTracking[target] = trackedLayouts;
-                FrameBufferAttachmentSignature[] fboSignature = vkFrameBuffer.ResolveAttachmentSignatureForPass(passIndex, context.PassMetadata, trackedLayouts, CompiledRenderGraph.Synchronization);
-                bool passDepthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(passIndex, context.PassMetadata, trackedLayouts);
+                FrameBufferAttachmentSignature[] fboSignature = vkFrameBuffer.ResolveAttachmentSignatureForPass(
+                    passIndex,
+                    context.PassMetadata,
+                    trackedLayouts,
+                    CompiledRenderGraph.Synchronization,
+                    preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
+                bool passDepthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(
+                    passIndex,
+                    context.PassMetadata,
+                    trackedLayouts,
+                    preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
                 if (DeferredLightingDiagnostics.Enabled && DeferredLightingDiagnostics.IsWatchedFrameBufferName(fboName))
                 {
                     Debug.VulkanEvery(
@@ -2501,15 +2602,19 @@ namespace XREngine.Rendering.Vulkan
                     ClearValue* dynamicClearValuesFbo = stackalloc ClearValue[(int)dynamicAttachmentCountFbo];
                     vkFrameBuffer.WriteClearValues(dynamicClearValuesFbo, dynamicAttachmentCountFbo, fboSignature);
 
-                    uint colorAttachmentCount = 0;
+                    int colorAttachmentCount = 0;
                     for (int i = 0; i < fboSignature.Length; i++)
                     {
                         if (fboSignature[i].Role == AttachmentRole.Color)
                             colorAttachmentCount++;
                     }
 
-                    Span<DynamicRenderingAttachmentPlan> colorAttachmentPlans = stackalloc DynamicRenderingAttachmentPlan[(int)Math.Max(colorAttachmentCount, 1u)];
-                    uint colorAttachmentIndex = 0;
+                    Span<DynamicRenderingAttachmentPlan> colorAttachmentPlans = stackalloc DynamicRenderingAttachmentPlan[Math.Max(colorAttachmentCount, 1)];
+                    Span<uint> colorAttachmentSourceIndices = stackalloc uint[Math.Max(colorAttachmentCount, 1)];
+                    Span<DynamicRenderingAttachmentPlan> resolveAttachmentPlans = stackalloc DynamicRenderingAttachmentPlan[Math.Max(fboSignature.Length, 1)];
+                    Span<uint> resolveAttachmentSourceIndices = stackalloc uint[Math.Max(fboSignature.Length, 1)];
+                    int colorAttachmentIndex = 0;
+                    int resolveAttachmentCount = 0;
                     DynamicRenderingAttachmentPlan depthAttachmentPlan = default;
                     DynamicRenderingAttachmentPlan stencilAttachmentPlan = default;
                     bool hasDepthAttachment = false;
@@ -2553,7 +2658,17 @@ namespace XREngine.Rendering.Vulkan
 
                         if (signature.Role == AttachmentRole.Color)
                         {
-                            colorAttachmentPlans[(int)colorAttachmentIndex++] = attachmentPlan;
+                            colorAttachmentPlans[colorAttachmentIndex] = attachmentPlan;
+                            colorAttachmentSourceIndices[colorAttachmentIndex] = signature.ColorIndex;
+                            colorAttachmentIndex++;
+                            continue;
+                        }
+
+                        if (signature.Role == AttachmentRole.Resolve)
+                        {
+                            resolveAttachmentPlans[resolveAttachmentCount] = attachmentPlan;
+                            resolveAttachmentSourceIndices[resolveAttachmentCount] = signature.ColorIndex;
+                            resolveAttachmentCount++;
                             continue;
                         }
 
@@ -2580,6 +2695,30 @@ namespace XREngine.Rendering.Vulkan
                         }
                     }
 
+                    for (int resolveIndex = 0; resolveIndex < resolveAttachmentCount; resolveIndex++)
+                    {
+                        uint sourceColorIndex = resolveAttachmentSourceIndices[resolveIndex];
+                        int sourcePlanIndex = -1;
+                        for (int colorIndex = 0; colorIndex < colorAttachmentCount; colorIndex++)
+                        {
+                            if (colorAttachmentSourceIndices[colorIndex] == sourceColorIndex)
+                            {
+                                sourcePlanIndex = colorIndex;
+                                break;
+                            }
+                        }
+
+                        if (sourcePlanIndex < 0)
+                        {
+                            throw new InvalidOperationException(
+                                $"Framebuffer '{fboName}' has a resolve attachment for color {sourceColorIndex}, but the dynamic rendering scope has no matching color source.");
+                        }
+
+                        colorAttachmentPlans[sourcePlanIndex] = colorAttachmentPlans[sourcePlanIndex].WithResolve(
+                            in resolveAttachmentPlans[resolveIndex],
+                            ResolveModeFlags.AverageBit);
+                    }
+
                     uint fboViewMask = vkFrameBuffer.MultiviewViewMask;
                     uint fboLayerCount = ResolveDynamicRenderingLayerCount(vkFrameBuffer.FramebufferLayers, fboViewMask);
                     DynamicRenderingFormatSignature targetDynamicRenderingFormats = CreateDynamicRenderingFormatSignature(
@@ -2591,7 +2730,7 @@ namespace XREngine.Rendering.Vulkan
                         fboRenderArea,
                         fboLayerCount,
                         fboViewMask,
-                        colorAttachmentPlans[..(int)colorAttachmentCount],
+                        colorAttachmentPlans[..colorAttachmentCount],
                         depthAttachmentPlan,
                         hasDepthAttachment,
                         stencilAttachmentPlan,
@@ -2631,7 +2770,12 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(passIndex, context.PassMetadata, trackedLayouts, CompiledRenderGraph.Synchronization);
+                RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(
+                    passIndex,
+                    context.PassMetadata,
+                    trackedLayouts,
+                    CompiledRenderGraph.Synchronization,
+                    preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
 
                 Debug.VulkanEvery(
                     $"Vulkan.BeginRP.FBO.{fboName}.{passRenderPass.Handle:X}",
@@ -2722,7 +2866,50 @@ namespace XREngine.Rendering.Vulkan
                         viewport.X, viewport.Y, viewport.Width, viewport.Height);
                 }
 
-                drawOp.Draw.Renderer.RecordDraw(
+                string? drawTargetName = drawOp.Target?.Name;
+                if (DeferredLightingDiagnostics.Enabled &&
+                    (string.Equals(drawTargetName, DefaultRenderPipeline.DeferredGBufferFBOName, StringComparison.Ordinal) ||
+                     string.Equals(drawTargetName, DefaultRenderPipeline.MsaaGBufferFBOName, StringComparison.Ordinal)))
+                {
+                    var draw = drawOp.Draw;
+                    var material = draw.MaterialOverride ?? draw.Renderer.MeshRenderer.Material;
+                    string gBufferTargetName = drawTargetName ?? "<unknown>";
+                    Debug.VulkanEvery(
+                        $"DeferredLighting.GBufferDraw.{gBufferTargetName}.{passIndex}.{draw.Renderer.GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[DeferredLightingDiag][GBufferDraw] target='{0}' pass={1} dyn={2} rp=0x{3:X} colors={4} depthFmt={5} layers={6} viewMask=0x{7:X} dsReadOnly={8} mesh='{9}' material='{10}' program='{11}' stereo={12} colorMask={13} blend={14} depth={15}/{16}/{17} cull={18} front={19} vp=({20},{21},{22},{23}) scissor=({24},{25},{26},{27})",
+                        gBufferTargetName,
+                        passIndex,
+                        activeDynamicRendering,
+                        activeRenderPass.Handle,
+                        activeDynamicRendering ? activeDynamicRenderingFormats.DescribeColorFormats() : "<render-pass>",
+                        activeDynamicRendering ? activeDynamicRenderingFormats.DepthAttachmentFormat : Format.Undefined,
+                        activeDynamicRendering ? activeDynamicRenderingFormats.LayerCount : 1u,
+                        activeDynamicRendering ? activeDynamicRenderingFormats.ViewMask : 0u,
+                        activeDepthStencilReadOnly,
+                        draw.Renderer.Mesh?.Name ?? draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
+                        material?.Name ?? "<unnamed material>",
+                        draw.PreparedProgram?.Data?.Name ?? "<uncaptured program>",
+                        draw.IsStereoPass,
+                        draw.ColorWriteMask,
+                        draw.BlendEnabled,
+                        draw.DepthTestEnabled,
+                        draw.DepthWriteEnabled,
+                        draw.DepthCompareOp,
+                        draw.CullMode,
+                        draw.FrontFace,
+                        viewport.X,
+                        viewport.Y,
+                        viewport.Width,
+                        viewport.Height,
+                        scissor.Offset.X,
+                        scissor.Offset.Y,
+                        scissor.Extent.Width,
+                        scissor.Extent.Height);
+                }
+
+                int drawUniformSlot = drawUniformSlotOverride ?? GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
+                bool recordedDraw = drawOp.Draw.Renderer.RecordDraw(
                     targetCommandBuffer,
                     drawOp.Draw,
                     activeRenderPass,
@@ -2733,7 +2920,24 @@ namespace XREngine.Rendering.Vulkan
                     activeDepthStencilReadOnly,
                     drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
                     drawOp.Target?.Name ?? "<swapchain>",
-                    drawUniformSlotOverride ?? GetMeshDrawUniformSlot(drawOp.Draw.Renderer));
+                    drawUniformSlot);
+
+                if (DeferredLightingDiagnostics.Enabled &&
+                    (string.Equals(drawTargetName, DefaultRenderPipeline.DeferredGBufferFBOName, StringComparison.Ordinal) ||
+                     string.Equals(drawTargetName, DefaultRenderPipeline.MsaaGBufferFBOName, StringComparison.Ordinal)))
+                {
+                    Debug.VulkanEvery(
+                        $"DeferredLighting.GBufferDraw.Result.{drawTargetName}.{passIndex}.{drawOp.Draw.Renderer.GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[DeferredLightingDiag][GBufferDraw.Result] target='{0}' pass={1} recorded={2} slot={3} blocker='{4}'",
+                        drawTargetName ?? "<unknown>",
+                        passIndex,
+                        recordedDraw,
+                        drawUniformSlot,
+                        recordedDraw
+                            ? "<none>"
+                            : drawOp.Draw.Renderer.DescribeReusableCommandBufferFrameDataBlocker(drawOp.Draw, drawUniformSlot));
+                }
             }
 
             void RecordIndirectDrawIntoCommandBuffer(CommandBuffer targetCommandBuffer, IndirectDrawOp indirectOp, int passIndex)
@@ -2981,17 +3185,20 @@ namespace XREngine.Rendering.Vulkan
 
                 vkFrameBuffer.EnsureCurrent();
 
+                bool targetReenteredThisCommandBuffer = fboLayoutTracking.ContainsKey(target);
                 ImageLayout[]? trackedLayouts = QueryCurrentAttachmentLayouts(target, vkFrameBuffer);
                 FrameBufferAttachmentSignature[] fboSignature = vkFrameBuffer.ResolveAttachmentSignatureForPass(
                     passIndex,
                     context.PassMetadata,
                     trackedLayouts,
-                    CompiledRenderGraph.Synchronization);
+                    CompiledRenderGraph.Synchronization,
+                    preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
 
                 inheritedDepthStencilReadOnly = vkFrameBuffer.UsesReadOnlyDepthStencilForPass(
                     passIndex,
                     context.PassMetadata,
-                    trackedLayouts);
+                    trackedLayouts,
+                    preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
 
                 if (UseDynamicRenderingRenderTargets)
                 {
@@ -3010,7 +3217,8 @@ namespace XREngine.Rendering.Vulkan
                     passIndex,
                     context.PassMetadata,
                     trackedLayouts,
-                    CompiledRenderGraph.Synchronization);
+                    CompiledRenderGraph.Synchronization,
+                    preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
                 inheritedFramebuffer = vkFrameBuffer.FrameBuffer;
                 if (inheritedRenderPass.Handle == 0 || inheritedFramebuffer.Handle == 0)
                 {
@@ -3197,8 +3405,30 @@ namespace XREngine.Rendering.Vulkan
                                     StencilAttachmentFormat = inheritedDynamicRenderingFormats.StencilAttachmentFormat,
                                     RasterizationSamples = inheritedSamples
                                 };
+                                DynamicRenderingLocalReadPlan localReadInheritance = default;
+                                void* localReadInheritancePNext = renderingInheritanceInfo.PNext;
+                                TryAppendDynamicRenderingLocalReadPNext(
+                                    in localReadInheritance,
+                                    inheritedDynamicRenderingFormats.ColorAttachmentCount,
+                                    ref localReadInheritancePNext,
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    null);
+                                renderingInheritanceInfo.PNext = localReadInheritancePNext;
                                 inheritanceInfo.PNext = &renderingInheritanceInfo;
                             }
+
+                            CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
+                            BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
+                            BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
+                            TryAppendDescriptorHeapInheritancePNext(
+                                ref inheritanceInfo,
+                                &descriptorHeapInheritanceInfo,
+                                &inheritedSamplerHeapInfo,
+                                &inheritedResourceHeapInfo);
 
                             CommandBufferBeginInfo beginInfo = new()
                             {
@@ -3379,10 +3609,10 @@ namespace XREngine.Rendering.Vulkan
 
                 Format* scheduledColorAttachmentFormats = stackalloc Format[(int)Math.Max(inheritedDynamicRenderingFormats.ColorAttachmentCount, 1u)];
                 CommandBufferInheritanceRenderingInfo scheduledRenderingInheritanceInfo = default;
-                if (inheritedDynamicRendering)
-                {
-                    inheritedDynamicRenderingFormats.CopyColorAttachmentFormats(
-                        scheduledColorAttachmentFormats,
+                    if (inheritedDynamicRendering)
+                    {
+                        inheritedDynamicRenderingFormats.CopyColorAttachmentFormats(
+                            scheduledColorAttachmentFormats,
                         inheritedDynamicRenderingFormats.ColorAttachmentCount);
 
                     scheduledRenderingInheritanceInfo = new CommandBufferInheritanceRenderingInfo
@@ -3396,9 +3626,22 @@ namespace XREngine.Rendering.Vulkan
                         StencilAttachmentFormat = inheritedDynamicRenderingFormats.StencilAttachmentFormat,
                         RasterizationSamples = inheritedSamples
                     };
-                }
+                    DynamicRenderingLocalReadPlan localReadInheritance = default;
+                    void* localReadInheritancePNext = scheduledRenderingInheritanceInfo.PNext;
+                    TryAppendDynamicRenderingLocalReadPNext(
+                        in localReadInheritance,
+                        inheritedDynamicRenderingFormats.ColorAttachmentCount,
+                        ref localReadInheritancePNext,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
+                        scheduledRenderingInheritanceInfo.PNext = localReadInheritancePNext;
+                    }
 
-                CommandBuffer[] secondaryBuffers = ArrayPool<CommandBuffer>.Shared.Rent(runCount);
+                    CommandBuffer[] secondaryBuffers = ArrayPool<CommandBuffer>.Shared.Rent(runCount);
                 CommandChain[] secondaryChains = ArrayPool<CommandChain>.Shared.Rent(runCount);
                 Array.Clear(secondaryBuffers, 0, runCount);
                 Array.Clear(secondaryChains, 0, runCount);
@@ -3460,6 +3703,15 @@ namespace XREngine.Rendering.Vulkan
                         };
                         if (inheritedDynamicRendering)
                             inheritanceInfo.PNext = &scheduledRenderingInheritanceInfo;
+
+                        CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
+                        BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
+                        BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
+                        TryAppendDescriptorHeapInheritancePNext(
+                            ref inheritanceInfo,
+                            &descriptorHeapInheritanceInfo,
+                            &inheritedSamplerHeapInfo,
+                            &inheritedResourceHeapInfo);
 
                         CommandBufferBeginInfo beginInfo = new()
                         {
@@ -3585,6 +3837,7 @@ namespace XREngine.Rendering.Vulkan
                 bool executedInPrimary = false;
                 bool meshLabelActive = false;
                 bool secondaryRecordingFinished = false;
+                int[]? drawUniformSlots = null;
 
                 CmdBeginLabel(commandBuffer, $"MeshCommandChainSecondary[{runCount}]");
                 meshLabelActive = true;
@@ -3604,6 +3857,15 @@ namespace XREngine.Rendering.Vulkan
 
                     if (!TryEnsureMutableCommandChainSecondaryCommandBuffer(chain, frameDataImageIndex, executedCommandChainSecondaryHandles, out secondary))
                         return false;
+
+                    drawUniformSlots = ArrayPool<int>.Shared.Rent(runCount);
+                    for (int i = 0; i < runCount; i++)
+                    {
+                        MeshDrawOp drawOp = (MeshDrawOp)ops[startIndex + i];
+                        int drawUniformSlot = GetMeshDrawUniformSlot(drawOp.Draw.Renderer);
+                        drawUniformSlots[i] = drawUniformSlot;
+                        drawOp.Draw.Renderer.EnsureUniformDrawSlotCapacity(drawUniformSlot + 1);
+                    }
 
                     MarkCommandChainSecondaryCommandBufferInvalid(chain);
                     Api!.ResetCommandBuffer(secondary, 0);
@@ -3638,8 +3900,30 @@ namespace XREngine.Rendering.Vulkan
                             StencilAttachmentFormat = inheritedDynamicRenderingFormats.StencilAttachmentFormat,
                             RasterizationSamples = inheritedSamples
                         };
+                        DynamicRenderingLocalReadPlan localReadInheritance = default;
+                        void* localReadInheritancePNext = renderingInheritanceInfo.PNext;
+                        TryAppendDynamicRenderingLocalReadPNext(
+                            in localReadInheritance,
+                            inheritedDynamicRenderingFormats.ColorAttachmentCount,
+                            ref localReadInheritancePNext,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null);
+                        renderingInheritanceInfo.PNext = localReadInheritancePNext;
                         inheritanceInfo.PNext = &renderingInheritanceInfo;
                     }
+
+                    CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
+                    BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
+                    BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
+                    TryAppendDescriptorHeapInheritancePNext(
+                        ref inheritanceInfo,
+                        &descriptorHeapInheritanceInfo,
+                        &inheritedSamplerHeapInfo,
+                        &inheritedResourceHeapInfo);
 
                     CommandBufferBeginInfo beginInfo = new()
                     {
@@ -3675,7 +3959,7 @@ namespace XREngine.Rendering.Vulkan
                         {
                             MeshDrawOp drawOp = (MeshDrawOp)ops[i];
                             using IDisposable? pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(drawOp.Context.PipelineInstance);
-                            RecordMeshDrawIntoCommandBuffer(secondary, drawOp, passIndex);
+                            RecordMeshDrawIntoCommandBuffer(secondary, drawOp, passIndex, drawUniformSlots[i - startIndex]);
                         }
                     }
                     finally
@@ -3708,6 +3992,12 @@ namespace XREngine.Rendering.Vulkan
 
                     if (!executedInPrimary && !secondaryRecordingFinished)
                         DestroyCommandChainSecondaryCommandBuffer(chain);
+
+                    if (drawUniformSlots is not null)
+                    {
+                        Array.Clear(drawUniformSlots, 0, runCount);
+                        ArrayPool<int>.Shared.Return(drawUniformSlots);
+                    }
 
                     if (meshLabelActive)
                         CmdEndLabel(commandBuffer);
@@ -3780,8 +4070,10 @@ namespace XREngine.Rendering.Vulkan
                         };
 
                         ImageMemoryBarrier* preRenderingBarriers = stackalloc ImageMemoryBarrier[2];
-                        preRenderingBarriers[0] = colorBarrier;
-                        preRenderingBarriers[1] = depthBarrier;
+                        uint preRenderingBarrierCount = 0;
+                        if (colorOldLayout != ImageLayout.ColorAttachmentOptimal)
+                            preRenderingBarriers[preRenderingBarrierCount++] = colorBarrier;
+                        preRenderingBarriers[preRenderingBarrierCount++] = depthBarrier;
 
                         CmdPipelineBarrierTracked(
                             commandBuffer,
@@ -3792,7 +4084,7 @@ namespace XREngine.Rendering.Vulkan
                             null,
                             0,
                             null,
-                            2,
+                            preRenderingBarrierCount,
                             preRenderingBarriers);
 
                         ClearValue* dynamicClearValues = stackalloc ClearValue[2];
@@ -3911,6 +4203,7 @@ namespace XREngine.Rendering.Vulkan
 
                 var imageBarriers = BarrierPlanner.GetBarriersForPass(passIndex);
                 var bufferBarriers = BarrierPlanner.GetBufferBarriersForPass(passIndex);
+                var swapchainBarriers = BarrierPlanner.GetSwapchainBarriersForPass(passIndex);
 
                 // If the barrier planner doesn't recognise this pass at all, it has no planned
                 // layout transitions. Emit a conservative full-pipeline memory barrier so that
@@ -3973,6 +4266,20 @@ namespace XREngine.Rendering.Vulkan
                         stageFlushes++;
                 }
 
+                for (int i = 0; i < swapchainBarriers.Count; i++)
+                {
+                    VulkanBarrierPlanner.PlannedSwapchainBarrier planned = swapchainBarriers[i];
+                    if (planned.SrcQueueFamilyIndex != Vk.QueueFamilyIgnored &&
+                        planned.DstQueueFamilyIndex != Vk.QueueFamilyIgnored &&
+                        planned.SrcQueueFamilyIndex != planned.DstQueueFamilyIndex)
+                    {
+                        queueOwnershipTransfers++;
+                    }
+
+                    if (planned.Previous.StageMask != planned.Next.StageMask)
+                        stageFlushes++;
+                }
+
                 for (int i = 0; i < bufferBarriers.Count; i++)
                 {
                     VulkanBarrierPlanner.PlannedBufferBarrier planned = bufferBarriers[i];
@@ -3987,15 +4294,16 @@ namespace XREngine.Rendering.Vulkan
                         stageFlushes++;
                 }
 
-                if (imageBarriers.Count > 0 || bufferBarriers.Count > 0)
+                if (swapchainBarriers.Count > 0 || imageBarriers.Count > 0 || bufferBarriers.Count > 0)
                 {
                     CmdBeginLabel(commandBuffer, "PassBarriers");
+                    EmitPlannedSwapchainBarriers(commandBuffer, swapchainBarriers);
                     EmitPlannedImageBarriers(commandBuffer, imageBarriers);
                     EmitPlannedBufferBarriers(commandBuffer, bufferBarriers);
                     CmdEndLabel(commandBuffer);
 
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBarrierPlannerPass(
-                        imageBarrierCount: imageBarriers.Count,
+                        imageBarrierCount: imageBarriers.Count + swapchainBarriers.Count,
                         bufferBarrierCount: bufferBarriers.Count,
                         queueOwnershipTransfers: queueOwnershipTransfers,
                         stageFlushes: stageFlushes);
@@ -4007,7 +4315,7 @@ namespace XREngine.Rendering.Vulkan
                             TimeSpan.FromSeconds(2),
                             "Pass barrier summary: pass={0} image={1} buffer={2} queueTransfers={3} stageFlushes={4}",
                             passIndex,
-                            imageBarriers.Count,
+                            imageBarriers.Count + swapchainBarriers.Count,
                             bufferBarriers.Count,
                             queueOwnershipTransfers,
                             stageFlushes);
@@ -4279,19 +4587,22 @@ namespace XREngine.Rendering.Vulkan
                         uint clearRenderLayerCount = activeDynamicRendering
                             ? Math.Max(activeDynamicRenderingFormats.LayerCount, 1u)
                             : 0u;
+                        uint clearRenderViewMask = activeDynamicRendering
+                            ? activeDynamicRenderingFormats.ViewMask
+                            : 0u;
                         if (clear.Target is null && swapchainClearedThisFrame && clear.ClearColor)
                         {
                             if (clear.ClearDepth || clear.ClearStencil)
                             {
                                 // Emit depth/stencil clear only â€” strip the color clear.
-                                RecordClearOp(commandBuffer, imageIndex, clear with { ClearColor = false }, activeRenderArea, in swapchainTarget, clearRenderLayerCount);
+                                RecordClearOp(commandBuffer, imageIndex, clear with { ClearColor = false }, activeRenderArea, in swapchainTarget, clearRenderLayerCount, clearRenderViewMask);
                                 clearRecorded = true;
                             }
                             // else: pure color clear on swapchain after first pass â†’ skip entirely
                         }
                         else
                         {
-                            RecordClearOp(commandBuffer, imageIndex, clear, activeRenderArea, in swapchainTarget, clearRenderLayerCount);
+                            RecordClearOp(commandBuffer, imageIndex, clear, activeRenderArea, in swapchainTarget, clearRenderLayerCount, clearRenderViewMask);
                             clearRecorded = true;
                         }
                         if (clear.Target is null && clearRecorded)
@@ -4690,7 +5001,8 @@ namespace XREngine.Rendering.Vulkan
             ClearOp op,
             Rect2D activeRenderArea,
             in SwapchainRecordingTarget swapchainTarget,
-            uint activeRenderLayerCount = 0u)
+            uint activeRenderLayerCount = 0u,
+            uint activeRenderViewMask = 0u)
         {
             _ = imageIndex;
 
@@ -4711,11 +5023,21 @@ namespace XREngine.Rendering.Vulkan
                 ? GenericToAPI<VkFrameBuffer>(op.Target)
                 : null;
             clearTargetFrameBuffer?.EnsureCurrent();
-            uint clearLayerCount = op.Target is null
-                ? 1u
-                : activeRenderLayerCount > 0u
-                    ? activeRenderLayerCount
-                    : Math.Max(clearTargetFrameBuffer?.FramebufferLayers ?? 1u, 1u);
+            uint clearLayerCount = ResolveClearRectLayerCount(op.Target, clearTargetFrameBuffer, activeRenderLayerCount, activeRenderViewMask);
+
+            if (clearLayerCount > 1u)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.CmdClearAttachments.Layered.{op.Target?.Name ?? "<swapchain>"}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] CmdClearAttachments layered clear target='{0}' layers={1} activeLayers={2} activeViewMask=0x{3:X} fboLayers={4} fboViewMask=0x{5:X}",
+                    op.Target?.Name ?? "<swapchain>",
+                    clearLayerCount,
+                    activeRenderLayerCount,
+                    activeRenderViewMask,
+                    clearTargetFrameBuffer?.FramebufferLayers ?? 0u,
+                    clearTargetFrameBuffer?.MultiviewViewMask ?? 0u);
+            }
 
             ClearRect clearRect = new()
             {
@@ -4817,6 +5139,53 @@ namespace XREngine.Rendering.Vulkan
 
             if (fboCount > 0)
                 Api!.CmdClearAttachments(commandBuffer, fboCount, fboAttachments, 1, rectPtr);
+        }
+
+        private static uint ResolveClearRectLayerCount(
+            XRFrameBuffer? target,
+            VkFrameBuffer? clearTargetFrameBuffer,
+            uint activeRenderLayerCount,
+            uint activeRenderViewMask)
+        {
+            if (target is null)
+                return 1u;
+
+            if (activeRenderViewMask != 0u || clearTargetFrameBuffer?.MultiviewViewMask != 0u)
+                return 1u;
+
+            if (activeRenderLayerCount > 1u && IsStereoCompatibleClearTarget(target, clearTargetFrameBuffer))
+                return 1u;
+
+            if (activeRenderLayerCount > 1u && RuntimeEngine.Rendering.State.IsStereoPass)
+                return 1u;
+
+            if (activeRenderLayerCount > 0u)
+                return Math.Max(activeRenderLayerCount, 1u);
+
+            return Math.Max(clearTargetFrameBuffer?.FramebufferLayers ?? 1u, 1u);
+        }
+
+        private static bool IsStereoCompatibleClearTarget(XRFrameBuffer target, VkFrameBuffer? clearTargetFrameBuffer)
+        {
+            var targets = target.Targets;
+            if (targets is null || targets.Length == 0)
+                return false;
+
+            uint framebufferLayers = clearTargetFrameBuffer?.FramebufferLayers ?? 0u;
+            for (int i = 0; i < targets.Length; i++)
+            {
+                var (attachmentTarget, _, _, layerIndex) = targets[i];
+                if (layerIndex >= 0)
+                    continue;
+
+                if (attachmentTarget is XRTexture texture &&
+                    VkFrameBuffer.IsStereoCompatibleTextureArrayAttachment(texture, framebufferLayers))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static string FormatFboAttachmentSignature(FrameBufferAttachmentSignature[] signatures)
@@ -5481,6 +5850,13 @@ namespace XREngine.Rendering.Vulkan
             BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
             EnsureComputeStorageImageLayoutsForDispatch(commandBuffer, op.Snapshot);
 
+            PushConstantsTracked(
+                commandBuffer,
+                op.Program.PipelineLayout,
+                CommonPushConstantStageFlags,
+                0,
+                new ComputeDispatchPushConstants(op.GroupsX, op.GroupsY, op.GroupsZ, 0u));
+
             ulong reusableDescriptorKey = ComputeReusableComputeDescriptorBindingKey(op, opIndex);
             if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, reusableDescriptorKey, out _, out var tempBuffers))
             {
@@ -5507,12 +5883,6 @@ namespace XREngine.Rendering.Vulkan
             }
 
             RegisterComputeTransientUniformBuffers(imageIndex, tempBuffers);
-            PushConstantsTracked(
-                commandBuffer,
-                op.Program.PipelineLayout,
-                CommonPushConstantStageFlags,
-                0,
-                new ComputeDispatchPushConstants(op.GroupsX, op.GroupsY, op.GroupsZ, 0u));
             Api!.CmdDispatch(commandBuffer, op.GroupsX, op.GroupsY, op.GroupsZ);
         }
 
@@ -6031,7 +6401,7 @@ namespace XREngine.Rendering.Vulkan
                 return PipelineStageFlags.TransferBit;
 
             if (layout == ImageLayout.ColorAttachmentOptimal ||
-                (asRenderAttachment && signature.Role == AttachmentRole.Color))
+                (asRenderAttachment && IsColorLikeAttachmentRole(signature.Role)))
                 return PipelineStageFlags.ColorAttachmentOutputBit;
 
             if (layout is ImageLayout.DepthStencilAttachmentOptimal ||
@@ -6068,7 +6438,7 @@ namespace XREngine.Rendering.Vulkan
                 return AccessFlags.TransferWriteBit;
 
             if (layout == ImageLayout.ColorAttachmentOptimal ||
-                (asRenderAttachment && signature.Role == AttachmentRole.Color))
+                (asRenderAttachment && IsColorLikeAttachmentRole(signature.Role)))
                 return AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit;
 
             if (layout is ImageLayout.DepthStencilReadOnlyOptimal
@@ -6578,6 +6948,117 @@ namespace XREngine.Rendering.Vulkan
                     0,
                     null);
             }
+        }
+
+        /// Appends dynamic rendering local-read pNext structs when a pass explicitly
+        /// opts into framebuffer-local attachment reads.
+        private bool TryAppendDynamicRenderingLocalReadPNext(
+            in DynamicRenderingLocalReadPlan localRead,
+            uint colorAttachmentCount,
+            ref void* pNext,
+            RenderingAttachmentLocationInfo* attachmentLocationInfo,
+            RenderingInputAttachmentIndexInfo* inputAttachmentIndexInfo,
+            uint* colorAttachmentLocations,
+            uint* colorInputAttachmentIndices,
+            uint* depthInputAttachmentIndex,
+            uint* stencilInputAttachmentIndex)
+        {
+            if (!SupportsDynamicRenderingLocalRead || !localRead.Enabled)
+                return false;
+
+            bool hasAttachmentLocations = localRead.ColorAttachmentLocations.Length > 0;
+            bool hasColorInputIndices = localRead.ColorInputAttachmentIndices.Length > 0;
+            bool hasInputIndices =
+                hasColorInputIndices ||
+                localRead.DepthInputAttachmentIndex.HasValue ||
+                localRead.StencilInputAttachmentIndex.HasValue;
+
+            if (!hasAttachmentLocations && !hasInputIndices)
+                return false;
+
+            if ((hasAttachmentLocations && (uint)localRead.ColorAttachmentLocations.Length != colorAttachmentCount) ||
+                (hasColorInputIndices && (uint)localRead.ColorInputAttachmentIndices.Length != colorAttachmentCount))
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.DynamicRendering.LocalRead.InvalidPlan",
+                    TimeSpan.FromSeconds(5),
+                    "[Vulkan] Dynamic rendering local-read plan ignored because color counts do not match the active rendering scope (attachments={0}, locations={1}, inputIndices={2}).",
+                    colorAttachmentCount,
+                    localRead.ColorAttachmentLocations.Length,
+                    localRead.ColorInputAttachmentIndices.Length);
+                return false;
+            }
+
+            if ((hasAttachmentLocations && (attachmentLocationInfo is null || colorAttachmentLocations is null)) ||
+                (hasInputIndices && (inputAttachmentIndexInfo is null || (hasColorInputIndices && colorInputAttachmentIndices is null))) ||
+                (localRead.DepthInputAttachmentIndex.HasValue && depthInputAttachmentIndex is null) ||
+                (localRead.StencilInputAttachmentIndex.HasValue && stencilInputAttachmentIndex is null))
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.DynamicRendering.LocalRead.MissingScratch",
+                    TimeSpan.FromSeconds(5),
+                    "[Vulkan] Dynamic rendering local-read plan ignored because scratch storage was not provided for the pNext chain.");
+                return false;
+            }
+
+            void* next = pNext;
+
+            if (hasAttachmentLocations)
+            {
+                for (int i = 0; i < localRead.ColorAttachmentLocations.Length; i++)
+                    colorAttachmentLocations[i] = localRead.ColorAttachmentLocations[i];
+
+                *attachmentLocationInfo = new RenderingAttachmentLocationInfo
+                {
+                    SType = StructureType.RenderingAttachmentLocationInfo,
+                    PNext = next,
+                    ColorAttachmentCount = colorAttachmentCount,
+                    PColorAttachmentLocations = colorAttachmentLocations,
+                };
+                next = attachmentLocationInfo;
+            }
+
+            if (hasInputIndices)
+            {
+                uint* colorInputPtr = null;
+                uint colorInputCount = 0;
+                if (hasColorInputIndices)
+                {
+                    for (int i = 0; i < localRead.ColorInputAttachmentIndices.Length; i++)
+                        colorInputAttachmentIndices[i] = localRead.ColorInputAttachmentIndices[i];
+
+                    colorInputPtr = colorInputAttachmentIndices;
+                    colorInputCount = colorAttachmentCount;
+                }
+
+                uint* depthInputPtr = null;
+                if (localRead.DepthInputAttachmentIndex.HasValue)
+                {
+                    *depthInputAttachmentIndex = localRead.DepthInputAttachmentIndex.Value;
+                    depthInputPtr = depthInputAttachmentIndex;
+                }
+
+                uint* stencilInputPtr = null;
+                if (localRead.StencilInputAttachmentIndex.HasValue)
+                {
+                    *stencilInputAttachmentIndex = localRead.StencilInputAttachmentIndex.Value;
+                    stencilInputPtr = stencilInputAttachmentIndex;
+                }
+
+                *inputAttachmentIndexInfo = new RenderingInputAttachmentIndexInfo
+                {
+                    SType = StructureType.RenderingInputAttachmentIndexInfo,
+                    PNext = next,
+                    ColorAttachmentCount = colorInputCount,
+                    PColorAttachmentInputIndices = colorInputPtr,
+                    PDepthInputAttachmentIndex = depthInputPtr,
+                    PStencilInputAttachmentIndex = stencilInputPtr,
+                };
+                next = inputAttachmentIndexInfo;
+            }
+
+            pNext = next;
+            return true;
         }
 
         /// Pipeline stages must not be zero; fall back to AllCommandsBit as safety net.

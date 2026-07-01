@@ -211,13 +211,14 @@ public sealed class SecondaryPassShaderContractTests
     [TestCase("Scene3D/PostProcessStereo.fs")]
     [TestCase("Scene3D/FinalPostProcess.fs")]
     [TestCase("Scene3D/FinalPostProcessStereo.fs")]
-    public void FullscreenCompositePasses_UseClipPolicyForTriangleUvs(string shaderRelativePath)
+    public void FullscreenCompositePasses_UseFramebufferUvForScreenAlignedSampling(string shaderRelativePath)
     {
         string source = LoadShaderSource(shaderRelativePath);
 
         source.ShouldContain("#pragma snippet \"ScreenSpaceUtils\"");
         source.ShouldContain("vec2 clipXY = FragPos.xy;");
-        source.ShouldContain("XRENGINE_ClipXYToScreenUV(clipXY)");
+        source.ShouldContain("XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight))");
+        source.ShouldNotContain("XRENGINE_ClipXYToScreenUV(clipXY)");
         source.ShouldNotContain("uv = uv * 0.5f + 0.5f;");
         source.ShouldNotContain("uv = uv * 0.5 + 0.5;");
     }
@@ -459,6 +460,24 @@ public sealed class SecondaryPassShaderContractTests
         source.ShouldNotContain("gl_VertexIndex");
     }
 
+    [Test]
+    public void SkyboxStereoVertex_UsesPerEyeCameraMatrices()
+    {
+        string source = LoadShaderSource(Path.Combine("Scene3D", "SkyboxStereo.vs"));
+
+        source.ShouldContain("#extension GL_OVR_multiview2 : require");
+        source.ShouldContain("layout(num_views = 2) in;");
+        source.ShouldContain("uniform mat4 LeftEyeInverseViewMatrix;");
+        source.ShouldContain("uniform mat4 RightEyeInverseViewMatrix;");
+        source.ShouldContain("uniform mat4 LeftEyeInverseProjMatrix;");
+        source.ShouldContain("uniform mat4 RightEyeInverseProjMatrix;");
+        source.ShouldContain("gl_ViewID_OVR == 0 ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix");
+        source.ShouldContain("gl_ViewID_OVR == 0 ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix");
+        source.ShouldContain("FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));");
+        source.ShouldNotContain("uniform mat4 InverseViewMatrix;");
+        source.ShouldNotContain("uniform mat4 InverseProjMatrix;");
+    }
+
     [TestCase("Scene3D/SkyboxEquirect.fs")]
     [TestCase("Scene3D/SkyboxOctahedral.fs")]
     [TestCase("Scene3D/SkyboxCubemap.fs")]
@@ -524,6 +543,14 @@ public sealed class SecondaryPassShaderContractTests
 
         source.ShouldContain("Skybox shaders reconstruct and rotate view rays in the vertex stage");
         source.ShouldContain("RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy");
+        source.ShouldContain("GetStereoVertexShader()");
+        source.ShouldContain("\"Shaders\", \"Scene3D\", \"SkyboxStereo.vs\"");
+        source.ShouldContain("[vertexShader, stereoVertexShader, fragmentShader]");
+        source.ShouldContain("#extension GL_OVR_multiview2 : require");
+        source.ShouldContain("LeftEyeInverseViewMatrix");
+        source.ShouldContain("RightEyeInverseViewMatrix");
+        source.ShouldContain("LeftEyeInverseProjMatrix");
+        source.ShouldContain("RightEyeInverseProjMatrix");
         source.ShouldContain("layout(location = 1) out vec3 FragWorldDir;");
         source.ShouldContain("uniform int DepthMode;");
         source.ShouldContain("uniform int ClipDepthRange;");

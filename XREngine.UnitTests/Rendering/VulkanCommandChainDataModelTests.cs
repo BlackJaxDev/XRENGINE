@@ -688,8 +688,8 @@ public sealed class VulkanCommandChainDataModelTests
 
         commandBufferSource.ShouldContain("DynamicRenderingFormatSignature targetDynamicRenderingFormats = CreateDynamicRenderingFormatSignature(");
         commandBufferSource.ShouldContain("fboLayerCount);");
-        commandBufferSource.ShouldContain("ViewMask = targetDynamicRenderingFormats.ViewMask");
-        commandBufferSource.ShouldContain("LayerCount = targetDynamicRenderingFormats.LayerCount");
+        commandBufferSource.ShouldContain("ViewMask = plan.ViewMask");
+        commandBufferSource.ShouldContain("LayerCount = plan.LayerCount");
         commandBufferSource.ShouldContain("ViewMask = inheritedDynamicRenderingFormats.ViewMask");
         commandBufferSource.ShouldContain("ResolveDynamicRenderingLayerCount(vkFrameBuffer.FramebufferLayers, fboViewMask)");
         commandBufferSource.ShouldContain("viewMask=0x{9:X}");

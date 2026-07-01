@@ -570,6 +570,11 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("preferredCascaded = camera;");
         source.ShouldContain("return preferredCascaded ?? cascadedFallback ?? preferredFallback ?? fallback;");
         source.ShouldNotContain("XRViewport?[] vrViewports");
+        source.ShouldContain("private bool HasActiveCascadedDirectionalShadowViewport(ShadowRequestSource source)");
+        source.ShouldContain("bool wantsDesktopCascades = HasActiveCascadedDirectionalShadowViewport(ShadowRequestSource.Desktop);");
+        source.ShouldContain("bool wantsHmdCascades = HasActiveCascadedDirectionalShadowViewport(ShadowRequestSource.Hmd);");
+        source.ShouldContain("light.UpdateCascadeShadows(ShadowRequestSource.Desktop, desktopCascadeCamera);");
+        source.ShouldContain("light.UpdateCascadeShadows(ShadowRequestSource.Hmd, hmdCascadeCamera);");
 
         int activeViewportIndex = source.IndexOf("foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())", System.StringComparison.Ordinal);
         int activeCascadedFallbackIndex = source.IndexOf("if (cascadedFallback is not null)", System.StringComparison.Ordinal);
@@ -581,17 +586,27 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
-    public void DirectionalCascadeSourceFrusta_IncludeDesktopEyesAndCombinedHmd()
+    public void DirectionalCascadeSourceFrusta_DoNotMixDesktopAndHmdSources()
     {
         string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
 
         cascadeSource.ShouldContain("private const int MaxCascadeSourceFrustumCount = 8;");
-        cascadeSource.ShouldContain("foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())");
+        cascadeSource.ShouldContain("private sealed class DirectionalCascadeSourceState(ShadowRequestSource source)");
+        cascadeSource.ShouldContain("private readonly DirectionalCascadeSourceState _desktopCascadeState = new(ShadowRequestSource.Desktop);");
+        cascadeSource.ShouldContain("private readonly DirectionalCascadeSourceState _hmdCascadeState = new(ShadowRequestSource.Hmd);");
+        cascadeSource.ShouldNotContain("DirectionalCascadeSourceKind");
+        cascadeSource.ShouldContain("internal bool PublishedCascadesMatchCamera(XRCamera? camera)");
+        cascadeSource.ShouldContain("private int CopyCascadeSourceFrusta(ShadowRequestSource source, XRCamera primaryCamera, Span<Frustum> destination)");
+        cascadeSource.ShouldContain("if (source == ShadowRequestSource.Hmd && RuntimeEngine.VRState.IsInVR)");
         cascadeSource.ShouldContain("AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.LeftEyeViewport");
         cascadeSource.ShouldContain("AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.RightEyeViewport");
         cascadeSource.ShouldContain("TryAddHmdCombinedCascadeSourceFrustum(world, destination, ref count);");
         cascadeSource.ShouldContain("ProjectionMatrixCombiner.TryCombineProjectionMatrices");
         cascadeSource.ShouldContain("destination[count++] = combinedLocalFrustum.TransformedBy(hmdNode.Transform.RenderMatrix);");
+        cascadeSource.ShouldContain("internal XRTexture2DArray? GetCascadedShadowReceiverTexture(ShadowRequestSource source)");
+        cascadeSource.ShouldContain("internal int GetActiveCascadeCount(ShadowRequestSource source)");
+        cascadeSource.ShouldContain("ClearCascadeShadows(ShadowRequestSource.Desktop);");
+        cascadeSource.ShouldContain("ClearCascadeShadows(ShadowRequestSource.Hmd);");
     }
 
     [Test]
@@ -1041,13 +1056,18 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         forwardSource.ShouldContain("AreRequiredDirectionalAtlasTilesSampleable");
         forwardSource.ShouldContain("perLightShadowTex = FindDirectionalShadowReceiverTexture(dirLight);");
         forwardSource.ShouldNotContain("if (useDirectionalShadowAtlas)\n                    {\n                        forwardShadowTex = null;\n                    }");
-        forwardSource.ShouldContain("firstDirLight.CascadedShadowReceiverTexture");
+        forwardSource.ShouldContain("firstDirLight.GetCascadedShadowReceiverTexture(directionalShadowCamera)");
+        forwardSource.ShouldContain("ResolveForwardDirectionalShadowCameraComponent(out XRCamera? directionalShadowCamera)");
+        forwardSource.ShouldContain("firstDirLight.PublishedCascadesMatchCamera(directionalShadowCamera)");
+        forwardSource.ShouldContain("dirLight.PublishedCascadesMatchCamera(directionalShadowCamera)");
 
         string deferredBindSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Commands", "Features", "VPRC_LightCombinePass.cs"));
         deferredBindSource.ShouldContain("AreRequiredDirectionalAtlasTilesSampleable");
         deferredBindSource.ShouldNotContain("HasAnyDirectionalAtlasTileSampleable");
         deferredBindSource.ShouldContain("selectedDirectionalLight.PrimaryShadowReceiverTexture");
         deferredBindSource.ShouldContain("if (useCascadedDirectionalShadows && directionalCascadeReceiverTexture is not null)");
+        deferredBindSource.ShouldContain("directionalLight.PublishedCascadesMatchCamera(activeRenderingCamera)");
+        deferredBindSource.ShouldContain("ActiveViewportPrefersCascadedDirectionalShadows(activeRenderingCamera)");
 
         string editorSource = LoadRepoSource(Path.Combine("XREngine.Editor", "ComponentEditors", "LightComponentEditorShared.cs"));
         editorSource.ShouldContain("Use Directional Shadow Atlas");

@@ -18,6 +18,7 @@ public unsafe partial class VulkanRenderer
             public int SetCount;
             public DescriptorPool Pool;
             public DescriptorSet[][] Sets = [];
+            public DescriptorHeapPushDataPayload[] DescriptorHeapPushData = [];
             public ulong SchemaFingerprint;
             public ulong ResourceFingerprint;
             public string ResourceFingerprintDetails = string.Empty;

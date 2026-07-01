@@ -148,7 +148,7 @@ public unsafe partial class VulkanRenderer
         if (TryAllocatePhysicalImage(group, ref image, ref memory, out string failureReason))
             return;
 
-        throw new VulkanOutOfMemoryException(failureReason, MemoryPropertyFlags.DeviceLocalBit);
+        throw new VulkanOutOfMemoryException(failureReason, group.MemoryProperties);
     }
 
     internal bool TryAllocatePhysicalImage(
@@ -198,11 +198,21 @@ public unsafe partial class VulkanRenderer
             Math.Max(1u, group.MipLevels),
             group.Samples);
 
+        if (group.TransientAttachmentPolicy == VulkanTransientAttachmentPolicy.PreferLazilyAllocated &&
+            !SupportsLazyAllocation)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.TransientAttachment.LazyUnsupported.{group.Key}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] Transient attachment group '{0}' requested lazy memory, but this device exposes no lazily allocated memory type. Falling back to device-local memory.",
+                group.Key);
+        }
+
         try
         {
             if (!TryAllocateImageMemoryWithFallback(
                 image,
-                MemoryPropertyFlags.DeviceLocalBit,
+                group.MemoryProperties,
                 out VulkanMemoryAllocation allocation,
                 out failureReason))
             {

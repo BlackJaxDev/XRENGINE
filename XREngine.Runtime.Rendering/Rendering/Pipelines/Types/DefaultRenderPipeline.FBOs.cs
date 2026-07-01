@@ -1160,6 +1160,26 @@ public partial class DefaultRenderPipeline
             ?? throw new InvalidOperationException($"Factory for '{textureName}' produced a non-FBO-attachable texture.");
     }
 
+    private XRTexture EnsurePipelineTexture(string textureName, Func<XRTexture> factory)
+    {
+        XRTexture? texture = null;
+        bool hasConcreteTexture = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Resources.TryGetTexture(textureName, out texture) == true;
+        if (hasConcreteTexture && texture is not null)
+            return texture;
+
+        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is { } instance)
+        {
+            string reason = hasConcreteTexture
+                ? "cached concrete texture entry is null"
+                : "no concrete texture instance is registered";
+            LogAttachmentTextureRebuild(instance, textureName, texture, reason);
+        }
+
+        texture = factory();
+        SetTexture(texture);
+        return texture;
+    }
+
     private XRFrameBuffer CreateVelocityFBO()
     {
         var velocityAttachment = EnsureTextureAttachment(VelocityTextureName, CreateVelocityTexture);
@@ -1694,16 +1714,17 @@ public partial class DefaultRenderPipeline
     /// </summary>
     private XRFrameBuffer CreateMsaaLightCombineFBO()
     {
-        var msaaLightingTexture = GetTexture<XRTexture>(MsaaLightingTextureName)!;
+        _ = EnsurePipelineTexture(MsaaDepthStencilTextureName, CreateMsaaDepthStencilTexture);
+        var msaaLightingTexture = EnsurePipelineTexture(MsaaLightingTextureName, CreateMsaaLightingTexture);
 
         XRTexture[] textures = [
-            GetTexture<XRTexture>(MsaaAlbedoOpacityTextureName)!,
-            GetTexture<XRTexture>(MsaaNormalTextureName)!,
-            GetTexture<XRTexture>(MsaaRMSETextureName)!,
-            GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName)!,
-            GetTexture<XRTexture>(MsaaDepthViewTextureName)!,
+            EnsurePipelineTexture(MsaaAlbedoOpacityTextureName, CreateMsaaAlbedoOpacityTexture),
+            EnsurePipelineTexture(MsaaNormalTextureName, CreateMsaaNormalTexture),
+            EnsurePipelineTexture(MsaaRMSETextureName, CreateMsaaRMSETexture),
+            EnsurePipelineTexture(AmbientOcclusionIntensityTextureName, CreateAmbientOcclusionIntensityTexture),
+            EnsurePipelineTexture(MsaaDepthViewTextureName, CreateMsaaDepthViewTexture),
             msaaLightingTexture,
-            GetTexture<XRTexture>(BRDFTextureName)!,
+            EnsurePipelineTexture(BRDFTextureName, CreateBRDFTexture),
         ];
 
         XRShader baseShader = XRShader.EngineShader(

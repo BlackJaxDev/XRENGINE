@@ -2944,7 +2944,8 @@ public unsafe partial class VulkanRenderer
         Image destinationImage,
         Format destinationFormat,
         Extent2D destinationExtent,
-        string destinationLabel)
+        string destinationLabel,
+        bool flipY = false)
     {
         if (sourceTexture is null || destinationImage.Handle == 0 || destinationExtent.Width == 0 || destinationExtent.Height == 0)
             return false;
@@ -3061,11 +3062,18 @@ public unsafe partial class VulkanRenderer
                 Y = checked((int)Math.Min(sourceExtent.Height, (uint)int.MaxValue)),
                 Z = 1
             };
-            blit.DstOffsets.Element0 = new Offset3D { X = 0, Y = 0, Z = 0 };
+            int destinationWidth = checked((int)Math.Min(destinationExtent.Width, (uint)int.MaxValue));
+            int destinationHeight = checked((int)Math.Min(destinationExtent.Height, (uint)int.MaxValue));
+            blit.DstOffsets.Element0 = new Offset3D
+            {
+                X = 0,
+                Y = flipY ? destinationHeight : 0,
+                Z = 0
+            };
             blit.DstOffsets.Element1 = new Offset3D
             {
-                X = checked((int)Math.Min(destinationExtent.Width, (uint)int.MaxValue)),
-                Y = checked((int)Math.Min(destinationExtent.Height, (uint)int.MaxValue)),
+                X = destinationWidth,
+                Y = flipY ? 0 : destinationHeight,
                 Z = 1
             };
 
@@ -3880,7 +3888,7 @@ public unsafe partial class VulkanRenderer
         if (Api!.CreateImageView(device, ref viewInfo, null, out ImageView imageView) != Result.Success)
             throw new InvalidOperationException("Failed to create OpenXR Vulkan swapchain image view.");
 
-        TrackLiveImageView(imageView, "OpenXR.SwapchainImageView");
+        TrackLiveImageView(imageView, in viewInfo, "OpenXR.SwapchainImageView");
         return imageView;
     }
 
@@ -3957,7 +3965,7 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException("Failed to create OpenXR Vulkan depth image view.");
         }
 
-        TrackLiveImageView(depthView, "OpenXR.DepthTarget");
+        TrackLiveImageView(depthView, in viewInfo, "OpenXR.DepthTarget");
         return new OpenXrDepthTarget(depthImage, allocation.Memory, depthView, depthFormat, depthAspect);
     }
 

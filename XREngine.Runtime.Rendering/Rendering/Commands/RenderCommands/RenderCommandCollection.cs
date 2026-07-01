@@ -34,7 +34,7 @@ namespace XREngine.Rendering.Commands
     /// camera while this collection is being rendered. A SortedSet over the command itself
     /// is therefore unsafe because its comparison key mutates under the tree.
     /// </summary>
-    internal sealed class SnapshotSortedRenderCommandCollection : ICollection<RenderCommand>
+    internal sealed class SnapshotSortedRenderCommandCollection : ICollection<RenderCommand>, IReadOnlyCollection<RenderCommand>
     {
         private readonly List<Entry> _entries = [];
         private readonly HashSet<RenderCommand> _membership = new(ReferenceRenderCommandComparer.Instance);
@@ -212,6 +212,8 @@ namespace XREngine.Rendering.Commands
         {
             using (_lock.EnterScope())
             {
+                using var renderingBufferScope = EnterRenderingBufferWriteScope();
+
                 Dictionary<int, RenderPassMetadata> incomingPassMetadata = BuildPassMetadata(passMetadata);
                 EnsureDefaultPassMetadata(passIndicesAndSorters.Keys, incomingPassMetadata);
                 if (HasEquivalentPassConfiguration(passIndicesAndSorters, incomingPassMetadata))
@@ -395,6 +397,31 @@ namespace XREngine.Rendering.Commands
             => _ownerPipeline?.IsShadowPipeline == true;
 
         private readonly Lock _lock = new();
+        private readonly ReaderWriterLockSlim _renderingBufferLock = new(LockRecursionPolicy.SupportsRecursion);
+
+        private RenderingBufferReadScope EnterRenderingBufferReadScope()
+        {
+            _renderingBufferLock.EnterReadLock();
+            return new RenderingBufferReadScope(_renderingBufferLock);
+        }
+
+        private RenderingBufferWriteScope EnterRenderingBufferWriteScope()
+        {
+            _renderingBufferLock.EnterWriteLock();
+            return new RenderingBufferWriteScope(_renderingBufferLock);
+        }
+
+        private readonly ref struct RenderingBufferReadScope(ReaderWriterLockSlim gate)
+        {
+            public void Dispose()
+                => gate.ExitReadLock();
+        }
+
+        private readonly ref struct RenderingBufferWriteScope(ReaderWriterLockSlim gate)
+        {
+            public void Dispose()
+                => gate.ExitWriteLock();
+        }
 
         public int GetUpdatingCommandCount()
         {
@@ -418,28 +445,26 @@ namespace XREngine.Rendering.Commands
 
         public int GetRenderingCommandCount()
         {
-            using (_lock.EnterScope())
-                return _renderingPasses.Values.Sum(static pass => pass.Count);
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            return _renderingPasses.Values.Sum(static pass => pass.Count);
         }
 
         public int GetRenderingPassCommandCount(int renderPass)
         {
-            using (_lock.EnterScope())
-                return _renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list)
-                    ? list.Count
-                    : 0;
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            return _renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list)
+                ? list.Count
+                : 0;
         }
 
         public bool TryGetRenderingPassCommands(int renderPass, out IReadOnlyCollection<RenderCommand>? commands)
         {
-            using (_lock.EnterScope())
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            if (_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) &&
+                list is IReadOnlyCollection<RenderCommand> readOnly)
             {
-                if (_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) &&
-                    list is IReadOnlyCollection<RenderCommand> readOnly)
-                {
-                    commands = readOnly;
-                    return true;
-                }
+                commands = readOnly;
+                return true;
             }
 
             commands = null;
@@ -454,19 +479,20 @@ namespace XREngine.Rendering.Commands
         public void AddCPU(RenderCommand item)
         {
             int pass = item.RenderPass;
-            if (!_updatingPasses.TryGetValue(pass, out var set))
-            {
-                if (s_addCpuMissingPassDiagCount < 30)
-                {
-                    string ownerName = _ownerPipeline?.DebugName ?? "<no-owner>";
-                    Debug.Rendering($"[RenderCommandCollection:AddCPU] MISSING_PASS pass={pass} cmd={item.GetType().Name} enabled={item.Enabled} owner={ownerName} updatingPassKeys=[{string.Join(",", _updatingPasses.Keys.OrderBy(static x => x))}]");
-                    s_addCpuMissingPassDiagCount++;
-                }
-                return; // No CPU pass found for this render command
-            }
 
             using (_lock.EnterScope())
             {
+                if (!_updatingPasses.TryGetValue(pass, out var set))
+                {
+                    if (s_addCpuMissingPassDiagCount < 30)
+                    {
+                        string ownerName = _ownerPipeline?.DebugName ?? "<no-owner>";
+                        Debug.Rendering($"[RenderCommandCollection:AddCPU] MISSING_PASS pass={pass} cmd={item.GetType().Name} enabled={item.Enabled} owner={ownerName} updatingPassKeys=[{string.Join(",", _updatingPasses.Keys.OrderBy(static x => x))}]");
+                        s_addCpuMissingPassDiagCount++;
+                    }
+                    return; // No CPU pass found for this render command
+                }
+
                 long sortOrderKey = GetSortOrderKey(pass);
                 int beforeCount = set.Count;
                 if (set is SnapshotSortedRenderCommandCollection snapshotSet)
@@ -522,9 +548,12 @@ namespace XREngine.Rendering.Commands
 
         public int GetCommandsAddedCount()
         {
-            int added = _numCommandsRecentlyAddedToUpdate;
-            _numCommandsRecentlyAddedToUpdate = 0;
-            return added;
+            using (_lock.EnterScope())
+            {
+                int added = _numCommandsRecentlyAddedToUpdate;
+                _numCommandsRecentlyAddedToUpdate = 0;
+                return added;
+            }
         }
 
         // Per-thread probe-deferred work list. Probe draws are intentionally deferred to
@@ -602,6 +631,8 @@ namespace XREngine.Rendering.Commands
             bool allowExcludedGpuFallbackMeshes = true,
             Action<IRenderCommandMesh>? onExcludedGpuFallbackMesh = null)
         {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
@@ -872,6 +903,8 @@ namespace XREngine.Rendering.Commands
 
         public void RenderCPUMeshOnly(int renderPass)
         {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
@@ -891,6 +924,8 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void RenderCPUNonMeshAndExcluded(int renderPass)
         {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
@@ -924,6 +959,8 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void RenderCPUFiltered(int renderPass, Predicate<RenderCommand> filter, bool respectCpuQueryOcclusion)
         {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
@@ -1076,6 +1113,8 @@ namespace XREngine.Rendering.Commands
 
         public void RenderGPU(int renderPass, EMeshSubmissionStrategy meshSubmissionStrategy)
         {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
                 return;
 
@@ -1138,31 +1177,27 @@ namespace XREngine.Rendering.Commands
 
         public bool HasRenderingCommands(int renderPass)
         {
-            using (_lock.EnterScope())
-            {
-                return _renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) &&
-                    list.Count > 0;
-            }
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            return _renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) &&
+                list.Count > 0;
         }
 
         public bool HasGpuEligibleMeshCommands(int renderPass)
         {
-            using (_lock.EnterScope())
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) || list.Count == 0)
+                return false;
+
+            foreach (var cmd in list)
             {
-                if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) || list.Count == 0)
-                    return false;
+                if (cmd is not IRenderCommandMesh meshCmd)
+                    continue;
 
-                foreach (var cmd in list)
-                {
-                    if (cmd is not IRenderCommandMesh meshCmd)
-                        continue;
+                var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
+                if (meshCmd.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true)
+                    continue;
 
-                    var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                    if (meshCmd.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true)
-                        continue;
-
-                    return true;
-                }
+                return true;
             }
 
             return false;
@@ -1439,73 +1474,86 @@ namespace XREngine.Rendering.Commands
         {
             using var sample = RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers");
 
-            (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
-            (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
-            (_updatingSwapQueueMembership, _renderingSwapQueueMembership) = (_renderingSwapQueueMembership, _updatingSwapQueueMembership);
-
-            using (RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers.RenderPasses"))
+            using (_lock.EnterScope())
             {
-                // Dirty-delta publish: walk only the commands that mutated since the last swap.
-                // Secondary shared-view collections yield to authoritative collections because the
-                // snapshot fields live on the RenderCommand instance itself. They still swap their
-                // own pass membership, and can publish commands that no authoritative view collected.
-                var queue = _renderingSwapQueue;
-                if (IsRenderCommandSnapshotAuthority)
+                using var renderingBufferScope = EnterRenderingBufferWriteScope();
+
+                (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
+                (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
+                (_updatingSwapQueueMembership, _renderingSwapQueueMembership) = (_renderingSwapQueueMembership, _updatingSwapQueueMembership);
+
+                using (RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers.RenderPasses"))
                 {
-                    int queueCount = queue.Count;
-                    for (int i = 0; i < queueCount; i++)
+                    // Dirty-delta publish: walk only the commands that mutated since the last swap.
+                    // Secondary shared-view collections yield to authoritative collections because the
+                    // snapshot fields live on the RenderCommand instance itself. They still swap their
+                    // own pass membership, and can publish commands that no authoritative view collected.
+                    var queue = _renderingSwapQueue;
+                    if (IsRenderCommandSnapshotAuthority)
                     {
-                        var cmd = queue[i];
-                        if (cmd is null)
-                            continue;
-                        if (cmd._dirty || !cmd.HasSwappedBuffers)
-                            cmd.SwapBuffers();
-                        cmd._authoritativePublishQueued = false;
+                        int queueCount = queue.Count;
+                        for (int i = 0; i < queueCount; i++)
+                        {
+                            var cmd = queue[i];
+                            if (cmd is null)
+                                continue;
+                            if (cmd._dirty || !cmd.HasSwappedBuffers)
+                                cmd.SwapBuffers();
+                            cmd._authoritativePublishQueued = false;
+                        }
                     }
+                    else
+                    {
+                        int queueCount = queue.Count;
+                        for (int i = 0; i < queueCount; i++)
+                        {
+                            var cmd = queue[i];
+                            if (cmd is null)
+                                continue;
+                            if (!cmd._authoritativePublishQueued && (cmd._dirty || !cmd.HasSwappedBuffers))
+                                cmd.SwapBuffers();
+                        }
+                    }
+                    queue.Clear();
+                    _renderingSwapQueueMembership.Clear();
                 }
-                else
+
+                using (RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers.ClearPasses"))
                 {
-                    int queueCount = queue.Count;
-                    for (int i = 0; i < queueCount; i++)
-                    {
-                        var cmd = queue[i];
-                        if (cmd is null)
-                            continue;
-                        if (!cmd._authoritativePublishQueued && (cmd._dirty || !cmd.HasSwappedBuffers))
-                            cmd.SwapBuffers();
-                    }
+                    foreach (var pass in _updatingPasses.Values)
+                        pass.Clear();
                 }
-                queue.Clear();
-                _renderingSwapQueueMembership.Clear();
-            }
 
-            using (RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers.ClearPasses"))
-            {
-                foreach (var pass in _updatingPasses.Values)
-                    pass.Clear();
-            }
+                // Reset the per-pass sort-order counters. Keys can be added by AddCPU on other
+                // threads in the future, so we snapshot before mutating values. The collection is
+                // typically small (one entry per render pass) so the ToArray() cost is negligible.
+                if (_updatingPassSortOrderCounters.Count > 0)
+                {
+                    foreach (int passIndex in _updatingPassSortOrderCounters.Keys.ToArray())
+                        _updatingPassSortOrderCounters[passIndex] = 0L;
+                }
 
-            // Reset the per-pass sort-order counters. Keys can be added by AddCPU on other
-            // threads in the future, so we snapshot before mutating values. The collection is
-            // typically small (one entry per render pass) so the ToArray() cost is negligible.
-            if (_updatingPassSortOrderCounters.Count > 0)
-            {
-                foreach (int passIndex in _updatingPassSortOrderCounters.Keys.ToArray())
-                    _updatingPassSortOrderCounters[passIndex] = 0L;
+                _numCommandsRecentlyAddedToUpdate = 0;
             }
-
-            _numCommandsRecentlyAddedToUpdate = 0;
         }
 
         public IEnumerable<IRenderCommandMesh> EnumerateRenderingMeshCommands()
         {
-            foreach (var pass in _renderingPasses.Values)
+            _renderingBufferLock.EnterReadLock();
+            try
             {
-                foreach (var cmd in pass)
+                foreach (var pass in _renderingPasses.Values)
                 {
-                    if (cmd is IRenderCommandMesh meshCmd)
-                        yield return meshCmd;
+                    foreach (var cmd in pass)
+                    {
+                        if (cmd is IRenderCommandMesh meshCmd)
+                            yield return meshCmd;
+                    }
                 }
+            }
+            finally
+            {
+                _renderingBufferLock.ExitReadLock();
             }
         }
 

@@ -114,7 +114,31 @@ namespace XREngine.Rendering.Vulkan
             };
 
             if (useDynamicRendering)
+            {
+                DynamicRenderingLocalReadPlan localReadInheritance = default;
+                void* localReadInheritancePNext = renderingInheritanceInfo.PNext;
+                TryAppendDynamicRenderingLocalReadPNext(
+                    in localReadInheritance,
+                    dynamicRenderingFormats.ColorAttachmentCount,
+                    ref localReadInheritancePNext,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null);
+                renderingInheritanceInfo.PNext = localReadInheritancePNext;
                 inheritanceInfo.PNext = &renderingInheritanceInfo;
+            }
+
+            CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
+            BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
+            BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
+            TryAppendDescriptorHeapInheritancePNext(
+                ref inheritanceInfo,
+                &descriptorHeapInheritanceInfo,
+                &inheritedSamplerHeapInfo,
+                &inheritedResourceHeapInfo);
 
             CommandBufferBeginInfo beginInfo = new()
             {
@@ -660,6 +684,15 @@ namespace XREngine.Rendering.Vulkan
                 };
 
                 beginInfo.PInheritanceInfo = &inheritanceInfo;
+
+                CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
+                BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
+                BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
+                TryAppendDescriptorHeapInheritancePNext(
+                    ref inheritanceInfo,
+                    &descriptorHeapInheritanceInfo,
+                    &inheritedSamplerHeapInfo,
+                    &inheritedResourceHeapInfo);
 
                 if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
                     throw new Exception("Failed to begin Vulkan secondary command buffer.");

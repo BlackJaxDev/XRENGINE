@@ -1713,7 +1713,7 @@ public unsafe partial class VulkanRenderer
             if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
                 throw new Exception("Failed to create synchronized imported texture image view.");
 
-            Renderer.TrackLiveImageView(created, "VkImageBackedTexture.ImportedUploadView");
+            Renderer.TrackLiveImageView(created, in viewInfo, "VkImageBackedTexture.ImportedUploadView");
             return created;
         }
 
@@ -1758,7 +1758,7 @@ public unsafe partial class VulkanRenderer
             if (Api!.CreateSampler(Device, ref samplerInfo, null, out Sampler created) != Result.Success)
                 throw new Exception("Failed to create synchronized imported texture sampler.");
 
-            Renderer.RegisterLiveSampler(created);
+            Renderer.RegisterLiveSampler(created, in samplerInfo);
             return created;
         }
 
@@ -1939,7 +1939,7 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
                 throw new Exception("Failed to create image view.");
-            Renderer.TrackLiveImageView(created, "VkImageBackedTexture.View");
+            Renderer.TrackLiveImageView(created, in viewInfo, "VkImageBackedTexture.View");
             return created;
         }
 
@@ -2581,7 +2581,7 @@ public unsafe partial class VulkanRenderer
             if (Api!.CreateSampler(Device, ref samplerInfo, null, out _sampler) != Result.Success)
                 throw new Exception("Failed to create sampler.");
 
-            Renderer.RegisterLiveSampler(_sampler);
+            Renderer.RegisterLiveSampler(_sampler, in samplerInfo);
         }
 
         private (float minLod, float maxLod) ResolveSamplerLodRange()

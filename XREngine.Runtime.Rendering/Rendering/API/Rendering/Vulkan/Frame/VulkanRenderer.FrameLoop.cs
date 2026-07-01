@@ -659,11 +659,17 @@ namespace XREngine.Rendering.Vulkan
             }
 
             bool frameGenerationRequested = NvidiaDlssManager.IsFrameGenerationRequested;
-            if (_streamlineFrameGenerationSwapchainActive != frameGenerationRequested)
+            bool frameGenerationDlssRuntimeRequested = frameGenerationRequested
+                && NvidiaDlssManager.Native.ShouldLoadDlssFeatureForFrameGenerationRuntime;
+            if (_streamlineFrameGenerationSwapchainActive != frameGenerationRequested
+                || (_streamlineFrameGenerationSwapchainActive
+                    && _streamlineFrameGenerationSwapchainIncludesDlss != frameGenerationDlssRuntimeRequested))
             {
                 RecreateSwapchainImmediately(
                     frameGenerationRequested
-                        ? "NVIDIA DLSS frame generation enabled; recreating swapchain through Streamline"
+                        ? frameGenerationDlssRuntimeRequested
+                            ? "NVIDIA DLSS/DLAA changed while DLSS frame generation is enabled; recreating Streamline swapchain with DLSS + DLSS-G"
+                            : "NVIDIA DLSS frame generation enabled; recreating swapchain through Streamline"
                         : "NVIDIA DLSS frame generation disabled; recreating swapchain without Streamline");
                 return;
             }

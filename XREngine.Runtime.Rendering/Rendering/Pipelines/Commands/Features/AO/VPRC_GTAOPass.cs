@@ -118,9 +118,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            var area = RuntimeEngine.Rendering.State.RenderArea;
-            int width = area.Width;
-            int height = area.Height;
+            ResolveActiveRenderSize(instance, out int width, out int height);
             bool forceRebuild = state.ResourcesDirty;
             state.ResourcesDirty = false;
 
@@ -377,18 +375,15 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             camera.SetUniforms(program);
 
-            if (RuntimeEngine.Rendering.State.IsStereoPass)
-                ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
+            if (IsStereoPassActive())
+                GetRightEyeCamera()?.SetUniforms(program, false);
 
             camera.SetAmbientOcclusionUniforms(
                 program,
                 AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
                 ResolveSettingsPipeline());
 
-            var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
-            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
+            SetScreenUniforms(program);
         }
 
         private void GTAOHorizontalBlur_SetUniforms(XRRenderProgram program)
@@ -421,10 +416,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 program.Uniform(EEngineUniform.DepthMode.ToStringFast(), (int)camera.DepthMode);
 
             var settings = GetCurrentSettings();
-            var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
-            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), region.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), region.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
+            SetScreenUniforms(program);
             program.Uniform("BlurDirection", direction);
             program.Uniform("DenoiseRadius", Math.Clamp(settings?.GTAODenoiseRadius ?? GroundTruthAmbientOcclusionSettings.DefaultDenoiseRadius, 0, 16));
             program.Uniform("DenoiseSharpness", settings?.GTAODenoiseSharpness is > 0.0f ? settings.GTAODenoiseSharpness : GroundTruthAmbientOcclusionSettings.DefaultDenoiseSharpness);
@@ -442,11 +434,54 @@ namespace XREngine.Rendering.Pipelines.Commands
         private RenderPipeline? ResolveSettingsPipeline()
             => ActivePipelineInstance?.AssignedPipeline ?? ParentPipeline;
 
+        private static void ResolveActiveRenderSize(XRRenderPipelineInstance? instance, out int width, out int height)
+        {
+            var area = instance?.RenderState.CurrentRenderRegion ?? RuntimeEngine.Rendering.State.RenderArea;
+            if (area.Width <= 0 || area.Height <= 0)
+                area = RuntimeEngine.Rendering.State.RenderArea;
+
+            width = Math.Max(area.Width, 1);
+            height = Math.Max(area.Height, 1);
+        }
+
+        private void SetScreenUniforms(XRRenderProgram program)
+        {
+            ResolveActiveRenderSize(ActivePipelineInstance, out int width, out int height);
+            program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToStringFast(), height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), Vector2.Zero);
+        }
+
+        private bool IsStereoPassActive()
+        {
+            var instance = ActivePipelineInstance;
+            var renderState = RuntimeEngine.Rendering.State.ActiveRenderCommandExecutionState;
+            return instance?.RenderState.StereoPass == true ||
+                   renderState?.StereoPass == true ||
+                   RuntimeEngine.Rendering.State.IsStereoPass;
+        }
+
+        private XRCamera? GetRightEyeCamera()
+        {
+            var instance = ActivePipelineInstance;
+            var renderState = RuntimeEngine.Rendering.State.ActiveRenderCommandExecutionState;
+            return instance?.RenderState.StereoRightEyeCamera
+                ?? (renderState?.StereoRightEyeCamera as XRCamera)
+                ?? RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
+        }
+
         private XRCamera? GetCurrentCamera()
-            => ActivePipelineInstance.RenderState.SceneCamera
-                ?? ActivePipelineInstance.RenderState.RenderingCamera
-                ?? ActivePipelineInstance.LastSceneCamera
-                ?? ActivePipelineInstance.LastRenderingCamera;
+        {
+            var instance = ActivePipelineInstance;
+            var renderState = RuntimeEngine.Rendering.State.ActiveRenderCommandExecutionState;
+            return instance?.RenderState.SceneCamera
+                ?? RuntimeEngine.Rendering.State.RenderingCamera
+                ?? instance?.RenderState.RenderingCamera
+                ?? (renderState?.SceneCamera as XRCamera)
+                ?? (renderState?.RenderingCamera as XRCamera)
+                ?? instance?.LastSceneCamera
+                ?? instance?.LastRenderingCamera;
+        }
 
         private void InvalidateDependentFbos(XRRenderPipelineInstance instance)
         {

@@ -929,13 +929,15 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     }
 
     private static void DrawParameterSection(CameraComponent component, HashSet<object> visited)
+        => DrawRuntimeCameraProjection(component.Camera, visited);
+
+    internal static void DrawRuntimeCameraProjection(XRCamera camera, HashSet<object> visited)
     {
         using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.CameraComponent.Projection");
 
         if (!ImGui.CollapsingHeader("Projection Parameters", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        var camera = component.Camera;
         var parameters = camera.Parameters;
 
         DrawParameterTypeSwitcher(camera, parameters);
@@ -1459,12 +1461,15 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     }
 
     private static void DrawSchemaBasedPostProcessingEditor(CameraComponent component, HashSet<object> visited)
+        => DrawRuntimeCameraPostProcessing(component.Camera, ResolvePostProcessingEditorPipeline(component.Camera), component, visited);
+
+    internal static void DrawRuntimeCameraPostProcessing(XRCamera camera, RenderPipeline? pipeline, CameraComponent? component, HashSet<object> visited)
     {
         using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.CameraComponent.PostProcessing");
 
-        var pipeline = ResolvePostProcessingEditorPipeline(component.Camera);
+        pipeline ??= ResolvePostProcessingEditorPipeline(camera);
         var schema = pipeline.PostProcessSchema;
-        var state = component.Camera.GetPostProcessState(pipeline);
+        var state = camera.GetPostProcessState(pipeline);
 
         ImGui.PushID("PostProcessingPanel");
         ImGui.TextDisabled($"Pipeline: {pipeline.DebugName}");
@@ -1483,9 +1488,10 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
         else
         {
-            DrawTemporalControlsStatus(component);
+            if (component is not null)
+                DrawTemporalControlsStatus(component);
             ImGui.Separator();
-            DrawSchemaStageSelector(schema, state, component);
+            DrawSchemaStageSelector(schema, state, camera, component);
             ImGui.Spacing();
             DrawAdvancedPostProcessingInspector(state, visited);
         }
@@ -1502,7 +1508,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     private static RenderPipeline ResolvePostProcessingEditorPipeline(XRCamera camera)
         => ResolveCameraEditorPipeline(camera);
 
-    private static void DrawSchemaStageSelector(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, CameraComponent component)
+    private static void DrawSchemaStageSelector(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, XRCamera camera, CameraComponent? component)
     {
         List<PostProcessStageEntry> stages = BuildOrderedStageEntries(schema, state);
         if (stages.Count == 0)
@@ -1542,7 +1548,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
 
         ImGui.Spacing();
-        DrawSchemaStageSelection(stages[selectedIndex], component);
+        DrawSchemaStageSelection(stages[selectedIndex], camera, component);
     }
 
     private static int FindSelectedStageIndex(List<PostProcessStageEntry> stages, string selectedStageKey)
@@ -1612,9 +1618,9 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         return true;
     }
 
-    private static void DrawSchemaStageSelection(PostProcessStageEntry stage, CameraComponent component)
+    private static void DrawSchemaStageSelection(PostProcessStageEntry stage, XRCamera camera, CameraComponent? component)
     {
-        bool effectiveHDR = component.Camera.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+        bool effectiveHDR = camera.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
         bool tonemappingDisabled = effectiveHDR && stage.Descriptor.Key.Equals(TonemappingStageKey, StringComparison.OrdinalIgnoreCase);
 
         ImGui.PushID(stage.Descriptor.Key);
@@ -1633,7 +1639,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             ImGui.TextColored(WarningTextColor, "Tonemapping is bypassed while HDR output is active.");
 
         using (new ImGuiDisabledScope(tonemappingDisabled))
-            DrawSchemaStage(stage.Descriptor, stage.State, component, drawStageHeader: false);
+            DrawSchemaStage(stage.Descriptor, stage.State, undoTarget, component, drawStageHeader: false);
 
         ImGui.PopID();
     }
@@ -1671,7 +1677,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
     }
 
-    private static void DrawSchemaStage(PostProcessStageDescriptor stage, PostProcessStageState stageState, CameraComponent component, bool drawStageHeader = true)
+    private static void DrawSchemaStage(PostProcessStageDescriptor stage, PostProcessStageState stageState, XRBase? undoTarget, CameraComponent? component, bool drawStageHeader = true)
     {
         if (stage.Parameters.Count == 0)
             return;
@@ -1681,12 +1687,12 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         if (drawStageHeader)
             ImGui.SeparatorText(stage.DisplayName);
 
-        XRBase? undoTarget = (stageState.BackingInstance as XRBase) ?? component;
+        undoTarget = (stageState.BackingInstance as XRBase) ?? undoTarget;
 
         foreach (var param in stage.Parameters)
             DrawSchemaParameter(param, stageState, undoTarget);
 
-        if (stageState.BackingInstance is DepthOfFieldSettings dof)
+        if (component is not null && stageState.BackingInstance is DepthOfFieldSettings dof)
             DrawDepthOfFieldFocusTarget(dof, component);
 
         ImGui.PopID();

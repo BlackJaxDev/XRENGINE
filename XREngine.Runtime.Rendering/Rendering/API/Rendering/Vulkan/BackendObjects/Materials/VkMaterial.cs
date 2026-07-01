@@ -162,6 +162,17 @@ namespace XREngine.Rendering.Vulkan
                 if (sets.Length == 0)
                     return true;
 
+                if (Renderer.IsDescriptorHeapDrawBindingActive)
+                {
+                    if (!Renderer.TryPushDescriptorHeapProgramData(commandBuffer, program, state.DescriptorHeapPushData[resolvedFrame], out string heapReason))
+                    {
+                        RecordDescriptorFailure(default, $"descriptor heap material push failed: {heapReason}");
+                        return false;
+                    }
+
+                    return true;
+                }
+
                 Renderer.BindDescriptorSetsTracked(
                     commandBuffer,
                     PipelineBindPoint.Graphics,
@@ -389,6 +400,7 @@ namespace XREngine.Rendering.Vulkan
                     ? VulkanBindlessMaterialDescriptors.BuildVariableDescriptorCounts(bindings, layoutArray.Length)
                     : [];
                 DescriptorSet[][] descriptorSets = new DescriptorSet[frameCount][];
+                DescriptorHeapPushDataPayload[] descriptorHeapPushData = new DescriptorHeapPushDataPayload[frameCount];
                 for (int frame = 0; frame < frameCount; frame++)
                 {
                     DescriptorSet[] frameSets = new DescriptorSet[setCount];
@@ -423,6 +435,7 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     descriptorSets[frame] = frameSets;
+                    descriptorHeapPushData[frame] = Renderer.CreateDescriptorHeapPushDataPayload(program.DescriptorHeapLayout);
                 }
 
                 if (!TryCreateUniformResources(program, bindings, frameCount, out Dictionary<(uint set, uint binding), UniformBindingResource> uniformResources))
@@ -437,6 +450,7 @@ namespace XREngine.Rendering.Vulkan
                     Program = program,
                     Bindings = bindings,
                     DescriptorSets = descriptorSets,
+                    DescriptorHeapPushData = descriptorHeapPushData,
                     UniformBindings = uniformResources,
                     HasMaterialParameterOrSamplerBindings = hasMaterialBindings,
                     FrameCount = frameCount,
@@ -704,9 +718,9 @@ namespace XREngine.Rendering.Vulkan
                 List<DescriptorBufferInfo> bufferInfos = new();
                 List<DescriptorImageInfo> imageInfos = new();
                 List<BufferView> texelBufferViews = new();
-                List<(int writeIndex, int bufferIndex)> bufferMap = new();
-                List<(int writeIndex, int imageIndex)> imageMap = new();
-                List<(int writeIndex, int texelIndex)> texelMap = new();
+                List<(int writeIndex, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount)> bufferMap = new();
+                List<(int writeIndex, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount)> imageMap = new();
+                List<(int writeIndex, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount)> texelMap = new();
 
                 foreach (DescriptorBindingInfo binding in state.Bindings)
                 {
@@ -722,7 +736,7 @@ namespace XREngine.Rendering.Vulkan
                             if (!state.UniformBindings.TryGetValue((binding.Set, binding.Binding), out UniformBindingResource? resource))
                                 return false;
 
-                            bufferMap.Add((writes.Count, bufferInfos.Count));
+                            bufferMap.Add((writes.Count, bufferInfos.Count, binding, 1u));
                             bufferInfos.Add(new DescriptorBufferInfo
                             {
                                 Buffer = resource.Buffers[frameIndex],
@@ -754,7 +768,7 @@ namespace XREngine.Rendering.Vulkan
                                 imageInfos.Add(info);
                             }
 
-                            imageMap.Add((writes.Count, imageStart));
+                            imageMap.Add((writes.Count, imageStart, binding, descriptorCount));
                             writes.Add(new WriteDescriptorSet
                             {
                                 SType = StructureType.WriteDescriptorSet,
@@ -777,7 +791,7 @@ namespace XREngine.Rendering.Vulkan
                                 texelBufferViews.Add(texelView);
                             }
 
-                            texelMap.Add((writes.Count, texelStart));
+                            texelMap.Add((writes.Count, texelStart, binding, descriptorCount));
                             writes.Add(new WriteDescriptorSet
                             {
                                 SType = StructureType.WriteDescriptorSet,
@@ -803,17 +817,48 @@ namespace XREngine.Rendering.Vulkan
                 fixed (DescriptorImageInfo* imagePtr = imageArray)
                 fixed (BufferView* texelPtr = texelArray)
                 {
-                    foreach ((int writeIndex, int bufferIndex) in bufferMap)
+                    foreach ((int writeIndex, int bufferIndex, _, _) in bufferMap)
                         writePtr[writeIndex].PBufferInfo = bufferPtr + bufferIndex;
 
-                    foreach ((int writeIndex, int imageIndex) in imageMap)
+                    foreach ((int writeIndex, int imageIndex, _, _) in imageMap)
                         writePtr[writeIndex].PImageInfo = imagePtr + imageIndex;
 
-                    foreach ((int writeIndex, int texelIndex) in texelMap)
+                    foreach ((int writeIndex, int texelIndex, _, _) in texelMap)
                         writePtr[writeIndex].PTexelBufferView = texelPtr + texelIndex;
 
                     if (writeArray.Length > 0)
                     {
+                        if (Renderer.IsDescriptorHeapDrawBindingActive)
+                        {
+                            DescriptorHeapPushDataPayload payload = state.DescriptorHeapPushData[frameIndex];
+                            foreach ((_, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount) in bufferMap)
+                            {
+                                if (!Renderer.TryWriteDescriptorHeapBinding(state.Program, binding, payload, bufferPtr + bufferIndex, null, null, descriptorCount, out string heapReason))
+                                {
+                                    RecordDescriptorFailure(binding, $"descriptor heap buffer write failed: {heapReason}");
+                                    return false;
+                                }
+                            }
+
+                            foreach ((_, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount) in imageMap)
+                            {
+                                if (!Renderer.TryWriteDescriptorHeapBinding(state.Program, binding, payload, null, imagePtr + imageIndex, null, descriptorCount, out string heapReason))
+                                {
+                                    RecordDescriptorFailure(binding, $"descriptor heap image write failed: {heapReason}");
+                                    return false;
+                                }
+                            }
+
+                            foreach ((_, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount) in texelMap)
+                            {
+                                if (!Renderer.TryWriteDescriptorHeapBinding(state.Program, binding, payload, null, null, texelPtr + texelIndex, descriptorCount, out string heapReason))
+                                {
+                                    RecordDescriptorFailure(binding, $"descriptor heap texel write failed: {heapReason}");
+                                    return false;
+                                }
+                            }
+                        }
+
                         if (!TryUpdateDescriptorSetsWithTemplates(state, frameIndex, writeArray))
                             Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
                     }
@@ -926,9 +971,12 @@ namespace XREngine.Rendering.Vulkan
                     {
                         (buffers[frame], memories[frame]) = Renderer.CreateBuffer(
                             bufferSize,
-                            BufferUsageFlags.UniformBufferBit,
+                            Renderer.IsDescriptorHeapDrawBindingActive
+                                ? BufferUsageFlags.UniformBufferBit | BufferUsageFlags.ShaderDeviceAddressBit
+                                : BufferUsageFlags.UniformBufferBit,
                             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                            null);
+                            null,
+                            Renderer.IsDescriptorHeapDrawBindingActive);
                     }
 
                     resources[(binding.Set, binding.Binding)] = new UniformBindingResource

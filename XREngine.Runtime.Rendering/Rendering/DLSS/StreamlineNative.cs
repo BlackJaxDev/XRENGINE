@@ -42,6 +42,7 @@ namespace XREngine.Rendering.DLSS
             private static bool _reflexEnabled;
             private static int _activeBridgeSessions;
             private static int _activeNativeVulkanSessions;
+            private static int _activeFrameGenerationProxySwapchains;
             private static nint _boundDeviceHandle;
             private static nint _boundInstanceHandle;
             private static nint _boundPhysicalDeviceHandle;
@@ -288,6 +289,14 @@ namespace XREngine.Rendering.DLSS
             {
                 error = null;
 
+                bool includeDlss = ShouldLoadDlssFeatureForFrameGenerationRuntime;
+                if (includeDlss && !NvidiaDlssManager.RequiredRuntimeDllsAvailable)
+                {
+                    error = NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason;
+                    _lastError = error;
+                    return false;
+                }
+
                 if (!NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable)
                 {
                     error = NvidiaDlssManager.FrameGenerationRuntimeDllsUnavailableReason;
@@ -297,7 +306,7 @@ namespace XREngine.Rendering.DLSS
 
                 lock (Sync)
                 {
-                    if (!EnsureRuntimeInitialized(includeFrameGeneration: true, out string failureReason, includeDlss: false)
+                    if (!EnsureRuntimeInitialized(includeFrameGeneration: true, out string failureReason, includeDlss)
                         || !ResolveFrameGenerationFeatureFunctions(out failureReason))
                     {
                         error = failureReason;
@@ -364,7 +373,7 @@ namespace XREngine.Rendering.DLSS
 
                 lock (Sync)
                 {
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out string failureReason, includeDlss: false)
+                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out string failureReason, includeDlss: renderer.StreamlineFrameGenerationSwapchainIncludesDlss)
                         || !ResolveFrameGenerationFeatureFunctions(out failureReason))
                     {
                         errorMessage = failureReason;
@@ -459,7 +468,7 @@ namespace XREngine.Rendering.DLSS
 
                 lock (Sync)
                 {
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: false)
+                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: renderer.StreamlineFrameGenerationSwapchainIncludesDlss)
                         || !ResolveFrameGenerationFeatureFunctions(out failureReason))
                     {
                         return false;
@@ -490,6 +499,7 @@ namespace XREngine.Rendering.DLSS
             internal static unsafe bool TryCreateProxySwapchain(
                 VulkanRenderer renderer,
                 ref SwapchainCreateInfoKHR createInfo,
+                bool includeDlss,
                 out SwapchainKHR swapchain,
                 out Result result,
                 out string failureReason)
@@ -497,7 +507,14 @@ namespace XREngine.Rendering.DLSS
                 swapchain = default;
                 result = Result.ErrorInitializationFailed;
 
-                if (!EnsureFrameGenerationVulkanProxyReady(renderer, out failureReason))
+                if (includeDlss && !NvidiaDlssManager.RequiredRuntimeDllsAvailable)
+                {
+                    failureReason = NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason;
+                    _lastError = failureReason;
+                    return false;
+                }
+
+                if (!EnsureFrameGenerationVulkanProxyReady(renderer, includeDlss, out failureReason))
                     return false;
 
                 fixed (SwapchainCreateInfoKHR* createInfoPtr = &createInfo)
@@ -508,6 +525,9 @@ namespace XREngine.Rendering.DLSS
                     }
                 }
 
+                if (result == Result.Success)
+                    RegisterFrameGenerationProxySwapchain();
+
                 return true;
             }
 
@@ -516,11 +536,18 @@ namespace XREngine.Rendering.DLSS
                 SwapchainKHR swapchain,
                 out string failureReason)
             {
-                if (!EnsureFrameGenerationVulkanProxyReady(renderer, out failureReason))
-                    return false;
+                try
+                {
+                    if (!EnsureFrameGenerationVulkanProxyReady(renderer, renderer.StreamlineFrameGenerationSwapchainIncludesDlss, out failureReason))
+                        return false;
 
-                _vkDestroySwapchainProxy!(renderer.Device, swapchain, null);
-                return true;
+                    _vkDestroySwapchainProxy!(renderer.Device, swapchain, null);
+                    return true;
+                }
+                finally
+                {
+                    ReleaseFrameGenerationProxySwapchain();
+                }
             }
 
             internal static unsafe bool TryGetProxySwapchainImages(
@@ -533,7 +560,7 @@ namespace XREngine.Rendering.DLSS
             {
                 result = Result.ErrorInitializationFailed;
 
-                if (!EnsureFrameGenerationVulkanProxyReady(renderer, out failureReason))
+                if (!EnsureFrameGenerationVulkanProxyReady(renderer, renderer.StreamlineFrameGenerationSwapchainIncludesDlss, out failureReason))
                     return false;
 
                 fixed (uint* imageCountPtr = &imageCount)
@@ -554,7 +581,7 @@ namespace XREngine.Rendering.DLSS
             {
                 result = Result.ErrorInitializationFailed;
 
-                if (!EnsureFrameGenerationVulkanProxyReady(renderer, out failureReason))
+                if (!EnsureFrameGenerationVulkanProxyReady(renderer, renderer.StreamlineFrameGenerationSwapchainIncludesDlss, out failureReason))
                     return false;
 
                 fixed (uint* imageIndexPtr = &imageIndex)
@@ -572,7 +599,7 @@ namespace XREngine.Rendering.DLSS
             {
                 result = Result.ErrorInitializationFailed;
 
-                if (!EnsureFrameGenerationVulkanProxyReady(renderer, out failureReason))
+                if (!EnsureFrameGenerationVulkanProxyReady(renderer, renderer.StreamlineFrameGenerationSwapchainIncludesDlss, out failureReason))
                     return false;
 
                 fixed (PresentInfoKHR* presentInfoPtr = &presentInfo)
@@ -589,7 +616,7 @@ namespace XREngine.Rendering.DLSS
             {
                 lock (Sync)
                 {
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: false)
+                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: renderer.StreamlineFrameGenerationSwapchainIncludesDlss)
                         || !ResolveFrameGenerationFeatureFunctions(out failureReason))
                     {
                         return false;
@@ -654,7 +681,7 @@ namespace XREngine.Rendering.DLSS
 
                 if (_vulkanInfoInitialized && !MatchesBoundDevice(renderer))
                 {
-                    if (_activeBridgeSessions != 0 || _activeNativeVulkanSessions != 0)
+                    if (HasActiveRuntimeOwnersUnsafe)
                     {
                         failureReason = "Streamline runtime is already bound to a different Vulkan device.";
                         _lastError = failureReason;
@@ -707,7 +734,7 @@ namespace XREngine.Rendering.DLSS
 
                 if (_vulkanInfoInitialized && !MatchesBoundDevice(sidecar))
                 {
-                    if (_activeBridgeSessions != 0)
+                    if (HasActiveRuntimeOwnersUnsafe)
                     {
                         failureReason = "Streamline runtime is already bound to a different Vulkan sidecar device.";
                         _lastError = failureReason;
@@ -771,7 +798,7 @@ namespace XREngine.Rendering.DLSS
                      (includeFrameGeneration && !_runtimeIncludesFrameGeneration));
                 if (needsAdditionalFeatures)
                 {
-                    if (_activeBridgeSessions != 0 || _activeNativeVulkanSessions != 0)
+                    if (HasActiveRuntimeOwnersUnsafe)
                     {
                         failureReason =
                             "Streamline was initialized without all requested features and active Streamline sessions are still using it. " +
@@ -1015,11 +1042,15 @@ namespace XREngine.Rendering.DLSS
                 return false;
             }
 
-            private static bool EnsureFrameGenerationVulkanProxyReady(VulkanRenderer renderer, out string failureReason)
+            internal static bool ShouldLoadDlssFeatureForFrameGenerationRuntime
+                => global::XREngine.RuntimeEngine.EffectiveSettings.EnableNvidiaDlss
+                   || global::XREngine.Rendering.RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == global::XREngine.EAntiAliasingMode.Dlaa;
+
+            private static bool EnsureFrameGenerationVulkanProxyReady(VulkanRenderer renderer, bool includeDlss, out string failureReason)
             {
                 lock (Sync)
                 {
-                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss: false)
+                    if (!EnsureNativeVulkanRuntime(renderer, includeFrameGeneration: true, out failureReason, includeDlss)
                         || !EnsureVulkanProxyFunctionsResolved(out failureReason))
                     {
                         return false;
@@ -1317,7 +1348,7 @@ namespace XREngine.Rendering.DLSS
                     if (_activeBridgeSessions > 0)
                         _activeBridgeSessions--;
 
-                    if (_activeBridgeSessions != 0 || _activeNativeVulkanSessions != 0)
+                    if (HasActiveRuntimeOwnersUnsafe)
                         return;
 
                     ShutdownRuntimeUnsafe();
@@ -1331,7 +1362,32 @@ namespace XREngine.Rendering.DLSS
                     if (_activeNativeVulkanSessions > 0)
                         _activeNativeVulkanSessions--;
 
-                    if (_activeBridgeSessions != 0 || _activeNativeVulkanSessions != 0)
+                    if (HasActiveRuntimeOwnersUnsafe)
+                        return;
+
+                    ShutdownRuntimeUnsafe();
+                }
+            }
+
+            private static bool HasActiveRuntimeOwnersUnsafe
+                => _activeBridgeSessions != 0
+                   || _activeNativeVulkanSessions != 0
+                   || _activeFrameGenerationProxySwapchains != 0;
+
+            private static void RegisterFrameGenerationProxySwapchain()
+            {
+                lock (Sync)
+                    _activeFrameGenerationProxySwapchains++;
+            }
+
+            private static void ReleaseFrameGenerationProxySwapchain()
+            {
+                lock (Sync)
+                {
+                    if (_activeFrameGenerationProxySwapchains > 0)
+                        _activeFrameGenerationProxySwapchains--;
+
+                    if (HasActiveRuntimeOwnersUnsafe)
                         return;
 
                     ShutdownRuntimeUnsafe();

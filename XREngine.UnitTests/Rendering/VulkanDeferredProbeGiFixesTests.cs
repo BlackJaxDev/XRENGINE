@@ -419,7 +419,8 @@ public sealed class VulkanDeferredProbeGiFixesTests
         compilerSource.ShouldNotContain("x.GroupOrder.CompareTo(y.GroupOrder)");
         compilerSource.ShouldNotContain(".OrderBy(x => x.GroupOrder)");
         compilerSource.ShouldContain("ArrayPool<FrameOpSortKey>.Shared.Rent(opCount)");
-        commandBufferSource.ShouldContain("Always sort frame ops by (PassOrder, safe draw order, OriginalIndex).");
+        commandBufferSource.ShouldContain("Always sort frame ops by (PassOrder, safe draw order, OriginalIndex)");
+        commandBufferSource.ShouldContain("normalize same-target clears before first same-target use");
         commandBufferSource.ShouldContain("counters are written before the draw commands that consume them.");
     }
 
@@ -434,6 +435,31 @@ public sealed class VulkanDeferredProbeGiFixesTests
         compilerSource.ShouldContain("op.Context.PassMetadata is { Count: > 0 } metadata");
         compilerSource.ShouldContain("RenderGraphSynchronizationPlanner.TopologicallySort(metadata)");
         compilerSource.ShouldContain("per-context metadata is only");
+    }
+
+    [Test]
+    public void VulkanFboReentry_PreservesTrackedClearLoadsAfterFirstUse()
+    {
+        string frameBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+
+        frameBufferSource.ShouldContain("bool preserveTrackedClearLoads = false");
+        frameBufferSource.ShouldContain("AttachmentLoadOp.Clear when preserveClearLoads => AttachmentLoadOp.Load");
+        commandBufferSource.ShouldContain("bool targetReenteredThisCommandBuffer = fboLayoutTracking.ContainsKey(target);");
+        commandBufferSource.ShouldContain("preserveTrackedClearLoads: targetReenteredThisCommandBuffer");
+    }
+
+    [Test]
+    public void VulkanFrameOpSort_LiftsSameTargetClearBeforeFirstUse()
+    {
+        string compilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderGraphCompiler.cs");
+
+        compilerSource.ShouldContain("MoveTargetClearsBeforeFirstSameTargetUse(sortKeys, opCount)");
+        compilerSource.ShouldContain("clearKey.Operation is not ClearOp clear");
+        compilerSource.ShouldContain("IsSameSchedulingTarget(clear, previous.Operation)");
+        compilerSource.ShouldContain("IsTargetUseThatClearMustPrecede(previous.Operation)");
+        compilerSource.ShouldContain("ReferenceEquals(x.Target, y.Target)");
+        compilerSource.ShouldContain("op is MeshDrawOp or BlitOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp or TransformFeedbackOp");
     }
 
     [Test]

@@ -608,6 +608,7 @@ public sealed class VrViewRenderModeContractTests
         string xrViewport = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRViewport.cs");
         string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs");
         string temporalAccumulation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs");
+        string pushViewportRenderArea = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/State/VPRC_PushViewportRenderArea.cs");
 
         settings.ShouldContain("public EVrViewRenderMode ViewRenderMode");
         settings.ShouldContain("public UnitTestingVrFoveationSettings Foveation");
@@ -665,6 +666,7 @@ public sealed class VrViewRenderModeContractTests
         openXr.ShouldContain("OpenXrStereoRenderTarget");
         openXr.ShouldContain("TryRenderVulkanTrueSinglePassStereoToSwapchains");
         openXr.ShouldContain("TryEnsureVulkanStereoRenderTarget");
+        openXr.ShouldContain("_openXrStereoViewport ??= new XRViewport(null)");
         openXr.ShouldContain("True SinglePassStereo did not render this frame; skipping eye submission");
         openXr.ShouldContain("FrameModeMismatch");
         openXr.ShouldNotContain("True SinglePassStereo failed this frame; falling back");
@@ -672,6 +674,8 @@ public sealed class VrViewRenderModeContractTests
         openXr.ShouldContain("stereoViewport.MeshRenderCommandsOverride = null");
         openXr.ShouldNotContain("stereoViewport.MeshRenderCommandsOverride = sharedMeshCommands");
         openXr.ShouldContain("RendersExternalSwapchainTarget: false");
+        openXr.ShouldContain("RendersToExternalSwapchainTarget = true");
+        openXr.ShouldContain("SkippedResizeCatchUpThisFrame");
         openXrFrameLifecycle.ShouldContain("useTrueSinglePassStereo");
         openXrFrameLifecycle.ShouldContain("EnsureOpenXrStereoViewport");
         openXrFrameLifecycle.ShouldContain("ReleaseOpenXrExternalEyeViewportPipelinesForTrueStereo");
@@ -690,6 +694,7 @@ public sealed class VrViewRenderModeContractTests
         openXrState.ShouldContain("_vulkanStereoDepthArray");
         openXrState.ShouldContain("GetOrCreateOpenXrStereoPipeline");
         xrViewport.ShouldContain("meshRenderCommandsOverride: MeshRenderCommandsOverride");
+        pushViewportRenderArea.ShouldContain("UseInternalResolution || vp.RendersToExternalSwapchainTarget");
         contracts.ShouldContain("EVrViewRenderImplementationPath");
         contracts.ShouldContain("EVrTemporalHistoryPolicy");
         contracts.ShouldContain("EOpenXrEyeResolutionPreset");
@@ -717,6 +722,8 @@ public sealed class VrViewRenderModeContractTests
 
         string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
         openXr.ShouldContain("if (!trueSinglePassStereo)");
+        AssertTrueStereoPublishDoesNotFlipY(openXr, "true stereo left eye swapchain image");
+        AssertTrueStereoPublishDoesNotFlipY(openXr, "true stereo right eye swapchain image");
         vulkanOpenXr.ShouldContain("TryBlitTextureArrayLayerToOpenXrSwapchainImage");
         vulkanOpenXr.ShouldContain("BaseArrayLayer = sourceLayer");
         vulkanOpenXr.ShouldContain("RendersExternalSwapchainTarget = true");
@@ -736,6 +743,16 @@ public sealed class VrViewRenderModeContractTests
         engineStats.ShouldNotContain("RenderVRSinglePassStereo");
         defaultPipeline.ShouldNotContain("RenderVRSinglePassStereo");
         temporalAccumulation.ShouldNotContain("RenderVRSinglePassStereo");
+    }
+
+    private static void AssertTrueStereoPublishDoesNotFlipY(string openXrVulkanSource, string publishLabel)
+    {
+        int labelIndex = openXrVulkanSource.IndexOf(publishLabel, StringComparison.Ordinal);
+        labelIndex.ShouldBeGreaterThanOrEqualTo(0);
+
+        string publishCallTail = openXrVulkanSource.Substring(labelIndex, Math.Min(200, openXrVulkanSource.Length - labelIndex));
+        publishCallTail.ShouldContain("flipY: false");
+        publishCallTail.ShouldNotContain("flipY: true");
     }
 
     [Test]

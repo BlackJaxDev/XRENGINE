@@ -343,7 +343,9 @@ namespace XREngine.Rendering.Vulkan
                 // Determine usage and memory flags
                 BufferUsageFlags usage = ResolveVkUsageFlags(Data.Target, Data.Usage);
                 MemoryPropertyFlags memProps = ResolveMemoryProperties(Data);
-                bool enableDeviceAddress = Renderer.ShouldEnableDeviceAddressForSceneDatabaseBuffer(Data);
+                bool enableDeviceAddress =
+                    Renderer.ShouldEnableDeviceAddressForSceneDatabaseBuffer(Data) ||
+                    Renderer.IsDescriptorHeapDrawBindingActive;
                 if (enableDeviceAddress)
                     usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 

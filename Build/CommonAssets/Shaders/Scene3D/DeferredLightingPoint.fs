@@ -1,5 +1,9 @@
 #version 450
 
+#ifdef XRENGINE_STEREO_DEFERRED
+#extension GL_OVR_multiview2 : require
+#endif
+
 #ifndef XRENGINE_DEPTH_MODE_UNIFORM
 #define XRENGINE_DEPTH_MODE_UNIFORM
 uniform int DepthMode;
@@ -19,6 +23,11 @@ layout(binding = 0) uniform sampler2DMS AlbedoOpacity;
 layout(binding = 1) uniform sampler2DMS Normal;
 layout(binding = 2) uniform sampler2DMS RMSE;
 layout(binding = 3) uniform sampler2DMS DepthView;
+#elif defined(XRENGINE_STEREO_DEFERRED)
+layout(binding = 0) uniform sampler2DArray AlbedoOpacity;
+layout(binding = 1) uniform sampler2DArray Normal;
+layout(binding = 2) uniform sampler2DArray RMSE;
+layout(binding = 3) uniform sampler2DArray DepthView;
 #else
 layout(binding = 0) uniform sampler2D AlbedoOpacity; //AlbedoOpacity
 layout(binding = 1) uniform sampler2D Normal; //Normal
@@ -36,6 +45,18 @@ uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 uniform mat4 ViewProjectionMatrix;
+#ifdef XRENGINE_STEREO_DEFERRED
+uniform mat4 LeftEyeViewMatrix;
+uniform mat4 RightEyeViewMatrix;
+uniform mat4 LeftEyeInverseViewMatrix;
+uniform mat4 RightEyeInverseViewMatrix;
+uniform mat4 LeftEyeInverseProjMatrix;
+uniform mat4 RightEyeInverseProjMatrix;
+uniform mat4 LeftEyeProjMatrix;
+uniform mat4 RightEyeProjMatrix;
+uniform mat4 LeftEyeViewProjectionMatrix;
+uniform mat4 RightEyeViewProjectionMatrix;
+#endif
 uniform float ShadowNearPlaneDist = 0.1f;
 uniform float ShadowBase = 0.035f;
 uniform float ShadowMult = 1.221f;
@@ -90,6 +111,30 @@ int XRENGINE_ResolveContactShadowSampleCount(int requestedSamples, float viewDep
 float XRENGINE_SampleContactShadowScreenSpace(
 	sampler2DMS sceneDepth,
 	int sampleId,
+	vec2 screenSize,
+	mat4 viewMatrix,
+	mat4 inverseProjMatrix,
+	mat4 inverseViewMatrix,
+	mat4 viewProjectionMatrix,
+	int depthMode,
+	vec3 fragPosWS,
+	vec3 normalWS,
+	vec3 lightDirWS,
+	float receiverOffset,
+	float compareBias,
+	float contactDistance,
+	int contactSamples,
+	float contactThickness,
+	float contactFadeStart,
+	float contactFadeEnd,
+	float contactNormalOffset,
+	float jitterStrength,
+	float viewDepth);
+#elif defined(XRENGINE_STEREO_DEFERRED)
+float XRENGINE_SampleContactShadowScreenSpace(
+	sampler2DArray sceneDepth,
+	sampler2DArray sceneNormal,
+	float layer,
 	vec2 screenSize,
 	mat4 viewMatrix,
 	mat4 inverseProjMatrix,
@@ -202,6 +247,35 @@ float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDir
 		InverseProjMatrix,
 		InverseViewMatrix,
 		ViewProjectionMatrix,
+		DepthMode,
+		fragPosWS,
+		N,
+		lightDirWS,
+		receiverOffset,
+		compareBias,
+		ContactShadowDistance,
+		contactSampleCount,
+		ContactShadowThickness,
+		ContactShadowFadeStart,
+		ContactShadowFadeEnd,
+		ContactShadowNormalOffset,
+		ContactShadowJitterStrength,
+		viewDepth);
+#elif defined(XRENGINE_STEREO_DEFERRED)
+	bool leftEye = gl_ViewID_OVR == 0;
+	mat4 viewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;
+	mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
+	mat4 inverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+	mat4 viewProjectionMatrix = leftEye ? LeftEyeViewProjectionMatrix : RightEyeViewProjectionMatrix;
+	return XRENGINE_SampleContactShadowScreenSpace(
+		DepthView,
+		Normal,
+		float(gl_ViewID_OVR),
+		vec2(ScreenWidth, ScreenHeight),
+		viewMatrix,
+		inverseProjMatrix,
+		inverseViewMatrix,
+		viewProjectionMatrix,
 		DepthMode,
 		fragPosWS,
 		N,
@@ -878,12 +952,12 @@ vec3 CalcTotalLight(
 in vec3 fragPosWS,
 in vec3 normal,
 in vec3 albedo,
-in vec3 rms)
+in vec3 rms,
+in vec3 cameraPosition)
 {
 	normal = normalize(normal);
 	float metallic = rms.y;
-	vec3 CameraPosition = vec3(InverseViewMatrix[3]);
-	vec3 V = normalize(CameraPosition - fragPosWS);
+	vec3 V = normalize(cameraPosition - fragPosWS);
 	vec3 F0 = mix(vec3(0.04f), albedo, metallic);
 	return CalcPointLight(normal, V, fragPosWS, albedo, rms, F0);
 }
@@ -897,6 +971,12 @@ void main()
 	vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
 	vec3 rms = texelFetch(RMSE, coord, gl_SampleID).rgb;
 	float depth = texelFetch(DepthView, coord, gl_SampleID).r;
+#elif defined(XRENGINE_STEREO_DEFERRED)
+	vec3 uvi = vec3(uv, gl_ViewID_OVR);
+	vec3 albedo = texture(AlbedoOpacity, uvi).rgb;
+	vec3 normal = XRENGINE_ReadNormal(Normal, uvi);
+	vec3 rms = texture(RMSE, uvi).rgb;
+	float depth = texture(DepthView, uvi).r;
 #else
 	//Retrieve shading information from GBuffer textures
 	vec3 albedo = texture(AlbedoOpacity, uv).rgb;
@@ -913,9 +993,18 @@ void main()
 
 	// InverseProjMatrix already encodes the active depth convention. Use raw
 	// depth so reversed-Z does not get flipped a second time.
+#ifdef XRENGINE_STEREO_DEFERRED
+	bool leftEye = gl_ViewID_OVR == 0;
+	mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
+	mat4 inverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverseProjMatrix, inverseViewMatrix);
+	vec3 cameraPosition = inverseViewMatrix[3].xyz;
+#else
 	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, InverseProjMatrix, InverseViewMatrix);
+	vec3 cameraPosition = InverseViewMatrix[3].xyz;
+#endif
 
-	OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms);
+	OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms, cameraPosition);
 
 	// Debug visualisation (additive blending still applies; works best with a single point light)
 	if (ShadowDebugMode == 1)

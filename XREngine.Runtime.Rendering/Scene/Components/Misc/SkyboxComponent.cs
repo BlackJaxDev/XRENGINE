@@ -150,6 +150,7 @@ namespace XREngine.Components.Scene.Mesh
 
         // Cached shaders
         private static XRShader? s_vertexShader;
+        private static XRShader? s_stereoVertexShader;
         private static XRShader? s_equirectShader;
         private static XRShader? s_octahedralShader;
         private static XRShader? s_cubemapShader;
@@ -1095,6 +1096,7 @@ namespace XREngine.Components.Scene.Mesh
             _material?.SettingUniforms -= SetUniforms;
 
             XRShader? vertexShader = GetVertexShader();
+            XRShader? stereoVertexShader = GetStereoVertexShader();
             XRShader? fragmentShader = _mode switch
             {
                 ESkyboxMode.Texture => GetFragmentShaderForProjection(_projection),
@@ -1102,7 +1104,7 @@ namespace XREngine.Components.Scene.Mesh
                 _ => GetGradientShader()
             };
             
-            if (vertexShader is null || fragmentShader is null)
+            if (vertexShader is null || stereoVertexShader is null || fragmentShader is null)
             {
                 Debug.RenderingWarning($"SkyboxComponent: Failed to load shaders for projection {_projection}");
                 return;
@@ -1130,7 +1132,9 @@ namespace XREngine.Components.Scene.Mesh
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
             };
 
-            _material = new XRMaterial(tex is not null ? [tex] : [], vertexShader, fragmentShader)
+            _material = new XRMaterial(
+                tex is not null ? [tex] : [],
+                [vertexShader, stereoVertexShader, fragmentShader])
             {
                 Name = materialName,
                 RenderPass = (int)EDefaultRenderPass.Background,
@@ -1326,6 +1330,19 @@ namespace XREngine.Components.Scene.Mesh
             return s_vertexShader;
         }
 
+        private static XRShader GetStereoVertexShader()
+        {
+            if (s_stereoVertexShader is null)
+            {
+                s_stereoVertexShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
+                    JobPriority.Highest,
+                    "Shaders", "Scene3D", "SkyboxStereo.vs");
+
+                s_stereoVertexShader ??= new XRShader(EShaderType.Vertex, StereoVertexShaderSource);
+            }
+            return s_stereoVertexShader;
+        }
+
         private static XRShader GetGradientShader()
         {
             if (s_gradientShader is not null)
@@ -1437,6 +1454,72 @@ vec3 GetWorldRay(vec2 clipXY)
     float invW = abs(viewPos.w) > 1e-6 ? 1.0 / viewPos.w : 1.0;
     vec3 viewRay = viewPos.xyz * invW;
     return mat3(InverseViewMatrix) * viewRay;
+}
+
+vec3 RotateSkyDirection(vec3 dir)
+{
+    float cosRot = cos(SkyboxRotation);
+    float sinRot = sin(SkyboxRotation);
+    return vec3(
+        dir.x * cosRot - dir.z * sinRot,
+        dir.y,
+        dir.x * sinRot + dir.z * cosRot);
+}
+
+float GetFarClipZ()
+{
+    if (DepthMode == 1)
+        return ClipDepthRange == 1 ? -1.0 : 0.0;
+
+    return 1.0;
+}
+
+void main()
+{
+    vec2 clipXY = Position.xy;
+    FragClipPos = Position;
+    FragWorldDir = RotateSkyDirection(GetWorldRay(clipXY));
+    gl_Position = vec4(clipXY, GetFarClipZ(), 1.0);
+}
+";
+
+        /// <summary>
+        /// Stereo variant of the skybox vertex shader; keeps reconstructed sky rays eye-local in multiview passes.
+        /// </summary>
+        private const string StereoVertexShaderSource = @"
+#version 450
+#extension GL_OVR_multiview2 : require
+
+layout(num_views = 2) in;
+
+layout(location = 0) in vec3 Position;
+layout(location = 0) out vec3 FragClipPos;
+layout(location = 1) out vec3 FragWorldDir;
+
+uniform mat4 LeftEyeInverseViewMatrix;
+uniform mat4 RightEyeInverseViewMatrix;
+uniform mat4 LeftEyeInverseProjMatrix;
+uniform mat4 RightEyeInverseProjMatrix;
+uniform int DepthMode;
+uniform int ClipDepthRange;
+uniform float SkyboxRotation = 0.0;
+
+mat4 GetInverseViewMatrix()
+{
+    return gl_ViewID_OVR == 0 ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+}
+
+mat4 GetInverseProjMatrix()
+{
+    return gl_ViewID_OVR == 0 ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
+}
+
+vec3 GetWorldRay(vec2 clipXY)
+{
+    vec4 viewPos = GetInverseProjMatrix() * vec4(clipXY, 1.0, 1.0);
+    float invW = abs(viewPos.w) > 1e-6 ? 1.0 / viewPos.w : 1.0;
+    vec3 viewRay = viewPos.xyz * invW;
+    return mat3(GetInverseViewMatrix()) * viewRay;
 }
 
 vec3 RotateSkyDirection(vec3 dir)

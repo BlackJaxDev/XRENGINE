@@ -181,6 +181,11 @@ public static class XREngineEnvironmentVariables
     public const string MdicGlFinish = "XRE_MDIC_GL_FINISH";
 
     public const string VkRenderTargetMode = "XRE_VK_RENDER_TARGET_MODE";
+    public const string VkCapabilityTier = "XRE_VK_CAPABILITY_TIER";
+    public const string VkDescriptorBackend = "XRE_VK_DESCRIPTOR_BACKEND";
+    public const string VkProgramBindingBackend = "XRE_VK_PROGRAM_BINDING_BACKEND";
+    public const string VkFoveationBackend = "XRE_VK_FOVEATION_BACKEND";
+    public const string VkRayTracingBackend = "XRE_VK_RAY_TRACING_BACKEND";
     public const string VkObsHook = "XRE_VK_OBS_HOOK";
     public const string DisableVulkanObsCapture = "DISABLE_VULKAN_OBS_CAPTURE";
     public const string VulkanLoaderLayersDisable = "VK_LOADER_LAYERS_DISABLE";

@@ -1,5 +1,9 @@
 #version 450
 
+#ifdef XRENGINE_STEREO_DEFERRED
+#extension GL_OVR_multiview2 : require
+#endif
+
 #ifndef XRENGINE_DEPTH_MODE_UNIFORM
 #define XRENGINE_DEPTH_MODE_UNIFORM
 uniform int DepthMode;
@@ -20,6 +24,11 @@ layout(binding = 0) uniform sampler2DMS AlbedoOpacity;
 layout(binding = 1) uniform sampler2DMS Normal;
 layout(binding = 2) uniform sampler2DMS RMSE;
 layout(binding = 3) uniform sampler2DMS DepthView;
+#elif defined(XRENGINE_STEREO_DEFERRED)
+layout(binding = 0) uniform sampler2DArray AlbedoOpacity; //AlbedoOpacity
+layout(binding = 1) uniform sampler2DArray Normal; //Normal
+layout(binding = 2) uniform sampler2DArray RMSE; //PBR: Roughness, Metallic, Specular, Index of refraction
+layout(binding = 3) uniform sampler2DArray DepthView; //Depth
 #else
 layout(binding = 0) uniform sampler2D AlbedoOpacity; //AlbedoOpacity
 layout(binding = 1) uniform sampler2D Normal; //Normal
@@ -59,6 +68,18 @@ uniform mat4 InverseViewMatrix;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
 uniform mat4 ViewProjectionMatrix;
+#ifdef XRENGINE_STEREO_DEFERRED
+uniform mat4 LeftEyeViewMatrix;
+uniform mat4 RightEyeViewMatrix;
+uniform mat4 LeftEyeInverseViewMatrix;
+uniform mat4 RightEyeInverseViewMatrix;
+uniform mat4 LeftEyeInverseProjMatrix;
+uniform mat4 RightEyeInverseProjMatrix;
+uniform mat4 LeftEyeProjMatrix;
+uniform mat4 RightEyeProjMatrix;
+uniform mat4 LeftEyeViewProjectionMatrix;
+uniform mat4 RightEyeViewProjectionMatrix;
+#endif
 uniform float ShadowBase = 0.035f;
 uniform float ShadowMult = 1.221f;
 uniform float ShadowBiasMin = 0.00001f;
@@ -109,6 +130,30 @@ int XRENGINE_ResolveContactShadowSampleCount(int requestedSamples, float viewDep
 float XRENGINE_SampleContactShadowScreenSpace(
 	sampler2DMS sceneDepth,
 	int sampleId,
+	vec2 screenSize,
+	mat4 viewMatrix,
+	mat4 inverseProjMatrix,
+	mat4 inverseViewMatrix,
+	mat4 viewProjectionMatrix,
+	int depthMode,
+	vec3 fragPosWS,
+	vec3 normalWS,
+	vec3 lightDirWS,
+	float receiverOffset,
+	float compareBias,
+	float contactDistance,
+	int contactSamples,
+	float contactThickness,
+	float contactFadeStart,
+	float contactFadeEnd,
+	float contactNormalOffset,
+	float jitterStrength,
+	float viewDepth);
+#elif defined(XRENGINE_STEREO_DEFERRED)
+float XRENGINE_SampleContactShadowScreenSpace(
+	sampler2DArray sceneDepth,
+	sampler2DArray sceneNormal,
+	float layer,
 	vec2 screenSize,
 	mat4 viewMatrix,
 	mat4 inverseProjMatrix,
@@ -427,6 +472,35 @@ float SampleDeferredContactShadow(in vec3 fragPosWS, in vec3 N, in vec3 lightDir
 		InverseProjMatrix,
 		InverseViewMatrix,
 		ViewProjectionMatrix,
+		DepthMode,
+		fragPosWS,
+		N,
+		lightDirWS,
+		0.0f,
+		contactCompareBias,
+		ContactShadowDistance,
+		contactSampleCount,
+		ContactShadowThickness,
+		ContactShadowFadeStart,
+		ContactShadowFadeEnd,
+		ContactShadowNormalOffset,
+		ContactShadowJitterStrength,
+		viewDepth);
+#elif defined(XRENGINE_STEREO_DEFERRED)
+	bool leftEye = gl_ViewID_OVR == 0;
+	mat4 viewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;
+	mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
+	mat4 inverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+	mat4 viewProjectionMatrix = leftEye ? LeftEyeViewProjectionMatrix : RightEyeViewProjectionMatrix;
+	return XRENGINE_SampleContactShadowScreenSpace(
+		DepthView,
+		Normal,
+		float(gl_ViewID_OVR),
+		vec2(ScreenWidth, ScreenHeight),
+		viewMatrix,
+		inverseProjMatrix,
+		inverseViewMatrix,
+		viewProjectionMatrix,
 		DepthMode,
 		fragPosWS,
 		N,
@@ -999,6 +1073,12 @@ void main()
 		vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
 		vec3 rms = texelFetch(RMSE, coord, gl_SampleID).rgb;
 		float depth = texelFetch(DepthView, coord, gl_SampleID).r;
+#elif defined(XRENGINE_STEREO_DEFERRED)
+		vec3 uvi = vec3(uv, gl_ViewID_OVR);
+		vec3 albedo = texture(AlbedoOpacity, uvi).rgb;
+		vec3 normal = XRENGINE_ReadNormal(Normal, uvi);
+		vec3 rms = texture(RMSE, uvi).rgb;
+		float depth = texture(DepthView, uvi).r;
 #else
 		//Retrieve shading information from GBuffer textures
 		vec3 albedo = texture(AlbedoOpacity, uv).rgb;
@@ -1015,10 +1095,20 @@ void main()
 		// Drive cascade selection from the G-buffer's own player-camera depth.
 		// Reusing this view-space reconstruction keeps CSM blend boundaries tied
 		// to the rendered camera even when world reconstruction changes.
+#ifdef XRENGINE_STEREO_DEFERRED
+		bool leftEye = gl_ViewID_OVR == 0;
+		mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
+		mat4 inverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+		vec3 fragPosVS = XRENGINE_ViewPosFromDepthRaw(depth, uv, inverseProjMatrix);
+		float viewDepth = abs(fragPosVS.z);
+		vec3 fragPosWS = (inverseViewMatrix * vec4(fragPosVS, 1.0f)).xyz;
+		vec3 cameraPosition = inverseViewMatrix[3].xyz;
+#else
 		vec3 fragPosVS = XRENGINE_ViewPosFromDepthRaw(depth, uv, InverseProjMatrix);
 		float viewDepth = abs(fragPosVS.z);
 		vec3 fragPosWS = (InverseViewMatrix * vec4(fragPosVS, 1.0f)).xyz;
 		vec3 cameraPosition = InverseViewMatrix[3].xyz;
+#endif
 
 		OutColor = CalcTotalLight(fragPosWS, normal, albedo, rms, cameraPosition, viewDepth);
 }

@@ -57,10 +57,14 @@ vec2 AOClipDirectionFromTextureDirection(vec2 textureDirection)
 
 vec2 AOTextureUVFromFragPos(vec3 fragPos)
 {
-    // FullscreenTri.vs emits clip-space FragPos. Deriving AO UVs from the
-    // interpolated clip position keeps FBO orientation consistent across
-    // OpenGL and Vulkan negative-height viewport rendering.
-    return AOTextureUVFromClipXY(fragPos.xy);
+    // Screen-space AO must sample the actual framebuffer-local pixel written by
+    // the current pass. This keeps reduced-resolution and multiview external
+    // targets aligned with the pushed render area instead of depending on the
+    // fullscreen triangle's interpolated clip coordinates.
+    return clamp(
+        (gl_FragCoord.xy - ScreenOrigin) / max(vec2(ScreenWidth, ScreenHeight), vec2(1.0f)),
+        vec2(0.0f),
+        vec2(1.0f));
 }
 
 bool AOIsFarDepth(float depth)

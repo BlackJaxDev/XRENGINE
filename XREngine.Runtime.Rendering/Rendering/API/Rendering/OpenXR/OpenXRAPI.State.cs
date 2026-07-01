@@ -4,9 +4,11 @@ using System;
 using System.Diagnostics;
 using System.Numerics;
 using System.Threading;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.PostProcessing;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
@@ -123,6 +125,11 @@ public unsafe partial class OpenXRAPI
     private XRViewport? _openXrStereoViewport;
     private XRCamera? _openXrLeftEyeCamera;
     private XRCamera? _openXrRightEyeCamera;
+    private XRCamera? _openXrSubscribedLeftEyeSettingsCamera;
+    private XRCamera? _openXrSubscribedRightEyeSettingsCamera;
+    private XRCamera? _openXrEyeSettingsSourceCamera;
+    private CameraPostProcessStateCollection? _openXrSharedEyePostProcessStates;
+    private int _openXrSyncingEyeCameraSettings;
 
     private readonly object _openXrPoseLock = new();
 
@@ -613,6 +620,132 @@ public unsafe partial class OpenXRAPI
         catch
         {
             // Best-effort only; falling back to defaults is preferable to crashing the render thread.
+        }
+    }
+
+    private void EnsureOpenXrEyeSettingsOwnership(XRCamera leftEyeCamera, XRCamera rightEyeCamera)
+    {
+        CameraPostProcessStateCollection sharedPostProcessStates =
+            _openXrSharedEyePostProcessStates
+            ??= leftEyeCamera.PostProcessStates ?? new CameraPostProcessStateCollection();
+
+        try
+        {
+            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 1);
+
+            if (!ReferenceEquals(leftEyeCamera.PostProcessStates, sharedPostProcessStates))
+                leftEyeCamera.PostProcessStates = sharedPostProcessStates;
+            if (!ReferenceEquals(rightEyeCamera.PostProcessStates, sharedPostProcessStates))
+                rightEyeCamera.PostProcessStates = sharedPostProcessStates;
+        }
+        finally
+        {
+            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 0);
+        }
+
+        UpdateOpenXrEyeSettingsSubscriptions(leftEyeCamera, rightEyeCamera);
+        _openXrEyeSettingsSourceCamera ??= leftEyeCamera;
+    }
+
+    private void UpdateOpenXrEyeSettingsSubscriptions(XRCamera? leftEyeCamera, XRCamera? rightEyeCamera)
+    {
+        UpdateOpenXrEyeSettingsSubscription(ref _openXrSubscribedLeftEyeSettingsCamera, leftEyeCamera);
+        UpdateOpenXrEyeSettingsSubscription(ref _openXrSubscribedRightEyeSettingsCamera, rightEyeCamera);
+
+        if (leftEyeCamera is null || rightEyeCamera is null)
+            _openXrEyeSettingsSourceCamera = null;
+        else if (!ReferenceEquals(_openXrEyeSettingsSourceCamera, leftEyeCamera) &&
+                 !ReferenceEquals(_openXrEyeSettingsSourceCamera, rightEyeCamera))
+        {
+            _openXrEyeSettingsSourceCamera = leftEyeCamera;
+        }
+    }
+
+    private void UpdateOpenXrEyeSettingsSubscription(ref XRCamera? subscribedCamera, XRCamera? camera)
+    {
+        if (ReferenceEquals(subscribedCamera, camera))
+            return;
+
+        if (subscribedCamera is not null)
+            subscribedCamera.PropertyChanged -= HandleOpenXrEyeCameraSettingsChanged;
+
+        subscribedCamera = camera;
+
+        if (subscribedCamera is not null)
+            subscribedCamera.PropertyChanged += HandleOpenXrEyeCameraSettingsChanged;
+    }
+
+    private void HandleOpenXrEyeCameraSettingsChanged(object? sender, IXRPropertyChangedEventArgs args)
+    {
+        if (Volatile.Read(ref _openXrSyncingEyeCameraSettings) != 0)
+            return;
+        if (sender is not XRCamera sourceCamera)
+            return;
+
+        XRCamera? destinationCamera = ResolveOpenXrEyeSettingsDestination(sourceCamera);
+        if (destinationCamera is null)
+            return;
+
+        switch (args.PropertyName)
+        {
+            case nameof(XRCamera.AntiAliasingModeOverride):
+            case nameof(XRCamera.MsaaSampleCountOverride):
+            case nameof(XRCamera.OutputHDROverride):
+            case nameof(XRCamera.TsrRenderScaleOverride):
+            case nameof(XRCamera.PostProcessMaterial):
+                _openXrEyeSettingsSourceCamera = sourceCamera;
+                CopyOpenXrEyeScalarSettings(sourceCamera, destinationCamera);
+                break;
+            case nameof(XRCamera.PostProcessStates):
+                _openXrEyeSettingsSourceCamera = sourceCamera;
+                AdoptOpenXrEyePostProcessStates(sourceCamera, destinationCamera);
+                break;
+        }
+    }
+
+    private XRCamera? ResolveOpenXrEyeSettingsDestination(XRCamera sourceCamera)
+    {
+        if (ReferenceEquals(sourceCamera, _openXrSubscribedLeftEyeSettingsCamera))
+            return _openXrSubscribedRightEyeSettingsCamera;
+        if (ReferenceEquals(sourceCamera, _openXrSubscribedRightEyeSettingsCamera))
+            return _openXrSubscribedLeftEyeSettingsCamera;
+        return null;
+    }
+
+    private void CopyOpenXrEyeScalarSettings(XRCamera sourceCamera, XRCamera destinationCamera)
+    {
+        try
+        {
+            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 1);
+
+            destinationCamera.AntiAliasingModeOverride = sourceCamera.AntiAliasingModeOverride;
+            destinationCamera.MsaaSampleCountOverride = sourceCamera.MsaaSampleCountOverride;
+            destinationCamera.OutputHDROverride = sourceCamera.OutputHDROverride;
+            destinationCamera.TsrRenderScaleOverride = sourceCamera.TsrRenderScaleOverride;
+            destinationCamera.PostProcessMaterial = sourceCamera.PostProcessMaterial;
+        }
+        finally
+        {
+            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 0);
+        }
+    }
+
+    private void AdoptOpenXrEyePostProcessStates(XRCamera sourceCamera, XRCamera destinationCamera)
+    {
+        CameraPostProcessStateCollection sharedPostProcessStates =
+            sourceCamera.PostProcessStates ?? new CameraPostProcessStateCollection();
+        _openXrSharedEyePostProcessStates = sharedPostProcessStates;
+
+        try
+        {
+            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 1);
+
+            if (!ReferenceEquals(destinationCamera.PostProcessStates, sharedPostProcessStates))
+                destinationCamera.PostProcessStates = sharedPostProcessStates;
+        }
+        finally
+        {
+            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 0);
         }
     }
 

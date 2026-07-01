@@ -49,6 +49,7 @@ public enum RenderGraphImageLayout
     Undefined,
     ColorAttachment,
     DepthStencilAttachment,
+    RenderingLocalRead,
     ShaderReadOnly,
     General,
     TransferSource,

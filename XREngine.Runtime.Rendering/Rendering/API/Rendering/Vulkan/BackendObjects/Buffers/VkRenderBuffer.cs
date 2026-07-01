@@ -266,7 +266,7 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
                 throw new Exception("Failed to create render buffer image view.");
-            Renderer.TrackLiveImageView(_view, "VkRenderBuffer.View");
+            Renderer.TrackLiveImageView(_view, in viewInfo, "VkRenderBuffer.View");
         }
 
         private void RetireView()

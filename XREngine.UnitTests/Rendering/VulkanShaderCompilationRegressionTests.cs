@@ -24,11 +24,24 @@ public sealed class VulkanShaderCompilationRegressionTests
         "Scene3D/DeferredLightCombineStereo.fs",
         "Scene3D/DeferredLightingPoint.fs",
         "Scene3D/DeferredLightingSpot.fs",
+        "Scene3D/GTAOGen.fs",
+        "Scene3D/GTAOGenStereo.fs",
+        "Scene3D/GTAOBlur.fs",
+        "Scene3D/GTAOBlurStereo.fs",
+        "Scene3D/BloomCopy.fs",
+        "Scene3D/BloomCopyStereo.fs",
+        "Scene3D/BloomDownsample.fs",
+        "Scene3D/BloomDownsampleStereo.fs",
+        "Scene3D/BloomUpsample.fs",
+        "Scene3D/BloomUpsampleStereo.fs",
         "Scene3D/IrradianceConvolutionCubemapOcta.fs",
         "Scene3D/IrradianceConvolutionEquirect.fs",
         "Scene3D/IrradianceConvolutionEquirectOcta.fs",
         "Scene3D/IrradianceConvolutionOcta.fs",
         "Scene3D/PostProcess.fs",
+        "Scene3D/PostProcessStereo.fs",
+        "Scene3D/FinalPostProcess.fs",
+        "Scene3D/FinalPostProcessStereo.fs",
         "Scene3D/PrefilterCubemapOcta.fs",
         "Scene3D/PrefilterEquirect.fs",
         "Scene3D/PrefilterEquirectOcta.fs",
@@ -157,6 +170,34 @@ public sealed class VulkanShaderCompilationRegressionTests
         spirv.Length.ShouldBeGreaterThan(0);
         rewrittenSource.ShouldNotBeNull();
         rewrittenSource.ShouldContain("GetFarClipZ");
+    }
+
+    [Test]
+    public void SkyboxStereoVertexShader_CompilesToSpirv_ForVulkan()
+    {
+        LoadedShaderSource loadedShader = LoadShaderSource("Scene3D/SkyboxStereo.vs");
+        var shaderSource = new TextFile
+        {
+            FilePath = loadedShader.FullPath,
+            Text = loadedShader.Source
+        };
+
+        XRShader shader = new(EShaderType.Vertex, shaderSource);
+
+        byte[] spirv = VulkanShaderCompiler.Compile(
+            shader,
+            out string entryPoint,
+            out _,
+            out string? rewrittenSource);
+
+        entryPoint.ShouldBe("main");
+        spirv.ShouldNotBeNull();
+        spirv.Length.ShouldBeGreaterThan(0);
+        rewrittenSource.ShouldNotBeNull();
+        rewrittenSource.ShouldContain("GL_EXT_multiview");
+        rewrittenSource.ShouldContain("gl_ViewIndex");
+        rewrittenSource.ShouldNotContain("gl_ViewID_OVR");
+        rewrittenSource.ShouldNotContain("layout(num_views = 2) in;");
     }
 
     [TestCaseSource(nameof(DebugVertexShaders))]

@@ -10,6 +10,8 @@ using XREngine.Rendering.API.Rendering.OpenXR;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
+    private const uint VulkanApiVersion14 = (1u << 22) | (4u << 12);
+
     private bool _supportsAnisotropy;
     private string[] _availableDeviceExtensions = Array.Empty<string>();
     private string[] _enabledDeviceExtensions = Array.Empty<string>();
@@ -43,6 +45,7 @@ public unsafe partial class VulkanRenderer
             return;
 
         DestroyGlobalMaterialTextureDescriptorTable();
+        DestroyDescriptorHeapBackend();
         DestroyDescriptorUpdateTemplateCache();
         DestroyCachedDescriptorSetLayouts();
         DestroyVulkanPipelineCache();
@@ -268,6 +271,24 @@ public unsafe partial class VulkanRenderer
         featureSupported = bufferDeviceAddressFeatures.BufferDeviceAddress;
     }
 
+    private static bool IsVulkanApiVersionAtLeast(uint apiVersion, uint major, uint minor)
+    {
+        if (major == 1u && minor == 4u)
+            return apiVersion >= VulkanApiVersion14;
+
+        uint actualMajor = apiVersion >> 22;
+        uint actualMinor = (apiVersion >> 12) & 0x3FFu;
+        return actualMajor > major || actualMajor == major && actualMinor >= minor;
+    }
+
+    private static string FormatVulkanApiVersion(uint apiVersion)
+    {
+        uint major = apiVersion >> 22;
+        uint minor = (apiVersion >> 12) & 0x3FFu;
+        uint patch = apiVersion & 0xFFFu;
+        return $"{major}.{minor}.{patch}";
+    }
+
     private unsafe void QueryMaintenance4Capabilities(
         bool extensionEnabled,
         out bool featureSupported)
@@ -320,6 +341,274 @@ public unsafe partial class VulkanRenderer
         Api.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
 
         featureSupported = dynamicRenderingFeatures.DynamicRendering && (promotedToCore || extensionEnabled);
+    }
+
+    private unsafe void QueryDynamicRenderingLocalReadCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported,
+        out bool promotedToCore,
+        out bool depthStencilAttachmentsSupported,
+        out bool multisampledAttachmentsSupported)
+    {
+        featureSupported = false;
+        promotedToCore = false;
+        depthStencilAttachmentsSupported = false;
+        multisampledAttachmentsSupported = false;
+
+        Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+        promotedToCore = IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 4u);
+        if (!promotedToCore && !extensionEnabled)
+            return;
+
+        if (promotedToCore)
+        {
+            PhysicalDeviceDynamicRenderingLocalReadFeatures localReadFeatures = new()
+            {
+                SType = StructureType.PhysicalDeviceDynamicRenderingLocalReadFeatures,
+                PNext = null,
+            };
+
+            PhysicalDeviceFeatures2 features2 = new()
+            {
+                SType = StructureType.PhysicalDeviceFeatures2,
+                PNext = &localReadFeatures,
+            };
+
+            Api.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+            featureSupported = localReadFeatures.DynamicRenderingLocalRead;
+
+            PhysicalDeviceVulkan14Properties vulkan14Properties = new()
+            {
+                SType = StructureType.PhysicalDeviceVulkan14Properties,
+                PNext = null,
+            };
+
+            PhysicalDeviceProperties2 properties2 = new()
+            {
+                SType = StructureType.PhysicalDeviceProperties2,
+                PNext = &vulkan14Properties,
+            };
+
+            Api.GetPhysicalDeviceProperties2(_physicalDevice, &properties2);
+            _vulkan14Properties = vulkan14Properties;
+            depthStencilAttachmentsSupported = vulkan14Properties.DynamicRenderingLocalReadDepthStencilAttachments;
+            multisampledAttachmentsSupported = vulkan14Properties.DynamicRenderingLocalReadMultisampledAttachments;
+            return;
+        }
+
+        PhysicalDeviceDynamicRenderingLocalReadFeaturesKHR localReadFeaturesKhr = new()
+        {
+            SType = StructureType.PhysicalDeviceDynamicRenderingLocalReadFeaturesKhr,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 khrFeatures2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &localReadFeaturesKhr,
+        };
+
+        Api.GetPhysicalDeviceFeatures2(_physicalDevice, &khrFeatures2);
+        featureSupported = localReadFeaturesKhr.DynamicRenderingLocalRead;
+    }
+
+    private unsafe void QueryMaintenance5Capabilities(
+        bool extensionEnabled,
+        out bool featureSupported,
+        out bool promotedToCore)
+    {
+        featureSupported = false;
+        promotedToCore = false;
+
+        Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+        promotedToCore = IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 4u);
+        if (!promotedToCore && !extensionEnabled)
+            return;
+
+        if (promotedToCore)
+        {
+            PhysicalDeviceMaintenance5Features maintenance5Features = new()
+            {
+                SType = StructureType.PhysicalDeviceMaintenance5Features,
+                PNext = null,
+            };
+
+            PhysicalDeviceFeatures2 features2 = new()
+            {
+                SType = StructureType.PhysicalDeviceFeatures2,
+                PNext = &maintenance5Features,
+            };
+
+            Api.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+            featureSupported = maintenance5Features.Maintenance5;
+            return;
+        }
+
+        PhysicalDeviceMaintenance5FeaturesKHR maintenance5FeaturesKhr = new()
+        {
+            SType = StructureType.PhysicalDeviceMaintenance5FeaturesKhr,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 khrFeatures2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &maintenance5FeaturesKhr,
+        };
+
+        Api.GetPhysicalDeviceFeatures2(_physicalDevice, &khrFeatures2);
+        featureSupported = maintenance5FeaturesKhr.Maintenance5;
+    }
+
+    private unsafe void QueryShaderObjectCapabilities(
+        bool extensionAvailable,
+        out bool featureSupported,
+        out PhysicalDeviceShaderObjectPropertiesEXT properties)
+    {
+        featureSupported = false;
+        properties = default;
+        if (!extensionAvailable)
+            return;
+
+        PhysicalDeviceShaderObjectFeaturesEXT features = new()
+        {
+            SType = StructureType.PhysicalDeviceShaderObjectFeaturesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = features.ShaderObject;
+
+        PhysicalDeviceShaderObjectPropertiesEXT queriedProperties = new()
+        {
+            SType = StructureType.PhysicalDeviceShaderObjectPropertiesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceProperties2 properties2 = new()
+        {
+            SType = StructureType.PhysicalDeviceProperties2,
+            PNext = &queriedProperties,
+        };
+
+        Api.GetPhysicalDeviceProperties2(_physicalDevice, &properties2);
+        properties = queriedProperties;
+    }
+
+    private unsafe void QueryMemoryPriorityCapabilities(bool extensionAvailable, out bool featureSupported)
+    {
+        featureSupported = false;
+        if (!extensionAvailable)
+            return;
+
+        PhysicalDeviceMemoryPriorityFeaturesEXT features = new()
+        {
+            SType = StructureType.PhysicalDeviceMemoryPriorityFeaturesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = features.MemoryPriority;
+    }
+
+    private unsafe void QueryAccelerationStructureCapabilities(bool extensionAvailable, out bool featureSupported)
+    {
+        featureSupported = false;
+        if (!extensionAvailable)
+            return;
+
+        PhysicalDeviceAccelerationStructureFeaturesKHR features = new()
+        {
+            SType = StructureType.PhysicalDeviceAccelerationStructureFeaturesKhr,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = features.AccelerationStructure;
+    }
+
+    private unsafe void QueryRayTracingPipelineCapabilities(bool extensionAvailable, out bool featureSupported)
+    {
+        featureSupported = false;
+        if (!extensionAvailable)
+            return;
+
+        PhysicalDeviceRayTracingPipelineFeaturesKHR features = new()
+        {
+            SType = StructureType.PhysicalDeviceRayTracingPipelineFeaturesKhr,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = features.RayTracingPipeline;
+    }
+
+    private unsafe void QueryRayQueryCapabilities(bool extensionAvailable, out bool featureSupported)
+    {
+        featureSupported = false;
+        if (!extensionAvailable)
+            return;
+
+        PhysicalDeviceRayQueryFeaturesKHR features = new()
+        {
+            SType = StructureType.PhysicalDeviceRayQueryFeaturesKhr,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = features.RayQuery;
+    }
+
+    private unsafe void QueryDeviceGeneratedCommandsCapabilities(bool extensionAvailable, out bool featureSupported)
+    {
+        featureSupported = false;
+        if (!extensionAvailable)
+            return;
+
+        PhysicalDeviceDeviceGeneratedCommandsFeaturesEXT features = new()
+        {
+            SType = StructureType.PhysicalDeviceDeviceGeneratedCommandsFeaturesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = features.DeviceGeneratedCommands;
     }
 
     private unsafe void QueryShaderDrawParametersCapabilities(out bool featureSupported)
@@ -709,6 +998,10 @@ public unsafe partial class VulkanRenderer
             out PhysicalDeviceVulkan12Features supportedVulkan12Features,
             out bool vulkan12PromotedToCore);
 
+        Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties physicalDeviceProperties);
+        bool vulkan13PromotedToCore = IsVulkanApiVersionAtLeast(physicalDeviceProperties.ApiVersion, 1u, 3u);
+        bool vulkan14PromotedToCore = IsVulkanApiVersionAtLeast(physicalDeviceProperties.ApiVersion, 1u, 4u);
+
         _availableDeviceExtensions = EnumerateAvailableDeviceExtensions();
         var availableExtensionSet = new HashSet<string>(_availableDeviceExtensions, StringComparer.Ordinal);
 
@@ -741,6 +1034,16 @@ public unsafe partial class VulkanRenderer
             {
                 Debug.VulkanWarning(
                     "[Vulkan] Optional extension {0} skipped because required dependency VK_KHR_pipeline_library is unavailable.",
+                    optionalExt);
+                continue;
+            }
+
+            if (optionalExt == "VK_KHR_dynamic_rendering_local_read" &&
+                !vulkan13PromotedToCore &&
+                !availableExtensionSet.Contains("VK_KHR_dynamic_rendering"))
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Optional extension {0} skipped because dynamic rendering is unavailable.",
                     optionalExt);
                 continue;
             }
@@ -855,6 +1158,17 @@ public unsafe partial class VulkanRenderer
             out bool dynamicRenderingPromotedToCore);
         bool enableDynamicRenderingFeature = dynamicRenderingFeatureSupported;
 
+        bool dynamicRenderingLocalReadExtensionEnabled = extensionsArray.Contains("VK_KHR_dynamic_rendering_local_read");
+        QueryDynamicRenderingLocalReadCapabilities(
+            dynamicRenderingLocalReadExtensionEnabled,
+            out bool dynamicRenderingLocalReadFeatureSupported,
+            out bool dynamicRenderingLocalReadPromotedToCore,
+            out bool dynamicRenderingLocalReadDepthStencilSupported,
+            out bool dynamicRenderingLocalReadMultisampledSupported);
+        bool enableDynamicRenderingLocalReadFeature =
+            enableDynamicRenderingFeature &&
+            dynamicRenderingLocalReadFeatureSupported;
+
         bool shaderDrawParametersExtensionEnabled = extensionsArray.Contains("VK_KHR_shader_draw_parameters");
         QueryShaderDrawParametersCapabilities(out bool shaderDrawParametersFeatureSupported);
         bool enableShaderDrawParametersFeature = shaderDrawParametersFeatureSupported;
@@ -889,6 +1203,67 @@ public unsafe partial class VulkanRenderer
             maintenance4ExtensionEnabled,
             out bool maintenance4FeatureSupported);
         bool enableMaintenance4Feature = maintenance4FeatureSupported;
+
+        bool maintenance5ExtensionEnabled = extensionsArray.Contains("VK_KHR_maintenance5");
+        QueryMaintenance5Capabilities(
+            maintenance5ExtensionEnabled,
+            out bool maintenance5FeatureSupported,
+            out bool maintenance5PromotedToCore);
+        bool enableMaintenance5Feature = maintenance5FeatureSupported;
+
+        bool extendedFlagsExtensionAvailable = availableExtensionSet.Contains("VK_KHR_extended_flags");
+        bool extendedFlagsExtensionEnabled = extensionsArray.Contains("VK_KHR_extended_flags");
+        bool descriptorHeapExtensionAvailable = availableExtensionSet.Contains(VulkanDescriptorHeapExt.ExtensionName);
+        bool descriptorHeapExtensionEnabled = extensionsArray.Contains(VulkanDescriptorHeapExt.ExtensionName);
+        bool shaderUntypedPointersExtensionAvailable = availableExtensionSet.Contains(VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName);
+        bool descriptorBufferExtensionAvailable = availableExtensionSet.Contains("VK_EXT_descriptor_buffer");
+        bool memoryBudgetExtensionAvailable = availableExtensionSet.Contains("VK_EXT_memory_budget");
+        bool memoryBudgetExtensionEnabled = extensionsArray.Contains("VK_EXT_memory_budget");
+        bool memoryPriorityExtensionAvailable = availableExtensionSet.Contains("VK_EXT_memory_priority");
+        QueryMemoryPriorityCapabilities(
+            memoryPriorityExtensionAvailable,
+            out bool memoryPriorityFeatureSupported);
+
+        bool shaderObjectExtensionAvailable = availableExtensionSet.Contains("VK_EXT_shader_object");
+        QueryShaderObjectCapabilities(
+            shaderObjectExtensionAvailable,
+            out bool shaderObjectFeatureSupported,
+            out PhysicalDeviceShaderObjectPropertiesEXT shaderObjectProperties);
+
+        bool accelerationStructureExtensionAvailable = availableExtensionSet.Contains("VK_KHR_acceleration_structure");
+        QueryAccelerationStructureCapabilities(
+            accelerationStructureExtensionAvailable,
+            out bool accelerationStructureFeatureSupported);
+        bool rayTracingPipelineExtensionAvailable =
+            availableExtensionSet.Contains("VK_KHR_ray_tracing_pipeline") &&
+            availableExtensionSet.Contains("VK_KHR_deferred_host_operations");
+        QueryRayTracingPipelineCapabilities(
+            rayTracingPipelineExtensionAvailable,
+            out bool rayTracingPipelineFeatureSupported);
+        bool rayQueryExtensionAvailable = availableExtensionSet.Contains("VK_KHR_ray_query");
+        QueryRayQueryCapabilities(
+            rayQueryExtensionAvailable,
+            out bool rayQueryFeatureSupported);
+        bool deviceGeneratedCommandsExtensionAvailable = availableExtensionSet.Contains("VK_EXT_device_generated_commands");
+        QueryDeviceGeneratedCommandsCapabilities(
+            deviceGeneratedCommandsExtensionAvailable,
+            out bool deviceGeneratedCommandsFeatureSupported);
+        bool descriptorHeapDependenciesReady =
+            descriptorHeapExtensionAvailable &&
+            (vulkan14PromotedToCore ||
+             ((maintenance5FeatureSupported || extendedFlagsExtensionAvailable) &&
+              (bufferDeviceAddressFeatureSupported || vulkan12PromotedToCore))) &&
+            shaderUntypedPointersExtensionAvailable;
+        QueryDescriptorHeapCapabilities(
+            descriptorHeapExtensionAvailable,
+            shaderUntypedPointersExtensionAvailable,
+            out bool descriptorHeapFeatureSupported,
+            out bool descriptorHeapCaptureReplaySupported,
+            out PhysicalDeviceDescriptorHeapPropertiesEXTNative descriptorHeapProperties);
+        bool enableDescriptorHeapFeature =
+            descriptorHeapExtensionEnabled &&
+            descriptorHeapDependenciesReady &&
+            descriptorHeapFeatureSupported;
 
         QueryTimelineSemaphoreCapabilities(out bool timelineSemaphoreFeatureSupported);
         bool enableTimelineSemaphoreFeature = timelineSemaphoreFeatureSupported;
@@ -996,6 +1371,20 @@ public unsafe partial class VulkanRenderer
             DynamicRendering = enableDynamicRenderingFeature,
         };
 
+        PhysicalDeviceDynamicRenderingLocalReadFeatures dynamicRenderingLocalReadFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceDynamicRenderingLocalReadFeatures,
+            PNext = null,
+            DynamicRenderingLocalRead = enableDynamicRenderingLocalReadFeature,
+        };
+
+        PhysicalDeviceDynamicRenderingLocalReadFeaturesKHR dynamicRenderingLocalReadFeatureEnableKhr = new()
+        {
+            SType = StructureType.PhysicalDeviceDynamicRenderingLocalReadFeaturesKhr,
+            PNext = null,
+            DynamicRenderingLocalRead = enableDynamicRenderingLocalReadFeature,
+        };
+
         PhysicalDeviceVulkan11Features vulkan11FeatureEnable = new()
         {
             SType = StructureType.PhysicalDeviceVulkan11Features,
@@ -1034,6 +1423,20 @@ public unsafe partial class VulkanRenderer
             SType = StructureType.PhysicalDeviceMaintenance4Features,
             PNext = null,
             Maintenance4 = enableMaintenance4Feature,
+        };
+
+        PhysicalDeviceMaintenance5Features maintenance5FeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceMaintenance5Features,
+            PNext = null,
+            Maintenance5 = enableMaintenance5Feature,
+        };
+
+        PhysicalDeviceMaintenance5FeaturesKHR maintenance5FeatureEnableKhr = new()
+        {
+            SType = StructureType.PhysicalDeviceMaintenance5FeaturesKhr,
+            PNext = null,
+            Maintenance5 = enableMaintenance5Feature,
         };
 
         PhysicalDeviceTimelineSemaphoreFeatures timelineSemaphoreFeatureEnable = new()
@@ -1098,6 +1501,14 @@ public unsafe partial class VulkanRenderer
             FragmentDensityMapNonSubsampledImages = enableFragmentDensityMapFeature && fragmentDensityMapNonSubsampledImagesSupported,
         };
 
+        PhysicalDeviceDescriptorHeapFeaturesEXTNative descriptorHeapFeatureEnable = new()
+        {
+            SType = VulkanDescriptorHeapExt.PhysicalDeviceDescriptorHeapFeaturesSType,
+            PNext = null,
+            DescriptorHeap = enableDescriptorHeapFeature,
+            DescriptorHeapCaptureReplay = false,
+        };
+
         // Keep promoted feature structs separate. Mixing VkPhysicalDeviceVulkan12Features
         // with the promoted per-feature structs is invalid and Monado rejects the device
         // created from that pNext chain during xrCreateSession.
@@ -1128,10 +1539,30 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &bufferDeviceAddressFeatureEnable;
         }
 
+        if (enableDescriptorHeapFeature)
+        {
+            descriptorHeapFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &descriptorHeapFeatureEnable;
+        }
+
         if (enableDynamicRenderingFeature)
         {
             dynamicRenderingFeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &dynamicRenderingFeatureEnable;
+        }
+
+        if (enableDynamicRenderingLocalReadFeature)
+        {
+            if (dynamicRenderingLocalReadPromotedToCore)
+            {
+                dynamicRenderingLocalReadFeatureEnable.PNext = enabledFeaturesPNext;
+                enabledFeaturesPNext = &dynamicRenderingLocalReadFeatureEnable;
+            }
+            else
+            {
+                dynamicRenderingLocalReadFeatureEnableKhr.PNext = enabledFeaturesPNext;
+                enabledFeaturesPNext = &dynamicRenderingLocalReadFeatureEnableKhr;
+            }
         }
 
         if (enableShaderDrawParametersFeature || enableMultiviewFeature)
@@ -1156,6 +1587,20 @@ public unsafe partial class VulkanRenderer
         {
             maintenance4FeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &maintenance4FeatureEnable;
+        }
+
+        if (enableMaintenance5Feature)
+        {
+            if (maintenance5PromotedToCore)
+            {
+                maintenance5FeatureEnable.PNext = enabledFeaturesPNext;
+                enabledFeaturesPNext = &maintenance5FeatureEnable;
+            }
+            else
+            {
+                maintenance5FeatureEnableKhr.PNext = enabledFeaturesPNext;
+                enabledFeaturesPNext = &maintenance5FeatureEnableKhr;
+            }
         }
 
         if (enableTimelineSemaphoreFeature && !useVulkan12FeatureEnable)
@@ -1260,11 +1705,39 @@ public unsafe partial class VulkanRenderer
             _vulkanDeviceCreatedThroughOpenXr = false;
         }
 
+        bool descriptorHeapNativeApiAvailable = false;
+        string descriptorHeapNativeApiReason = string.Empty;
+        if (enableDescriptorHeapFeature)
+            descriptorHeapNativeApiAvailable = TryInitializeDescriptorHeapNativeApi(out descriptorHeapNativeApiReason);
+
         _supportsDescriptorIndexing = enableDescriptorIndexing;
         _supportsNvMemoryDecompression = enableNvMemoryDecompression;
         _supportsNvCopyMemoryIndirect = enableNvCopyMemoryIndirect;
         _supportsBufferDeviceAddress = enableBufferDeviceAddress;
         _supportsDynamicRendering = dynamicRenderingFeatureSupported;
+        _supportsVulkan14 = vulkan14PromotedToCore;
+        _supportsDynamicRenderingLocalRead = enableDynamicRenderingLocalReadFeature;
+        _supportsDynamicRenderingLocalReadStorageResources = enableDynamicRenderingLocalReadFeature;
+        _supportsDynamicRenderingLocalReadColorAttachments = enableDynamicRenderingLocalReadFeature;
+        _supportsDynamicRenderingLocalReadDepthStencilAttachments =
+            enableDynamicRenderingLocalReadFeature && dynamicRenderingLocalReadDepthStencilSupported;
+        _supportsDynamicRenderingLocalReadMultisampledAttachments =
+            enableDynamicRenderingLocalReadFeature && dynamicRenderingLocalReadMultisampledSupported;
+        _supportsMaintenance4 = enableMaintenance4Feature;
+        _supportsMaintenance5 = enableMaintenance5Feature;
+        _supportsExtendedFlags = extendedFlagsExtensionEnabled;
+        _descriptorHeapFeatureSupported = descriptorHeapFeatureSupported;
+        _descriptorHeapCaptureReplaySupported = descriptorHeapCaptureReplaySupported;
+        _descriptorHeapProperties = descriptorHeapFeatureSupported ? descriptorHeapProperties : default;
+        _supportsDescriptorHeap = enableDescriptorHeapFeature && descriptorHeapNativeApiAvailable;
+        _supportsShaderObject = shaderObjectFeatureSupported;
+        _supportsMemoryBudget = memoryBudgetExtensionAvailable && memoryBudgetExtensionEnabled;
+        _supportsMemoryPriority = memoryPriorityFeatureSupported;
+        _supportsAccelerationStructure = accelerationStructureFeatureSupported;
+        _supportsRayTracingPipeline = rayTracingPipelineFeatureSupported;
+        _supportsRayQuery = rayQueryFeatureSupported;
+        _supportsDeviceGeneratedCommands = deviceGeneratedCommandsFeatureSupported;
+        _shaderObjectProperties = shaderObjectFeatureSupported ? shaderObjectProperties : default;
         _supportsIndexTypeUint8 = enableIndexTypeUint8Feature;
         _supportsTimelineSemaphores = enableTimelineSemaphoreFeature;
         _supportsSynchronization2 = enableSynchronization2Feature;
@@ -1281,6 +1754,39 @@ public unsafe partial class VulkanRenderer
         _supportsVulkanFragmentDensityMapDynamic = enableFragmentDensityMapFeature && fragmentDensityMapDynamicSupported;
         _supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
         _supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
+        ResolveDescriptorBackendAfterDeviceCreate(
+            VulkanFeatureProfile.RequestedDescriptorBackend,
+            enableDescriptorIndexing,
+            descriptorHeapExtensionAvailable,
+            descriptorHeapDependenciesReady,
+            descriptorHeapFeatureSupported,
+            descriptorHeapNativeApiAvailable);
+        if (enableDescriptorHeapFeature && !descriptorHeapNativeApiAvailable)
+        {
+            Debug.VulkanWarning(
+                "[Vulkan.DescriptorHeap.Capability] feature enabled but native API loading failed: {0}",
+                descriptorHeapNativeApiReason);
+        }
+        ValidateExplicitModernBackendRequests(
+            vulkan13PromotedToCore,
+            vulkan14PromotedToCore,
+            enableDynamicRenderingFeature,
+            enableDynamicRenderingLocalReadFeature,
+            enableMaintenance4Feature,
+            enableMaintenance5Feature,
+            enableSynchronization2Feature,
+            enableTimelineSemaphoreFeature,
+            enableDescriptorIndexing,
+            enableBufferDeviceAddress,
+            drawIndirectCountExtensionEnabled || enableDrawIndirectCountFeature,
+            descriptorHeapExtensionAvailable,
+            descriptorHeapDependenciesReady,
+            shaderObjectFeatureSupported,
+            enableFragmentShadingRateFeature,
+            enableFragmentDensityMapFeature,
+            accelerationStructureFeatureSupported,
+            rayTracingPipelineFeatureSupported,
+            rayQueryFeatureSupported);
         ResolveRenderTargetMode();
         RuntimeEngine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
         RuntimeEngine.Rendering.State.HasOvrMultiViewExtension = enableMultiviewFeature;
@@ -1618,8 +2124,6 @@ public unsafe partial class VulkanRenderer
 
         if (descriptorIndexingExtensionLoaded && _supportsDescriptorIndexing)
             Debug.Vulkan("[Vulkan] VK_EXT_descriptor_indexing enabled for descriptor update-after-bind support.");
-
-        LogStartupCapabilitySnapshot();
     }
 
     private void ReportLayeredShadowCapabilities(
@@ -1656,34 +2160,620 @@ public unsafe partial class VulkanRenderer
             _supportsGeometryShader);
     }
 
+    private void ValidateExplicitModernBackendRequests(
+        bool vulkan13PromotedToCore,
+        bool vulkan14PromotedToCore,
+        bool dynamicRenderingEnabled,
+        bool dynamicRenderingLocalReadEnabled,
+        bool maintenance4Enabled,
+        bool maintenance5Enabled,
+        bool synchronization2Enabled,
+        bool timelineSemaphoreEnabled,
+        bool descriptorIndexingEnabled,
+        bool bufferDeviceAddressEnabled,
+        bool drawIndirectCountEnabled,
+        bool descriptorHeapExtensionAvailable,
+        bool descriptorHeapDependenciesReady,
+        bool shaderObjectFeatureSupported,
+        bool fragmentShadingRateSupported,
+        bool fragmentDensityMapSupported,
+        bool accelerationStructureSupported,
+        bool rayTracingPipelineSupported,
+        bool rayQuerySupported)
+    {
+        bool productionTierReady =
+            vulkan13PromotedToCore &&
+            dynamicRenderingEnabled &&
+            synchronization2Enabled &&
+            timelineSemaphoreEnabled &&
+            descriptorIndexingEnabled &&
+            bufferDeviceAddressEnabled &&
+            drawIndirectCountEnabled &&
+            maintenance4Enabled;
+        bool vulkan14OptInTierReady =
+            vulkan14PromotedToCore &&
+            dynamicRenderingLocalReadEnabled &&
+            maintenance5Enabled;
+        bool vulkan14ExperimentalTierReady =
+            vulkan14OptInTierReady &&
+            descriptorHeapExtensionAvailable &&
+            descriptorHeapDependenciesReady &&
+            _descriptorHeapNativeApiAvailable &&
+            shaderObjectFeatureSupported;
+
+        if (VulkanFeatureProfile.TryGetCapabilityTierEnvOverride(out EVulkanCapabilityTier tier))
+        {
+            if (tier == EVulkanCapabilityTier.Vulkan13Production && !productionTierReady)
+            {
+                ThrowExplicitCapabilityMissing(
+                    VulkanFeatureProfile.CapabilityTierEnvVar,
+                    tier.ToString(),
+                    "Vulkan 1.3 production tier requires dynamic rendering, Sync2, timeline semaphores, descriptor indexing, buffer device address, draw indirect count, and maintenance4.");
+            }
+
+            if (tier == EVulkanCapabilityTier.Vulkan14OptInBaseline && !vulkan14OptInTierReady)
+            {
+                ThrowExplicitCapabilityMissing(
+                    VulkanFeatureProfile.CapabilityTierEnvVar,
+                    tier.ToString(),
+                    "Vulkan 1.4 opt-in tier requires Vulkan 1.4, dynamic rendering local read, and maintenance5.");
+            }
+
+            if (tier == EVulkanCapabilityTier.Vulkan14Experimental && !vulkan14ExperimentalTierReady)
+            {
+                ThrowExplicitCapabilityMissing(
+                    VulkanFeatureProfile.CapabilityTierEnvVar,
+                    tier.ToString(),
+                    "Vulkan 1.4 experimental tier requires the opt-in tier plus descriptor heap binding support and shader-object capability.");
+            }
+        }
+
+        if (VulkanFeatureProfile.TryGetDescriptorBackendEnvOverride(out EVulkanDescriptorBackend descriptorBackend))
+        {
+            if (descriptorBackend == EVulkanDescriptorBackend.DescriptorIndexing && !descriptorIndexingEnabled)
+            {
+                ThrowExplicitCapabilityMissing(
+                    VulkanFeatureProfile.DescriptorBackendEnvVar,
+                    descriptorBackend.ToString(),
+                    "Descriptor indexing was explicitly requested, but the descriptor indexing feature set is unavailable.");
+            }
+
+            if (descriptorBackend == EVulkanDescriptorBackend.DescriptorHeap)
+            {
+                string reason = !descriptorHeapExtensionAvailable
+                    ? "VK_EXT_descriptor_heap is not exposed by the selected physical device."
+                    : !descriptorHeapDependenciesReady
+                        ? "VK_EXT_descriptor_heap dependencies are incomplete; the path needs Vulkan 1.4 or maintenance5/extended flags plus buffer device address/Vulkan 1.2 and shader untyped pointers support."
+                        : !SupportsDescriptorHeap
+                            ? "VK_EXT_descriptor_heap is exposed, but native entry points, feature enablement, or heap storage initialization failed."
+                            : _activeDescriptorBackend != EVulkanDescriptorBackend.DescriptorHeap
+                                ? _descriptorBackendFallbackReason
+                                : string.Empty;
+
+                if (string.IsNullOrWhiteSpace(reason))
+                    return;
+
+                ThrowExplicitCapabilityMissing(
+                    VulkanFeatureProfile.DescriptorBackendEnvVar,
+                    descriptorBackend.ToString(),
+                    reason);
+            }
+        }
+
+        if (VulkanFeatureProfile.TryGetProgramBindingBackendEnvOverride(out EVulkanProgramBindingBackend programBindingBackend) &&
+            programBindingBackend == EVulkanProgramBindingBackend.ShaderObjects)
+        {
+            string reason = shaderObjectFeatureSupported
+                ? "VK_EXT_shader_object is available, but the renderer shader-object program-binding backend is not implemented yet."
+                : "VK_EXT_shader_object is unavailable or its shaderObject feature bit is false.";
+            ThrowExplicitCapabilityMissing(
+                VulkanFeatureProfile.ProgramBindingBackendEnvVar,
+                programBindingBackend.ToString(),
+                reason);
+        }
+
+        if (VulkanFeatureProfile.TryGetFoveationBackendEnvOverride(out EVulkanFoveationBackend foveationBackend))
+        {
+            if (foveationBackend == EVulkanFoveationBackend.FragmentShadingRate)
+            {
+                string reason = fragmentShadingRateSupported
+                    ? "Fragment shading rate is available, but the Vulkan VRS/foveation backend is not implemented yet."
+                    : "VK_KHR_fragment_shading_rate is unavailable or no fragment shading-rate feature bit is supported.";
+                ThrowExplicitCapabilityMissing(
+                    VulkanFeatureProfile.FoveationBackendEnvVar,
+                    foveationBackend.ToString(),
+                    reason);
+            }
+
+            if (foveationBackend == EVulkanFoveationBackend.FragmentDensityMap)
+            {
+                string reason = fragmentDensityMapSupported
+                    ? "Fragment density map is available, but the Vulkan density-map foveation backend is not implemented yet."
+                    : "VK_EXT_fragment_density_map is unavailable or its feature bit is false.";
+                ThrowExplicitCapabilityMissing(
+                    VulkanFeatureProfile.FoveationBackendEnvVar,
+                    foveationBackend.ToString(),
+                    reason);
+            }
+        }
+
+        if (VulkanFeatureProfile.TryGetRayTracingBackendEnvOverride(out EVulkanRayTracingBackend rayTracingBackend))
+        {
+            if (rayTracingBackend == EVulkanRayTracingBackend.RayTracingPipeline)
+            {
+                string reason = accelerationStructureSupported && rayTracingPipelineSupported
+                    ? "KHR ray tracing pipeline support is available, but the Vulkan ray-tracing backend is not implemented yet."
+                    : "KHR ray tracing pipeline support requires acceleration structures, ray tracing pipeline, and deferred host operations.";
+                ThrowExplicitCapabilityMissing(
+                    VulkanFeatureProfile.RayTracingBackendEnvVar,
+                    rayTracingBackend.ToString(),
+                    reason);
+            }
+
+            if (rayTracingBackend == EVulkanRayTracingBackend.RayQuery)
+            {
+                string reason = accelerationStructureSupported && rayQuerySupported
+                    ? "Ray query support is available, but the Vulkan ray-query backend is not implemented yet."
+                    : "KHR ray query support requires acceleration structures and the rayQuery feature bit.";
+                ThrowExplicitCapabilityMissing(
+                    VulkanFeatureProfile.RayTracingBackendEnvVar,
+                    rayTracingBackend.ToString(),
+                    reason);
+            }
+        }
+    }
+
+    private static void ThrowExplicitCapabilityMissing(string environmentVariable, string value, string reason)
+    {
+        Debug.VulkanWarning(
+            "[Vulkan] Capability.ExplicitRequest state=explicitly-required-missing env={0} value={1} reason='{2}'",
+            environmentVariable,
+            value,
+            reason);
+        throw new InvalidOperationException(
+            $"Vulkan capability request {environmentVariable}={value} cannot be satisfied: {reason}");
+    }
+
     private void LogStartupCapabilitySnapshot()
     {
         Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
         Api!.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
 
-        bool hasAccelerationStructure = IsDeviceExtensionSupported("VK_KHR_acceleration_structure");
-        bool hasRayTracingPipeline = IsDeviceExtensionSupported("VK_KHR_ray_tracing_pipeline") && RuntimeEngine.Rendering.State.HasVulkanRayTracing;
+        string apiVersion = FormatVulkanApiVersion(properties.ApiVersion);
+        var availableExtensions = new HashSet<string>(_availableDeviceExtensions, StringComparer.Ordinal);
+        var enabledExtensions = new HashSet<string>(_enabledDeviceExtensions, StringComparer.Ordinal);
+        bool HasExtension(string extensionName) => availableExtensions.Contains(extensionName);
+        bool HasEnabledExtension(string extensionName) => enabledExtensions.Contains(extensionName);
 
-        LogCapability("AccelerationStructure", hasAccelerationStructure, "Optional");
-        LogCapability("DescriptorIndexing", _supportsDescriptorIndexing, "Optional");
-        VulkanBindlessMaterialCapability bindlessMaterialCapability = RefreshBindlessMaterialCapability();
-        LogCapability("BindlessMaterialTextures", bindlessMaterialCapability.Tier >= EVulkanBindlessMaterialCapabilityTier.DescriptorIndexingReady, bindlessMaterialCapability.Mode.ToString());
+        EVulkanDescriptorBackend requestedDescriptorBackend = VulkanFeatureProfile.RequestedDescriptorBackend;
+        EVulkanDescriptorBackend descriptorBackend = _activeDescriptorBackend;
+        EVulkanProgramBindingBackend programBindingBackend = VulkanFeatureProfile.RequestedProgramBindingBackend;
+        EVulkanFoveationBackend foveationBackend = VulkanFeatureProfile.RequestedFoveationBackend;
+        EVulkanRayTracingBackend rayTracingBackend = VulkanFeatureProfile.RequestedRayTracingBackend;
+
+        bool productionTierReady =
+            SupportsDynamicRendering &&
+            SupportsSynchronization2 &&
+            _supportsTimelineSemaphores &&
+            SupportsMaintenance4 &&
+            SupportsDescriptorIndexing &&
+            SupportsBufferDeviceAddress &&
+            _supportsDrawIndirectCount;
+        bool vulkan14OptInTierReady =
+            SupportsVulkan14 &&
+            SupportsDynamicRenderingLocalRead &&
+            SupportsMaintenance5;
+        bool vulkan14ExperimentalTierReady =
+            vulkan14OptInTierReady &&
+            HasExtension(VulkanDescriptorHeapExt.ExtensionName) &&
+            _descriptorHeapNativeApiAvailable &&
+            SupportsShaderObject;
+
         Debug.Vulkan(
-            "[Vulkan] Capability.BindlessMaterialTextures mode={0} tier={1} capacity={2} tableReady={3} shaderReady={4} drawPathReady={5} reason='{6}'",
-            bindlessMaterialCapability.Mode,
-            bindlessMaterialCapability.Tier,
-            bindlessMaterialCapability.DescriptorCapacity,
-            bindlessMaterialCapability.GlobalDescriptorTableReady,
-            bindlessMaterialCapability.ShaderReady,
-            bindlessMaterialCapability.DrawPathReady,
+            "[Vulkan] Capability.Snapshot apiVersion={0} requestedTier={1} requestedDescriptorBackend={2} activeDescriptorBackend={3} requestedProgramBindingBackend={4} requestedFoveationBackend={5} requestedRayTracingBackend={6}",
+            apiVersion,
+            VulkanFeatureProfile.RequestedCapabilityTier,
+            requestedDescriptorBackend,
+            descriptorBackend,
+            programBindingBackend,
+            foveationBackend,
+            rayTracingBackend);
+
+        foreach (string extensionName in ReportedModernCapabilityExtensionNames)
+        {
+            Debug.Vulkan(
+                "[Vulkan] Capability.Extension name={0} available={1} enabled={2}",
+                extensionName,
+                HasExtension(extensionName),
+                HasEnabledExtension(extensionName));
+        }
+
+        LogCapability(
+            "Vulkan13ProductionTier",
+            CapabilityState(true, productionTierReady, productionTierReady),
+            apiVersion,
+            "Vulkan 1.3",
+            "dynamicRendering+sync2+timelineSemaphore+descriptorIndexing+bufferDeviceAddress+drawIndirectCount+maintenance4",
+            $"renderTarget={_requestedRenderTargetMode}->{(UseDynamicRenderingRenderTargets ? "DynamicRendering" : "LegacyRenderPass")};sync={RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend}->{_activeSynchronizationBackend};descriptor={descriptorBackend}",
+            $"ready={productionTierReady}",
+            productionTierReady ? string.Empty : "Production tier incomplete; see individual capability rows.");
+
+        LogCapability(
+            "Vulkan14OptInTier",
+            CapabilityState(SupportsVulkan14, vulkan14OptInTierReady, false),
+            apiVersion,
+            "Vulkan 1.4",
+            "dynamicRenderingLocalRead+maintenance5",
+            VulkanFeatureProfile.RequestedCapabilityTier.ToString(),
+            $"ready={vulkan14OptInTierReady}",
+            vulkan14OptInTierReady ? string.Empty : "Optional Vulkan 1.4 tier is not fully available.");
+
+        LogCapability(
+            "Vulkan14ExperimentalTier",
+            CapabilityState(SupportsVulkan14, vulkan14ExperimentalTierReady, false),
+            apiVersion,
+            "Vulkan 1.4 + VK_EXT_descriptor_heap + VK_EXT_shader_object",
+            "descriptorHeap+shaderObject",
+            VulkanFeatureProfile.RequestedCapabilityTier.ToString(),
+            $"ready={vulkan14ExperimentalTierReady};descriptorHeapNativeApi={_descriptorHeapNativeApiAvailable};descriptorHeapStorage={_descriptorHeapStorageReady}",
+            vulkan14ExperimentalTierReady ? string.Empty : "Experimental tier remains disabled until descriptor heap native API/storage and shader-object backend exist.");
+
+        LogCapability(
+            "DynamicRendering",
+            CapabilityState(SupportsDynamicRendering, SupportsDynamicRendering, UseDynamicRenderingRenderTargets),
+            apiVersion,
+            "VK_KHR_dynamic_rendering / Vulkan 1.3",
+            "dynamicRendering",
+            $"{_requestedRenderTargetMode}->{(UseDynamicRenderingRenderTargets ? "DynamicRendering" : "LegacyRenderPass")}",
+            $"extensionEnabled={HasEnabledExtension("VK_KHR_dynamic_rendering")}",
+            UseDynamicRenderingRenderTargets ? string.Empty : "Legacy render-pass target mode selected or dynamic rendering unavailable.");
+
+        LogCapability(
+            "DynamicRenderingLocalRead",
+            CapabilityState(
+                HasExtension("VK_KHR_dynamic_rendering_local_read") || SupportsVulkan14,
+                SupportsDynamicRenderingLocalRead,
+                false),
+            apiVersion,
+            "VK_KHR_dynamic_rendering_local_read / Vulkan 1.4",
+            "dynamicRenderingLocalRead",
+            "OptionalPrototype",
+            $"storageResources={SupportsDynamicRenderingLocalReadStorageResources};singleSampledColor={SupportsDynamicRenderingLocalReadColorAttachments};depthStencil={SupportsDynamicRenderingLocalReadDepthStencilAttachments};multisampled={SupportsDynamicRenderingLocalReadMultisampledAttachments}",
+            SupportsDynamicRenderingLocalRead ? "No pass has opted into local-read barriers yet." : "Local read remains optional until Vulkan 1.4 tier is required.");
+
+        LogCapability(
+            "Synchronization2",
+            CapabilityState(
+                HasExtension("VK_KHR_synchronization2") || IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 3u),
+                SupportsSynchronization2,
+                _activeSynchronizationBackend == EVulkanSynchronizationBackend.Sync2),
+            apiVersion,
+            "VK_KHR_synchronization2 / Vulkan 1.3",
+            "synchronization2",
+            $"{RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend}->{_activeSynchronizationBackend}",
+            $"featureSupported={_supportsSynchronization2Feature}",
+            _activeSynchronizationBackend == EVulkanSynchronizationBackend.Sync2 ? string.Empty : "Legacy synchronization backend selected or Sync2 unavailable.");
+
+        LogCapability(
+            "TimelineSemaphore",
+            CapabilityState(_supportsTimelineSemaphores, _supportsTimelineSemaphores, _supportsTimelineSemaphores),
+            apiVersion,
+            "Vulkan 1.2 timelineSemaphore",
+            "timelineSemaphore",
+            "FramePacing",
+            "required=True",
+            _supportsTimelineSemaphores ? string.Empty : "Renderer timeline synchronization requires timeline semaphores.");
+
+        LogCapability(
+            "DescriptorIndexing",
+            CapabilityState(
+                HasExtension("VK_EXT_descriptor_indexing") || IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 2u),
+                SupportsDescriptorIndexing,
+                SupportsDescriptorIndexing && descriptorBackend == EVulkanDescriptorBackend.DescriptorIndexing),
+            apiVersion,
+            "VK_EXT_descriptor_indexing / Vulkan 1.2",
+            "descriptorIndexing+runtimeDescriptorArray+partiallyBound+updateAfterBind",
+            descriptorBackend.ToString(),
+            $"runtimeArray={_supportsRuntimeDescriptorArray};partiallyBound={_supportsDescriptorBindingPartiallyBound};updateAfterBind={_supportsDescriptorBindingUpdateAfterBind};storageImageUpdateAfterBind={_supportsDescriptorBindingStorageImageUpdateAfterBind}",
+            SupportsDescriptorIndexing ? string.Empty : "Descriptor sets remain on the non-indexed path.");
+
+        VulkanBindlessMaterialCapability bindlessMaterialCapability = RefreshBindlessMaterialCapability();
+        LogCapability(
+            "BindlessMaterialTextures",
+            CapabilityState(
+                SupportsDescriptorIndexing,
+                bindlessMaterialCapability.Tier >= EVulkanBindlessMaterialCapabilityTier.DescriptorIndexingReady,
+                bindlessMaterialCapability.DrawPathReady),
+            apiVersion,
+            "VK_EXT_descriptor_indexing / Vulkan 1.2",
+            "descriptorIndexing",
+            bindlessMaterialCapability.Mode.ToString(),
+            $"tier={bindlessMaterialCapability.Tier};capacity={bindlessMaterialCapability.DescriptorCapacity};tableReady={bindlessMaterialCapability.GlobalDescriptorTableReady};shaderReady={bindlessMaterialCapability.ShaderReady};drawPathReady={bindlessMaterialCapability.DrawPathReady}",
             bindlessMaterialCapability.Reason);
-        LogCapability("DrawIndirectCount", _supportsDrawIndirectCount, "Optional");
-        LogCapability("MeshShaderEXT", SupportsVulkanMeshTaskIndirectCount, "Optional");
-        LogCapability("Multiview", RuntimeEngine.Rendering.State.HasVulkanMultiView, "Optional");
-        LogCapability("DepthClipControlEXT", SupportsDepthClipControl, "Optional");
-        LogCapability("RayTracingPipeline", hasRayTracingPipeline, "DisabledByProfile");
-        LogCapability("TimelineSemaphore", _supportsTimelineSemaphores, "Required");
-        LogCapability("Synchronization2", _supportsSynchronization2Feature, "Optional");
+
+        LogCapability(
+            "DescriptorHeap",
+            CapabilityState(HasExtension(VulkanDescriptorHeapExt.ExtensionName), SupportsDescriptorHeap, _activeDescriptorBackend == EVulkanDescriptorBackend.DescriptorHeap),
+            apiVersion,
+            "VK_EXT_descriptor_heap",
+            "descriptorHeap",
+            $"{requestedDescriptorBackend}->{descriptorBackend}",
+            $"feature={_descriptorHeapFeatureSupported};captureReplay={_descriptorHeapCaptureReplaySupported};nativeApi={_descriptorHeapNativeApiAvailable};storage={_descriptorHeapStorageReady};shaderUntypedPointers={_descriptorHeapShaderUntypedPointersAvailable};samplerHeapBytes={DescriptorHeapSamplerCapacityBytes};resourceHeapBytes={DescriptorHeapResourceCapacityBytes};samplerDescriptorSize={_descriptorHeapProperties.SamplerDescriptorSize};imageDescriptorSize={_descriptorHeapProperties.ImageDescriptorSize};bufferDescriptorSize={_descriptorHeapProperties.BufferDescriptorSize};samplerWrites={_descriptorHeapSamplerWriteCount};resourceWrites={_descriptorHeapResourceWriteCount};samplerBinds={_descriptorHeapSamplerBindCount};resourceBinds={_descriptorHeapResourceBindCount}",
+            HasExtension(VulkanDescriptorHeapExt.ExtensionName)
+                ? _descriptorBackendFallbackReason
+                : "VK_EXT_descriptor_heap is not exposed by the selected physical device.");
+
+        LogCapability(
+            "DescriptorBuffer",
+            CapabilityState(HasExtension("VK_EXT_descriptor_buffer"), false, false),
+            apiVersion,
+            "VK_EXT_descriptor_buffer",
+            "descriptorBuffer",
+            "NotTargetBackend",
+            "deprecatedBy=VK_EXT_descriptor_heap",
+            "Descriptor buffer is intentionally not the long-term modernization backend.");
+
+        LogCapability(
+            "BufferDeviceAddress",
+            CapabilityState(
+                HasExtension("VK_KHR_buffer_device_address") || IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 2u),
+                SupportsBufferDeviceAddress,
+                SupportsBufferDeviceAddress && (SupportsNvCopyMemoryIndirect || VulkanFeatureProfile.EnableBindlessMaterialTable)),
+            apiVersion,
+            "VK_KHR_buffer_device_address / Vulkan 1.2",
+            "bufferDeviceAddress",
+            VulkanFeatureProfile.ActiveGeometryFetchMode.ToString(),
+            $"nvCopyMemoryIndirect={SupportsNvCopyMemoryIndirect};bindlessMaterial={VulkanFeatureProfile.EnableBindlessMaterialTable}",
+            SupportsBufferDeviceAddress ? string.Empty : "Buffer-device-address consumers remain disabled.");
+
+        LogCapability(
+            "ShaderObject",
+            CapabilityState(HasExtension("VK_EXT_shader_object"), SupportsShaderObject, false),
+            apiVersion,
+            "VK_EXT_shader_object",
+            "shaderObject",
+            $"{programBindingBackend}->PipelineObjects",
+            $"shaderBinaryVersion={_shaderObjectProperties.ShaderBinaryVersion}",
+            SupportsShaderObject ? "Shader-object backend is not implemented yet; pipeline objects remain active." : "VK_EXT_shader_object unavailable or feature bit is false.");
+
+        LogCapability(
+            "GraphicsPipelineLibrary",
+            CapabilityState(HasExtension("VK_EXT_graphics_pipeline_library"), SupportsGraphicsPipelineLibrary, SupportsGraphicsPipelineLibrary),
+            apiVersion,
+            "VK_KHR_pipeline_library + VK_EXT_graphics_pipeline_library",
+            "graphicsPipelineLibrary",
+            "PipelineObjects",
+            $"dependencyEnabled={HasEnabledExtension("VK_KHR_pipeline_library")}",
+            SupportsGraphicsPipelineLibrary ? string.Empty : "Monolithic pipeline fallback remains available.");
+
+        LogCapability(
+            "FragmentShadingRate",
+            CapabilityState(HasExtension("VK_KHR_fragment_shading_rate"), SupportsVulkanFragmentShadingRate, false),
+            apiVersion,
+            "VK_KHR_fragment_shading_rate",
+            "pipelineFragmentShadingRate|primitiveFragmentShadingRate|attachmentFragmentShadingRate",
+            $"{foveationBackend}->Off",
+            $"attachment={SupportsVulkanFragmentShadingRateAttachment}",
+            SupportsVulkanFragmentShadingRate ? "VRS/foveation backend is not implemented yet." : "Fragment shading rate unavailable.");
+
+        LogCapability(
+            "FragmentDensityMap",
+            CapabilityState(HasExtension("VK_EXT_fragment_density_map"), SupportsVulkanFragmentDensityMap, false),
+            apiVersion,
+            "VK_EXT_fragment_density_map",
+            "fragmentDensityMap",
+            $"{foveationBackend}->Off",
+            $"dynamic={SupportsVulkanFragmentDensityMapDynamic}",
+            SupportsVulkanFragmentDensityMap ? "Density-map foveation backend is not implemented yet." : "Fragment density map unavailable.");
+
+        LogCapability(
+            "Multiview",
+            CapabilityState(
+                HasExtension("VK_KHR_multiview") || IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 1u),
+                RuntimeEngine.Rendering.State.HasVulkanMultiView,
+                RuntimeEngine.Rendering.State.HasVulkanMultiView),
+            apiVersion,
+            "VK_KHR_multiview / Vulkan 1.1",
+            "multiview",
+            "StereoTargets",
+            $"enabled={RuntimeEngine.Rendering.State.HasVulkanMultiView}",
+            RuntimeEngine.Rendering.State.HasVulkanMultiView ? string.Empty : "Stereo single-pass multiview remains disabled.");
+
+        LogCapability(
+            "MeshShaderEXT",
+            CapabilityState(HasExtension("VK_EXT_mesh_shader"), SupportsVulkanMeshTaskIndirectCount, false),
+            apiVersion,
+            "VK_EXT_mesh_shader",
+            "taskShader+meshShader",
+            "MeshletDispatch",
+            $"task={_supportsVulkanTaskShaderFeature};mesh={_supportsVulkanMeshShaderFeature}",
+            SupportsVulkanMeshTaskIndirectCount ? "Mesh/task shader capability loaded; production meshlet dispatch remains profile-gated." : "Mesh/task shader path unavailable.");
+
+        LogCapability(
+            "DrawIndirectCount",
+            CapabilityState(
+                HasExtension("VK_KHR_draw_indirect_count") || IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 2u),
+                _supportsDrawIndirectCount,
+                _supportsDrawIndirectCount),
+            apiVersion,
+            "VK_KHR_draw_indirect_count / Vulkan 1.2",
+            "drawIndirectCount",
+            "GpuDrivenIndirect",
+            $"extensionLoaded={_khrDrawIndirectCount is not null}",
+            _supportsDrawIndirectCount ? string.Empty : "Multi-draw indirect count falls back to non-count indirect path.");
+
+        LogCapability(
+            "ExternalMemorySemaphore",
+            CapabilityState(
+                HasExtension("VK_KHR_external_memory") || HasExtension("VK_KHR_external_semaphore"),
+                SupportsExternalMemoryWin32 && SupportsExternalSemaphoreWin32,
+                SupportsExternalMemoryWin32 && SupportsExternalSemaphoreWin32),
+            apiVersion,
+            "VK_KHR_external_memory + VK_KHR_external_semaphore + Win32 variants",
+            "externalMemoryWin32+externalSemaphoreWin32",
+            "Interop",
+            $"memoryWin32={SupportsExternalMemoryWin32};semaphoreWin32={SupportsExternalSemaphoreWin32}",
+            SupportsExternalMemoryWin32 && SupportsExternalSemaphoreWin32 ? string.Empty : "Interop/upscale/OBS paths requiring external sharing remain disabled.");
+
+        LogCapability(
+            "MemoryBudget",
+            CapabilityState(HasExtension("VK_EXT_memory_budget"), SupportsMemoryBudget, false),
+            apiVersion,
+            "VK_EXT_memory_budget",
+            "memoryBudget",
+            "AllocatorDiagnostics",
+            "heapBudget=reported-when-enabled",
+            SupportsMemoryBudget ? "Allocator residency policy has not consumed memory budget yet." : "Memory budget extension unavailable or disabled.");
+
+        LogCapability(
+            "MemoryPriority",
+            CapabilityState(HasExtension("VK_EXT_memory_priority"), SupportsMemoryPriority, false),
+            apiVersion,
+            "VK_EXT_memory_priority",
+            "memoryPriority",
+            "AllocatorDiagnostics",
+            $"feature={SupportsMemoryPriority}",
+            SupportsMemoryPriority ? "Allocator priority policy has not consumed memory priority yet." : "Memory priority extension unavailable or feature bit is false.");
+
+        LogCapability(
+            "TransientLazyAttachments",
+            CapabilityState(true, SupportsLazyAllocation, SupportsLazyAllocation),
+            apiVersion,
+            "MemoryPropertyFlags.LazilyAllocatedBit",
+            "lazilyAllocatedMemoryType",
+            "TransientAttachmentPolicy",
+            $"lazyAlloc={SupportsLazyAllocation}",
+            SupportsLazyAllocation ? string.Empty : "Transient images fall back to regular device-local memory.");
+
+        LogCapability(
+            "RayTracingPipeline",
+            CapabilityState(
+                HasExtension("VK_KHR_ray_tracing_pipeline"),
+                SupportsAccelerationStructure && SupportsRayTracingPipeline,
+                false),
+            apiVersion,
+            "VK_KHR_acceleration_structure + VK_KHR_ray_tracing_pipeline + VK_KHR_deferred_host_operations",
+            "accelerationStructure+rayTracingPipeline",
+            $"{rayTracingBackend}->Off",
+            $"accelerationStructure={SupportsAccelerationStructure};rayTracingPipeline={SupportsRayTracingPipeline}",
+            SupportsAccelerationStructure && SupportsRayTracingPipeline ? "Vulkan ray tracing backend is not implemented yet." : "KHR ray tracing pipeline requirements are incomplete.");
+
+        LogCapability(
+            "RayQuery",
+            CapabilityState(HasExtension("VK_KHR_ray_query"), SupportsAccelerationStructure && SupportsRayQuery, false),
+            apiVersion,
+            "VK_KHR_ray_query",
+            "rayQuery",
+            $"{rayTracingBackend}->Off",
+            $"accelerationStructure={SupportsAccelerationStructure};rayQuery={SupportsRayQuery}",
+            SupportsAccelerationStructure && SupportsRayQuery ? "Vulkan ray-query backend is not implemented yet." : "Ray query requirements are incomplete.");
+
+        LogCapability(
+            "DeviceGeneratedCommands",
+            CapabilityState(HasExtension("VK_EXT_device_generated_commands"), SupportsDeviceGeneratedCommands, false),
+            apiVersion,
+            "VK_EXT_device_generated_commands",
+            "deviceGeneratedCommands",
+            "Deferred",
+            $"feature={SupportsDeviceGeneratedCommands}",
+            SupportsDeviceGeneratedCommands ? "Deferred until descriptor heap/shader object architecture is stable." : "Device-generated commands unavailable.");
+
+        LogCapability(
+            "Maintenance4",
+            CapabilityState(
+                HasExtension("VK_KHR_maintenance4") || IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 3u),
+                SupportsMaintenance4,
+                SupportsMaintenance4),
+            apiVersion,
+            "VK_KHR_maintenance4 / Vulkan 1.3",
+            "maintenance4",
+            "ProductionTier",
+            $"enabled={SupportsMaintenance4}",
+            SupportsMaintenance4 ? string.Empty : "Maintenance4 unavailable.");
+
+        LogCapability(
+            "Maintenance5",
+            CapabilityState(
+                HasExtension("VK_KHR_maintenance5") || SupportsVulkan14,
+                SupportsMaintenance5,
+                false),
+            apiVersion,
+            "VK_KHR_maintenance5 / Vulkan 1.4",
+            "maintenance5",
+            "DescriptorHeapDependency",
+            $"enabled={SupportsMaintenance5}",
+            SupportsMaintenance5 ? "Available for descriptor heap dependency checks." : "Maintenance5 unavailable.");
+
+        LogCapability(
+            "ExtendedFlags",
+            CapabilityState(HasExtension("VK_KHR_extended_flags"), SupportsExtendedFlags, false),
+            apiVersion,
+            "VK_KHR_extended_flags",
+            "extendedFlags",
+            "DescriptorHeapDependency",
+            $"enabled={SupportsExtendedFlags}",
+            SupportsExtendedFlags ? "Available for descriptor heap dependency checks." : "Extended flags unavailable.");
+
+        LogCapability(
+            "ShaderUntypedPointers",
+            CapabilityState(HasExtension(VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName), _descriptorHeapShaderUntypedPointersAvailable, false),
+            apiVersion,
+            VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName,
+            "shaderUntypedPointers",
+            "DescriptorHeapDependency",
+            $"available={_descriptorHeapShaderUntypedPointersAvailable}",
+            _descriptorHeapShaderUntypedPointersAvailable
+                ? "Descriptor heap dependency is present; legacy set/binding mappings do not require enabling it."
+                : "Descriptor heap requires shader untyped pointers support.");
+
+        LogCapability(
+            "DepthClipViewportLayer",
+            CapabilityState(
+                HasExtension(VulkanDepthClipControlExt.ExtensionName) || IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 2u),
+                SupportsDepthClipControl || RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering,
+                SupportsDepthClipControl || RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering),
+            apiVersion,
+            "VK_EXT_depth_clip_control + VK_EXT_shader_viewport_index_layer",
+            "depthClipControl+shaderOutputViewportIndex+shaderOutputLayer",
+            "LayeredShadowPlanning",
+            $"depthClip={SupportsDepthClipControl};viewportLayer={RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering}",
+            SupportsDepthClipControl ? string.Empty : "Depth clip control unavailable; clip-space/layered paths use fallbacks.");
+
+        LogCapability(
+            "IndexTypeUint8",
+            CapabilityState(
+                HasExtension("VK_EXT_index_type_uint8") || HasExtension("VK_KHR_index_type_uint8") || SupportsVulkan14,
+                SupportsIndexTypeUint8,
+                false),
+            apiVersion,
+            "VK_EXT_index_type_uint8 / VK_KHR_index_type_uint8 / Vulkan 1.4",
+            "indexTypeUint8",
+            "IndexBuffers",
+            $"enabled={SupportsIndexTypeUint8}",
+            SupportsIndexTypeUint8 ? "Byte-sized index buffers are allowed." : "Byte-sized index buffers are skipped.");
+
+        LogCapability(
+            "TransformFeedback",
+            CapabilityState(HasExtension(ExtTransformFeedback.ExtensionName), SupportsTransformFeedback, SupportsTransformFeedback),
+            apiVersion,
+            ExtTransformFeedback.ExtensionName,
+            "transformFeedback",
+            "LegacyParity",
+            $"queries={SupportsTransformFeedbackQueries};draw={SupportsTransformFeedbackDraw};geometryStreams={SupportsTransformFeedbackGeometryStreams}",
+            SupportsTransformFeedback ? string.Empty : "Transform feedback unavailable.");
+
+        LogCapability(
+            "NvidiaDataMovement",
+            CapabilityState(
+                HasExtension("VK_NV_memory_decompression") || HasExtension("VK_NV_copy_memory_indirect"),
+                SupportsNvMemoryDecompression || SupportsNvCopyMemoryIndirect,
+                SupportsNvMemoryDecompression || SupportsNvCopyMemoryIndirect),
+            apiVersion,
+            "VK_NV_memory_decompression + VK_NV_copy_memory_indirect",
+            "memoryDecompression+copyMemoryIndirect",
+            "RtxIo",
+            $"decompression={SupportsNvMemoryDecompression};copyIndirect={SupportsNvCopyMemoryIndirect};methods=0x{NvMemoryDecompressionMethods:X};copyQueues=0x{NvCopyMemoryIndirectSupportedQueues:X}",
+            SupportsNvMemoryDecompression || SupportsNvCopyMemoryIndirect ? string.Empty : "NVIDIA accelerated data movement unavailable or disabled.");
 
         Debug.Vulkan(
             "[Vulkan] Capability.MaxMemoryAllocationCount status=Required supported=True value={0}",
@@ -1698,12 +2788,54 @@ public unsafe partial class VulkanRenderer
             FormatMemoryTypes(memoryProperties));
     }
 
-    private static void LogCapability(string name, bool supported, string classification)
+    private static EVulkanCapabilityState CapabilityState(
+        bool available,
+        bool enabled,
+        bool active,
+        bool explicitlyRequiredMissing = false)
+    {
+        if (explicitlyRequiredMissing)
+            return EVulkanCapabilityState.ExplicitlyRequiredMissing;
+        if (active)
+            return EVulkanCapabilityState.EnabledActive;
+        if (enabled)
+            return EVulkanCapabilityState.EnabledUnused;
+        if (available)
+            return EVulkanCapabilityState.AvailableDisabled;
+
+        return EVulkanCapabilityState.Unavailable;
+    }
+
+    private static void LogCapability(
+        string name,
+        EVulkanCapabilityState state,
+        string apiVersion,
+        string extensionName,
+        string featureBit,
+        string runtimeMode,
+        string properties,
+        string fallbackReason)
         => Debug.Vulkan(
-            "[Vulkan] Capability.{0} status={1} supported={2}",
+            "[Vulkan] Capability.{0} state={1} apiVersion={2} extension='{3}' feature='{4}' runtimeMode='{5}' properties='{6}' fallback='{7}'",
             name,
-            classification,
-            supported);
+            ToCapabilityStateString(state),
+            apiVersion,
+            extensionName,
+            featureBit,
+            runtimeMode,
+            properties,
+            fallbackReason);
+
+    private static string ToCapabilityStateString(EVulkanCapabilityState state)
+        => state switch
+        {
+            EVulkanCapabilityState.Unavailable => "unavailable",
+            EVulkanCapabilityState.AvailableDisabled => "available-disabled",
+            EVulkanCapabilityState.EnabledUnused => "enabled-unused",
+            EVulkanCapabilityState.EnabledActive => "enabled-active",
+            EVulkanCapabilityState.ExplicitlyRequiredMissing => "explicitly-required-missing",
+            _ => "unavailable",
+        };
 
     private static string FormatMemoryHeaps(PhysicalDeviceMemoryProperties memoryProperties)
     {

@@ -16,6 +16,7 @@ internal sealed class VulkanBarrierPlanner
     internal const int SwapchainPassIndex = int.MinValue + 1;
     private static readonly PlannedImageBarrier[] _emptyImageBarriers = [];
     private static readonly PlannedBufferBarrier[] _emptyBufferBarriers = [];
+    private static readonly PlannedSwapchainBarrier[] _emptySwapchainBarriers = [];
 
     private readonly List<PlannedImageBarrier> _imageBarriers = [];
     private readonly Dictionary<int, List<PlannedImageBarrier>> _perPassImageBarriers = [];
@@ -24,18 +25,30 @@ internal sealed class VulkanBarrierPlanner
     private readonly List<PlannedBufferBarrier> _bufferBarriers = [];
     private readonly Dictionary<int, List<PlannedBufferBarrier>> _perPassBufferBarriers = [];
     private readonly Dictionary<string, PlannedBufferState> _lastBufferStates = new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly List<PlannedSwapchainBarrier> _swapchainBarriers = [];
+    private readonly Dictionary<int, List<PlannedSwapchainBarrier>> _perPassSwapchainBarriers = [];
+    private PlannedImageState _lastSwapchainState;
+    private bool _hasLastSwapchainState;
+    private uint _lastSwapchainQueueOwner;
+    private bool _hasLastSwapchainQueueOwner;
+
     private readonly Dictionary<string, uint> _lastImageQueueOwners = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, uint> _lastBufferQueueOwners = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<int> _knownPassIndices = [];
 
     public IReadOnlyList<PlannedImageBarrier> ImageBarriers => _imageBarriers;
     public IReadOnlyList<PlannedBufferBarrier> BufferBarriers => _bufferBarriers;
+    public IReadOnlyList<PlannedSwapchainBarrier> SwapchainBarriers => _swapchainBarriers;
 
     public IReadOnlyList<PlannedImageBarrier> GetBarriersForPass(int passIndex)
         => _perPassImageBarriers.TryGetValue(passIndex, out var list) ? list : _emptyImageBarriers;
 
     public IReadOnlyList<PlannedBufferBarrier> GetBufferBarriersForPass(int passIndex)
         => _perPassBufferBarriers.TryGetValue(passIndex, out var list) ? list : _emptyBufferBarriers;
+
+    public IReadOnlyList<PlannedSwapchainBarrier> GetSwapchainBarriersForPass(int passIndex)
+        => _perPassSwapchainBarriers.TryGetValue(passIndex, out var list) ? list : _emptySwapchainBarriers;
 
     /// <summary>
     /// Returns true if <paramref name="passIndex"/> was present in the pass metadata
@@ -98,6 +111,12 @@ internal sealed class VulkanBarrierPlanner
         _perPassBufferBarriers.Clear();
         _lastBufferStates.Clear();
         _lastBufferQueueOwners.Clear();
+        _swapchainBarriers.Clear();
+        _perPassSwapchainBarriers.Clear();
+        _lastSwapchainState = default;
+        _hasLastSwapchainState = false;
+        _lastSwapchainQueueOwner = 0u;
+        _hasLastSwapchainQueueOwner = false;
         _knownPassIndices.Clear();
 
         if (passMetadata is null || passMetadata.Count == 0)
@@ -123,6 +142,12 @@ internal sealed class VulkanBarrierPlanner
                         e.SubresourceRange.Equals(usage.SubresourceRange))
                     .LastOrDefault();
 
+                if (IsSwapchainTargetUsage(usage))
+                {
+                    TrackSwapchainUsage(pass, usage, edge, ownership);
+                    continue;
+                }
+
                 if (ShouldTrackImage(usage.ResourceType))
                     TrackImageUsage(pass, usage, resourcePlanner, resourceAllocator, edge, ownership);
 
@@ -130,6 +155,61 @@ internal sealed class VulkanBarrierPlanner
                     TrackBufferUsage(pass, usage, resourcePlanner, edge, ownership);
             }
         }
+    }
+
+    private void TrackSwapchainUsage(
+        RenderPassMetadata pass,
+        RenderPassResourceUsage usage,
+        RenderGraphSynchronizationEdge? syncEdge,
+        QueueOwnershipConfig ownership)
+    {
+        PlannedImageState desiredState = syncEdge is null
+            ? PlannedImageState.FromSwapchainUsage(usage, pass.Stage)
+            : PlannedImageState.FromSwapchainSyncState(syncEdge.ConsumerState, usage.ResourceType, pass.Stage);
+
+        uint desiredOwnerQueue = ownership.ResolveOwner(pass.Stage, usage.ResourceType);
+        uint previousOwnerQueue = _hasLastSwapchainQueueOwner ? _lastSwapchainQueueOwner : desiredOwnerQueue;
+        uint srcQueueFamily = previousOwnerQueue != desiredOwnerQueue ? previousOwnerQueue : Vk.QueueFamilyIgnored;
+        uint dstQueueFamily = previousOwnerQueue != desiredOwnerQueue ? desiredOwnerQueue : Vk.QueueFamilyIgnored;
+
+        PlannedSwapchainBarrier? plannedBarrier = null;
+        if (_hasLastSwapchainState)
+        {
+            PlannedImageState previousState = _lastSwapchainState;
+            if (syncEdge is not null)
+                previousState = PlannedImageState.FromSwapchainSyncState(syncEdge.ProducerState, usage.ResourceType, pass.Stage);
+
+            if (!previousState.Equals(desiredState))
+            {
+                plannedBarrier = new PlannedSwapchainBarrier(
+                    pass.PassIndex,
+                    usage.ResourceName,
+                    usage.ResourceType,
+                    previousState,
+                    desiredState,
+                    srcQueueFamily,
+                    dstQueueFamily);
+            }
+        }
+        else
+        {
+            plannedBarrier = new PlannedSwapchainBarrier(
+                SwapchainPassIndex,
+                usage.ResourceName,
+                usage.ResourceType,
+                PlannedImageState.SwapchainPresentInitial(),
+                desiredState,
+                srcQueueFamily,
+                dstQueueFamily);
+        }
+
+        if (plannedBarrier.HasValue)
+            AddSwapchainBarrier(plannedBarrier.Value);
+
+        _lastSwapchainState = desiredState;
+        _hasLastSwapchainState = true;
+        _lastSwapchainQueueOwner = desiredOwnerQueue;
+        _hasLastSwapchainQueueOwner = true;
     }
 
     private void TrackImageUsage(
@@ -282,6 +362,23 @@ internal sealed class VulkanBarrierPlanner
 
         list.Add(barrier);
     }
+
+    private void AddSwapchainBarrier(PlannedSwapchainBarrier barrier)
+    {
+        _swapchainBarriers.Add(barrier);
+
+        if (!_perPassSwapchainBarriers.TryGetValue(barrier.PassIndex, out var list))
+        {
+            list = [];
+            _perPassSwapchainBarriers[barrier.PassIndex] = list;
+        }
+
+        list.Add(barrier);
+    }
+
+    private static bool IsSwapchainTargetUsage(RenderPassResourceUsage usage)
+        => usage.ResourceName.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase)
+            && ShouldTrackImage(usage.ResourceType);
 
     private static bool ShouldTrackImage(ERenderPassResourceType type)
         => type is ERenderPassResourceType.ColorAttachment
@@ -499,6 +596,15 @@ internal sealed class VulkanBarrierPlanner
         uint SrcQueueFamilyIndex,
         uint DstQueueFamilyIndex);
 
+    internal readonly record struct PlannedSwapchainBarrier(
+        int PassIndex,
+        string ResourceName,
+        ERenderPassResourceType ResourceType,
+        PlannedImageState Previous,
+        PlannedImageState Next,
+        uint SrcQueueFamilyIndex,
+        uint DstQueueFamilyIndex);
+
     internal readonly struct PlannedImageState(ImageLayout layout, PipelineStageFlags stageMask, AccessFlags accessMask, ImageAspectFlags aspectMask) : IEquatable<PlannedImageState>
     {
         public ImageLayout Layout { get; } = layout;
@@ -508,6 +614,28 @@ internal sealed class VulkanBarrierPlanner
 
         public static PlannedImageState Initial(ImageAspectFlags aspect)
             => new(ImageLayout.Undefined, PipelineStageFlags.TopOfPipeBit, AccessFlags.None, aspect);
+
+        public static PlannedImageState SwapchainPresentInitial()
+            => new(ImageLayout.PresentSrcKhr, PipelineStageFlags.BottomOfPipeBit, AccessFlags.None, ImageAspectFlags.ColorBit);
+
+        public static PlannedImageState FromSwapchainUsage(RenderPassResourceUsage usage, ERenderGraphPassStage passStage)
+        {
+            ImageLayout layout = ResolveLayout(usage.ResourceType);
+            PipelineStageFlags stages = ResolveStage(usage.ResourceType, passStage);
+            AccessFlags access = ResolveAccess(usage.ResourceType, usage.Access);
+            return new(layout, stages, access, ImageAspectFlags.ColorBit);
+        }
+
+        public static PlannedImageState FromSwapchainSyncState(
+            RenderGraphSyncState state,
+            ERenderPassResourceType resourceType,
+            ERenderGraphPassStage fallbackStage)
+        {
+            ImageLayout layout = ResolveLayoutFromSync(state.Layout, resourceType, group: null);
+            PipelineStageFlags stages = ResolveStageFromSync(state.StageMask, resourceType, fallbackStage);
+            AccessFlags access = ResolveAccessFromSync(state.AccessMask, resourceType);
+            return new(layout, stages, access, ImageAspectFlags.ColorBit);
+        }
 
         public static PlannedImageState FromUsage(RenderPassResourceUsage usage, VulkanPhysicalImageGroup group, ERenderGraphPassStage passStage)
         {
@@ -785,6 +913,7 @@ internal sealed class VulkanBarrierPlanner
             RenderGraphImageLayout.Undefined => ImageLayout.Undefined,
             RenderGraphImageLayout.ColorAttachment => ImageLayout.ColorAttachmentOptimal,
             RenderGraphImageLayout.DepthStencilAttachment => ImageLayout.DepthStencilAttachmentOptimal,
+            RenderGraphImageLayout.RenderingLocalRead => ImageLayout.RenderingLocalRead,
             RenderGraphImageLayout.ShaderReadOnly => ResolveSampledTextureLayout(group),
             RenderGraphImageLayout.General => ImageLayout.General,
             RenderGraphImageLayout.TransferSource => ImageLayout.TransferSrcOptimal,

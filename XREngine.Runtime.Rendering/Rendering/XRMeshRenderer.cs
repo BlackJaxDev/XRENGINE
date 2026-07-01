@@ -223,6 +223,7 @@ namespace XREngine.Rendering
             bool preferNV = allowNvStereo && RuntimeEngine.Rendering.Settings.PreferNVStereo;
             bool hasNvMaterialVertexShader = MaterialHasMatchingVertexShader(HasNVStereoViewRendering);
             bool hasMultiViewMaterialVertexShader = MaterialHasMatchingVertexShader(HasMultiViewExtension);
+            bool canUseGeneratedStereoVertexShader = !MaterialHasAnyVertexShader();
             
             if (useMeshDeform)
             {
@@ -235,9 +236,9 @@ namespace XREngine.Rendering
                     ver = GetMeshDeformOVRMultiViewVersion();
                 else if (stereoPass && allowNvStereo && hasNvMaterialVertexShader)
                     ver = GetMeshDeformNVStereoVersion();
-                else if (stereoPass && preferNV && RuntimeEngine.Rendering.State.IsNVIDIA)
+                else if (stereoPass && canUseGeneratedStereoVertexShader && preferNV && RuntimeEngine.Rendering.State.IsNVIDIA)
                     ver = GetMeshDeformNVStereoVersion();
-                else if (stereoPass && RuntimeEngine.Rendering.State.HasAnyMultiViewExtension)
+                else if (stereoPass && canUseGeneratedStereoVertexShader && RuntimeEngine.Rendering.State.HasAnyMultiViewExtension)
                     ver = GetMeshDeformOVRMultiViewVersion();
                 else
                     ver = GetMeshDeformDefaultVersion();
@@ -253,9 +254,9 @@ namespace XREngine.Rendering
                     ver = GetOVRMultiViewVersion();
                 else if (stereoPass && allowNvStereo && hasNvMaterialVertexShader)
                     ver = GetNVStereoVersion();
-                else if (stereoPass && preferNV && RuntimeEngine.Rendering.State.IsNVIDIA)
+                else if (stereoPass && canUseGeneratedStereoVertexShader && preferNV && RuntimeEngine.Rendering.State.IsNVIDIA)
                     ver = GetNVStereoVersion();
-                else if (stereoPass && RuntimeEngine.Rendering.State.HasAnyMultiViewExtension)
+                else if (stereoPass && canUseGeneratedStereoVertexShader && RuntimeEngine.Rendering.State.HasAnyMultiViewExtension)
                     ver = GetOVRMultiViewVersion();
                 else
                     ver = GetDefaultVersion();
@@ -272,6 +273,9 @@ namespace XREngine.Rendering
 
             return material.VertexShaders.Any(selector);
         }
+
+        private bool MaterialHasAnyVertexShader()
+            => Material?.VertexShaders is { Count: > 0 };
 
         private static bool CanUseVrSpecificVersions()
             => RuntimeEngine.VRState.IsInVR;

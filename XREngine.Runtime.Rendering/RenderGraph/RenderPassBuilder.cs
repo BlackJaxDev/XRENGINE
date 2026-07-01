@@ -59,6 +59,16 @@ public sealed class RenderPassBuilder
     public RenderPassBuilder UseResolveAttachment(string resourceName, ERenderPassStoreOp store = ERenderPassStoreOp.Store)
         => AddUsage(resourceName, ERenderPassResourceType.ResolveAttachment, ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, store);
 
+    public RenderPassBuilder UseResolveAttachment(string resourceName, uint sourceColorIndex, ERenderPassStoreOp store = ERenderPassStoreOp.Store)
+        => AddUsage(
+            resourceName,
+            ERenderPassResourceType.ResolveAttachment,
+            ERenderGraphAccess.Write,
+            ERenderPassLoadOp.DontCare,
+            store,
+            null,
+            sourceColorIndex);
+
     public RenderPassBuilder SampleTexture(string resourceName)
         => AddUsage(resourceName, ERenderPassResourceType.SampledTexture, ERenderGraphAccess.Read, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
 
@@ -101,10 +111,11 @@ public sealed class RenderPassBuilder
         ERenderGraphAccess access,
         ERenderPassLoadOp load,
         ERenderPassStoreOp store,
-        RenderGraphSubresourceRange? subresourceRange = null)
+        RenderGraphSubresourceRange? subresourceRange = null,
+        uint? resolveSourceColorIndex = null)
     {
         if (!string.IsNullOrWhiteSpace(resourceName))
-            _metadata.AddUsage(new RenderPassResourceUsage(resourceName, type, access, load, store, subresourceRange));
+            _metadata.AddUsage(new RenderPassResourceUsage(resourceName, type, access, load, store, subresourceRange, resolveSourceColorIndex));
 
         return this;
     }
