@@ -36,12 +36,16 @@ public partial class DefaultRenderPipeline2
     {
         ViewportRenderCommandContainer c = new(this);
         var ifElse = c.Add<VPRC_IfElse>();
-        ifElse.ConditionEvaluator = () => State.WindowViewport is not null
-            && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;
+        ifElse.ConditionEvaluator = ShouldUseViewportTargetCommands;
         ifElse.TrueCommands = CreateViewportTargetCommands();
         ifElse.FalseCommands = CreateFBOTargetCommands();
         return c;
     }
+
+    private static bool ShouldUseViewportTargetCommands()
+        => State.WindowViewport is not null
+        && (RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null
+            || RuntimeEngine.Rendering.State.IsStereoPass);
     public ViewportRenderCommandContainer CreateFBOTargetCommands()
     {
         ViewportRenderCommandContainer c = new(this);

@@ -570,6 +570,28 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("preferredCascaded = camera;");
         source.ShouldContain("return preferredCascaded ?? cascadedFallback ?? preferredFallback ?? fallback;");
         source.ShouldNotContain("XRViewport?[] vrViewports");
+
+        int activeViewportIndex = source.IndexOf("foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())", System.StringComparison.Ordinal);
+        int activeCascadedFallbackIndex = source.IndexOf("if (cascadedFallback is not null)", System.StringComparison.Ordinal);
+        int leftEyeFallbackIndex = source.IndexOf("RuntimeEngine.VRState.LeftEyeViewport", activeCascadedFallbackIndex, System.StringComparison.Ordinal);
+
+        activeViewportIndex.ShouldBeGreaterThanOrEqualTo(0);
+        activeCascadedFallbackIndex.ShouldBeGreaterThan(activeViewportIndex);
+        leftEyeFallbackIndex.ShouldBeGreaterThan(activeCascadedFallbackIndex);
+    }
+
+    [Test]
+    public void DirectionalCascadeSourceFrusta_IncludeDesktopEyesAndCombinedHmd()
+    {
+        string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
+
+        cascadeSource.ShouldContain("private const int MaxCascadeSourceFrustumCount = 8;");
+        cascadeSource.ShouldContain("foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())");
+        cascadeSource.ShouldContain("AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.LeftEyeViewport");
+        cascadeSource.ShouldContain("AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.RightEyeViewport");
+        cascadeSource.ShouldContain("TryAddHmdCombinedCascadeSourceFrustum(world, destination, ref count);");
+        cascadeSource.ShouldContain("ProjectionMatrixCombiner.TryCombineProjectionMatrices");
+        cascadeSource.ShouldContain("destination[count++] = combinedLocalFrustum.TransformedBy(hmdNode.Transform.RenderMatrix);");
     }
 
     [Test]

@@ -760,6 +760,27 @@ public sealed class VrViewRenderModeContractTests
         textureView.ShouldContain("ResolveViewType(Data.TextureTarget, subresourceRange.LayerCount)");
     }
 
+    [Test]
+    public void DefaultRenderPipelines_RouteStereoFboRendersThroughFullViewportCommandChain()
+    {
+        string pipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+        string pipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
+        string pipelineLegacy = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+
+        foreach (string source in new[] { pipeline, pipeline2 })
+        {
+            source.ShouldContain("ifElse.ConditionEvaluator = ShouldUseViewportTargetCommands;");
+            source.ShouldContain("private static bool ShouldUseViewportTargetCommands()");
+            source.ShouldContain("RuntimeEngine.Rendering.State.IsStereoPass");
+            source.ShouldContain("CreateViewportTargetCommands()");
+            source.ShouldContain("CreateFBOTargetCommands()");
+        }
+
+        pipelineLegacy.ShouldContain("ifElse.ConditionEvaluator = ShouldUseViewportTargetCommands;");
+        pipeline.ShouldNotContain("&& RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;");
+        pipeline2.ShouldNotContain("&& RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;");
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         DirectoryInfo? dir = new(AppContext.BaseDirectory);

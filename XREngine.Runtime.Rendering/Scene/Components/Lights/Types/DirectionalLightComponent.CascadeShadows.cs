@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections;
 using System.ComponentModel;
 using System.Numerics;
+using XREngine.Components;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
@@ -170,6 +171,7 @@ namespace XREngine.Components.Lights
             ulong LastRenderedFrame);
 
         private const int MaxCascadeRenderCount = 8;
+        private const int MaxCascadeSourceFrustumCount = 8;
         private const float CascadeBoundsPadding = 0.05f;
         private const float ShadowBiasDepthRangeEpsilon = 1e-4f;
         private static readonly string[] CascadeViewProjectionMatrixUniformNames = CreateCascadeViewProjectionMatrixUniformNames();
@@ -196,7 +198,8 @@ namespace XREngine.Components.Lights
         private readonly DirectionalCascadeAtlasSlot[] _cascadeAtlasSlots = new DirectionalCascadeAtlasSlot[MaxCascadeRenderCount];
         private readonly BoundingRectangle[] _groupedAtlasClearRects = new BoundingRectangle[MaxCascadeRenderCount];
         private DirectionalCascadeAtlasSlot _primaryAtlasSlot;
-        private readonly Frustum[] _cascadeSourceFrusta = new Frustum[3];
+        private readonly Frustum[] _cascadeSourceFrusta = new Frustum[MaxCascadeSourceFrustumCount];
+        private readonly XRCamera?[] _cascadeSourceCameras = new XRCamera?[MaxCascadeSourceFrustumCount];
         private XRMaterial? _shadowAtlasMaterial;
         private XRMaterial? _cascadeGeometryShadowMaterial;
         private XRMaterial? _cascadeInstancedShadowMaterial;
@@ -1288,30 +1291,123 @@ namespace XREngine.Components.Lights
                 return 0;
 
             int count = 0;
-            destination[count++] = primaryCamera.WorldFrustum();
-
-            if (!RuntimeEngine.VRState.IsInVR)
-                return count;
+            Array.Clear(_cascadeSourceCameras);
+            AddCascadeSourceCameraFrustum(primaryCamera, destination, _cascadeSourceCameras, ref count);
 
             IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
-            AddEyeFrustum(RuntimeEngine.VRState.LeftEyeViewport, primaryCamera, world, destination, ref count);
-            AddEyeFrustum(RuntimeEngine.VRState.RightEyeViewport, primaryCamera, world, destination, ref count);
+            foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
+                AddCascadeSourceViewportFrustum(viewport, world, destination, _cascadeSourceCameras, ref count);
+
+            AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.LeftEyeViewport, world, destination, _cascadeSourceCameras, ref count);
+            AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.RightEyeViewport, world, destination, _cascadeSourceCameras, ref count);
+            TryAddHmdCombinedCascadeSourceFrustum(world, destination, ref count);
+
             return count;
         }
 
-        private static void AddEyeFrustum(XRViewport? viewport, XRCamera primaryCamera, IRuntimeRenderWorld? world, Span<Frustum> destination, ref int count)
+        private static bool ViewportPrefersCascadedDirectionalShadowSource(XRViewport viewport)
+        {
+            if (viewport.CameraComponent is { } cameraComponent)
+                return cameraComponent.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded;
+
+            return viewport.RendersToExternalSwapchainTarget && viewport.ActiveCamera is not null;
+        }
+
+        private static void AddCascadeSourceViewportFrustum(
+            XRViewport? viewport,
+            IRuntimeRenderWorld? world,
+            Span<Frustum> destination,
+            XRCamera?[] sourceCameras,
+            ref int count)
         {
             if (count >= destination.Length ||
                 viewport is null ||
                 !ReferenceEquals(viewport.World, world) ||
                 viewport.Suppress3DSceneRendering ||
                 viewport.ActiveCamera is not XRCamera camera ||
-                ReferenceEquals(camera, primaryCamera))
+                !ViewportPrefersCascadedDirectionalShadowSource(viewport))
             {
                 return;
             }
 
-            destination[count++] = camera.WorldFrustum();
+            AddCascadeSourceCameraFrustum(camera, destination, sourceCameras, ref count);
+        }
+
+        private static void AddCascadeSourceCameraFrustum(
+            XRCamera camera,
+            Span<Frustum> destination,
+            XRCamera?[] sourceCameras,
+            ref int count)
+        {
+            if (count >= destination.Length || ContainsCascadeSourceCamera(sourceCameras, count, camera))
+                return;
+
+            destination[count] = camera.WorldFrustum();
+            sourceCameras[count] = camera;
+            count++;
+        }
+
+        private static bool ContainsCascadeSourceCamera(XRCamera?[] sourceCameras, int count, XRCamera camera)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if (ReferenceEquals(sourceCameras[i], camera))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private void TryAddHmdCombinedCascadeSourceFrustum(
+            IRuntimeRenderWorld? world,
+            Span<Frustum> destination,
+            ref int count)
+        {
+            if (count >= destination.Length ||
+                !RuntimeEngine.VRState.IsInVR ||
+                !TryGetCascadeSourceEyeCamera(RuntimeEngine.VRState.LeftEyeViewport, world, out XRCamera? leftCamera) ||
+                !TryGetCascadeSourceEyeCamera(RuntimeEngine.VRState.RightEyeViewport, world, out XRCamera? rightCamera))
+            {
+                return;
+            }
+
+            var hmdNode = RuntimeEngine.VRState.ViewInformation.HMDNode;
+            if (hmdNode is null)
+                return;
+
+            if (!ProjectionMatrixCombiner.TryCombineProjectionMatrices(
+                leftCamera.ProjectionMatrix,
+                leftCamera.Transform.InverseLocalMatrix,
+                rightCamera.ProjectionMatrix,
+                rightCamera.Transform.InverseLocalMatrix,
+                out Matrix4x4 combinedProjection) ||
+                !Matrix4x4.Invert(combinedProjection, out Matrix4x4 inverseCombinedProjection))
+            {
+                return;
+            }
+
+            Frustum combinedLocalFrustum = new(inverseCombinedProjection);
+            destination[count++] = combinedLocalFrustum.TransformedBy(hmdNode.Transform.RenderMatrix);
+        }
+
+        private static bool TryGetCascadeSourceEyeCamera(
+            XRViewport? viewport,
+            IRuntimeRenderWorld? world,
+            out XRCamera camera)
+        {
+            camera = null!;
+
+            if (viewport is null ||
+                !ReferenceEquals(viewport.World, world) ||
+                viewport.Suppress3DSceneRendering ||
+                viewport.ActiveCamera is not XRCamera activeCamera ||
+                !ViewportPrefersCascadedDirectionalShadowSource(viewport))
+            {
+                return false;
+            }
+
+            camera = activeCamera;
+            return true;
         }
 
         private uint GetCascadeFitResolution(int cascadeIndex, XRTexture2DArray cascadeTexture)

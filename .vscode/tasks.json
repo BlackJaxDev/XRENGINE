@@ -86,6 +86,24 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Build-Monado",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\OpenXR\\Build-Monado.ps1",
+				"-InstallPrerequisites"
+			],
+			"group": "build",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Generate-UnitTestingWorldSettings",
 			"type": "shell",
 			"command": "powershell",

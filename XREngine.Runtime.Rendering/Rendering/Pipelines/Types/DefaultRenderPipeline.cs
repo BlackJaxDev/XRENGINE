@@ -1816,8 +1816,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         ViewportRenderCommandContainer c = new(this);
         var ifElse = c.Add<VPRC_IfElse>();
         ifElse.Label = "WindowViewportTarget";
-        ifElse.ConditionEvaluator = () => State.WindowViewport is not null
-            && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;
+        ifElse.ConditionEvaluator = ShouldUseViewportTargetCommands;
         ifElse.TrueCommands = CreateViewportTargetCommandsLegacy();
         ifElse.FalseCommands = CreateFBOTargetCommandsLegacy();
         return c;
