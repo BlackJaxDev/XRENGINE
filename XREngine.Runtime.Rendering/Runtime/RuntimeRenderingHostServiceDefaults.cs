@@ -27,6 +27,9 @@ public static class RuntimeRenderingHostServiceDefaults
     public const int BlendshapePrecombineComputeMinActiveShapes = 8;
     public const int BlendshapePrecombineDirectMinActiveShapes = 8;
     public const int BlendshapePrecombineMinAffectedVertices = 1024;
+    public const bool StreamMeshLodsOnDemand = false;
+    public const int MeshLodStreamingDrainIntervalFrames = 4;
+    public const int MeshLodStreamingMaxLoadsPerDrain = 8;
     public const int ShaderConfigVersion = 0;
     public const ERenderClipSpaceYDirection ClipSpaceYDirection = ERenderClipSpaceYDirection.YUp;
     public const ERenderClipDepthRange ClipDepthRange = ERenderClipDepthRange.ZeroToOne;

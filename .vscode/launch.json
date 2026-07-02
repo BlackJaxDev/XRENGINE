@@ -31,6 +31,23 @@
             }
         },
         {
+            "name": "Editor (Unit Testing World, Validation Layers)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "Build-Editor",
+            "program": "${workspaceFolder}/Build/Editor/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.Editor.exe",
+            "args": ["--unit-testing"],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "stopAtEntry": false,
+            "env": {
+                "XRE_WORLD_MODE": "UnitTesting",
+                "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL": "1",
+                "XRE_VULKAN_VALIDATION": "1",
+                "XRE_GL_DEBUG": "1"
+            }
+        },
+        {
             "name": "Debug Client (Server & other client run separately)",
             "type": "coreclr",
             "request": "launch",

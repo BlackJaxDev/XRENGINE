@@ -61,7 +61,18 @@ public unsafe partial class VulkanRenderer
         VkRenderProgram Program,
         string Consumer);
 
-    internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw, FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
+    internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw, FrameOpContext Context) : FrameOp(PassIndex, Target, Context)
+    {
+        /// <summary>
+        /// True when this draw was enqueued inside an occlusion QueryOp Begin/End bracket
+        /// (CPU occlusion proxy AABB draws). Such draws must keep their enqueue position
+        /// relative to the surrounding QueryOps: canonical opaque-draw reordering would
+        /// make the frame-op sort comparer intransitive and scramble Begin/End pairing
+        /// (observed as VUID-vkCmdBeginQuery-queryPool-01922 and
+        /// VUID-vkEndCommandBuffer-commandBuffer-00061).
+        /// </summary>
+        internal bool PreserveSubmissionOrder { get; init; }
+    }
 
     internal enum EVulkanQueryFrameOpKind
     {
@@ -232,6 +243,15 @@ public unsafe partial class VulkanRenderer
     internal bool EnqueueOcclusionQueryEnd(XRRenderQuery query)
         => EnqueueOcclusionQueryOp(query, EQueryTarget.AnySamplesPassedConservative, EVulkanQueryFrameOpKind.End);
 
+    // Tracks whether the calling thread is currently between an occlusion QueryOp
+    // Begin and End enqueue. Mesh draws enqueued inside the bracket (proxy AABB
+    // draws) are marked PreserveSubmissionOrder so the frame-op sort cannot move
+    // them (or reorder other draws across the bracket).
+    [ThreadStatic]
+    private static int t_occlusionQueryBracketDepth;
+
+    internal static bool IsInOcclusionQueryBracket => t_occlusionQueryBracketDepth > 0;
+
     private bool EnqueueOcclusionQueryOp(
         XRRenderQuery query,
         EQueryTarget target,
@@ -257,6 +277,12 @@ public unsafe partial class VulkanRenderer
             target,
             operation,
             context));
+
+        if (operation == EVulkanQueryFrameOpKind.Begin)
+            t_occlusionQueryBracketDepth++;
+        else if (t_occlusionQueryBracketDepth > 0)
+            t_occlusionQueryBracketDepth--;
+
         return true;
     }
 
@@ -1728,7 +1754,10 @@ public unsafe partial class VulkanRenderer
                 Renderer.EnsureValidPassIndex(passIndex, "MeshDraw", context.PassMetadata),
                 target,
                 draw,
-                context));
+                context)
+            {
+                PreserveSubmissionOrder = VulkanRenderer.IsInOcclusionQueryBracket,
+            });
         }
 
         internal bool TryCreatePreparedIndirectDrawSnapshot(

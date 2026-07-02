@@ -69,7 +69,7 @@ public unsafe partial class VulkanRenderer
             }
 
             private static bool CanCanonicalizeMeshDrawOrder(MeshDrawOp op)
-                => op.Draw.Renderer is not null && !op.Draw.BlendEnabled;
+                => op.Draw.Renderer is not null && !op.Draw.BlendEnabled && !op.PreserveSubmissionOrder;
 
             private static int CompareCanonicalMeshDrawOrder(MeshDrawOp x, MeshDrawOp y)
             {

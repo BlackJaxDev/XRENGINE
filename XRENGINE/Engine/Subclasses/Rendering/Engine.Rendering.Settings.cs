@@ -611,6 +611,9 @@ namespace XREngine
                 private EGpuSortDomainPolicy _gpuSortDomainPolicy = EGpuSortDomainPolicy.OpaqueFrontToBackTransparentBackToFront;
                 private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.GpuHiZ;
                 private bool _cacheGpuHiZOcclusionOncePerFrame = false;
+                private bool _streamMeshLodsOnDemand = false;
+                private int _meshLodStreamingDrainIntervalFrames = 4;
+                private int _meshLodStreamingMaxLoadsPerDrain = 8;
                 private int _cpuQueryOcclusionRetestPeriodFrames = 6;
                 private int _cpuQueryOcclusionMaxQueriesPerFrame = 64;
                 private float _cpuQueryOcclusionVisibleDemotionBudgetFraction = 0.25f;
@@ -1669,6 +1672,43 @@ namespace XREngine
                 {
                     get => _cacheGpuHiZOcclusionOncePerFrame;
                     set => SetField(ref _cacheGpuHiZOcclusionOncePerFrame, value);
+                }
+
+                /// <summary>
+                /// When true, non-essential mesh LOD levels stay out of the GPU mesh atlas until the
+                /// GPU LOD-select pass requests them. LOD0 and each command's own mesh always stay resident,
+                /// so selection clamps to the nearest resident level while finer/coarser data streams in.
+                /// </summary>
+                [Category("LOD Streaming")]
+                [Description("When true, defers non-essential mesh LOD atlas uploads until the GPU LOD-select pass requests them. LOD0 and each command's own mesh always stay resident.")]
+                public bool StreamMeshLodsOnDemand
+                {
+                    get => _streamMeshLodsOnDemand;
+                    set => SetField(ref _streamMeshLodsOnDemand, value);
+                }
+
+                /// <summary>
+                /// Render-frame interval between drains of the GPU mesh LOD request buffer.
+                /// Lower values reduce LOD pop-in latency; higher values reduce map/readback pressure.
+                /// </summary>
+                [Category("LOD Streaming")]
+                [Description("Frames between GPU mesh LOD request buffer drains (1..64). Lower = faster LOD loads, higher = less readback pressure.")]
+                public int MeshLodStreamingDrainIntervalFrames
+                {
+                    get => _meshLodStreamingDrainIntervalFrames;
+                    set => SetField(ref _meshLodStreamingDrainIntervalFrames, Math.Clamp(value, 1, 64));
+                }
+
+                /// <summary>
+                /// Maximum mesh LOD atlas loads serviced per request-buffer drain. Bounds per-frame
+                /// upload work; dropped requests are re-raised by the GPU while the LOD stays non-resident.
+                /// </summary>
+                [Category("LOD Streaming")]
+                [Description("Maximum mesh LOD atlas loads serviced per drain (1..256). Dropped requests are re-raised by the GPU on later frames.")]
+                public int MeshLodStreamingMaxLoadsPerDrain
+                {
+                    get => _meshLodStreamingMaxLoadsPerDrain;
+                    set => SetField(ref _meshLodStreamingMaxLoadsPerDrain, Math.Clamp(value, 1, 256));
                 }
 
                 /// <summary>

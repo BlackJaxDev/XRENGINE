@@ -95,6 +95,9 @@ public static class RuntimeRenderingHostServices
         public int BlendshapePrecombineComputeMinActiveShapes => RuntimeRenderingHostServiceDefaults.BlendshapePrecombineComputeMinActiveShapes;
         public int BlendshapePrecombineDirectMinActiveShapes => RuntimeRenderingHostServiceDefaults.BlendshapePrecombineDirectMinActiveShapes;
         public int BlendshapePrecombineMinAffectedVertices => RuntimeRenderingHostServiceDefaults.BlendshapePrecombineMinAffectedVertices;
+        public bool StreamMeshLodsOnDemand => RuntimeRenderingHostServiceDefaults.StreamMeshLodsOnDemand;
+        public int MeshLodStreamingDrainIntervalFrames => RuntimeRenderingHostServiceDefaults.MeshLodStreamingDrainIntervalFrames;
+        public int MeshLodStreamingMaxLoadsPerDrain => RuntimeRenderingHostServiceDefaults.MeshLodStreamingMaxLoadsPerDrain;
         public int ShaderConfigVersion => RuntimeRenderingHostServiceDefaults.ShaderConfigVersion;
         public ERenderClipSpaceYDirection ClipSpaceYDirection => RuntimeRenderingHostServiceDefaults.ClipSpaceYDirection;
         public ERenderClipDepthRange ClipDepthRange => RuntimeRenderingHostServiceDefaults.ClipDepthRange;

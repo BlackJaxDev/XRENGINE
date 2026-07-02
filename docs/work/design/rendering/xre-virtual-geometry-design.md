@@ -1,6 +1,6 @@
 # XRE Virtual Geometry Design
 
-Last Updated: 2026-05-01
+Last Updated: 2026-07-01
 Status: design
 Scope: engine-native design for paged clustered geometry, runtime detail selection, GPU-driven visibility, streaming residency, and renderer integration.
 
@@ -98,7 +98,11 @@ Content outside that boundary should keep using the existing renderer path or an
 
 ### 7.1 Valid Runtime Selection
 
-Runtime selection must never emit a cluster and any of its descendants together. It must also avoid holes where neither a cluster nor its descendants are emitted. The MVP should use a strict tree because it is easiest to validate. A DAG-capable encoding can be added later for storage compaction.
+Runtime selection must never emit a cluster and any of its descendants together. It must also avoid holes where neither a cluster nor its descendants are emitted.
+
+Selection must also be crack-free at cut boundaries: neighboring clusters that share a simplified boundary must make identical refine-or-stop decisions. That requires group-shared error values (section 9.3), not independently computed per-cluster errors.
+
+A cluster-group DAG is not a storage optimization to defer. Grouped simplification with alternating group boundaries between levels is what prevents locked-edge artifacts and boundary cracks. The runtime encoding may be flattened into tree-like ranges for the MVP, but the build process must be group-based from the first compiler milestone.
 
 ### 7.2 Resident Coverage
 
@@ -158,13 +162,22 @@ The existing meshlet settings are a good starting point:
 
 Parent clusters are built by grouping adjacent child clusters, simplifying the merged surface while preserving external borders, then reclustering the simplified result back into bounded renderable units.
 
+The grouping step is load-bearing for quality and crack avoidance:
+
+- Group roughly 8-32 adjacent clusters per group.
+- Lock only the group-external border during simplification; edges interior to the group are free to simplify, including former cluster boundaries.
+- Vary group partitioning between levels so an edge locked at one level becomes interior, and therefore simplifiable, at the next level. Without this, locked edges accumulate and error concentrates at seams.
+- Assign every cluster in a group the same error value: the maximum simplification error of the group. Force parent error to be strictly greater than child error. This makes the runtime refine-or-stop decision identical for all clusters sharing a boundary, which is what guarantees crack-free cuts without any runtime stitching.
+
+Parent-child edges naturally cross group boundaries, producing a DAG over cluster groups. The MVP may flatten this into per-cluster child ranges, but only if group identity and group-shared errors are preserved in the cooked data.
+
 Required build outputs:
 
 - child range
 - optional parent range
+- group id and group-shared geometric error
 - local bounds and bounding sphere
 - normal cone
-- geometric error
 - material or material-class reference
 - page id
 - payload offset
@@ -179,6 +192,8 @@ The compiler must validate:
 - every non-root node has a reachable root
 - every child edge points to a valid cluster
 - parent error is monotonic relative to children
+- every cluster in a group carries the identical group error value
+- group partitioning alternates between levels so locked edges do not persist across consecutive levels
 - page offsets and sizes stay within page bounds
 - material references are valid
 - fallback mesh exists when the source asset needs one
@@ -199,6 +214,8 @@ The proposed cooked extension is `.xvg`.
 | `FALL` | Conventional fallback mesh payload |
 | `META` | Build diagnostics, source hash, cluster stats, error histograms |
 | `STRS` | String table for source path fragments, debug labels, and material names |
+
+The existing cooked-asset pipeline (`CookedBinarySerializer`, `CookedAssetBlob`) is MemoryPack whole-object deserialization, which is wrong for paged geometry: pages must support partial range reads without deserializing the asset. The chunked layout above is therefore intentional and justified, but `.xvg` must still register with the cooked asset registry and carry the standard cooked envelope, versioning, and cache-invalidation hashes so it behaves like every other cooked asset for build and cache purposes.
 
 ### 9.5 C# Record Layout
 
@@ -236,7 +253,8 @@ public struct XvgClusterRecord
     public Vector3 BoundsMax;
     public Vector4 BoundsSphere;     // xyz + radius
     public Vector4 NormalCone;       // axis.xyz + cosHalfAngle
-    public float GeometricError;
+    public float GroupError;         // group-shared max error, monotonic vs children
+    public uint GroupId;
     public uint EdgeRangeStart;
     public ushort ChildCount;
     public ushort ParentCount;
@@ -263,6 +281,10 @@ public struct XvgPageRecord
 ```
 
 The cluster record is the hot metadata unit. Vertex and triangle payloads must stay in pages until a selected cluster actually needs them.
+
+These structs are file records only. GPU-side cluster metadata must be a separate, explicitly padded layout compatible with std430: `Vector3` fields inside a `Pack = 1` struct misalign every following `Vector4`, so file records must never be uploaded directly as SSBO contents. The load path should transcode file records into 16-byte-aligned GPU records once at asset load.
+
+The `EDGE` chunk must define its encoding explicitly: the record above assumes one edge range per cluster holding child edges first, then parent edges, with `ChildCount` and `ParentCount` partitioning the range.
 
 ### 9.6 Quantization And Compression
 
@@ -387,27 +409,24 @@ void SelectVisibleClusters(in ViewContext view, ReadOnlySpan<XvgInstance> instan
             if (FineHiZOccluded(worldBounds, view))
                 continue;
 
-            float errorPixels = ProjectedErrorPixels(cluster.GeometricError, worldBounds, view);
-            bool resident = Residency.IsResident(cluster.PageId);
-            bool stopHere =
-                cluster.ChildCount == 0 ||
-                errorPixels <= Settings.XvgMaxErrorPixels ||
-                !resident;
+            float errorPixels = ProjectedErrorPixels(cluster.GroupError, worldBounds, view);
+            bool wantFiner = cluster.ChildCount > 0 && errorPixels > Settings.XvgMaxErrorPixels;
+            bool childrenResident = wantFiner && Residency.AreChildPagesResident(clusterId);
 
-            if (!resident)
-                EnqueuePageRequest(cluster.PageId, ComputePagePriority(instance, cluster, view));
+            if (wantFiner && !childrenResident)
+                EnqueueChildPageRequests(clusterId, ComputePagePriority(instance, cluster, view));
 
-            if (stopHere)
-            {
-                if (resident)
-                    EmitVisibleCluster(instance, clusterId);
-                else
-                    EmitNearestResidentAncestor(instance, clusterId);
-            }
-            else
+            if (wantFiner && childrenResident)
             {
                 foreach (int child in ChildrenOf(clusterId))
                     stack.Push(child);
+            }
+            else
+            {
+                // Streaming loads pages parent-before-child (section 13.1), so
+                // traversal only ever reaches resident clusters. Emitting the
+                // current cluster is always valid and happens exactly once.
+                EmitVisibleCluster(instance, clusterId);
             }
         }
 
@@ -421,11 +440,19 @@ void SelectVisibleClusters(in ViewContext view, ReadOnlySpan<XvgInstance> instan
 
 The real GPU implementation will not use a managed `foreach` loop or rented C# stack in the shader. The pseudocode documents behavior, not literal implementation.
 
+Residency is checked on the children before descending, never on the current cluster. Combined with parent-before-child page loading, this removes any need for a runtime "nearest resident ancestor" search — such a search is a correctness hazard, because multiple non-resident siblings would each emit the same ancestor and double-render it.
+
+Because errors are group-shared and monotonic (section 9.3), the emit decision also has an order-independent formulation: a cluster belongs to the cut exactly when `ClusterError <= threshold && ParentError > threshold`. This allows a flat per-cluster compute dispatch over candidate clusters instead of a persistent-threads traversal, which maps far better to portable OpenGL compute. The stack traversal above should be treated as a hierarchy culling accelerator; a portable implementation can use level-by-level ping-pong work queues, with the flat predicate as the ground-truth cut definition and validation oracle.
+
+Occlusion timing: the existing `GPURenderPassCollection` Hi-Z builds from current-frame depth, but XVG selection runs before any depth exists for the frame. The selection pass must cull against the previous frame's Hi-Z pyramid (conservatively reprojected), then re-test clusters that were occluded last frame against the freshly built pyramid in a second pass to handle disocclusion. The existing occlusion re-test infrastructure is the natural place to grow this two-pass scheme.
+
 ## 13. Page Streaming And Residency
 
 ### 13.1 Streaming Rules
 
 - Root or minimum-resident pages are loaded before an `XVG` asset can render through the `XVG` path.
+- A page may only become resident after every page containing its clusters' ancestors is resident. Parent-before-child ordering keeps every reachable traversal prefix a valid cut and removes any need for runtime ancestor searches.
+- Eviction runs in the reverse order: finest pages first, and never a page whose children are still resident.
 - Fine page misses request IO but render a resident parent in the current frame.
 - Page requests are deduplicated and prioritized by projected error, screen size, view distance, and recent visibility.
 - Uploads share the render-work budget with texture uploads, mesh uploads, shader warmup, and shadow atlas work.
@@ -678,6 +705,8 @@ Triangle count is not the primary runtime budget. The main control variables are
 | Cluster bounds | Every triangle in a cluster is contained by cluster bounds |
 | Hierarchy validity | No cycles, valid child ranges, reachable roots |
 | Valid cut coverage | Parent/child selection cannot double-render or miss coverage |
+| Group error consistency | Every cluster in a group carries the group max error; parent group error is strictly greater |
+| Boundary alternation | Edges locked at one level are interior and simplifiable at an adjacent level |
 | Border preservation | Adjacent cluster cuts do not create cracks |
 | Page table integrity | Payload offsets and sizes fit the owning page |
 | Fallback presence | Every eligible asset has a valid fallback route |
@@ -742,9 +771,9 @@ Runtime protection:
 ### Phase 1: Offline Compiler MVP
 
 - Build leaf clusters from `XRMesh`.
-- Build a strict tree hierarchy.
+- Build a cluster-group hierarchy: grouped simplification with alternating group boundaries and group-shared errors. A flattened tree encoding is acceptable only if group identity and group-shared errors are preserved.
 - Emit `.xvg` with metadata, pages, fallback mesh, and build report.
-- Add offline validators and deterministic cook tests.
+- Add offline validators and deterministic cook tests, including group-error and boundary-alternation checks.
 
 ### Phase 2: Runtime Residency MVP
 
@@ -793,7 +822,7 @@ Runtime protection:
 
 ### Phase 8: Advanced Features
 
-- DAG compaction.
+- Hierarchy encoding compaction and cross-instance data sharing.
 - Small-triangle software raster path.
 - Sparse resource experiments.
 - Mesh shader task dispatch experiments.
@@ -819,7 +848,8 @@ A credible MVP for static opaque meshes with hardware rasterization is roughly 3
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Compiler creates cracks | Severe visual artifacts | Border locking, seam tests, cut validator |
+| Compiler creates cracks | Severe visual artifacts | Group-shared errors, border locking, seam tests, cut validator |
+| Locked boundaries resist simplification | Error concentrates at seams, poor coarse levels | Alternating group partitioning between levels |
 | Page streaming thrashes | Stutter and quality bounce | Root residency, hysteresis, upload budget, pressure logs |
 | Material diversity explodes bins | Draw or dispatch overhead | State-class grouping and material eligibility reports |
 | OpenGL binding limits constrain materials | Backend-specific fallback behavior | Capability flags, material windows, classic fallback |
@@ -835,6 +865,7 @@ A credible MVP for static opaque meshes with hardware rasterization is roughly 3
 - How should `XVG` eligibility be represented in import settings and material inspectors?
 - Should meshlet generation settings become the first `XVG` leaf-cluster settings UI, or should `XVG` expose a separate profile?
 - Which scenes should become the canonical validation corpus for large static geometry?
+- Should shadow views reuse the main-view cut, or select an independent, coarser cut per shadow cascade or cube face? The `GPURenderPassCollection` view-set support is the natural hook, but per-view selection multiplies traversal cost.
 - Should `log_virtual_geometry.txt` be enabled by default in Debug summary mode, or only when the feature is enabled?
 
 ## 26. Final Recommendation
