@@ -17,6 +17,11 @@ Backend support is path-specific:
   queries against `CulledSceneToRenderBuffer` after the GPU cull pass on the
   supported instrumented/OpenGL path. Zero-readback modes should use `GpuHiZ`.
 
+The requested `CpuQueryAsync` mode is not rewritten by the Vulkan feature
+profile. Unsupported backends or pass shapes must report an explicit skip /
+force-visible reason instead of silently substituting a different occlusion
+algorithm.
+
 It complements the GPU Hi-Z compute path (`GpuHiZ`) and the CPU software
 rasterizer (`CpuSoftwareOcclusion`).
 
@@ -61,6 +66,12 @@ OpenGL executes those calls directly through `GLRenderQuery`. Vulkan enqueues
 `QueryOp` frame operations around the deferred proxy `MeshDrawOp`, then records
 `vkCmdBeginQuery` / `vkCmdEndQuery` inside the same render pass as the proxy
 draw.
+
+CPU occlusion only runs on primary opaque/masked scene passes. Shadow passes and
+forward depth-normal prepasses bypass both CPU-query and CPU software occlusion:
+their depth contents are inputs to later lighting/visibility work, so letting
+them make or reuse temporal occlusion decisions can produce stale one-frame
+holes and duplicate per-mesh query work.
 
 The two-step lifecycle (`SubmitCpuOcclusionQueryBatch` + `ResolveCpuOcclusionQueryResults`)
 is intentionally asynchronous. Queries submitted on frame N typically resolve on
@@ -143,7 +154,7 @@ the path is inactive (effective mode mismatch, zero-readback strategy, etc.).
 | Backend | Status |
 | --- | --- |
 | OpenGL 4.6 | Production. Uses `GL_ANY_SAMPLES_PASSED_CONSERVATIVE`. |
-| Vulkan | CPU-direct supported through `VkQueryPool` occlusion queries recorded as Vulkan frame ops. GPU-dispatch refinement remains limited to the supported/instrumented path; prefer `GpuHiZ` for Vulkan GPU-driven zero-readback. |
+| Vulkan | CPU-direct uses `VkQueryPool` occlusion queries recorded as Vulkan frame ops when `GpuOcclusionCullingMode=CpuQueryAsync`. GPU-dispatch refinement remains limited to the supported/instrumented path; prefer `GpuHiZ` for Vulkan GPU-driven zero-readback. |
 | DX12 | Not implemented. |
 
 Both OpenGL and Vulkan resolve through `AsyncOcclusionQueryManager` with

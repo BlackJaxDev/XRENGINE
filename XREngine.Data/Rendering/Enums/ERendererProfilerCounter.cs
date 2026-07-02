@@ -32,4 +32,8 @@ public enum ERendererProfilerCounter
     GpuIndirectDrawCalls = 23,
     GpuMeshletDrawCalls = 24,
     UnknownStrategyDrawCalls = 25,
+    DirectionalCascadeStaleSampled = 26,
+    DirectionalCascadeMixedGenerationPrevented = 27,
+    DirectionalCascadePhysicalReprojected = 28,
+    DirectionalCascadeForcedFreshRender = 29,
 }

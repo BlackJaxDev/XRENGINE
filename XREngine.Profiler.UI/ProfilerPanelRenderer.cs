@@ -350,7 +350,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     //  Panel draw methods
     // ═══════════════════════════════════════════════════════════════
 
-    public void DrawProfilerTreePanel(ref bool open, bool allowClose = true)
+    public void DrawProfilerTreePanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -370,6 +370,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var nowUtc = DateTime.UtcNow;
 
@@ -516,7 +518,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             ImGui.SetTooltip("Write a unique LLM-oriented log for the latest CPU profiler frame snapshot.");
     }
 
-    public void DrawFpsDropSpikesPanel(ref bool open, bool allowClose = true)
+    public void DrawFpsDropSpikesPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -536,6 +538,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         if (ImGui.Button("Clear Spikes"))
         {
@@ -600,7 +604,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
-    public void DrawRenderStatsPanel(ref bool open, bool allowClose = true)
+    public void DrawRenderStatsPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -620,6 +624,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var stats = _source.LatestRenderStats;
         if (stats is null)
@@ -1039,7 +1045,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
-    public void DrawGpuPipelinePanel(ref bool open, bool allowClose = true)
+    public void DrawGpuPipelinePanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1060,6 +1066,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         if (_source.LatestRenderStats is null)
         {
@@ -1192,7 +1200,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         => root.Children is { Length: > 0 } &&
            !string.Equals(root.Name, "Render Thread (CPU+Present)", StringComparison.Ordinal);
 
-    public void DrawThreadAllocationsPanel(ref bool open, bool allowClose = true)
+    public void DrawThreadAllocationsPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1212,6 +1220,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var allocs = _source.LatestAllocations;
         if (allocs is null)
@@ -1243,7 +1253,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
-    public void DrawComponentTimingsPanel(ref bool open, bool allowClose = true)
+    public void DrawComponentTimingsPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1263,6 +1273,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var frame = _source.LatestFrame;
         var components = frame?.ComponentTimings;
@@ -1322,7 +1334,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
-    public void DrawBvhMetricsPanel(ref bool open, bool allowClose = true)
+    public void DrawBvhMetricsPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1343,6 +1355,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             }
         }
 
+        drawHeader?.Invoke();
+
         var bvh = _source.LatestBvhMetrics;
         if (bvh is null)
         {
@@ -1359,7 +1373,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
-    public void DrawJobSystemPanel(ref bool open, bool allowClose = true)
+    public void DrawJobSystemPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1379,6 +1393,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var jobs = _source.LatestJobStats;
         if (jobs is null)
@@ -1423,7 +1439,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
-    public void DrawMainThreadInvokesPanel(ref bool open, bool allowClose = true)
+    public void DrawMainThreadInvokesPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1443,6 +1459,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var invokes = _source.LatestMainThreadInvokes;
         if (invokes is null || invokes.Entries is null)

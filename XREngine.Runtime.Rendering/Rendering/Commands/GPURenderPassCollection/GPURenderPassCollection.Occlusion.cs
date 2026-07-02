@@ -125,7 +125,6 @@ namespace XREngine.Rendering.Commands
         private EOcclusionCullingMode _lastLoggedOcclusionMode = (EOcclusionCullingMode)(-1);
         private bool _loggedGpuHiZOcclusionScaffold;
         private bool _loggedCpuQueryAsyncScaffold;
-        private bool _loggedCpuQueryModeSuppressedByProfile;
 
         private static readonly AsyncOcclusionQueryManager s_cpuOcclusionQueryManager = new();
         private readonly List<(uint SourceCommandIndex, XRRenderQuery Query)> _cpuOcclusionPending = [];
@@ -303,26 +302,7 @@ namespace XREngine.Rendering.Commands
             if (ForcePassthroughCulling)
                 return EOcclusionCullingMode.Disabled;
 
-            EOcclusionCullingMode mode = VulkanFeatureProfile.ResolveOcclusionCullingMode(RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode);
-            if (!VulkanFeatureProfile.IsActive)
-                return mode;
-
-            if (mode == EOcclusionCullingMode.CpuQueryAsync && VulkanFeatureProfile.ActiveProfile != EVulkanGpuDrivenProfile.Diagnostics)
-            {
-                if (!_loggedCpuQueryModeSuppressedByProfile)
-                {
-                    _loggedCpuQueryModeSuppressedByProfile = true;
-                    Log(LogCategory.Culling, LogLevel.Warning,
-                        "Occlusion mode {0} suppressed for profile {1}; using {2} canonical path.",
-                        EOcclusionCullingMode.CpuQueryAsync,
-                        VulkanFeatureProfile.ActiveProfile,
-                        EOcclusionCullingMode.GpuHiZ);
-                }
-
-                return EOcclusionCullingMode.GpuHiZ;
-            }
-
-            return mode;
+            return VulkanFeatureProfile.ResolveOcclusionCullingMode(RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode);
         }
 
         private void ApplyOcclusionCulling(GPUScene scene, XRCamera? camera)

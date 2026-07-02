@@ -81,11 +81,12 @@ public static partial class EditorImGuiUI
         ImGui.TextColored(new Vector4(0.6f, 0.9f, 1.0f, 1.0f), "CPU-Query Path (hardware AnySamplesPassed):");
         int cpuSkipNoCam = OcclusionTelemetry.CpuPassesSkippedNoCamera;
         int cpuSkipShadow = OcclusionTelemetry.CpuPassesSkippedShadow;
+        int cpuSkipDepthPrepass = OcclusionTelemetry.CpuPassesSkippedDepthNormalPrePass;
         int cpuSkipMode = OcclusionTelemetry.CpuPassesSkippedModeOff;
         if (cpuPasses == 0)
         {
             ImGui.TextDisabled("  Not active this frame.");
-            if (cpuSkipNoCam + cpuSkipShadow + cpuSkipMode > 0)
+            if (cpuSkipNoCam + cpuSkipShadow + cpuSkipDepthPrepass + cpuSkipMode > 0)
             {
                 ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.3f, 1.0f), "  Skip reasons (RenderCPU calls bypassed):");
                 if (cpuSkipMode > 0)
@@ -94,6 +95,8 @@ public static partial class EditorImGuiUI
                     ImGui.Text($"    camera null           : {cpuSkipNoCam}");
                 if (cpuSkipShadow > 0)
                     ImGui.Text($"    shadow pass           : {cpuSkipShadow}");
+                if (cpuSkipDepthPrepass > 0)
+                    ImGui.Text($"    depth-normal prepass  : {cpuSkipDepthPrepass}");
             }
             else
             {
@@ -103,8 +106,8 @@ public static partial class EditorImGuiUI
         else
         {
             ImGui.Text($"  Passes Active : {cpuPasses}");
-            if (cpuSkipNoCam + cpuSkipShadow + cpuSkipMode > 0)
-                ImGui.Text($"  Passes Skipped: noCam={cpuSkipNoCam} shadow={cpuSkipShadow} modeOff={cpuSkipMode}");
+            if (cpuSkipNoCam + cpuSkipShadow + cpuSkipDepthPrepass + cpuSkipMode > 0)
+                ImGui.Text($"  Passes Skipped: noCam={cpuSkipNoCam} shadow={cpuSkipShadow} depthPre={cpuSkipDepthPrepass} modeOff={cpuSkipMode}");
             ImGui.Text($"  Tested        : {cpuTested:N0}");
             Vector4 culledColor = cpuCulled > 0
                 ? new Vector4(0.4f, 1.0f, 0.6f, 1.0f)

@@ -213,6 +213,7 @@ public static class RuntimeRenderingHostServices
         public long MaxShadowAtlasMemoryBytes => RuntimeRenderingHostServiceDefaults.MaxShadowAtlasMemoryBytes;
         public int MaxShadowTilesRenderedPerFrame => RuntimeRenderingHostServiceDefaults.MaxShadowTilesRenderedPerFrame;
         public float MaxShadowRenderMilliseconds => RuntimeRenderingHostServiceDefaults.MaxShadowRenderMilliseconds;
+        public int MaxDirectionalCascadeAtlasStaleFrames => RuntimeRenderingHostServiceDefaults.MaxDirectionalCascadeAtlasStaleFrames;
         public uint MinShadowAtlasTileResolution => RuntimeRenderingHostServiceDefaults.MinShadowAtlasTileResolution;
         public uint MaxShadowAtlasTileResolution => RuntimeRenderingHostServiceDefaults.MaxShadowAtlasTileResolution;
 

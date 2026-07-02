@@ -248,6 +248,7 @@ public sealed partial class RenderProfilerV2Data
     public RenderProfilerRendererStateData RendererState { get; set; } = new();
     public RenderProfilerSceneAssetData SceneAssets { get; set; } = new();
     public RenderProfilerGpuDrivenData GpuDriven { get; set; } = new();
+    public RenderProfilerOcclusionData Occlusion { get; set; } = new();
 }
 
 [MemoryPackable]
@@ -413,6 +414,8 @@ public sealed partial class ShadowAtlasSolveDiagnosticsData
     public int PointGroupSeedCount { get; set; }
     public int PointGroupMemberCount { get; set; }
     public int PointGroupCoLocationFailureCount { get; set; }
+    public int IncrementalReuseCount { get; set; }
+    public int WaterlineDemotionCount { get; set; }
     public string LastFailureReason { get; set; } = string.Empty;
 }
 
@@ -462,6 +465,10 @@ public sealed partial class RenderProfilerRendererStateData
     public int GpuIndirectDrawCalls { get; set; }
     public int GpuMeshletDrawCalls { get; set; }
     public int UnknownStrategyDrawCalls { get; set; }
+    public int DirectionalCascadeStaleSampled { get; set; }
+    public int DirectionalCascadeMixedGenerationPrevented { get; set; }
+    public int DirectionalCascadePhysicalReprojected { get; set; }
+    public int DirectionalCascadeForcedFreshRender { get; set; }
     public string ActiveTextureBindingRung { get; set; } = string.Empty;
     public string ActiveStereoMode { get; set; } = string.Empty;
     public string ActiveSubmissionStrategy { get; set; } = string.Empty;
@@ -469,6 +476,45 @@ public sealed partial class RenderProfilerRendererStateData
     public bool ValidationLayersEnabled { get; set; }
     public bool DebugOutputEnabled { get; set; }
     public bool GpuTimestampsDenseMode { get; set; }
+}
+
+[MemoryPackable]
+public sealed partial class RenderProfilerOcclusionData
+{
+    public string EffectiveMode { get; set; } = string.Empty;
+    public string SubmissionStrategy { get; set; } = string.Empty;
+    public int CpuPassesActive { get; set; }
+    public int CpuPassesSkippedNoCamera { get; set; }
+    public int CpuPassesSkippedShadow { get; set; }
+    public int CpuPassesSkippedDepthNormalPrePass { get; set; }
+    public int CpuPassesSkippedModeOff { get; set; }
+    public int CpuTested { get; set; }
+    public int CpuCulled { get; set; }
+    public int CpuRendered { get; set; }
+    public int CpuDecisionSeed { get; set; }
+    public int CpuDecisionCached { get; set; }
+    public int CpuDecisionVisibleQuery { get; set; }
+    public int CpuDecisionVisibleHysteresis { get; set; }
+    public int CpuDecisionProbe { get; set; }
+    public int CpuDecisionSkip { get; set; }
+    public int CpuDecisionForcedVisible { get; set; }
+    public string CpuMotionTier { get; set; } = string.Empty;
+    public string CpuActiveViewScope { get; set; } = string.Empty;
+    public int CpuGlobalConservativeFrames { get; set; }
+    public int CpuPendingQueries { get; set; }
+    public long CpuQuerySubmittedTotal { get; set; }
+    public long CpuQueryResolvedTotal { get; set; }
+    public int CpuQueryLatencySamples { get; set; }
+    public double CpuQueryLatencyAverageFrames { get; set; }
+    public int CpuQueryLatencyMaxFrames { get; set; }
+    public long CpuBudgetSkippedTotal { get; set; }
+    public long CpuForcedVisibleTotal { get; set; }
+    public int CpuUnsupportedStereoQueryMode { get; set; }
+    public int CpuQueryAsyncSubmitted { get; set; }
+    public int CpuQueryAsyncResolved { get; set; }
+    public int CpuQueryAsyncOccluded { get; set; }
+    public int CpuSocTested { get; set; }
+    public int CpuSocCulled { get; set; }
 }
 
 [MemoryPackable]

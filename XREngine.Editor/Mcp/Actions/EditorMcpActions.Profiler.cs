@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using XREngine;
 using XREngine.Data.Core;
 using GpuPipelineStats = XREngine.Engine.Rendering.Stats.GpuPipelineProfiler;
+using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
 using VrStats = XREngine.Engine.Rendering.Stats.Vr;
 using VulkanStats = XREngine.Engine.Rendering.Stats.Vulkan;
 
@@ -74,6 +75,43 @@ namespace XREngine.Editor.Mcp
                         backend = GpuPipelineStats.GpuRenderPipelineBackend,
                         status = GpuPipelineStats.GpuRenderPipelineStatusMessage,
                         frame_ms = GpuPipelineStats.GpuRenderPipelineFrameMs,
+                    },
+                    occlusion = new
+                    {
+                        effective_mode = OcclusionTelemetry.LastEffectiveMode.ToString(),
+                        submission_strategy = OcclusionTelemetry.LastSubmissionStrategy.ToString(),
+                        cpu_passes_active = OcclusionTelemetry.CpuPassesActive,
+                        cpu_passes_skipped_no_camera = OcclusionTelemetry.CpuPassesSkippedNoCamera,
+                        cpu_passes_skipped_shadow = OcclusionTelemetry.CpuPassesSkippedShadow,
+                        cpu_passes_skipped_depth_normal_prepass = OcclusionTelemetry.CpuPassesSkippedDepthNormalPrePass,
+                        cpu_passes_skipped_mode_off = OcclusionTelemetry.CpuPassesSkippedModeOff,
+                        cpu_tested = OcclusionTelemetry.CpuTested,
+                        cpu_culled = OcclusionTelemetry.CpuCulled,
+                        cpu_rendered = OcclusionTelemetry.CpuRendered,
+                        cpu_decision_seed = OcclusionTelemetry.CpuDecisionSeed,
+                        cpu_decision_cached = OcclusionTelemetry.CpuDecisionCached,
+                        cpu_decision_visible_query = OcclusionTelemetry.CpuDecisionVisibleQuery,
+                        cpu_decision_visible_hysteresis = OcclusionTelemetry.CpuDecisionVisibleHysteresis,
+                        cpu_decision_probe = OcclusionTelemetry.CpuDecisionProbe,
+                        cpu_decision_skip = OcclusionTelemetry.CpuDecisionSkip,
+                        cpu_decision_forced_visible = OcclusionTelemetry.CpuDecisionForcedVisible,
+                        cpu_motion_tier = OcclusionTelemetry.CpuMotionTier.ToString(),
+                        cpu_active_view_scope = OcclusionTelemetry.CpuActiveViewScope.ToString(),
+                        cpu_global_conservative_frames = OcclusionTelemetry.CpuGlobalConservativeFrames,
+                        cpu_pending_queries = OcclusionTelemetry.CpuPendingQueries,
+                        cpu_query_submitted_total = OcclusionTelemetry.CpuQuerySubmittedTotal,
+                        cpu_query_resolved_total = OcclusionTelemetry.CpuQueryResolvedTotal,
+                        cpu_query_latency_samples = OcclusionTelemetry.CpuQueryLatencySamples,
+                        cpu_query_latency_average_frames = OcclusionTelemetry.CpuQueryLatencyAverageFrames,
+                        cpu_query_latency_max_frames = OcclusionTelemetry.CpuQueryLatencyMaxFrames,
+                        cpu_budget_skipped_total = OcclusionTelemetry.CpuBudgetSkippedTotal,
+                        cpu_forced_visible_total = OcclusionTelemetry.CpuForcedVisibleTotal,
+                        cpu_unsupported_stereo_query_mode = OcclusionTelemetry.CpuUnsupportedStereoQueryMode,
+                        cpu_query_async_submitted = OcclusionTelemetry.CpuQueryAsyncSubmitted,
+                        cpu_query_async_resolved = OcclusionTelemetry.CpuQueryAsyncResolved,
+                        cpu_query_async_occluded = OcclusionTelemetry.CpuQueryAsyncOccluded,
+                        cpu_soc_tested = OcclusionTelemetry.CpuSocTested,
+                        cpu_soc_culled = OcclusionTelemetry.CpuSocCulled,
                     },
                     vr = new
                     {

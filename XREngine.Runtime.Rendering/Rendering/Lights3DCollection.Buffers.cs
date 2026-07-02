@@ -57,6 +57,11 @@ namespace XREngine.Scene
                 }
             }
 
+            using (RuntimeEngine.Profiler.Start("Lights3DCollection.SwapBuffers.ShadowAtlas"))
+            {
+                PublishShadowAtlasFrame(collectVisibleNow: false, scratch);
+            }
+
             using (RuntimeEngine.Profiler.Start("WorldInstance.GlobalSwapBuffers.LightmapBaking"))
             {
                 LightmapBaking.ProcessManualRequests();

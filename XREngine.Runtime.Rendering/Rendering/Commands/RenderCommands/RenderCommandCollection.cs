@@ -577,11 +577,19 @@ namespace XREngine.Rendering.Commands
                 || renderPass == (int)EDefaultRenderPass.MaskedForward;
         }
 
-        internal bool PrepareCpuSoftwareOcclusion(int renderPass, XRCamera? camera)
+        private static bool ShouldSuppressOcclusionForCurrentPass(bool suppressDepthNormalPrePass, out bool isShadowPass, out bool isDepthNormalPrePass)
         {
+            isShadowPass = RuntimeEngine.Rendering.State.IsShadowPass;
+            isDepthNormalPrePass = suppressDepthNormalPrePass;
+            return isShadowPass || isDepthNormalPrePass;
+        }
+
+        internal bool PrepareCpuSoftwareOcclusion(int renderPass, XRCamera? camera, bool suppressCpuOcclusionForPass = false)
+        {
+            bool suppressOcclusion = ShouldSuppressOcclusionForCurrentPass(suppressCpuOcclusionForPass, out _, out _);
             if (!CpuSoftwareOcclusionCuller.IsEnabled ||
                 camera is null ||
-                RuntimeEngine.Rendering.State.IsShadowPass ||
+                suppressOcclusion ||
                 !RenderPassIsOcclusionTestable(renderPass))
             {
                 return false;
@@ -624,7 +632,8 @@ namespace XREngine.Rendering.Commands
             bool skipGpuCommands = false,
             XRCamera? camera = null,
             bool allowExcludedGpuFallbackMeshes = true,
-            Action<IRenderCommandMesh>? onExcludedGpuFallbackMesh = null)
+            Action<IRenderCommandMesh>? onExcludedGpuFallbackMesh = null,
+            bool suppressCpuOcclusionForPass = false)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
@@ -632,13 +641,13 @@ namespace XREngine.Rendering.Commands
                 return;
 
             EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;
-            bool isShadowPass = RuntimeEngine.Rendering.State.IsShadowPass;
+            bool suppressOcclusion = ShouldSuppressOcclusionForCurrentPass(suppressCpuOcclusionForPass, out bool isShadowPass, out bool isDepthNormalPrePass);
             bool useCpuQueryOcclusion =
-                !isShadowPass &&
+                !suppressOcclusion &&
                 camera is not null &&
                 occlusionMode == EOcclusionCullingMode.CpuQueryAsync &&
                 RenderPassIsOcclusionTestable(renderPass);
-            bool useCpuSocOcclusion = PrepareCpuSoftwareOcclusion(renderPass, camera);
+            bool useCpuSocOcclusion = PrepareCpuSoftwareOcclusion(renderPass, camera, suppressCpuOcclusionForPass);
 
             EOcclusionCullingMode appliedOcclusionMode = useCpuQueryOcclusion
                 ? EOcclusionCullingMode.CpuQueryAsync
@@ -660,6 +669,7 @@ namespace XREngine.Rendering.Commands
                 XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuPassSkipped(
                     noCamera: camera is null,
                     shadowPass: isShadowPass,
+                    depthNormalPrePass: isDepthNormalPrePass,
                     modeOff: occlusionMode != EOcclusionCullingMode.CpuQueryAsync);
             }
 
@@ -1021,10 +1031,10 @@ namespace XREngine.Rendering.Commands
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
-            bool shadowPass = RuntimeEngine.Rendering.State.IsShadowPass;
+            bool suppressOcclusion = ShouldSuppressOcclusionForCurrentPass(false, out _, out _);
             bool occlusionTestable =
                 respectCpuQueryOcclusion &&
-                !shadowPass &&
+                !suppressOcclusion &&
                 RenderPassIsOcclusionTestable(renderPass);
             XRCamera? camera = occlusionTestable ? GetActiveCpuOcclusionCamera() : null;
             EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;
