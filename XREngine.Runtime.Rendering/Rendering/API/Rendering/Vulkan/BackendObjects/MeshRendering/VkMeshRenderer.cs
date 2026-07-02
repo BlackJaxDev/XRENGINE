@@ -41,6 +41,7 @@ public unsafe partial class VulkanRenderer
     private const int FrameOpKindTransformFeedback = 9;
     private const int FrameOpKindComputeDispatch = 10;
     private const int FrameOpKindTextureUpload = 11;
+    private const int FrameOpKindQuery = 12;
 
     internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpContext Context);
 
@@ -61,6 +62,20 @@ public unsafe partial class VulkanRenderer
         string Consumer);
 
     internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw, FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
+
+    internal enum EVulkanQueryFrameOpKind
+    {
+        Begin,
+        End,
+    }
+
+    internal sealed record QueryOp(
+        int PassIndex,
+        XRFrameBuffer? Target,
+        VkRenderQuery Query,
+        EQueryTarget QueryTarget,
+        EVulkanQueryFrameOpKind Operation,
+        FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
 
     internal readonly record struct VulkanFrameDrawStats(int DrawCalls, int MultiDrawCalls, int TrianglesRendered);
 
@@ -211,6 +226,40 @@ public unsafe partial class VulkanRenderer
             _frameOps.Add(validatedOp);
     }
 
+    internal bool EnqueueOcclusionQueryBegin(XRRenderQuery query, EQueryTarget target)
+        => EnqueueOcclusionQueryOp(query, target, EVulkanQueryFrameOpKind.Begin);
+
+    internal bool EnqueueOcclusionQueryEnd(XRRenderQuery query)
+        => EnqueueOcclusionQueryOp(query, EQueryTarget.AnySamplesPassedConservative, EVulkanQueryFrameOpKind.End);
+
+    private bool EnqueueOcclusionQueryOp(
+        XRRenderQuery query,
+        EQueryTarget target,
+        EVulkanQueryFrameOpKind operation)
+    {
+        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null)
+            return false;
+
+        VkRenderQuery? vkQuery = GenericToAPI<VkRenderQuery>(query);
+        if (vkQuery is null)
+            return false;
+
+        FrameOpContext context = CaptureFrameOpContext();
+        int passIndex = EnsureValidPassIndex(
+            RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+            "Query",
+            context.PassMetadata);
+
+        EnqueueFrameOp(new QueryOp(
+            passIndex,
+            GetCurrentDrawFrameBuffer(),
+            vkQuery,
+            target,
+            operation,
+            context));
+        return true;
+    }
+
     internal FrameOp[] CaptureFrameOpsExcludingTextureUploads(Action emitFrameOps, out ulong signature)
         => CaptureFrameOps(emitFrameOps, excludeTextureUploads: true, out signature);
 
@@ -358,6 +407,7 @@ public unsafe partial class VulkanRenderer
         {
             ClearOp clear => clear with { PassIndex = validatedPassIndex },
             MeshDrawOp meshDraw => meshDraw with { PassIndex = validatedPassIndex },
+            QueryOp query => query with { PassIndex = validatedPassIndex },
             BlitOp blit => blit with { PassIndex = validatedPassIndex },
             IndirectDrawOp indirectDraw => indirectDraw with { PassIndex = validatedPassIndex },
             MeshTaskDispatchIndirectCountOp meshTaskDispatch => meshTaskDispatch with { PassIndex = validatedPassIndex },
@@ -546,6 +596,11 @@ public unsafe partial class VulkanRenderer
                     hash.Add(meshDraw.Draw.PreparedProgramIdentity);
                     HashProgramBindingSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot);
                     break;
+                case QueryOp query:
+                    hash.Add(query.Query.GetHashCode());
+                    hash.Add((int)query.QueryTarget);
+                    hash.Add((int)query.Operation);
+                    break;
                 case BlitOp blit:
                     hash.Add(blit.InFbo?.GetHashCode() ?? 0);
                     hash.Add(blit.OutFbo?.GetHashCode() ?? 0);
@@ -654,6 +709,7 @@ public unsafe partial class VulkanRenderer
         {
             ClearOp => FrameOpKindClear,
             MeshDrawOp => FrameOpKindMeshDraw,
+            QueryOp => FrameOpKindQuery,
             BlitOp => FrameOpKindBlit,
             IndirectDrawOp => FrameOpKindIndirectDraw,
             MeshTaskDispatchIndirectCountOp => FrameOpKindMeshTaskDispatchIndirectCount,

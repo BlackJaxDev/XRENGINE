@@ -394,8 +394,7 @@ namespace XREngine.Components.Lights
             bool needsRasterDepth = ShouldUseVulkanRasterDepthReceiverTexture();
             if (CastsShadows &&
                 EnableCascadedShadows &&
-                (state.ShadowMapTexture is null ||
-                 (needsRasterDepth && state.RasterDepthTexture is null)))
+                (needsRasterDepth ? state.RasterDepthTexture is null : state.ShadowMapTexture is null))
             {
                 EnsureCascadeShadowResources(source);
             }
@@ -411,7 +410,7 @@ namespace XREngine.Components.Lights
         internal bool HasCascadeRasterDepthTextureForSource(ShadowRequestSource source) => GetCascadeSourceState(source).RasterDepthTexture is not null;
         internal bool UsesCascadeRasterDepthReceiver => ShouldUseVulkanRasterDepthReceiverTexture();
 
-        private XRTexture2DArray? GetCascadeReceiverTextureForDiagnostics(DirectionalCascadeSourceState state)
+        private XRTexture2DArray? SelectCascadeReceiverTexture(DirectionalCascadeSourceState state)
             => ShouldUseVulkanRasterDepthReceiverTexture()
                 ? state.RasterDepthTexture
                 : state.ShadowMapTexture;
@@ -1262,39 +1261,53 @@ namespace XREngine.Components.Lights
             ETexMagFilter magFilter = selection.Format.RequiresLinearFiltering ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
             int smallestAllowedMomentMip = ResolveShadowMomentSmallestAllowedMipmapLevel(momentEncoding, ShadowMomentUseMipmaps, width, height);
 
-            bool recreateTexture = state.ShadowMapTexture is null ||
-                state.ShadowMapTexture.Depth != (uint)requiredCascades ||
-                state.ShadowMapTexture.Width != width ||
-                state.ShadowMapTexture.Height != height ||
-                state.ShadowMapTexture.SizedInternalFormat != shadowFormat.SizedInternalFormat ||
+            // On the Vulkan depth-encoding path the raster depth array is the receiver;
+            // the color/moment array would be cleared and written but never sampled, so
+            // skip allocating it entirely and render the cascades depth-only.
+            bool needsColorArray = !ShouldUseVulkanRasterDepthReceiverTexture();
+
+            bool colorArrayMismatch = needsColorArray
+                ? state.ShadowMapTexture is null ||
+                    state.ShadowMapTexture.Depth != (uint)requiredCascades ||
+                    state.ShadowMapTexture.Width != width ||
+                    state.ShadowMapTexture.Height != height ||
+                    state.ShadowMapTexture.SizedInternalFormat != shadowFormat.SizedInternalFormat ||
+                    state.ShadowMapTexture.MinFilter != minFilter ||
+                    state.ShadowMapTexture.MagFilter != magFilter ||
+                    state.ShadowMapTexture.AutoGenerateMipmaps != (momentEncoding && ShadowMomentUseMipmaps) ||
+                    state.ShadowMapTexture.SmallestAllowedMipmapLevel != smallestAllowedMomentMip
+                : state.ShadowMapTexture is not null;
+
+            bool recreateTexture = colorArrayMismatch ||
                 state.RasterDepthTexture is null ||
                 state.RasterDepthTexture.Depth != (uint)requiredCascades ||
                 state.RasterDepthTexture.Width != width ||
                 state.RasterDepthTexture.Height != height ||
-                state.RasterDepthTexture.SizedInternalFormat != depthFormat.SizedInternalFormat ||
-                state.ShadowMapTexture.MinFilter != minFilter ||
-                state.ShadowMapTexture.MagFilter != magFilter ||
-                state.ShadowMapTexture.AutoGenerateMipmaps != (momentEncoding && ShadowMomentUseMipmaps) ||
-                state.ShadowMapTexture.SmallestAllowedMipmapLevel != smallestAllowedMomentMip;
+                state.RasterDepthTexture.SizedInternalFormat != depthFormat.SizedInternalFormat;
 
             if (recreateTexture)
             {
                 state.ShadowMapTexture?.Destroy();
+                state.ShadowMapTexture = null;
                 state.RasterDepthTexture?.Destroy();
-                state.ShadowMapTexture = XRTexture2DArray.CreateFrameBufferTexture(
-                    (uint)requiredCascades,
-                    width,
-                    height,
-                    shadowFormat.InternalFormat,
-                    shadowFormat.PixelFormat,
-                    shadowFormat.PixelType,
-                    EFrameBufferAttachment.ColorAttachment0);
-                state.ShadowMapTexture.Name = GetCascadeShadowResourceName(source, "ColorArray");
-                state.ShadowMapTexture.SamplerName = "ShadowMapArray";
-                state.ShadowMapTexture.MinFilter = minFilter;
-                state.ShadowMapTexture.MagFilter = magFilter;
-                state.ShadowMapTexture.AutoGenerateMipmaps = momentEncoding && ShadowMomentUseMipmaps;
-                state.ShadowMapTexture.SmallestAllowedMipmapLevel = smallestAllowedMomentMip;
+
+                if (needsColorArray)
+                {
+                    state.ShadowMapTexture = XRTexture2DArray.CreateFrameBufferTexture(
+                        (uint)requiredCascades,
+                        width,
+                        height,
+                        shadowFormat.InternalFormat,
+                        shadowFormat.PixelFormat,
+                        shadowFormat.PixelType,
+                        EFrameBufferAttachment.ColorAttachment0);
+                    state.ShadowMapTexture.Name = GetCascadeShadowResourceName(source, "ColorArray");
+                    state.ShadowMapTexture.SamplerName = "ShadowMapArray";
+                    state.ShadowMapTexture.MinFilter = minFilter;
+                    state.ShadowMapTexture.MagFilter = magFilter;
+                    state.ShadowMapTexture.AutoGenerateMipmaps = momentEncoding && ShadowMomentUseMipmaps;
+                    state.ShadowMapTexture.SmallestAllowedMipmapLevel = smallestAllowedMomentMip;
+                }
 
                 state.RasterDepthTexture = XRTexture2DArray.CreateFrameBufferTexture(
                     (uint)requiredCascades,
@@ -1312,9 +1325,17 @@ namespace XREngine.Components.Lights
             {
                 state.LayeredFrameBuffer ??= new XRFrameBuffer();
                 state.LayeredFrameBuffer.Name = GetCascadeShadowResourceName(source, "LayeredFbo");
-                state.LayeredFrameBuffer.SetRenderTargets(
-                    (state.ShadowMapTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-                    (state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, -1));
+                if (state.ShadowMapTexture is not null)
+                {
+                    state.LayeredFrameBuffer.SetRenderTargets(
+                        (state.ShadowMapTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                        (state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, -1));
+                }
+                else
+                {
+                    state.LayeredFrameBuffer.SetRenderTargets(
+                        (state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, -1));
+                }
             }
 
             if (state.FrameBuffers.Length == requiredCascades && !recreateTexture)
@@ -1359,12 +1380,18 @@ namespace XREngine.Components.Lights
                 transforms[i] = transform;
                 cameras[i] = camera;
                 viewports[i] = viewport;
-                frameBuffers[i] = new XRFrameBuffer(
-                    (state.ShadowMapTexture!, EFrameBufferAttachment.ColorAttachment0, 0, i),
-                    (state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, i))
-                {
-                    Name = GetCascadeShadowResourceName(source, $"Layer{i}Fbo"),
-                };
+                frameBuffers[i] = state.ShadowMapTexture is not null
+                    ? new XRFrameBuffer(
+                        (state.ShadowMapTexture, EFrameBufferAttachment.ColorAttachment0, 0, i),
+                        (state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, i))
+                    {
+                        Name = GetCascadeShadowResourceName(source, $"Layer{i}Fbo"),
+                    }
+                    : new XRFrameBuffer(
+                        (state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, i))
+                    {
+                        Name = GetCascadeShadowResourceName(source, $"Layer{i}Fbo"),
+                    };
             }
 
             state.Transforms = transforms;
@@ -1687,7 +1714,7 @@ namespace XREngine.Components.Lights
             // concurrent Ensure/Release calls from property changes on other threads.
             Transform[] transformsSnapshot = state.Transforms;
             XRCamera[] camerasSnapshot = state.Cameras;
-            XRTexture2DArray? cascadeTexture = state.ShadowMapTexture;
+            XRTexture2DArray? cascadeTexture = SelectCascadeReceiverTexture(state);
             if (cascadeTexture is null || camerasSnapshot.Length == 0 || transformsSnapshot.Length != camerasSnapshot.Length)
             {
                 LogCascadeClearReason($"invalid-resources texture={cascadeTexture is not null} cameras={camerasSnapshot.Length} transforms={transformsSnapshot.Length}");
@@ -1858,8 +1885,8 @@ namespace XREngine.Components.Lights
         {
             IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
             bool hasAnyCascadeReceiver =
-                GetCascadeReceiverTextureForDiagnostics(_desktopCascadeState) is not null ||
-                GetCascadeReceiverTextureForDiagnostics(_hmdCascadeState) is not null;
+                SelectCascadeReceiverTexture(_desktopCascadeState) is not null ||
+                SelectCascadeReceiverTexture(_hmdCascadeState) is not null;
             bool hasAnyPublishedCascades =
                 HasPublishedCascades(ShadowRequestSource.Desktop) ||
                 HasPublishedCascades(ShadowRequestSource.Hmd);
@@ -1914,7 +1941,7 @@ namespace XREngine.Components.Lights
             if (backend == DirectionalCascadeShadowBackend.AtlasPage)
                 return CreateAtlasPageCascadeShadowRenderPlan(state, requestedMode, cascadeCount, hasGroupedAtlasAllocation);
 
-            if (state.ShadowMapTexture is null)
+            if (SelectCascadeReceiverTexture(state) is null)
                 return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingCascadeTextureArray);
 
             if (requestedMode == EDirectionalCascadeShadowRenderMode.Sequential)
@@ -2041,7 +2068,7 @@ namespace XREngine.Components.Lights
                 Backend = backend,
                 ActiveCascadeCount = cascadeCount,
                 LayeredFrameBuffer = null,
-                CascadeTextureArray = state.ShadowMapTexture,
+                CascadeTextureArray = SelectCascadeReceiverTexture(state),
                 FallbackReason = fallbackReason,
             };
 
@@ -2685,7 +2712,7 @@ namespace XREngine.Components.Lights
 
             Vector3 sourcePosition = sourceCamera.Transform.RenderTranslation;
             DirectionalCascadeSourceState sourceState = GetCascadeSourceState(source);
-            XRTexture2DArray? receiverTexture = GetCascadeReceiverTextureForDiagnostics(sourceState);
+            XRTexture2DArray? receiverTexture = SelectCascadeReceiverTexture(sourceState);
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
@@ -2815,7 +2842,7 @@ namespace XREngine.Components.Lights
                 ActiveCascadeCount,
                 _desktopCascadeState.ShadowMapTexture is not null,
                 _desktopCascadeState.RasterDepthTexture is not null,
-                GetCascadeReceiverTextureForDiagnostics(_desktopCascadeState) is not null);
+                SelectCascadeReceiverTexture(_desktopCascadeState) is not null);
         }
 
         private static string FormatVector(Vector3 value)

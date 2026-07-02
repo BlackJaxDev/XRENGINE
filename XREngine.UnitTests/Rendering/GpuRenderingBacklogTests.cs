@@ -304,7 +304,7 @@ public class GpuRenderingBacklogTests
         coordinator.BeginPass(renderPass: 0, camera, sceneCommandCount: 1024u);
 
         for (uint i = 0; i < 1024u; i++)
-            coordinator.ShouldRender(0, camera, i, out _).ShouldBe(ECpuOcclusionDecision.Visible);
+            coordinator.ShouldRender(0, camera, i, out bool _).ShouldBe(ECpuOcclusionDecision.Visible);
 
         sw.Stop();
         sw.ElapsedMilliseconds.ShouldBeLessThan(5000);
@@ -323,17 +323,20 @@ public class GpuRenderingBacklogTests
         object passState = InvokeNonPublic(coordinator, "GetPassState", 0, camera).ShouldNotBeNull();
         object queryState = Activator.CreateInstance(queryStateType, nonPublic: true)!;
 
+        SetNonPublicField(passState, "ForceVisibleThisFrame", false);
         SetNonPublicField(queryState, "LastAnySamplesPassed", false);
-        SetNonPublicField(queryState, "ConsecutiveOccludedFrames", 0);
+        SetNonPublicField(queryState, "StateKind", ECpuOcclusionQueryStateKind.PredictedOccluded);
+        SetNonPublicField(queryState, "ConsecutiveOccludedFrames", 1);
         SetNonPublicField(queryState, "LastTouchedFrame", 0ul);
+        SetNonPublicField(queryState, "LastQueryFrame", 1ul);
 
         IDictionary queries = (IDictionary)GetNonPublicField(passState, "Queries");
         queries[43u] = queryState;
 
         SetNonPublicField(queryState, "LastDecidedFrameId", ulong.MaxValue);
-        coordinator.ShouldRender(0, camera, 43u, out _).ShouldBe(ECpuOcclusionDecision.Visible);
+        coordinator.ShouldRender(0, camera, 43u, out bool _).ShouldBe(ECpuOcclusionDecision.Visible);
         SetNonPublicField(queryState, "LastDecidedFrameId", ulong.MaxValue);
-        coordinator.ShouldRender(0, camera, 43u, out _).ShouldBe(ECpuOcclusionDecision.Skip);
+        coordinator.ShouldRender(0, camera, 43u, out bool _).ShouldBe(ECpuOcclusionDecision.Skip);
     }
 
     [Test]

@@ -295,7 +295,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private const string AutoExposureComputeShaderSource2D = @"#version 460
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding = 0) uniform sampler2D SourceTex;
 layout(r32f, binding = 1) uniform image2D ExposureOut;
@@ -318,6 +318,9 @@ uniform float CenterWeightPower;
 
 const int MAX_SAMPLES = 256;
 const int SAMPLE_GRID = 16;
+const float PAD_LUM = 3.402823e38;
+
+shared float s_lums[MAX_SAMPLES];
 
 float SafeLum(vec3 rgb)
 {
@@ -325,6 +328,76 @@ float SafeLum(vec3 rgb)
     return max(l, 1e-6);
 }
 
+float SampleGridLuminance(int tid, int gridX, int gridY, int w, int h, int mip)
+{
+    int gy = tid / gridX;
+    int gx = tid - gy * gridX;
+    int y = min((gy * h + h / 2) / gridY, h - 1);
+    int x = min((gx * w + w / 2) / gridX, w - 1);
+    vec3 rgb = texelFetch(SourceTex, ivec2(x, y), mip).rgb;
+    float lum = SafeLum(rgb);
+
+    if (MeteringMode == 1)
+        lum = log2(lum);
+    else if (MeteringMode == 2)
+    {
+        vec2 uv = (vec2(x, y) + vec2(0.5)) / vec2(w, h);
+        vec2 d = uv - vec2(0.5);
+        float r = length(d) / 0.70710678;
+        float weight = mix(1.0, max(0.0, 1.0 - r), clamp(CenterWeightStrength, 0.0, 1.0));
+        weight = pow(max(weight, 1e-4), max(CenterWeightPower, 0.01));
+        lum *= weight;
+    }
+
+    return lum;
+}
+
+// Parallel tree sum over the shared array. Every invocation must call this
+// so the barriers stay in uniform control flow; the total is broadcast back
+// to all invocations.
+float ReduceSum(int tid)
+{
+    for (int offset = MAX_SAMPLES >> 1; offset > 0; offset >>= 1)
+    {
+        if (tid < offset)
+            s_lums[tid] += s_lums[tid + offset];
+        barrier();
+    }
+
+    float total = s_lums[0];
+    // Keep the array stable until every invocation has read the total
+    // (the shared array is reused by subsequent reductions).
+    barrier();
+    return total;
+}
+
+// In-place bitonic sort (ascending) of the full shared array.
+void SortShared(int tid)
+{
+    for (int k = 2; k <= MAX_SAMPLES; k <<= 1)
+    {
+        for (int j = k >> 1; j > 0; j >>= 1)
+        {
+            int ixj = tid ^ j;
+            if (ixj > tid)
+            {
+                bool ascending = (tid & k) == 0;
+                float a = s_lums[tid];
+                float b = s_lums[ixj];
+                if ((a > b) == ascending)
+                {
+                    s_lums[tid] = b;
+                    s_lums[ixj] = a;
+                }
+            }
+            barrier();
+        }
+    }
+}
+
+// Cooperative metering: each invocation fetches at most one grid sample and
+// the workgroup reduces in shared memory. The previous implementation ran all
+// 256 fetches plus an insertion sort on a single invocation.
 float ComputeMeteredLuminance()
 {
     int mip = (MeteringMode == 0)
@@ -337,89 +410,39 @@ float ComputeMeteredLuminance()
     int gridY = min(h, SAMPLE_GRID);
     int sampleCount = clamp(gridX * gridY, 1, MAX_SAMPLES);
 
-    if (MeteringMode == 0)
+    int tid = int(gl_LocalInvocationIndex);
+    float lum = (tid < sampleCount) ? SampleGridLuminance(tid, gridX, gridY, w, h, mip) : 0.0;
+
+    float drop = (MeteringMode == 0) ? 0.0 : clamp(IgnoreTopPercent, 0.0, 0.5);
+    if (drop > 0.0)
     {
-        if (sampleCount <= 1)
-        {
-            vec3 src = texelFetch(SourceTex, ivec2(0, 0), mip).rgb;
-            return SafeLum(src);
-        }
+        // Sort so the brightest fraction can be discarded; padding sorts to the end.
+        s_lums[tid] = (tid < sampleCount) ? lum : PAD_LUM;
+        barrier();
+        SortShared(tid);
 
-        float sum = 0.0;
-        for (int gy = 0; gy < gridY; ++gy)
-        {
-            int y = min((gy * h + h / 2) / gridY, h - 1);
-            for (int gx = 0; gx < gridX; ++gx)
-            {
-                int x = min((gx * w + w / 2) / gridX, w - 1);
-                vec3 src = texelFetch(SourceTex, ivec2(x, y), mip).rgb;
-                sum += SafeLum(src);
-            }
-        }
+        int keep = clamp(int(floor((1.0 - drop) * float(sampleCount))), 1, sampleCount);
+        if (tid >= keep)
+            s_lums[tid] = 0.0;
+        barrier();
 
-        return sum / float(sampleCount);
+        float avg = ReduceSum(tid) / float(keep);
+        return (MeteringMode == 1) ? exp2(avg) : avg;
     }
 
-    if (sampleCount <= 0)
-    {
-        vec3 src = texelFetch(SourceTex, ivec2(0, 0), SmallestMip).rgb;
-        return SafeLum(src);
-    }
+    s_lums[tid] = (tid < sampleCount) ? lum : 0.0;
+    barrier();
 
-    float lums[MAX_SAMPLES];
-    int sampleIndex = 0;
-    for (int gy = 0; gy < gridY; ++gy)
-    {
-        int y = min((gy * h + h / 2) / gridY, h - 1);
-        for (int gx = 0; gx < gridX; ++gx)
-        {
-            int x = min((gx * w + w / 2) / gridX, w - 1);
-            vec3 rgb = texelFetch(SourceTex, ivec2(x, y), mip).rgb;
-            float lum = SafeLum(rgb);
-
-            if (MeteringMode == 1)
-                lum = log2(lum);
-            else if (MeteringMode == 2)
-            {
-                vec2 uv = (vec2(x, y) + vec2(0.5)) / vec2(w, h);
-                vec2 d = uv - vec2(0.5);
-                float r = length(d) / 0.70710678;
-                float weight = mix(1.0, max(0.0, 1.0 - r), clamp(CenterWeightStrength, 0.0, 1.0));
-                weight = pow(max(weight, 1e-4), max(CenterWeightPower, 0.01));
-                lum *= weight;
-            }
-
-            lums[sampleIndex++] = lum;
-        }
-    }
-
-    for (int i = 1; i < sampleCount; ++i)
-    {
-        float key = lums[i];
-        int j = i - 1;
-        while (j >= 0 && lums[j] > key)
-        {
-            lums[j + 1] = lums[j];
-            j--;
-        }
-        lums[j + 1] = key;
-    }
-
-    float drop = clamp(IgnoreTopPercent, 0.0, 0.5);
-    int keep = int(floor((1.0 - drop) * float(sampleCount)));
-    keep = clamp(keep, 1, sampleCount);
-
-    float sum = 0.0;
-    for (int i = 0; i < keep; ++i)
-        sum += lums[i];
-
-    float avg = sum / float(keep);
+    float avg = ReduceSum(tid) / float(sampleCount);
     return (MeteringMode == 1) ? exp2(avg) : avg;
 }
 
 void main()
 {
     float lumDot = ComputeMeteredLuminance();
+
+    if (gl_LocalInvocationIndex != 0u)
+        return;
 
     float denom = max((MinExposure / max(ExposureBase, 1e-6)) - AutoExposureBias, 1e-6);
     float maxLumForMinExposure = (ExposureDividend * max(AutoExposureScale, 0.0)) / denom;
@@ -456,7 +479,7 @@ void main()
 ";
 
     private const string AutoExposureComputeShaderSource2DArray = @"#version 460
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding = 0) uniform sampler2DArray SourceTex;
 layout(r32f, binding = 1) uniform image2D ExposureOut;
@@ -480,6 +503,9 @@ uniform int LayerCount;
 
 const int MAX_SAMPLES = 256;
 const int SAMPLE_GRID = 16;
+const float PAD_LUM = 3.402823e38;
+
+shared float s_lums[MAX_SAMPLES];
 
 float SafeLum(vec3 rgb)
 {
@@ -487,6 +513,76 @@ float SafeLum(vec3 rgb)
     return max(l, 1e-6);
 }
 
+float SampleGridLuminance(int tid, int gridX, int gridY, int w, int h, int mip, int layer)
+{
+    int gy = tid / gridX;
+    int gx = tid - gy * gridX;
+    int y = min((gy * h + h / 2) / gridY, h - 1);
+    int x = min((gx * w + w / 2) / gridX, w - 1);
+    vec3 rgb = texelFetch(SourceTex, ivec3(x, y, layer), mip).rgb;
+    float lum = SafeLum(rgb);
+
+    if (MeteringMode == 1)
+        lum = log2(lum);
+    else if (MeteringMode == 2)
+    {
+        vec2 uv = (vec2(x, y) + vec2(0.5)) / vec2(w, h);
+        vec2 d = uv - vec2(0.5);
+        float r = length(d) / 0.70710678;
+        float weight = mix(1.0, max(0.0, 1.0 - r), clamp(CenterWeightStrength, 0.0, 1.0));
+        weight = pow(max(weight, 1e-4), max(CenterWeightPower, 0.01));
+        lum *= weight;
+    }
+
+    return lum;
+}
+
+// Parallel tree sum over the shared array. Every invocation must call this
+// so the barriers stay in uniform control flow; the total is broadcast back
+// to all invocations.
+float ReduceSum(int tid)
+{
+    for (int offset = MAX_SAMPLES >> 1; offset > 0; offset >>= 1)
+    {
+        if (tid < offset)
+            s_lums[tid] += s_lums[tid + offset];
+        barrier();
+    }
+
+    float total = s_lums[0];
+    // Keep the array stable until every invocation has read the total
+    // (the shared array is reused by the next layer's reduction).
+    barrier();
+    return total;
+}
+
+// In-place bitonic sort (ascending) of the full shared array.
+void SortShared(int tid)
+{
+    for (int k = 2; k <= MAX_SAMPLES; k <<= 1)
+    {
+        for (int j = k >> 1; j > 0; j >>= 1)
+        {
+            int ixj = tid ^ j;
+            if (ixj > tid)
+            {
+                bool ascending = (tid & k) == 0;
+                float a = s_lums[tid];
+                float b = s_lums[ixj];
+                if ((a > b) == ascending)
+                {
+                    s_lums[tid] = b;
+                    s_lums[ixj] = a;
+                }
+            }
+            barrier();
+        }
+    }
+}
+
+// Cooperative metering: each invocation fetches at most one grid sample per
+// layer and the workgroup reduces in shared memory. The previous
+// implementation ran all fetches plus an insertion sort on a single invocation.
 float ComputeMeteredLuminanceForLayer(int layer)
 {
     int mip = (MeteringMode == 0)
@@ -499,83 +595,30 @@ float ComputeMeteredLuminanceForLayer(int layer)
     int gridY = min(h, SAMPLE_GRID);
     int sampleCount = clamp(gridX * gridY, 1, MAX_SAMPLES);
 
-    if (MeteringMode == 0)
+    int tid = int(gl_LocalInvocationIndex);
+    float lum = (tid < sampleCount) ? SampleGridLuminance(tid, gridX, gridY, w, h, mip, layer) : 0.0;
+
+    float drop = (MeteringMode == 0) ? 0.0 : clamp(IgnoreTopPercent, 0.0, 0.5);
+    if (drop > 0.0)
     {
-        if (sampleCount <= 1)
-        {
-            vec3 src = texelFetch(SourceTex, ivec3(0, 0, layer), mip).rgb;
-            return SafeLum(src);
-        }
+        // Sort so the brightest fraction can be discarded; padding sorts to the end.
+        s_lums[tid] = (tid < sampleCount) ? lum : PAD_LUM;
+        barrier();
+        SortShared(tid);
 
-        float sum = 0.0;
-        for (int gy = 0; gy < gridY; ++gy)
-        {
-            int y = min((gy * h + h / 2) / gridY, h - 1);
-            for (int gx = 0; gx < gridX; ++gx)
-            {
-                int x = min((gx * w + w / 2) / gridX, w - 1);
-                vec3 src = texelFetch(SourceTex, ivec3(x, y, layer), mip).rgb;
-                sum += SafeLum(src);
-            }
-        }
+        int keep = clamp(int(floor((1.0 - drop) * float(sampleCount))), 1, sampleCount);
+        if (tid >= keep)
+            s_lums[tid] = 0.0;
+        barrier();
 
-        return sum / float(sampleCount);
+        float avg = ReduceSum(tid) / float(keep);
+        return (MeteringMode == 1) ? exp2(avg) : avg;
     }
 
-    if (sampleCount <= 0)
-    {
-        vec3 src = texelFetch(SourceTex, ivec3(0, 0, layer), SmallestMip).rgb;
-        return SafeLum(src);
-    }
+    s_lums[tid] = (tid < sampleCount) ? lum : 0.0;
+    barrier();
 
-    float lums[MAX_SAMPLES];
-    int sampleIndex = 0;
-    for (int gy = 0; gy < gridY; ++gy)
-    {
-        int y = min((gy * h + h / 2) / gridY, h - 1);
-        for (int gx = 0; gx < gridX; ++gx)
-        {
-            int x = min((gx * w + w / 2) / gridX, w - 1);
-            vec3 rgb = texelFetch(SourceTex, ivec3(x, y, layer), mip).rgb;
-            float lum = SafeLum(rgb);
-
-            if (MeteringMode == 1)
-                lum = log2(lum);
-            else if (MeteringMode == 2)
-            {
-                vec2 uv = (vec2(x, y) + vec2(0.5)) / vec2(w, h);
-                vec2 d = uv - vec2(0.5);
-                float r = length(d) / 0.70710678;
-                float weight = mix(1.0, max(0.0, 1.0 - r), clamp(CenterWeightStrength, 0.0, 1.0));
-                weight = pow(max(weight, 1e-4), max(CenterWeightPower, 0.01));
-                lum *= weight;
-            }
-
-            lums[sampleIndex++] = lum;
-        }
-    }
-
-    for (int i = 1; i < sampleCount; ++i)
-    {
-        float key = lums[i];
-        int j = i - 1;
-        while (j >= 0 && lums[j] > key)
-        {
-            lums[j + 1] = lums[j];
-            j--;
-        }
-        lums[j + 1] = key;
-    }
-
-    float drop = clamp(IgnoreTopPercent, 0.0, 0.5);
-    int keep = int(floor((1.0 - drop) * float(sampleCount)));
-    keep = clamp(keep, 1, sampleCount);
-
-    float sum = 0.0;
-    for (int i = 0; i < keep; ++i)
-        sum += lums[i];
-
-    float avg = sum / float(keep);
+    float avg = ReduceSum(tid) / float(sampleCount);
     return (MeteringMode == 1) ? exp2(avg) : avg;
 }
 
@@ -586,6 +629,9 @@ void main()
     for (int layer = 0; layer < layers; ++layer)
         lumDot += ComputeMeteredLuminanceForLayer(layer);
     lumDot /= float(layers);
+
+    if (gl_LocalInvocationIndex != 0u)
+        return;
 
     float denom = max((MinExposure / max(ExposureBase, 1e-6)) - AutoExposureBias, 1e-6);
     float maxLumForMinExposure = (ExposureDividend * max(AutoExposureScale, 0.0)) / denom;

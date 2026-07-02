@@ -15,8 +15,11 @@ namespace XREngine.Rendering
             Quarter = 4,
         }
 
-        public const int DefaultSliceCount = 5;
-        public const int DefaultStepsPerSlice = 10;
+        // 3 slices x 4 steps (x2 directions) = 24 depth taps per pixel, in line with
+        // XeGTAO's High preset. The previous 5x10 default cost ~100 taps per pixel and
+        // made the half-res GTAO gather the most expensive GPU pass in the default pipeline.
+        public const int DefaultSliceCount = 3;
+        public const int DefaultStepsPerSlice = 4;
         public const bool DefaultDenoiseEnabled = true;
         public const int DefaultDenoiseRadius = 5;
         public const float DefaultDenoiseSharpness = 10.0f;

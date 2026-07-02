@@ -598,7 +598,12 @@ namespace XREngine.Components.Capture.Lights.Types
             SetField(ref _shadowMapResolutionHeight, height, nameof(ShadowMapResolutionHeight));
 
             if (ShadowMap is null)
-                ShadowMap = new XRMaterialFrameBuffer(GetShadowMapMaterial(width, height));
+                ShadowMap = new XRMaterialFrameBuffer(GetShadowMapMaterial(width, height))
+                {
+                    // Named so GPU frame dumps attribute shadow passes to this light
+                    // instead of falling back to the null-target "Swapchain" label.
+                    Name = $"{GetType().Name}.{ID:N}.ShadowMapFbo",
+                };
             else
                 ShadowMap.Resize(width, height);
         }

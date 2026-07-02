@@ -122,7 +122,7 @@ public override void Initialize()
         throw new Exception("Windowing platform doesn't support Vulkan.");
 
     CreateInstance();              // 1. Vulkan instance (1.3)
-    SetupDebugMessenger();         // 2. Validation layers (DEBUG only)
+    SetupDebugMessenger();         // 2. Validation layers (opt-in via XRE_VULKAN_VALIDATION)
     CreateSurface();               // 3. KHR surface from window
     PickPhysicalDevice();          // 4. Select GPU
     CreateLogicalDevice();         // 5. Queues + features + extensions
@@ -140,13 +140,13 @@ From `Bootstrap/VulkanRenderer.Instance.cs`:
 - Creates a Vulkan 1.3 instance with application name "XRENGINE"
 - Enumerates available instance extensions via `vkEnumerateInstanceExtensionProperties`
 - Adds required extensions from the Silk.NET window surface (`VK_KHR_surface`, platform-specific surface extension)
-- In DEBUG builds, adds `VK_EXT_debug_utils` for validation layer reporting
+- When validation layers are enabled, adds `VK_EXT_debug_utils` for validation layer reporting
 
 ### Validation & Debug Messenger
 
 From `Validation.cs`:
 
-- Enables `VK_LAYER_KHRONOS_validation` in debug builds
+- `VK_LAYER_KHRONOS_validation` is disabled by default in all configurations because it multiplies primary command recording cost on the render thread; opt in by setting `XRE_VULKAN_VALIDATION=1` (any value other than `0`/`false`/`off`/`no` enables it)
 - Registers a `DebugUtilsMessengerEXT` with a callback that routes Vulkan validation messages through the engine's debug logging system
 - Filters by severity (verbose, info, warning, error)
 
@@ -821,7 +821,7 @@ variable influence branch or a paired bone-world/inverse-bind palette contract.
 
 `VulkanAutoExposure.cs` implements GPU-based auto-exposure via compute shaders:
 
-- Computes scene luminance histogram on the GPU
+- Meters scene luminance from a 16×16 sample grid using a single 256-invocation workgroup: each invocation fetches one sample, then the workgroup reduces cooperatively in shared memory (bitonic sort when a top percentile is discarded, parallel tree sum otherwise)
 - Outputs exposure value for tone mapping
 - Resources are created/destroyed with the renderer lifecycle
 

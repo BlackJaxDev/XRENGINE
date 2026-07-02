@@ -561,13 +561,8 @@ namespace XREngine.Rendering.Commands
         // (every Visible mesh has already written its depth). Drawing probes inline in the
         // pass iteration produced visible flicker because the probe's outcome depended on
         // whether the future occluder had drawn yet within the same pass iteration.
-        [ThreadStatic] private static List<DeferredProbe>? t_deferredProbes;
-
-        private readonly struct DeferredProbe(uint queryKey, in AABB worldBounds)
-        {
-            public readonly uint QueryKey = queryKey;
-            public readonly AABB WorldBounds = worldBounds;
-        }
+        [ThreadStatic] private static List<CpuOcclusionProbeCandidate>? t_probeCandidates;
+        [ThreadStatic] private static List<CpuOcclusionScheduledProbe>? t_deferredProbes;
 
         /// <summary>
         /// Returns true when the CPU occlusion coordinator should be consulted for the
@@ -668,11 +663,14 @@ namespace XREngine.Rendering.Commands
                     modeOff: occlusionMode != EOcclusionCullingMode.CpuQueryAsync);
             }
 
-            // Phase 2 deferred-probe queue (reused per-thread).
-            List<DeferredProbe>? deferredProbes = null;
+            // Phase 2 deferred-probe queues (reused per-thread).
+            List<CpuOcclusionProbeCandidate>? probeCandidates = null;
+            List<CpuOcclusionScheduledProbe>? deferredProbes = null;
             if (useCpuQueryOcclusion)
             {
-                deferredProbes = t_deferredProbes ??= new List<DeferredProbe>(64);
+                probeCandidates = t_probeCandidates ??= new List<CpuOcclusionProbeCandidate>(128);
+                deferredProbes = t_deferredProbes ??= new List<CpuOcclusionScheduledProbe>(64);
+                probeCandidates.Clear();
                 deferredProbes.Clear();
             }
 
@@ -717,7 +715,12 @@ namespace XREngine.Rendering.Commands
                     // cpuCmdIndex shifts on every list mutation; StableQueryKey is assigned
                     // at command construction and never changes.
                     uint queryKey = cmd.StableQueryKey;
-                    var decision = s_cpuOcclusionCoordinator.ShouldRender(renderPass, camera, queryKey, out bool needsHardwareQuery);
+                    var decision = s_cpuOcclusionCoordinator.ShouldRender(
+                        renderPass,
+                        camera,
+                        queryKey,
+                        out CpuOcclusionProbeRequest probeRequest);
+                    bool needsHardwareQuery = probeRequest.Requested;
 
                     if (decision == XREngine.Rendering.Occlusion.ECpuOcclusionDecision.Skip)
                     {
@@ -750,13 +753,12 @@ namespace XREngine.Rendering.Commands
                             cpuCmdIndex++;
                             continue;
                         }
-
                         var probeBounds = cmd.CullingVolume;
-                        if (probeBounds.HasValue && deferredProbes is not null)
+                        if (probeBounds.HasValue && probeCandidates is not null)
                         {
                             if (CpuQueryProxyIsNearPlaneUnsafe(camera!, probeBounds.Value))
                             {
-                                s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey);
+                                s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NearPlaneUnsafe);
                                 if (ShouldLogSponzaCpuDiag(cmd))
                                     LogSponzaCpuDiag("draw-cpu-query-near-plane", renderPass, cmd, camera, $"queryKey={queryKey}");
                                 RenderWithGpuScope(cmd, renderPass);
@@ -771,10 +773,11 @@ namespace XREngine.Rendering.Commands
                             XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
                             if (ShouldLogSponzaCpuDiag(cmd))
                                 LogSponzaCpuDiag("skip-cpu-query-probe", renderPass, cmd, camera, $"queryKey={queryKey}, cpuSocCull={cpuSocCull}");
-                            deferredProbes.Add(new DeferredProbe(queryKey, probeBounds.Value));
+                            probeCandidates.Add(CreateCpuOcclusionProbeCandidate(queryKey, probeBounds.Value, probeRequest, camera!));
                             cpuCmdIndex++;
                             continue;
                         }
+                        s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NoBounds);
                         // No bounds available — fall through to full-mesh requery so the
                         // query can still refresh (correctness fallback; will flicker).
                     }
@@ -789,13 +792,13 @@ namespace XREngine.Rendering.Commands
                     // through the deferred-probe queue so it tests a proxy AABB against
                     // the pass's complete depth — matching the GPU-dispatch occlusion path.
                     if (needsHardwareQuery &&
-                        deferredProbes is not null &&
+                        probeCandidates is not null &&
                         cmd.CullingVolume is AABB visibleProbeBounds)
                     {
                         if (CpuQueryProxyIsNearPlaneUnsafe(camera!, visibleProbeBounds))
-                            s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey);
+                            s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NearPlaneUnsafe);
                         else
-                            deferredProbes!.Add(new DeferredProbe(queryKey, visibleProbeBounds));
+                            probeCandidates.Add(CreateCpuOcclusionProbeCandidate(queryKey, visibleProbeBounds, probeRequest, camera!));
 
                         if (ShouldLogSponzaCpuDiag(cmd))
                             LogSponzaCpuDiag("draw-cpu-query-visible", renderPass, cmd, camera, $"queryKey={queryKey}, needsHardwareQuery=True");
@@ -804,24 +807,15 @@ namespace XREngine.Rendering.Commands
                     else
                     {
                         // Fallback: command has no AABB, so we can't issue a proxy probe.
-                        // Bracket the mesh draw directly. This retains the self-visibility
-                        // limitation for the no-bounds case (acceptable: such commands are
-                        // typically full-screen overlays, skybox, debug lines, where
-                        // occlusion culling isn't meaningful anyway and they're usually
-                        // excluded via CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded).
                         if (needsHardwareQuery)
-                            s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, queryKey);
-                        try
                         {
-                            if (ShouldLogSponzaCpuDiag(cmd))
-                                LogSponzaCpuDiag("draw-cpu-query-direct", renderPass, cmd, camera, $"queryKey={queryKey}, needsHardwareQuery={needsHardwareQuery}");
-                            RenderWithGpuScope(cmd, renderPass);
+                            s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NoBounds);
+                            XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuBudgetSkipped(ECpuOcclusionQueryReason.DiagnosticForcedQuery);
                         }
-                        finally
-                        {
-                            if (needsHardwareQuery)
-                                s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, queryKey);
-                        }
+
+                        if (ShouldLogSponzaCpuDiag(cmd))
+                            LogSponzaCpuDiag("draw-cpu-query-direct", renderPass, cmd, camera, $"queryKey={queryKey}, needsHardwareQuery={needsHardwareQuery}");
+                        RenderWithGpuScope(cmd, renderPass);
                     }
 
                     cpuCmdIndex++;
@@ -835,6 +829,7 @@ namespace XREngine.Rendering.Commands
                 {
                     if (ShouldLogSponzaCpuDiag(cmd))
                         LogSponzaCpuDiag("skip-cpu-soc", renderPass, cmd, camera, $"queryKey={cmd.StableQueryKey}");
+                    XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordCpuCulledOne();
                     cpuCmdIndex++;
                     continue;
                 }
@@ -848,22 +843,84 @@ namespace XREngine.Rendering.Commands
             // Phase 3: deferred probe-only AABB draws. Now the depth buffer reflects all
             // visible meshes from this pass, so the conservative samples-passed query
             // result is a faithful "is this mesh's AABB exposed to the camera?" answer.
+            if (probeCandidates is { Count: > 0 } && deferredProbes is not null)
+                s_cpuOcclusionCoordinator.SelectProbeCandidates(renderPass, camera, probeCandidates, deferredProbes);
+
             if (deferredProbes is { Count: > 0 })
             {
                 foreach (var probe in deferredProbes)
                 {
-                    s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, probe.QueryKey);
+                    if (probe.IsHierarchyGroup)
+                        s_cpuOcclusionCoordinator.BeginHierarchyQuery(renderPass, camera, probe.HierarchyGroupKey);
+                    else
+                        s_cpuOcclusionCoordinator.BeginQuery(renderPass, camera, probe.QueryKey);
                     try
                     {
                         XREngine.Rendering.Occlusion.CpuOcclusionProxyRenderer.Draw(probe.WorldBounds);
                     }
                     finally
                     {
-                        s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, probe.QueryKey);
+                        if (probe.IsHierarchyGroup)
+                            s_cpuOcclusionCoordinator.EndHierarchyQuery(renderPass, camera, probe.HierarchyGroupKey);
+                        else
+                            s_cpuOcclusionCoordinator.EndQuery(renderPass, camera, probe.QueryKey);
                     }
                 }
                 deferredProbes.Clear();
             }
+            probeCandidates?.Clear();
+        }
+
+        private static CpuOcclusionProbeCandidate CreateCpuOcclusionProbeCandidate(
+            uint queryKey,
+            in AABB bounds,
+            CpuOcclusionProbeRequest request,
+            XRCamera camera)
+        {
+            float leftPriority = EstimateCpuOcclusionProbePriority(bounds, camera, out float leftDistance);
+            float priority = leftPriority;
+            float distance = leftDistance;
+
+            XRCamera? rightEye = GetActiveRightEyeCamera();
+            if (rightEye is not null && !ReferenceEquals(rightEye, camera))
+            {
+                float rightPriority = EstimateCpuOcclusionProbePriority(bounds, rightEye, out float rightDistance);
+                if (rightPriority > priority)
+                    priority = rightPriority;
+                distance = MathF.Min(distance, rightDistance);
+            }
+
+            priority += request.PriorityBias;
+            return new CpuOcclusionProbeCandidate(queryKey, bounds, request, priority, distance);
+        }
+
+        private static float EstimateCpuOcclusionProbePriority(in AABB bounds, XRCamera camera, out float distance)
+        {
+            Vector3 size = bounds.Max - bounds.Min;
+            Vector3 center = (bounds.Min + bounds.Max) * 0.5f;
+            float radius = MathF.Max(0.001f, size.Length() * 0.5f);
+            distance = MathF.Max(0.001f, MathF.Abs(camera.DistanceFromRenderNearPlane(center)));
+            float projectedRadius = radius / distance;
+            float priority = projectedRadius * projectedRadius;
+
+            float edgeRisk = 0.0f;
+            AccumulateRevealRisk(camera, new Vector3(bounds.Min.X, bounds.Min.Y, bounds.Min.Z), ref edgeRisk);
+            AccumulateRevealRisk(camera, new Vector3(bounds.Max.X, bounds.Min.Y, bounds.Min.Z), ref edgeRisk);
+            AccumulateRevealRisk(camera, new Vector3(bounds.Min.X, bounds.Max.Y, bounds.Min.Z), ref edgeRisk);
+            AccumulateRevealRisk(camera, new Vector3(bounds.Max.X, bounds.Max.Y, bounds.Min.Z), ref edgeRisk);
+            AccumulateRevealRisk(camera, new Vector3(bounds.Min.X, bounds.Min.Y, bounds.Max.Z), ref edgeRisk);
+            AccumulateRevealRisk(camera, new Vector3(bounds.Max.X, bounds.Min.Y, bounds.Max.Z), ref edgeRisk);
+            AccumulateRevealRisk(camera, new Vector3(bounds.Min.X, bounds.Max.Y, bounds.Max.Z), ref edgeRisk);
+            AccumulateRevealRisk(camera, new Vector3(bounds.Max.X, bounds.Max.Y, bounds.Max.Z), ref edgeRisk);
+
+            return priority + edgeRisk;
+        }
+
+        private static void AccumulateRevealRisk(XRCamera camera, Vector3 corner, ref float risk)
+        {
+            float nearDistance = camera.DistanceFromRenderNearPlane(corner);
+            if (nearDistance < camera.NearZ * 2.0f)
+                risk += 0.25f;
         }
 
         private static bool CpuQueryProxyIsNearPlaneUnsafe(XRCamera camera, AABB bounds)
@@ -964,11 +1021,22 @@ namespace XREngine.Rendering.Commands
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
 
-            bool useCpuQueryOcclusion =
+            bool shadowPass = RuntimeEngine.Rendering.State.IsShadowPass;
+            bool occlusionTestable =
                 respectCpuQueryOcclusion &&
-                !RuntimeEngine.Rendering.State.IsShadowPass &&
-                RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync;
-            XRCamera? camera = useCpuQueryOcclusion ? GetActiveCpuOcclusionCamera() : null;
+                !shadowPass &&
+                RenderPassIsOcclusionTestable(renderPass);
+            XRCamera? camera = occlusionTestable ? GetActiveCpuOcclusionCamera() : null;
+            EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;
+            bool useCpuQueryOcclusion =
+                occlusionTestable &&
+                camera is not null &&
+                occlusionMode == EOcclusionCullingMode.CpuQueryAsync;
+            bool useCpuSocOcclusion =
+                occlusionTestable &&
+                camera is not null &&
+                !useCpuQueryOcclusion &&
+                PrepareCpuSoftwareOcclusion(renderPass, camera);
 
             uint cpuCmdIndex = 0;
             foreach (var cmd in list)
@@ -993,6 +1061,16 @@ namespace XREngine.Rendering.Commands
                         cpuCmdIndex++;
                         continue;
                     }
+                }
+
+                if (useCpuSocOcclusion &&
+                    cmd is IRenderCommandMesh socMesh &&
+                    !CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(socMesh) &&
+                    cmd.CullingVolume is AABB socBounds &&
+                    !s_cpuSoftwareOcclusionCuller.TestVisible(cmd.StableQueryKey, socBounds))
+                {
+                    cpuCmdIndex++;
+                    continue;
                 }
 
                 RenderWithGpuScope(cmd, renderPass);

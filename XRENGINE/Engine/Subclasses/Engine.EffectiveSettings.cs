@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine
@@ -245,7 +246,67 @@ namespace XREngine
             /// Gets the active occlusion culling mode for GPU indirect rendering.
             /// </summary>
             public static EOcclusionCullingMode GpuOcclusionCullingMode
-                => Rendering.Settings.GpuOcclusionCullingMode;
+                => ResolveGpuOcclusionCullingMode();
+
+            private static EOcclusionCullingMode ResolveGpuOcclusionCullingMode()
+            {
+                string? raw = XREngine.Rendering.EffectiveSettingsEnvOverrides.OcclusionCullingMode;
+                if (!string.IsNullOrWhiteSpace(raw) &&
+                    Enum.TryParse(raw, ignoreCase: true, out EOcclusionCullingMode parsed))
+                {
+                    return parsed;
+                }
+
+                return Rendering.Settings.GpuOcclusionCullingMode;
+            }
+
+            public static int CpuQueryOcclusionRetestPeriodFrames
+                => Rendering.Settings.CpuQueryOcclusionRetestPeriodFrames;
+
+            public static int CpuQueryOcclusionMaxQueriesPerFrame
+                => Rendering.Settings.CpuQueryOcclusionMaxQueriesPerFrame;
+
+            public static float CpuQueryOcclusionVisibleDemotionBudgetFraction
+                => Rendering.Settings.CpuQueryOcclusionVisibleDemotionBudgetFraction;
+
+            public static int CpuQueryOcclusionRecoveryMinCadenceFrames
+                => Rendering.Settings.CpuQueryOcclusionRecoveryMinCadenceFrames;
+
+            public static float CpuQueryOcclusionSmallMotionMeters
+                => Rendering.Settings.CpuQueryOcclusionSmallMotionMeters;
+
+            public static float CpuQueryOcclusionMediumMotionMeters
+                => Rendering.Settings.CpuQueryOcclusionMediumMotionMeters;
+
+            public static float CpuQueryOcclusionLargeMotionMeters
+                => Rendering.Settings.CpuQueryOcclusionLargeMotionMeters;
+
+            public static float CpuQueryOcclusionCameraCutMeters
+                => Rendering.Settings.CpuQueryOcclusionCameraCutMeters;
+
+            public static float CpuQueryOcclusionSmallRotationDegrees
+                => Rendering.Settings.CpuQueryOcclusionSmallRotationDegrees;
+
+            public static float CpuQueryOcclusionMediumRotationDegrees
+                => Rendering.Settings.CpuQueryOcclusionMediumRotationDegrees;
+
+            public static float CpuQueryOcclusionLargeRotationDegrees
+                => Rendering.Settings.CpuQueryOcclusionLargeRotationDegrees;
+
+            public static float CpuQueryOcclusionCameraCutRotationDegrees
+                => Rendering.Settings.CpuQueryOcclusionCameraCutRotationDegrees;
+
+            public static float CpuQueryOcclusionVrHeadMotionMeters
+                => Rendering.Settings.CpuQueryOcclusionVrHeadMotionMeters;
+
+            public static float CpuQueryOcclusionVrHeadRotationDegrees
+                => Rendering.Settings.CpuQueryOcclusionVrHeadRotationDegrees;
+
+            public static ECpuQueryStereoMode CpuQueryOcclusionStereoMode
+                => Rendering.Settings.CpuQueryOcclusionStereoMode;
+
+            public static int CpuQueryOcclusionMaxPendingFrames
+                => Rendering.Settings.CpuQueryOcclusionMaxPendingFrames;
 
             /// <summary>
             /// Gets whether the opt-in CPU software occlusion culler is enabled.

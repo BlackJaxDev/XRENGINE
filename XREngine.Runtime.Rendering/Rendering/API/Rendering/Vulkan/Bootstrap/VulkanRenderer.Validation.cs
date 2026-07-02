@@ -16,11 +16,12 @@ public unsafe partial class VulkanRenderer
 
     private static bool ResolveValidationLayerDefault()
     {
-#if DEBUG
-        const bool defaultValue = true;
-#else
+        // Validation layers are opt-in in all configurations (including DEBUG):
+        // VK_LAYER_KHRONOS_validation intercepts every Vulkan call on the render
+        // thread and multiplies primary command recording cost several times over,
+        // which dominates frame time on CPU-bound scenes. Set XRE_VULKAN_VALIDATION=1
+        // to enable them for correctness debugging sessions.
         const bool defaultValue = false;
-#endif
 
         string? raw = Environment.GetEnvironmentVariable(global::XREngine.XREngineEnvironmentVariables.VulkanValidation);
         if (string.IsNullOrWhiteSpace(raw))

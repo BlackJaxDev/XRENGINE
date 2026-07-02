@@ -126,7 +126,7 @@ public sealed class GpuIndirectPhase9ValidationTests
     [Test]
     public void ShippingFast_NoUnconditionalCpuFallbackAntiPattern()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.CullingAndSoA.cs");
 
         source.ShouldContain("if (VulkanFeatureProfile.EnforceStrictNoFallbacks)");
         source.ShouldContain("return VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;");
@@ -135,9 +135,9 @@ public sealed class GpuIndirectPhase9ValidationTests
     [Test]
     public void VulkanStageTimingHooks_AreWiredForResetCullOcclusionIndirectDraw()
     {
-        string indirect = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
-        string culling = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs");
-        string occlusion = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.Occlusion.cs");
+        string indirect = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
+        string culling = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.CullingAndSoA.cs");
+        string occlusion = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
 
         indirect.ShouldContain("EVulkanGpuDrivenStageTiming.Reset");
         indirect.ShouldContain("EVulkanGpuDrivenStageTiming.Indirect");

@@ -13,6 +13,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.DLSS;
+using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using TextureRuntimeLogMode = XREngine.Rendering.TextureRuntimeLogMode;
@@ -611,6 +612,21 @@ namespace XREngine
                 private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.GpuHiZ;
                 private bool _cacheGpuHiZOcclusionOncePerFrame = false;
                 private int _cpuQueryOcclusionRetestPeriodFrames = 6;
+                private int _cpuQueryOcclusionMaxQueriesPerFrame = 64;
+                private float _cpuQueryOcclusionVisibleDemotionBudgetFraction = 0.25f;
+                private int _cpuQueryOcclusionRecoveryMinCadenceFrames = 2;
+                private float _cpuQueryOcclusionSmallMotionMeters = 0.02f;
+                private float _cpuQueryOcclusionMediumMotionMeters = 0.25f;
+                private float _cpuQueryOcclusionLargeMotionMeters = 2.0f;
+                private float _cpuQueryOcclusionCameraCutMeters = 12.0f;
+                private float _cpuQueryOcclusionSmallRotationDegrees = 1.0f;
+                private float _cpuQueryOcclusionMediumRotationDegrees = 5.0f;
+                private float _cpuQueryOcclusionLargeRotationDegrees = 15.0f;
+                private float _cpuQueryOcclusionCameraCutRotationDegrees = 55.0f;
+                private float _cpuQueryOcclusionVrHeadMotionMeters = 0.25f;
+                private float _cpuQueryOcclusionVrHeadRotationDegrees = 20.0f;
+                private ECpuQueryStereoMode _cpuQueryOcclusionStereoMode = ECpuQueryStereoMode.PerEyeSequential;
+                private int _cpuQueryOcclusionMaxPendingFrames = 6;
                 private bool _enableCpuSoftwareOcclusionCulling = false;
                 private int _cpuSocBufferWidth = 256;
                 private int _cpuSocBufferHeight = 128;
@@ -667,9 +683,15 @@ namespace XREngine
                 private bool _logVRFrameTimes = false;
                 private bool _preferNVStereo = true;
                 private EVrViewRenderMode _vrViewRenderMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
+                private EVrMirrorMode _vrMirrorMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrMirrorMode;
                 private bool _renderWindowsWhileInVR = true;
                 private bool _vrMirrorComposeFromEyeTextures = true;
                 private bool _vrCopyEyePreviewTextures = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrCopyEyePreviewTextures;
+                private float _vrLeftEyeTargetRateHz = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrOutputTargetRateHz;
+                private float _vrRightEyeTargetRateHz = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrOutputTargetRateHz;
+                private float _vrDesktopEditorTargetRateHz = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrOutputTargetRateHz;
+                private float _vrCyclopeanDesktopTargetRateHz = 60.0f;
+                private bool _vrDesktopAutoSkipWhenOverBudget = true;
                 private bool _enableVrFoveatedViewSet = false;
                 private EVrFoveationMode _vrFoveationMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationMode;
                 private EVrFoveationQualityPreset _vrFoveationQualityPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
@@ -1629,23 +1651,10 @@ namespace XREngine
                 /// Selects which mesh occlusion culling path to run.
                 /// </summary>
                 [Category("Occlusion")]
-                [Description("Selects which mesh occlusion culling path to run.")]
+                [Description("Selects which mesh occlusion culling path to run. CpuQueryAsync uses OpenGL or Vulkan hardware queries on CPU direct; DX12 forces visible. GpuHiZ requires GPU dispatch, while CPU direct uses CpuQueryAsync or CpuSoftwareOcclusion.")]
                 public EOcclusionCullingMode GpuOcclusionCullingMode
                 {
-                    get
-                    {
-                        // Env override for perf measurement / bisecting regressions.
-                        // Wins over both the serialized setting and the in-memory field.
-                        EOcclusionCullingMode resolved = _gpuOcclusionCullingMode;
-                        string? raw = System.Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode);
-                        if (!string.IsNullOrWhiteSpace(raw) &&
-                            System.Enum.TryParse(raw.Trim(), ignoreCase: true, out EOcclusionCullingMode parsed))
-                        {
-                            resolved = parsed;
-                        }
-
-                        return resolved;
-                    }
+                    get => _gpuOcclusionCullingMode;
                     set => SetField(ref _gpuOcclusionCullingMode, value);
                 }
 
@@ -1675,6 +1684,134 @@ namespace XREngine
                 {
                     get => _cpuQueryOcclusionRetestPeriodFrames;
                     set => SetField(ref _cpuQueryOcclusionRetestPeriodFrames, Math.Clamp(value, 1, 64));
+                }
+
+                /// <summary>
+                /// Maximum CPU hardware occlusion proxy queries submitted for one pass/view scope per render frame.
+                /// Shared stereo scopes consume this budget once for the stereo frame.
+                /// </summary>
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: maximum proxy queries submitted per pass/view scope per render frame.")]
+                public int CpuQueryOcclusionMaxQueriesPerFrame
+                {
+                    get => _cpuQueryOcclusionMaxQueriesPerFrame;
+                    set => SetField(ref _cpuQueryOcclusionMaxQueriesPerFrame, Math.Clamp(value, 0, 4096));
+                }
+
+                /// <summary>
+                /// Fraction of the CPU query budget reserved for visible-demotion probes.
+                /// The remainder is reserved for occluded-recovery probes.
+                /// </summary>
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: fraction of query budget reserved for visible-demotion probes. The rest is recovery.")]
+                public float CpuQueryOcclusionVisibleDemotionBudgetFraction
+                {
+                    get => _cpuQueryOcclusionVisibleDemotionBudgetFraction;
+                    set => SetField(ref _cpuQueryOcclusionVisibleDemotionBudgetFraction, Math.Clamp(value, 0.0f, 1.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: minimum frames between recovery probes for a predicted-occluded command.")]
+                public int CpuQueryOcclusionRecoveryMinCadenceFrames
+                {
+                    get => _cpuQueryOcclusionRecoveryMinCadenceFrames;
+                    set => SetField(ref _cpuQueryOcclusionRecoveryMinCadenceFrames, Math.Clamp(value, 1, 64));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: camera translation threshold in meters for SmallMotion.")]
+                public float CpuQueryOcclusionSmallMotionMeters
+                {
+                    get => _cpuQueryOcclusionSmallMotionMeters;
+                    set => SetField(ref _cpuQueryOcclusionSmallMotionMeters, Math.Clamp(value, 0.0f, 100.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: camera translation threshold in meters for MediumMotion.")]
+                public float CpuQueryOcclusionMediumMotionMeters
+                {
+                    get => _cpuQueryOcclusionMediumMotionMeters;
+                    set => SetField(ref _cpuQueryOcclusionMediumMotionMeters, Math.Clamp(value, 0.0f, 100.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: camera translation threshold in meters for LargeMotion.")]
+                public float CpuQueryOcclusionLargeMotionMeters
+                {
+                    get => _cpuQueryOcclusionLargeMotionMeters;
+                    set => SetField(ref _cpuQueryOcclusionLargeMotionMeters, Math.Clamp(value, 0.0f, 100.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: camera translation threshold in meters for CameraCut.")]
+                public float CpuQueryOcclusionCameraCutMeters
+                {
+                    get => _cpuQueryOcclusionCameraCutMeters;
+                    set => SetField(ref _cpuQueryOcclusionCameraCutMeters, Math.Clamp(value, 0.0f, 1000.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: camera rotation threshold in degrees for SmallMotion.")]
+                public float CpuQueryOcclusionSmallRotationDegrees
+                {
+                    get => _cpuQueryOcclusionSmallRotationDegrees;
+                    set => SetField(ref _cpuQueryOcclusionSmallRotationDegrees, Math.Clamp(value, 0.0f, 180.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: camera rotation threshold in degrees for MediumMotion.")]
+                public float CpuQueryOcclusionMediumRotationDegrees
+                {
+                    get => _cpuQueryOcclusionMediumRotationDegrees;
+                    set => SetField(ref _cpuQueryOcclusionMediumRotationDegrees, Math.Clamp(value, 0.0f, 180.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: camera rotation threshold in degrees for LargeMotion.")]
+                public float CpuQueryOcclusionLargeRotationDegrees
+                {
+                    get => _cpuQueryOcclusionLargeRotationDegrees;
+                    set => SetField(ref _cpuQueryOcclusionLargeRotationDegrees, Math.Clamp(value, 0.0f, 180.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: camera rotation threshold in degrees for CameraCut.")]
+                public float CpuQueryOcclusionCameraCutRotationDegrees
+                {
+                    get => _cpuQueryOcclusionCameraCutRotationDegrees;
+                    set => SetField(ref _cpuQueryOcclusionCameraCutRotationDegrees, Math.Clamp(value, 0.0f, 180.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: normal VR head-pose translation threshold in meters; below this never becomes CameraCut.")]
+                public float CpuQueryOcclusionVrHeadMotionMeters
+                {
+                    get => _cpuQueryOcclusionVrHeadMotionMeters;
+                    set => SetField(ref _cpuQueryOcclusionVrHeadMotionMeters, Math.Clamp(value, 0.0f, 10.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: normal VR head-pose rotation threshold in degrees; below this never becomes CameraCut.")]
+                public float CpuQueryOcclusionVrHeadRotationDegrees
+                {
+                    get => _cpuQueryOcclusionVrHeadRotationDegrees;
+                    set => SetField(ref _cpuQueryOcclusionVrHeadRotationDegrees, Math.Clamp(value, 0.0f, 180.0f));
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: stereo query policy. Shared stereo defaults conservative-visible unless explicitly allowed.")]
+                public ECpuQueryStereoMode CpuQueryOcclusionStereoMode
+                {
+                    get => _cpuQueryOcclusionStereoMode;
+                    set => SetField(ref _cpuQueryOcclusionStereoMode, value);
+                }
+
+                [Category("Occlusion")]
+                [Description("CPU-query occlusion: maximum age in frames for an unresolved pending query before it is discarded and forced visible.")]
+                public int CpuQueryOcclusionMaxPendingFrames
+                {
+                    get => _cpuQueryOcclusionMaxPendingFrames;
+                    set => SetField(ref _cpuQueryOcclusionMaxPendingFrames, Math.Clamp(value, 1, 120));
                 }
 
                 /// <summary>
@@ -1939,14 +2076,29 @@ namespace XREngine
                 }
 
                 /// <summary>
+                /// Explicitly selects the desktop output policy used while VR is active.
+                /// </summary>
+                [Category("VR")]
+                [Description("Explicitly selects the desktop output policy while VR is active. BlitSubmittedEye is the standard profiling mode; FullIndependentRender is expensive and intended for diagnostics.")]
+                public EVrMirrorMode VrMirrorMode
+                {
+                    get => _vrMirrorMode;
+                    set => SetField(ref _vrMirrorMode, value);
+                }
+
+                /// <summary>
                 /// If true, windows will be rendered while in VR mode.
                 /// </summary>
                 [Category("VR")]
-                [Description("If true, windows will be rendered while in VR mode.")]
+                [Description("Legacy compatibility toggle for VR desktop output. Prefer VrMirrorMode; Off maps to false, other modes map to true.")]
                 public bool RenderWindowsWhileInVR
                 {
-                    get => _renderWindowsWhileInVR;
-                    set => SetField(ref _renderWindowsWhileInVR, value);
+                    get => _vrMirrorMode != EVrMirrorMode.Off && _renderWindowsWhileInVR;
+                    set
+                    {
+                        if (SetField(ref _renderWindowsWhileInVR, value) && !value)
+                            VrMirrorMode = EVrMirrorMode.Off;
+                    }
                 }
 
                 /// <summary>
@@ -1954,11 +2106,21 @@ namespace XREngine
                 /// When false, the desktop window follows the legacy full-scene viewport render path.
                 /// </summary>
                 [Category("VR")]
-                [Description("If true, desktop mirror output while in VR is composed from already rendered eye textures. Disable for legacy full-scene mirror rendering.")]
+                [Description("Legacy compatibility toggle for cheap VR desktop mirror composition. Prefer VrMirrorMode=BlitSubmittedEye.")]
                 public bool VrMirrorComposeFromEyeTextures
                 {
-                    get => _vrMirrorComposeFromEyeTextures;
-                    set => SetField(ref _vrMirrorComposeFromEyeTextures, value);
+                    get => _vrMirrorMode != EVrMirrorMode.Off &&
+                        (_vrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct || _vrMirrorComposeFromEyeTextures);
+                    set
+                    {
+                        if (!SetField(ref _vrMirrorComposeFromEyeTextures, value))
+                            return;
+
+                        if (value)
+                            VrMirrorMode = EVrMirrorMode.BlitSubmittedEye;
+                        else if (_vrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct)
+                            VrMirrorMode = EVrMirrorMode.FullIndependentRender;
+                    }
                 }
 
                 /// <summary>
@@ -1970,6 +2132,46 @@ namespace XREngine
                 {
                     get => _vrCopyEyePreviewTextures;
                     set => SetField(ref _vrCopyEyePreviewTextures, value);
+                }
+
+                [Category("VR")]
+                [Description("Target presentation rate for the left eye output. 0 matches the XR runtime cadence.")]
+                public float VrLeftEyeTargetRateHz
+                {
+                    get => _vrLeftEyeTargetRateHz;
+                    set => SetField(ref _vrLeftEyeTargetRateHz, MathF.Max(0.0f, value));
+                }
+
+                [Category("VR")]
+                [Description("Target presentation rate for the right eye output. 0 matches the XR runtime cadence.")]
+                public float VrRightEyeTargetRateHz
+                {
+                    get => _vrRightEyeTargetRateHz;
+                    set => SetField(ref _vrRightEyeTargetRateHz, MathF.Max(0.0f, value));
+                }
+
+                [Category("VR")]
+                [Description("Target rate for the independent desktop editor output while VR is active. 0 matches the XR runtime cadence.")]
+                public float VrDesktopEditorTargetRateHz
+                {
+                    get => _vrDesktopEditorTargetRateHz;
+                    set => SetField(ref _vrDesktopEditorTargetRateHz, MathF.Max(0.0f, value));
+                }
+
+                [Category("VR")]
+                [Description("Target rate for the cyclopean desktop preview while VR is active. 0 matches the XR runtime cadence.")]
+                public float VrCyclopeanDesktopTargetRateHz
+                {
+                    get => _vrCyclopeanDesktopTargetRateHz;
+                    set => SetField(ref _vrCyclopeanDesktopTargetRateHz, MathF.Max(0.0f, value));
+                }
+
+                [Category("VR")]
+                [Description("When true, desktop-facing VR outputs are skipped for a frame if the previous whole-frame cost already exceeded the active XR budget band.")]
+                public bool VrDesktopAutoSkipWhenOverBudget
+                {
+                    get => _vrDesktopAutoSkipWhenOverBudget;
+                    set => SetField(ref _vrDesktopAutoSkipWhenOverBudget, value);
                 }
 
                 /// <summary>

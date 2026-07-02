@@ -11,6 +11,49 @@ public enum EVrOutputViewKind
     CyclopeanDesktop,
 }
 
+public enum EFrameOutputKind
+{
+    DesktopScene,
+    DesktopMirror,
+    EditorScenePanel,
+    OpenXREyeSubmit,
+    OpenVRSubmit,
+    ImGuiOverlay,
+    DynamicTextOverlay,
+    Present,
+}
+
+public enum EFrameOutputPhase
+{
+    Collect,
+    Swap,
+    Render,
+    Submit,
+    Overlay,
+    Present,
+}
+
+public enum EFrameOutputSkipReason
+{
+    None,
+    Cadence,
+    Budget,
+    MirrorOff,
+    SurfaceUnavailable,
+    VrGated,
+    Disabled,
+    HeldLastImage,
+}
+
+public enum EVrMirrorMode
+{
+    Off,
+    BlitSubmittedEye,
+    CyclopeanReconstruct,
+    LowRatePreview,
+    FullIndependentRender,
+}
+
 public enum EVrVisibilityPolicy
 {
     IndependentDesktopAndVrEyes,
@@ -193,6 +236,63 @@ public readonly record struct ViewRecordingWorkItem(
 {
     public bool HasImmutableFoveationInput => Foveation.Equals(View.Foveation);
 }
+
+public readonly record struct FrameOutputPacingDecision(
+    EVrOutputViewKind ViewKind,
+    EFrameOutputKind OutputKind,
+    ulong FrameId,
+    bool IsDue,
+    bool CadenceSkipped,
+    bool AutoSkipped,
+    EFrameOutputSkipReason SkipReason,
+    float ConfiguredTargetRateHz,
+    float SourceRateHz,
+    double AchievedRateHz,
+    int TotalRenderCount,
+    int TotalSkipCount)
+{
+    public bool Skipped => !IsDue;
+
+    public static FrameOutputPacingDecision Due(
+        EVrOutputViewKind viewKind,
+        EFrameOutputKind outputKind,
+        ulong frameId = 0UL,
+        float configuredTargetRateHz = 0.0f,
+        float sourceRateHz = 0.0f)
+        => new(
+            viewKind,
+            outputKind,
+            frameId,
+            IsDue: true,
+            CadenceSkipped: false,
+            AutoSkipped: false,
+            EFrameOutputSkipReason.None,
+            configuredTargetRateHz,
+            sourceRateHz,
+            sourceRateHz > 0.0f ? sourceRateHz : 0.0,
+            TotalRenderCount: 0,
+            TotalSkipCount: 0);
+}
+
+public readonly record struct FrameOutputTelemetry(
+    EFrameOutputKind OutputKind,
+    EVrOutputViewKind ViewKind,
+    EFrameOutputPhase Phase,
+    FrameOutputPacingDecision Pacing,
+    string? Name,
+    string? PipelineName,
+    bool Active,
+    bool Rendered,
+    bool SceneRendered,
+    bool Mirror,
+    bool SeparateSceneRender,
+    bool SharedVisibility,
+    int CommandCount,
+    int DrawCalls,
+    int MultiDrawCalls,
+    int Triangles,
+    double CpuMs,
+    double GpuMs);
 
 public readonly record struct ViewRenderGroupContext
 {
@@ -415,6 +515,30 @@ public readonly record struct ViewRenderGroupContext
             leftEye.Foveation.IsEnabled ||
             rightEye.Foveation.IsEnabled ||
             cyclopeanDesktop.Foveation.IsEnabled;
+
+        return new ViewVisibilityFrustumContext(
+            solve.View,
+            solve.Projection,
+            IsConservative: true,
+            IncludesFoveatedViews: includesFoveatedViews);
+    }
+
+    public static ViewVisibilityFrustumContext BuildCombinedRuntimeVisibilityFrustum(
+        in ViewRenderContext leftEye,
+        in ViewRenderContext rightEye,
+        bool highSpeedMode = true)
+    {
+        ProjectionMatrixCombiner.FrustumSolveResult solve = ProjectionMatrixCombiner.SolveMinimalEnclosingFrustum(
+            [leftEye.ProjectionMatrix, rightEye.ProjectionMatrix],
+            [leftEye.ViewMatrix, rightEye.ViewMatrix],
+            farBoundsSourceCount: null,
+            solveViewOrientation: true,
+            refineViewOrientation: !highSpeedMode,
+            highSpeedMode: highSpeedMode);
+
+        bool includesFoveatedViews =
+            leftEye.Foveation.IsEnabled ||
+            rightEye.Foveation.IsEnabled;
 
         return new ViewVisibilityFrustumContext(
             solve.View,

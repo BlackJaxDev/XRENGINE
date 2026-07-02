@@ -1487,6 +1487,11 @@ public unsafe partial class VulkanRenderer
                 hash.Add(draw.Draw.PreparedProgramIdentity);
                 hash.Add(ComputeShadowCommandChainStructuralSignature(draw.Draw.ShadowUniformState));
                 break;
+            case QueryOp query:
+                hash.Add(query.Query.GetHashCode());
+                hash.Add((int)query.QueryTarget);
+                hash.Add((int)query.Operation);
+                break;
             case ClearOp clear:
                 hash.Add(clear.ClearColor);
                 hash.Add(clear.ClearDepth);

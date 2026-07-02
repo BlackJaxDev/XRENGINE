@@ -81,6 +81,7 @@ namespace XREngine
                     RtxIo.SnapshotAndReset();
                     Vulkan.SnapshotAndReset();
                     Vr.SnapshotAndReset();
+                    FrameLifecycle.SnapshotAndReset();
                     Vram.SnapshotAndReset();
                     ResourceChurn.SnapshotAndReset();
 

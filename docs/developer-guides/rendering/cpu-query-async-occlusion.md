@@ -1,14 +1,21 @@
 # CPU Query Async Occlusion
 
 `EOcclusionCullingMode.CpuQueryAsync` is XRENGINE's hardware-query-based occlusion
-path. It works on **both** mesh submission paths:
+path. On the CPU-direct mesh submission path, it submits asynchronous hardware
+queries on OpenGL and Vulkan. DX12 still forces commands visible and records an
+`UnsupportedBackend` diagnostic instead of silently culling with an unvalidated
+query backend.
+
+Backend support is path-specific:
 
 - On `CpuDirect` (CPU traversal), the per-pass `RenderCommandCollection` uses
   `CpuRenderOcclusionCoordinator` to bracket each visible probe's draw with an
-  occlusion query (this has always worked).
-- On the GPU-dispatch strategies (`GpuIndirect*`), the
+  occlusion query. OpenGL records the query immediately; Vulkan enqueues
+  begin/end query frame ops around the deferred proxy draw.
+- On the GPU-dispatch strategies (`GpuIndirect*`), the current
   `GPURenderPassCollection.ApplyCpuQueryAsyncOcclusion` path issues proxy-AABB
-  queries against `CulledSceneToRenderBuffer` after the GPU cull pass.
+  queries against `CulledSceneToRenderBuffer` after the GPU cull pass on the
+  supported instrumented/OpenGL path. Zero-readback modes should use `GpuHiZ`.
 
 It complements the GPU Hi-Z compute path (`GpuHiZ`) and the CPU software
 rasterizer (`CpuSoftwareOcclusion`).
@@ -31,19 +38,29 @@ enough that per-mesh culling pays off.
 sequenceDiagram
   participant Cull as GPU Cull Pass
   participant CQA as CpuQueryAsync
-  participant GL as Hardware Queries
+  participant HW as Hardware Queries
   participant Sub as Mesh Submission
   Cull->>CQA: VisibleCount + CulledSceneToRenderBuffer
   CQA->>CQA: Build pendingSet, apply budget + stagger
   loop per candidate (cap: 64)
-    CQA->>GL: AnySamplesPassedConservative.Begin
-    CQA->>GL: Draw proxy AABB (depth-only)
-    CQA->>GL: EndQuery (handle queued)
+    CQA->>HW: AnySamplesPassedConservative.Begin
+    CQA->>HW: Draw proxy AABB (depth-only)
+    CQA->>HW: EndQuery (handle queued)
   end
-  Note over CQA,GL: Next frames: TryGetAnySamplesPassed() is non-blocking
-  GL-->>CQA: Resolved samplesPassed (1+ frames later)
+  Note over CQA,HW: Next frames: TryGetAnySamplesPassed() is non-blocking
+  HW-->>CQA: Resolved samplesPassed (1+ frames later)
   CQA->>Sub: Apply hysteresis -> mark occluded
 ```
+
+## Submission (CPU-direct path)
+
+The CPU-direct path defers proxy work until after predicted-visible opaque
+meshes have populated depth. Each scheduled probe draws a depth-tested,
+color/depth-write-disabled AABB proxy between `BeginQuery` and `EndQuery`.
+OpenGL executes those calls directly through `GLRenderQuery`. Vulkan enqueues
+`QueryOp` frame operations around the deferred proxy `MeshDrawOp`, then records
+`vkCmdBeginQuery` / `vkCmdEndQuery` inside the same render pass as the proxy
+draw.
 
 The two-step lifecycle (`SubmitCpuOcclusionQueryBatch` + `ResolveCpuOcclusionQueryResults`)
 is intentionally asynchronous. Queries submitted on frame N typically resolve on
@@ -56,16 +73,16 @@ the GPU.
 [`GPURenderPassCollection.Occlusion.cs`](../../../XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs))
 runs after the GPU cull pass for the active `RenderPass`. It:
 
-1. Bails when the active renderer is not OpenGL. **The CpuQueryAsync GPU-dispatch
-   path is OpenGL-only today.** Vulkan and DX12 backends pass through unchanged.
-   The CpuDirect submission path is independent of this gate.
+1. Bails when the active renderer is not OpenGL. **CpuQueryAsync is OpenGL-only
+   on this GPU-dispatch refinement path today.** Vulkan and DX12 backends pass
+   through unchanged and report the unsupported backend in telemetry.
 2. Bails when the culled-buffer or count-buffer is unavailable, when the pass is
    on a `GpuIndirectZeroReadback` strategy (no CPU-visible visible-count), or
    when `VisibleCommandCount == 0`. Pair `CpuQueryAsync` with `CpuDirect` or
    `GpuIndirectInstrumented` when you want GPU-dispatch refinement; use
    `GpuHiZ` under zero-readback.
 3. Iterates `CulledSceneToRenderBuffer` entries, looking up the source command
-   (`Reserved1` → source index in `GPUScene`).
+   (`Reserved1` â†’ source index in `GPUScene`).
 4. Skips a candidate if:
    - it's already in `_cpuOcclusionPending`,
    - it was recently resolved and the per-frame stagger says "not yet" (LRU
@@ -92,7 +109,7 @@ runs after the GPU cull pass for the active `RenderPass`. It:
 The 64-query cap puts a hard ceiling on per-frame submission cost; with the
 6-frame retest window, a stable scene cycles roughly `6 * 64 = 384` candidates
 through the pool before reusing query slots. Larger working sets simply test
-fewer candidates more often — Hi-Z handles the wide cull, `CpuQueryAsync` adds
+fewer candidates more often â€” Hi-Z handles the wide cull, `CpuQueryAsync` adds
 mesh-level refinement.
 
 ## Resolution
@@ -101,7 +118,7 @@ mesh-level refinement.
 
 1. `XRRenderQuery.TryGetAnySamplesPassed(out _)` is non-blocking
    (`GL_QUERY_RESULT_AVAILABLE`). Unresolved queries stay in the pending list.
-2. Resolved results enter `_cpuOcclusionRecent` (sourceIndex → last result frame
+2. Resolved results enter `_cpuOcclusionRecent` (sourceIndex â†’ last result frame
    + verdict).
 3. The hysteresis filter requires `TemporalOcclusionHysteresisFrames` consecutive
    "occluded" results before downstream culling acts on the verdict.
@@ -113,9 +130,9 @@ mesh-level refinement.
 [`OcclusionTelemetry`](../../../XREngine.Runtime.Rendering/Rendering/Occlusion/OcclusionTelemetry.cs)
 exposes:
 
-- `CpuQueryAsyncSubmitted` — queries Begin/End-bracketed this frame.
-- `CpuQueryAsyncResolved` — queries whose results landed this frame.
-- `CpuQueryAsyncOccluded` — final per-frame "occluded" decisions after
+- `CpuQueryAsyncSubmitted` â€” queries Begin/End-bracketed this frame.
+- `CpuQueryAsyncResolved` â€” queries whose results landed this frame.
+- `CpuQueryAsyncOccluded` â€” final per-frame "occluded" decisions after
   hysteresis.
 
 The ImGui Occlusion panel renders all three plus a one-line explanation when
@@ -126,16 +143,15 @@ the path is inactive (effective mode mismatch, zero-readback strategy, etc.).
 | Backend | Status |
 | --- | --- |
 | OpenGL 4.6 | Production. Uses `GL_ANY_SAMPLES_PASSED_CONSERVATIVE`. |
-| Vulkan (WIP) | Pass-through; the submit/resolve methods bail when the active renderer is not `OpenGLRenderer`. Vulkan queries (`VK_QUERY_TYPE_OCCLUSION`) are tracked under the Vulkan upscale bridge work. |
+| Vulkan | CPU-direct supported through `VkQueryPool` occlusion queries recorded as Vulkan frame ops. GPU-dispatch refinement remains limited to the supported/instrumented path; prefer `GpuHiZ` for Vulkan GPU-driven zero-readback. |
 | DX12 | Not implemented. |
 
-A Vulkan equivalent can reuse the same lifecycle (proxy AABB depth-only draw,
-`AnySamplesPassed` query, non-blocking poll) — the bottleneck is wiring a
-`VkQueryPool`-backed `XRRenderQuery` rather than redesigning the contract.
+Both OpenGL and Vulkan resolve through `AsyncOcclusionQueryManager` with
+availability checks first, so the render thread never waits for query results.
 
 ## Did We Try Meshlets On OpenGL?
 
-Yes — partially. `EMeshShaderDialect` already models both OpenGL dialects,
+Yes â€” partially. `EMeshShaderDialect` already models both OpenGL dialects,
 and the production GLSL shader variants for both already exist alongside the
 Vulkan ones:
 
@@ -144,7 +160,7 @@ Vulkan ones:
 | `VulkanEXT` | `VK_EXT_mesh_shader` | `MeshletCulling.task`, `MeshletRender.mesh`, `MeshletRenderSkinned.mesh` | `vkCmdDrawMeshTasksIndirectCountEXT` wired | **true** |
 | `OpenGLEXT` | `GL_EXT_mesh_shader` | `MeshletCullingExt.task`, `MeshletRenderExt.mesh`, `MeshletRenderSkinnedExt.mesh` | `glMultiDrawMeshTasksIndirectCountEXT` **not wired**; extension also rarely exposed by current drivers | false |
 | `OpenGLNV` | `GL_NV_mesh_shader` | NV variants for diagnostics | No indirect-count entrypoint exists in the spec | false (diagnostic-only) |
-| `None` | — | — | — | false |
+| `None` | â€” | â€” | â€” | false |
 
 The blocker for production meshlets on OpenGL is **not** missing shaders; it's
 the indirect-count mesh-task dispatch entrypoint:
@@ -162,7 +178,7 @@ the indirect-count mesh-task dispatch entrypoint:
 Until the EXT delegate is wired (or a driver/hardware target appears that
 justifies it), the resolver downgrades any forced meshlet strategy on OpenGL
 to `GpuIndirectZeroReadback`. The Occlusion panel surfaces the active
-downgrade (requested → resolved + dialect + reason), and the editor tooltip on
+downgrade (requested â†’ resolved + dialect + reason), and the editor tooltip on
 `ForceMeshSubmissionStrategy` explains it.
 
 See [mesh-submission-strategies](../../architecture/rendering/mesh-submission-strategies.md)
@@ -175,10 +191,17 @@ for the full resolver contract.
   pixels will report "visible" even when most of the mesh is behind an
   occluder. Split large geometry or stack with `CpuSoftwareOcclusion` for
   software pre-pass coverage.
+- **CPU SOC self-occluder guard.** `CpuSoftwareOcclusion` culls between render
+  commands, not inside a single merged command. When an imported scene collapses
+  to one `$MergedNode_0` command, SOC may rasterize that command into the mask
+  and then skip testing it against itself. The Occlusion panel reports this as
+  `Self-Occluder Skips`; split submeshes or mesh islands into separate render
+  commands to see SOC remove hidden geometry.
 - **Hi-Z dirty-bypass passthrough copy** (todo Phase 4) is deferred. The
   current `XRE_GPU_HIZ_DIRTY_BYPASS=1` opt-in has a documented nvoglv64 crash
   under sustained dirty conditions; the safe default remains OFF until the
   state handoff is rewritten as an explicit GPU passthrough copy.
-- **Vulkan parity** is the next obvious extension; the design above is
-  backend-agnostic apart from the `OpenGLRenderer` cast in
-  `SubmitCpuOcclusionQueryBatch`.
+- **Vulkan GPU-dispatch parity** remains separate from CPU-direct support. The
+  CPU-direct path records `QueryOp` begin/end around proxy draws; the
+  GPU-dispatch refinement path still needs backend-specific validation before it
+  should be treated as production Vulkan behavior.

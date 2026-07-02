@@ -45,6 +45,7 @@ internal sealed class RuntimeRenderSettings
     private OpenXRAPI.OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
     private OpenXRAPI.OpenXrRenderPacingMode _openXrRenderPacingMode = RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
     private EVrViewRenderMode _vrViewRenderMode = RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
+    private EVrMirrorMode _vrMirrorMode = RuntimeRenderingHostServiceDefaults.VrMirrorMode;
     private EVrFoveationMode _vrFoveationMode = RuntimeRenderingHostServiceDefaults.VrFoveationMode;
     private EVrFoveationQualityPreset _vrFoveationQualityPreset = RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
     private bool _vrFoveationRequireRequested = RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
@@ -388,6 +389,13 @@ internal sealed class RuntimeRenderSettings
         set => _vrViewRenderMode = value
             ? EVrViewRenderMode.SinglePassStereo
             : EVrViewRenderMode.SequentialViews;
+    }
+    public EVrMirrorMode VrMirrorMode
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.VrMirrorMode
+            : _vrMirrorMode;
+        set => _vrMirrorMode = value;
     }
     public EVrFoveationMode VrFoveationMode
     {

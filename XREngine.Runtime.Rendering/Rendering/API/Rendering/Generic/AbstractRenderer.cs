@@ -216,6 +216,60 @@ namespace XREngine.Rendering
             RenderPipelineGpuProfiler.Instance.RecordRenderThreadCpuTiming(frameId, name, milliseconds);
         }
 
+        private static void RecordImGuiFrameOutput(XRCamera? camera, ulong frameId, long elapsedTicks)
+        {
+            double cpuMs = elapsedTicks <= 0L ? 0.0 : elapsedTicks * 1000.0 / Stopwatch.Frequency;
+            IRuntimeRenderingHostServices services = RuntimeRenderingHostServices.Current;
+            EVrOutputViewKind viewKind = ResolveImGuiOverlayViewKind(camera, services);
+            bool desktopFacing = viewKind is EVrOutputViewKind.DesktopEditor or EVrOutputViewKind.CyclopeanDesktop;
+            bool mirror = desktopFacing &&
+                services.IsInVR &&
+                services.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct;
+            var pacing = FrameOutputPacingDecision.Due(viewKind, EFrameOutputKind.ImGuiOverlay, frameId);
+            var telemetry = new FrameOutputTelemetry(
+                EFrameOutputKind.ImGuiOverlay,
+                viewKind,
+                EFrameOutputPhase.Overlay,
+                pacing,
+                BuildImGuiOverlayOutputName(viewKind),
+                string.Empty,
+                true,
+                true,
+                false,
+                mirror,
+                false,
+                viewKind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye ||
+                    (viewKind == EVrOutputViewKind.CyclopeanDesktop && services.VrMirrorMode != EVrMirrorMode.FullIndependentRender),
+                0,
+                0,
+                0,
+                0,
+                cpuMs,
+                0.0);
+            services.RecordRenderFrameOutput(telemetry);
+        }
+
+        private static EVrOutputViewKind ResolveImGuiOverlayViewKind(XRCamera? camera, IRuntimeRenderingHostServices services)
+        {
+            if (camera?.StereoEyeLeft == true)
+                return EVrOutputViewKind.LeftEye;
+            if (camera?.StereoEyeLeft == false)
+                return EVrOutputViewKind.RightEye;
+
+            return services.IsInVR && services.VrMirrorMode != EVrMirrorMode.FullIndependentRender
+                ? EVrOutputViewKind.CyclopeanDesktop
+                : EVrOutputViewKind.DesktopEditor;
+        }
+
+        private static string BuildImGuiOverlayOutputName(EVrOutputViewKind viewKind)
+            => viewKind switch
+            {
+                EVrOutputViewKind.LeftEye => "ImGui overlay left eye",
+                EVrOutputViewKind.RightEye => "ImGui overlay right eye",
+                EVrOutputViewKind.CyclopeanDesktop => "ImGui overlay VR mirror",
+                _ => "ImGui overlay",
+            };
+
         protected static void ConfigureImGuiDisplay(IRuntimeScreenSpaceUserInterface? canvas, XRViewport? viewport, XRCamera? camera)
         {
             var io = ImGui.GetIO();
@@ -321,6 +375,8 @@ namespace XREngine.Rendering
                 return false;
 
             _lastImGuiTimestampTicks = timestampTicks;
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            long overlayStartTicks = Stopwatch.GetTimestamp();
 
             lock (ImGuiContextTracker.SyncRoot)
             {
@@ -334,7 +390,6 @@ namespace XREngine.Rendering
                     {
                         RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
                         bool profilingActive = profiler.ShouldInstrumentCommandScopes;
-                        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
 
                         long phaseStart = BeginImGuiCpuPhase(profilingActive);
                         ConfigureImGuiDisplay(canvas, viewport, camera);
@@ -390,6 +445,7 @@ namespace XREngine.Rendering
                 }
             }
 
+            RecordImGuiFrameOutput(camera, frameId, Stopwatch.GetTimestamp() - overlayStartTicks);
             return true;
         }
 

@@ -2618,6 +2618,45 @@ namespace XREngine.Rendering
                 name,
                 System.Diagnostics.Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds);
 
+        private static void RecordWindowFrameOutput(
+            EFrameOutputKind outputKind,
+            EVrOutputViewKind viewKind,
+            EFrameOutputPhase phase,
+            string name,
+            bool rendered,
+            bool sceneRendered,
+            bool mirror,
+            bool separateSceneRender,
+            bool sharedVisibility,
+            long elapsedTicks)
+        {
+            double cpuMs = elapsedTicks <= 0L
+                ? 0.0
+                : elapsedTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            var pacing = FrameOutputPacingDecision.Due(viewKind, outputKind, frameId);
+            RuntimeRenderingHostServices.Current.RecordRenderFrameOutput(
+                new FrameOutputTelemetry(
+                    outputKind,
+                    viewKind,
+                    phase,
+                    pacing,
+                    name,
+                    string.Empty,
+                    true,
+                    rendered,
+                    sceneRendered,
+                    mirror,
+                    separateSceneRender,
+                    sharedVisibility,
+                    0,
+                    0,
+                    0,
+                    0,
+                    cpuMs,
+                    0.0));
+        }
+
         private bool ShouldBeRendering()
             => !_isDisposed && !_isDisposing && !IsCloseRequestedOrApproved && Viewports.Count > 0 && TargetWorldInstance is not null;
 
@@ -2720,11 +2759,12 @@ namespace XREngine.Rendering
                 bool forceFullViewport = RuntimeRenderingHostServices.Current.ForceFullViewport;
                 if (forceFullViewport)
                     useScenePanelMode = false;
+                EVrMirrorMode mirrorMode = RuntimeRenderingHostServices.Current.VrMirrorMode;
                 bool mirrorByComposition =
                     RuntimeRenderingHostServices.Current.IsInVR &&
                     RuntimeRenderingHostServices.Current.IsOpenXRActive &&
                     RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR &&
-                    RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures;
+                    mirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct;
                 bool hasRenderableHostSurface = HasRenderableHostSurface();
                 if (!hasRenderableHostSurface)
                 {
@@ -2789,7 +2829,14 @@ namespace XREngine.Rendering
                     }
                     else
                     {
-                        RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
+                        // Scoped so scene/viewport rendering cost is attributed in profiler
+                        // captures instead of appearing as unexplained XRWindow.RenderFrame self time.
+                        long viewportsPhaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                        using (var renderViewportsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.RenderWindowViewports"))
+                        {
+                            RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
+                        }
+                        RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.RenderWindowViewports", viewportsPhaseStart);
                     }
                 }
                 catch (Exception vpEx)
@@ -2858,7 +2905,19 @@ namespace XREngine.Rendering
                 // minimum clear to the background color and render the debug triangle + ImGui overlay.
                 using (var renderWindowSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Renderer.RenderWindow"))
                 {
+                    long presentStart = System.Diagnostics.Stopwatch.GetTimestamp();
                     frameRenderer.RenderWindow(delta);
+                    RecordWindowFrameOutput(
+                        EFrameOutputKind.Present,
+                        EVrOutputViewKind.DesktopEditor,
+                        EFrameOutputPhase.Present,
+                        "Window present",
+                        rendered: true,
+                        sceneRendered: false,
+                        mirror: false,
+                        separateSceneRender: false,
+                        sharedVisibility: false,
+                        System.Diagnostics.Stopwatch.GetTimestamp() - presentStart);
                 }
 
                 using (var postViewportsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.PostRenderViewportsCallback"))
@@ -3084,7 +3143,19 @@ namespace XREngine.Rendering
                     var fb = EffectiveFramebufferSize;
                     uint targetWidth = (uint)Math.Max(1, fb.X);
                     uint targetHeight = (uint)Math.Max(1, fb.Y);
-                    RuntimeRenderingHostServices.Current.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);
+                    long mirrorStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                    bool mirrorRendered = RuntimeRenderingHostServices.Current.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);
+                    RecordWindowFrameOutput(
+                        EFrameOutputKind.DesktopMirror,
+                        EVrOutputViewKind.CyclopeanDesktop,
+                        EFrameOutputPhase.Render,
+                        "VR desktop mirror composition",
+                        rendered: mirrorRendered,
+                        sceneRendered: false,
+                        mirror: true,
+                        separateSceneRender: false,
+                        sharedVisibility: true,
+                        System.Diagnostics.Stopwatch.GetTimestamp() - mirrorStart);
                 }
             }
         }

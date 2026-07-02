@@ -129,6 +129,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             bool hasStaticFrameOps = ops.Length > 0;
+            bool hasQueryFrameOps = HasQueryFrameOps(ops) || HasQueryFrameOps(dynamicUiBatchTextOps);
             bool delayDynamicUiBatchTextOverlayRecording =
                 preserveSwapchainForOverlay &&
                 dynamicUiBatchTextOps.Length > 0;
@@ -180,6 +181,7 @@ namespace XREngine.Rendering.Vulkan
             if (VulkanPrimaryCommandBufferReuseEnabled &&
                 !imageForcedDirty &&
                 !gpuPipelineProfilingActive &&
+                !hasQueryFrameOps &&
                 TryReuseCleanCommandChainPrimaryVariant(
                     imageIndex,
                     frameOpsSignature,
@@ -274,7 +276,7 @@ namespace XREngine.Rendering.Vulkan
             bool forcedDirty = dirty;
             bool usingCommandChains = commandChainSchedule is not null;
             bool hasTextureUploadFrameOps = hasStaticFrameOps && HasTextureUploadFrameOps(ops);
-            bool frameOpsRequireFreshPrimary = hasStaticFrameOps && !VulkanPrimaryCommandBufferReuseEnabled;
+            bool frameOpsRequireFreshPrimary = hasStaticFrameOps && (!VulkanPrimaryCommandBufferReuseEnabled || hasQueryFrameOps);
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DirtyEvaluation"))
             {
@@ -639,6 +641,17 @@ namespace XREngine.Rendering.Vulkan
             commandBuffer = best.PrimaryCommandBuffer;
             swapchainLayoutAfterCommandBuffer = best.RecordedSwapchainFinalLayout;
             return true;
+        }
+
+        private static bool HasQueryFrameOps(FrameOp[] ops)
+        {
+            for (int i = 0; i < ops.Length; i++)
+            {
+                if (ops[i] is QueryOp)
+                    return true;
+            }
+
+            return false;
         }
 
         private static void MarkCommandBufferVariantTransientAfterTextureUpload(CommandBufferCacheVariant variant)
@@ -1606,6 +1619,8 @@ namespace XREngine.Rendering.Vulkan
                         $" compute='{compute.Program.Data.Name ?? "<unnamed program>"}' groups={compute.GroupsX},{compute.GroupsY},{compute.GroupsZ} uniforms={compute.Snapshot.Uniforms.Count} samplers={compute.Snapshot.Samplers.Count + compute.Snapshot.SamplersByName.Count} images={compute.Snapshot.Images.Count} buffers={compute.Snapshot.Buffers.Count}",
                     IndirectDrawOp indirect =>
                         $" renderer='{indirect.MeshRenderer.MeshRenderer?.Name ?? "<unnamed renderer>"}' draws={indirect.DrawCount} stride={indirect.Stride} offset={indirect.ByteOffset} countOffset={indirect.CountByteOffset} useCount={indirect.UseCount}",
+                    QueryOp query =>
+                        $" query={query.Operation} target={query.QueryTarget}",
                     BlitOp blit =>
                         $" in='{blit.InFbo?.Name ?? "<swapchain>"}' out='{blit.OutFbo?.Name ?? "<swapchain>"}' color={blit.ColorBit} depth={blit.DepthBit} stencil={blit.StencilBit}",
                     _ => string.Empty
@@ -4618,6 +4633,21 @@ namespace XREngine.Rendering.Vulkan
 
                         CmdBeginLabel(commandBuffer, $"TransformFeedback.{transformFeedbackOp.Operation}");
                         RecordTransformFeedbackOp(commandBuffer, transformFeedbackOp);
+                        CmdEndLabel(commandBuffer);
+                        break;
+
+                    case QueryOp queryOp:
+                        if (!renderPassActive || activeTarget != queryOp.Target)
+                        {
+                            EndActiveRenderPass();
+                            BeginRenderPassForTarget(queryOp.Target, opPassIndex, activeContext);
+                        }
+
+                        CmdBeginLabel(commandBuffer, $"Query.{queryOp.Operation}");
+                        if (queryOp.Operation == EVulkanQueryFrameOpKind.Begin)
+                            queryOp.Query.BeginQuery(commandBuffer, queryOp.QueryTarget);
+                        else
+                            queryOp.Query.EndQuery(commandBuffer);
                         CmdEndLabel(commandBuffer);
                         break;
 

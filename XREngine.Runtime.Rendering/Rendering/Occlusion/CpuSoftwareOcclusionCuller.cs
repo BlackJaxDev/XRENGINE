@@ -172,7 +172,10 @@ namespace XREngine.Rendering.Occlusion
                 return true;
 
             if (_selectedOccluderKeys.Contains(stableQueryKey))
+            {
+                OcclusionTelemetry.RecordCpuSocSelfOccluderSkipped();
                 return true;
+            }
 
             _frameTestsRun++;
             if (_frameOccludersRasterized == 0)

@@ -633,6 +633,71 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"Multi-Draw Calls: {stats.MultiDrawCalls:N0}");
         ImGui.Text($"Triangles Rendered: {stats.TrianglesRendered:N0}");
 
+        FrameLifecycleTelemetryData lifecycle = stats.FrameLifecycle;
+        ImGui.Separator();
+        ImGui.Text("Frame Lifecycle:");
+        ImGui.Text($"  Ids: update {lifecycle.UpdateFrameId:N0} | collect {lifecycle.CollectFrameId:N0} | swap {lifecycle.SwapFrameId:N0} | render {lifecycle.RenderFrameId:N0} | present {lifecycle.PresentFrameId:N0}");
+        ImGui.Text($"  Collect late policy: {lifecycle.CollectVisibleLatePolicy}");
+        ImGui.Text($"  Collect wait for render: {lifecycle.CollectWaitForRenderMs:F3} ms ({lifecycle.CollectWaitReason})");
+        ImGui.Text($"  Render wait for collect: {lifecycle.RenderWaitForCollectMs:F3} ms ({lifecycle.RenderWaitReason})");
+        ImGui.Text($"  Skipped collect frames: {lifecycle.SkippedCollectFrames:N0} | stale visibility reuse: {lifecycle.StaleCollectReuseFrames:N0}");
+
+        FrameOutputManifestData outputs = stats.FrameOutputs;
+        ImGui.Separator();
+        ImGui.Text("Frame Outputs:");
+        ImGui.Text($"  Mirror: {outputs.MirrorMode} | Visibility: {outputs.VisibilityPolicy} | Budget: {outputs.BudgetBand} {outputs.BudgetMs:F2} ms");
+        ImGui.Text($"  Whole frame: {outputs.WholeFrameMs:F3} ms | p50 {outputs.WholeFrameP50Ms:F3} | p90 {outputs.WholeFrameP90Ms:F3} | p95 {outputs.WholeFrameP95Ms:F3} | p99 {outputs.WholeFrameP99Ms:F3} | worst {outputs.WholeFrameWorstMs:F3}");
+        FrameOutputEntryData[] outputRows = outputs.Outputs ?? [];
+        if (outputRows.Length > 0 &&
+            ImGui.BeginTable("FrameOutputRows", 9, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable))
+        {
+            ImGui.TableSetupColumn("Output", ImGuiTableColumnFlags.WidthFixed, 110f);
+            ImGui.TableSetupColumn("View", ImGuiTableColumnFlags.WidthFixed, 105f);
+            ImGui.TableSetupColumn("Mode", ImGuiTableColumnFlags.WidthFixed, 92f);
+            ImGui.TableSetupColumn("Rate", ImGuiTableColumnFlags.WidthFixed, 82f);
+            ImGui.TableSetupColumn("CPU", ImGuiTableColumnFlags.WidthFixed, 70f);
+            ImGui.TableSetupColumn("GPU", ImGuiTableColumnFlags.WidthFixed, 70f);
+            ImGui.TableSetupColumn("Cmds", ImGuiTableColumnFlags.WidthFixed, 62f);
+            ImGui.TableSetupColumn("Skips", ImGuiTableColumnFlags.WidthFixed, 70f);
+            ImGui.TableSetupColumn("Pipeline", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableHeadersRow();
+
+            for (int i = 0; i < outputRows.Length; i++)
+            {
+                FrameOutputEntryData row = outputRows[i];
+                double cpuMs = row.CollectCpuMs + row.SwapCpuMs + row.RenderCpuMs + row.SubmitCpuMs + row.OverlayCpuMs + row.PresentCpuMs;
+                string mode = row.Mirror
+                    ? "Mirror"
+                    : row.SeparateSceneRender
+                        ? "Scene"
+                        : row.SceneRendered
+                            ? "Shared"
+                            : "Held";
+
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted(row.OutputKind);
+                ImGui.TableSetColumnIndex(1);
+                ImGui.TextUnformatted(row.ViewKind);
+                ImGui.TableSetColumnIndex(2);
+                ImGui.TextUnformatted(mode);
+                ImGui.TableSetColumnIndex(3);
+                ImGui.Text($"{row.ConfiguredTargetRateHz:F0}/{row.AchievedRateHz:F0}");
+                ImGui.TableSetColumnIndex(4);
+                ImGui.Text($"{cpuMs:F2}");
+                ImGui.TableSetColumnIndex(5);
+                ImGui.Text($"{row.GpuMs:F2}");
+                ImGui.TableSetColumnIndex(6);
+                ImGui.Text($"{row.CommandCount:N0}");
+                ImGui.TableSetColumnIndex(7);
+                ImGui.Text(row.Skipped ? $"{row.TotalSkipCount:N0} {row.SkipReason}" : $"{row.TotalSkipCount:N0}");
+                ImGui.TableSetColumnIndex(8);
+                ImGui.TextUnformatted(string.IsNullOrWhiteSpace(row.PipelineName) ? row.Name : row.PipelineName);
+            }
+
+            ImGui.EndTable();
+        }
+
         RenderResourceChurnRowData[] resourceChurnRows = stats.RenderResourceChurnRows ?? [];
         int resourceChurnCount = stats.RenderResourceCreatedCount
             + stats.RenderResourceRecreatedCount
@@ -1791,8 +1856,9 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                     }
                     agg.RootNodes.Add(rootNode);
                     agg.ThreadIds.Add(thread.ThreadId);
-                    agg.TotalTimeMs += rootNode.ElapsedMs;
-                    agg.MaxRootElapsedMs = Math.Max(agg.MaxRootElapsedMs, rootNode.ElapsedMs);
+                    float rootElapsedMs = GetClassifiedRootElapsedMs(rootNode);
+                    agg.TotalTimeMs += rootElapsedMs;
+                    agg.MaxRootElapsedMs = Math.Max(agg.MaxRootElapsedMs, rootElapsedMs);
                     agg.SeenThisUpdate = true;
                     agg.LastSeen = now;
                     UpdateAggregatedChildrenRecursive(rootNode.Children, agg.Children, now);
@@ -3548,6 +3614,28 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         => scopeKind == ProfilerScopeKind.Unspecified
             ? name
             : string.Concat(name, " [", scopeKind.ToString(), "]");
+
+    private static float GetClassifiedRootElapsedMs(ProfilerNodeData node)
+    {
+        float downstreamRenderPressureMs = CalculateDownstreamRenderPressureMs(node);
+        return Math.Max(0.0f, node.ElapsedMs - downstreamRenderPressureMs);
+    }
+
+    private static float CalculateDownstreamRenderPressureMs(ProfilerNodeData node)
+    {
+        float total = string.Equals(node.Name, "EngineTimer.CollectVisibleThread.WaitForRender", StringComparison.Ordinal)
+            ? node.ElapsedMs
+            : 0.0f;
+
+        ProfilerNodeData[] children = node.Children ?? [];
+        for (int i = 0; i < children.Length; i++)
+        {
+            if (children[i] is not null)
+                total += CalculateDownstreamRenderPressureMs(children[i]);
+        }
+
+        return total;
+    }
 
     private sealed class AggregatedChildNode
     {

@@ -16,8 +16,8 @@ uniform sampler2D DepthView;
 uniform float Radius = 2.2f;
 uniform float Bias = 0.06f;
 uniform float Power = 1.35f; // Unused in gather - applied post-denoise in DeferredLightCombine
-uniform int SliceCount = 5;
-uniform int StepsPerSlice = 10;
+uniform int SliceCount = 3;
+uniform int StepsPerSlice = 4;
 uniform float FalloffStartRatio = 0.4f;
 uniform float ThicknessHeuristic = 1.0f; // 0 = disabled, 1 = full thin-occluder correction
 uniform bool UseInputNormals = true;

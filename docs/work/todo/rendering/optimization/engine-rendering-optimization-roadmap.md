@@ -1,6 +1,6 @@
 # Engine Rendering Optimization Roadmap
 
-Last Updated: 2026-05-29
+Last Updated: 2026-07-01
 Owner: Rendering
 Status: Active roadmap
 Target Branch: `rendering-engine-optimization-roadmap`
@@ -30,6 +30,13 @@ This roadmap is the coordination document. Detailed implementation lives in:
 - [Material Table And Texture Binding Ladder TODO](material-table-and-texture-binding-ladder-todo.md)
 - [Visibility Buffer Rendering TODO](visibility-buffer-rendering-todo.md)
 - [VR Rendering Performance Contract TODO](vr-rendering-performance-contract-todo.md)
+- [Vulkan Primary Command Recording Fast Path TODO](vulkan-primary-command-recording-fast-path-todo.md)
+- [Desktop And VR Shared Render-Thread Frame Pacing TODO](desktop-vr-shared-render-thread-frame-pacing-todo.md)
+- [Editor Profiler And UI Render Cost TODO](editor-profiler-ui-render-cost-todo.md)
+- [OpenXR Vulkan Submit Fence Wait TODO](../vr/openxr-vulkan-submit-fence-wait-todo.md)
+- [Default Pipeline GPU Hotspots TODO](default-pipeline-gpu-hotspots-todo.md)
+- [Collect-Visible Render Wait Decoupling TODO](collect-visible-render-wait-decoupling-todo.md)
+- [Rendering Clean Performance Baseline Profile Contract TODO](rendering-clean-performance-baseline-profile-contract-todo.md)
 - [Rendering Profiler And Benchmarking TODO](rendering-profiler-and-benchmarking-todo.md)
 
 Avatar asset transformation is tracked separately under

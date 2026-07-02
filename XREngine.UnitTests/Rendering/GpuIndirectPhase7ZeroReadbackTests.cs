@@ -126,9 +126,10 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
             "private static bool HasSignificantCameraChange",
             StringComparison.Ordinal);
 
-        cpuQueryAsync.ShouldContain("out cameraMoved");
-        cpuQueryAsync.ShouldContain("SubmitCpuOcclusionQueryBatch(scene, camera, candidates, cameraMoved);");
-        cpuQueryAsync.ShouldContain("ApplyTemporalCpuOcclusionFilter(candidates, cameraMoved, ref temporalOverrides, ref falsePositiveRecoveries);");
+        cpuQueryAsync.ShouldContain("ECpuOcclusionMotionTier motionTier = GetCpuQueryAsyncMotionTier(");
+        cpuQueryAsync.ShouldContain("if (motionTier == ECpuOcclusionMotionTier.CameraCut)");
+        cpuQueryAsync.ShouldContain("SubmitCpuOcclusionQueryBatch(scene, camera, candidates, motionTier);");
+        cpuQueryAsync.ShouldContain("ApplyTemporalCpuOcclusionFilter(candidates, motionTier, ref temporalOverrides, ref falsePositiveRecoveries);");
 
         string submit = Slice(
             occlusionSource,
@@ -136,7 +137,9 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
             "private uint ApplyTemporalCpuOcclusionFilter",
             StringComparison.Ordinal);
 
-        submit.ShouldContain("int retestPeriod = cameraMoved ? 1 : Math.Max(1, TemporalOcclusionHysteresisFrames * 3);");
+        submit.ShouldContain("ECpuOcclusionMotionTier.Stable => Math.Max(1, TemporalOcclusionHysteresisFrames * 3)");
+        submit.ShouldContain("ECpuOcclusionMotionTier.SmallMotion => Math.Max(1, TemporalOcclusionHysteresisFrames * 2)");
+        submit.ShouldContain("_ => 1");
 
         string filter = Slice(
             occlusionSource,
@@ -144,7 +147,7 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
             "private void ResolveCpuOcclusionQueryResults",
             StringComparison.Ordinal);
 
-        filter.ShouldContain("if (cameraMoved)");
+        filter.ShouldContain("if (motionTier == ECpuOcclusionMotionTier.CameraCut)");
         filter.ShouldContain("temporalOverrides++;");
         filter.ShouldContain("else if (state.ConsecutiveOccludedFrames >= TemporalOcclusionHysteresisFrames)");
     }

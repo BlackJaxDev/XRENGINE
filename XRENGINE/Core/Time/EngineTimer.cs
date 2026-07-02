@@ -7,6 +7,12 @@ using XREngine.Data.Profiling;
 
 namespace XREngine.Timers
 {
+    public enum ECollectVisibleLatePolicy
+    {
+        BlockUntilFresh = 0,
+        ReusePreviousVisibility = 1,
+    }
+
     public partial class EngineTimer : XRBase
     {
         private static readonly double SecondsPerStopwatchTick = 1.0 / Stopwatch.Frequency;
@@ -160,8 +166,21 @@ namespace XREngine.Timers
             _swapDone = new(true);//,
             //_updateDone = new(false);
 
+        private int _hasCompletedCollectSwap;
         private long _fixedUpdateAccumulatorTicks;
         private long _fixedUpdateClockTimestampTicks;
+        private ECollectVisibleLatePolicy _collectVisibleLatePolicy = ReadCollectVisibleLatePolicyFromEnvironment();
+
+        public ECollectVisibleLatePolicy CollectVisibleLatePolicy
+        {
+            get => _collectVisibleLatePolicy;
+            set => SetField(ref _collectVisibleLatePolicy, value);
+        }
+
+        public ulong UpdateFrameId { get; private set; }
+        public ulong CollectFrameId { get; private set; }
+        public ulong SwapFrameId { get; private set; }
+        public ulong PresentFrameId { get; private set; }
 
         public bool IsRunning => _watch.IsRunning;
 
@@ -197,6 +216,8 @@ namespace XREngine.Timers
             _watch.Start();
             _renderDone = new ManualResetEventSlim(false);
             _swapDone = new ManualResetEventSlim(true);
+            _hasCompletedCollectSwap = 0;
+            _collectVisibleLatePolicy = ReadCollectVisibleLatePolicyFromEnvironment();
 
             // Critical engine loops must NOT run on the shared ThreadPool; bursts of mesh/asset
             // import jobs were observed to starve them (see fps-drop diagnostics). Use dedicated
@@ -234,6 +255,26 @@ namespace XREngine.Timers
             };
             t.Start();
             return t;
+        }
+
+        private static ECollectVisibleLatePolicy ReadCollectVisibleLatePolicyFromEnvironment()
+        {
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy);
+            if (string.IsNullOrWhiteSpace(raw))
+                return ECollectVisibleLatePolicy.BlockUntilFresh;
+
+            string value = raw.Trim();
+            if (Enum.TryParse(value, ignoreCase: true, out ECollectVisibleLatePolicy parsed))
+                return parsed;
+
+            return value.ToLowerInvariant() switch
+            {
+                "block" => ECollectVisibleLatePolicy.BlockUntilFresh,
+                "fresh" => ECollectVisibleLatePolicy.BlockUntilFresh,
+                "reuse" => ECollectVisibleLatePolicy.ReusePreviousVisibility,
+                "stale" => ECollectVisibleLatePolicy.ReusePreviousVisibility,
+                _ => ECollectVisibleLatePolicy.BlockUntilFresh,
+            };
         }
 
         private void WaitForRemainingTicks(long remainingTicks)
@@ -331,14 +372,20 @@ namespace XREngine.Timers
                     //Wait for the render thread to swap update buffers with render buffers
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.WaitForRender", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
+                        long waitStartTicks = TimeTicks();
                         _renderDone.Wait(-1);
+                        Engine.Rendering.Stats.FrameLifecycle.RecordCollectWaitForRender(TimeTicks() - waitStartTicks);
                     }
 
                     _renderDone.Reset();
 
-                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.ProcessCollectVisibleSwapJobs", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
                         Engine.Jobs.ProcessCollectVisibleSwapJobs();
+                    }
+
+                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                    {
                         DispatchSwapBuffers();
                     }
                 }
@@ -352,6 +399,7 @@ namespace XREngine.Timers
 #endif
 
                 //Inform the render thread that the swap is done
+                Volatile.Write(ref _hasCompletedCollectSwap, 1);
                 _swapDone.Set();
             }
         }
@@ -437,17 +485,43 @@ namespace XREngine.Timers
         /// </summary>
         public void WaitToRender()
         {
-            // Wait for the collect-visible thread to finish swapping buffers.
-            _swapDone.Wait();
+            bool reusedPreviousVisibility = false;
+            while (IsRunning)
+            {
+                if (_swapDone.IsSet)
+                {
+                    _swapDone.Reset();
+                    break;
+                }
+
+                if (CanReusePreviousVisibilityThisFrame())
+                {
+                    if (!DispatchRender())
+                    {
+                        WaitUntilNextRenderDispatch();
+                        continue;
+                    }
+
+                    Engine.Rendering.Stats.FrameLifecycle.RecordStaleCollectReuse();
+                    reusedPreviousVisibility = true;
+                    break;
+                }
+
+                long waitStartTicks = TimeTicks();
+                _swapDone.Wait();
+                Engine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForCollect(TimeTicks() - waitStartTicks);
+            }
+
             if (!IsRunning)
                 return;
 
-            _swapDone.Reset();
-
-            // Suspend this thread until a render is dispatched. Keep the loop responsive,
-            // but do not steal time from the upcoming render by draining queued jobs here.
-            while (IsRunning && !DispatchRender())
-                WaitUntilNextRenderDispatch();
+            if (!reusedPreviousVisibility)
+            {
+                // Suspend this thread until a render is dispatched. Keep the loop responsive,
+                // but do not steal time from the upcoming render by draining queued jobs here.
+                while (IsRunning && !DispatchRender())
+                    WaitUntilNextRenderDispatch();
+            }
 
             if (!IsRunning)
                 return;
@@ -455,6 +529,10 @@ namespace XREngine.Timers
             // Inform the update thread that the render is done
             _renderDone.Set();
         }
+
+        private bool CanReusePreviousVisibilityThisFrame()
+            => CollectVisibleLatePolicy == ECollectVisibleLatePolicy.ReusePreviousVisibility &&
+               Volatile.Read(ref _hasCompletedCollectSwap) != 0;
 
         public bool IsCollectVisibleDone
             => _swapDone.IsSet;
@@ -545,7 +623,10 @@ namespace XREngine.Timers
 
                     long renderFrameElapsedTicks = Math.Max(0L, timestampTicks - renderFrameStartTicks);
                     double renderFrameMs = renderFrameElapsedTicks * 1000.0 / Stopwatch.Frequency;
+                    Engine.Rendering.Stats.FrameOutputs.RecordWholeFrameRenderThread(renderFrameId, renderFrameElapsedTicks);
+                    Engine.Rendering.Stats.FrameOutputs.SnapshotAndReset();
                     XREngine.Rendering.RenderPipelineGpuProfiler.Instance.RecordRenderThreadFrameMs(renderFrameId, renderFrameMs);
+                    PresentFrameId = renderFrameId;
                 }
                 return dispatch;
             }
@@ -566,6 +647,10 @@ namespace XREngine.Timers
                 long elapsedTicks = Math.Clamp(timestampTicks - Collect.LastTimestampTicks, 0L, Stopwatch.Frequency);
                 Collect.DeltaTicks = elapsedTicks;
                 Collect.LastTimestampTicks = timestampTicks;
+                unchecked
+                {
+                    CollectFrameId++;
+                }
                 PreCollectVisible?.Invoke();
                 CollectVisible?.Invoke();
                 PostCollectVisible?.Invoke();
@@ -581,6 +666,10 @@ namespace XREngine.Timers
         public void DispatchSwapBuffers()
         {
             using var sample = Engine.Profiler.Start("EngineTimer.DispatchSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop);
+            unchecked
+            {
+                SwapFrameId++;
+            }
             SwapBuffers?.Invoke();
         }
 
@@ -627,6 +716,10 @@ namespace XREngine.Timers
 
                     Update.DeltaTicks = elapsedTicks;
                     Update.LastTimestampTicks = timestampTicks;
+                    unchecked
+                    {
+                        UpdateFrameId++;
+                    }
 
                     using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PreUpdate", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {

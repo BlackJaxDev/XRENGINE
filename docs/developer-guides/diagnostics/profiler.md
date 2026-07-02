@@ -144,6 +144,12 @@ A standalone Silk.NET window (GLFW + OpenGL 3.3 + ImGui with docking) that:
 
 ### GPU Pipeline Timing
 
+The Render Stats panel includes a `Frame Outputs` table that attributes the
+shared render-thread frame to desktop scene, desktop mirror, XR submit, overlay,
+and present rows. It shows mirror mode, visibility policy, budget band,
+configured and achieved output rates, skip counts, command counts, and per-phase
+CPU timing.
+
 The profiler can collect GPU timestamp timings around generic `ViewportRenderCommand`
 execution, which makes it possible to see where render-pipeline time is being spent
 without instrumenting each pass manually.
@@ -240,16 +246,17 @@ at least one sample has been written. Harness summaries are written under
 `summary.json`, `summary.txt`, and `run-logdirs.txt`; by default the harness keeps
 only the latest three summary runs, configurable with `-RetainedRunCount`.
 
-### Render Stats Capture Schema v2
+### Render Stats Capture Schema v3
 
 `profiler-capture-manifest.json` now records
-`xrengine.profile_capture.render_stats.v2` with `schema_version = 2`. The
+`xrengine.profile_capture.render_stats.v3` with `schema_version = 3`. The
 manifest makes benchmark context explicit: build configuration, world mode,
 forced and effective mesh submission strategy, zero-readback material draw path,
 render backend, GPU/vendor, scene, camera, lights, viewport, render scale,
-stereo mode, validation/debug state, shader and texture cache mode, GPU clock
-policy, target refresh rate, frame budget, warmup/capture durations, and any
-invalid benchmark environment overrides detected at launch.
+stereo mode, VR view render mode, VR mirror mode, desktop mirror target rates,
+validation/debug state, shader and texture cache mode, GPU clock policy, target
+refresh rate, frame budget, warmup/capture durations, and any invalid benchmark
+environment overrides detected at launch.
 
 Each `profiler-render-stats.ndjson` sample includes the old frame timing fields
 plus renderer-state churn counters: indirect-count and multi-draw calls, shader
@@ -257,6 +264,26 @@ program and pipeline switches, VAO/buffer/SSBO/UBO binds, texture binds and
 redundant bind skips, active texture-binding rung, uniform calls, upload bytes,
 barriers by kind, readback bytes, mapped-buffer reads, active stereo mode,
 active backend, validation/debug flags, and timestamp query/readback counts.
+
+Frame lifecycle fields identify fence pressure between update, collect/swap, and
+render: `update_frame_id`, `collect_frame_id`, `swap_frame_id`,
+`present_frame_id`, `collect_visible_late_policy`,
+`collect_wait_for_render_ms`, `collect_wait_reason`,
+`render_wait_for_collect_ms`, `render_wait_reason`,
+`skipped_collect_frames`, and `stale_collect_reuse_frames`.
+`XRE_COLLECT_VISIBLE_LATE_POLICY=ReusePreviousVisibility` records stale-snapshot
+reuse when render intentionally skips a late collect/swap wait; the default
+`BlockUntilFresh` preserves fresh visibility publication before render.
+
+Frame output fields decompose the shared render-thread frame across desktop,
+mirror, XR submit, overlay, and present work. Top-level fields include
+`vr_mirror_mode`, `vr_visibility_policy`, `frame_output_budget_band`,
+`frame_output_budget_ms`, `frame_output_whole_frame_ms`, and whole-frame
+`p50/p90/p95/p99/worst` values. The raw `frame_outputs` object includes one row
+per active output such as `DesktopScene`, `DesktopMirror`, `OpenXREyeSubmit`,
+`OpenVRSubmit`, `ImGuiOverlay`, `DynamicTextOverlay`, and `Present`, with
+configured/achieved rate, skip reason/counts, command count, phase CPU timings,
+GPU timing when available, and flags for mirror vs. separate scene render.
 
 Scene and asset counters identify whether a slowdown is global or asset-local:
 visible renderer/submesh/triangle counts, material slots, active materials,
@@ -342,7 +369,7 @@ Components panel without affecting frame logging or render statistics.
 When code-profiler frame logging is enabled, the stats thread also writes
 disk diagnostics for severe frame anomalies:
 
-- `profiler-fps-drops.log` records completed-frame spikes using the per-thread snapshot history.
+- `profiler-fps-drops.log` records completed-frame spikes using the per-thread snapshot history. Thread totals are classified work time; wall time and downstream render-pressure wait time are logged separately as `ThreadWallTimeMs` and `ThreadDownstreamRenderPressureMs`.
 - `profiler-render-stalls.log` records when an active render dispatch goes longer than
   **CodeProfilerRenderStallThresholdMs** without completing a render, then logs how long recovery took once the next render finishes.
 - `profiler-conditional-loop-spikes.log` records rate-limited slow scopes tagged

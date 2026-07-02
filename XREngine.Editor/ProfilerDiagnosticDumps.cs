@@ -149,8 +149,14 @@ internal static class ProfilerDiagnosticDumps
         CpuRootAggregate[] rootAggregates = BuildRootAggregates(orderedThreads);
 
         float totalThreadMs = 0.0f;
+        float totalThreadWallMs = 0.0f;
+        float totalThreadDownstreamRenderPressureMs = 0.0f;
         for (int i = 0; i < orderedThreads.Length; i++)
+        {
             totalThreadMs += orderedThreads[i].TotalTimeMs;
+            totalThreadWallMs += orderedThreads[i].WallTimeMs;
+            totalThreadDownstreamRenderPressureMs += orderedThreads[i].DownstreamRenderPressureMs;
+        }
 
         Engine.CodeProfiler.ProfilerThreadSnapshot? worstThread = orderedThreads.Length > 0 ? orderedThreads[0] : null;
 
@@ -165,10 +171,14 @@ internal static class ProfilerDiagnosticDumps
         sb.Append("FrameTimeSeconds: ").AppendLine(FormatMs(snapshot.FrameTime));
         sb.Append("ThreadCount: ").AppendLine(orderedThreads.Length.ToString(CultureInfo.InvariantCulture));
         sb.Append("TotalThreadMs: ").AppendLine(FormatMs(totalThreadMs));
+        sb.Append("TotalThreadWallMs: ").AppendLine(FormatMs(totalThreadWallMs));
+        sb.Append("TotalThreadDownstreamRenderPressureMs: ").AppendLine(FormatMs(totalThreadDownstreamRenderPressureMs));
         if (worstThread is not null)
         {
             sb.Append("WorstThreadId: ").AppendLine(worstThread.ThreadId.ToString(CultureInfo.InvariantCulture));
             sb.Append("WorstThreadMs: ").AppendLine(FormatMs(worstThread.TotalTimeMs));
+            sb.Append("WorstThreadWallMs: ").AppendLine(FormatMs(worstThread.WallTimeMs));
+            sb.Append("WorstThreadDownstreamRenderPressureMs: ").AppendLine(FormatMs(worstThread.DownstreamRenderPressureMs));
         }
         sb.Append("ThreadHistoryCount: ").AppendLine((history?.Count ?? 0).ToString(CultureInfo.InvariantCulture));
         sb.AppendLine();
@@ -198,7 +208,7 @@ internal static class ProfilerDiagnosticDumps
                     aggregates.Add(key, aggregate);
                 }
 
-                aggregate.Add(root.ElapsedMs, CalculateSelfMs(root));
+                aggregate.Add(CalculateClassifiedTotalMs(root), CalculateClassifiedSelfMs(root));
             }
         }
 
@@ -211,6 +221,7 @@ internal static class ProfilerDiagnosticDumps
     {
         sb.AppendLine("Thread History Summary");
         sb.AppendLine("----------------------");
+        sb.AppendLine("History samples are classified work ms; downstream render-pressure waits are excluded.");
         if (history is null || history.Count == 0)
         {
             sb.AppendLine("No thread history samples were available.");
@@ -305,6 +316,10 @@ internal static class ProfilerDiagnosticDumps
                 .Append(thread.ThreadId.ToString(CultureInfo.InvariantCulture))
                 .Append(" total=")
                 .Append(FormatMs(thread.TotalTimeMs))
+                .Append(" ms wall=")
+                .Append(FormatMs(thread.WallTimeMs))
+                .Append(" ms downstreamRenderPressure=")
+                .Append(FormatMs(thread.DownstreamRenderPressureMs))
                 .AppendLine(" ms");
 
             Engine.CodeProfiler.ProfilerNodeSnapshot[] roots = thread.RootNodes
@@ -365,7 +380,19 @@ internal static class ProfilerDiagnosticDumps
             .Append(" ms self=")
             .Append(FormatMs(CalculateSelfMs(node)))
             .Append(" ms children=")
-            .AppendLine(node.Children.Count.ToString(CultureInfo.InvariantCulture));
+            .Append(node.Children.Count.ToString(CultureInfo.InvariantCulture));
+
+        float downstreamRenderPressureMs = CalculateDownstreamRenderPressureMs(node);
+        if (downstreamRenderPressureMs > 0.0f)
+        {
+            sb.Append(" classifiedTotal=")
+                .Append(FormatMs(CalculateClassifiedTotalMs(node)))
+                .Append(" ms downstreamRenderPressure=")
+                .Append(FormatMs(downstreamRenderPressureMs))
+                .Append(" ms");
+        }
+
+        sb.AppendLine();
 
         Engine.CodeProfiler.ProfilerNodeSnapshot[] children = node.Children
             .OrderByDescending(static child => child.ElapsedMs)
@@ -382,6 +409,32 @@ internal static class ProfilerDiagnosticDumps
             childTotal += children[i].ElapsedMs;
 
         return Math.Max(0.0f, node.ElapsedMs - childTotal);
+    }
+
+    private static float CalculateClassifiedTotalMs(Engine.CodeProfiler.ProfilerNodeSnapshot node)
+        => Math.Max(0.0f, node.ElapsedMs - CalculateDownstreamRenderPressureMs(node));
+
+    private static float CalculateClassifiedSelfMs(Engine.CodeProfiler.ProfilerNodeSnapshot node)
+    {
+        float classifiedChildTotal = 0.0f;
+        IReadOnlyList<Engine.CodeProfiler.ProfilerNodeSnapshot> children = node.Children;
+        for (int i = 0; i < children.Count; i++)
+            classifiedChildTotal += CalculateClassifiedTotalMs(children[i]);
+
+        return Math.Max(0.0f, CalculateClassifiedTotalMs(node) - classifiedChildTotal);
+    }
+
+    private static float CalculateDownstreamRenderPressureMs(Engine.CodeProfiler.ProfilerNodeSnapshot node)
+    {
+        float total = string.Equals(node.Name, "EngineTimer.CollectVisibleThread.WaitForRender", StringComparison.Ordinal)
+            ? node.ElapsedMs
+            : 0.0f;
+
+        IReadOnlyList<Engine.CodeProfiler.ProfilerNodeSnapshot> children = node.Children;
+        for (int i = 0; i < children.Count; i++)
+            total += CalculateDownstreamRenderPressureMs(children[i]);
+
+        return total;
     }
 
     private static float MaxOrZero(float[] samples)

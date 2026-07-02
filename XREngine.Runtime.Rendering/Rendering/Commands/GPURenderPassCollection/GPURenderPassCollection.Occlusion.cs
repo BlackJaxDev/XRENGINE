@@ -1130,27 +1130,22 @@ namespace XREngine.Rendering.Commands
             if (scene.TotalCommandCount != _cpuOcclusionLastSceneCommandCount)
             {
                 _cpuOcclusionLastSceneCommandCount = scene.TotalCommandCount;
-                temporalOverrides += (uint)_temporalOcclusion.Count;
-                ResetTemporalOcclusionState();
+                temporalOverrides++;
             }
 
-            bool cameraMoved;
-            if (HasSignificantCameraChange(
+            ECpuOcclusionMotionTier motionTier = GetCpuQueryAsyncMotionTier(
                 camera,
                 ref _cpuOcclusionHasCameraState,
                 ref _cpuOcclusionLastCameraPosition,
-                ref _cpuOcclusionLastProjection,
-                out cameraMoved))
-            {
+                ref _cpuOcclusionLastProjection);
+            if (motionTier == ECpuOcclusionMotionTier.CameraCut)
                 temporalOverrides += (uint)_temporalOcclusion.Count;
-                ResetTemporalOcclusionState();
-            }
 
             ResolveCpuOcclusionQueryResults();
-            SubmitCpuOcclusionQueryBatch(scene, camera, candidates, cameraMoved);
+            SubmitCpuOcclusionQueryBatch(scene, camera, candidates, motionTier);
 
             uint falsePositiveRecoveries = 0u;
-            uint occluded = ApplyTemporalCpuOcclusionFilter(candidates, cameraMoved, ref temporalOverrides, ref falsePositiveRecoveries);
+            uint occluded = ApplyTemporalCpuOcclusionFilter(candidates, motionTier, ref temporalOverrides, ref falsePositiveRecoveries);
             RecordOcclusionFrameStats(candidates, occluded, falsePositiveRecoveries, temporalOverrides);
 
             if (occluded > 0u)
@@ -1164,17 +1159,16 @@ namespace XREngine.Rendering.Commands
                     "submitted at up to {2}/frame, resolved next frame, and fed through a {3}-frame hysteresis filter.",
                     EOcclusionCullingMode.CpuQueryAsync,
                     RenderPass,
-                    CpuOcclusionMaxQueriesPerFrame,
+                    RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame,
                     TemporalOcclusionHysteresisFrames);
             }
         }
 
-        private static bool HasSignificantCameraChange(
+        private static ECpuOcclusionMotionTier GetCpuQueryAsyncMotionTier(
             XRCamera camera,
             ref bool hasCameraState,
             ref Vector3 lastCameraPosition,
-            ref Matrix4x4 lastProjection,
-            out bool cameraMoved)
+            ref Matrix4x4 lastProjection)
         {
             Vector3 position = camera.Transform.RenderTranslation;
             Matrix4x4 projection = camera.ProjectionMatrix;
@@ -1184,23 +1178,44 @@ namespace XREngine.Rendering.Commands
                 hasCameraState = true;
                 lastCameraPosition = position;
                 lastProjection = projection;
-                cameraMoved = false;
-                return false;
+                return ECpuOcclusionMotionTier.Stable;
             }
 
-            float distanceSq = Vector3.DistanceSquared(lastCameraPosition, position);
-            bool movedAny = distanceSq > (TemporalCameraMotionDistanceEpsilon * TemporalCameraMotionDistanceEpsilon);
-            bool movedFar = distanceSq > (TemporalCameraJumpDistance * TemporalCameraJumpDistance);
+            float distance = Vector3.Distance(lastCameraPosition, position);
 
             float projDelta =
                 MathF.Abs(lastProjection.M11 - projection.M11) +
                 MathF.Abs(lastProjection.M22 - projection.M22);
-            bool projectionChanged = projDelta > TemporalProjectionDeltaThreshold;
 
             lastCameraPosition = position;
             lastProjection = projection;
-            cameraMoved = movedAny || projectionChanged;
-            return movedFar || projectionChanged;
+
+            if (distance <= TemporalCameraMotionDistanceEpsilon && projDelta <= TemporalProjectionDeltaThreshold)
+                return ECpuOcclusionMotionTier.Stable;
+            if (distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionCameraCutMeters ||
+                projDelta > TemporalProjectionDeltaThreshold)
+                return ECpuOcclusionMotionTier.CameraCut;
+            if (distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionLargeMotionMeters)
+                return ECpuOcclusionMotionTier.LargeMotion;
+            if (distance >= RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMediumMotionMeters)
+                return ECpuOcclusionMotionTier.MediumMotion;
+            return ECpuOcclusionMotionTier.SmallMotion;
+        }
+
+        private static bool HasSignificantCameraChange(
+            XRCamera camera,
+            ref bool hasCameraState,
+            ref Vector3 lastCameraPosition,
+            ref Matrix4x4 lastProjection,
+            out bool cameraMoved)
+        {
+            ECpuOcclusionMotionTier tier = GetCpuQueryAsyncMotionTier(
+                camera,
+                ref hasCameraState,
+                ref lastCameraPosition,
+                ref lastProjection);
+            cameraMoved = tier != ECpuOcclusionMotionTier.Stable;
+            return tier is ECpuOcclusionMotionTier.LargeMotion or ECpuOcclusionMotionTier.CameraCut;
         }
 
         private void ResetTemporalOcclusionState()
@@ -1209,7 +1224,7 @@ namespace XREngine.Rendering.Commands
             _cpuOcclusionLastResolved.Clear();
         }
 
-        private void SubmitCpuOcclusionQueryBatch(GPUScene scene, XRCamera camera, uint candidates, bool cameraMoved)
+        private void SubmitCpuOcclusionQueryBatch(GPUScene scene, XRCamera camera, uint candidates, ECpuOcclusionMotionTier motionTier)
         {
             _ = candidates;
 
@@ -1217,7 +1232,10 @@ namespace XREngine.Rendering.Commands
             // The pool path is implemented for OpenGL; the Vulkan backend has its own query
             // lifecycle and would need an equivalent renderer wired before submitting here.
             if (AbstractRenderer.Current is not OpenGLRenderer)
+            {
+                OcclusionTelemetry.RecordCpuBudgetSkipped(ECpuOcclusionQueryReason.DiagnosticForcedQuery);
                 return;
+            }
 
             if (CulledSceneToRenderBuffer is null || _culledCountBuffer is null)
                 return;
@@ -1227,7 +1245,10 @@ namespace XREngine.Rendering.Commands
             // CulledSceneToRenderBuffer safely — fall through and let the filter pass
             // everything through. (Matches ApplyTemporalCpuOcclusionFilter's own bail.)
             if (IsCpuReadbackCountDisabledForPass())
+            {
+                OcclusionTelemetry.RecordCpuBudgetSkipped(ECpuOcclusionQueryReason.DiagnosticForcedQuery);
                 return;
+            }
 
             uint inputCount = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
             if (inputCount == 0u)
@@ -1248,10 +1269,19 @@ namespace XREngine.Rendering.Commands
             }
 
             ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-            int retestPeriod = cameraMoved ? 1 : Math.Max(1, TemporalOcclusionHysteresisFrames * 3);
-            int submissionBudget = Math.Max(0, CpuOcclusionMaxQueriesPerFrame - _cpuOcclusionPending.Count);
+            int retestPeriod = motionTier switch
+            {
+                ECpuOcclusionMotionTier.Stable => Math.Max(1, TemporalOcclusionHysteresisFrames * 3),
+                ECpuOcclusionMotionTier.SmallMotion => Math.Max(1, TemporalOcclusionHysteresisFrames * 2),
+                _ => 1,
+            };
+            int maxQueries = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame;
+            int submissionBudget = Math.Max(0, maxQueries - _cpuOcclusionPending.Count);
             if (submissionBudget == 0)
+            {
+                OcclusionTelemetry.RecordCpuBudgetSkipped(ECpuOcclusionQueryReason.StaleStateRefresh, (int)Math.Min(inputCount, int.MaxValue));
                 return;
+            }
 
             int submitted = 0;
             for (uint i = 0; i < inputCount && submitted < submissionBudget; ++i)
@@ -1306,14 +1336,17 @@ namespace XREngine.Rendering.Commands
             _ = camera; // Camera state is observed via the caller's HasSignificantCameraChange bookkeeping.
         }
 
-        private uint ApplyTemporalCpuOcclusionFilter(uint candidates, bool cameraMoved, ref uint temporalOverrides, ref uint falsePositiveRecoveries)
+        private uint ApplyTemporalCpuOcclusionFilter(uint candidates, ECpuOcclusionMotionTier motionTier, ref uint temporalOverrides, ref uint falsePositiveRecoveries)
         {
             if (CulledSceneToRenderBuffer is null || _culledCountBuffer is null)
                 return 0u;
 
             // CPU temporal filter requires GPU count readback — pass through all candidates when disabled.
             if (IsCpuReadbackCountDisabledForPass())
+            {
+                OcclusionTelemetry.RecordCpuBudgetSkipped(ECpuOcclusionQueryReason.DiagnosticForcedQuery, (int)Math.Min(candidates, int.MaxValue));
                 return candidates;
+            }
 
             uint inputCount = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
             if (inputCount == 0u)
@@ -1352,7 +1385,7 @@ namespace XREngine.Rendering.Commands
                     else
                     {
                         state.ConsecutiveOccludedFrames++;
-                        if (cameraMoved)
+                        if (motionTier == ECpuOcclusionMotionTier.CameraCut)
                         {
                             temporalOverrides++;
                         }

@@ -23,6 +23,8 @@ public sealed partial class RenderStatsPacket
     // Rendering profiler schema v2: nested to stay below MemoryPack's per-object member cap.
     public RenderProfilerV2Data RenderProfilerV2 { get; set; } = new();
     public VulkanFrameLoopTelemetryData VulkanFrameLoop { get; set; } = new();
+    public FrameLifecycleTelemetryData FrameLifecycle { get; set; } = new();
+    public FrameOutputManifestData FrameOutputs { get; set; } = new();
 
     public int GpuTransparencyOpaqueOrOtherVisible { get; set; }
     public int GpuTransparencyMaskedVisible { get; set; }
@@ -242,7 +244,7 @@ public sealed partial class RenderStatsPacket
 [MemoryPackable]
 public sealed partial class RenderProfilerV2Data
 {
-    public int ProfileCaptureSchemaVersion { get; set; } = 2;
+    public int ProfileCaptureSchemaVersion { get; set; } = 3;
     public RenderProfilerRendererStateData RendererState { get; set; } = new();
     public RenderProfilerSceneAssetData SceneAssets { get; set; } = new();
     public RenderProfilerGpuDrivenData GpuDriven { get; set; } = new();
@@ -304,6 +306,78 @@ public sealed partial class VulkanFrameLoopTelemetryData
     public int RetiredSamplerCount { get; set; }
     public int RetiredImageMemoryCount { get; set; }
     public long RetiredImageBytes { get; set; }
+}
+
+[MemoryPackable]
+public sealed partial class FrameLifecycleTelemetryData
+{
+    public ulong UpdateFrameId { get; set; }
+    public ulong CollectFrameId { get; set; }
+    public ulong SwapFrameId { get; set; }
+    public ulong RenderFrameId { get; set; }
+    public ulong PresentFrameId { get; set; }
+    public string CollectVisibleLatePolicy { get; set; } = string.Empty;
+    public double CollectWaitForRenderMs { get; set; }
+    public string CollectWaitReason { get; set; } = string.Empty;
+    public double RenderWaitForCollectMs { get; set; }
+    public string RenderWaitReason { get; set; } = string.Empty;
+    public int SkippedCollectFrames { get; set; }
+    public int StaleCollectReuseFrames { get; set; }
+}
+
+[MemoryPackable]
+public sealed partial class FrameOutputManifestData
+{
+    public ulong FrameId { get; set; }
+    public bool VrActive { get; set; }
+    public string MirrorMode { get; set; } = string.Empty;
+    public string VisibilityPolicy { get; set; } = string.Empty;
+    public string BudgetBand { get; set; } = string.Empty;
+    public double BudgetMs { get; set; }
+    public double WholeFrameMs { get; set; }
+    public double WholeFrameP50Ms { get; set; }
+    public double WholeFrameP90Ms { get; set; }
+    public double WholeFrameP95Ms { get; set; }
+    public double WholeFrameP99Ms { get; set; }
+    public double WholeFrameWorstMs { get; set; }
+    public FrameOutputEntryData[] Outputs { get; set; } = [];
+}
+
+[MemoryPackable]
+public sealed partial class FrameOutputEntryData
+{
+    public ulong FrameId { get; set; }
+    public string OutputKind { get; set; } = string.Empty;
+    public string ViewKind { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string PipelineName { get; set; } = string.Empty;
+    public bool Active { get; set; }
+    public bool Rendered { get; set; }
+    public bool SceneRendered { get; set; }
+    public bool Mirror { get; set; }
+    public bool SeparateSceneRender { get; set; }
+    public bool SharedVisibility { get; set; }
+    public bool Due { get; set; }
+    public bool Skipped { get; set; }
+    public bool CadenceSkipped { get; set; }
+    public bool AutoSkipped { get; set; }
+    public string SkipReason { get; set; } = string.Empty;
+    public float ConfiguredTargetRateHz { get; set; }
+    public float SourceRateHz { get; set; }
+    public double AchievedRateHz { get; set; }
+    public int TotalRenderCount { get; set; }
+    public int TotalSkipCount { get; set; }
+    public int CommandCount { get; set; }
+    public int DrawCalls { get; set; }
+    public int MultiDrawCalls { get; set; }
+    public int Triangles { get; set; }
+    public double CollectCpuMs { get; set; }
+    public double SwapCpuMs { get; set; }
+    public double RenderCpuMs { get; set; }
+    public double SubmitCpuMs { get; set; }
+    public double OverlayCpuMs { get; set; }
+    public double PresentCpuMs { get; set; }
+    public double GpuMs { get; set; }
 }
 
 [MemoryPackable]

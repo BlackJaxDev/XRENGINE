@@ -28,6 +28,18 @@ public sealed class MaskedSoftwareOcclusionCullingTests
     }
 
     [Test]
+    public void TelemetryTracksSocSelfOccluderSkips()
+    {
+        OcclusionTelemetry.BeginFrame();
+
+        OcclusionTelemetry.RecordCpuSocSelfOccluderSkipped();
+        OcclusionTelemetry.BeginFrame();
+
+        OcclusionTelemetry.CpuSocSelfOccluderSkipped.ShouldBe(1);
+        OcclusionTelemetry.BeginFrame();
+    }
+
+    [Test]
     public void CoveredBufferRectRejectsBehindButAllowsCloser()
     {
         MaskedOcclusionBuffer buffer = new();

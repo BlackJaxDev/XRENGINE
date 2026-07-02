@@ -118,6 +118,7 @@ public static class XREngineEnvironmentVariables
     public const string GpuDeviceId = "XRE_GPU_DEVICE_ID";
     public const string GpuDriver = "XRE_GPU_DRIVER";
     public const string GpuTimestampDense = "XRE_GPU_TIMESTAMP_DENSE";
+    public const string CollectVisibleLatePolicy = "XRE_COLLECT_VISIBLE_LATE_POLICY";
 
     public const string EngineAssetsPath = "XRE_ENGINE_ASSETS_PATH";
     public const string GameAssetsPath = "XRE_GAME_ASSETS_PATH";

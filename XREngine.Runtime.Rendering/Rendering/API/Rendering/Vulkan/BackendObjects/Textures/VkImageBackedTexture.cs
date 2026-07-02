@@ -2672,7 +2672,8 @@ public unsafe partial class VulkanRenderer
         /// Builds the <see cref="ImageMemoryBarrier"/> and selects appropriate pipeline stages
         /// for transitioning from <paramref name="oldLayout"/> to <paramref name="newLayout"/>.
         /// Common transitions (undefined→transfer-dst, transfer-dst→shader-read) use precise
-        /// stages; all others fall back to <c>AllCommands</c>.
+        /// stages; other pairs derive stages/access per layout role, falling back to
+        /// <c>AllCommands</c> only for unrecognized layouts.
         /// </summary>
         private void AssembleTransitionImageLayout(
             ImageLayout oldLayout,
@@ -2793,12 +2794,109 @@ public unsafe partial class VulkanRenderer
             }
             else
             {
-                // Fault-containment fallback: correctness demands sync;
-                // narrower masks need case-by-case analysis per layout pair.
-                barrier.SrcAccessMask = AccessFlags.MemoryWriteBit;
-                barrier.DstAccessMask = AccessFlags.MemoryReadBit;
-                sourceStage = PipelineStageFlags.AllCommandsBit;
-                destinationStage = PipelineStageFlags.AllCommandsBit;
+                // Derive stages/access from the layout roles instead of AllCommands.
+                // Unrecognized layouts still fall back to broad masks inside the helpers.
+                GetLayoutSourceSync(oldLayout, out sourceStage, out AccessFlags srcAccess);
+                GetLayoutDestinationSync(newLayout, out destinationStage, out AccessFlags dstAccess);
+                barrier.SrcAccessMask = srcAccess;
+                barrier.DstAccessMask = dstAccess;
+            }
+        }
+
+        /// <summary>
+        /// Derives the pipeline stages and access mask covering all prior GPU work for an
+        /// image leaving <paramref name="layout"/>. Unrecognized layouts fall back to broad masks.
+        /// </summary>
+        private static void GetLayoutSourceSync(ImageLayout layout, out PipelineStageFlags stage, out AccessFlags access)
+        {
+            switch (layout)
+            {
+                case ImageLayout.Undefined:
+                case ImageLayout.Preinitialized:
+                    stage = PipelineStageFlags.TopOfPipeBit;
+                    access = 0;
+                    break;
+                case ImageLayout.General:
+                    // Storage-image usage: written by compute or fragment shaders.
+                    stage = PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.FragmentShaderBit;
+                    access = AccessFlags.ShaderWriteBit;
+                    break;
+                case ImageLayout.ColorAttachmentOptimal:
+                    stage = PipelineStageFlags.ColorAttachmentOutputBit;
+                    access = AccessFlags.ColorAttachmentWriteBit;
+                    break;
+                case ImageLayout.DepthStencilAttachmentOptimal:
+                case ImageLayout.DepthAttachmentOptimal:
+                    stage = PipelineStageFlags.LateFragmentTestsBit;
+                    access = AccessFlags.DepthStencilAttachmentWriteBit;
+                    break;
+                case ImageLayout.ShaderReadOnlyOptimal:
+                case ImageLayout.DepthStencilReadOnlyOptimal:
+                    // Prior reads need execution ordering only; no writes to make available.
+                    stage = PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit;
+                    access = 0;
+                    break;
+                case ImageLayout.TransferSrcOptimal:
+                    stage = PipelineStageFlags.TransferBit;
+                    access = 0;
+                    break;
+                case ImageLayout.TransferDstOptimal:
+                    stage = PipelineStageFlags.TransferBit;
+                    access = AccessFlags.TransferWriteBit;
+                    break;
+                case ImageLayout.PresentSrcKhr:
+                    stage = PipelineStageFlags.BottomOfPipeBit;
+                    access = 0;
+                    break;
+                default:
+                    stage = PipelineStageFlags.AllCommandsBit;
+                    access = AccessFlags.MemoryWriteBit;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Derives the pipeline stages and access mask covering the first GPU work consuming
+        /// an image entering <paramref name="layout"/>. Unrecognized layouts fall back to broad masks.
+        /// </summary>
+        private static void GetLayoutDestinationSync(ImageLayout layout, out PipelineStageFlags stage, out AccessFlags access)
+        {
+            switch (layout)
+            {
+                case ImageLayout.General:
+                    stage = PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.FragmentShaderBit;
+                    access = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit;
+                    break;
+                case ImageLayout.ColorAttachmentOptimal:
+                    stage = PipelineStageFlags.ColorAttachmentOutputBit;
+                    access = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit;
+                    break;
+                case ImageLayout.DepthStencilAttachmentOptimal:
+                case ImageLayout.DepthAttachmentOptimal:
+                    stage = PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit;
+                    access = AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit;
+                    break;
+                case ImageLayout.ShaderReadOnlyOptimal:
+                case ImageLayout.DepthStencilReadOnlyOptimal:
+                    stage = PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit;
+                    access = AccessFlags.ShaderReadBit;
+                    break;
+                case ImageLayout.TransferSrcOptimal:
+                    stage = PipelineStageFlags.TransferBit;
+                    access = AccessFlags.TransferReadBit;
+                    break;
+                case ImageLayout.TransferDstOptimal:
+                    stage = PipelineStageFlags.TransferBit;
+                    access = AccessFlags.TransferWriteBit;
+                    break;
+                case ImageLayout.PresentSrcKhr:
+                    stage = PipelineStageFlags.BottomOfPipeBit;
+                    access = 0;
+                    break;
+                default:
+                    stage = PipelineStageFlags.AllCommandsBit;
+                    access = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit;
+                    break;
             }
         }
 

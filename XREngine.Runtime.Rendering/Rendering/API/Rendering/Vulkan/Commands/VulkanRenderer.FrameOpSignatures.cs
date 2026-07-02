@@ -110,6 +110,9 @@ namespace XREngine.Rendering.Vulkan
                     case MeshDrawOp draw:
                         AddMeshDrawSignatureParts(parts, i, opType, draw);
                         break;
+                    case QueryOp query:
+                        AddQuerySignaturePart(parts, i, opType, query);
+                        break;
                     case BlitOp blit:
                         AddBlitSignaturePart(parts, i, opType, blit);
                         break;
@@ -284,6 +287,21 @@ namespace XREngine.Rendering.Vulkan
                 "material",
                 hash,
                 $"mesh='{renderer?.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{material?.Name ?? "<unnamed material>"}' renderer=0x{(renderer?.GetHashCode() ?? 0):X8} instances={draw.Instances} stereo={draw.IsStereoPass} unjittered={draw.UseUnjitteredProjection}");
+        }
+
+        private static void AddQuerySignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, QueryOp query)
+        {
+            HashCode hash = new();
+            hash.Add(query.Query.GetHashCode());
+            hash.Add((int)query.QueryTarget);
+            hash.Add((int)query.Operation);
+            AddSignaturePart(
+                parts,
+                opIndex,
+                opType,
+                "query",
+                hash,
+                $"op={query.Operation} target={query.QueryTarget} query=0x{query.Query.GetHashCode():X8}");
         }
 
         private static void AddBlitSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, BlitOp blit)
