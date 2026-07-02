@@ -497,7 +497,7 @@ namespace XREngine.Scene
                         faceOrCascadeIndex: 0,
                         primaryCamera,
                         priority: 9000.0f,
-                        fallback: ShadowFallbackMode.Legacy,
+                        fallback: ShadowFallbackMode.StaleTile,
                         encoding: encoding);
                 }
             }
@@ -973,7 +973,7 @@ namespace XREngine.Scene
             ShadowAtlasFrameData frameData = ShadowAtlas.PublishedFrameData;
             for (int i = 0; i < DynamicDirectionalLights.Count; i++)
             {
-                DynamicDirectionalLights[i].ClearDirectionalAtlasSlots();
+                DynamicDirectionalLights[i].BeginDirectionalAtlasSlotPublish();
                 DynamicDirectionalLights[i].SetShadowAtlasDiagnostic(default);
             }
 

@@ -39,6 +39,24 @@ public sealed class DirectionalShadowAtlasFallbackTests
     }
 
     [Test]
+    public void DirectionalPrimaryAtlas_UsesReusableStaleTileFallback()
+    {
+        string source = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.Shadows.cs")
+            .Replace("\r\n", "\n");
+        string submitBody = ExtractRegion(
+            source,
+            "private void SubmitDirectionalShadowAtlasRequests()",
+            "private void SubmitDirectionalCascadeShadowAtlasRequests");
+        string primarySubmit = ExtractRegion(
+            submitBody,
+            "EShadowProjectionType.DirectionalPrimary",
+            "encoding: encoding);");
+
+        primarySubmit.ShouldContain("fallback: ShadowFallbackMode.StaleTile");
+        primarySubmit.ShouldNotContain("fallback: ShadowFallbackMode.Legacy");
+    }
+
+    [Test]
     public void DeferredDirectionalAtlasFallback_KeepsLegacyPrimarySamplerBound()
     {
         string source = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_LightCombinePass.cs")
@@ -81,7 +99,43 @@ public sealed class DirectionalShadowAtlasFallbackTests
         clearCascadeShadowsBody.ShouldNotContain("_primaryAtlasSlot = default;");
         directionalSource.ShouldContain("Array.Clear(state.AtlasSlots);");
         directionalSource.ShouldContain("internal void ClearDirectionalAtlasSlots()");
-        lightsSource.ShouldContain("DynamicDirectionalLights[i].ClearDirectionalAtlasSlots();");
+        lightsSource.ShouldContain("DynamicDirectionalLights[i].BeginDirectionalAtlasSlotPublish();");
+    }
+
+    [Test]
+    public void DirectionalAtlasTileRendering_PreservesPrePushedRenderArea()
+    {
+        string renderStateSource = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderingState.cs")
+            .Replace("\r\n", "\n");
+        string shadowPipelineSource = ReadRepoFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/ShadowRenderPipeline.cs")
+            .Replace("\r\n", "\n");
+
+        string initialRenderArea = ExtractRegion(
+            renderStateSource,
+            "private bool PushInitialMainRenderArea",
+            "private void PushRequiredRenderArea");
+
+        initialRenderArea.ShouldContain("viewport?.RenderPipeline is ShadowRenderPipeline { PreserveExistingRenderArea: true }");
+        initialRenderArea.ShouldContain("CurrentRenderRegion.Width > 0");
+        initialRenderArea.ShouldContain("return false;");
+        shadowPipelineSource.ShouldContain("Keeps an atlas tile render area intact");
+        shadowPipelineSource.ShouldContain("VPRC_PushShadowOutputFBORenderArea");
+    }
+
+    [Test]
+    public void DirectionalCascadeAtlasStaleTiles_PreserveRenderedUniformState()
+    {
+        string source = ReadRepoFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/DirectionalLightComponent.CascadeShadows.cs")
+            .Replace("\r\n", "\n");
+
+        source.ShouldContain("PreviousAtlasSlots");
+        source.ShouldContain("BeginDirectionalAtlasSlotPublish");
+        source.ShouldContain("ShouldPreserveStaleCascadeAtlasUniformData");
+        source.ShouldContain("previous.ContentVersion == allocation.ContentVersion");
+        source.ShouldContain("allocation.ActiveFallback == ShadowFallbackMode.StaleTile");
+        source.ShouldContain("atlasSlot.HasCascadeUniformData");
+        source.ShouldContain("splits[i] = atlasSlot.SplitFarDistance;");
+        source.ShouldContain("matrices[i] = atlasSlot.WorldToLightSpaceMatrix;");
     }
 
     [Test]
@@ -140,8 +194,8 @@ public sealed class DirectionalShadowAtlasFallbackTests
         framebufferSource.ShouldContain("layerIndex < 0");
         framebufferSource.ShouldContain("Math.Max(source.DescriptorArrayLayers, 1u)");
         commandBufferSource.ShouldContain("ResolveDynamicRenderingLayerCount(vkFrameBuffer.FramebufferLayers, fboViewMask)");
-        commandBufferSource.ShouldContain("LayerCount = targetDynamicRenderingFormats.LayerCount");
-        commandBufferSource.ShouldContain("clearLayerCount = op.Target is null");
+        commandBufferSource.ShouldContain("LayerCount = plan.LayerCount");
+        commandBufferSource.ShouldContain("ResolveClearRectLayerCount(op.Target, clearTargetFrameBuffer, activeRenderLayerCount, activeRenderViewMask)");
     }
 
     [Test]

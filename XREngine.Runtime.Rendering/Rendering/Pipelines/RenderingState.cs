@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Lights;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
 using XREngine.Scene;
@@ -197,6 +198,13 @@ public sealed partial class XRRenderPipelineInstance
                 BoundingRectangle externalViewportRegion = viewport?.InternalResolutionRegion ?? default;
                 PushRequiredRenderArea(externalViewportRegion, "OpenXR external swapchain viewport");
                 return true;
+            }
+
+            if (viewport?.RenderPipeline is ShadowRenderPipeline { PreserveExistingRenderArea: true } &&
+                CurrentRenderRegion.Width > 0 &&
+                CurrentRenderRegion.Height > 0)
+            {
+                return false;
             }
 
             if (target is not null)
