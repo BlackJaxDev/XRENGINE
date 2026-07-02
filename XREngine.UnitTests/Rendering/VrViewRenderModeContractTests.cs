@@ -622,6 +622,92 @@ public sealed class VrViewRenderModeContractTests
     }
 
     [Test]
+    public void RenderFrameViewSet_QuadViewCarriesStableRolesParentsAndVisibility()
+    {
+        RenderFrameViewSet viewSet = CreateQuadViewSet(EVrViewRenderMode.SequentialViews);
+
+        viewSet.ViewCount.ShouldBe(4);
+        viewSet.VisibilityPolicy.ShouldBe(EVrVisibilityPolicy.SharedFrameViewSet);
+        viewSet.VisibilityGroupCount.ShouldBe(1);
+        viewSet.IsQuadViewSet.ShouldBeTrue();
+        viewSet.GetView(0).Kind.ShouldBe(EVrOutputViewKind.LeftWide);
+        viewSet.GetView(1).Kind.ShouldBe(EVrOutputViewKind.RightWide);
+        viewSet.GetView(2).Kind.ShouldBe(EVrOutputViewKind.LeftInset);
+        viewSet.GetView(3).Kind.ShouldBe(EVrOutputViewKind.RightInset);
+        viewSet.GetView(2).ParentViewId.ShouldBe(0u);
+        viewSet.GetView(3).ParentViewId.ShouldBe(1u);
+        viewSet.GetView(0).OpenXrViewIndex.ShouldBe(0);
+        viewSet.GetView(3).OpenXrViewIndex.ShouldBe(3);
+        viewSet.CountViewsInVisibilityGroup(0).ShouldBe(4);
+    }
+
+    [Test]
+    public void RenderFrameViewBatchPlanner_SinglePassStereoSplitsQuadViewIntoWideAndInsetPairs()
+    {
+        RenderFrameViewSet viewSet = CreateQuadViewSet(EVrViewRenderMode.SinglePassStereo);
+
+        RenderFrameViewBatchPlan plan = RenderFrameViewBatchPlanner.Plan(
+            viewSet,
+            RenderFrameViewBatchCapabilities.VulkanMultiviewStereoPairs);
+
+        plan.BatchCount.ShouldBe(2);
+
+        RenderFrameViewBatch wide = plan.GetBatch(0);
+        wide.Kind.ShouldBe(ERenderFrameViewBatchKind.LayeredStereoPair);
+        wide.ViewCount.ShouldBe(2);
+        wide.ContainsView(0).ShouldBeTrue();
+        wide.ContainsView(1).ShouldBeTrue();
+        wide.ContainsView(2).ShouldBeFalse();
+
+        RenderFrameViewBatch inset = plan.GetBatch(1);
+        inset.Kind.ShouldBe(ERenderFrameViewBatchKind.LayeredStereoPair);
+        inset.ViewCount.ShouldBe(2);
+        inset.ContainsView(2).ShouldBeTrue();
+        inset.ContainsView(3).ShouldBeTrue();
+    }
+
+    [Test]
+    public void RenderFrameViewBatchPlanner_ParallelRecordingKeepsQuadViewsAsIndependentWork()
+    {
+        RenderFrameViewSet viewSet = CreateQuadViewSet(EVrViewRenderMode.ParallelCommandBufferRecording);
+
+        RenderFrameViewBatchPlan plan = RenderFrameViewBatchPlanner.Plan(
+            viewSet,
+            RenderFrameViewBatchCapabilities.VulkanMultiviewStereoPairs);
+
+        plan.BatchCount.ShouldBe(4);
+        for (int i = 0; i < plan.BatchCount; i++)
+        {
+            RenderFrameViewBatch batch = plan.GetBatch(i);
+            batch.Kind.ShouldBe(ERenderFrameViewBatchKind.ParallelCommandBufferRecording);
+            batch.ViewCount.ShouldBe(1);
+            batch.ContainsView(i).ShouldBeTrue();
+        }
+    }
+
+    [Test]
+    public void RenderFrameViewBatchPlanner_QuadViewLayeredBatchRequiresCompatibleExtents()
+    {
+        RenderFrameViewSet mixedExtentQuad = CreateQuadViewSet(EVrViewRenderMode.SinglePassStereo);
+
+        RenderFrameViewBatchPlan splitPlan = RenderFrameViewBatchPlanner.Plan(
+            mixedExtentQuad,
+            RenderFrameViewBatchCapabilities.VulkanMultiviewQuadView);
+
+        splitPlan.BatchCount.ShouldBe(2);
+        splitPlan.GetBatch(0).Kind.ShouldBe(ERenderFrameViewBatchKind.LayeredStereoPair);
+        splitPlan.GetBatch(1).Kind.ShouldBe(ERenderFrameViewBatchKind.LayeredStereoPair);
+
+        RenderFrameViewBatchPlan fullLayerPlan = RenderFrameViewBatchPlanner.Plan(
+            mixedExtentQuad,
+            RenderFrameViewBatchCapabilities.VulkanMultiviewQuadView with { SupportsMixedLayerExtents = true });
+
+        fullLayerPlan.BatchCount.ShouldBe(1);
+        fullLayerPlan.GetBatch(0).Kind.ShouldBe(ERenderFrameViewBatchKind.LayeredViewSet);
+        fullLayerPlan.GetBatch(0).ViewCount.ShouldBe(4);
+    }
+
+    [Test]
     public void SourceContracts_FrameOutputPacingManifestAndMirrorPolicy()
     {
         string contracts = ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VrViewContextContracts.cs");
@@ -638,6 +724,10 @@ public sealed class VrViewRenderModeContractTests
         contracts.ShouldContain("enum EVrMirrorMode");
         contracts.ShouldContain("FrameOutputPacingDecision");
         contracts.ShouldContain("FrameOutputTelemetry");
+        contracts.ShouldContain("RenderFrameViewSet");
+        contracts.ShouldContain("RenderFrameViewBatchPlanner");
+        contracts.ShouldContain("LeftWide");
+        contracts.ShouldContain("RightInset");
         settings.ShouldContain("public EVrMirrorMode VrMirrorMode");
         settings.ShouldContain("public float VrCyclopeanDesktopTargetRateHz");
         settings.ShouldContain("public bool VrDesktopAutoSkipWhenOverBudget");
@@ -893,6 +983,45 @@ public sealed class VrViewRenderModeContractTests
         Matrix4x4? projection = null,
         ViewFoveationContext? foveation = null)
         => new(kind, viewIndex, -1, view, projection ?? CreateProjection(70.0f), foveation ?? ViewFoveationContext.Off());
+
+    private static RenderFrameViewSet CreateQuadViewSet(EVrViewRenderMode renderMode)
+    {
+        RenderFrameViewDescriptor[] views =
+        [
+            CreateFrameView(EVrOutputViewKind.LeftWide, 0u, RenderFrameViewDescriptor.InvalidViewId, 0, 1600u, 1600u),
+            CreateFrameView(EVrOutputViewKind.RightWide, 1u, RenderFrameViewDescriptor.InvalidViewId, 1, 1600u, 1600u),
+            CreateFrameView(EVrOutputViewKind.LeftInset, 2u, 0u, 2, 1000u, 1000u),
+            CreateFrameView(EVrOutputViewKind.RightInset, 3u, 1u, 3, 1000u, 1000u),
+        ];
+
+        return RenderFrameViewSet.Create(
+            renderMode,
+            EVrVisibilityPolicy.SharedFrameViewSet,
+            visibilityGroupCount: 1,
+            views: views,
+            debugName: "quad-view-rvc");
+    }
+
+    private static RenderFrameViewDescriptor CreateFrameView(
+        EVrOutputViewKind kind,
+        uint viewId,
+        uint parentViewId,
+        int openXrViewIndex,
+        uint width,
+        uint height)
+        => new(
+            viewId,
+            kind,
+            parentViewId,
+            0,
+            openXrViewIndex,
+            viewId,
+            RenderFrameViewRect.FromSize(width, height),
+            Matrix4x4.Identity,
+            CreateProjection(70.0f),
+            Matrix4x4.Identity,
+            ViewFoveationContext.Off(),
+            kind.ToString());
 
     private static Matrix4x4 CreateProjection(float verticalFovDegrees)
         => Matrix4x4.CreatePerspectiveFieldOfView(

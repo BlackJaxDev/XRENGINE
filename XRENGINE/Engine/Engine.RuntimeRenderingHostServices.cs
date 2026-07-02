@@ -60,6 +60,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public int BlendshapePrecombineComputeMinActiveShapes => Engine.Rendering.Settings.BlendshapePrecombineComputeMinActiveShapes;
     public int BlendshapePrecombineDirectMinActiveShapes => Engine.Rendering.Settings.BlendshapePrecombineDirectMinActiveShapes;
     public int BlendshapePrecombineMinAffectedVertices => Engine.Rendering.Settings.BlendshapePrecombineMinAffectedVertices;
+    public bool StreamMeshLodsOnDemand => Engine.Rendering.Settings.StreamMeshLodsOnDemand;
+    public int MeshLodStreamingDrainIntervalFrames => Engine.Rendering.Settings.MeshLodStreamingDrainIntervalFrames;
+    public int MeshLodStreamingMaxLoadsPerDrain => Engine.Rendering.Settings.MeshLodStreamingMaxLoadsPerDrain;
     public int ShaderConfigVersion => Engine.Rendering.Settings.ShaderConfigVersion;
     public ERenderClipSpaceYDirection ClipSpaceYDirection => Engine.Rendering.Settings.ClipSpaceYDirection;
     public ERenderClipDepthRange ClipDepthRange => Engine.Rendering.Settings.ClipDepthRange;

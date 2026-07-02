@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Vulkan
             private QueryPool _queryPool;
             private QueryType _queryType = QueryType.Occlusion;
             private bool _queryActive;
+            private static bool _loggedHostQueryResetUnsupported;
 
             public override VkObjectType Type => VkObjectType.Query;
             public override bool IsGenerated => IsActive;
@@ -45,18 +46,42 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                // vkCmdResetQueryPool is queued on the GPU. If we reuse a pool whose
-                // previous result was available, a CPU poll before the queued reset
-                // executes can observe that stale availability bit. CPU occlusion
-                // queries are sparse and only re-begun after their prior result has
-                // resolved, so use a fresh pool for each submission.
-                if (_queryPool.Handle != 0)
-                    DestroyQueryPool();
+                // Pool lifetime: the pool is created once and reused across submissions.
+                // It must NOT be destroyed here — previously recorded command buffers
+                // (including the still-pending previous frame) reference it, and destroying
+                // it invalidates them (InvalidCommandBuffer-VkQueryPool validation errors
+                // followed by an access violation inside vkQueueSubmit2).
+                //
+                // Reuse is safe because the reset below happens on the HOST, immediately:
+                // the old hazard was that vkCmdResetQueryPool is queued on the GPU, letting
+                // a CPU poll observe a stale availability bit before the queued reset ran.
+                // vkResetQueryPool has no such window, and the CPU occlusion coordinator
+                // only re-begins a query after its prior result has resolved, so the pool
+                // has no pending GPU use when we reset it.
+                //
+                // Occlusion QueryOps are recorded while the target's render pass is
+                // active, and vkCmdResetQueryPool must only be recorded outside a
+                // render pass instance (VUID-vkCmdResetQueryPool-renderpass), so the
+                // host-side reset (core 1.2 hostQueryReset) is also the only valid
+                // reset point for this path.
+                if (!Renderer.SupportsHostQueryReset)
+                {
+                    if (!_loggedHostQueryResetUnsupported)
+                    {
+                        _loggedHostQueryResetUnsupported = true;
+                        Debug.VulkanWarning(
+                            "Occlusion query skipped: device does not support hostQueryReset (Vulkan 1.2), " +
+                            "and vkCmdResetQueryPool cannot be recorded inside an active render pass. " +
+                            "Occlusion candidates remain visible.");
+                    }
+
+                    return false;
+                }
 
                 if (!EnsureQueryPool(queryType))
                     return false;
 
-                Api!.CmdResetQueryPool(commandBuffer, _queryPool, 0, 1);
+                Api!.ResetQueryPool(Device, _queryPool, 0, 1);
                 Api.CmdBeginQuery(commandBuffer, _queryPool, 0, flags);
                 Data.CurrentQuery = target;
                 _queryActive = true;

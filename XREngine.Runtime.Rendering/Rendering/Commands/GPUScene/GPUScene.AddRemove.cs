@@ -29,7 +29,6 @@ namespace XREngine.Rendering.Commands
 {
     public partial class GPUScene
     {
-
         /// <summary>
         /// Adds a render command to the GPU scene.
         /// </summary>

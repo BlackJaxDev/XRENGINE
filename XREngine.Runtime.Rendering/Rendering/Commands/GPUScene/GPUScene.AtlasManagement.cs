@@ -344,6 +344,9 @@ namespace XREngine.Rendering.Commands
         }
 
         private bool TryPopulateLogicalMeshState(LogicalMeshState state, IEnumerable<(XRMesh mesh, float minProjectedRadiusPixels)> lodMeshes, string meshLabel, out string? failureReason)
+            => TryPopulateLogicalMeshState(state, lodMeshes, meshLabel, null, out failureReason);
+
+        private bool TryPopulateLogicalMeshState(LogicalMeshState state, IEnumerable<(XRMesh mesh, float minProjectedRadiusPixels)> lodMeshes, string meshLabel, XRMesh? requiredResidentMesh, out string? failureReason)
         {
             failureReason = null;
             state.DebugLabel = meshLabel;
@@ -375,17 +378,40 @@ namespace XREngine.Rendering.Commands
             XRMesh?[] newMeshes = new XRMesh?[MaxLogicalMeshLodCount];
             float[] newMinProjectedRadiusPixels = new float[MaxLogicalMeshLodCount];
 
+            bool deferNonEssentialLods = RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand && levels.Count > 1;
+
             for (int i = 0; i < levels.Count; i++)
             {
                 XRMesh mesh = levels[i].mesh;
+                newMeshes[i] = mesh;
+                newMinProjectedRadiusPixels[i] = i == lastIndex ? 0.0f : MathF.Max(0.0f, levels[i].minProjectedRadiusPixels);
+
+                // LOD0 is the mandatory-resident fallback level; the command's own mesh must
+                // also stay resident because indirect draws reference it before (or without)
+                // the GPU LOD-select rewrite. Levels already resident stay resident so
+                // re-registration does not thrash atlas contents.
+                bool alreadyResident = i < state.MeshIds.Length
+                    && state.MeshIds[i] != 0
+                    && ReferenceEquals(state.Meshes[i], mesh);
+                bool mustBeResident = i == 0
+                    || !deferNonEssentialLods
+                    || alreadyResident
+                    || ReferenceEquals(mesh, requiredResidentMesh);
+
+                if (!mustBeResident)
+                {
+                    // Deferred level: MeshIds stays 0 so GPURenderLODSelect clamps selection
+                    // to the nearest resident level and raises a LODRequestBuffer bit that
+                    // ServiceLodStreamingRequests turns into a RequestLODLoad.
+                    continue;
+                }
+
                 GetOrCreateMeshID(mesh, out uint meshId);
                 string lodLabel = levels.Count == 1 ? meshLabel : $"{meshLabel} LOD{i}";
                 if (!EnsureSubmeshInAtlas(mesh, meshId, lodLabel, out failureReason))
                     return false;
 
                 newMeshIds[i] = meshId;
-                newMeshes[i] = mesh;
-                newMinProjectedRadiusPixels[i] = i == lastIndex ? 0.0f : MathF.Max(0.0f, levels[i].minProjectedRadiusPixels);
             }
 
             if (previousRefCount > 0)
@@ -449,7 +475,7 @@ namespace XREngine.Rendering.Commands
                 state = _logicalMeshStates[logicalMeshId];
             }
 
-            if (!TryPopulateLogicalMeshState(state, lodMeshes, meshLabel, out failureReason))
+            if (!TryPopulateLogicalMeshState(state, lodMeshes, meshLabel, mesh, out failureReason))
                 return false;
 
             GetOrCreateMeshID(mesh, out meshId);

@@ -64,6 +64,17 @@ public unsafe partial class VulkanRenderer
                string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool ContainsQueryFrameOp(FrameOp[] ops)
+    {
+        for (int i = 0; i < ops.Length; i++)
+        {
+            if (ops[i] is QueryOp)
+                return true;
+        }
+
+        return false;
+    }
+
     private CommandChainResourcePlanReadScope BeginCommandChainResourcePlanReadScope(ulong resourcePlanRevision)
         => new(this, resourcePlanRevision);
 
@@ -79,6 +90,21 @@ public unsafe partial class VulkanRenderer
         stats = default;
         if (!CommandChainsEnabledForCurrentRecording)
             return null;
+
+        // Occlusion query brackets (QueryOp Begin/End around a proxy draw) must record
+        // inline into the primary command buffer: chain secondaries would need
+        // inheritedQueries-aware inheritance info, and splitting a bracket across
+        // secondaries ends a command buffer with an in-progress query
+        // (VUID-vkEndCommandBuffer-commandBuffer-00061). Fall back to inline recording
+        // for frames that contain query ops.
+        if (ContainsQueryFrameOp(staticOps) || ContainsQueryFrameOp(volatileOps))
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.CommandChains.QueryOpsInlineFallback.{GetHashCode()}",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan.CommandChains] Frame contains occlusion QueryOps; recording inline instead of command chains.");
+            return null;
+        }
 
         bool traceCommandChains = CommandChainTraceEnabled;
         FrameOpResourcePlannerSwitchingState frameOpSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;

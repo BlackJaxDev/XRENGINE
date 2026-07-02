@@ -561,6 +561,62 @@ public class GpuRenderingBacklogTests
     }
 
     [Test]
+    public void LOD_StreamOnDemand_DefersNonLod0_UntilRequested()
+    {
+        bool previous = RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand;
+        RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand = true;
+        try
+        {
+            var scene = new GPUScene();
+            var lod0 = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+            var lod1 = XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitZ + Vector3.UnitX, Vector3.UnitZ + Vector3.UnitY);
+
+            scene.RegisterLogicalMeshLODs([(lod0, 96.0f), (lod1, 0.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
+
+            scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry entry).ShouldBeTrue();
+            entry.LODCount.ShouldBe(2u);
+            entry.LOD0_MeshDataID.ShouldNotBe(0u);
+            entry.LOD1_MeshDataID.ShouldBe(0u);
+
+            scene.RequestLODLoad(logicalMeshId, 1, out string? requestFailure).ShouldBeTrue(requestFailure);
+            scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry loadedEntry).ShouldBeTrue();
+            loadedEntry.LOD1_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, lod1));
+        }
+        finally
+        {
+            RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand = previous;
+        }
+    }
+
+    [Test]
+    public void LOD_StreamOnDemand_ServicePump_LoadsRequestedLevelsAndClearsMask()
+    {
+        bool previous = RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand;
+        RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand = true;
+        try
+        {
+            var scene = new GPUScene();
+            var lod0 = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+            var lod1 = XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitZ + Vector3.UnitX, Vector3.UnitZ + Vector3.UnitY);
+
+            scene.RegisterLogicalMeshLODs([(lod0, 96.0f), (lod1, 0.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
+            scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry deferredEntry).ShouldBeTrue();
+            deferredEntry.LOD1_MeshDataID.ShouldBe(0u);
+
+            scene.LODRequestBuffer.SetDataRawAtIndex(logicalMeshId, 0b10u);
+            scene.ServiceLodStreamingRequests();
+
+            scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry loadedEntry).ShouldBeTrue();
+            loadedEntry.LOD1_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, lod1));
+            scene.LODRequestBuffer.GetDataRawAtIndex<uint>(logicalMeshId).ShouldBe(0u);
+        }
+        finally
+        {
+            RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand = previous;
+        }
+    }
+
+    [Test]
     public void LOD_SelectShader_WritesMeshIdAndLodLevel()
     {
         string source = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderLODSelect.comp");

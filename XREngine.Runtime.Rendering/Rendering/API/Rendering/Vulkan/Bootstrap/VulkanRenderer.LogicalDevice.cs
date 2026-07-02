@@ -1185,6 +1185,13 @@ public unsafe partial class VulkanRenderer
             drawIndirectCountExtensionEnabled &&
             supportedVulkan12Features.DrawIndirectCount;
 
+        // Host query reset (core 1.2). Occlusion query pools must be reset outside a render
+        // pass instance; CPU occlusion QueryOps are recorded while the target render pass is
+        // active, so the reset has to happen on the host instead of the command buffer.
+        bool hostQueryResetFeatureSupported =
+            vulkan12PromotedToCore && supportedVulkan12Features.HostQueryReset;
+        bool enableHostQueryResetFeature = hostQueryResetFeatureSupported;
+
         bool multiviewExtensionEnabled = extensionsArray.Contains("VK_KHR_multiview");
         QueryMultiviewCapabilities(
             multiviewExtensionEnabled,
@@ -1409,6 +1416,7 @@ public unsafe partial class VulkanRenderer
             BufferDeviceAddress = enableBufferDeviceAddress,
             ShaderOutputViewportIndex = enableShaderOutputViewportIndexFeature,
             ShaderOutputLayer = enableShaderOutputLayerFeature,
+            HostQueryReset = enableHostQueryResetFeature,
         };
 
         PhysicalDeviceIndexTypeUint8FeaturesEXT indexTypeUint8FeatureEnable = new()
@@ -1444,6 +1452,13 @@ public unsafe partial class VulkanRenderer
             SType = StructureType.PhysicalDeviceTimelineSemaphoreFeatures,
             PNext = null,
             TimelineSemaphore = enableTimelineSemaphoreFeature,
+        };
+
+        PhysicalDeviceHostQueryResetFeatures hostQueryResetFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceHostQueryResetFeatures,
+            PNext = null,
+            HostQueryReset = enableHostQueryResetFeature,
         };
 
         PhysicalDeviceSynchronization2Features synchronization2FeatureEnable = new()
@@ -1609,6 +1624,12 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &timelineSemaphoreFeatureEnable;
         }
 
+        if (enableHostQueryResetFeature && !useVulkan12FeatureEnable)
+        {
+            hostQueryResetFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &hostQueryResetFeatureEnable;
+        }
+
         if (enableSynchronization2Feature)
         {
             synchronization2FeatureEnable.PNext = enabledFeaturesPNext;
@@ -1748,6 +1769,7 @@ public unsafe partial class VulkanRenderer
         _supportsTransformFeedbackQueries = enableTransformFeedbackFeature && transformFeedbackProperties.TransformFeedbackQueries;
         _supportsTransformFeedbackDraw = enableTransformFeedbackFeature && transformFeedbackProperties.TransformFeedbackDraw;
         _transformFeedbackProperties = enableTransformFeedbackFeature ? transformFeedbackProperties : default;
+        _supportsHostQueryReset = enableHostQueryResetFeature;
         _supportsVulkanFragmentShadingRate = enableFragmentShadingRateFeature;
         _supportsVulkanFragmentShadingRateAttachment = enableFragmentShadingRateFeature && attachmentFragmentShadingRateSupported;
         _supportsVulkanFragmentDensityMap = enableFragmentDensityMapFeature;

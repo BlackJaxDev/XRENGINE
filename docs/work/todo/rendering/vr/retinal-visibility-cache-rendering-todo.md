@@ -71,6 +71,10 @@ oracle for later visibility, shadelet, and shared-lighting stages.
   simulator lane where available).
 - [ ] Capture current Forward+ reference images and profiler captures for stereo
   and any existing foveated `RenderCommandCollection` ViewSet path.
+- [ ] Define the performance baseline RVC must beat as foveated Forward+
+  (quad views + fragment shading rate + visibility-mask stenciling), not
+  uniform Forward+, and record its unique-fragment-invocation counts for the
+  target validation scenes.
 - [ ] Inventory current OpenXR runtime support for
   `XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO`,
   `XR_VARJO_foveated_rendering`, depth layers, visibility masks, multiview, and
@@ -78,6 +82,12 @@ oracle for later visibility, shadelet, and shared-lighting stages.
 - [ ] Inventory Vulkan descriptor heap support alongside descriptor indexing so
   RVC can report the selected material/resource binding backend before cache
   work begins.
+- [ ] Inventory Vulkan `VK_EXT_fragment_density_map` support alongside fragment
+  shading rate so the foveation-rate abstraction stays expressible as either a
+  shading-rate image or a fragment density map.
+- [ ] Stand up the quad-view emulation lane with the Quad-Views-Foveated OpenXR
+  API layer so `QuadView` validation runs on non-Varjo hardware, including
+  eye-tracked inset movement and runtime inset-boundary blending.
 - [ ] Define the `RenderFrameViewSet` contract: stable view identity, parent
   eye, wide/inset relationship, projection, viewport, recommended image size,
   foveation metadata, previous-view state, and mirror/debug views.
@@ -158,6 +168,10 @@ the [design open questions](../../../design/rendering/retinal-visibility-cache-r
   defers them to Phase 8.
 - [ ] Decide how much existing Forward+ tile infrastructure is reused for
   head-space clusters (informs Phase 5).
+- [ ] Decide the shared light grid space: truly head-anchored,
+  orientation-snapped, or world-aligned with a camera-relative origin, given
+  cluster-ID churn under head rotation (blocks Phase 5, interacts with Phase 8
+  temporal reuse).
 - [ ] Decide which RVC controls are editor quality settings versus backend-only
   renderer policy.
 
@@ -176,6 +190,8 @@ the [design open questions](../../../design/rendering/retinal-visibility-cache-r
   or an equivalent oversized viewport layout, so gaze availability can choose
   the correct set without invalid dimensions.
 - [ ] Allocate and submit swapchains for every reported view.
+- [ ] Stencil each view's `XR_KHR_visibility_mask` hidden-area mesh before
+  rendering and handle `XrEventDataVisibilityMaskChangedKHR`.
 - [ ] Render all reported views through the existing Forward+ path.
 - [ ] Carry per-view projection, viewport, previous-view state, and timing into
   the frame profile.
@@ -237,6 +253,10 @@ Acceptance criteria:
   reconstruction error, and fallback classes.
 - [ ] Define the conservative HZB contract for RVC visibility: previous/early
   depth may reject only when reprojection and dynamic-object state are safe.
+- [ ] Render wide-view visibility before same-eye inset visibility and seed the
+  inset HZB from wide depth (exact zero-parallax remap since both views share
+  one center of projection); record wide-versus-inset depth agreement for
+  later reuse validation.
 - [ ] Add a current-frame HZB/post-validation pass for newly visible,
   uncertain, HZB-edge, or cross-view-disagreement candidates.
 - [ ] Split visibility candidates by execution lane: hardware raster first,
@@ -262,7 +282,21 @@ Acceptance criteria:
 - [ ] Build per-view pixel-to-shadelet maps.
 - [ ] Support 1x1, 2x2, 4x4, and 8x8 shadelet densities.
 - [ ] Add a Vulkan `VK_KHR_fragment_shading_rate` foveation fast path for
-  materials not yet ported to compute-side material reconstruction.
+  materials not yet ported to compute-side material reconstruction. Desktop
+  fragment shading rate caps at 4x4, so 8x8 densities require the compute
+  shadelet path; express near-UI/hand 1x1 overrides through shading-rate
+  combiner ops.
+- [ ] Deduplicate shadelets hierarchically: tile-local shared-memory dedup
+  first, then a global merge of tile survivors, to avoid global atomic
+  contention.
+- [ ] Encode per-view pixel-to-shadelet maps with per-tile indirection
+  (per-tile base offset plus 16-bit local index) to halve map bandwidth.
+- [ ] Ship a counters-only reuse telemetry mode that reports intra-view,
+  inset/wide, and cross-eye shadelet key-match ceilings without changing
+  shading, as the evidence gate for Phase 6.
+- [ ] Force the wide-view region under the inset (minus a blend guard band) to
+  the coarsest shadelet rate with no per-view specular; the runtime only
+  needs plausible data there for edge blending.
 - [ ] Sort or bin shadelets by material before shading to avoid divergent
   compute-side material evaluation.
 - [ ] Store material row IDs/resource generations in shadelet records and load
@@ -287,7 +321,10 @@ Acceptance criteria:
 
 ## Phase 5 - Shared Head-Space Light Clusters
 
-- [ ] Build a shared head-space cluster grid for the full frame view set.
+- [ ] Build a shared head-space cluster grid for the full frame view set,
+  implementing the Phase 0 grid-space decision (orientation snapping or
+  world-aligned camera-relative origin) so stationary surfaces keep stable
+  cluster IDs under head rotation.
 - [ ] Map shadelets to head-space clusters instead of rebuilding independent
   light lists per view.
 - [ ] Reuse existing Forward+ light metadata and buffers where layout and
@@ -310,6 +347,9 @@ Acceptance criteria:
 
 ## Phase 6 - Inset/Wide And Stereo Shadelet Reuse
 
+- [ ] Gate this phase on the Phase 4 telemetry ceilings; descope stereo reuse
+  with evidence if measured cross-eye key-match rates on target content are
+  low.
 - [ ] Share shadelets between wide and inset views for the same eye when
   primitive, surface location, material, normal, LOD, and deformation thresholds
   agree.
@@ -323,6 +363,8 @@ Acceptance criteria:
   they have an explicit safe key.
 - [ ] Keep sharp specular and reflection correction per view, especially in the
   fovea and guard band.
+- [ ] Measure the specular-sharing roughness threshold per material class
+  through the A/B harness instead of hard-coding 0.35.
 - [ ] Default `RvcStereoReuseEnabled` off until the validation harness is green.
 - [ ] Build the A/B harness to the Phase 0 contract (per-view shading versus
   cross-view reuse, shared toggle, tolerance-based pass/fail).
@@ -332,8 +374,9 @@ Acceptance criteria:
 Acceptance criteria:
 
 - [ ] Measured unique-shadelet count `S < 0.5 * sum(P_i)` on opaque-heavy test
-  scenes (target range roughly 20-35% of total view pixels), adopted as the
-  exit criterion instead of the vaguer "beats Forward+".
+  scenes (target range roughly 20-35% of total view pixels) and below the
+  Phase 0 foveated Forward+ unique-invocation baseline, adopted as the exit
+  criterion instead of the vaguer "beats Forward+".
 - [ ] Opaque-heavy test scenes show material/stable-light reuse across views.
 - [ ] The A/B harness shows no perceptible difference on the validated content
   set before stereo reuse is enabled by default.
@@ -370,10 +413,17 @@ Acceptance criteria:
 - [ ] Invalidate on material changes, animation/deformation version changes,
   LOD changes, shadow caster set changes, view-set changes, and gaze-region
   changes.
+- [ ] Decide the foveal anti-aliasing path explicitly: evaluate
+  ID-discontinuity edge AA from the visibility buffer as the foveal path,
+  with foveated TAA as the fallback rather than the default assumption.
 - [ ] Add foveated TAA/reprojection and edge-aware upsampling that understand
   wide/inset view identity.
 - [ ] Investigate late foveal inset refresh on Vulkan without violating OpenXR
   frame timing.
+- [ ] Late-latch the foveation center through buffer-device-address constants
+  written at submit time; never rebuild command buffers for gaze updates.
+- [ ] Exploit saccadic suppression: drop foveal refresh quality during detected
+  saccades and land quality at the predicted gaze endpoint.
 - [ ] Evaluate optional cross-domain extensions as follow-ups behind the
   hand-tuned fallback: saccade-predicted guard-band widening, learned peripheral
   reconstruction, and peripheral checkerboard/quad-rotation sampling.

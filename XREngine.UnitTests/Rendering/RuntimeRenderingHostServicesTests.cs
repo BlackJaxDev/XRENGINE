@@ -398,6 +398,9 @@ public sealed class RuntimeRenderingHostServicesTests
         public int BlendshapePrecombineComputeMinActiveShapes { get; set; } = RuntimeRenderingHostServiceDefaults.BlendshapePrecombineComputeMinActiveShapes;
         public int BlendshapePrecombineDirectMinActiveShapes { get; set; } = RuntimeRenderingHostServiceDefaults.BlendshapePrecombineDirectMinActiveShapes;
         public int BlendshapePrecombineMinAffectedVertices { get; set; } = RuntimeRenderingHostServiceDefaults.BlendshapePrecombineMinAffectedVertices;
+        public bool StreamMeshLodsOnDemand { get; set; } = RuntimeRenderingHostServiceDefaults.StreamMeshLodsOnDemand;
+        public int MeshLodStreamingDrainIntervalFrames { get; set; } = RuntimeRenderingHostServiceDefaults.MeshLodStreamingDrainIntervalFrames;
+        public int MeshLodStreamingMaxLoadsPerDrain { get; set; } = RuntimeRenderingHostServiceDefaults.MeshLodStreamingMaxLoadsPerDrain;
         public int ShaderConfigVersion => 0;
         public ERenderClipSpaceYDirection ClipSpaceYDirection { get; set; } = RuntimeRenderingHostServiceDefaults.ClipSpaceYDirection;
         public ERenderClipDepthRange ClipDepthRange { get; set; } = RuntimeRenderingHostServiceDefaults.ClipDepthRange;

@@ -54,6 +54,9 @@ namespace XREngine.Rendering.Commands
         private readonly Dictionary<uint, LogicalMeshState> _logicalMeshStates = [];
         private XRDataBuffer? _lodTableBuffer;
         private XRDataBuffer? _lodRequestBuffer;
+        private ulong _lodStreamingLastDrainFrameId;
+        private bool _lodStreamingHasDrained;
+        private readonly HashSet<ulong> _lodStreamingFailedRequests = [];
         private uint _nextLogicalMeshID = 1;
 
         /// <summary>Next material ID to assign (incremented atomically).</summary>
@@ -286,6 +289,57 @@ namespace XREngine.Rendering.Commands
                 }
 
                 return requests;
+            }
+        }
+
+        /// <summary>
+        /// Render-thread pump for GPU-authored mesh LOD residency requests.
+        /// Drains <see cref="LODRequestBuffer"/> at a throttled frame interval and loads the
+        /// requested LOD levels into the mesh atlas via <see cref="RequestLODLoad"/>.
+        /// No-op unless <c>StreamMeshLodsOnDemand</c> is enabled. Requests dropped by the
+        /// per-drain load budget are re-raised by the GPU while the level stays non-resident,
+        /// so this loop is self-healing across frames.
+        /// </summary>
+        public void ServiceLodStreamingRequests()
+        {
+            if (!RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand || !HasLogicalMeshEntries)
+                return;
+
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            uint interval = (uint)Math.Clamp(RuntimeEngine.Rendering.Settings.MeshLodStreamingDrainIntervalFrames, 1, 64);
+            if (_lodStreamingHasDrained && frameId - _lodStreamingLastDrainFrameId < interval)
+                return;
+
+            _lodStreamingHasDrained = true;
+            _lodStreamingLastDrainFrameId = frameId;
+
+            // DrainLODRequests maps the request buffer; the throttle above bounds how often
+            // that map/readback cost is paid. The returned list is small and drain-gated,
+            // so the allocation is acceptable outside the per-frame hot path.
+            List<(uint logicalMeshId, uint lodMask)> requests = DrainLODRequests();
+            if (requests.Count == 0)
+                return;
+
+            int budget = Math.Clamp(RuntimeEngine.Rendering.Settings.MeshLodStreamingMaxLoadsPerDrain, 1, 256);
+            for (int i = 0; i < requests.Count && budget > 0; i++)
+            {
+                (uint logicalMeshId, uint lodMask) = requests[i];
+                for (int lodLevel = 0; lodLevel < MaxLogicalMeshLodCount && budget > 0; lodLevel++)
+                {
+                    if ((lodMask & (1u << lodLevel)) == 0)
+                        continue;
+
+                    if (RequestLODLoad(logicalMeshId, lodLevel, out string? failureReason))
+                    {
+                        budget--;
+                        continue;
+                    }
+
+                    // Log each distinct failing (logicalMesh, lod) pair once to avoid per-drain spam.
+                    ulong failureKey = ((ulong)logicalMeshId << 32) | (uint)lodLevel;
+                    if (_lodStreamingFailedRequests.Add(failureKey))
+                        Debug.MeshesWarning($"[GPUScene] Mesh LOD streaming failed to load LOD {lodLevel} for logical mesh {logicalMeshId}: {failureReason}");
+                }
             }
         }
 

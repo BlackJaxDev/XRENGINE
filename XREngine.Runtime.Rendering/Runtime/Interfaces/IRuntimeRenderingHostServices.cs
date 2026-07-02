@@ -133,6 +133,21 @@ public interface IRuntimeRenderingHostServices
     int BlendshapePrecombineMinAffectedVertices { get; }
 
     /// <summary>
+    /// Gets whether non-essential mesh LOD levels defer atlas upload until the GPU LOD-select pass requests them.
+    /// </summary>
+    bool StreamMeshLodsOnDemand { get; }
+
+    /// <summary>
+    /// Gets the render-frame interval between drains of the GPU mesh LOD request buffer.
+    /// </summary>
+    int MeshLodStreamingDrainIntervalFrames { get; }
+
+    /// <summary>
+    /// Gets the maximum number of LOD atlas loads serviced per request-buffer drain.
+    /// </summary>
+    int MeshLodStreamingMaxLoadsPerDrain { get; }
+
+    /// <summary>
     /// Gets the host shader configuration revision used to invalidate runtime render programs.
     /// </summary>
     int ShaderConfigVersion { get; }

@@ -49,6 +49,7 @@ namespace XREngine.Rendering.Vulkan
         private bool _supportsTransformFeedbackGeometryStreams;
         private bool _supportsTransformFeedbackQueries;
         private bool _supportsTransformFeedbackDraw;
+        private bool _supportsHostQueryReset;
         private bool _supportsVulkanFragmentShadingRate;
         private bool _supportsVulkanFragmentShadingRateAttachment;
         private bool _supportsVulkanFragmentDensityMap;
@@ -99,6 +100,8 @@ namespace XREngine.Rendering.Vulkan
         public bool SupportsTransformFeedbackGeometryStreams => SupportsTransformFeedback && _supportsTransformFeedbackGeometryStreams;
         public bool SupportsTransformFeedbackQueries => SupportsTransformFeedback && _supportsTransformFeedbackQueries;
         public bool SupportsTransformFeedbackDraw => SupportsTransformFeedback && _supportsTransformFeedbackDraw;
+        /// <summary>Core-1.2 hostQueryReset feature: query pools may be reset from the CPU via vkResetQueryPool.</summary>
+        public bool SupportsHostQueryReset => _supportsHostQueryReset;
         public bool SupportsVulkanFragmentShadingRate => _supportsVulkanFragmentShadingRate;
         public bool SupportsVulkanFragmentShadingRateAttachment => _supportsVulkanFragmentShadingRateAttachment;
         public bool SupportsVulkanFragmentDensityMap => _supportsVulkanFragmentDensityMap;

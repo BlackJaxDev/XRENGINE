@@ -166,6 +166,30 @@ internal sealed class RuntimeRenderSettings
             : _blendshapePrecombineMinAffectedVertices;
         set => _blendshapePrecombineMinAffectedVertices = Math.Max(1, value);
     }
+    private bool _streamMeshLodsOnDemand = RuntimeRenderingHostServiceDefaults.StreamMeshLodsOnDemand;
+    public bool StreamMeshLodsOnDemand
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.StreamMeshLodsOnDemand
+            : _streamMeshLodsOnDemand;
+        set => _streamMeshLodsOnDemand = value;
+    }
+    private int _meshLodStreamingDrainIntervalFrames = RuntimeRenderingHostServiceDefaults.MeshLodStreamingDrainIntervalFrames;
+    public int MeshLodStreamingDrainIntervalFrames
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.MeshLodStreamingDrainIntervalFrames
+            : _meshLodStreamingDrainIntervalFrames;
+        set => _meshLodStreamingDrainIntervalFrames = Math.Clamp(value, 1, 64);
+    }
+    private int _meshLodStreamingMaxLoadsPerDrain = RuntimeRenderingHostServiceDefaults.MeshLodStreamingMaxLoadsPerDrain;
+    public int MeshLodStreamingMaxLoadsPerDrain
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.MeshLodStreamingMaxLoadsPerDrain
+            : _meshLodStreamingMaxLoadsPerDrain;
+        set => _meshLodStreamingMaxLoadsPerDrain = Math.Clamp(value, 1, 256);
+    }
     public bool CalculateSkinnedBoundsInComputeShader
     {
         get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)

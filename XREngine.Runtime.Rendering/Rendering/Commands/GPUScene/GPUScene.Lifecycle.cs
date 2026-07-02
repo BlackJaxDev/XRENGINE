@@ -56,6 +56,9 @@ namespace XREngine.Rendering.Commands
             _lodTableBuffer = MakeLodTableBuffer();
             _lodRequestBuffer?.Destroy();
             _lodRequestBuffer = MakeLodRequestBuffer();
+            _lodStreamingLastDrainFrameId = 0;
+            _lodStreamingHasDrained = false;
+            _lodStreamingFailedRequests.Clear();
 
             _allLoadedCommandsBuffer?.Destroy();
             _allLoadedCommandsBuffer = MakeCommandsInputBuffer();
@@ -144,6 +147,9 @@ namespace XREngine.Rendering.Commands
             _lodTableBuffer = null;
             _lodRequestBuffer?.Destroy();
             _lodRequestBuffer = null;
+            _lodStreamingLastDrainFrameId = 0;
+            _lodStreamingHasDrained = false;
+            _lodStreamingFailedRequests.Clear();
             _allLoadedCommandsBuffer?.Destroy();
             _allLoadedCommandsBuffer = null;
             _allLoadedDrawMetadataBuffer?.Destroy();

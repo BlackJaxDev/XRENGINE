@@ -724,6 +724,10 @@ namespace XREngine.Rendering.Commands
             _lodSelectComputeShader.DispatchCompute(dispatchGroups, 1, 1, postLodBarrier);
             AbstractRenderer.Current?.MemoryBarrier(postLodBarrier);
             _culledHotCommandsValid = false;
+
+            // Turn GPU-raised LOD residency requests (from earlier frames) into atlas loads.
+            // Internally frame-throttled and a no-op unless StreamMeshLodsOnDemand is enabled.
+            scene.ServiceLodStreamingRequests();
         }
 
         private static Vector2 ResolveLodProjectionScale(XRCamera camera)

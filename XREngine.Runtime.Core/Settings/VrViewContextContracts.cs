@@ -9,6 +9,11 @@ public enum EVrOutputViewKind
     RightEye,
     DesktopEditor,
     CyclopeanDesktop,
+    LeftWide,
+    RightWide,
+    LeftInset,
+    RightInset,
+    Debug,
 }
 
 public enum EFrameOutputKind
@@ -58,6 +63,8 @@ public enum EVrVisibilityPolicy
 {
     IndependentDesktopAndVrEyes,
     CombinedRuntimeLeftRightCyclopean,
+    PerView,
+    SharedFrameViewSet,
 }
 
 public enum EVrFoveationGazeSource
@@ -235,6 +242,558 @@ public readonly record struct ViewRecordingWorkItem(
     ViewFoveationContext Foveation)
 {
     public bool HasImmutableFoveationInput => Foveation.Equals(View.Foveation);
+}
+
+public readonly record struct RenderFrameViewRect(
+    uint X,
+    uint Y,
+    uint Width,
+    uint Height)
+{
+    public bool IsValid => Width != 0u && Height != 0u;
+
+    public static RenderFrameViewRect FromSize(uint width, uint height)
+        => new(0u, 0u, width, height);
+}
+
+public readonly record struct RenderFrameViewDescriptor(
+    uint ViewId,
+    EVrOutputViewKind Kind,
+    uint ParentViewId,
+    int VisibilityGroupIndex,
+    int OpenXrViewIndex,
+    uint OutputLayer,
+    RenderFrameViewRect ViewRect,
+    Matrix4x4 ViewMatrix,
+    Matrix4x4 ProjectionMatrix,
+    Matrix4x4 PreviousViewProjectionMatrix,
+    ViewFoveationContext Foveation,
+    string? DebugName = null)
+{
+    public const uint InvalidViewId = uint.MaxValue;
+
+    public bool HasParent => ParentViewId != InvalidViewId;
+    public bool IsStereoEye => Kind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye;
+    public bool IsWideView => Kind is EVrOutputViewKind.LeftWide or EVrOutputViewKind.RightWide;
+    public bool IsInsetView => Kind is EVrOutputViewKind.LeftInset or EVrOutputViewKind.RightInset;
+    public bool IsQuadView => IsWideView || IsInsetView;
+    public bool IsLeftEyeFamily => Kind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.LeftWide or EVrOutputViewKind.LeftInset;
+    public bool IsRightEyeFamily => Kind is EVrOutputViewKind.RightEye or EVrOutputViewKind.RightWide or EVrOutputViewKind.RightInset;
+    public bool IsXrSubmittedView => IsStereoEye || IsQuadView;
+    public Matrix4x4 ViewProjectionMatrix => ViewMatrix * ProjectionMatrix;
+
+    public RenderFrameViewDescriptor WithVisibilityGroup(int visibilityGroupIndex)
+        => this with { VisibilityGroupIndex = visibilityGroupIndex };
+
+    public RenderFrameViewDescriptor WithParent(uint parentViewId)
+        => this with { ParentViewId = parentViewId };
+}
+
+public readonly record struct RenderFrameViewSet
+{
+    public const int MaxViewCount = 8;
+
+    private readonly RenderFrameViewDescriptor _view0;
+    private readonly RenderFrameViewDescriptor _view1;
+    private readonly RenderFrameViewDescriptor _view2;
+    private readonly RenderFrameViewDescriptor _view3;
+    private readonly RenderFrameViewDescriptor _view4;
+    private readonly RenderFrameViewDescriptor _view5;
+    private readonly RenderFrameViewDescriptor _view6;
+    private readonly RenderFrameViewDescriptor _view7;
+
+    private RenderFrameViewSet(
+        EVrViewRenderMode renderMode,
+        EVrVisibilityPolicy visibilityPolicy,
+        int visibilityGroupCount,
+        int viewCount,
+        RenderFrameViewDescriptor view0,
+        RenderFrameViewDescriptor view1,
+        RenderFrameViewDescriptor view2,
+        RenderFrameViewDescriptor view3,
+        RenderFrameViewDescriptor view4,
+        RenderFrameViewDescriptor view5,
+        RenderFrameViewDescriptor view6,
+        RenderFrameViewDescriptor view7,
+        string? debugName)
+    {
+        RenderMode = renderMode;
+        VisibilityPolicy = visibilityPolicy;
+        VisibilityGroupCount = visibilityGroupCount;
+        ViewCount = viewCount;
+        _view0 = view0;
+        _view1 = view1;
+        _view2 = view2;
+        _view3 = view3;
+        _view4 = view4;
+        _view5 = view5;
+        _view6 = view6;
+        _view7 = view7;
+        DebugName = debugName;
+    }
+
+    public EVrViewRenderMode RenderMode { get; }
+    public EVrVisibilityPolicy VisibilityPolicy { get; }
+    public int VisibilityGroupCount { get; }
+    public int ViewCount { get; }
+    public string? DebugName { get; }
+    public bool IsQuadViewSet => CountQuadViews() == 4;
+
+    public static RenderFrameViewSet Create(
+        EVrViewRenderMode renderMode,
+        EVrVisibilityPolicy visibilityPolicy,
+        int visibilityGroupCount,
+        ReadOnlySpan<RenderFrameViewDescriptor> views,
+        string? debugName = null)
+    {
+        if (views.Length < 1 || views.Length > MaxViewCount)
+            throw new ArgumentOutOfRangeException(nameof(views), $"A frame view set supports 1 to {MaxViewCount} views.");
+        if (visibilityGroupCount < 1)
+            throw new ArgumentOutOfRangeException(nameof(visibilityGroupCount));
+
+        RenderFrameViewDescriptor view0 = default;
+        RenderFrameViewDescriptor view1 = default;
+        RenderFrameViewDescriptor view2 = default;
+        RenderFrameViewDescriptor view3 = default;
+        RenderFrameViewDescriptor view4 = default;
+        RenderFrameViewDescriptor view5 = default;
+        RenderFrameViewDescriptor view6 = default;
+        RenderFrameViewDescriptor view7 = default;
+
+        for (int i = 0; i < views.Length; i++)
+        {
+            RenderFrameViewDescriptor view = views[i];
+            ValidateView(i, view, views.Length, visibilityGroupCount);
+            switch (i)
+            {
+                case 0: view0 = view; break;
+                case 1: view1 = view; break;
+                case 2: view2 = view; break;
+                case 3: view3 = view; break;
+                case 4: view4 = view; break;
+                case 5: view5 = view; break;
+                case 6: view6 = view; break;
+                case 7: view7 = view; break;
+            }
+        }
+
+        return new(
+            renderMode,
+            visibilityPolicy,
+            visibilityGroupCount,
+            views.Length,
+            view0,
+            view1,
+            view2,
+            view3,
+            view4,
+            view5,
+            view6,
+            view7,
+            debugName);
+    }
+
+    private static void ValidateView(
+        int index,
+        in RenderFrameViewDescriptor view,
+        int viewCount,
+        int visibilityGroupCount)
+    {
+        if (view.ViewId != (uint)index)
+            throw new ArgumentException("Frame view IDs must be dense and match their view-set slot.", nameof(view));
+        if (!view.ViewRect.IsValid)
+            throw new ArgumentException("Frame views require a non-zero render rectangle.", nameof(view));
+        if (view.VisibilityGroupIndex < 0 || view.VisibilityGroupIndex >= visibilityGroupCount)
+            throw new ArgumentOutOfRangeException(nameof(view.VisibilityGroupIndex));
+        if (view.HasParent && view.ParentViewId >= (uint)viewCount)
+            throw new ArgumentOutOfRangeException(nameof(view.ParentViewId));
+    }
+
+    public RenderFrameViewDescriptor GetView(int index)
+        => index switch
+        {
+            0 when ViewCount > 0 => _view0,
+            1 when ViewCount > 1 => _view1,
+            2 when ViewCount > 2 => _view2,
+            3 when ViewCount > 3 => _view3,
+            4 when ViewCount > 4 => _view4,
+            5 when ViewCount > 5 => _view5,
+            6 when ViewCount > 6 => _view6,
+            7 when ViewCount > 7 => _view7,
+            _ => throw new ArgumentOutOfRangeException(nameof(index)),
+        };
+
+    public int CountViewsInVisibilityGroup(int visibilityGroupIndex)
+    {
+        if (visibilityGroupIndex < 0 || visibilityGroupIndex >= VisibilityGroupCount)
+            throw new ArgumentOutOfRangeException(nameof(visibilityGroupIndex));
+
+        int count = 0;
+        for (int i = 0; i < ViewCount; i++)
+        {
+            if (GetView(i).VisibilityGroupIndex == visibilityGroupIndex)
+                count++;
+        }
+
+        return count;
+    }
+
+    public int CountQuadViews()
+    {
+        int count = 0;
+        for (int i = 0; i < ViewCount; i++)
+        {
+            if (GetView(i).IsQuadView)
+                count++;
+        }
+
+        return count;
+    }
+
+    public int FindFirstView(EVrOutputViewKind kind)
+    {
+        for (int i = 0; i < ViewCount; i++)
+        {
+            if (GetView(i).Kind == kind)
+                return i;
+        }
+
+        return -1;
+    }
+}
+
+public enum ERenderFrameViewBatchKind
+{
+    SequentialView,
+    LayeredStereoPair,
+    LayeredViewSet,
+    ParallelCommandBufferRecording,
+}
+
+public readonly record struct RenderFrameViewBatch(
+    ERenderFrameViewBatchKind Kind,
+    ulong ViewMask,
+    int OutputLayerBase,
+    string? DebugName)
+{
+    public int ViewCount => BitOperations.PopCount(ViewMask);
+    public bool IsLayered => Kind is ERenderFrameViewBatchKind.LayeredStereoPair or ERenderFrameViewBatchKind.LayeredViewSet;
+
+    public bool ContainsView(int viewIndex)
+    {
+        if ((uint)viewIndex >= 64u)
+            throw new ArgumentOutOfRangeException(nameof(viewIndex));
+
+        return (ViewMask & (1UL << viewIndex)) != 0UL;
+    }
+}
+
+public readonly record struct RenderFrameViewBatchCapabilities(
+    bool SupportsLayeredStereoPairs,
+    bool SupportsLayeredQuadView,
+    bool SupportsParallelCommandBufferRecording,
+    bool SupportsMixedLayerExtents,
+    int MaxLayerCount)
+{
+    public static RenderFrameViewBatchCapabilities None => new(false, false, false, false, 1);
+    public static RenderFrameViewBatchCapabilities VulkanMultiviewStereoPairs => new(true, false, true, false, 2);
+    public static RenderFrameViewBatchCapabilities VulkanMultiviewQuadView => new(true, true, true, false, 4);
+}
+
+public readonly record struct RenderFrameViewBatchPlan
+{
+    private readonly RenderFrameViewBatch _batch0;
+    private readonly RenderFrameViewBatch _batch1;
+    private readonly RenderFrameViewBatch _batch2;
+    private readonly RenderFrameViewBatch _batch3;
+    private readonly RenderFrameViewBatch _batch4;
+    private readonly RenderFrameViewBatch _batch5;
+    private readonly RenderFrameViewBatch _batch6;
+    private readonly RenderFrameViewBatch _batch7;
+
+    internal RenderFrameViewBatchPlan(
+        int batchCount,
+        RenderFrameViewBatch batch0,
+        RenderFrameViewBatch batch1,
+        RenderFrameViewBatch batch2,
+        RenderFrameViewBatch batch3,
+        RenderFrameViewBatch batch4,
+        RenderFrameViewBatch batch5,
+        RenderFrameViewBatch batch6,
+        RenderFrameViewBatch batch7)
+    {
+        BatchCount = batchCount;
+        _batch0 = batch0;
+        _batch1 = batch1;
+        _batch2 = batch2;
+        _batch3 = batch3;
+        _batch4 = batch4;
+        _batch5 = batch5;
+        _batch6 = batch6;
+        _batch7 = batch7;
+    }
+
+    public int BatchCount { get; }
+
+    public RenderFrameViewBatch GetBatch(int index)
+        => index switch
+        {
+            0 when BatchCount > 0 => _batch0,
+            1 when BatchCount > 1 => _batch1,
+            2 when BatchCount > 2 => _batch2,
+            3 when BatchCount > 3 => _batch3,
+            4 when BatchCount > 4 => _batch4,
+            5 when BatchCount > 5 => _batch5,
+            6 when BatchCount > 6 => _batch6,
+            7 when BatchCount > 7 => _batch7,
+            _ => throw new ArgumentOutOfRangeException(nameof(index)),
+        };
+
+    public static RenderFrameViewBatchPlan Create(ReadOnlySpan<RenderFrameViewBatch> batches)
+    {
+        if (batches.Length < 1 || batches.Length > RenderFrameViewSet.MaxViewCount)
+            throw new ArgumentOutOfRangeException(nameof(batches));
+
+        RenderFrameViewBatch batch0 = default;
+        RenderFrameViewBatch batch1 = default;
+        RenderFrameViewBatch batch2 = default;
+        RenderFrameViewBatch batch3 = default;
+        RenderFrameViewBatch batch4 = default;
+        RenderFrameViewBatch batch5 = default;
+        RenderFrameViewBatch batch6 = default;
+        RenderFrameViewBatch batch7 = default;
+
+        for (int i = 0; i < batches.Length; i++)
+        {
+            switch (i)
+            {
+                case 0: batch0 = batches[i]; break;
+                case 1: batch1 = batches[i]; break;
+                case 2: batch2 = batches[i]; break;
+                case 3: batch3 = batches[i]; break;
+                case 4: batch4 = batches[i]; break;
+                case 5: batch5 = batches[i]; break;
+                case 6: batch6 = batches[i]; break;
+                case 7: batch7 = batches[i]; break;
+            }
+        }
+
+        return new(batches.Length, batch0, batch1, batch2, batch3, batch4, batch5, batch6, batch7);
+    }
+}
+
+public static class RenderFrameViewBatchPlanner
+{
+    public static RenderFrameViewBatchPlan Plan(
+        in RenderFrameViewSet viewSet,
+        in RenderFrameViewBatchCapabilities capabilities)
+        => viewSet.RenderMode switch
+        {
+            EVrViewRenderMode.SinglePassStereo => PlanLayered(viewSet, capabilities),
+            EVrViewRenderMode.ParallelCommandBufferRecording when capabilities.SupportsParallelCommandBufferRecording =>
+                PlanOneBatchPerView(viewSet, ERenderFrameViewBatchKind.ParallelCommandBufferRecording),
+            _ => PlanOneBatchPerView(viewSet, ERenderFrameViewBatchKind.SequentialView),
+        };
+
+    private static RenderFrameViewBatchPlan PlanLayered(
+        in RenderFrameViewSet viewSet,
+        in RenderFrameViewBatchCapabilities capabilities)
+    {
+        RenderFrameViewBatchPlanBuilder batches = default;
+        ulong plannedMask = 0UL;
+
+        if (capabilities.SupportsLayeredQuadView &&
+            viewSet.IsQuadViewSet &&
+            capabilities.MaxLayerCount >= 4 &&
+            TryBuildQuadMask(viewSet, capabilities.SupportsMixedLayerExtents, out ulong quadMask))
+        {
+            batches.Append(new(
+                ERenderFrameViewBatchKind.LayeredViewSet,
+                quadMask,
+                OutputLayerBase: 0,
+                "quad-view layered view set"));
+            plannedMask |= quadMask;
+        }
+
+        if (plannedMask == 0UL && capabilities.SupportsLayeredStereoPairs && capabilities.MaxLayerCount >= 2)
+        {
+            TryAppendPair(
+                viewSet,
+                capabilities.SupportsMixedLayerExtents,
+                EVrOutputViewKind.LeftWide,
+                EVrOutputViewKind.RightWide,
+                "quad wide stereo pair",
+                ref batches,
+                ref plannedMask);
+            TryAppendPair(
+                viewSet,
+                capabilities.SupportsMixedLayerExtents,
+                EVrOutputViewKind.LeftInset,
+                EVrOutputViewKind.RightInset,
+                "quad inset stereo pair",
+                ref batches,
+                ref plannedMask);
+            TryAppendPair(
+                viewSet,
+                capabilities.SupportsMixedLayerExtents,
+                EVrOutputViewKind.LeftEye,
+                EVrOutputViewKind.RightEye,
+                "stereo pair",
+                ref batches,
+                ref plannedMask);
+        }
+
+        AppendUnplannedSequentialViews(viewSet, ref batches, plannedMask);
+        return batches.ToPlan();
+    }
+
+    private static RenderFrameViewBatchPlan PlanOneBatchPerView(
+        in RenderFrameViewSet viewSet,
+        ERenderFrameViewBatchKind kind)
+    {
+        RenderFrameViewBatchPlanBuilder batches = default;
+        for (int i = 0; i < viewSet.ViewCount; i++)
+        {
+            RenderFrameViewDescriptor view = viewSet.GetView(i);
+            batches.Append(new(
+                kind,
+                1UL << i,
+                (int)view.OutputLayer,
+                view.DebugName));
+        }
+
+        return batches.ToPlan();
+    }
+
+    private static void TryAppendPair(
+        in RenderFrameViewSet viewSet,
+        bool supportsMixedLayerExtents,
+        EVrOutputViewKind leftKind,
+        EVrOutputViewKind rightKind,
+        string debugName,
+        ref RenderFrameViewBatchPlanBuilder batches,
+        ref ulong plannedMask)
+    {
+        int left = viewSet.FindFirstView(leftKind);
+        int right = viewSet.FindFirstView(rightKind);
+        if (left < 0 || right < 0)
+            return;
+
+        RenderFrameViewDescriptor leftView = viewSet.GetView(left);
+        RenderFrameViewDescriptor rightView = viewSet.GetView(right);
+        if (!supportsMixedLayerExtents && !SameExtent(leftView, rightView))
+            return;
+
+        ulong mask = (1UL << left) | (1UL << right);
+        batches.Append(new(
+            ERenderFrameViewBatchKind.LayeredStereoPair,
+            mask,
+            Math.Min((int)leftView.OutputLayer, (int)rightView.OutputLayer),
+            debugName));
+        plannedMask |= mask;
+    }
+
+    private static bool TryBuildQuadMask(
+        in RenderFrameViewSet viewSet,
+        bool supportsMixedLayerExtents,
+        out ulong mask)
+    {
+        mask = 0UL;
+        int leftWide = viewSet.FindFirstView(EVrOutputViewKind.LeftWide);
+        int rightWide = viewSet.FindFirstView(EVrOutputViewKind.RightWide);
+        int leftInset = viewSet.FindFirstView(EVrOutputViewKind.LeftInset);
+        int rightInset = viewSet.FindFirstView(EVrOutputViewKind.RightInset);
+        if (leftWide < 0 || rightWide < 0 || leftInset < 0 || rightInset < 0)
+            return false;
+
+        RenderFrameViewDescriptor first = viewSet.GetView(leftWide);
+        if (!supportsMixedLayerExtents &&
+            (!SameExtent(first, viewSet.GetView(rightWide)) ||
+             !SameExtent(first, viewSet.GetView(leftInset)) ||
+             !SameExtent(first, viewSet.GetView(rightInset))))
+            return false;
+
+        mask =
+            (1UL << leftWide) |
+            (1UL << rightWide) |
+            (1UL << leftInset) |
+            (1UL << rightInset);
+        return true;
+    }
+
+    private static void AppendUnplannedSequentialViews(
+        in RenderFrameViewSet viewSet,
+        ref RenderFrameViewBatchPlanBuilder batches,
+        ulong plannedMask)
+    {
+        for (int i = 0; i < viewSet.ViewCount; i++)
+        {
+            ulong mask = 1UL << i;
+            if ((plannedMask & mask) != 0UL)
+                continue;
+
+            RenderFrameViewDescriptor view = viewSet.GetView(i);
+            batches.Append(new(
+                ERenderFrameViewBatchKind.SequentialView,
+                mask,
+                (int)view.OutputLayer,
+                view.DebugName));
+        }
+    }
+
+    private static bool SameExtent(
+        in RenderFrameViewDescriptor first,
+        in RenderFrameViewDescriptor second)
+        => first.ViewRect.Width == second.ViewRect.Width &&
+           first.ViewRect.Height == second.ViewRect.Height;
+
+    private ref struct RenderFrameViewBatchPlanBuilder
+    {
+        private int _count;
+        private RenderFrameViewBatch _batch0;
+        private RenderFrameViewBatch _batch1;
+        private RenderFrameViewBatch _batch2;
+        private RenderFrameViewBatch _batch3;
+        private RenderFrameViewBatch _batch4;
+        private RenderFrameViewBatch _batch5;
+        private RenderFrameViewBatch _batch6;
+        private RenderFrameViewBatch _batch7;
+
+        public void Append(in RenderFrameViewBatch batch)
+        {
+            switch (_count)
+            {
+                case 0: _batch0 = batch; break;
+                case 1: _batch1 = batch; break;
+                case 2: _batch2 = batch; break;
+                case 3: _batch3 = batch; break;
+                case 4: _batch4 = batch; break;
+                case 5: _batch5 = batch; break;
+                case 6: _batch6 = batch; break;
+                case 7: _batch7 = batch; break;
+                default: throw new InvalidOperationException("Frame view batch plan exceeded its maximum batch count.");
+            }
+
+            _count++;
+        }
+
+        public RenderFrameViewBatchPlan ToPlan()
+        {
+            if (_count == 0)
+                throw new InvalidOperationException("Frame view batch plan must contain at least one batch.");
+
+            return new(
+                _count,
+                _batch0,
+                _batch1,
+                _batch2,
+                _batch3,
+                _batch4,
+                _batch5,
+                _batch6,
+                _batch7);
+        }
+    }
 }
 
 public readonly record struct FrameOutputPacingDecision(
