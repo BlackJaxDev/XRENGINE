@@ -204,6 +204,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public long MaxShadowAtlasMemoryBytes => Engine.Rendering.Settings.MaxShadowAtlasMemoryBytes;
     public int MaxShadowTilesRenderedPerFrame => Engine.Rendering.Settings.MaxShadowTilesRenderedPerFrame;
     public float MaxShadowRenderMilliseconds => Engine.Rendering.Settings.MaxShadowRenderMilliseconds;
+    public int MaxDirectionalCascadeAtlasStaleFrames => Engine.Rendering.Settings.MaxDirectionalCascadeAtlasStaleFrames;
     public uint MinShadowAtlasTileResolution => Engine.Rendering.Settings.MinShadowAtlasTileResolution;
     public uint MaxShadowAtlasTileResolution => Engine.Rendering.Settings.MaxShadowAtlasTileResolution;
 

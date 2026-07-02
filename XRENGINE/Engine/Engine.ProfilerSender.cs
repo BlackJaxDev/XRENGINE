@@ -1,5 +1,6 @@
 using XREngine.Data.Profiling;
 using XREngine.Rendering.Shadows;
+using OcclusionTelemetry = XREngine.Rendering.Occlusion.OcclusionTelemetry;
 
 namespace XREngine;
 
@@ -191,6 +192,10 @@ public static partial class Engine
                     GpuIndirectDrawCalls = Rendering.Stats.RendererState.GpuIndirectDrawCalls,
                     GpuMeshletDrawCalls = Rendering.Stats.RendererState.GpuMeshletDrawCalls,
                     UnknownStrategyDrawCalls = Rendering.Stats.RendererState.UnknownStrategyDrawCalls,
+                    DirectionalCascadeStaleSampled = Rendering.Stats.RendererState.DirectionalCascadeStaleSampled,
+                    DirectionalCascadeMixedGenerationPrevented = Rendering.Stats.RendererState.DirectionalCascadeMixedGenerationPrevented,
+                    DirectionalCascadePhysicalReprojected = Rendering.Stats.RendererState.DirectionalCascadePhysicalReprojected,
+                    DirectionalCascadeForcedFreshRender = Rendering.Stats.RendererState.DirectionalCascadeForcedFreshRender,
                     ActiveTextureBindingRung = Rendering.Stats.RendererState.ActiveTextureBindingRung,
                     ActiveStereoMode = Rendering.Stats.RendererState.ActiveStereoMode,
                     ActiveSubmissionStrategy = Rendering.Stats.RendererState.ActiveSubmissionStrategy,
@@ -275,6 +280,7 @@ public static partial class Engine
                     VisibilityReconstructionMs = Rendering.Stats.GpuDriven.VisibilityReconstructionMs,
                     VisibilityMaterialShadingMs = Rendering.Stats.GpuDriven.VisibilityMaterialShadingMs,
                 },
+                Occlusion = CollectOcclusionProfilerData(),
             },
             GpuTransparencyOpaqueOrOtherVisible = Rendering.Stats.GpuTransparency.GpuTransparencyOpaqueOrOtherVisible,
             GpuTransparencyMaskedVisible = Rendering.Stats.GpuTransparency.GpuTransparencyMaskedVisible,
@@ -604,6 +610,45 @@ public static partial class Engine
         };
     }
 
+    private static RenderProfilerOcclusionData CollectOcclusionProfilerData()
+        => new()
+        {
+            EffectiveMode = OcclusionTelemetry.LastEffectiveMode.ToString(),
+            SubmissionStrategy = OcclusionTelemetry.LastSubmissionStrategy.ToString(),
+            CpuPassesActive = OcclusionTelemetry.CpuPassesActive,
+            CpuPassesSkippedNoCamera = OcclusionTelemetry.CpuPassesSkippedNoCamera,
+            CpuPassesSkippedShadow = OcclusionTelemetry.CpuPassesSkippedShadow,
+            CpuPassesSkippedDepthNormalPrePass = OcclusionTelemetry.CpuPassesSkippedDepthNormalPrePass,
+            CpuPassesSkippedModeOff = OcclusionTelemetry.CpuPassesSkippedModeOff,
+            CpuTested = OcclusionTelemetry.CpuTested,
+            CpuCulled = OcclusionTelemetry.CpuCulled,
+            CpuRendered = OcclusionTelemetry.CpuRendered,
+            CpuDecisionSeed = OcclusionTelemetry.CpuDecisionSeed,
+            CpuDecisionCached = OcclusionTelemetry.CpuDecisionCached,
+            CpuDecisionVisibleQuery = OcclusionTelemetry.CpuDecisionVisibleQuery,
+            CpuDecisionVisibleHysteresis = OcclusionTelemetry.CpuDecisionVisibleHysteresis,
+            CpuDecisionProbe = OcclusionTelemetry.CpuDecisionProbe,
+            CpuDecisionSkip = OcclusionTelemetry.CpuDecisionSkip,
+            CpuDecisionForcedVisible = OcclusionTelemetry.CpuDecisionForcedVisible,
+            CpuMotionTier = OcclusionTelemetry.CpuMotionTier.ToString(),
+            CpuActiveViewScope = OcclusionTelemetry.CpuActiveViewScope.ToString(),
+            CpuGlobalConservativeFrames = OcclusionTelemetry.CpuGlobalConservativeFrames,
+            CpuPendingQueries = OcclusionTelemetry.CpuPendingQueries,
+            CpuQuerySubmittedTotal = OcclusionTelemetry.CpuQuerySubmittedTotal,
+            CpuQueryResolvedTotal = OcclusionTelemetry.CpuQueryResolvedTotal,
+            CpuQueryLatencySamples = OcclusionTelemetry.CpuQueryLatencySamples,
+            CpuQueryLatencyAverageFrames = OcclusionTelemetry.CpuQueryLatencyAverageFrames,
+            CpuQueryLatencyMaxFrames = OcclusionTelemetry.CpuQueryLatencyMaxFrames,
+            CpuBudgetSkippedTotal = OcclusionTelemetry.CpuBudgetSkippedTotal,
+            CpuForcedVisibleTotal = OcclusionTelemetry.CpuForcedVisibleTotal,
+            CpuUnsupportedStereoQueryMode = OcclusionTelemetry.CpuUnsupportedStereoQueryMode,
+            CpuQueryAsyncSubmitted = OcclusionTelemetry.CpuQueryAsyncSubmitted,
+            CpuQueryAsyncResolved = OcclusionTelemetry.CpuQueryAsyncResolved,
+            CpuQueryAsyncOccluded = OcclusionTelemetry.CpuQueryAsyncOccluded,
+            CpuSocTested = OcclusionTelemetry.CpuSocTested,
+            CpuSocCulled = OcclusionTelemetry.CpuSocCulled,
+        };
+
     private static ThreadAllocationsPacket? CollectThreadAllocations()
     {
         var snap = Allocations.GetSnapshot();
@@ -675,6 +720,8 @@ public static partial class Engine
             PointGroupSeedCount = diagnostics.PointGroupSeedCount,
             PointGroupMemberCount = diagnostics.PointGroupMemberCount,
             PointGroupCoLocationFailureCount = diagnostics.PointGroupCoLocationFailureCount,
+            IncrementalReuseCount = diagnostics.IncrementalReuseCount,
+            WaterlineDemotionCount = diagnostics.WaterlineDemotionCount,
             LastFailureReason = diagnostics.LastFailureReason.ToString(),
         };
 

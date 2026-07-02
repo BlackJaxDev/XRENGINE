@@ -796,12 +796,13 @@ namespace XREngine.Rendering.Occlusion
 
         private static bool ShouldForceVisibleForStaleOcclusion(QueryState queryState, ulong frameId, ECpuOcclusionMotionTier motionTier)
         {
-            if (motionTier is ECpuOcclusionMotionTier.Stable or ECpuOcclusionMotionTier.SmallMotion or ECpuOcclusionMotionTier.VrHeadPoseMotion)
-                return false;
-
-            ulong age = queryState.LastQueryFrame == 0UL ? ulong.MaxValue : frameId - queryState.LastQueryFrame;
-            ulong maxAge = motionTier == ECpuOcclusionMotionTier.LargeMotion ? 2UL : 4UL;
-            return age > maxAge;
+            // Camera cuts are handled at BeginPass by forcing the whole pass visible.
+            // For normal camera motion, keep occluded history active and schedule
+            // higher-priority recovery probes instead of exploding the draw list.
+            _ = queryState;
+            _ = frameId;
+            _ = motionTier;
+            return false;
         }
 
         private static int GetRecoveryCadence(ECpuOcclusionMotionTier motionTier)

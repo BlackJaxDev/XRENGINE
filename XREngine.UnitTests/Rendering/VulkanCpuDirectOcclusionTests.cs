@@ -9,9 +9,11 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class VulkanCpuDirectOcclusionTests
 {
     [Test]
-    public void CpuQueryAsync_VulkanCpuDirect_EnqueuesAndRecordsQueryFrameOps()
+    public void CpuQueryAsync_VulkanCpuDirect_UsesRequestedModeAndRecordsQueryFrameOps()
     {
         string coordinator = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Occlusion/CpuRenderOcclusionCoordinator.cs");
+        string cpuDirect = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");
+        string gpuOcclusion = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
         string frameOps = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
         string query = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Queries/VkRenderQuery.cs");
@@ -24,6 +26,25 @@ public sealed class VulkanCpuDirectOcclusionTests
         coordinator.ShouldContain("VulkanQueryResolveMinLatencyFrames");
         coordinator.ShouldContain("ShouldDelayPendingQueryPoll(queryState, frameId)");
         coordinator.ShouldContain("AbstractRenderer.Current is not VulkanRenderer");
+
+        cpuDirect.ShouldContain("EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;");
+        cpuDirect.ShouldContain("occlusionMode == EOcclusionCullingMode.CpuQueryAsync");
+        cpuDirect.ShouldContain("ShouldSuppressOcclusionForCurrentPass(suppressCpuOcclusionForPass, out bool isShadowPass, out bool isDepthNormalPrePass)");
+        cpuDirect.ShouldContain("suppressCpuOcclusionForPass = false");
+        cpuDirect.ShouldContain("!suppressOcclusion &&");
+        cpuDirect.ShouldContain("depthNormalPrePass: isDepthNormalPrePass");
+        cpuDirect.ShouldNotContain("UseDepthNormalMaterialVariants");
+        cpuDirect.ShouldNotContain("ResolveCpuDirectOcclusionMode");
+        cpuDirect.ShouldNotContain("XREngineEnvironmentVariables.VulkanCpuQueryOcclusion");
+        cpuDirect.ShouldNotContain("return EOcclusionCullingMode.Disabled;");
+
+        string depthPrepass = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ForwardDepthNormalPrePass.cs");
+        depthPrepass.ShouldContain("commands.RenderCPU(pass, false, camera, suppressCpuOcclusionForPass: true);");
+
+        gpuOcclusion.ShouldContain("return VulkanFeatureProfile.ResolveOcclusionCullingMode(RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode);");
+        gpuOcclusion.ShouldNotContain("_loggedCpuQueryModeSuppressedByProfile");
+        gpuOcclusion.ShouldNotContain("CpuQueryAsync && VulkanFeatureProfile.ActiveProfile != EVulkanGpuDrivenProfile.Diagnostics");
+        gpuOcclusion.ShouldNotContain("Occlusion mode {0} suppressed");
 
         frameOps.ShouldContain("internal sealed record QueryOp(");
         frameOps.ShouldContain("internal bool EnqueueOcclusionQueryBegin(XRRenderQuery query, EQueryTarget target)");

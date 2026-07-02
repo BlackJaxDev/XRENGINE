@@ -411,7 +411,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             LightRendererCache uniformCache = GetRendererCache();
             _currentLightComponent.SetUniforms(materialProgram);
             int deferredDebugMode = RenderDiagnosticsFlags.DeferredDebugView;
-            materialProgram.Uniform("DeferredDebugMode", deferredDebugMode >= 0 && deferredDebugMode <= 14 ? deferredDebugMode : 0);
+            materialProgram.Uniform("DeferredDebugMode", deferredDebugMode >= 0 && deferredDebugMode <= 18 ? deferredDebugMode : 0);
+            materialProgram.Uniform("DirectionalShadowAtlasMaxStaleFrames", (float)RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeAtlasStaleFrames);
 
             bool useCascadedDirectionalShadows = false;
             bool directionalAtlasSampleable = false;

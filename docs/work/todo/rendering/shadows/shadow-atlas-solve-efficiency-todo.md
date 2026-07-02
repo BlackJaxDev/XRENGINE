@@ -83,13 +83,16 @@ Related docs:
 
 - [x] Replace one-demotion-per-restart with batched demotion when the same solve
   attempt fails multiple candidates at the same effective level.
-- [ ] Preserve reusable page/free-block state between retries when only request
+- [x] Preserve reusable page/free-block state between retries when only request
   levels changed and page topology did not need a full reset.
-  - Deferred. The current implementation keeps deterministic full-state resets
-    between attempts but bounds the attempt count, batches demotions, demotes
-    page-sized candidates together, and emits deterministic fallback diagnostics.
-- [ ] Track the lowest failing size per kind/encoding and skip immediately
+  - Absorbed by the allocation/threading pass: page occupancy is persistent
+    across frames, and local repair frees/replaces only the failed entry or
+    group instead of clearing every page.
+- [x] Track the lowest failing size per kind/encoding and skip immediately
   impossible candidates in the next attempt.
+  - Superseded by the feasibility waterline pre-pass plus local repair. The
+    solver demotes over-capacity buckets before placement instead of learning
+    impossibility through repeated candidate failures.
 - [x] Add a hard attempt ceiling with visible diagnostics and deterministic
   fallback demotion, not silent failure.
 - [x] Add tests for near-capacity scenes that previously required many restart
@@ -156,8 +159,8 @@ Related docs:
   demotion when the ceiling is reached.
 - Directional cascade and point face group publishing now use indexed group keys
   and pooled member arrays.
-- The buddy allocator keeps free blocks sorted per level and selects the first
-  deterministic block without scanning for placement order on every allocation.
+- The buddy allocator uses per-level slot bitsets and deterministic lowest-bit
+  selection, so alloc/free no longer pays sorted-list insert churn.
 - Shadow atlas phase tests now install a minimal test render host so directional
   lights can construct their pipeline-dependent shadow resources without the
   full editor host.

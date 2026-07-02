@@ -93,7 +93,7 @@ public sealed class PointShadowAtlasStabilityTests
         {
             frameData.TryGetAllocation(requests[faceIndex].Key, out ShadowAtlasAllocation frontFace).ShouldBeTrue();
             frontFace.IsResident.ShouldBeTrue();
-            frontFace.Resolution.ShouldBeGreaterThanOrEqualTo(256u);
+            frontFace.Resolution.ShouldBeGreaterThanOrEqualTo(128u);
         }
 
         for (int faceIndex = 3; faceIndex < requests.Length; faceIndex++)

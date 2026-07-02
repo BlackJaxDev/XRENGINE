@@ -483,6 +483,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public long MaxShadowAtlasMemoryBytes => 0L;
         public int MaxShadowTilesRenderedPerFrame => 16;
         public float MaxShadowRenderMilliseconds => 2.0f;
+        public int MaxDirectionalCascadeAtlasStaleFrames => RuntimeRenderingHostServiceDefaults.MaxDirectionalCascadeAtlasStaleFrames;
         public uint MinShadowAtlasTileResolution => 128u;
         public uint MaxShadowAtlasTileResolution => 4096u;
         public bool IsWindowScenePanelPresentationEnabled => false;

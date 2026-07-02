@@ -46,6 +46,7 @@ uniform bool DirectionalShadowAtlasEnabled = false;
 uniform ivec4 DirectionalShadowAtlasPacked0[MAX_CASCADES]; // enabled, page, fallback, record index
 uniform vec4 DirectionalShadowAtlasUvScaleBias[MAX_CASCADES];
 uniform vec4 DirectionalShadowAtlasDepthParams[MAX_CASCADES]; // near, far, local texel size, requested/allocated scale
+uniform float DirectionalShadowAtlasMaxStaleFrames = 32.0f;
 uniform int DeferredDebugMode = 0;
 
 // Distinct debug colors per cascade index
@@ -121,6 +122,13 @@ struct DirLight
 	float CascadeBiasMax[MAX_CASCADES];
 	float CascadeReceiverOffsets[MAX_CASCADES];
 	mat4 CascadeMatrices[MAX_CASCADES];
+	float RenderedCascadeSplits[MAX_CASCADES];
+	float RenderedCascadeBlendWidths[MAX_CASCADES];
+	float RenderedCascadeBiasMin[MAX_CASCADES];
+	float RenderedCascadeBiasMax[MAX_CASCADES];
+	float RenderedCascadeReceiverOffsets[MAX_CASCADES];
+	mat4 RenderedCascadeMatrices[MAX_CASCADES];
+	float RenderedCascadeStaleAge[MAX_CASCADES];
 	int CascadeCount;
 };
 uniform DirLight LightData;
@@ -725,23 +733,37 @@ float ReadDirectionalAtlasCenterDepth(in int pageIndex, in vec2 uv)
 	return 1.0f;
 }
 
+float ApplyDirectionalStaleAtlasEdgeFade(in float shadow, in vec3 fragCoord, in float localTexelSize, in float staleAge)
+{
+	if (staleAge <= 0.0f)
+		return shadow;
+
+	float border = min(min(fragCoord.x, 1.0f - fragCoord.x), min(fragCoord.y, 1.0f - fragCoord.y));
+	float fadeWidth = max(localTexelSize * 4.0f, 1e-5f);
+	return mix(1.0f, shadow, smoothstep(0.0f, fadeWidth, border));
+}
+
 float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float viewDepth, in int cascadeIndex)
 {
 		if (!LightHasShadowMap)
 			return 1.0f;
 
-		mat4 lightMatrix = LightData.CascadeMatrices[cascadeIndex];
+		ivec4 atlasState = ivec4(0, -1, 1, -1);
 		float atlasResolutionScale = 1.0f;
-		bool atlasMetadataEnabled = false;
+		bool atlasPageValid = false;
+		bool atlasSampleAllowed = false;
 		if (DirectionalShadowAtlasEnabled)
 		{
-			ivec4 atlasState = DirectionalShadowAtlasPacked0[cascadeIndex];
-			atlasMetadataEnabled = atlasState.x != 0;
-			if (atlasMetadataEnabled)
+			atlasState = DirectionalShadowAtlasPacked0[cascadeIndex];
+			atlasPageValid = atlasState.x != 0 && atlasState.y >= 0 && atlasState.y < textureSize(DirectionalShadowAtlas, 0).z;
+			float renderedAge = LightData.RenderedCascadeStaleAge[cascadeIndex];
+			atlasSampleAllowed = atlasPageValid && renderedAge >= 0.0f && renderedAge <= DirectionalShadowAtlasMaxStaleFrames;
+			if (atlasSampleAllowed)
 				atlasResolutionScale = max(DirectionalShadowAtlasDepthParams[cascadeIndex].w, 1.0f);
 		}
 
-		float receiverOffset = LightData.CascadeReceiverOffsets[cascadeIndex];
+		mat4 lightMatrix = atlasSampleAllowed ? LightData.RenderedCascadeMatrices[cascadeIndex] : LightData.CascadeMatrices[cascadeIndex];
+		float receiverOffset = atlasSampleAllowed ? LightData.RenderedCascadeReceiverOffsets[cascadeIndex] : LightData.CascadeReceiverOffsets[cascadeIndex];
 		vec3 offsetPosWS = fragPosWS + N * receiverOffset;
 		vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS);
 
@@ -753,8 +775,9 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 		float cascadeScale = 1.0f + float(cascadeIndex) * 0.35f;
 		float filterRadius = ShadowFilterRadius * cascadeScale;
 		float atlasAuthoredTexelSize = DirectionalShadowAtlasDepthParams[cascadeIndex].z / atlasResolutionScale;
-		float constantBias = LightData.CascadeBiasMin[cascadeIndex];
-		vec2 shadowTexelSize = atlasMetadataEnabled && DirectionalShadowAtlasDepthParams[cascadeIndex].z > 0.0f
+		float constantBias = atlasSampleAllowed ? LightData.RenderedCascadeBiasMin[cascadeIndex] : LightData.CascadeBiasMin[cascadeIndex];
+		float maxBias = atlasSampleAllowed ? LightData.RenderedCascadeBiasMax[cascadeIndex] : LightData.CascadeBiasMax[cascadeIndex];
+		vec2 shadowTexelSize = atlasSampleAllowed && DirectionalShadowAtlasDepthParams[cascadeIndex].z > 0.0f
 			? vec2(max(atlasAuthoredTexelSize, 1e-7f))
 			: 1.0f / vec2(textureSize(ShadowMapArray, 0).xy);
 		float bias = XRENGINE_ComputeShadowDepthBias(
@@ -762,7 +785,7 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 			shadowTexelSize,
 			filterRadius,
 			constantBias,
-			LightData.CascadeBiasMax[cascadeIndex]);
+			maxBias);
 		float contact = EnableContactShadows
 			? SampleDeferredContactShadow(fragPosWS, N, normalize(-LightData.Direction), viewDepth)
 			: 1.0f;
@@ -776,9 +799,8 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 
 		if (DirectionalShadowAtlasEnabled)
 		{
-			ivec4 atlasI0 = DirectionalShadowAtlasPacked0[cascadeIndex];
-			bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < textureSize(DirectionalShadowAtlas, 0).z;
-			if (atlasEnabled)
+			ivec4 atlasI0 = atlasState;
+			if (atlasSampleAllowed)
 			{
 				vec4 atlasUvScaleBias = DirectionalShadowAtlasUvScaleBias[cascadeIndex];
 				float atlasLocalTexelSize = max(atlasAuthoredTexelSize, 1e-7f);
@@ -787,12 +809,12 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 					vec2(atlasLocalTexelSize),
 					filterRadius,
 					constantBias,
-					LightData.CascadeBiasMax[cascadeIndex]);
+					maxBias);
 				if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
 				{
 					vec2 atlasUv = XRENGINE_ShadowAtlasUvFromLocal(fragCoord.xy, atlasUvScaleBias);
 					float atlasMomentReceiverDepth = clamp(fragCoord.z - min(atlasBias, 0.01f), 0.0f, 1.0f);
-					return XRENGINE_SampleShadowMoment2DArray(
+					float shadow = XRENGINE_SampleShadowMoment2DArray(
 						DirectionalShadowAtlas,
 						atlasUv,
 						float(atlasI0.y),
@@ -803,10 +825,11 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 						ShadowMomentParams0.z,
 						ShadowMomentParams0.w,
 						0.0f,
-						false) * contact;
+						false);
+					return ApplyDirectionalStaleAtlasEdgeFade(shadow, fragCoord, atlasLocalTexelSize, LightData.RenderedCascadeStaleAge[cascadeIndex]) * contact;
 				}
 
-				return SampleDirectionalAtlasPage(
+				float shadow = SampleDirectionalAtlasPage(
 					atlasI0.y,
 					fragCoord,
 					atlasUvScaleBias,
@@ -820,7 +843,8 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 					LightSourceRadius,
 					ShadowMinPenumbra * cascadeScale,
 					ShadowMaxPenumbra * cascadeScale,
-					ShadowVogelTapCount) * contact;
+					ShadowVogelTapCount);
+				return ApplyDirectionalStaleAtlasEdgeFade(shadow, fragCoord, atlasLocalTexelSize, LightData.RenderedCascadeStaleAge[cascadeIndex]) * contact;
 			}
 
 		}
@@ -862,8 +886,20 @@ vec4 DebugCascadeShadowProbe(in vec3 fragPosWS, in vec3 N, in int cascadeIndex)
 	if (!LightHasShadowMap)
 		return vec4(1.0f, 0.0f, 1.0f, 0.0f);
 
-	mat4 lightMatrix = LightData.CascadeMatrices[cascadeIndex];
-	float receiverOffset = LightData.CascadeReceiverOffsets[cascadeIndex];
+	ivec4 atlasState = ivec4(0, -1, 1, -1);
+	bool atlasSampleAllowed = false;
+	if (DirectionalShadowAtlasEnabled)
+	{
+		atlasState = DirectionalShadowAtlasPacked0[cascadeIndex];
+		bool atlasPageValid = atlasState.x != 0 && atlasState.y >= 0 && atlasState.y < textureSize(DirectionalShadowAtlas, 0).z;
+		float renderedAge = LightData.RenderedCascadeStaleAge[cascadeIndex];
+		atlasSampleAllowed = atlasPageValid && renderedAge >= 0.0f && renderedAge <= DirectionalShadowAtlasMaxStaleFrames;
+	}
+
+	mat4 lightMatrix = atlasSampleAllowed ? LightData.RenderedCascadeMatrices[cascadeIndex] : LightData.CascadeMatrices[cascadeIndex];
+	float receiverOffset = atlasSampleAllowed ? LightData.RenderedCascadeReceiverOffsets[cascadeIndex] : LightData.CascadeReceiverOffsets[cascadeIndex];
+	vec3 currentOffsetPosWS = fragPosWS + N * LightData.CascadeReceiverOffsets[cascadeIndex];
+	vec3 currentFragCoord = XRENGINE_ProjectShadowCoord(LightData.CascadeMatrices[cascadeIndex], currentOffsetPosWS);
 	vec3 offsetPosWS = fragPosWS + N * receiverOffset;
 	vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS);
 
@@ -875,18 +911,15 @@ vec4 DebugCascadeShadowProbe(in vec3 fragPosWS, in vec3 N, in int cascadeIndex)
 	float cascadeScale = 1.0f + float(cascadeIndex) * 0.35f;
 	float filterRadius = ShadowFilterRadius * cascadeScale;
 	float atlasResolutionScale = 1.0f;
-	bool atlasMetadataEnabled = false;
-	if (DirectionalShadowAtlasEnabled)
+	if (atlasSampleAllowed)
 	{
-		ivec4 atlasState = DirectionalShadowAtlasPacked0[cascadeIndex];
-		atlasMetadataEnabled = atlasState.x != 0;
-		if (atlasMetadataEnabled)
-			atlasResolutionScale = max(DirectionalShadowAtlasDepthParams[cascadeIndex].w, 1.0f);
+		atlasResolutionScale = max(DirectionalShadowAtlasDepthParams[cascadeIndex].w, 1.0f);
 	}
 
 	float atlasAuthoredTexelSize = DirectionalShadowAtlasDepthParams[cascadeIndex].z / atlasResolutionScale;
-	float constantBias = LightData.CascadeBiasMin[cascadeIndex];
-	vec2 shadowTexelSize = atlasMetadataEnabled && DirectionalShadowAtlasDepthParams[cascadeIndex].z > 0.0f
+	float constantBias = atlasSampleAllowed ? LightData.RenderedCascadeBiasMin[cascadeIndex] : LightData.CascadeBiasMin[cascadeIndex];
+	float maxBias = atlasSampleAllowed ? LightData.RenderedCascadeBiasMax[cascadeIndex] : LightData.CascadeBiasMax[cascadeIndex];
+	vec2 shadowTexelSize = atlasSampleAllowed && DirectionalShadowAtlasDepthParams[cascadeIndex].z > 0.0f
 		? vec2(max(atlasAuthoredTexelSize, 1e-7f))
 		: 1.0f / vec2(textureSize(ShadowMapArray, 0).xy);
 	float bias = XRENGINE_ComputeShadowDepthBias(
@@ -894,15 +927,14 @@ vec4 DebugCascadeShadowProbe(in vec3 fragPosWS, in vec3 N, in int cascadeIndex)
 		shadowTexelSize,
 		filterRadius,
 		constantBias,
-		LightData.CascadeBiasMax[cascadeIndex]);
+		maxBias);
 
 	float sampleDepth = 0.0f;
 	vec2 atlasUv = fragCoord.xy;
 	if (DirectionalShadowAtlasEnabled)
 	{
-		ivec4 atlasI0 = DirectionalShadowAtlasPacked0[cascadeIndex];
-		bool atlasEnabled = atlasI0.x != 0 && atlasI0.y >= 0 && atlasI0.y < textureSize(DirectionalShadowAtlas, 0).z;
-		if (!atlasEnabled)
+		ivec4 atlasI0 = atlasState;
+		if (!atlasSampleAllowed)
 			return vec4(fragCoord.z, 0.0f, 0.0f, -2.0f);
 
 		atlasUv = XRENGINE_ShadowAtlasUvFromLocal(fragCoord.xy, DirectionalShadowAtlasUvScaleBias[cascadeIndex]);
@@ -922,6 +954,21 @@ vec4 DebugCascadeShadowProbe(in vec3 fragPosWS, in vec3 N, in int cascadeIndex)
 		debugValue = atlasUv.x;
 	else if (DeferredDebugMode == 14)
 		debugValue = atlasUv.y;
+	else if (DeferredDebugMode == 15)
+		debugValue = currentFragCoord.x;
+	else if (DeferredDebugMode == 16)
+		debugValue = fragCoord.x;
+	else if (DeferredDebugMode == 17)
+		debugValue = DirectionalShadowAtlasMaxStaleFrames <= 0.0f
+			? 0.0f
+			: clamp(LightData.RenderedCascadeStaleAge[cascadeIndex] / DirectionalShadowAtlasMaxStaleFrames, 0.0f, 1.0f);
+	else if (DeferredDebugMode == 18)
+	{
+		float border = min(min(fragCoord.x, 1.0f - fragCoord.x), min(fragCoord.y, 1.0f - fragCoord.y));
+		debugValue = atlasSampleAllowed
+			? smoothstep(0.0f, max(DirectionalShadowAtlasDepthParams[cascadeIndex].z * 4.0f, 1e-5f), border)
+			: 0.0f;
+	}
 
 	return vec4(debugValue, sampleDepth, XRENGINE_ShadowLit(fragCoord.z, sampleDepth, bias), 1.0f);
 }
@@ -986,7 +1033,7 @@ in float viewDepth)
 
 				if (viewDepth <= splitFar || isLast)
 				{
-					if ((DeferredDebugMode >= 7 && DeferredDebugMode <= 9) || (DeferredDebugMode >= 11 && DeferredDebugMode <= 14))
+					if ((DeferredDebugMode >= 7 && DeferredDebugMode <= 9) || (DeferredDebugMode >= 11 && DeferredDebugMode <= 18))
 					{
 						vec4 probe = DebugCascadeShadowProbe(fragPosWS, N, i);
 						if (probe.w < 0.0f)

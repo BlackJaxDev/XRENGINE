@@ -163,6 +163,13 @@ namespace XREngine.Scene
             public fixed float CascadeBiasMax[ForwardMaxCascades];
             public fixed float CascadeReceiverOffsets[ForwardMaxCascades];
             public fixed float CascadeMatrices[ForwardMaxCascades * 16];
+            public fixed float RenderedCascadeSplits[ForwardMaxCascades];
+            public fixed float RenderedCascadeBlendWidths[ForwardMaxCascades];
+            public fixed float RenderedCascadeBiasMin[ForwardMaxCascades];
+            public fixed float RenderedCascadeBiasMax[ForwardMaxCascades];
+            public fixed float RenderedCascadeReceiverOffsets[ForwardMaxCascades];
+            public fixed float RenderedCascadeMatrices[ForwardMaxCascades * 16];
+            public fixed float RenderedCascadeStaleAge[ForwardMaxCascades];
             public int CascadeCount;
             private int _padding0;
             private int _padding1;
@@ -486,6 +493,13 @@ namespace XREngine.Scene
             Span<float> cascadeBiasMaxes = stackalloc float[ForwardMaxCascades];
             Span<float> cascadeReceiverOffsets = stackalloc float[ForwardMaxCascades];
             Span<Matrix4x4> cascadeMatrices = stackalloc Matrix4x4[ForwardMaxCascades];
+            Span<float> renderedCascadeSplits = stackalloc float[ForwardMaxCascades];
+            Span<float> renderedCascadeBlendWidths = stackalloc float[ForwardMaxCascades];
+            Span<float> renderedCascadeBiasMins = stackalloc float[ForwardMaxCascades];
+            Span<float> renderedCascadeBiasMaxes = stackalloc float[ForwardMaxCascades];
+            Span<float> renderedCascadeReceiverOffsets = stackalloc float[ForwardMaxCascades];
+            Span<float> renderedCascadeStaleAges = stackalloc float[ForwardMaxCascades];
+            Span<Matrix4x4> renderedCascadeMatrices = stackalloc Matrix4x4[ForwardMaxCascades];
             light.CopyPublishedCascadeUniformData(
                 directionalShadowCamera,
                 cascadeSplits,
@@ -495,6 +509,16 @@ namespace XREngine.Scene
                 cascadeReceiverOffsets,
                 cascadeMatrices,
                 out int cascadeCount);
+            light.CopyPublishedRenderedCascadeUniformData(
+                directionalShadowCamera,
+                renderedCascadeSplits,
+                renderedCascadeBlendWidths,
+                renderedCascadeBiasMins,
+                renderedCascadeBiasMaxes,
+                renderedCascadeReceiverOffsets,
+                renderedCascadeMatrices,
+                renderedCascadeStaleAges,
+                out _);
 
             data.CascadeCount = Math.Clamp(cascadeCount, 0, ForwardMaxCascades);
             CopyFloatSpan(data.CascadeSplits, cascadeSplits);
@@ -503,6 +527,13 @@ namespace XREngine.Scene
             CopyFloatSpan(data.CascadeBiasMax, cascadeBiasMaxes);
             CopyFloatSpan(data.CascadeReceiverOffsets, cascadeReceiverOffsets);
             CopyMatrixSpan(data.CascadeMatrices, cascadeMatrices);
+            CopyFloatSpan(data.RenderedCascadeSplits, renderedCascadeSplits);
+            CopyFloatSpan(data.RenderedCascadeBlendWidths, renderedCascadeBlendWidths);
+            CopyFloatSpan(data.RenderedCascadeBiasMin, renderedCascadeBiasMins);
+            CopyFloatSpan(data.RenderedCascadeBiasMax, renderedCascadeBiasMaxes);
+            CopyFloatSpan(data.RenderedCascadeReceiverOffsets, renderedCascadeReceiverOffsets);
+            CopyMatrixSpan(data.RenderedCascadeMatrices, renderedCascadeMatrices);
+            CopyFloatSpan(data.RenderedCascadeStaleAge, renderedCascadeStaleAges);
 
             return data;
         }
@@ -1340,6 +1371,7 @@ namespace XREngine.Scene
             program.Uniform("DirectionalShadowAtlasPacked0", _directionalShadowAtlasPacked0);
             program.Uniform("DirectionalShadowAtlasParams0", _directionalShadowAtlasParams0);
             program.Uniform("DirectionalShadowAtlasParams1", _directionalShadowAtlasParams1);
+            program.Uniform("DirectionalShadowAtlasMaxStaleFrames", (float)RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeAtlasStaleFrames);
 
             LogForwardDirectionalShadowBinding(
                 directionalLightCount > 0 ? directionalLights[0] : null,

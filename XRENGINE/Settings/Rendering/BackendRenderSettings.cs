@@ -390,7 +390,7 @@ public partial class VulkanTargetModeSettings : XRBase
 [MemoryPackable]
 public partial class VulkanGpuDrivenSettings : XRBase
 {
-    private EVulkanGpuDrivenProfile _profile = EVulkanGpuDrivenProfile.Diagnostics;
+    private EVulkanGpuDrivenProfile _profile = EVulkanGpuDrivenProfile.Auto;
     private EVulkanGeometryFetchMode _geometryFetchMode = EVulkanGeometryFetchMode.Atlas;
 
     [Category("Vulkan GPU Driven")]
