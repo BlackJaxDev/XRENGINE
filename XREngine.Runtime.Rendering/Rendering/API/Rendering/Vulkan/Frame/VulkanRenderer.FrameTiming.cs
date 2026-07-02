@@ -796,6 +796,7 @@ public unsafe partial class VulkanRenderer
             ClearOp clear => $"Clear[target={GetTargetName(clear.Target)}; color={clear.ClearColor}; depth={clear.ClearDepth}; stencil={clear.ClearStencil}]",
             BlitOp blit => $"Blit[src={GetTargetName(blit.InFbo)}; dst={GetTargetName(blit.OutFbo)}; color={blit.ColorBit}; depth={blit.DepthBit}; stencil={blit.StencilBit}]",
             MeshDrawOp draw => BuildVulkanGpuProfilerMeshDrawLabel(draw),
+            QueryOp query => $"Query[{query.Operation}; target={query.QueryTarget}; fbo={GetTargetName(query.Target)}]",
             IndirectDrawOp indirect => $"IndirectDraw[count={indirect.DrawCount}; stride={indirect.Stride}; useCount={indirect.UseCount}]",
             MeshTaskDispatchIndirectCountOp meshTask => $"MeshTaskDispatchIndirectCount[max={meshTask.MaxDrawCount}; stride={meshTask.Stride}]",
             TransformFeedbackOp transformFeedback => $"TransformFeedback[{transformFeedback.Operation}; target={GetTargetName(transformFeedback.Target)}]",
@@ -816,7 +817,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private static string GetTargetName(XRFrameBuffer? target)
-        => GetDisplayName(target?.Name, "Swapchain");
+        => target is null ? "Swapchain" : GetDisplayName(target.Name, "UnnamedFbo");
 
     private static string GetDisplayName(string? value, string fallback)
         => string.IsNullOrWhiteSpace(value) ? fallback : value;

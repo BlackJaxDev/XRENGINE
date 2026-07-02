@@ -10,6 +10,7 @@ using XREngine.Data.Trees;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
@@ -371,6 +372,34 @@ public interface IRuntimeRenderingHostServices
     int CpuQueryOcclusionRetestPeriodFrames { get; }
 
     /// <summary>
+    /// Gets the maximum CPU hardware-query proxy submissions per pass/view scope per frame.
+    /// </summary>
+    int CpuQueryOcclusionMaxQueriesPerFrame { get; }
+
+    /// <summary>
+    /// Gets the fraction of the CPU query budget reserved for visible-demotion probes.
+    /// </summary>
+    float CpuQueryOcclusionVisibleDemotionBudgetFraction { get; }
+
+    /// <summary>
+    /// Gets the minimum frame cadence for recovery probes on predicted-occluded commands.
+    /// </summary>
+    int CpuQueryOcclusionRecoveryMinCadenceFrames { get; }
+
+    float CpuQueryOcclusionSmallMotionMeters { get; }
+    float CpuQueryOcclusionMediumMotionMeters { get; }
+    float CpuQueryOcclusionLargeMotionMeters { get; }
+    float CpuQueryOcclusionCameraCutMeters { get; }
+    float CpuQueryOcclusionSmallRotationDegrees { get; }
+    float CpuQueryOcclusionMediumRotationDegrees { get; }
+    float CpuQueryOcclusionLargeRotationDegrees { get; }
+    float CpuQueryOcclusionCameraCutRotationDegrees { get; }
+    float CpuQueryOcclusionVrHeadMotionMeters { get; }
+    float CpuQueryOcclusionVrHeadRotationDegrees { get; }
+    ECpuQueryStereoMode CpuQueryOcclusionStereoMode { get; }
+    int CpuQueryOcclusionMaxPendingFrames { get; }
+
+    /// <summary>
     /// Gets whether the legacy CPU software occlusion culling side toggle is enabled.
     /// </summary>
     bool EnableCpuSoftwareOcclusionCulling { get; }
@@ -491,6 +520,16 @@ public interface IRuntimeRenderingHostServices
     /// When false, the render-pipeline GPU profiler short-circuits scope creation.
     /// </summary>
     bool EnableGpuRenderPipelineProfiling { get; }
+
+    /// <summary>
+    /// Gets whether a resolved GPU render-pipeline frame timing is available.
+    /// </summary>
+    bool GpuRenderPipelineTimingsReady => RuntimeRenderingHostServiceDefaults.GpuRenderPipelineTimingsReady;
+
+    /// <summary>
+    /// Gets the latest resolved GPU render-pipeline frame time in milliseconds.
+    /// </summary>
+    double GpuRenderPipelineFrameMs => RuntimeRenderingHostServiceDefaults.GpuRenderPipelineFrameMs;
 
     /// <summary>
     /// Gets the host's current render frame id. Used by runtime rendering code that
@@ -1289,6 +1328,40 @@ public interface IRuntimeRenderingHostServices
     EVrViewRenderMode VrViewRenderMode { get; }
 
     /// <summary>
+    /// Gets the active VR desktop mirror policy.
+    /// </summary>
+    EVrMirrorMode VrMirrorMode => RuntimeRenderingHostServiceDefaults.VrMirrorMode;
+
+    /// <summary>
+    /// Gets the target output rate for a VR view. A value of zero matches the XR runtime cadence.
+    /// </summary>
+    float GetVrOutputTargetRateHz(EVrOutputViewKind viewKind)
+        => RuntimeRenderingHostServiceDefaults.VrOutputTargetRateHz;
+
+    /// <summary>
+    /// Gets whether desktop-facing VR outputs may be skipped to protect the active XR budget band.
+    /// </summary>
+    bool VrDesktopAutoSkipWhenOverBudget => RuntimeRenderingHostServiceDefaults.VrDesktopAutoSkipWhenOverBudget;
+
+    /// <summary>
+    /// Evaluates whether an output is due for this frame according to host pacing policy.
+    /// </summary>
+    FrameOutputPacingDecision EvaluateFrameOutputPacing(
+        EVrOutputViewKind viewKind,
+        EFrameOutputKind outputKind,
+        bool xrCritical)
+        => FrameOutputPacingDecision.Due(
+            viewKind,
+            outputKind,
+            CurrentRenderFrameId,
+            GetVrOutputTargetRateHz(viewKind));
+
+    /// <summary>
+    /// Records a per-output frame manifest contribution.
+    /// </summary>
+    void RecordRenderFrameOutput(in FrameOutputTelemetry telemetry) { }
+
+    /// <summary>
     /// Gets whether VR rendering should configure a foveated multi-view view set.
     /// </summary>
     bool EnableVrFoveatedViewSet { get; }
@@ -1379,7 +1452,7 @@ public interface IRuntimeRenderingHostServices
     /// <summary>
     /// Attempts to render the host desktop mirror composition into the current target size.
     /// </summary>
-    void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight);
+    bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight);
 
     /// <summary>
     /// Records left-eye and right-eye draw counts for VR diagnostics.

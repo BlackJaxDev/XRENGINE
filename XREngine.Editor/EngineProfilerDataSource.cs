@@ -95,6 +95,8 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
                 {
                     ThreadId = t.ThreadId,
                     TotalTimeMs = t.TotalTimeMs,
+                    WallTimeMs = t.WallTimeMs,
+                    DownstreamRenderPressureMs = t.DownstreamRenderPressureMs,
                     RootNodes = ConvertNodes(t.RootNodes),
                 };
             }
@@ -466,6 +468,22 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
                 RetiredImageMemoryCount = Engine.Rendering.Stats.Vulkan.VulkanRetiredImageMemoryCount,
                 RetiredImageBytes = Engine.Rendering.Stats.Vulkan.VulkanRetiredImageBytes,
             },
+            FrameLifecycle = new FrameLifecycleTelemetryData
+            {
+                UpdateFrameId = Engine.Rendering.Stats.FrameLifecycle.UpdateFrameId,
+                CollectFrameId = Engine.Rendering.Stats.FrameLifecycle.CollectFrameId,
+                SwapFrameId = Engine.Rendering.Stats.FrameLifecycle.SwapFrameId,
+                RenderFrameId = Engine.Rendering.Stats.FrameLifecycle.RenderFrameId,
+                PresentFrameId = Engine.Rendering.Stats.FrameLifecycle.PresentFrameId,
+                CollectVisibleLatePolicy = Engine.Rendering.Stats.FrameLifecycle.CollectVisibleLatePolicy,
+                CollectWaitForRenderMs = Engine.Rendering.Stats.FrameLifecycle.CollectWaitForRenderMs,
+                CollectWaitReason = Engine.Rendering.Stats.FrameLifecycle.CollectWaitReason,
+                RenderWaitForCollectMs = Engine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs,
+                RenderWaitReason = Engine.Rendering.Stats.FrameLifecycle.RenderWaitReason,
+                SkippedCollectFrames = Engine.Rendering.Stats.FrameLifecycle.SkippedCollectFrames,
+                StaleCollectReuseFrames = Engine.Rendering.Stats.FrameLifecycle.StaleCollectReuseFrames,
+            },
+            FrameOutputs = ConvertFrameOutputManifest(Engine.Rendering.Stats.FrameOutputs.LastManifest),
             AllocatedVRAMBytes = Engine.Rendering.Stats.Vram.AllocatedVRAMBytes,
             AllocatedBufferBytes = Engine.Rendering.Stats.Vram.AllocatedBufferBytes,
             AllocatedTextureBytes = Engine.Rendering.Stats.Vram.AllocatedTextureBytes,
@@ -566,6 +584,68 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             GpuRenderPipelineStatusMessage = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineStatusMessage,
             GpuRenderPipelineFrameMs = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineFrameMs,
             GpuRenderPipelineTimingRoots = Engine.Rendering.Stats.GpuPipelineProfiler.GetGpuRenderPipelineTimingRoots(),
+        };
+    }
+
+    private static FrameOutputManifestData ConvertFrameOutputManifest(Engine.Rendering.Stats.FrameOutputManifestSnapshot snapshot)
+    {
+        var outputs = snapshot.Outputs ?? [];
+        FrameOutputEntryData[] outputData = new FrameOutputEntryData[outputs.Length];
+        for (int i = 0; i < outputs.Length; i++)
+        {
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
+            outputData[i] = new FrameOutputEntryData
+            {
+                FrameId = output.FrameId,
+                OutputKind = output.OutputKind.ToString(),
+                ViewKind = output.ViewKind.ToString(),
+                Name = output.Name,
+                PipelineName = output.PipelineName,
+                Active = output.Active,
+                Rendered = output.Rendered,
+                SceneRendered = output.SceneRendered,
+                Mirror = output.Mirror,
+                SeparateSceneRender = output.SeparateSceneRender,
+                SharedVisibility = output.SharedVisibility,
+                Due = output.Due,
+                Skipped = output.Skipped,
+                CadenceSkipped = output.CadenceSkipped,
+                AutoSkipped = output.AutoSkipped,
+                SkipReason = output.SkipReason.ToString(),
+                ConfiguredTargetRateHz = output.ConfiguredTargetRateHz,
+                SourceRateHz = output.SourceRateHz,
+                AchievedRateHz = output.AchievedRateHz,
+                TotalRenderCount = output.TotalRenderCount,
+                TotalSkipCount = output.TotalSkipCount,
+                CommandCount = output.CommandCount,
+                DrawCalls = output.DrawCalls,
+                MultiDrawCalls = output.MultiDrawCalls,
+                Triangles = output.Triangles,
+                CollectCpuMs = output.CollectCpuMs,
+                SwapCpuMs = output.SwapCpuMs,
+                RenderCpuMs = output.RenderCpuMs,
+                SubmitCpuMs = output.SubmitCpuMs,
+                OverlayCpuMs = output.OverlayCpuMs,
+                PresentCpuMs = output.PresentCpuMs,
+                GpuMs = output.GpuMs,
+            };
+        }
+
+        return new FrameOutputManifestData
+        {
+            FrameId = snapshot.FrameId,
+            VrActive = snapshot.VrActive,
+            MirrorMode = snapshot.MirrorMode.ToString(),
+            VisibilityPolicy = snapshot.VisibilityPolicy.ToString(),
+            BudgetBand = snapshot.BudgetBand,
+            BudgetMs = snapshot.BudgetMs,
+            WholeFrameMs = snapshot.WholeFrameMs,
+            WholeFrameP50Ms = snapshot.WholeFrameP50Ms,
+            WholeFrameP90Ms = snapshot.WholeFrameP90Ms,
+            WholeFrameP95Ms = snapshot.WholeFrameP95Ms,
+            WholeFrameP99Ms = snapshot.WholeFrameP99Ms,
+            WholeFrameWorstMs = snapshot.WholeFrameWorstMs,
+            Outputs = outputData,
         };
     }
 

@@ -14,6 +14,7 @@ using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Shadows;
 using XREngine.Scene;
@@ -59,6 +60,21 @@ public sealed class RuntimeRenderingHostServicesTests
             {
                 GpuOcclusionCullingMode = EOcclusionCullingMode.CpuQueryAsync,
                 CpuQueryOcclusionRetestPeriodFrames = 9,
+                CpuQueryOcclusionMaxQueriesPerFrame = 37,
+                CpuQueryOcclusionVisibleDemotionBudgetFraction = 0.4f,
+                CpuQueryOcclusionRecoveryMinCadenceFrames = 3,
+                CpuQueryOcclusionSmallMotionMeters = 0.03f,
+                CpuQueryOcclusionMediumMotionMeters = 0.5f,
+                CpuQueryOcclusionLargeMotionMeters = 3.0f,
+                CpuQueryOcclusionCameraCutMeters = 14.0f,
+                CpuQueryOcclusionSmallRotationDegrees = 2.0f,
+                CpuQueryOcclusionMediumRotationDegrees = 6.0f,
+                CpuQueryOcclusionLargeRotationDegrees = 18.0f,
+                CpuQueryOcclusionCameraCutRotationDegrees = 65.0f,
+                CpuQueryOcclusionVrHeadMotionMeters = 0.35f,
+                CpuQueryOcclusionVrHeadRotationDegrees = 25.0f,
+                CpuQueryOcclusionStereoMode = ECpuQueryStereoMode.StereoPairShared,
+                CpuQueryOcclusionMaxPendingFrames = 8,
                 EnableCpuSoftwareOcclusionCulling = true,
                 CpuSocBufferWidth = 512,
                 CpuSocBufferHeight = 256,
@@ -73,6 +89,21 @@ public sealed class RuntimeRenderingHostServicesTests
 
             RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode.ShouldBe(EOcclusionCullingMode.CpuQueryAsync);
             RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRetestPeriodFrames.ShouldBe(9);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame.ShouldBe(37);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionVisibleDemotionBudgetFraction.ShouldBe(0.4f);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionRecoveryMinCadenceFrames.ShouldBe(3);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionSmallMotionMeters.ShouldBe(0.03f);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMediumMotionMeters.ShouldBe(0.5f);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionLargeMotionMeters.ShouldBe(3.0f);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionCameraCutMeters.ShouldBe(14.0f);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionSmallRotationDegrees.ShouldBe(2.0f);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMediumRotationDegrees.ShouldBe(6.0f);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionLargeRotationDegrees.ShouldBe(18.0f);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionCameraCutRotationDegrees.ShouldBe(65.0f);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionVrHeadMotionMeters.ShouldBe(0.35f);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionVrHeadRotationDegrees.ShouldBe(25.0f);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionStereoMode.ShouldBe(ECpuQueryStereoMode.StereoPairShared);
+            RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxPendingFrames.ShouldBe(8);
             RuntimeEngine.EffectiveSettings.EnableCpuSoftwareOcclusionCulling.ShouldBeTrue();
             RuntimeEngine.EffectiveSettings.CpuSocBufferWidth.ShouldBe(512);
             RuntimeEngine.EffectiveSettings.CpuSocBufferHeight.ShouldBe(256);
@@ -392,6 +423,21 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool EnableGpuIndirectDebugLogging => false;
         public EOcclusionCullingMode GpuOcclusionCullingMode { get; set; } = RuntimeRenderingHostServiceDefaults.GpuOcclusionCullingMode;
         public int CpuQueryOcclusionRetestPeriodFrames { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionRetestPeriodFrames;
+        public int CpuQueryOcclusionMaxQueriesPerFrame { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMaxQueriesPerFrame;
+        public float CpuQueryOcclusionVisibleDemotionBudgetFraction { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVisibleDemotionBudgetFraction;
+        public int CpuQueryOcclusionRecoveryMinCadenceFrames { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionRecoveryMinCadenceFrames;
+        public float CpuQueryOcclusionSmallMotionMeters { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionSmallMotionMeters;
+        public float CpuQueryOcclusionMediumMotionMeters { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMediumMotionMeters;
+        public float CpuQueryOcclusionLargeMotionMeters { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionLargeMotionMeters;
+        public float CpuQueryOcclusionCameraCutMeters { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionCameraCutMeters;
+        public float CpuQueryOcclusionSmallRotationDegrees { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionSmallRotationDegrees;
+        public float CpuQueryOcclusionMediumRotationDegrees { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMediumRotationDegrees;
+        public float CpuQueryOcclusionLargeRotationDegrees { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionLargeRotationDegrees;
+        public float CpuQueryOcclusionCameraCutRotationDegrees { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionCameraCutRotationDegrees;
+        public float CpuQueryOcclusionVrHeadMotionMeters { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVrHeadMotionMeters;
+        public float CpuQueryOcclusionVrHeadRotationDegrees { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVrHeadRotationDegrees;
+        public ECpuQueryStereoMode CpuQueryOcclusionStereoMode { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionStereoMode;
+        public int CpuQueryOcclusionMaxPendingFrames { get; set; } = RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMaxPendingFrames;
         public bool EnableCpuSoftwareOcclusionCulling { get; set; } = RuntimeRenderingHostServiceDefaults.EnableCpuSoftwareOcclusionCulling;
         public int CpuSocBufferWidth { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocBufferWidth;
         public int CpuSocBufferHeight { get; set; } = RuntimeRenderingHostServiceDefaults.CpuSocBufferHeight;
@@ -1249,8 +1295,9 @@ public sealed class RuntimeRenderingHostServicesTests
         {
         }
 
-        public void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
+        public bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
         {
+            return false;
         }
 
         public void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)

@@ -15,6 +15,7 @@ using XREngine.Components;
 using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Shadows;
@@ -126,6 +127,21 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool EnableGpuIndirectDebugLogging => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
     public EOcclusionCullingMode GpuOcclusionCullingMode => Engine.EffectiveSettings.GpuOcclusionCullingMode;
     public int CpuQueryOcclusionRetestPeriodFrames => Engine.Rendering.Settings.CpuQueryOcclusionRetestPeriodFrames;
+    public int CpuQueryOcclusionMaxQueriesPerFrame => Engine.Rendering.Settings.CpuQueryOcclusionMaxQueriesPerFrame;
+    public float CpuQueryOcclusionVisibleDemotionBudgetFraction => Engine.Rendering.Settings.CpuQueryOcclusionVisibleDemotionBudgetFraction;
+    public int CpuQueryOcclusionRecoveryMinCadenceFrames => Engine.Rendering.Settings.CpuQueryOcclusionRecoveryMinCadenceFrames;
+    public float CpuQueryOcclusionSmallMotionMeters => Engine.Rendering.Settings.CpuQueryOcclusionSmallMotionMeters;
+    public float CpuQueryOcclusionMediumMotionMeters => Engine.Rendering.Settings.CpuQueryOcclusionMediumMotionMeters;
+    public float CpuQueryOcclusionLargeMotionMeters => Engine.Rendering.Settings.CpuQueryOcclusionLargeMotionMeters;
+    public float CpuQueryOcclusionCameraCutMeters => Engine.Rendering.Settings.CpuQueryOcclusionCameraCutMeters;
+    public float CpuQueryOcclusionSmallRotationDegrees => Engine.Rendering.Settings.CpuQueryOcclusionSmallRotationDegrees;
+    public float CpuQueryOcclusionMediumRotationDegrees => Engine.Rendering.Settings.CpuQueryOcclusionMediumRotationDegrees;
+    public float CpuQueryOcclusionLargeRotationDegrees => Engine.Rendering.Settings.CpuQueryOcclusionLargeRotationDegrees;
+    public float CpuQueryOcclusionCameraCutRotationDegrees => Engine.Rendering.Settings.CpuQueryOcclusionCameraCutRotationDegrees;
+    public float CpuQueryOcclusionVrHeadMotionMeters => Engine.Rendering.Settings.CpuQueryOcclusionVrHeadMotionMeters;
+    public float CpuQueryOcclusionVrHeadRotationDegrees => Engine.Rendering.Settings.CpuQueryOcclusionVrHeadRotationDegrees;
+    public ECpuQueryStereoMode CpuQueryOcclusionStereoMode => Engine.Rendering.Settings.CpuQueryOcclusionStereoMode;
+    public int CpuQueryOcclusionMaxPendingFrames => Engine.Rendering.Settings.CpuQueryOcclusionMaxPendingFrames;
     public bool EnableCpuSoftwareOcclusionCulling => Engine.EffectiveSettings.EnableCpuSoftwareOcclusionCulling;
     public int CpuSocBufferWidth => Engine.EffectiveSettings.CpuSocBufferWidth;
     public int CpuSocBufferHeight => Engine.EffectiveSettings.CpuSocBufferHeight;
@@ -173,6 +189,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public float DefaultTsrRenderScale => Engine.Rendering.Settings.TsrRenderScale;
     public bool EnableRenderStatisticsTracking => Engine.Rendering.Stats.EnableTracking;
     public bool EnableGpuRenderPipelineProfiling => Engine.EditorPreferences.Diagnostics.Profiler.EnableGpuRenderPipelineProfiling;
+    public bool GpuRenderPipelineTimingsReady => Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineTimingsReady;
+    public double GpuRenderPipelineFrameMs => Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineFrameMs;
     public ulong CurrentRenderFrameId => Engine.Rendering.State.RenderFrameId;
     public bool ProvidesShadowAtlasSettings => true;
     public bool UseSpotShadowAtlas => Engine.Rendering.Settings.UseSpotShadowAtlas;
@@ -786,13 +804,22 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         => Engine.Rendering.Stats.Vr.RecordVrPerViewVisibleCounts(leftVisible, rightVisible);
 
     public void RecordRenderVrRenderSubmitTime(TimeSpan submitTime)
-        => Engine.Rendering.Stats.Vr.RecordVrRenderSubmitTime(submitTime);
+    {
+        Engine.Rendering.Stats.Vr.RecordVrRenderSubmitTime(submitTime);
+        RecordVrSubmitFrameOutput(
+            Engine.VRState.IsOpenXRActive ? EFrameOutputKind.OpenXREyeSubmit : EFrameOutputKind.OpenVRSubmit,
+            submitTime,
+            Engine.VRState.IsOpenXRActive ? "OpenXR render submit" : "OpenVR render submit");
+    }
 
     public void RecordRenderVrXrWaitFrameBlockTime(TimeSpan waitTime)
         => Engine.Rendering.Stats.Vr.RecordVrXrWaitFrameBlockTime(waitTime);
 
     public void RecordRenderVrXrEndFrameSubmitTime(TimeSpan submitTime)
-        => Engine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(submitTime);
+    {
+        Engine.Rendering.Stats.Vr.RecordVrXrEndFrameSubmitTime(submitTime);
+        RecordVrSubmitFrameOutput(EFrameOutputKind.OpenXREyeSubmit, submitTime, "OpenXR xrEndFrame submit");
+    }
 
     public void RecordRenderVrXrPredictedToLatePoseDelta(double millimeters, double degrees)
         => Engine.Rendering.Stats.Vr.RecordVrXrPredictedToLatePoseDelta(millimeters, degrees);
@@ -817,6 +844,47 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void RecordRenderVrXrPacingHandoffStall()
         => Engine.Rendering.Stats.Vr.RecordVrXrPacingHandoffStall();
+
+    private static void RecordVrSubmitFrameOutput(EFrameOutputKind outputKind, TimeSpan submitTime, string name)
+    {
+        if (!Engine.VRState.IsInVR)
+            return;
+
+        double cpuMs = Math.Max(0.0, submitTime.TotalMilliseconds * 0.5);
+        ulong frameId = Engine.Rendering.State.RenderFrameId;
+        RecordVrSubmitFrameOutputForEye(outputKind, EVrOutputViewKind.LeftEye, frameId, cpuMs, name + " left");
+        RecordVrSubmitFrameOutputForEye(outputKind, EVrOutputViewKind.RightEye, frameId, cpuMs, name + " right");
+    }
+
+    private static void RecordVrSubmitFrameOutputForEye(
+        EFrameOutputKind outputKind,
+        EVrOutputViewKind viewKind,
+        ulong frameId,
+        double cpuMs,
+        string name)
+    {
+        var pacing = FrameOutputPacingDecision.Due(viewKind, outputKind, frameId);
+        var telemetry = new FrameOutputTelemetry(
+            outputKind,
+            viewKind,
+            EFrameOutputPhase.Submit,
+            pacing,
+            name,
+            string.Empty,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+            0,
+            0,
+            0,
+            0,
+            cpuMs,
+            0.0);
+        Engine.Rendering.Stats.FrameOutputs.RecordOutput(telemetry);
+    }
 
     public void RecordRenderVulkanAdhocBarrier(int emittedCount, int redundantCount)
         => Engine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(emittedCount, redundantCount);
@@ -1127,6 +1195,61 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool EnableOpenXrVulkanParallelRendering
         => Engine.GameSettings is not IVRGameStartupSettings vrSettings || vrSettings.EnableOpenXrVulkanParallelRendering;
     public EVrViewRenderMode VrViewRenderMode => Engine.Rendering.Settings.VrViewRenderMode;
+    public EVrMirrorMode VrMirrorMode => Engine.Rendering.Settings.VrMirrorMode;
+    public float GetVrOutputTargetRateHz(EVrOutputViewKind viewKind)
+        => viewKind switch
+        {
+            EVrOutputViewKind.LeftEye => Engine.Rendering.Settings.VrLeftEyeTargetRateHz,
+            EVrOutputViewKind.RightEye => Engine.Rendering.Settings.VrRightEyeTargetRateHz,
+            EVrOutputViewKind.DesktopEditor => Engine.Rendering.Settings.VrDesktopEditorTargetRateHz,
+            EVrOutputViewKind.CyclopeanDesktop => Engine.Rendering.Settings.VrCyclopeanDesktopTargetRateHz,
+            _ => 0.0f,
+        };
+    public bool VrDesktopAutoSkipWhenOverBudget => Engine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget;
+    public FrameOutputPacingDecision EvaluateFrameOutputPacing(
+        EVrOutputViewKind viewKind,
+        EFrameOutputKind outputKind,
+        bool xrCritical)
+    {
+        ulong frameId = Engine.Time.Timer.CollectFrameId;
+        float targetRateHz = GetVrOutputTargetRateHz(viewKind);
+
+        if (!xrCritical &&
+            Engine.VRState.IsInVR &&
+            viewKind is EVrOutputViewKind.DesktopEditor or EVrOutputViewKind.CyclopeanDesktop)
+        {
+            EVrMirrorMode mode = Engine.Rendering.Settings.VrMirrorMode;
+            if (mode == EVrMirrorMode.Off)
+            {
+                return Engine.Rendering.Stats.FrameOutputs.RecordForcedSkip(
+                    viewKind,
+                    outputKind,
+                    frameId,
+                    EFrameOutputSkipReason.MirrorOff,
+                    targetRateHz);
+            }
+
+            if (mode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct)
+            {
+                return Engine.Rendering.Stats.FrameOutputs.RecordForcedSkip(
+                    viewKind,
+                    outputKind,
+                    frameId,
+                    EFrameOutputSkipReason.HeldLastImage,
+                    targetRateHz);
+            }
+        }
+
+        return Engine.Rendering.Stats.FrameOutputs.EvaluatePacing(
+            viewKind,
+            outputKind,
+            frameId,
+            xrCritical,
+            targetRateHz,
+            Engine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget);
+    }
+    public void RecordRenderFrameOutput(in FrameOutputTelemetry telemetry)
+        => Engine.Rendering.Stats.FrameOutputs.RecordOutput(telemetry);
     public bool EnableVrFoveatedViewSet => Engine.Rendering.Settings.EnableVrFoveatedViewSet;
     public EVrFoveationMode VrFoveationMode => Engine.Rendering.Settings.VrFoveationMode;
     public EVrFoveationQualityPreset VrFoveationQualityPreset => Engine.Rendering.Settings.VrFoveationQualityPreset;
@@ -1137,7 +1260,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public uint OpenXrCustomEyeResolutionHeight => Engine.Rendering.Settings.OpenXrCustomEyeResolutionHeight;
     public bool IsInVR => Engine.VRState.IsInVR;
     public bool IsOpenXRActive => Engine.VRState.IsOpenXRActive;
-    public bool VrMirrorComposeFromEyeTextures => Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures;
+    public bool VrMirrorComposeFromEyeTextures
+        => Engine.Rendering.Settings.RenderWindowsWhileInVR &&
+           Engine.Rendering.Settings.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct;
     public bool VrCopyEyePreviewTextures => Engine.Rendering.Settings.VrCopyEyePreviewTextures;
     public Vector2 VrFoveationCenterUv => Engine.Rendering.Settings.VrFoveationCenterUv;
     public float VrFoveationInnerRadius => Engine.Rendering.Settings.VrFoveationInnerRadius;
@@ -1159,8 +1284,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy => Engine.Rendering.Settings.OpenXrActionSyncPolicy;
     public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => Engine.Rendering.Settings.OpenXrRenderPacingMode;
 
-    public void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
-        => _ = Engine.VRState.OpenXRApi?.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);
+    public bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
+        => Engine.VRState.OpenXRApi?.TryRenderDesktopMirrorComposition(targetWidth, targetHeight) == true;
 
     public void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
         => Engine.Rendering.Stats.Vr.RecordVrPerViewDrawCounts(leftDraws, rightDraws);

@@ -83,6 +83,15 @@ More concretely:
 - It runs `Engine.Jobs.ProcessCollectVisibleSwapJobs()` and then `DispatchSwapBuffers()`.
 - The render thread waits on `_swapDone`, ensuring it only renders after the new snapshot is published.
 
+The default late-frame policy is `BlockUntilFresh`, which preserves that strict
+fresh-snapshot fence. `XRE_COLLECT_VISIBLE_LATE_POLICY=ReusePreviousVisibility`
+is a diagnostic policy for isolating render-thread pressure from visibility
+collection: once at least one real collect/swap has completed, the render thread
+may render the previously published visibility snapshot instead of blocking on a
+late collect/swap. Accepted short aliases are `block`, `fresh`, `reuse`, and
+`stale`. This policy does not add another buffer; it only decides whether a
+missed collect/swap fence blocks render or records a stale-snapshot reuse.
+
 This is why `CollectVisible`, `SwapBuffers`, and `Render` should be treated as hot-path rendering phases, not as generic convenience ticks for unrelated work.
 
 ## Window, Render, And Input Ownership
@@ -156,6 +165,12 @@ The viewport does not decide the spatial structure itself. It delegates that to 
 
 After collection finishes and after the render thread signals that the previous frame is done, the collect-visible thread runs swap work.
 
+Profiler scopes split this handoff into three different costs:
+
+- `EngineTimer.CollectVisibleThread.WaitForRender`: downstream render pressure; the collect-visible thread is asleep waiting for render to finish.
+- `EngineTimer.CollectVisibleThread.ProcessCollectVisibleSwapJobs`: queued collect/swap jobs that must run before buffer publication.
+- `EngineTimer.CollectVisibleThread.DispatchSwapBuffers`: the actual world, scene, viewport, and command-buffer publication callbacks.
+
 There are two distinct swap layers:
 
 1. World/scene swap
@@ -193,6 +208,12 @@ This is the handoff from command collection to command consumption for that view
 ### 5. Render
 
 Once `_swapDone` is signaled, the render thread dispatches `RenderFrame`.
+
+If `ReusePreviousVisibility` is active and `_swapDone` is late, the render
+thread may dispatch with the last published visibility snapshot instead of
+waiting. The frame lifecycle telemetry then records
+`render_wait_reason=ReusingPreviousVisibility`,
+`skipped_collect_frames`, and `stale_collect_reuse_frames` for that sample.
 
 At the window level the relevant order is:
 
@@ -494,6 +515,23 @@ Also distinguish between:
 
 - explicit diagnostics fallback that was requested by settings
 - fallback that was merely available historically but is now suppressed with a warning when GPU dispatch is meant to be authoritative
+
+### Collect-visible late policy
+
+`EngineTimer.CollectVisibleLatePolicy` controls what the render thread does
+when collect/swap publication is late:
+
+| Policy | Behavior |
+|---|---|
+| `BlockUntilFresh` | Default. Render waits on `_swapDone` so every render consumes the newest published collect/swap snapshot. |
+| `ReusePreviousVisibility` | Diagnostic mode. After at least one collect/swap has completed, render may reuse the previous visibility snapshot rather than blocking on a late collect/swap. |
+
+The process environment override is `XRE_COLLECT_VISIBLE_LATE_POLICY`. Use
+`BlockUntilFresh` for correctness baselines and `ReusePreviousVisibility` only
+when measuring whether visible-collection work or render-thread pressure is the
+limiting factor. Profile captures and the live profiler report the effective
+policy, frame lifecycle ids, wait durations, wait reasons, skipped collect
+frames, and stale reuse counts.
 
 ## CollectVisible, SwapBuffers, and Render by Responsibility
 

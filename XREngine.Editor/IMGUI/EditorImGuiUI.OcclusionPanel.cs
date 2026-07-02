@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using ImGuiNET;
 using XREngine;
@@ -67,6 +68,7 @@ public static partial class EditorImGuiUI
             ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.3f, 1.0f),
                 "Configured but not applied — see skip reasons below.");
         }
+
         ImGui.Separator();
 
         // CPU path
@@ -122,7 +124,8 @@ public static partial class EditorImGuiUI
             int dVH = OcclusionTelemetry.CpuDecisionVisibleHysteresis;
             int dProbe = OcclusionTelemetry.CpuDecisionProbe;
             int dSkip = OcclusionTelemetry.CpuDecisionSkip;
-            int dTotal = dSeed + dCached + dVQ + dVH + dProbe + dSkip;
+            int dForced = OcclusionTelemetry.CpuDecisionForcedVisible;
+            int dTotal = dSeed + dCached + dVQ + dVH + dProbe + dSkip + dForced;
             if (dTotal > 0)
             {
                 ImGui.Spacing();
@@ -130,6 +133,8 @@ public static partial class EditorImGuiUI
                 static string Pct(int n, int t) => t > 0 ? $"{(double)n / t * 100.0:F1}%" : "0.0%";
                 ImGui.Text($"    Seed (first-seen)     : {dSeed:N0}  ({Pct(dSeed, dTotal)})");
                 ImGui.Text($"    Cached (prepass reuse): {dCached:N0}  ({Pct(dCached, dTotal)})");
+                ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.4f, 1.0f),
+                    $"    Forced visible       : {dForced:N0}  ({Pct(dForced, dTotal)})");
                 ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.3f, 1.0f),
                     $"    Visible (query passed): {dVQ:N0}  ({Pct(dVQ, dTotal)})");
                 ImGui.Text($"    Visible (hysteresis)  : {dVH:N0}  ({Pct(dVH, dTotal)})");
@@ -145,6 +150,55 @@ public static partial class EditorImGuiUI
                     "    cull meshes whose AABB has ANY visible pixel; split large meshes or add a software pre-pass).");
             }
         }
+
+        int cpuHealthSignals =
+            OcclusionTelemetry.CpuPendingQueries +
+            OcclusionTelemetry.CpuQuerySubmittedTotal +
+            OcclusionTelemetry.CpuQueryResolvedTotal +
+            OcclusionTelemetry.CpuBudgetSkippedTotal +
+            OcclusionTelemetry.CpuForcedVisibleTotal +
+            OcclusionTelemetry.CpuGlobalConservativeFrames +
+            OcclusionTelemetry.CpuUnsupportedStereoQueryMode;
+        if (cpuPasses > 0 || cpuHealthSignals > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(0.8f, 0.9f, 1.0f, 1.0f), "  CPU Query Health:");
+            ImGui.Text($"    Scope / Motion      : {OcclusionTelemetry.CpuActiveViewScope} / {OcclusionTelemetry.CpuMotionTier}");
+            ImGui.Text($"    Pending Queries     : {OcclusionTelemetry.CpuPendingQueries:N0}");
+            ImGui.Text($"    Submitted / Resolved: {OcclusionTelemetry.CpuQuerySubmittedTotal:N0} / {OcclusionTelemetry.CpuQueryResolvedTotal:N0}");
+            if (OcclusionTelemetry.CpuQueryLatencySamples > 0)
+                ImGui.Text($"    Latency Frames      : avg={OcclusionTelemetry.CpuQueryLatencyAverageFrames:F1} max={OcclusionTelemetry.CpuQueryLatencyMaxFrames}");
+            if (OcclusionTelemetry.CpuGlobalConservativeFrames > 0)
+                ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.4f, 1.0f),
+                    $"    Conservative Frames : {OcclusionTelemetry.CpuGlobalConservativeFrames:N0}");
+            if (OcclusionTelemetry.CpuUnsupportedStereoQueryMode > 0)
+                ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.3f, 1.0f),
+                    $"    Unsupported Stereo  : {OcclusionTelemetry.CpuUnsupportedStereoQueryMode:N0}");
+
+            int forcedTotal = OcclusionTelemetry.CpuForcedVisibleTotal;
+            if (forcedTotal > 0)
+            {
+                ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.4f, 1.0f), $"    Forced Visible      : {forcedTotal:N0}");
+                foreach (ECpuOcclusionForceVisibleReason reason in Enum.GetValues<ECpuOcclusionForceVisibleReason>())
+                {
+                    int count = OcclusionTelemetry.GetCpuForcedVisibleCount(reason);
+                    if (count > 0)
+                        ImGui.Text($"      {reason,-24}: {count:N0}");
+                }
+            }
+
+            int skippedTotal = OcclusionTelemetry.CpuBudgetSkippedTotal;
+            if (skippedTotal > 0)
+            {
+                ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.3f, 1.0f), $"    Budget/Policy Skips : {skippedTotal:N0}");
+                foreach (ECpuOcclusionQueryReason reason in Enum.GetValues<ECpuOcclusionQueryReason>())
+                {
+                    int count = OcclusionTelemetry.GetCpuBudgetSkippedCount(reason);
+                    if (count > 0)
+                        ImGui.Text($"      {reason,-24}: {count:N0}");
+                }
+            }
+        }
         ImGui.Separator();
 
         // CPU software occlusion path
@@ -152,10 +206,11 @@ public static partial class EditorImGuiUI
         int socCulled = OcclusionTelemetry.CpuSocCulled;
         int socSelected = OcclusionTelemetry.CpuSocOccludersSelected;
         int socRasterized = OcclusionTelemetry.CpuSocOccludersRasterized;
+        int socSelfSkipped = OcclusionTelemetry.CpuSocSelfOccluderSkipped;
         double socRate = socTested > 0 ? (double)socCulled / socTested : 0.0;
 
         ImGui.TextColored(new Vector4(0.6f, 0.9f, 1.0f, 1.0f), "CPU SOC Path (software raster):");
-        if (socTested + socSelected + socRasterized == 0)
+        if (socTested + socSelected + socRasterized + socSelfSkipped == 0)
         {
             ImGui.TextDisabled("  Not active this frame.");
             if (configuredMode == EOcclusionCullingMode.CpuSoftwareOcclusion || legacyCpuSocEnabled)
@@ -170,11 +225,18 @@ public static partial class EditorImGuiUI
             ImGui.Text($"  Occluders Rasterized: {socRasterized:N0}");
             ImGui.Text($"  Tiles Closed        : {OcclusionTelemetry.CpuSocTilesClosed:N0}");
             ImGui.Text($"  Tested              : {socTested:N0}");
+            if (socSelfSkipped > 0)
+                ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.4f, 1.0f),
+                    $"  Self-Occluder Skips : {socSelfSkipped:N0}");
             Vector4 socColor = socCulled > 0
                 ? new Vector4(0.4f, 1.0f, 0.6f, 1.0f)
                 : new Vector4(1.0f, 0.7f, 0.3f, 1.0f);
             ImGui.TextColored(socColor, $"  Culled              : {socCulled:N0}  ({socRate * 100.0:F1}%)");
             ImGui.Text($"  Time ms             : begin={OcclusionTelemetry.CpuSocBeginMilliseconds:F3} raster={OcclusionTelemetry.CpuSocRasterMilliseconds:F3} test={OcclusionTelemetry.CpuSocTestMilliseconds:F3}");
+            if (socSelfSkipped > 0 && socTested == 0)
+                ImGui.TextWrapped(
+                    "  SOC built an occluder mask, but every eligible command was also one of the occluders. " +
+                    "Split merged geometry into separate render commands to let software occlusion remove hidden commands.");
             if (OcclusionTelemetry.CpuSocForceVisible)
                 ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.4f, 1.0f), "  Force visible is enabled.");
         }

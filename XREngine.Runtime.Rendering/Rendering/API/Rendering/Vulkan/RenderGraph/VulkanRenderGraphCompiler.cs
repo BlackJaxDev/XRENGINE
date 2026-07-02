@@ -285,7 +285,7 @@ public unsafe partial class VulkanRenderer
                ReferenceEquals(x.Target, y.Target);
 
         private static bool IsTargetUseThatClearMustPrecede(FrameOp op)
-            => op is MeshDrawOp or BlitOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp or TransformFeedbackOp;
+            => op is MeshDrawOp or QueryOp or BlitOp or IndirectDrawOp or MeshTaskDispatchIndirectCountOp or TransformFeedbackOp;
 
         private static int ResolvePassOrder(FrameOp op, VulkanCompiledRenderGraph graph)
         {
@@ -358,6 +358,7 @@ public unsafe partial class VulkanRenderer
         {
             ClearOp c => c.Target is null,
             MeshDrawOp d => d.Target is null,
+            QueryOp q => q.Target is null,
             BlitOp b => b.OutFbo is null,
             IndirectDrawOp id => id.Target is null,
             MeshTaskDispatchIndirectCountOp meshTask => meshTask.Target is null,

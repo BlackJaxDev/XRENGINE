@@ -13,7 +13,7 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     [Test]
     public void Phase4_CoreHotLayoutState_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.Core.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs");
 
         source.ShouldContain("public bool EnableHotCommandLayout { get; set; } = true;");
         source.ShouldContain("private XRDataBuffer? _sourceHotCommandBuffer;");
@@ -31,7 +31,7 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     [Test]
     public void Phase4_CullingHotPath_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.CullingAndSoA.cs");
 
         source.ShouldContain("private void BuildSourceHotCommandBuffer(GPUScene scene, uint inputCount)");
         source.ShouldContain("_buildHotCommandsProgram.Uniform(\"InputCount\", (int)inputCount);");
@@ -52,8 +52,8 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     [Test]
     public void Phase4_OcclusionAndIndirectHotPath_SourceContracts_ArePresent()
     {
-        string occlusionSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.Occlusion.cs");
-        string indirectSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
+        string occlusionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
+        string indirectSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
 
         occlusionSource.ShouldContain("_hiZOcclusionProgram.Uniform(\"UseHotCommands\", useHotCommands ? 1 : 0);");
         occlusionSource.ShouldContain("_hiZOcclusionProgram.BindBuffer(_culledHotCommandBuffer!, 9);");
@@ -61,7 +61,8 @@ public sealed class GpuIndirectPhase4HotLayoutTests
         occlusionSource.ShouldContain("(_culledHotCommandBuffer, _occlusionCulledHotBuffer) = (_occlusionCulledHotBuffer, _culledHotCommandBuffer);");
 
         indirectSource.ShouldContain("_indirectRenderTaskShader.Uniform(\"UseHotCommands\", _culledCommandsUseHotLayout ? 1 : 0);");
-        indirectSource.ShouldContain("_culledHotCommandBuffer?.BindTo(_indirectRenderTaskShader!, 9);");
+        indirectSource.ShouldContain("? _culledHotCommandBuffer");
+        indirectSource.ShouldContain(": CulledSceneToRenderBuffer).BindTo(_indirectRenderTaskShader!, 9);");
         indirectSource.ShouldContain("_buildHotCommandsProgram.Uniform(\"InputCount\", (int)inputCount);");
         indirectSource.ShouldContain("ShippingFast requires hot command layout", Case.Insensitive);
     }
@@ -80,8 +81,8 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     public void Phase4_OverflowTailHandling_SourceContracts_ArePresent()
     {
         string hybridSource = ReadWorkspaceFile("XRENGINE/Rendering/HybridRenderingManager.cs");
-        string passSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs");
-        string sceneSource = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPUScene.cs");
+        string passSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
+        string sceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.cs");
         string settingsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
 
         hybridSource.ShouldContain("private static bool TryReadDrawCount(XRDataBuffer? parameterBuffer, out uint drawCount)");

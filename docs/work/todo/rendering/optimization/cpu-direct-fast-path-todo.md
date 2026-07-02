@@ -1,6 +1,6 @@
 # CPU Direct Fast Path TODO
 
-Last Updated: 2026-05-29
+Last Updated: 2026-07-01
 Owner: Rendering
 Status: Active
 Target Branch: `rendering-cpu-direct-fast-path`
@@ -11,6 +11,15 @@ Design source:
 - [Engine Rendering Optimization Roadmap](engine-rendering-optimization-roadmap.md)
 - [Render Submission Performance Debug Plan](../../../design/rendering/render-submission-perf-debug-plan.md)
 - [Frame Lifecycle And Dispatch Paths](../../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
+- [Mesh Submission Strategies Contract](../../../../architecture/rendering/mesh-submission-strategies.md)
+
+Related todos (overlap guard):
+
+- [Vulkan Primary Command Recording Fast Path](vulkan-primary-command-recording-fast-path-todo.md)
+  owns Vulkan submission-side cost (primary recording, descriptor churn); do
+  not duplicate its items here.
+- [Default Pipeline GPU Hotspots](default-pipeline-gpu-hotspots-todo.md) owns
+  GPU-side pass cost; this TODO covers CPU submission cost only.
 
 ## Goal
 
@@ -28,6 +37,17 @@ backend cases, and performance comparisons against GPU-driven strategies.
 - Shader/material/texture prewarm boundaries.
 - Hot-path allocation elimination.
 
+## Backend Scope
+
+- Phases 0, 1, 5, and 6 are backend-agnostic and apply to CPU direct on both
+  OpenGL and Vulkan. They can proceed independently of the GL-specific phases.
+- Phases 2-4 target the OpenGL CPU direct backend specifically
+  (`glBufferSubData`, `glUseProgram`, VAO binds, persistent-mapped rings). The
+  Vulkan equivalents are tracked in
+  [Vulkan Primary Command Recording Fast Path](vulkan-primary-command-recording-fast-path-todo.md).
+  Before starting Phases 2-4, confirm with a Phase 0 baseline that the measured
+  submission cost is on the GL backend.
+
 ## Non-Goals
 
 - Do not replace zero-readback GPU-driven rendering.
@@ -40,21 +60,28 @@ backend cases, and performance comparisons against GPU-driven strategies.
 
 - [ ] Create dedicated branch `rendering-cpu-direct-fast-path`.
 - [ ] Capture Release CPU direct baseline for the unit-testing avatar scene,
-  Sponza/static high-object scene, and a material-diverse scene.
+  Sponza/static high-object scene, and a material-diverse scene. Use the
+  existing tasks (`Measurement-Baseline-CpuDirect`,
+  `Measurement-P3-CpuDirect-Census`, `Measurement-P3-CpuDirect-Census-NoOcclusion`,
+  `Measurement-GameLoopRenderPipeline-Release-All`, backed by
+  `Tools/Measure-MeshSubmissionBaselines.ps1`) rather than new ad-hoc capture.
 - [ ] Capture current counters: draw calls, program switches, VAO binds, buffer
   binds, SSBO/UBO binds, texture binds, uniform calls, buffer upload bytes,
   barriers, and readback bytes.
 - [ ] Capture a sampled CPU profile with ETW, Superluminal, or `dotnet-trace`.
 - [ ] Inventory render-submission hot paths for `new`, LINQ, captured
   closures, boxing, string concatenation, and `foreach` over class enumerators.
+  Start from the `Report-NewAllocations` task output.
 - [ ] Inventory places where shader linking, asset deserialization, texture
   upload, or meshlet generation can occur during visible render frames.
 
 Acceptance criteria:
 
 - [ ] Baseline captures include build configuration, backend, GPU, driver,
-  scene, camera, lights, stereo mode, shader-cache state, and texture-cache
-  state.
+  scene, camera, lights, stereo mode, shader-cache state, texture-cache state,
+  validation/debug layer state (Vulkan validation is opt-in via
+  `XRE_VULKAN_VALIDATION=1` and materially skews CPU cost when loaded), and
+  profiler attach state.
 - [ ] Hot-path allocation and late-work inventory is recorded in this TODO or a
   linked audit note.
 
@@ -71,7 +98,9 @@ Acceptance criteria:
 - [ ] Replace `foreach` over class enumerators in hot paths with index loops or
   struct enumerators.
 - [ ] Ensure profiler labels are stable strings or interned/static identifiers,
-  not per-frame concatenations.
+  not per-frame concatenations. Partially landed already (XRWindow viewport
+  profile scope, Vulkan FBO timing labels); audit the remaining submission
+  paths.
 - [ ] Add source-contract tests for known no-allocation hot-path methods where
   practical.
 
@@ -79,7 +108,9 @@ Acceptance criteria:
 
 - [ ] CPU direct steady-state render submission allocates zero managed bytes on
   representative static and skinned-avatar scenes, excluding explicitly opted
-  diagnostic modes.
+  diagnostic modes. Verify with `dotnet-counters` GC allocation-rate sampling
+  or an equivalent allocation trace, plus a clean `Report-NewAllocations` pass
+  over the submission paths.
 
 ## Phase 2 - SRP-Batcher-Equivalent Constant Fast Path
 
@@ -171,7 +202,8 @@ Acceptance criteria:
 
 - [ ] Run targeted unit/source-contract tests for render command collection,
   material table bindings, shader prewarm, and upload allocator behavior.
-- [ ] Run Release CPU direct baseline after each major phase.
+- [ ] Run Release CPU direct baseline after each major phase (same
+  `Measurement-*` tasks as Phase 0).
 - [ ] Compare before/after p50, p90, p99 frame time and state counters.
 - [ ] Capture at least one CPU sampled profile after optimization.
 - [ ] Validate unit-testing avatar scene with lights disabled and enabled.

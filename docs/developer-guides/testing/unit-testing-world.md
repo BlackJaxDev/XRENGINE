@@ -178,7 +178,17 @@ On Windows, `VR.Mode=MonadoOpenXR` honors the requested `Rendering.RenderBackend
 
 The repo-staged Windows Monado preview window has a right-click simulated HMD pose menu. It can switch between the default figure-eight transform test and a user-input HMD mode. In user-input mode, `W`/`S` move forward/back, `A`/`D` move left/right, `Q` moves up, `E` moves down, up/down arrows control elastic pitch, left/right arrows add persistent yaw, and `,`/`.` control elastic roll. Hold Shift while yawing to turn faster. Position, pitch, and roll ease back to their rest values when released.
 
-When `VR.AllowDesktopEditing=false` and `RenderWindowsWhileInVR=true`, the desktop window renders a separate mono runtime camera parented under the HMD through a smoothed transform. This viewport owns its own render commands and the Unit Testing World does not create editor UI for it, so the desktop output is a clean player/cyclopean view rather than the ImGui editor. It is not composed by stretching either eye texture. Set `RenderWindowsWhileInVR=false` for perf runs that should submit only the XR eye frames.
+When VR is active, desktop output is controlled by `Rendering.VrMirrorMode`.
+The default performance posture is a cheap mirror: `BlitSubmittedEye` keeps
+`RenderWindowsWhileInVR=true` but composes the desktop window from the submitted
+XR eye output instead of rendering a second full scene. Set
+`Rendering.VrMirrorMode=Off` for eye-submit-only perf runs. Select
+`FullIndependentRender` only when editor diagnostics need a separate desktop
+scene path; with `VR.AllowDesktopEditing=true` that path owns its own visibility
+group and render commands. `LowRatePreview` keeps the legacy mono/cyclopean
+runtime-camera path available at an explicitly paced desktop rate, and
+`CyclopeanReconstruct` is reserved for the depth-aware mirror reconstruction
+path.
 
 Useful tasks:
 

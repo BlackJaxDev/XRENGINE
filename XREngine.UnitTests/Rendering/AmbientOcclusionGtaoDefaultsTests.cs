@@ -19,10 +19,10 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
         settings.Power.ShouldBe(1.35f, 0.0001f);
         settings.Bias.ShouldBe(0.06f, 0.0001f);
 
-        settings.GroundTruth.SliceCount.ShouldBe(5);
-        settings.GTAOSliceCount.ShouldBe(5);
-        settings.GroundTruth.StepsPerSlice.ShouldBe(10);
-        settings.GTAOStepsPerSlice.ShouldBe(10);
+        settings.GroundTruth.SliceCount.ShouldBe(3);
+        settings.GTAOSliceCount.ShouldBe(3);
+        settings.GroundTruth.StepsPerSlice.ShouldBe(4);
+        settings.GTAOStepsPerSlice.ShouldBe(4);
         settings.GroundTruth.DenoiseEnabled.ShouldBeTrue();
         settings.GTAODenoiseEnabled.ShouldBeTrue();
         settings.GroundTruth.DenoiseRadius.ShouldBe(5);
@@ -96,8 +96,8 @@ public sealed class AmbientOcclusionGtaoDefaultsTests
         source.ShouldContain("uniform float Radius = 2.2f;");
         source.ShouldContain("uniform float Bias = 0.06f;");
         source.ShouldContain("uniform float Power = 1.35f;");
-        source.ShouldContain("uniform int SliceCount = 5;");
-        source.ShouldContain("uniform int StepsPerSlice = 10;");
+        source.ShouldContain("uniform int SliceCount = 3;");
+        source.ShouldContain("uniform int StepsPerSlice = 4;");
         source.ShouldContain("uniform bool UseVisibilityBitmask = true;");
         source.ShouldContain("uniform float VisibilityBitmaskThickness = 0.12f;");
         source.ShouldContain("float ComputeSampleFalloff(vec3 delta, float dist, vec3 viewDir, float falloffStart, float radiusVS, float thicknessLimit)");

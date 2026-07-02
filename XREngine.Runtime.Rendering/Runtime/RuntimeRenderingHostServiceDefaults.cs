@@ -1,5 +1,6 @@
 using XREngine.Data.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering;
@@ -68,6 +69,21 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool EnableGpuIndirectDebugLogging = false;
     public const EOcclusionCullingMode GpuOcclusionCullingMode = EOcclusionCullingMode.GpuHiZ;
     public const int CpuQueryOcclusionRetestPeriodFrames = 6;
+    public const int CpuQueryOcclusionMaxQueriesPerFrame = 64;
+    public const float CpuQueryOcclusionVisibleDemotionBudgetFraction = 0.25f;
+    public const int CpuQueryOcclusionRecoveryMinCadenceFrames = 2;
+    public const float CpuQueryOcclusionSmallMotionMeters = 0.02f;
+    public const float CpuQueryOcclusionMediumMotionMeters = 0.25f;
+    public const float CpuQueryOcclusionLargeMotionMeters = 2.0f;
+    public const float CpuQueryOcclusionCameraCutMeters = 12.0f;
+    public const float CpuQueryOcclusionSmallRotationDegrees = 1.0f;
+    public const float CpuQueryOcclusionMediumRotationDegrees = 5.0f;
+    public const float CpuQueryOcclusionLargeRotationDegrees = 15.0f;
+    public const float CpuQueryOcclusionCameraCutRotationDegrees = 55.0f;
+    public const float CpuQueryOcclusionVrHeadMotionMeters = 0.25f;
+    public const float CpuQueryOcclusionVrHeadRotationDegrees = 20.0f;
+    public const ECpuQueryStereoMode CpuQueryOcclusionStereoMode = ECpuQueryStereoMode.PerEyeSequential;
+    public const int CpuQueryOcclusionMaxPendingFrames = 6;
     public const bool EnableCpuSoftwareOcclusionCulling = false;
     public const int CpuSocBufferWidth = 256;
     public const int CpuSocBufferHeight = 128;
@@ -85,6 +101,8 @@ public static class RuntimeRenderingHostServiceDefaults
     public const float DefaultTsrRenderScale = 1.0f;
     public const bool EnableRenderStatisticsTracking = true;
     public const bool EnableGpuRenderPipelineProfiling = false;
+    public const bool GpuRenderPipelineTimingsReady = false;
+    public const double GpuRenderPipelineFrameMs = 0.0;
     public const ulong CurrentRenderFrameId = 0UL;
     public const ETwoPlayerPreference TwoPlayerViewportPreference = ETwoPlayerPreference.SplitHorizontally;
     public const EThreePlayerPreference ThreePlayerViewportPreference = EThreePlayerPreference.PreferFirstPlayer;
@@ -125,6 +143,9 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool RenderWindowsWhileInVR = false;
     public const bool EnableOpenXrVulkanParallelRendering = true;
     public const EVrViewRenderMode VrViewRenderMode = EVrViewRenderMode.SequentialViews;
+    public const EVrMirrorMode VrMirrorMode = EVrMirrorMode.BlitSubmittedEye;
+    public const float VrOutputTargetRateHz = 0.0f;
+    public const bool VrDesktopAutoSkipWhenOverBudget = true;
     public const bool EnableVrFoveatedViewSet = false;
     public const EVrFoveationMode VrFoveationMode = EVrFoveationMode.Off;
     public const EVrFoveationQualityPreset VrFoveationQualityPreset = EVrFoveationQualityPreset.Balanced;

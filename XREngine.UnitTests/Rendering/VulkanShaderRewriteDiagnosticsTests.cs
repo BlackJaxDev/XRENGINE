@@ -85,6 +85,37 @@ void main()
         spirv.Length.ShouldBeGreaterThan(0);
     }
 
+    [TestCase("AutoExposureComputeShaderSource2D", "VulkanAutoExposure2D.comp")]
+    [TestCase("AutoExposureComputeShaderSource2DArray", "VulkanAutoExposure2DArray.comp")]
+    public void AutoExposureComputeShaders_UseParallelReductionAndCompileAfterRewrite(string constantName, string shaderName)
+    {
+        FieldInfo? field = typeof(VulkanRenderer).GetField(constantName, BindingFlags.NonPublic | BindingFlags.Static);
+        field.ShouldNotBeNull();
+        string source = (string)field!.GetRawConstantValue()!;
+
+        // Metering must reduce cooperatively across a full workgroup instead of
+        // running all samples plus a sort on a single invocation.
+        source.ShouldContain("local_size_x = 256");
+        source.ShouldContain("shared float s_lums[MAX_SAMPLES];");
+
+        var shaderSource = new TextFile
+        {
+            FilePath = shaderName,
+            Text = source
+        };
+
+        XRShader shader = new(EShaderType.Compute, shaderSource)
+        {
+            Name = shaderName
+        };
+
+        byte[] spirv = VulkanShaderCompiler.Compile(shader, out string entryPoint, out _, out _);
+
+        entryPoint.ShouldBe("main");
+        spirv.ShouldNotBeNull();
+        spirv.Length.ShouldBeGreaterThan(0);
+    }
+
     [Test]
     public void Rewrite_UsesStageSpecificBindingsForAutoUniformBlocks()
     {

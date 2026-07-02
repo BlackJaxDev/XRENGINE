@@ -107,7 +107,7 @@ namespace XREngine.Rendering.Occlusion
                     if ((tile.Mask & requiredMask) != requiredMask)
                         return false;
 
-                    if (tile.ZMin0 <= queryNearestReciprocalDepth + depthEpsilon)
+                    if (tile.ZMin0 + depthEpsilon < queryNearestReciprocalDepth)
                         return false;
                 }
             }

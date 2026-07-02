@@ -191,6 +191,44 @@ namespace XREngine.Rendering.Vulkan
             _lastFrameCompletedTimestamp = frameStartTimestamp;
         }
 
+        private static void RecordOverlayFrameOutput(
+            EFrameOutputKind outputKind,
+            string name,
+            bool rendered,
+            int commandCount,
+            long elapsedTicks)
+        {
+            double cpuMs = elapsedTicks <= 0L ? 0.0 : elapsedTicks * 1000.0 / Stopwatch.Frequency;
+            IRuntimeRenderingHostServices services = RuntimeRenderingHostServices.Current;
+            EVrOutputViewKind viewKind = services.IsInVR && services.VrMirrorMode != EVrMirrorMode.FullIndependentRender
+                ? EVrOutputViewKind.CyclopeanDesktop
+                : EVrOutputViewKind.DesktopEditor;
+            bool mirror = services.IsInVR &&
+                viewKind == EVrOutputViewKind.CyclopeanDesktop &&
+                services.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct;
+            var pacing = FrameOutputPacingDecision.Due(viewKind, outputKind, RuntimeEngine.Rendering.State.RenderFrameId);
+            var telemetry = new FrameOutputTelemetry(
+                outputKind,
+                viewKind,
+                EFrameOutputPhase.Overlay,
+                pacing,
+                name,
+                string.Empty,
+                true,
+                rendered,
+                false,
+                mirror,
+                false,
+                viewKind == EVrOutputViewKind.CyclopeanDesktop && services.VrMirrorMode != EVrMirrorMode.FullIndependentRender,
+                commandCount,
+                0,
+                0,
+                0,
+                cpuMs,
+                0.0);
+            services.RecordRenderFrameOutput(telemetry);
+        }
+
         private void WaitCurrentFrameSlotAndDrainRetiredResources()
             => TryWaitCurrentFrameSlotAndDrainRetiredResources(interactiveResize: false, "blocking skipped-frame cleanup");
 
@@ -961,8 +999,6 @@ namespace XREngine.Rendering.Vulkan
                         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRecordCommandBufferAllocation(allocatedBytes);
                 }
             }
-            recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
-
             CommandBuffer imguiOverlayCommandBuffer = default;
             bool hasImGuiOverlayCommandBuffer = false;
             CommandBuffer dynamicUiBatchTextOverlayCommandBuffer = default;
@@ -996,7 +1032,14 @@ namespace XREngine.Rendering.Vulkan
                     throw;
                 }
             }
+            long imguiOverlayElapsedTicks = Stopwatch.GetTimestamp() - stageStartTimestamp;
             recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+            RecordOverlayFrameOutput(
+                EFrameOutputKind.ImGuiOverlay,
+                "Vulkan ImGui overlay command buffer",
+                hasImGuiOverlayCommandBuffer,
+                hasImGuiOverlayCommandBuffer ? 1 : 0,
+                imguiOverlayElapsedTicks);
 
             if (dynamicUiBatchTextOverlayOpCount > 0)
             {
@@ -1044,7 +1087,14 @@ namespace XREngine.Rendering.Vulkan
                         throw;
                     }
                 }
+                long dynamicTextOverlayElapsedTicks = Stopwatch.GetTimestamp() - stageStartTimestamp;
                 recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+                RecordOverlayFrameOutput(
+                    EFrameOutputKind.DynamicTextOverlay,
+                    "Vulkan dynamic text overlay command buffer",
+                    hasDynamicUiBatchTextOverlayCommandBuffer,
+                    hasDynamicUiBatchTextOverlayCommandBuffer ? 1 : 0,
+                    dynamicTextOverlayElapsedTicks);
             }
 
             if (_commandBufferDirtyFlags is not null &&

@@ -105,6 +105,12 @@ namespace XREngine.Rendering
         /// </summary>
         public bool Suppress3DSceneRendering { get; set; }
 
+        private FrameOutputPacingDecision _pendingFrameOutputPacing;
+        private FrameOutputPacingDecision _renderingFrameOutputPacing;
+        private bool _pendingFrameOutputSceneDue = true;
+        private bool _renderingFrameOutputSceneDue = true;
+        private double _skippedSceneRenderDeltaSeconds;
+
         /// <summary>
         /// When true, objects outside the camera's view frustum are culled (not rendered).
         /// Set to false to disable frustum culling (e.g., for shadow map rendering or omnidirectional cameras).
@@ -916,14 +922,49 @@ namespace XREngine.Rendering
         /// </summary>
         private void CollectVisibleAutomatic()
         {
+            FrameOutputPacingDecision pacing = EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
+            _pendingFrameOutputPacing = pacing;
+            _pendingFrameOutputSceneDue = pacing.IsDue;
+
             if (Suppress3DSceneRendering)
             {
+                long suppressedStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 // Skip expensive 3D scene collection but still collect UI
                 // so the editor overlay stays responsive.
                 CollectVisible_ScreenSpaceUI();
+                RecordFrameOutput(
+                    EFrameOutputPhase.Collect,
+                    pacing,
+                    rendered: false,
+                    sceneRendered: false,
+                    commandCount: GetRenderingCommandCountForTelemetry(),
+                    elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - suppressedStart);
                 return;
             }
+
+            if (!pacing.IsDue)
+            {
+                long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                CollectVisible_ScreenSpaceUI();
+                RecordFrameOutput(
+                    EFrameOutputPhase.Collect,
+                    pacing,
+                    rendered: false,
+                    sceneRendered: false,
+                    commandCount: GetRenderingCommandCountForTelemetry(),
+                    elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - skipStart);
+                return;
+            }
+
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             CollectVisible();
+            RecordFrameOutput(
+                EFrameOutputPhase.Collect,
+                pacing,
+                rendered: true,
+                sceneRendered: true,
+                commandCount: GetUpdatingCommandCountForTelemetry(),
+                elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - started);
         }
 
         #endregion
@@ -1038,15 +1079,56 @@ namespace XREngine.Rendering
         /// </summary>
         private void SwapBuffersAutomatic()
         {
+            FrameOutputPacingDecision pacing = _pendingFrameOutputPacing.FrameId != 0UL
+                ? _pendingFrameOutputPacing
+                : EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
+
             if (Suppress3DSceneRendering)
             {
+                long suppressedStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 // Skip 3D command buffer swap but still swap UI buffers
                 // so the editor overlay stays responsive.
                 SwapBuffers_ScreenSpaceUI();
+                _renderingFrameOutputPacing = pacing;
+                _renderingFrameOutputSceneDue = false;
+                RecordFrameOutput(
+                    EFrameOutputPhase.Swap,
+                    pacing,
+                    rendered: false,
+                    sceneRendered: false,
+                    commandCount: GetRenderingCommandCountForTelemetry(),
+                    elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - suppressedStart);
                 return;
             }
+
+            if (!_pendingFrameOutputSceneDue)
+            {
+                long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                SwapBuffers_ScreenSpaceUI();
+                _renderingFrameOutputPacing = pacing;
+                _renderingFrameOutputSceneDue = false;
+                RecordFrameOutput(
+                    EFrameOutputPhase.Swap,
+                    pacing,
+                    rendered: false,
+                    sceneRendered: false,
+                    commandCount: GetRenderingCommandCountForTelemetry(),
+                    elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - skipStart);
+                return;
+            }
+
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.SwapBuffersAutomatic");
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             SwapBuffers();
+            _renderingFrameOutputPacing = pacing;
+            _renderingFrameOutputSceneDue = true;
+            RecordFrameOutput(
+                EFrameOutputPhase.Swap,
+                pacing,
+                rendered: true,
+                sceneRendered: true,
+                commandCount: GetRenderingCommandCountForTelemetry(),
+                elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - started);
         }
 
         #endregion
@@ -1083,6 +1165,25 @@ namespace XREngine.Rendering
 
             if (ShouldSuspendPipelineWork(nameof(Render)))
                 return;
+
+            FrameOutputPacingDecision pacing = _renderingFrameOutputPacing.FrameId != 0UL
+                ? _renderingFrameOutputPacing
+                : FrameOutputPacingDecision.Due(ResolveOutputViewKind(), ResolveFrameOutputKind(), State.RenderFrameId);
+
+            if (!_renderingFrameOutputSceneDue && IsDesktopFacingOutput())
+            {
+                long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                RenderScreenSpaceUIOverlay(targetFbo);
+                AccumulateSkippedSceneRenderDelta();
+                RecordFrameOutput(
+                    EFrameOutputPhase.Render,
+                    pacing,
+                    rendered: false,
+                    sceneRendered: false,
+                    commandCount: GetRenderingCommandCountForTelemetry(),
+                    elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - skipStart);
+                return;
+            }
 
             XRCamera? camera = cameraOverride ?? ResolveActiveCameraWithPawnRefresh();
             if (camera is null)
@@ -1162,7 +1263,10 @@ namespace XREngine.Rendering
             
             using (RuntimeEngine.Profiler.Start("XRViewport.Render", ProfilerScopeKind.AlwaysOnHotPathLoop))
             {
+                long renderStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
+                using RuntimeTimerFrame.ScopedRenderDeltaOverride renderDeltaScope =
+                    PushSceneRenderDeltaScope(consumeSkippedDelta: IsDesktopFacingOutput() && !shadowPass);
 
                 // Visibility-driven compute deformation (skinning/blendshapes).
                 // This runs on the render thread and uses the swapped (rendering) command buffers.
@@ -1185,6 +1289,14 @@ namespace XREngine.Rendering
 
                 if (!uiThroughPipeline)
                     RenderScreenSpaceUIOverlay(targetFbo);
+
+                RecordFrameOutput(
+                    EFrameOutputPhase.Render,
+                    pacing,
+                    rendered: true,
+                    sceneRendered: !Suppress3DSceneRendering,
+                    commandCount: GetRenderingCommandCountForTelemetry(),
+                    elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - renderStart);
             }
         }
 
@@ -1235,6 +1347,161 @@ namespace XREngine.Rendering
 
             if (!uiThroughPipeline)
                 RenderScreenSpaceUIOverlay(targetFbo);
+        }
+
+        private FrameOutputPacingDecision EvaluateFrameOutputPacing(EFrameOutputKind fallbackOutputKind)
+        {
+            EVrOutputViewKind viewKind = ResolveOutputViewKind();
+            EFrameOutputKind outputKind = ResolveFrameOutputKind(fallbackOutputKind);
+            bool xrCritical = viewKind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye ||
+                outputKind is EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit;
+            return RuntimeRenderingHostServices.Current.EvaluateFrameOutputPacing(viewKind, outputKind, xrCritical);
+        }
+
+        private EVrOutputViewKind ResolveOutputViewKind()
+        {
+            XRCamera? camera = ActiveCamera;
+            if (camera?.StereoEyeLeft == true)
+                return EVrOutputViewKind.LeftEye;
+            if (camera?.StereoEyeLeft == false)
+                return EVrOutputViewKind.RightEye;
+
+            if (!RuntimeRenderingHostServices.Current.IsInVR)
+                return EVrOutputViewKind.DesktopEditor;
+
+            return RuntimeRenderingHostServices.Current.VrMirrorMode == EVrMirrorMode.FullIndependentRender
+                ? EVrOutputViewKind.DesktopEditor
+                : EVrOutputViewKind.CyclopeanDesktop;
+        }
+
+        private EFrameOutputKind ResolveFrameOutputKind(EFrameOutputKind fallback = EFrameOutputKind.DesktopScene)
+        {
+            EVrOutputViewKind viewKind = ResolveOutputViewKind();
+            if (viewKind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye)
+            {
+                return RuntimeRenderingHostServices.Current.IsOpenXRActive
+                    ? EFrameOutputKind.OpenXREyeSubmit
+                    : EFrameOutputKind.OpenVRSubmit;
+            }
+
+            if (RuntimeRenderingHostServices.Current.IsInVR &&
+                RuntimeRenderingHostServices.Current.VrMirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct)
+            {
+                return EFrameOutputKind.DesktopMirror;
+            }
+
+            return fallback;
+        }
+
+        private bool IsDesktopFacingOutput()
+        {
+            EVrOutputViewKind viewKind = ResolveOutputViewKind();
+            return viewKind is EVrOutputViewKind.DesktopEditor or EVrOutputViewKind.CyclopeanDesktop;
+        }
+
+        private void AccumulateSkippedSceneRenderDelta()
+        {
+            double deltaSeconds = RuntimeRenderingHostServices.Current.RenderDeltaSeconds;
+            if (!double.IsFinite(deltaSeconds) || deltaSeconds <= 0.0)
+                return;
+
+            _skippedSceneRenderDeltaSeconds = Math.Min(
+                _skippedSceneRenderDeltaSeconds + deltaSeconds,
+                1.0);
+        }
+
+        private RuntimeTimerFrame.ScopedRenderDeltaOverride PushSceneRenderDeltaScope(bool consumeSkippedDelta)
+        {
+            double deltaSeconds = RuntimeRenderingHostServices.Current.RenderDeltaSeconds;
+            if (!double.IsFinite(deltaSeconds) || deltaSeconds < 0.0)
+                deltaSeconds = 0.0;
+
+            if (consumeSkippedDelta && _skippedSceneRenderDeltaSeconds > 0.0)
+            {
+                deltaSeconds += _skippedSceneRenderDeltaSeconds;
+                _skippedSceneRenderDeltaSeconds = 0.0;
+            }
+
+            return RuntimeTimerFrame.PushScopedRenderDeltaSeconds((float)Math.Clamp(deltaSeconds, 0.0, 1.0));
+        }
+
+        private void RecordFrameOutput(
+            EFrameOutputPhase phase,
+            in FrameOutputPacingDecision pacing,
+            bool rendered,
+            bool sceneRendered,
+            int commandCount,
+            long elapsedTicks,
+            double gpuMs = 0.0)
+        {
+            double cpuMs = elapsedTicks <= 0L
+                ? 0.0
+                : elapsedTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            EFrameOutputKind outputKind = pacing.OutputKind;
+            EVrOutputViewKind viewKind = pacing.ViewKind;
+            IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
+            if (phase == EFrameOutputPhase.Render &&
+                gpuMs <= 0.0 &&
+                hostServices.GpuRenderPipelineTimingsReady &&
+                hostServices.GpuRenderPipelineFrameMs > 0.0)
+            {
+                gpuMs = hostServices.GpuRenderPipelineFrameMs;
+            }
+
+            EVrMirrorMode mirrorMode = hostServices.VrMirrorMode;
+            bool desktopFacing = viewKind is EVrOutputViewKind.DesktopEditor or EVrOutputViewKind.CyclopeanDesktop;
+            bool mirror = outputKind == EFrameOutputKind.DesktopMirror ||
+                (desktopFacing && (mirrorMode is EVrMirrorMode.BlitSubmittedEye or EVrMirrorMode.CyclopeanReconstruct));
+            bool separateSceneRender =
+                sceneRendered &&
+                hostServices.IsInVR &&
+                viewKind == EVrOutputViewKind.DesktopEditor &&
+                mirrorMode == EVrMirrorMode.FullIndependentRender;
+            bool sharedVisibility =
+                viewKind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye ||
+                (viewKind == EVrOutputViewKind.CyclopeanDesktop && mirrorMode != EVrMirrorMode.FullIndependentRender);
+
+            var telemetry = new FrameOutputTelemetry(
+                outputKind,
+                viewKind,
+                phase,
+                pacing,
+                BuildFrameOutputName(outputKind, viewKind),
+                _renderPipeline.DebugName,
+                true,
+                rendered,
+                sceneRendered,
+                mirror,
+                separateSceneRender,
+                sharedVisibility,
+                commandCount,
+                0,
+                0,
+                0,
+                cpuMs,
+                gpuMs);
+            hostServices.RecordRenderFrameOutput(telemetry);
+        }
+
+        private static string BuildFrameOutputName(EFrameOutputKind outputKind, EVrOutputViewKind viewKind)
+            => outputKind switch
+            {
+                EFrameOutputKind.DesktopMirror => "VR desktop mirror",
+                EFrameOutputKind.OpenXREyeSubmit => viewKind == EVrOutputViewKind.LeftEye ? "OpenXR left eye" : "OpenXR right eye",
+                EFrameOutputKind.OpenVRSubmit => viewKind == EVrOutputViewKind.LeftEye ? "OpenVR left eye" : "OpenVR right eye",
+                _ => viewKind.ToString(),
+            };
+
+        private int GetUpdatingCommandCountForTelemetry()
+        {
+            RenderCommandCollection commands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            return commands.GetUpdatingCommandCount();
+        }
+
+        private int GetRenderingCommandCountForTelemetry()
+        {
+            RenderCommandCollection commands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            return commands.GetRenderingCommandCount();
         }
 
         /// <summary>

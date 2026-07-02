@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Shouldly;
+using System;
 using System.Runtime.CompilerServices;
 using XREngine.Rendering.Commands;
 
@@ -32,6 +33,29 @@ public class GpuIndirectPhase3ScaffoldTests
 
         settings.GpuOcclusionCullingMode = EOcclusionCullingMode.Disabled;
         settings.GpuOcclusionCullingMode.ShouldBe(EOcclusionCullingMode.Disabled);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void EngineSettings_OcclusionMode_InspectorValueIgnoresEnvOverride()
+    {
+        string? previousMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode, "Disabled");
+
+            var settings = new XREngine.Engine.Rendering.EngineSettings
+            {
+                GpuOcclusionCullingMode = EOcclusionCullingMode.CpuQueryAsync
+            };
+
+            settings.GpuOcclusionCullingMode.ShouldBe(EOcclusionCullingMode.CpuQueryAsync);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode, previousMode);
+        }
     }
 
     [Test]

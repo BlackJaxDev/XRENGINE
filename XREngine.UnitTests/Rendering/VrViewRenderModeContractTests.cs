@@ -418,6 +418,42 @@ public sealed class VrViewRenderModeContractTests
     }
 
     [Test]
+    public void ViewRenderGroup_TwoEyeVisibilityFrustumExcludesSkippedCyclopeanView()
+    {
+        VrFoveationResolution resolution = new(
+            EVrFoveationMode.Fixed,
+            EVrFoveationMode.Fixed,
+            EVrFoveationQualityPreset.Aggressive,
+            EVrFoveationCapabilityPath.VulkanFragmentShadingRate,
+            true,
+            null);
+        ViewFoveationContext cyclopeanFoveation = ViewFoveationContext.FromResolution(
+            resolution,
+            Vector2.Zero,
+            Vector2.Zero,
+            new Vector2(0.1f, 0.9f),
+            EVrFoveationGazeSource.FixedCenter,
+            backendResourceKey: 707UL);
+
+        ViewRenderContext left = CreateView(EVrOutputViewKind.LeftEye, 0u, Matrix4x4.CreateTranslation(0.032f, 0.0f, 0.0f));
+        ViewRenderContext right = CreateView(EVrOutputViewKind.RightEye, 1u, Matrix4x4.CreateTranslation(-0.032f, 0.0f, 0.0f));
+        ViewRenderContext cyclopean = CreateView(
+            EVrOutputViewKind.CyclopeanDesktop,
+            2u,
+            Matrix4x4.Identity,
+            CreateProjection(55.0f),
+            cyclopeanFoveation);
+
+        ViewVisibilityFrustumContext twoEye = ViewRenderGroupContext.BuildCombinedRuntimeVisibilityFrustum(left, right);
+        ViewVisibilityFrustumContext threeView = ViewRenderGroupContext.BuildCombinedRuntimeVisibilityFrustum(left, right, cyclopean);
+
+        twoEye.IsConservative.ShouldBeTrue();
+        twoEye.IncludesFoveatedViews.ShouldBeFalse();
+        threeView.IsConservative.ShouldBeTrue();
+        threeView.IncludesFoveatedViews.ShouldBeTrue();
+    }
+
+    [Test]
     public void ViewRenderGroup_CombinedRuntimeBindsOneImmutableVisibleSetToAllViews()
     {
         ViewRenderContext left = CreateView(EVrOutputViewKind.LeftEye, 0u, Matrix4x4.CreateTranslation(0.032f, 0.0f, 0.0f));
@@ -583,6 +619,41 @@ public sealed class VrViewRenderModeContractTests
         foveatedVisibility.IncludesFoveatedViews.ShouldBeTrue();
         foveatedVisibility.ViewMatrix.ShouldBe(offVisibility.ViewMatrix);
         foveatedVisibility.ProjectionMatrix.ShouldBe(offVisibility.ProjectionMatrix);
+    }
+
+    [Test]
+    public void SourceContracts_FrameOutputPacingManifestAndMirrorPolicy()
+    {
+        string contracts = ReadWorkspaceFile("XREngine.Runtime.Core/Settings/VrViewContextContracts.cs");
+        string settings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
+        string stats = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.FrameOutputs.cs");
+        string host = ReadWorkspaceFile("XRENGINE/Engine/Engine.RuntimeRenderingHostServices.cs");
+        string viewport = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRViewport.cs");
+        string timerFrame = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeTimerFrame.cs");
+        string window = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
+        string packet = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
+        string profileCapture = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfileCapture.cs");
+
+        contracts.ShouldContain("enum EFrameOutputKind");
+        contracts.ShouldContain("enum EVrMirrorMode");
+        contracts.ShouldContain("FrameOutputPacingDecision");
+        contracts.ShouldContain("FrameOutputTelemetry");
+        settings.ShouldContain("public EVrMirrorMode VrMirrorMode");
+        settings.ShouldContain("public float VrCyclopeanDesktopTargetRateHz");
+        settings.ShouldContain("public bool VrDesktopAutoSkipWhenOverBudget");
+        stats.ShouldContain("IsCadenceFrameDue");
+        stats.ShouldContain("VR120");
+        host.ShouldContain("EvaluateFrameOutputPacing");
+        host.ShouldContain("RecordForcedSkip");
+        viewport.ShouldContain("CollectVisibleAutomatic");
+        viewport.ShouldContain("RecordFrameOutput");
+        viewport.ShouldContain("AccumulateSkippedSceneRenderDelta");
+        viewport.ShouldContain("PushSceneRenderDeltaScope");
+        timerFrame.ShouldContain("PushScopedRenderDeltaSeconds");
+        window.ShouldContain("TryRenderDesktopMirrorComposition");
+        packet.ShouldContain("FrameOutputManifestData");
+        profileCapture.ShouldContain("\"frame_outputs\"");
+        profileCapture.ShouldContain("ProfileCaptureSchemaVersion = 3");
     }
 
     [Test]

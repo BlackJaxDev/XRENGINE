@@ -140,6 +140,7 @@ namespace XREngine
             private const int ProducerBufferAutoGrowthFactor = 8;
             private const int RenderThreadScopeStackCapacity = 256;
             private const string RenderDispatchScopeName = "EngineTimer.DispatchRender";
+            private const string CollectVisibleWaitForRenderScopeName = "EngineTimer.CollectVisibleThread.WaitForRender";
             private const string RenderStallLogFileName = "profiler-render-stalls.log";
             private const string ConditionalLoopSpikeLogFileName = "profiler-conditional-loop-spikes.log";
             private const string OneOffInvokeLogFileName = "profiler-one-off-invokes.log";
@@ -1140,7 +1141,9 @@ namespace XREngine
                     builder.Append("[").Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")).AppendLine("] FPS drop detected");
                     builder.Append("FrameTimeSeconds: ").Append(frame.FrameTime.ToString("F6")).AppendLine();
                     builder.Append("ThreadId: ").Append(thread.ThreadId).AppendLine();
-                    builder.Append("ThreadTotalTimeMs: ").Append(thread.TotalTimeMs.ToString("F3")).AppendLine();
+                    builder.Append("ThreadWorkTimeMs: ").Append(thread.TotalTimeMs.ToString("F3")).AppendLine();
+                    builder.Append("ThreadWallTimeMs: ").Append(thread.WallTimeMs.ToString("F3")).AppendLine();
+                    builder.Append("ThreadDownstreamRenderPressureMs: ").Append(thread.DownstreamRenderPressureMs.ToString("F3")).AppendLine();
                     builder.Append("CurrentMs: ").Append(currentMs.ToString("F3")).AppendLine();
                     builder.Append("PreviousMs: ").Append(previousMs.ToString("F3")).AppendLine();
                     builder.Append("BaselineMs: ").Append(baselineMs.ToString("F3")).AppendLine();
@@ -1161,7 +1164,9 @@ namespace XREngine
                     {
                         string blockingHotPath = GetHottestPath(blockingThread.RootNodes, out float blockingHotPathMs, out ProfilerScopeKind blockingHotPathScopeKind);
                         builder.Append("LikelyBlockingThreadId: ").Append(blockingThread.ThreadId).AppendLine();
-                        builder.Append("LikelyBlockingThreadTotalTimeMs: ").Append(blockingThread.TotalTimeMs.ToString("F3")).AppendLine();
+                        builder.Append("LikelyBlockingThreadWorkTimeMs: ").Append(blockingThread.TotalTimeMs.ToString("F3")).AppendLine();
+                        builder.Append("LikelyBlockingThreadWallTimeMs: ").Append(blockingThread.WallTimeMs.ToString("F3")).AppendLine();
+                        builder.Append("LikelyBlockingThreadDownstreamRenderPressureMs: ").Append(blockingThread.DownstreamRenderPressureMs.ToString("F3")).AppendLine();
                         builder.Append("LikelyBlockingHotPathMs: ").Append(blockingHotPathMs.ToString("F3")).AppendLine();
                         builder.Append("LikelyBlockingHotPathScopeKind: ").Append(blockingHotPathScopeKind).AppendLine();
                         builder.Append("LikelyBlockingHotPath: ").Append(blockingHotPath).AppendLine();
@@ -1221,7 +1226,9 @@ namespace XREngine
                     builder.Append("  ").Append(i + 1).Append(". Thread ").Append(thread.ThreadId);
                     if (thread.ThreadId == currentThreadId)
                         builder.Append(" (current)");
-                    builder.Append(" total=").Append(thread.TotalTimeMs.ToString("F3"));
+                    builder.Append(" work=").Append(thread.TotalTimeMs.ToString("F3"));
+                    builder.Append(" ms wall=").Append(thread.WallTimeMs.ToString("F3"));
+                    builder.Append(" ms downstreamRenderPressure=").Append(thread.DownstreamRenderPressureMs.ToString("F3"));
                     builder.Append(" ms hot=").Append(hotPathMs.ToString("F3")).Append(" ms ");
                     builder.Append("kind=").Append(hotPathScopeKind).Append(" ");
                     builder.Append(hotPath).AppendLine();
@@ -1275,6 +1282,26 @@ namespace XREngine
                     ProfilerScopeKind.OneOffInvoke => 3,
                     _ => 0,
                 };
+
+            private static float CalculateDownstreamRenderPressureMs(IReadOnlyList<ProfilerNodeSnapshot> nodes)
+            {
+                float total = 0.0f;
+                for (int i = 0; i < nodes.Count; i++)
+                    total += CalculateDownstreamRenderPressureMs(nodes[i]);
+                return total;
+            }
+
+            private static float CalculateDownstreamRenderPressureMs(ProfilerNodeSnapshot node)
+            {
+                float total = IsDownstreamRenderPressureScope(node.Name) ? node.ElapsedMs : 0.0f;
+                IReadOnlyList<ProfilerNodeSnapshot> children = node.Children;
+                for (int i = 0; i < children.Count; i++)
+                    total += CalculateDownstreamRenderPressureMs(children[i]);
+                return total;
+            }
+
+            private static bool IsDownstreamRenderPressureScope(string? scopeName)
+                => string.Equals(scopeName, CollectVisibleWaitForRenderScopeName, StringComparison.Ordinal);
 
             private static bool TryGetLikelyBlockingThread(IReadOnlyList<ProfilerThreadSnapshot> threads, int currentThreadId, out ProfilerThreadSnapshot blockingThread)
             {
@@ -1738,15 +1765,20 @@ namespace XREngine
                 public int ThreadId { get; }
                 public IReadOnlyList<ProfilerNodeSnapshot> RootNodes { get; }
                 public float TotalTimeMs { get; }
+                public float WallTimeMs { get; }
+                public float DownstreamRenderPressureMs { get; }
 
                 public ProfilerThreadSnapshot(int threadId, IReadOnlyList<ProfilerNodeSnapshot> rootNodes)
                 {
                     ThreadId = threadId;
                     RootNodes = rootNodes;
-                    float total = 0f;
+                    float wallTotal = 0f;
                     for (int i = 0; i < rootNodes.Count; i++)
-                        total += rootNodes[i].ElapsedMs;
-                    TotalTimeMs = total;
+                        wallTotal += rootNodes[i].ElapsedMs;
+
+                    WallTimeMs = wallTotal;
+                    DownstreamRenderPressureMs = CalculateDownstreamRenderPressureMs(rootNodes);
+                    TotalTimeMs = Math.Max(0.0f, wallTotal - DownstreamRenderPressureMs);
                 }
             }
 
@@ -1833,6 +1865,8 @@ namespace XREngine
                 public int ThreadId { get; } = threadId;
                 public IReadOnlyList<ProfilerNodeSnapshot> RootNodes { get; } = rootNodes;
                 public float TotalTimeMs { get; } = 0f;
+                public float WallTimeMs { get; } = 0f;
+                public float DownstreamRenderPressureMs { get; } = 0f;
             }
 
             public sealed class ProfilerNodeSnapshot(string name, float elapsedMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)

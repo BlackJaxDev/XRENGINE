@@ -1636,14 +1636,20 @@ public unsafe partial class VulkanRenderer
 
         using var scope = NewCommandScope();
 
+        // The auto-exposure texture is only touched by compute (storage writes/reads)
+        // and fragment sampling, so those stages fully cover prior access without
+        // resorting to AllCommands.
+        const PipelineStageFlags autoExposureStages =
+            PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.FragmentShaderBit;
+
         TransitionPhysicalGroupForCopy(
             scope.CommandBuffer,
             oldGroup,
             oldLayout,
             ImageLayout.TransferSrcOptimal,
-            AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+            AccessFlags.ShaderWriteBit,
             AccessFlags.TransferReadBit,
-            PipelineStageFlags.AllCommandsBit,
+            autoExposureStages,
             PipelineStageFlags.TransferBit);
 
         TransitionPhysicalGroupForCopy(
@@ -1651,9 +1657,9 @@ public unsafe partial class VulkanRenderer
             newGroup,
             newLayout,
             ImageLayout.TransferDstOptimal,
-            AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+            AccessFlags.ShaderWriteBit,
             AccessFlags.TransferWriteBit,
-            PipelineStageFlags.AllCommandsBit,
+            autoExposureStages,
             PipelineStageFlags.TransferBit);
 
         ImageCopy copy = new()
@@ -1693,9 +1699,9 @@ public unsafe partial class VulkanRenderer
             ImageLayout.TransferDstOptimal,
             newLayout,
             AccessFlags.TransferWriteBit,
-            AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+            AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
             PipelineStageFlags.TransferBit,
-            PipelineStageFlags.AllCommandsBit);
+            autoExposureStages);
 
         oldGroup.LastKnownLayout = ImageLayout.TransferSrcOptimal;
         newGroup.LastKnownLayout = newLayout;

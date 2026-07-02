@@ -692,7 +692,16 @@ The blit uses `glBlitFramebuffer` to copy pixels from mirror to swapchain. If th
 
 ## Desktop Mirror Composition
 
-When VR is active, the desktop window can either render a separate viewport camera or display a low-cost mirror of what the headset sees. The Unit Testing World uses a separate mono desktop camera when `VR.AllowDesktopEditing=false`: the camera is parented under the HMD through a smoothed transform, owns its desktop viewport command collection, suppresses editor UI, and renders through the normal viewport path. The eye-texture composition path remains available for runtime modes that explicitly enable `VrMirrorComposeFromEyeTextures`; replacing its current one-eye blit behavior with depth-aware cyclopean reconstruction is tracked in [VR Mirror Cyclopean Reconstruction TODO](../../work/todo/rendering/vr/vr-mirror-cyclopean-reconstruction-todo.md).
+When VR is active, the desktop window is governed by `VrMirrorMode`:
+`Off`, `BlitSubmittedEye`, `CyclopeanReconstruct`, `LowRatePreview`, or
+`FullIndependentRender`. The standard profiling/default posture is
+`BlitSubmittedEye`, which keeps the desktop window alive but composes it from
+the submitted XR eye output instead of recording another full desktop scene.
+`FullIndependentRender` is opt-in for editor diagnostics that need a separate
+desktop camera and visibility group. `LowRatePreview` keeps the mono/cyclopean
+runtime-camera path available behind the output cadence scheduler, and
+`CyclopeanReconstruct` is the depth-aware reconstruction target tracked in
+[VR Mirror Cyclopean Reconstruction TODO](../../work/todo/rendering/vr/vr-mirror-cyclopean-reconstruction-todo.md).
 
 `TryRenderDesktopMirrorComposition()` in `OpenXRAPI.OpenGL.cs`:
 
@@ -708,7 +717,13 @@ TryRenderDesktopMirrorComposition(targetWidth, targetHeight)
 This is activated in `XRWindow.RenderCallback` when:
 - `Engine.VRState.IsInVR == true`
 - `Engine.Rendering.Settings.RenderWindowsWhileInVR == true`
-- `Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures == true`
+- `Engine.Rendering.Settings.VrMirrorMode` is `BlitSubmittedEye` or
+  `CyclopeanReconstruct`
+
+The profiler `Frame Outputs` manifest reports whether the desktop row is a
+`DesktopMirror` or a separate `DesktopScene`, the active mirror mode, configured
+desktop target rate, achieved rate, skip counts, and whole render-thread frame
+budget band.
 
 ---
 

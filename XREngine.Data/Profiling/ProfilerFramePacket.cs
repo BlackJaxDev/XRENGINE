@@ -41,7 +41,12 @@ public sealed partial class ProfilerFramePacket
 public sealed partial class ProfilerThreadData
 {
     public int ThreadId { get; set; }
+    /// <summary>Classified work time, excluding waits attributed to another thread.</summary>
     public float TotalTimeMs { get; set; }
+    /// <summary>Raw wall-clock time for all root scopes on the thread.</summary>
+    public float WallTimeMs { get; set; }
+    /// <summary>Time spent waiting on downstream render pressure, such as collect-visible waiting for render.</summary>
+    public float DownstreamRenderPressureMs { get; set; }
     public ProfilerNodeData[] RootNodes { get; set; } = [];
 }
 

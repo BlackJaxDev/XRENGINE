@@ -80,6 +80,7 @@ namespace XREngine.Rendering.Occlusion
         private static long _cpuSocRasterMicros;
         private static long _cpuSocTestMicros;
         private static int _cpuSocForceVisible;
+        private static int _cpuSocSelfOccluderSkipped;
         private static int _lastFrameCpuSocTested;
         private static int _lastFrameCpuSocCulled;
         private static int _lastFrameCpuSocOccludersSelected;
@@ -89,6 +90,7 @@ namespace XREngine.Rendering.Occlusion
         private static long _lastFrameCpuSocRasterMicros;
         private static long _lastFrameCpuSocTestMicros;
         private static int _lastFrameCpuSocForceVisible;
+        private static int _lastFrameCpuSocSelfOccluderSkipped;
 
         // Per-decision distribution for the CPU-query path. This is the diagnostic that
         // tells us whether occlusion is failing at the *query* level (hardware reports
@@ -100,6 +102,7 @@ namespace XREngine.Rendering.Occlusion
         private static int _cpuDecisionVisibleHyst;     // Query reported zero, hysteresis still visible
         private static int _cpuDecisionProbe;            // ProbeOnly (periodic depth-proxy retest)
         private static int _cpuDecisionSkip;             // Skip (fully occluded)
+        private static int _cpuDecisionForcedVisible;    // Conservative-visible policy forced the draw
 
         // CpuQueryAsync (GPU dispatch path) — counts proxy-AABB hardware queries submitted
         // and resolved per frame. These are the canonical "is CpuQueryAsync actually doing
@@ -118,6 +121,32 @@ namespace XREngine.Rendering.Occlusion
         private static int _lastFrameCpuDecisionVisibleHyst;
         private static int _lastFrameCpuDecisionProbe;
         private static int _lastFrameCpuDecisionSkip;
+        private static int _lastFrameCpuDecisionForcedVisible;
+
+        private static int _cpuGlobalConservativeFrames;
+        private static int _lastFrameCpuGlobalConservativeFrames;
+        private static int _cpuPendingQueries;
+        private static int _lastFrameCpuPendingQueries;
+        private static int _cpuQueryLatencySamples;
+        private static int _cpuQueryLatencyTotalFrames;
+        private static int _cpuQueryLatencyMaxFrames;
+        private static int _lastFrameCpuQueryLatencySamples;
+        private static int _lastFrameCpuQueryLatencyTotalFrames;
+        private static int _lastFrameCpuQueryLatencyMaxFrames;
+        private static int _cpuUnsupportedStereoQueryMode;
+        private static int _lastFrameCpuUnsupportedStereoQueryMode;
+        private static int _currentCpuMotionTier = (int)ECpuOcclusionMotionTier.Stable;
+        private static int _lastCpuMotionTier = (int)ECpuOcclusionMotionTier.Stable;
+        private static int _currentCpuViewScope = (int)EOcclusionViewScope.MonoDesktop;
+        private static int _lastCpuViewScope = (int)EOcclusionViewScope.MonoDesktop;
+        private static readonly int[] _cpuForcedVisibleReasons = new int[Enum.GetValues<ECpuOcclusionForceVisibleReason>().Length];
+        private static readonly int[] _lastFrameCpuForcedVisibleReasons = new int[Enum.GetValues<ECpuOcclusionForceVisibleReason>().Length];
+        private static readonly int[] _cpuQuerySubmittedReasons = new int[Enum.GetValues<ECpuOcclusionQueryReason>().Length];
+        private static readonly int[] _lastFrameCpuQuerySubmittedReasons = new int[Enum.GetValues<ECpuOcclusionQueryReason>().Length];
+        private static readonly int[] _cpuQueryResolvedReasons = new int[Enum.GetValues<ECpuOcclusionQueryReason>().Length];
+        private static readonly int[] _lastFrameCpuQueryResolvedReasons = new int[Enum.GetValues<ECpuOcclusionQueryReason>().Length];
+        private static readonly int[] _cpuBudgetSkippedReasons = new int[Enum.GetValues<ECpuOcclusionQueryReason>().Length];
+        private static readonly int[] _lastFrameCpuBudgetSkippedReasons = new int[Enum.GetValues<ECpuOcclusionQueryReason>().Length];
 
         /// <summary>Last completed frame: commands fed to CPU-query occlusion.</summary>
         public static int CpuTested => _lastFrameCpuTested;
@@ -186,6 +215,8 @@ namespace XREngine.Rendering.Occlusion
         public static double CpuSocTestMilliseconds => _lastFrameCpuSocTestMicros / 1000.0;
         /// <summary>Last completed frame: true when SOC was forced visible for diagnostics.</summary>
         public static bool CpuSocForceVisible => _lastFrameCpuSocForceVisible != 0;
+        /// <summary>Last completed frame: SOC tests skipped because the command supplied its own occluder.</summary>
+        public static int CpuSocSelfOccluderSkipped => _lastFrameCpuSocSelfOccluderSkipped;
 
         /// <summary>Last completed frame: first-seen commands (no prior query — forced Visible).</summary>
         public static int CpuDecisionSeed => _lastFrameCpuDecisionSeed;
@@ -199,6 +230,37 @@ namespace XREngine.Rendering.Occlusion
         public static int CpuDecisionProbe => _lastFrameCpuDecisionProbe;
         /// <summary>Last completed frame: Skip decisions (fully occluded, no draw, no probe).</summary>
         public static int CpuDecisionSkip => _lastFrameCpuDecisionSkip;
+        /// <summary>Last completed frame: visible decisions forced by conservative policy.</summary>
+        public static int CpuDecisionForcedVisible => _lastFrameCpuDecisionForcedVisible;
+
+        public static ECpuOcclusionMotionTier CpuMotionTier => (ECpuOcclusionMotionTier)_lastCpuMotionTier;
+        public static EOcclusionViewScope CpuActiveViewScope => (EOcclusionViewScope)_lastCpuViewScope;
+        public static int CpuGlobalConservativeFrames => _lastFrameCpuGlobalConservativeFrames;
+        public static int CpuPendingQueries => _lastFrameCpuPendingQueries;
+        public static int CpuQueryLatencySamples => _lastFrameCpuQueryLatencySamples;
+        public static int CpuQueryLatencyMaxFrames => _lastFrameCpuQueryLatencyMaxFrames;
+        public static double CpuQueryLatencyAverageFrames
+            => _lastFrameCpuQueryLatencySamples > 0
+                ? (double)_lastFrameCpuQueryLatencyTotalFrames / _lastFrameCpuQueryLatencySamples
+                : 0.0;
+        public static int CpuUnsupportedStereoQueryMode => _lastFrameCpuUnsupportedStereoQueryMode;
+
+        public static int GetCpuForcedVisibleCount(ECpuOcclusionForceVisibleReason reason)
+            => GetCount(_lastFrameCpuForcedVisibleReasons, (int)reason);
+
+        public static int GetCpuQuerySubmittedCount(ECpuOcclusionQueryReason reason)
+            => GetCount(_lastFrameCpuQuerySubmittedReasons, (int)reason);
+
+        public static int GetCpuQueryResolvedCount(ECpuOcclusionQueryReason reason)
+            => GetCount(_lastFrameCpuQueryResolvedReasons, (int)reason);
+
+        public static int GetCpuBudgetSkippedCount(ECpuOcclusionQueryReason reason)
+            => GetCount(_lastFrameCpuBudgetSkippedReasons, (int)reason);
+
+        public static int CpuForcedVisibleTotal => Sum(_lastFrameCpuForcedVisibleReasons);
+        public static int CpuQuerySubmittedTotal => Sum(_lastFrameCpuQuerySubmittedReasons);
+        public static int CpuQueryResolvedTotal => Sum(_lastFrameCpuQueryResolvedReasons);
+        public static int CpuBudgetSkippedTotal => Sum(_lastFrameCpuBudgetSkippedReasons);
 
         /// <summary>Last completed frame: CpuQueryAsync GPU-dispatch proxy-AABB queries submitted.</summary>
         public static int CpuQueryAsyncSubmitted => _lastFrameCpuQueryAsyncSubmitted;
@@ -245,6 +307,7 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameCpuSocRasterMicros = _cpuSocRasterMicros;
             _lastFrameCpuSocTestMicros = _cpuSocTestMicros;
             _lastFrameCpuSocForceVisible = _cpuSocForceVisible;
+            _lastFrameCpuSocSelfOccluderSkipped = _cpuSocSelfOccluderSkipped;
 
             _lastFrameCpuDecisionSeed = _cpuDecisionSeed;
             _lastFrameCpuDecisionCached = _cpuDecisionCached;
@@ -252,6 +315,20 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameCpuDecisionVisibleHyst = _cpuDecisionVisibleHyst;
             _lastFrameCpuDecisionProbe = _cpuDecisionProbe;
             _lastFrameCpuDecisionSkip = _cpuDecisionSkip;
+            _lastFrameCpuDecisionForcedVisible = _cpuDecisionForcedVisible;
+
+            _lastFrameCpuGlobalConservativeFrames = _cpuGlobalConservativeFrames;
+            _lastFrameCpuPendingQueries = _cpuPendingQueries;
+            _lastFrameCpuQueryLatencySamples = _cpuQueryLatencySamples;
+            _lastFrameCpuQueryLatencyTotalFrames = _cpuQueryLatencyTotalFrames;
+            _lastFrameCpuQueryLatencyMaxFrames = _cpuQueryLatencyMaxFrames;
+            _lastFrameCpuUnsupportedStereoQueryMode = _cpuUnsupportedStereoQueryMode;
+            _lastCpuMotionTier = _currentCpuMotionTier;
+            _lastCpuViewScope = _currentCpuViewScope;
+            SnapshotAndReset(_cpuForcedVisibleReasons, _lastFrameCpuForcedVisibleReasons);
+            SnapshotAndReset(_cpuQuerySubmittedReasons, _lastFrameCpuQuerySubmittedReasons);
+            SnapshotAndReset(_cpuQueryResolvedReasons, _lastFrameCpuQueryResolvedReasons);
+            SnapshotAndReset(_cpuBudgetSkippedReasons, _lastFrameCpuBudgetSkippedReasons);
 
             _lastFrameCpuQueryAsyncSubmitted = _cpuQueryAsyncSubmitted;
             _lastFrameCpuQueryAsyncResolved = _cpuQueryAsyncResolved;
@@ -279,12 +356,20 @@ namespace XREngine.Rendering.Occlusion
             _cpuSocRasterMicros = 0;
             _cpuSocTestMicros = 0;
             _cpuSocForceVisible = 0;
+            _cpuSocSelfOccluderSkipped = 0;
             _cpuDecisionSeed = 0;
             _cpuDecisionCached = 0;
             _cpuDecisionVisibleQuery = 0;
             _cpuDecisionVisibleHyst = 0;
             _cpuDecisionProbe = 0;
             _cpuDecisionSkip = 0;
+            _cpuDecisionForcedVisible = 0;
+            _cpuGlobalConservativeFrames = 0;
+            _cpuPendingQueries = 0;
+            _cpuQueryLatencySamples = 0;
+            _cpuQueryLatencyTotalFrames = 0;
+            _cpuQueryLatencyMaxFrames = 0;
+            _cpuUnsupportedStereoQueryMode = 0;
 
             _cpuQueryAsyncSubmitted = 0;
             _cpuQueryAsyncResolved = 0;
@@ -311,6 +396,56 @@ namespace XREngine.Rendering.Occlusion
             if (count > 0)
                 Interlocked.Add(ref _cpuQueryAsyncOccluded, count);
         }
+
+        public static void RecordCpuMotionTier(ECpuOcclusionMotionTier tier)
+            => Interlocked.Exchange(ref _currentCpuMotionTier, (int)tier);
+
+        public static void RecordCpuActiveViewScope(EOcclusionViewScope scope)
+            => Interlocked.Exchange(ref _currentCpuViewScope, (int)scope);
+
+        public static void RecordCpuGlobalConservativeFrame(ECpuOcclusionForceVisibleReason reason)
+        {
+            _ = reason;
+            Interlocked.Increment(ref _cpuGlobalConservativeFrames);
+        }
+
+        public static void RecordCpuForcedVisible(ECpuOcclusionForceVisibleReason reason, int count = 1)
+        {
+            if (count <= 0)
+                return;
+
+            AddToBucket(_cpuForcedVisibleReasons, (int)reason, count);
+        }
+
+        public static void RecordCpuPendingQueries(int count)
+        {
+            if (count > 0)
+                Interlocked.Add(ref _cpuPendingQueries, count);
+        }
+
+        public static void RecordCpuQuerySubmitted(ECpuOcclusionQueryReason reason, int count = 1)
+        {
+            if (count > 0)
+                AddToBucket(_cpuQuerySubmittedReasons, (int)reason, count);
+        }
+
+        public static void RecordCpuQueryResolved(ECpuOcclusionQueryReason reason, ulong latencyFrames)
+        {
+            AddToBucket(_cpuQueryResolvedReasons, (int)reason, 1);
+            int latency = latencyFrames > int.MaxValue ? int.MaxValue : (int)latencyFrames;
+            Interlocked.Increment(ref _cpuQueryLatencySamples);
+            Interlocked.Add(ref _cpuQueryLatencyTotalFrames, latency);
+            UpdateMax(ref _cpuQueryLatencyMaxFrames, latency);
+        }
+
+        public static void RecordCpuBudgetSkipped(ECpuOcclusionQueryReason reason, int count = 1)
+        {
+            if (count > 0)
+                AddToBucket(_cpuBudgetSkippedReasons, (int)reason, count);
+        }
+
+        public static void RecordCpuUnsupportedStereoQueryMode()
+            => Interlocked.Increment(ref _cpuUnsupportedStereoQueryMode);
 
         /// <summary>Records one CPU-query pass with its candidate count.</summary>
         public static void RecordCpuPassBegin(int candidateCount)
@@ -414,6 +549,9 @@ namespace XREngine.Rendering.Occlusion
         /// <summary>Records one CPU SOC visibility test.</summary>
         public static void RecordCpuSocTested() => Interlocked.Increment(ref _cpuSocTested);
 
+        /// <summary>Records one CPU SOC test skipped to avoid self-occluding the command that populated the mask.</summary>
+        public static void RecordCpuSocSelfOccluderSkipped() => Interlocked.Increment(ref _cpuSocSelfOccluderSkipped);
+
         /// <summary>Records one CPU SOC visibility test that reported occluded.</summary>
         public static void RecordCpuSocCulled() => Interlocked.Increment(ref _cpuSocCulled);
 
@@ -449,6 +587,43 @@ namespace XREngine.Rendering.Occlusion
         private static long ToMicroseconds(double milliseconds)
             => (long)Math.Round(milliseconds * 1000.0);
 
+        private static void AddToBucket(int[] buckets, int index, int count)
+        {
+            if ((uint)index >= (uint)buckets.Length)
+                return;
+            Interlocked.Add(ref buckets[index], count);
+        }
+
+        private static int GetCount(int[] buckets, int index)
+            => (uint)index < (uint)buckets.Length ? buckets[index] : 0;
+
+        private static int Sum(int[] buckets)
+        {
+            int total = 0;
+            for (int i = 0; i < buckets.Length; i++)
+                total += buckets[i];
+            return total;
+        }
+
+        private static void SnapshotAndReset(int[] source, int[] destination)
+        {
+            int count = Math.Min(source.Length, destination.Length);
+            for (int i = 0; i < count; i++)
+                destination[i] = Interlocked.Exchange(ref source[i], 0);
+        }
+
+        private static void UpdateMax(ref int target, int value)
+        {
+            int observed;
+            do
+            {
+                observed = Volatile.Read(ref target);
+                if (value <= observed)
+                    return;
+            }
+            while (Interlocked.CompareExchange(ref target, value, observed) != observed);
+        }
+
         /// <summary>Records a CPU-query decision by category for the diagnostic distribution.</summary>
         public static void RecordCpuDecision(ECpuDecisionKind kind)
         {
@@ -460,6 +635,7 @@ namespace XREngine.Rendering.Occlusion
                 case ECpuDecisionKind.VisibleHysteresis: Interlocked.Increment(ref _cpuDecisionVisibleHyst); break;
                 case ECpuDecisionKind.Probe: Interlocked.Increment(ref _cpuDecisionProbe); break;
                 case ECpuDecisionKind.Skip: Interlocked.Increment(ref _cpuDecisionSkip); break;
+                case ECpuDecisionKind.ForcedVisible: Interlocked.Increment(ref _cpuDecisionForcedVisible); break;
             }
         }
     }
@@ -473,6 +649,7 @@ namespace XREngine.Rendering.Occlusion
         VisibleHysteresis,
         Probe,
         Skip,
+        ForcedVisible,
     }
 
     /// <summary>

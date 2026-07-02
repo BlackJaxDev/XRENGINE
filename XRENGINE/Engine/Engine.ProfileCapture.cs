@@ -75,7 +75,7 @@ public static partial class Engine
         private const string ManifestFileName = "profiler-capture-manifest.json";
         private const string SummaryFileName = "profiler-capture-summary.json";
         private const string RuntimeCaptureDirectoryName = "speed-profiles";
-        private const int ProfileCaptureSchemaVersion = 2;
+        private const int ProfileCaptureSchemaVersion = 3;
         private const int RuntimeCaptureRetentionCount = 3;
         private const int FlushIntervalMilliseconds = 1000;
         private const int MaxBufferedCharacters = 256 * 1024;
@@ -371,6 +371,12 @@ public static partial class Engine
                 VrViewRenderModeEffective: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveVrViewRenderModeEffective),
                 VrViewRenderImplementationPath: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveVrViewRenderImplementationPath),
                 VrTemporalHistoryPolicy: CaptureString(() => Engine.Rendering.Stats.RendererState.ActiveVrTemporalHistoryPolicy),
+                VrMirrorMode: CaptureString(() => Engine.Rendering.Settings.VrMirrorMode.ToString()),
+                RenderWindowsWhileInVR: CaptureString(() => Engine.Rendering.Settings.RenderWindowsWhileInVR ? "true" : "false"),
+                VrMirrorComposeFromEyeTextures: CaptureString(() => Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures ? "true" : "false"),
+                VrDesktopEditorTargetRateHz: CaptureString(() => Engine.Rendering.Settings.VrDesktopEditorTargetRateHz.ToString(CultureInfo.InvariantCulture)),
+                VrCyclopeanDesktopTargetRateHz: CaptureString(() => Engine.Rendering.Settings.VrCyclopeanDesktopTargetRateHz.ToString(CultureInfo.InvariantCulture)),
+                VrDesktopAutoSkipWhenOverBudget: CaptureString(() => Engine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget ? "true" : "false"),
                 ValidationLayersEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.ValidationLayersEnabled ? "true" : "false"),
                 DebugOutputEnabled: CaptureString(() => Engine.Rendering.Stats.RendererState.DebugOutputEnabled ? "true" : "false"),
                 DeferredDebugView: CaptureString(() => global::XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView.ToString(CultureInfo.InvariantCulture)),
@@ -407,7 +413,7 @@ public static partial class Engine
             var manifest = new
             {
                 capture_file = FrameStatsFileName,
-                schema = "xrengine.profile_capture.render_stats.v2",
+                schema = "xrengine.profile_capture.render_stats.v3",
                 schema_version = ProfileCaptureSchemaVersion,
                 fields_note = "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready.",
                 run = metadata,
@@ -427,6 +433,7 @@ public static partial class Engine
             double elapsedMs = TicksToMilliseconds(Math.Max(0L, nowTicks - s_startTicks));
             double gpuPipelineMs = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineFrameMs;
             bool gpuTimingsReady = Engine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineTimingsReady;
+            Engine.Rendering.Stats.FrameOutputManifestSnapshot frameOutputs = Engine.Rendering.Stats.FrameOutputs.LastManifest;
 
             s_lineBuilder.Clear();
             s_lineBuilder.Append('{');
@@ -439,6 +446,10 @@ public static partial class Engine
             ulong renderFrameId = Engine.Rendering.State.RenderFrameId;
             AppendNumberField(s_lineBuilder, "render_frame_id", renderFrameId, ref first);
             AppendNumberField(s_lineBuilder, "completed_frame_id", renderFrameId == 0UL ? 0UL : renderFrameId - 1UL, ref first);
+            AppendNumberField(s_lineBuilder, "update_frame_id", Engine.Rendering.Stats.FrameLifecycle.UpdateFrameId, ref first);
+            AppendNumberField(s_lineBuilder, "collect_frame_id", Engine.Rendering.Stats.FrameLifecycle.CollectFrameId, ref first);
+            AppendNumberField(s_lineBuilder, "swap_frame_id", Engine.Rendering.Stats.FrameLifecycle.SwapFrameId, ref first);
+            AppendNumberField(s_lineBuilder, "present_frame_id", Engine.Rendering.Stats.FrameLifecycle.PresentFrameId, ref first);
             AppendStringField(s_lineBuilder, "capture_mode", metadata.CaptureMode, ref first);
             AppendStringField(s_lineBuilder, "run_label", metadata.RunLabel, ref first);
             AppendStringField(s_lineBuilder, "world_mode", metadata.WorldMode, ref first);
@@ -453,6 +464,13 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "vr_view_render_mode_effective", Engine.Rendering.Stats.RendererState.ActiveVrViewRenderModeEffective, ref first);
             AppendStringField(s_lineBuilder, "vr_view_render_implementation_path", Engine.Rendering.Stats.RendererState.ActiveVrViewRenderImplementationPath, ref first);
             AppendStringField(s_lineBuilder, "vr_temporal_history_policy", Engine.Rendering.Stats.RendererState.ActiveVrTemporalHistoryPolicy, ref first);
+            AppendStringField(s_lineBuilder, "vr_mirror_mode", frameOutputs.MirrorMode.ToString(), ref first);
+            AppendStringField(s_lineBuilder, "vr_visibility_policy", frameOutputs.VisibilityPolicy.ToString(), ref first);
+            AppendBoolField(s_lineBuilder, "render_windows_while_in_vr", Engine.Rendering.Settings.RenderWindowsWhileInVR, ref first);
+            AppendBoolField(s_lineBuilder, "vr_mirror_compose_from_eye_textures", Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures, ref first);
+            AppendNumberField(s_lineBuilder, "vr_desktop_editor_target_rate_hz", Engine.Rendering.Settings.VrDesktopEditorTargetRateHz, ref first);
+            AppendNumberField(s_lineBuilder, "vr_cyclopean_desktop_target_rate_hz", Engine.Rendering.Settings.VrCyclopeanDesktopTargetRateHz, ref first);
+            AppendBoolField(s_lineBuilder, "vr_desktop_auto_skip_when_over_budget", Engine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget, ref first);
             AppendStringField(s_lineBuilder, "active_render_backend", Engine.Rendering.Stats.RendererState.ActiveRenderBackend, ref first);
             AppendBoolField(s_lineBuilder, "validation_layers_enabled", Engine.Rendering.Stats.RendererState.ValidationLayersEnabled, ref first);
             AppendBoolField(s_lineBuilder, "debug_output_enabled", Engine.Rendering.Stats.RendererState.DebugOutputEnabled, ref first);
@@ -464,6 +482,23 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "update_ms", updateMs, ref first);
             AppendNumberField(s_lineBuilder, "collect_visible_ms", collectVisibleMs, ref first);
             AppendNumberField(s_lineBuilder, "fixed_update_ms", fixedUpdateMs, ref first);
+            AppendStringField(s_lineBuilder, "collect_visible_late_policy", Engine.Rendering.Stats.FrameLifecycle.CollectVisibleLatePolicy, ref first);
+            AppendNumberField(s_lineBuilder, "collect_wait_for_render_ms", Engine.Rendering.Stats.FrameLifecycle.CollectWaitForRenderMs, ref first);
+            AppendStringField(s_lineBuilder, "collect_wait_reason", Engine.Rendering.Stats.FrameLifecycle.CollectWaitReason, ref first);
+            AppendNumberField(s_lineBuilder, "render_wait_for_collect_ms", Engine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs, ref first);
+            AppendStringField(s_lineBuilder, "render_wait_reason", Engine.Rendering.Stats.FrameLifecycle.RenderWaitReason, ref first);
+            AppendNumberField(s_lineBuilder, "skipped_collect_frames", Engine.Rendering.Stats.FrameLifecycle.SkippedCollectFrames, ref first);
+            AppendNumberField(s_lineBuilder, "stale_collect_reuse_frames", Engine.Rendering.Stats.FrameLifecycle.StaleCollectReuseFrames, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_frame_id", frameOutputs.FrameId, ref first);
+            AppendStringField(s_lineBuilder, "frame_output_budget_band", frameOutputs.BudgetBand, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_budget_ms", frameOutputs.BudgetMs, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_whole_frame_ms", frameOutputs.WholeFrameMs, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_whole_frame_p50_ms", frameOutputs.WholeFrameP50Ms, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_whole_frame_p90_ms", frameOutputs.WholeFrameP90Ms, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_whole_frame_p95_ms", frameOutputs.WholeFrameP95Ms, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_whole_frame_p99_ms", frameOutputs.WholeFrameP99Ms, ref first);
+            AppendNumberField(s_lineBuilder, "frame_output_whole_frame_worst_ms", frameOutputs.WholeFrameWorstMs, ref first);
+            AppendRawJsonField(s_lineBuilder, "frame_outputs", JsonSerializer.Serialize(CreateFrameOutputCaptureManifest(frameOutputs)), ref first);
             AppendNullableNumberField(
                 s_lineBuilder,
                 "render_thread_minus_gpu_ms",
@@ -821,6 +856,68 @@ public static partial class Engine
             }
         }
 
+        private static object CreateFrameOutputCaptureManifest(Engine.Rendering.Stats.FrameOutputManifestSnapshot snapshot)
+        {
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs = snapshot.Outputs ?? [];
+            object[] rows = new object[outputs.Length];
+            for (int i = 0; i < outputs.Length; i++)
+            {
+                Engine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
+                rows[i] = new
+                {
+                    frame_id = output.FrameId,
+                    output_kind = output.OutputKind.ToString(),
+                    view_kind = output.ViewKind.ToString(),
+                    name = output.Name,
+                    pipeline_name = output.PipelineName,
+                    active = output.Active,
+                    rendered = output.Rendered,
+                    scene_rendered = output.SceneRendered,
+                    mirror = output.Mirror,
+                    separate_scene_render = output.SeparateSceneRender,
+                    shared_visibility = output.SharedVisibility,
+                    due = output.Due,
+                    skipped = output.Skipped,
+                    cadence_skipped = output.CadenceSkipped,
+                    auto_skipped = output.AutoSkipped,
+                    skip_reason = output.SkipReason.ToString(),
+                    configured_target_rate_hz = output.ConfiguredTargetRateHz,
+                    source_rate_hz = output.SourceRateHz,
+                    achieved_rate_hz = output.AchievedRateHz,
+                    total_render_count = output.TotalRenderCount,
+                    total_skip_count = output.TotalSkipCount,
+                    command_count = output.CommandCount,
+                    draw_calls = output.DrawCalls,
+                    multi_draw_calls = output.MultiDrawCalls,
+                    triangles = output.Triangles,
+                    collect_cpu_ms = output.CollectCpuMs,
+                    swap_cpu_ms = output.SwapCpuMs,
+                    render_cpu_ms = output.RenderCpuMs,
+                    submit_cpu_ms = output.SubmitCpuMs,
+                    overlay_cpu_ms = output.OverlayCpuMs,
+                    present_cpu_ms = output.PresentCpuMs,
+                    gpu_ms = output.GpuMs,
+                };
+            }
+
+            return new
+            {
+                frame_id = snapshot.FrameId,
+                vr_active = snapshot.VrActive,
+                mirror_mode = snapshot.MirrorMode.ToString(),
+                visibility_policy = snapshot.VisibilityPolicy.ToString(),
+                budget_band = snapshot.BudgetBand,
+                budget_ms = snapshot.BudgetMs,
+                whole_frame_ms = snapshot.WholeFrameMs,
+                whole_frame_p50_ms = snapshot.WholeFrameP50Ms,
+                whole_frame_p90_ms = snapshot.WholeFrameP90Ms,
+                whole_frame_p95_ms = snapshot.WholeFrameP95Ms,
+                whole_frame_p99_ms = snapshot.WholeFrameP99Ms,
+                whole_frame_worst_ms = snapshot.WholeFrameWorstMs,
+                outputs = rows,
+            };
+        }
+
         private static void AppendStringField(StringBuilder builder, string name, string value, ref bool first)
         {
             AppendFieldPrefix(builder, name, ref first);
@@ -939,6 +1036,7 @@ public static partial class Engine
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.ForceSingleBucket);
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.HizCullTrace);
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.GpuTimestampDense);
+            ValidateEnvEnum(errors, XREngineEnvironmentVariables.CollectVisibleLatePolicy, "BlockUntilFresh", "ReusePreviousVisibility", "block", "fresh", "reuse", "stale");
 
             ValidateEnvEnum(
                 errors,
@@ -1051,6 +1149,12 @@ public static partial class Engine
             string VrViewRenderModeEffective,
             string VrViewRenderImplementationPath,
             string VrTemporalHistoryPolicy,
+            string VrMirrorMode,
+            string RenderWindowsWhileInVR,
+            string VrMirrorComposeFromEyeTextures,
+            string VrDesktopEditorTargetRateHz,
+            string VrCyclopeanDesktopTargetRateHz,
+            string VrDesktopAutoSkipWhenOverBudget,
             string ValidationLayersEnabled,
             string DebugOutputEnabled,
             string DeferredDebugView,

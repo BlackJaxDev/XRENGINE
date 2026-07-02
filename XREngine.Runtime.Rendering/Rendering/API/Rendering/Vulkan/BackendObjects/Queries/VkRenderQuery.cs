@@ -45,6 +45,14 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
+                // vkCmdResetQueryPool is queued on the GPU. If we reuse a pool whose
+                // previous result was available, a CPU poll before the queued reset
+                // executes can observe that stale availability bit. CPU occlusion
+                // queries are sparse and only re-begun after their prior result has
+                // resolved, so use a fresh pool for each submission.
+                if (_queryPool.Handle != 0)
+                    DestroyQueryPool();
+
                 if (!EnsureQueryPool(queryType))
                     return false;
 

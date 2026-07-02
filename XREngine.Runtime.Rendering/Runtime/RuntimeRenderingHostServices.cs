@@ -12,6 +12,7 @@ using XREngine.Data.Trees;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Shadows;
 using XREngine.Scene;
 namespace XREngine.Rendering;
@@ -153,6 +154,21 @@ public static class RuntimeRenderingHostServices
         public bool EnableGpuIndirectDebugLogging => RuntimeRenderingHostServiceDefaults.EnableGpuIndirectDebugLogging;
         public EOcclusionCullingMode GpuOcclusionCullingMode => RuntimeRenderingHostServiceDefaults.GpuOcclusionCullingMode;
         public int CpuQueryOcclusionRetestPeriodFrames => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionRetestPeriodFrames;
+        public int CpuQueryOcclusionMaxQueriesPerFrame => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMaxQueriesPerFrame;
+        public float CpuQueryOcclusionVisibleDemotionBudgetFraction => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVisibleDemotionBudgetFraction;
+        public int CpuQueryOcclusionRecoveryMinCadenceFrames => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionRecoveryMinCadenceFrames;
+        public float CpuQueryOcclusionSmallMotionMeters => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionSmallMotionMeters;
+        public float CpuQueryOcclusionMediumMotionMeters => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMediumMotionMeters;
+        public float CpuQueryOcclusionLargeMotionMeters => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionLargeMotionMeters;
+        public float CpuQueryOcclusionCameraCutMeters => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionCameraCutMeters;
+        public float CpuQueryOcclusionSmallRotationDegrees => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionSmallRotationDegrees;
+        public float CpuQueryOcclusionMediumRotationDegrees => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMediumRotationDegrees;
+        public float CpuQueryOcclusionLargeRotationDegrees => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionLargeRotationDegrees;
+        public float CpuQueryOcclusionCameraCutRotationDegrees => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionCameraCutRotationDegrees;
+        public float CpuQueryOcclusionVrHeadMotionMeters => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVrHeadMotionMeters;
+        public float CpuQueryOcclusionVrHeadRotationDegrees => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionVrHeadRotationDegrees;
+        public ECpuQueryStereoMode CpuQueryOcclusionStereoMode => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionStereoMode;
+        public int CpuQueryOcclusionMaxPendingFrames => RuntimeRenderingHostServiceDefaults.CpuQueryOcclusionMaxPendingFrames;
         public bool EnableCpuSoftwareOcclusionCulling => RuntimeRenderingHostServiceDefaults.EnableCpuSoftwareOcclusionCulling;
         public int CpuSocBufferWidth => RuntimeRenderingHostServiceDefaults.CpuSocBufferWidth;
         public int CpuSocBufferHeight => RuntimeRenderingHostServiceDefaults.CpuSocBufferHeight;
@@ -177,6 +193,8 @@ public static class RuntimeRenderingHostServices
         public float DefaultTsrRenderScale => RuntimeRenderingHostServiceDefaults.DefaultTsrRenderScale;
         public bool EnableRenderStatisticsTracking => RuntimeRenderingHostServiceDefaults.EnableRenderStatisticsTracking;
         public bool EnableGpuRenderPipelineProfiling => RuntimeRenderingHostServiceDefaults.EnableGpuRenderPipelineProfiling;
+        public bool GpuRenderPipelineTimingsReady => RuntimeRenderingHostServiceDefaults.GpuRenderPipelineTimingsReady;
+        public double GpuRenderPipelineFrameMs => RuntimeRenderingHostServiceDefaults.GpuRenderPipelineFrameMs;
         public ulong CurrentRenderFrameId => RuntimeRenderingHostServiceDefaults.CurrentRenderFrameId;
 
         #endregion
@@ -1043,8 +1061,9 @@ public static class RuntimeRenderingHostServices
         public OpenXRAPI.OpenXrActionSyncPolicy OpenXrActionSyncPolicy => OpenXRAPI.OpenXrActionSyncPolicy.PredictedOnly;
         public OpenXRAPI.OpenXrRenderPacingMode OpenXrRenderPacingMode => RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
 
-        public void TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
+        public bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
         {
+            return false;
         }
 
         public void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
