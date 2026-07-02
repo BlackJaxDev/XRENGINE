@@ -834,7 +834,7 @@ public sealed class ShadowAtlasManager
 
     private static bool CanDirectionalCascadeJoinGroup(ShadowAtlasAllocation allocation)
         => allocation.IsResident &&
-            allocation.SkipReason == SkipReason.None &&
+            allocation.SkipReason is SkipReason.None or SkipReason.StaleTileReused &&
             allocation.AtlasKind == EShadowAtlasKind.Directional &&
             allocation.InnerPixelRect.Width > 0 &&
             allocation.InnerPixelRect.Height > 0;

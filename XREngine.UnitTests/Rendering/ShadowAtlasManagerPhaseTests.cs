@@ -36,6 +36,10 @@ public sealed class ShadowAtlasManagerPhaseTests
         "TryGetDirectionalCascadeGroupContainingRequest",
         BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("ShadowAtlasManager.TryGetDirectionalCascadeGroupContainingRequest method was not found.");
+    private static readonly MethodInfo ShouldRenderDirectionalRefreshPastBudgetMethod = typeof(ShadowAtlasManager).GetMethod(
+        "ShouldRenderDirectionalRefreshPastBudget",
+        BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("ShadowAtlasManager.ShouldRenderDirectionalRefreshPastBudget method was not found.");
     private static readonly MethodInfo ResolveShadowDirtyReasonMethod = typeof(Lights3DCollection).GetMethod(
         "ResolveShadowDirtyReason",
         BindingFlags.Static | BindingFlags.NonPublic)
@@ -414,7 +418,7 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
-    public void RenderScheduledTiles_DefersDirectionalCameraFitRefreshPastTileBudgetWhenStaleTilesExist()
+    public void SolveAllocations_DirectionalCameraFitRefreshKeepsStaleCascadeGroupUntilRenderCompletes()
     {
         ShadowAtlasManager manager = CreateManager(pageSize: 2048u, maxPages: 1, maxTiles: 1);
         DirectionalLightComponent light = CreateDirectionalLight(2048u);
@@ -442,6 +446,7 @@ public sealed class ShadowAtlasManagerPhaseTests
         manager.PublishFrameData();
 
         ShadowAtlasFrameData frameData = manager.PublishedFrameData;
+        frameData.DirectionalCascadeGroupCount.ShouldBe(1);
         for (int i = 0; i < movedRequests.Length; i++)
         {
             frameData.TryGetAllocation(movedRequests[i].Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
@@ -449,6 +454,48 @@ public sealed class ShadowAtlasManagerPhaseTests
             allocation.ActiveFallback.ShouldBe(ShadowFallbackMode.StaleTile);
             allocation.SkipReason.ShouldBe(SkipReason.StaleTileReused);
         }
+    }
+
+    [Test]
+    public void DirectionalCameraFitRefresh_DoesNotBypassTileBudgetWhenStaleTilesExist()
+    {
+        DirectionalLightComponent directionalLight = CreateDirectionalLight(1024u);
+        ShadowMapRequest directionalRefresh = CreateRequest(
+            directionalLight,
+            EShadowProjectionType.DirectionalCascade,
+            0,
+            512u,
+            128u,
+            10000.0f,
+            2u,
+            dirtyReason: ShadowDirtyReason.ContentChanged | ShadowDirtyReason.ProjectionOrCameraFitChanged);
+
+        ShouldRenderDirectionalRefreshPastBudget(directionalRefresh).ShouldBeFalse();
+
+        ShadowMapRequest firstDirectional = CreateRequest(
+            directionalLight,
+            EShadowProjectionType.DirectionalCascade,
+            0,
+            512u,
+            128u,
+            10000.0f,
+            2u,
+            dirtyReason: ShadowDirtyReason.FirstSubmission | ShadowDirtyReason.NeverRendered);
+
+        ShouldRenderDirectionalRefreshPastBudget(firstDirectional).ShouldBeTrue();
+
+        SpotLightComponent spotLight = CreateSpotLight(1024u);
+        ShadowMapRequest localRefresh = CreateRequest(
+            spotLight,
+            EShadowProjectionType.SpotPrimary,
+            0,
+            512u,
+            128u,
+            10000.0f,
+            2u,
+            dirtyReason: ShadowDirtyReason.ContentChanged | ShadowDirtyReason.ProjectionOrCameraFitChanged);
+
+        ShouldRenderDirectionalRefreshPastBudget(localRefresh).ShouldBeFalse();
     }
 
     [Test]
@@ -1282,6 +1329,9 @@ public sealed class ShadowAtlasManagerPhaseTests
 
         return false;
     }
+
+    private static bool ShouldRenderDirectionalRefreshPastBudget(ShadowMapRequest request)
+        => (bool)ShouldRenderDirectionalRefreshPastBudgetMethod.Invoke(null, [request])!;
 
     private static ShadowDirtyReason ResolveDirtyReasonForContentChange(
         LightComponent light,

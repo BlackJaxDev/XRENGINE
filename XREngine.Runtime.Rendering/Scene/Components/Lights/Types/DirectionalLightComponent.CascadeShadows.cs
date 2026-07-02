@@ -130,6 +130,7 @@ namespace XREngine.Components.Lights
             public readonly List<CascadedShadowAabb> Aabbs = new(4);
             public readonly List<CascadeShadowSlice> Slices = new(MaxCascadeRenderCount);
             public readonly DirectionalCascadeAtlasSlot[] AtlasSlots = new DirectionalCascadeAtlasSlot[MaxCascadeRenderCount];
+            public readonly DirectionalCascadeAtlasSlot[] PreviousAtlasSlots = new DirectionalCascadeAtlasSlot[MaxCascadeRenderCount];
             public float RangeNear;
             public float RangeFar;
             public XRTexture2DArray? ShadowMapTexture;
@@ -187,7 +188,15 @@ namespace XREngine.Components.Lights
             ShadowFallbackMode Fallback,
             BoundingRectangle PixelRect,
             BoundingRectangle InnerPixelRect,
-            ulong LastRenderedFrame);
+            ulong LastRenderedFrame,
+            ulong ContentVersion,
+            bool HasCascadeUniformData,
+            float SplitFarDistance,
+            float BlendWidth,
+            float BiasMin,
+            float BiasMax,
+            float ReceiverOffset,
+            Matrix4x4 WorldToLightSpaceMatrix);
 
         private const int MaxCascadeRenderCount = 8;
         private const int MaxCascadeSourceFrustumCount = 8;
@@ -866,19 +875,35 @@ namespace XREngine.Components.Lights
 
             lock (_cascadeDataLock)
             {
-                List<CascadeShadowSlice> slices = GetCascadeSourceState(source).Slices;
+                DirectionalCascadeSourceState state = GetCascadeSourceState(source);
+                List<CascadeShadowSlice> slices = state.Slices;
                 cascadeCount = slices.Count;
                 for (int i = 0; i < copyCount; i++)
                 {
                     if (i < cascadeCount)
                     {
-                        CascadeShadowSlice slice = slices[i];
-                        splits[i] = slice.SplitFarDistance;
-                        blendWidths[i] = slice.BlendWidth;
-                        biasMins[i] = slice.BiasMin;
-                        biasMaxes[i] = slice.BiasMax;
-                        receiverOffsets[i] = slice.ReceiverOffset;
-                        matrices[i] = slice.WorldToLightSpaceMatrix;
+                        DirectionalCascadeAtlasSlot atlasSlot = state.AtlasSlots[i];
+                        if (UsesDirectionalShadowAtlasForCurrentEncoding &&
+                            atlasSlot.HasCascadeUniformData &&
+                            IsDirectionalAtlasSlotSampleable(atlasSlot))
+                        {
+                            splits[i] = atlasSlot.SplitFarDistance;
+                            blendWidths[i] = atlasSlot.BlendWidth;
+                            biasMins[i] = atlasSlot.BiasMin;
+                            biasMaxes[i] = atlasSlot.BiasMax;
+                            receiverOffsets[i] = atlasSlot.ReceiverOffset;
+                            matrices[i] = atlasSlot.WorldToLightSpaceMatrix;
+                        }
+                        else
+                        {
+                            CascadeShadowSlice slice = slices[i];
+                            splits[i] = slice.SplitFarDistance;
+                            blendWidths[i] = slice.BlendWidth;
+                            biasMins[i] = slice.BiasMin;
+                            biasMaxes[i] = slice.BiasMax;
+                            receiverOffsets[i] = slice.ReceiverOffset;
+                            matrices[i] = slice.WorldToLightSpaceMatrix;
+                        }
                     }
                     else
                     {
@@ -893,13 +918,32 @@ namespace XREngine.Components.Lights
             }
         }
 
+        internal void BeginDirectionalAtlasSlotPublish()
+        {
+            lock (_cascadeDataLock)
+            {
+                CopyAtlasSlotsForPublish(_desktopCascadeState);
+                CopyAtlasSlotsForPublish(_hmdCascadeState);
+
+                _primaryAtlasSlot = default;
+            }
+        }
+
+        private static void CopyAtlasSlotsForPublish(DirectionalCascadeSourceState state)
+        {
+            Array.Copy(state.AtlasSlots, state.PreviousAtlasSlots, state.AtlasSlots.Length);
+            Array.Clear(state.AtlasSlots);
+        }
+
         internal void ClearDirectionalAtlasSlots()
         {
             lock (_cascadeDataLock)
             {
                 _primaryAtlasSlot = default;
                 Array.Clear(_desktopCascadeState.AtlasSlots);
+                Array.Clear(_desktopCascadeState.PreviousAtlasSlots);
                 Array.Clear(_hmdCascadeState.AtlasSlots);
+                Array.Clear(_hmdCascadeState.PreviousAtlasSlots);
             }
         }
 
@@ -908,7 +952,9 @@ namespace XREngine.Components.Lights
             lock (_cascadeDataLock)
             {
                 Array.Clear(_desktopCascadeState.AtlasSlots);
+                Array.Clear(_desktopCascadeState.PreviousAtlasSlots);
                 Array.Clear(_hmdCascadeState.AtlasSlots);
+                Array.Clear(_hmdCascadeState.PreviousAtlasSlots);
             }
         }
 
@@ -917,7 +963,14 @@ namespace XREngine.Components.Lights
             int recordIndex,
             float nearPlane,
             float farPlane,
-            uint desiredResolution)
+            uint desiredResolution,
+            bool hasCascadeUniformData,
+            float splitFarDistance,
+            float blendWidth,
+            float biasMin,
+            float biasMax,
+            float receiverOffset,
+            Matrix4x4 worldToLightSpaceMatrix)
         {
             uint sampleResolution = LightComponent.GetShadowAtlasSampleResolution(allocation);
             float texelSize = sampleResolution > 0u ? 1.0f / sampleResolution : 0.0f;
@@ -939,8 +992,41 @@ namespace XREngine.Components.Lights
                 Fallback: allocation.ActiveFallback,
                 PixelRect: allocation.PixelRect,
                 InnerPixelRect: allocation.InnerPixelRect,
-                LastRenderedFrame: allocation.LastRenderedFrame);
+                LastRenderedFrame: allocation.LastRenderedFrame,
+                ContentVersion: allocation.ContentVersion,
+                HasCascadeUniformData: hasCascadeUniformData,
+                SplitFarDistance: splitFarDistance,
+                BlendWidth: blendWidth,
+                BiasMin: biasMin,
+                BiasMax: biasMax,
+                ReceiverOffset: receiverOffset,
+                WorldToLightSpaceMatrix: worldToLightSpaceMatrix);
         }
+
+        private static bool ShouldPreserveStaleCascadeAtlasUniformData(
+            in ShadowAtlasAllocation allocation,
+            in DirectionalCascadeAtlasSlot previous)
+            => previous.HasAllocation &&
+               previous.HasCascadeUniformData &&
+               previous.IsResident &&
+               previous.LastRenderedFrame != 0u &&
+               previous.LastRenderedFrame == allocation.LastRenderedFrame &&
+               previous.ContentVersion == allocation.ContentVersion &&
+               allocation.ActiveFallback == ShadowFallbackMode.StaleTile;
+
+        private static DirectionalCascadeAtlasSlot PreserveStaleCascadeAtlasUniformData(
+            in DirectionalCascadeAtlasSlot next,
+            in DirectionalCascadeAtlasSlot previous)
+            => next with
+            {
+                HasCascadeUniformData = true,
+                SplitFarDistance = previous.SplitFarDistance,
+                BlendWidth = previous.BlendWidth,
+                BiasMin = previous.BiasMin,
+                BiasMax = previous.BiasMax,
+                ReceiverOffset = previous.ReceiverOffset,
+                WorldToLightSpaceMatrix = previous.WorldToLightSpaceMatrix,
+            };
 
         internal void SetCascadeAtlasSlot(
             ShadowRequestSource source,
@@ -955,7 +1041,30 @@ namespace XREngine.Components.Lights
                 return;
 
             lock (_cascadeDataLock)
-                GetCascadeSourceState(source).AtlasSlots[index] = CreateAtlasSlot(allocation, recordIndex, nearPlane, farPlane, desiredResolution);
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(source);
+                bool hasSlice = (uint)index < (uint)state.Slices.Count;
+                CascadeShadowSlice slice = hasSlice ? state.Slices[index] : default;
+                DirectionalCascadeAtlasSlot slot = CreateAtlasSlot(
+                    allocation,
+                    recordIndex,
+                    nearPlane,
+                    farPlane,
+                    desiredResolution,
+                    hasSlice,
+                    hasSlice ? slice.SplitFarDistance : farPlane,
+                    hasSlice ? slice.BlendWidth : 0.0f,
+                    hasSlice ? slice.BiasMin : 0.0f,
+                    hasSlice ? slice.BiasMax : ShadowSlopeBiasTexels,
+                    hasSlice ? slice.ReceiverOffset : 0.0f,
+                    hasSlice ? slice.WorldToLightSpaceMatrix : Matrix4x4.Identity);
+
+                DirectionalCascadeAtlasSlot previous = state.PreviousAtlasSlots[index];
+                if (ShouldPreserveStaleCascadeAtlasUniformData(allocation, previous))
+                    slot = PreserveStaleCascadeAtlasUniformData(slot, previous);
+
+                state.AtlasSlots[index] = slot;
+            }
         }
 
         internal void SetCascadeAtlasSlot(
@@ -975,7 +1084,19 @@ namespace XREngine.Components.Lights
             uint desiredResolution)
         {
             lock (_cascadeDataLock)
-                _primaryAtlasSlot = CreateAtlasSlot(allocation, recordIndex, nearPlane, farPlane, desiredResolution);
+                _primaryAtlasSlot = CreateAtlasSlot(
+                    allocation,
+                    recordIndex,
+                    nearPlane,
+                    farPlane,
+                    desiredResolution,
+                    hasCascadeUniformData: false,
+                    splitFarDistance: farPlane,
+                    blendWidth: 0.0f,
+                    biasMin: 0.0f,
+                    biasMax: ShadowSlopeBiasTexels,
+                    receiverOffset: 0.0f,
+                    worldToLightSpaceMatrix: Matrix4x4.Identity);
         }
 
         /// <summary>
