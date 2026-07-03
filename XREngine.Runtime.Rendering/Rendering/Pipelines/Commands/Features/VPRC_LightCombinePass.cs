@@ -415,7 +415,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             materialProgram.Uniform("DirectionalShadowAtlasMaxStaleFrames", (float)RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeAtlasStaleFrames);
 
             bool useCascadedDirectionalShadows = false;
-            bool directionalAtlasSampleable = false;
+            bool directionalAtlasUsable = false;
             bool useDirectionalShadowAtlas = false;
             bool legacyDirectionalCascadeBound = false;
             if (_currentLightComponent is DirectionalLightComponent directionalLight)
@@ -454,9 +454,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                     uniformCache.DirectionalShadowAtlasPacked0,
                     uniformCache.DirectionalShadowAtlasUvScaleBias,
                     uniformCache.DirectionalShadowAtlasDepthParams,
-                    out directionalAtlasSampleable);
+                    out directionalAtlasUsable);
 
-                if (useDirectionalShadowAtlas && !directionalAtlasSampleable)
+                if (useDirectionalShadowAtlas && !directionalAtlasUsable)
                     useDirectionalShadowAtlas = false;
 
                 if (useCascadedDirectionalShadows && directionalCascadeReceiverTexture is not null)
@@ -508,7 +508,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             bool hasShadowMap = _currentLightComponent.CastsShadows && selectedShadowMap is not null;
-            bool directionalHasShadowMap = directionalAtlasSampleable ||
+            bool directionalHasShadowMap = directionalAtlasUsable ||
                 legacyDirectionalCascadeBound;
             if (_currentLightComponent is DirectionalLightComponent)
                 directionalHasShadowMap |= !useDirectionalShadowAtlas && hasShadowMap;
@@ -801,7 +801,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             IVector4[] directionalShadowAtlasPacked0,
             Vector4[] directionalShadowAtlasUvScaleBias,
             Vector4[] directionalShadowAtlasDepthParams,
-            out bool hasSampleableAtlasTile)
+            out bool hasUsableAtlasState)
         {
             var lights = ResolveLightsForLight(directionalLight);
             bool requested = directionalLight.UsesDirectionalShadowAtlasForCurrentEncoding &&
@@ -811,7 +811,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             Array.Clear(directionalShadowAtlasPacked0);
             Array.Clear(directionalShadowAtlasUvScaleBias);
             Array.Clear(directionalShadowAtlasDepthParams);
-            hasSampleableAtlasTile = false;
+            hasUsableAtlasState = false;
             if (requested)
             {
                 directionalLight.CopyPublishedDirectionalAtlasUniformData(
@@ -820,21 +820,25 @@ namespace XREngine.Rendering.Pipelines.Commands
                     directionalShadowAtlasPacked0,
                     directionalShadowAtlasUvScaleBias,
                     directionalShadowAtlasDepthParams);
-                hasSampleableAtlasTile = AreRequiredDirectionalAtlasTilesSampleable(
-                    directionalShadowAtlasPacked0,
-                    useCascadedDirectionalShadows ? directionalLight.GetActiveCascadeCount(activeRenderingCamera) : 1);
+                int requiredAtlasSlotCount = useCascadedDirectionalShadows ? directionalLight.GetActiveCascadeCount(activeRenderingCamera) : 1;
+                hasUsableAtlasState = AreRequiredDirectionalAtlasSlotsUsable(directionalShadowAtlasPacked0, requiredAtlasSlotCount);
             }
 
             XRTexture2DArray? atlasTexture = null;
-            if (hasSampleableAtlasTile)
+            if (hasUsableAtlasState)
             {
-                ShadowMapFormatSelection shadowFormat = directionalLight.ResolveShadowMapFormat(preferredStorageFormat: null);
-                hasSampleableAtlasTile =
-                    lights!.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, shadowFormat.Encoding, 0, out atlasTexture) &&
-                    AreRequiredDirectionalAtlasTilesSampleable(
-                        directionalShadowAtlasPacked0,
-                        useCascadedDirectionalShadows ? directionalLight.GetActiveCascadeCount(activeRenderingCamera) : 1,
-                        checked((int)Math.Max(1u, atlasTexture.Depth)));
+                int requiredAtlasSlotCount = useCascadedDirectionalShadows ? directionalLight.GetActiveCascadeCount(activeRenderingCamera) : 1;
+                bool needsAtlasTexture = AnyRequiredDirectionalAtlasSlotSamplesPage(directionalShadowAtlasPacked0, requiredAtlasSlotCount);
+                if (needsAtlasTexture)
+                {
+                    ShadowMapFormatSelection shadowFormat = directionalLight.ResolveShadowMapFormat(preferredStorageFormat: null);
+                    hasUsableAtlasState =
+                        lights!.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, shadowFormat.Encoding, 0, out atlasTexture) &&
+                        AreRequiredDirectionalAtlasSlotsUsable(
+                            directionalShadowAtlasPacked0,
+                            requiredAtlasSlotCount,
+                            checked((int)Math.Max(1u, atlasTexture.Depth)));
+                }
             }
             materialProgram.Sampler(DirectionalShadowAtlasName, atlasTexture ?? DummyShadowMapArray, DirectionalShadowAtlasUnit);
 
@@ -842,22 +846,22 @@ namespace XREngine.Rendering.Pipelines.Commands
                 directionalLight,
                 activeRenderingCamera,
                 requested,
-                hasSampleableAtlasTile,
+                hasUsableAtlasState,
                 useCascadedDirectionalShadows,
                 lights,
                 directionalShadowAtlasPacked0);
 
-            materialProgram.Uniform("DirectionalShadowAtlasEnabled", hasSampleableAtlasTile);
+            materialProgram.Uniform("DirectionalShadowAtlasEnabled", hasUsableAtlasState);
             materialProgram.Uniform("DirectionalShadowAtlasPacked0", directionalShadowAtlasPacked0);
             materialProgram.Uniform("DirectionalShadowAtlasUvScaleBias", directionalShadowAtlasUvScaleBias);
             materialProgram.Uniform("DirectionalShadowAtlasDepthParams", directionalShadowAtlasDepthParams);
-            return hasSampleableAtlasTile;
+            return hasUsableAtlasState;
         }
 
-        private static bool AreRequiredDirectionalAtlasTilesSampleable(IVector4[] packed0, int count)
-            => AreRequiredDirectionalAtlasTilesSampleable(packed0, count, int.MaxValue);
+        private static bool AreRequiredDirectionalAtlasSlotsUsable(IVector4[] packed0, int count)
+            => AreRequiredDirectionalAtlasSlotsUsable(packed0, count, int.MaxValue);
 
-        private static bool AreRequiredDirectionalAtlasTilesSampleable(IVector4[] packed0, int count, int maxPageCount)
+        private static bool AreRequiredDirectionalAtlasSlotsUsable(IVector4[] packed0, int count, int maxPageCount)
         {
             int clampedCount = Math.Min(Math.Max(count, 0), packed0.Length);
             if (clampedCount <= 0)
@@ -866,12 +870,35 @@ namespace XREngine.Rendering.Pipelines.Commands
             for (int i = 0; i < clampedCount; i++)
             {
                 IVector4 packed = packed0[i];
-                if (packed.X == 0 || packed.Y < 0 || packed.Y >= maxPageCount)
+                if (DirectionalAtlasSlotSamplesPage(packed))
+                {
+                    if (packed.Y < 0 || packed.Y >= maxPageCount)
+                        return false;
+                    continue;
+                }
+
+                if (!HasExplicitNonLegacyDirectionalAtlasFallback(packed))
                     return false;
             }
 
             return true;
         }
+
+        private static bool AnyRequiredDirectionalAtlasSlotSamplesPage(IVector4[] packed0, int count)
+        {
+            int clampedCount = Math.Min(Math.Max(count, 0), packed0.Length);
+            for (int i = 0; i < clampedCount; i++)
+                if (DirectionalAtlasSlotSamplesPage(packed0[i]))
+                    return true;
+
+            return false;
+        }
+
+        private static bool DirectionalAtlasSlotSamplesPage(IVector4 packed)
+            => packed.X != 0;
+
+        private static bool HasExplicitNonLegacyDirectionalAtlasFallback(IVector4 packed)
+            => packed.Z > 0 && packed.Z != (int)ShadowFallbackMode.Legacy;
 
         private static void LogDeferredDirectionalShadowBinding(
             DirectionalLightComponent light,

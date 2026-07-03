@@ -255,8 +255,12 @@ namespace XREngine.Rendering.Vulkan
             out BlitImageInfo info)
         {
             info = default;
+            string? resourceName = texture.Name;
+            if (string.IsNullOrWhiteSpace(resourceName))
+                resourceName = texture.GetDescribingName();
+
             if (GetOrCreateAPIRenderObject(texture, true) is not { } apiObject)
-                return false;
+                return TryResolvePhysicalGroupBlitImage(texture, resourceName, mipLevel, layerIndex, aspectMask, stage, access, out info);
 
             if (apiObject is VkTextureView textureView)
             {
@@ -268,10 +272,10 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (apiObject is not IVkImageDescriptorSource source)
-                return false;
+                return TryResolvePhysicalGroupBlitImage(texture, resourceName, mipLevel, layerIndex, aspectMask, stage, access, out info);
 
             if (source.DescriptorImage.Handle == 0)
-                return false;
+                return TryResolvePhysicalGroupBlitImage(texture, resourceName, mipLevel, layerIndex, aspectMask, stage, access, out info);
 
             Format format = source.DescriptorFormat;
             if (IsDepthOrStencilAspect(aspectMask))
@@ -309,10 +313,6 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            string? resourceName = texture.Name;
-            if (string.IsNullOrWhiteSpace(resourceName))
-                resourceName = texture.GetDescribingName();
-
             if (!resolvedSubresourceLayout &&
                 !string.IsNullOrWhiteSpace(resourceName) &&
                 ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup? group) &&
@@ -346,6 +346,63 @@ namespace XREngine.Rendering.Vulkan
                 access,
                 source);
 
+            return info.IsValid;
+        }
+
+        private bool TryResolvePhysicalGroupBlitImage(
+            XRTexture texture,
+            string? resourceName,
+            int mipLevel,
+            int layerIndex,
+            ImageAspectFlags aspectMask,
+            PipelineStageFlags stage,
+            AccessFlags access,
+            out BlitImageInfo info)
+        {
+            info = default;
+            if (string.IsNullOrWhiteSpace(resourceName) ||
+                !ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup? group) ||
+                group is null ||
+                !group.IsAllocated ||
+                group.Image.Handle == 0)
+            {
+                return false;
+            }
+
+            if (IsDepthOrStencilAspect(aspectMask))
+            {
+                if (!IsDepthOrStencilFormat(group.Format))
+                    return false;
+            }
+            else if (!aspectMask.HasFlag(ImageAspectFlags.ColorBit))
+            {
+                return false;
+            }
+
+            uint baseArrayLayer = ResolveBlitBaseArrayLayer(texture, layerIndex);
+            uint layerCount = Math.Max(group.Template.Layers, 1u);
+            if (baseArrayLayer >= layerCount)
+                baseArrayLayer = layerCount - 1u;
+
+            uint mipLevels = Math.Max(group.MipLevels, 1u);
+            uint resolvedMipLevel = Math.Min((uint)Math.Max(mipLevel, 0), mipLevels - 1u);
+            uint width = Math.Max(group.ResolvedExtent.Width >> (int)resolvedMipLevel, 1u);
+            uint height = Math.Max(group.ResolvedExtent.Height >> (int)resolvedMipLevel, 1u);
+            ImageLayout layout = group.GetKnownLayout(resolvedMipLevel, 1, baseArrayLayer, 1);
+            if (layout == ImageLayout.Undefined)
+                layout = group.LastKnownLayout;
+
+            info = new BlitImageInfo(
+                group.Image,
+                group.Format,
+                aspectMask,
+                baseArrayLayer,
+                1,
+                resolvedMipLevel,
+                new Extent2D(width, height),
+                layout,
+                stage,
+                access);
             return info.IsValid;
         }
 

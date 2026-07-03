@@ -1857,7 +1857,7 @@ void main()
                 return false;
             }
 
-            if (!dlssRequested && frameGenRequested && !TryEnsureNativeDlssFrameGenerationSession(renderer, viewport, out string frameGenerationSessionFailure))
+            if (frameGenRequested && !TryEnsureNativeDlssFrameGenerationSession(renderer, viewport, out string frameGenerationSessionFailure))
             {
                 failureReason = frameGenerationSessionFailure;
                 return false;
@@ -2013,6 +2013,17 @@ void main()
                 outputImage,
                 exposureImage,
                 dispatchParameters);
+
+            if (frameGenRequested)
+            {
+                renderer.EnqueueDlssFrameGeneration(
+                    passIndex,
+                    _nativeDlssFrameGenerationSession!,
+                    depthImage,
+                    motionImage,
+                    outputImage,
+                    dispatchParameters);
+            }
 
             _fallbackSourceTexture = dlssOutputTexture;
             _fallbackApplySharpen = false;

@@ -122,10 +122,29 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            grading.MarkGpuAutoExposureReady(false);
-
             if (RuntimeEngine.StartupPresentationEnabled)
                 return;
+
+            XRViewport? viewport = ActivePipelineInstance.RenderState.WindowViewport ?? ActivePipelineInstance.LastWindowViewport;
+            if (viewport?.Suppress3DSceneRendering == true)
+            {
+                Debug.RenderingEvery(
+                    "ExposureUpdate.Skip.Suppress3DSceneRendering",
+                    TimeSpan.FromSeconds(2),
+                    "[ExposureUpdate] Holding auto exposure during suppressed 3D viewport frame.");
+                return;
+            }
+
+            if (viewport?.SuppressAutoExposureUpdates == true)
+            {
+                Debug.RenderingEvery(
+                    "ExposureUpdate.Skip.SuppressAutoExposureUpdates",
+                    TimeSpan.FromSeconds(2),
+                    "[ExposureUpdate] Holding auto exposure while the viewport requested exposure stability.");
+                return;
+            }
+
+            grading.MarkGpuAutoExposureReady(false);
 
             if (IsAutoExposureRestrictedPass())
             {

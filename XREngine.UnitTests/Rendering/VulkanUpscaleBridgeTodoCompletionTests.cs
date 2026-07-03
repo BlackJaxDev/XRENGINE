@@ -187,6 +187,8 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         vendorSource.ShouldContain("TryEnsureNativeDlssOutputTexture(outputWidth, outputHeight, outputHdr");
         vendorSource.ShouldContain("TryEnsureNativeDlssSession(renderer, viewport");
         vendorSource.ShouldContain("TryEnsureNativeDlssFrameGenerationSession(renderer, viewport");
+        vendorSource.ShouldContain("if (frameGenRequested && !TryEnsureNativeDlssFrameGenerationSession(renderer, viewport");
+        vendorSource.ShouldNotContain("if (!dlssRequested && frameGenRequested && !TryEnsureNativeDlssFrameGenerationSession");
         vendorSource.ShouldContain("renderer.TryResolveStreamlineImage(sourceColorTexture, depthOnly: false");
         vendorSource.ShouldContain("renderer.EnqueueDlssUpscale(");
         vendorSource.ShouldContain("renderer.EnqueueDlssFrameGeneration(");
@@ -199,6 +201,13 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         vendorSource.ShouldContain("in motionImage");
         vendorSource.ShouldContain("in hudlessImage");
         vendorSource.ShouldContain("NVIDIA DLSS frame generation requires a HUD-less color buffer matching the backbuffer.");
+        int dlssUpscaleEnqueueIndex = vendorSource.IndexOf("renderer.EnqueueDlssUpscale(", StringComparison.Ordinal);
+        int dlssFrameGenerationAfterUpscaleIndex = vendorSource.IndexOf(
+            "renderer.EnqueueDlssFrameGeneration(\n                    passIndex,\n                    _nativeDlssFrameGenerationSession!,\n                    depthImage,\n                    motionImage,\n                    outputImage,\n                    dispatchParameters);",
+            dlssUpscaleEnqueueIndex,
+            StringComparison.Ordinal);
+        dlssUpscaleEnqueueIndex.ShouldBeGreaterThanOrEqualTo(0);
+        dlssFrameGenerationAfterUpscaleIndex.ShouldBeGreaterThan(dlssUpscaleEnqueueIndex);
 
         string interopSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanRenderer.StreamlineInterop.cs").Replace("\r\n", "\n");
         interopSource.ShouldContain("internal readonly record struct VulkanStreamlineImage");
@@ -357,6 +366,12 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         engineRenderingSource.ShouldContain("InvalidateAllVulkanUpscaleBridges(\"anti-aliasing settings changed\");");
         engineRenderingSource.ShouldContain("NotifyVulkanUpscaleBridgeVendorSelectionChanged(\"NVIDIA DLSS preference changed\");");
         engineRenderingSource.ShouldContain("NotifyVulkanUpscaleBridgeVendorSelectionChanged(\"Intel XeSS preference changed\");");
+        engineRenderingSource.ShouldContain("RefreshWindowsAfterVendorUpscalePreferenceChanged();");
+        engineRenderingSource.ShouldContain("window.InvalidateScenePanelResources();");
+        engineRenderingSource.ShouldContain("window.RequestRenderStateRecheck(resetCircuitBreaker: true);");
+        engineRenderingSource.ShouldContain("FrameGenerationRequested={8} FrameGenerationAvailable={9} FrameGenerationUnavailableReason={10}");
+        engineRenderingSource.ShouldContain("NvidiaDlssFrameGenerationMode is Off");
+        engineRenderingSource.ShouldContain("Frame generation is requested, but unavailable");
 
         string vendorUpscaleSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_VendorUpscale.cs").Replace("\r\n", "\n");
         vendorUpscaleSource.ShouldContain("viewport?.Window?.Renderer is OpenGLRenderer openGlRenderer &&");
@@ -462,6 +477,10 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         dlssManagerSource.ShouldContain("ThirdParty/NVIDIA/SDK/win-x64/");
         dlssManagerSource.ShouldContain("Do not download NVIDIA runtime DLLs from third-party DLL sites");
         dlssManagerSource.ShouldContain("public static bool RequiredRuntimeDllsAvailable");
+        dlssManagerSource.ShouldContain("Path.Combine(AppContext.BaseDirectory, libraryName)");
+        dlssManagerSource.ShouldContain("TryLoadNativeLibrary(runtimePath, out handle)");
+        dlssManagerSource.ShouldContain("public static bool FrameGenerationAvailable");
+        dlssManagerSource.ShouldContain("public static string FrameGenerationUnavailableReason");
 
         readmeSource.ShouldContain("https://github.com/NVIDIA-RTX/Streamline/releases");
         readmeSource.ShouldContain("sl.interposer.dll");
@@ -478,6 +497,11 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         imguiPropertyEditorSource.ShouldContain("DrawInspectorMemberLabel(property, displayName, description, activeOverride);");
         imguiPropertyEditorSource.ShouldContain("NvidiaDlssManager.RequiredRuntimeDllsAvailable");
         imguiPropertyEditorSource.ShouldContain("This DLSS setting will not do anything");
+        imguiPropertyEditorSource.ShouldContain("IsNvidiaDlssFrameGenerationMember(member)");
+        imguiPropertyEditorSource.ShouldContain("Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration");
+        imguiPropertyEditorSource.ShouldContain("frame generation mode is Off");
+        imguiPropertyEditorSource.ShouldContain("NvidiaDlssManager.FrameGenerationAvailable");
+        imguiPropertyEditorSource.ShouldContain("NvidiaDlssManager.FrameGenerationUnavailableReason");
         imguiPropertyEditorSource.ShouldContain("ImGui.TextColored(DlssRuntimeWarningColor, \"!\")");
     }
 
@@ -492,6 +516,9 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         dlssSource.ShouldContain("_boundDeviceHandle = sidecar.Device.Handle;");
         dlssSource.ShouldContain("private const string StreamlineProjectId = \"f61b5f80-6a02-4c83-8bb2-96ab8e33d2d7\";");
         dlssSource.ShouldContain("ProjectId = Marshal.StringToHGlobalAnsi(StreamlineProjectId),");
+        dlssSource.ShouldContain("TryLoadRuntimeLibrary(StreamlineLibrary, out _libraryHandle)");
+        dlssSource.ShouldContain("or on the native probing path");
+        dlssSource.ShouldContain("if (!EnsureFrameGenerationRequirements(out failureReason))");
         dlssSource.ShouldContain("internal static int BridgeFailureGeneration");
         dlssSource.ShouldContain("internal static bool HasTerminalBridgeFailure");
         dlssSource.ShouldContain("MarkTerminalBridgeFailure(failureReason);");

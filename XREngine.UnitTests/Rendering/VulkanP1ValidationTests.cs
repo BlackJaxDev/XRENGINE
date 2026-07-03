@@ -350,8 +350,11 @@ public sealed class VulkanP1ValidationTests
 
         string allocatorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/VulkanResourceAllocator.cs");
         allocatorSource.ShouldContain("ComputePhysicalPlanUsageSignature");
-        allocatorSource.ShouldContain("BuildUsageProfiles(passMetadata, planner)");
-        allocatorSource.ShouldContain("pair.Value.Signature");
+        allocatorSource.ShouldContain("Physical allocations are descriptor-driven");
+        allocatorSource.ShouldContain("planner.FrameBufferDescriptors.OrderBy");
+        allocatorSource.ShouldNotContain("BuildUsageProfiles(passMetadata, planner)");
+        allocatorSource.ShouldContain("usage |= ImageUsageFlags.SampledBit;");
+        allocatorSource.ShouldContain("BufferUsageFlags.UniformBufferBit");
     }
 
     [Test]

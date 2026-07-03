@@ -711,6 +711,7 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             CollectSwap = ToSlice(snap.CollectSwap),
             Update = ToSlice(snap.Update),
             FixedUpdate = ToSlice(snap.FixedUpdate),
+            Scopes = ToScopeSlices(snap.Scopes),
         };
     }
 
@@ -723,6 +724,32 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             Samples = ring.Samples,
             Capacity = ring.Capacity,
         };
+
+    private static AllocationScopeSlice[] ToScopeSlices(Engine.AllocationScopeSnapshot[] scopes)
+    {
+        if (scopes.Length == 0)
+            return [];
+
+        AllocationScopeSlice[] slices = new AllocationScopeSlice[scopes.Length];
+        for (int i = 0; i < scopes.Length; i++)
+        {
+            Engine.AllocationScopeSnapshot scope = scopes[i];
+            slices[i] = new AllocationScopeSlice
+            {
+                Name = scope.Name,
+                Category = scope.Category,
+                BudgetBytes = scope.BudgetBytes,
+                LastBytes = scope.LastBytes,
+                AverageBytes = scope.AverageBytes,
+                MaxBytes = scope.MaxBytes,
+                Samples = scope.Samples,
+                Capacity = scope.Capacity,
+                OverBudgetCount = scope.OverBudgetCount,
+            };
+        }
+
+        return slices;
+    }
 
     private static BvhMetricsPacket? CollectBvhMetrics()
     {

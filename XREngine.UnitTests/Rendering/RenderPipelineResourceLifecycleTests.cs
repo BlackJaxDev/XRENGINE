@@ -355,6 +355,50 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void VulkanPlanner_PersistentColorTargetsKeepStablePhysicalUsageAcrossMetadataChanges()
+    {
+        RenderResourceRegistry registry = new();
+        registry.RegisterTextureDescriptor(new TextureResourceDescriptor(
+            "FinalColor",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(128u, 64u),
+            FormatLabel: ESizedInternalFormat.Rgba16f.ToString(),
+            Usage: RenderPipelineResourceUsage.ColorAttachment,
+            SizedInternalFormat: ESizedInternalFormat.Rgba16f));
+
+        registry.RegisterFrameBufferDescriptor(new FrameBufferResourceDescriptor(
+            "FinalColorFBO",
+            RenderResourceLifetime.Persistent,
+            RenderResourceSizePolicy.Absolute(128u, 64u),
+            [new FrameBufferAttachmentDescriptor("FinalColor", EFrameBufferAttachment.ColorAttachment0, 0, -1)]));
+
+        VulkanResourcePlanner planner = new();
+        planner.Sync(registry);
+
+        RenderPassMetadataCollection attachmentOnlyMetadata = new();
+        attachmentOnlyMetadata.ForPass(1, "FinalWrite", ERenderGraphPassStage.Graphics)
+            .UseColorAttachment("fbo::FinalColorFBO::color");
+
+        RenderPassMetadataCollection sampledMetadata = new();
+        sampledMetadata.ForPass(1, "FinalWrite", ERenderGraphPassStage.Graphics)
+            .UseColorAttachment("fbo::FinalColorFBO::color");
+        sampledMetadata.ForPass(2, "Present", ERenderGraphPassStage.Graphics)
+            .SampleTexture("tex::FinalColor");
+
+        int attachmentOnlySignature = VulkanResourceAllocator.ComputePhysicalPlanUsageSignature(planner, attachmentOnlyMetadata.Build());
+        int sampledSignature = VulkanResourceAllocator.ComputePhysicalPlanUsageSignature(planner, sampledMetadata.Build());
+        sampledSignature.ShouldBe(attachmentOnlySignature);
+
+        VulkanResourceAllocator allocator = new();
+        allocator.UpdatePlan(planner.CurrentPlan);
+        allocator.RebuildPhysicalPlan(null!, attachmentOnlyMetadata.Build(), planner);
+
+        VulkanPhysicalImageGroup group = allocator.EnumeratePhysicalGroups().Single();
+        group.Usage.HasFlag(ImageUsageFlags.ColorAttachmentBit).ShouldBeTrue();
+        group.Usage.HasFlag(ImageUsageFlags.SampledBit).ShouldBeTrue();
+    }
+
+    [Test]
     public void VulkanBarrierPlanner_PhysicalTrackingWinsOverLogicalViewSyncEdges()
     {
         RenderResourceRegistry registry = new();

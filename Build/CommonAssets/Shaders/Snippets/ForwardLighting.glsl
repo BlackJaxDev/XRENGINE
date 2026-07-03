@@ -13,6 +13,7 @@ const float MAX_REFLECTION_LOD = 4.0;
 const float XRENGINE_MIN_FORWARD_AMBIENT_FALLBACK = 0.08;
 const int XRENGINE_SHADOW_FALLBACK_LIT = 1;
 const int XRENGINE_SHADOW_FALLBACK_CONTACT_ONLY = 2;
+const int XRENGINE_SHADOW_FALLBACK_STALE_TILE = 3;
 const int XRENGINE_SHADOW_FALLBACK_LEGACY = 5;
 
 uniform vec3 GlobalAmbient;
@@ -1153,7 +1154,10 @@ float XRENGINE_ReadCascadeShadowMapDir(int lightIndex, DirLight light, vec3 frag
         atlasState = DirectionalShadowAtlasPacked0[atlasRecordIndex];
         atlasPageValid = atlasState.x != 0 && atlasState.y >= 0 && atlasState.y < XRENGINE_GetDirectionalShadowAtlasLayerCount();
         float renderedAge = light.RenderedCascadeStaleAge[cascadeIndex];
-        atlasSampleAllowed = atlasPageValid && renderedAge >= 0.0 && renderedAge <= DirectionalShadowAtlasMaxStaleFrames;
+        bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;
+        atlasSampleAllowed = atlasPageValid &&
+            renderedAge >= 0.0 &&
+            (!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames);
         if (atlasSampleAllowed)
             atlasResolutionScale = max(DirectionalShadowAtlasParams1[atlasRecordIndex].w, 1.0);
     }
@@ -1285,8 +1289,8 @@ float XRENGINE_ReadCascadeShadowMapDir(int lightIndex, DirLight light, vec3 frag
             return XRENGINE_ApplyDirectionalStaleAtlasEdgeFade(shadow, fragCoord, atlasLocalTexelSize, light.RenderedCascadeStaleAge[cascadeIndex]) * contact;
         }
 
-        if (fallbackMode == 2)
-            return contact;
+        if (fallbackMode > 0 && fallbackMode != XRENGINE_SHADOW_FALLBACK_LEGACY)
+            return fallbackMode == XRENGINE_SHADOW_FALLBACK_CONTACT_ONLY ? contact : 1.0;
         if (encoding != XRENGINE_SHADOW_ENCODING_DEPTH)
         {
             return XRENGINE_SampleShadowMoment2DArray(

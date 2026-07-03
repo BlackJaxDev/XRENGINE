@@ -643,6 +643,7 @@ public sealed partial class ThreadAllocationsPacket
     public AllocationSlice CollectSwap { get; set; } = new();
     public AllocationSlice Update { get; set; } = new();
     public AllocationSlice FixedUpdate { get; set; } = new();
+    public AllocationScopeSlice[] Scopes { get; set; } = [];
 }
 
 /// <summary>
@@ -661,6 +662,28 @@ public sealed partial class AllocationSlice
     public double LastKB => LastBytes / 1024.0;
     public double AverageKB => AverageBytes / 1024.0;
     public double MaxKB => MaxBytes / 1024.0;
+}
+
+/// <summary>
+/// Snapshot of a named allocation tracking scope.
+/// </summary>
+[MemoryPackable]
+public sealed partial class AllocationScopeSlice
+{
+    public string Name { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public long BudgetBytes { get; set; }
+    public long LastBytes { get; set; }
+    public double AverageBytes { get; set; }
+    public long MaxBytes { get; set; }
+    public int Samples { get; set; }
+    public int Capacity { get; set; }
+    public long OverBudgetCount { get; set; }
+
+    public double LastKB => LastBytes / 1024.0;
+    public double AverageKB => AverageBytes / 1024.0;
+    public double MaxKB => MaxBytes / 1024.0;
+    public double BudgetKB => BudgetBytes / 1024.0;
 }
 
 /// <summary>

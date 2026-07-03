@@ -15,6 +15,10 @@ uniform int DepthMode;
 #pragma snippet "PBRFunctions"
 #pragma snippet "DepthUtils"
 const int MAX_CASCADES = 8;
+const int XRENGINE_SHADOW_FALLBACK_LIT = 1;
+const int XRENGINE_SHADOW_FALLBACK_CONTACT_ONLY = 2;
+const int XRENGINE_SHADOW_FALLBACK_STALE_TILE = 3;
+const int XRENGINE_SHADOW_FALLBACK_LEGACY = 5;
 
 layout(location = 0) out vec3 OutColor; //Diffuse lighting output
 layout(location = 0) in vec3 FragPos;
@@ -748,7 +752,7 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 		if (!LightHasShadowMap)
 			return 1.0f;
 
-		ivec4 atlasState = ivec4(0, -1, 1, -1);
+		ivec4 atlasState = ivec4(0, -1, XRENGINE_SHADOW_FALLBACK_LIT, -1);
 		float atlasResolutionScale = 1.0f;
 		bool atlasPageValid = false;
 		bool atlasSampleAllowed = false;
@@ -757,7 +761,10 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 			atlasState = DirectionalShadowAtlasPacked0[cascadeIndex];
 			atlasPageValid = atlasState.x != 0 && atlasState.y >= 0 && atlasState.y < textureSize(DirectionalShadowAtlas, 0).z;
 			float renderedAge = LightData.RenderedCascadeStaleAge[cascadeIndex];
-			atlasSampleAllowed = atlasPageValid && renderedAge >= 0.0f && renderedAge <= DirectionalShadowAtlasMaxStaleFrames;
+			bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;
+			atlasSampleAllowed = atlasPageValid &&
+				renderedAge >= 0.0f &&
+				(!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames);
 			if (atlasSampleAllowed)
 				atlasResolutionScale = max(DirectionalShadowAtlasDepthParams[cascadeIndex].w, 1.0f);
 		}
@@ -800,6 +807,7 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 		if (DirectionalShadowAtlasEnabled)
 		{
 			ivec4 atlasI0 = atlasState;
+			int fallbackMode = atlasI0.z;
 			if (atlasSampleAllowed)
 			{
 				vec4 atlasUvScaleBias = DirectionalShadowAtlasUvScaleBias[cascadeIndex];
@@ -847,6 +855,8 @@ float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in float 
 				return ApplyDirectionalStaleAtlasEdgeFade(shadow, fragCoord, atlasLocalTexelSize, LightData.RenderedCascadeStaleAge[cascadeIndex]) * contact;
 			}
 
+			if (fallbackMode > 0 && fallbackMode != XRENGINE_SHADOW_FALLBACK_LEGACY)
+				return fallbackMode == XRENGINE_SHADOW_FALLBACK_CONTACT_ONLY ? contact : 1.0f;
 		}
 
 		if (ShadowMapEncoding != XRENGINE_SHADOW_ENCODING_DEPTH)
@@ -886,14 +896,17 @@ vec4 DebugCascadeShadowProbe(in vec3 fragPosWS, in vec3 N, in int cascadeIndex)
 	if (!LightHasShadowMap)
 		return vec4(1.0f, 0.0f, 1.0f, 0.0f);
 
-	ivec4 atlasState = ivec4(0, -1, 1, -1);
+	ivec4 atlasState = ivec4(0, -1, XRENGINE_SHADOW_FALLBACK_LIT, -1);
 	bool atlasSampleAllowed = false;
 	if (DirectionalShadowAtlasEnabled)
 	{
 		atlasState = DirectionalShadowAtlasPacked0[cascadeIndex];
 		bool atlasPageValid = atlasState.x != 0 && atlasState.y >= 0 && atlasState.y < textureSize(DirectionalShadowAtlas, 0).z;
 		float renderedAge = LightData.RenderedCascadeStaleAge[cascadeIndex];
-		atlasSampleAllowed = atlasPageValid && renderedAge >= 0.0f && renderedAge <= DirectionalShadowAtlasMaxStaleFrames;
+		bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;
+		atlasSampleAllowed = atlasPageValid &&
+			renderedAge >= 0.0f &&
+			(!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames);
 	}
 
 	mat4 lightMatrix = atlasSampleAllowed ? LightData.RenderedCascadeMatrices[cascadeIndex] : LightData.CascadeMatrices[cascadeIndex];

@@ -314,6 +314,13 @@ namespace XREngine.Rendering.DLSS
                         return false;
                     }
 
+                    if (!EnsureFrameGenerationRequirements(out failureReason))
+                    {
+                        error = failureReason;
+                        _lastError = error;
+                        return false;
+                    }
+
                 }
 
                 return true;
@@ -867,9 +874,9 @@ namespace XREngine.Rendering.DLSS
 
                 try
                 {
-                    if (!NativeLibrary.TryLoad(StreamlineLibrary, out _libraryHandle) || _libraryHandle == IntPtr.Zero)
+                    if (!TryLoadRuntimeLibrary(StreamlineLibrary, out _libraryHandle) || _libraryHandle == IntPtr.Zero)
                     {
-                        _lastError = $"{StreamlineLibrary} was not found on the probing path.";
+                        _lastError = $"{StreamlineLibrary} was not found in '{AppContext.BaseDirectory}' or on the native probing path.";
                         _libraryHandle = IntPtr.Zero;
                         return false;
                     }

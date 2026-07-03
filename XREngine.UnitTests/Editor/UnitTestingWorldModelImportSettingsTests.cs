@@ -148,6 +148,56 @@ public sealed class UnitTestingWorldModelImportSettingsTests
     }
 
     [Test]
+    public void Settings_RoundTripsEditorCameraRenderOnDemand_BetweenEditorAndRuntimeSettings()
+    {
+        var editorSettings = new EditorUnitTests.Settings
+        {
+            EditorCameraRenderOnDemand = true,
+        };
+
+        UnitTestingWorldSettings runtimeSettings = editorSettings.ToRuntimeSettings();
+
+        runtimeSettings.EditorCameraRenderOnDemand.ShouldBeTrue();
+
+        const string json = """
+        {
+          "EditorCameraRenderOnDemand": true
+        }
+        """;
+
+        UnitTestingWorldSettings parsed = UnitTestingWorldSettingsStore.ParseJsonc(json);
+
+        parsed.EditorCameraRenderOnDemand.ShouldBeTrue();
+        parsed.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.EditorCameraRenderOnDemand)).ShouldBeTrue();
+    }
+
+    [Test]
+    public void BootstrapPawnFactory_AppliesEditorCameraRenderOnDemandThroughInputBridge()
+    {
+        string pawnFactory = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapPawnFactory.cs").Replace("\r\n", "\n");
+        string inputBridge = ReadWorkspaceFile("XREngine.Runtime.InputIntegration/BootstrapFlyableCameraFactory.cs").Replace("\r\n", "\n");
+        string editorBridge = ReadWorkspaceFile("XREngine.Editor/Bootstrap/BootstrapEditorHookRegistration.cs").Replace("\r\n", "\n");
+        string editorPawn = ReadWorkspaceFile("XREngine.Editor/EditorFlyingCameraPawnComponent.cs").Replace("\r\n", "\n");
+
+        pawnFactory.ShouldContain("settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.EditorCameraRenderOnDemand))");
+        pawnFactory.ShouldContain("BootstrapInputBridge.Current?.SetFlyableCameraRenderOnDemand(pawnComp, settings.EditorCameraRenderOnDemand);");
+        inputBridge.ShouldContain("void SetFlyableCameraRenderOnDemand(XRComponent pawn, bool enabled);");
+        editorBridge.ShouldContain("public void SetFlyableCameraRenderOnDemand(XRComponent pawn, bool enabled)");
+        editorBridge.ShouldContain("editorPawn.RenderOnDemand = enabled;");
+        editorPawn.ShouldContain("case nameof(RenderOnDemand):");
+        editorPawn.ShouldContain("private const int RenderOnDemandSettleFrameCount = 3;");
+        editorPawn.ShouldContain("_renderOnDemandSettleFramesRemaining = Math.Max(_renderOnDemandSettleFramesRemaining, RenderOnDemandSettleFrameCount);");
+        editorPawn.ShouldContain("|| _renderOnDemandSettleFramesRemaining > 0");
+        editorPawn.ShouldContain("if (_renderOnDemand)\n                    InvalidateView();");
+        editorPawn.ShouldContain("vp.Suppress3DSceneRendering = false;");
+        editorPawn.ShouldContain("vp.SuppressAutoExposureUpdates = _renderOnDemand && vp.Suppress3DSceneRendering;");
+        editorPawn.ShouldContain("vp.SuppressAutoExposureUpdates = false;");
+        editorPawn.ShouldNotContain("HoldAutoExposureForCameraMotion");
+        editorPawn.ShouldNotContain("HoldActiveCameraAutoExposureForMotion");
+        editorPawn.ShouldNotContain("EditorCameraExposureHoldFrameCount");
+    }
+
+    [Test]
     public void Settings_RoundTripsDynamicDebugLightSettings_BetweenEditorAndRuntimeSettings()
     {
         var editorSettings = new EditorUnitTests.Settings
@@ -452,5 +502,19 @@ public sealed class UnitTestingWorldModelImportSettingsTests
             if (Directory.Exists(tempRoot))
                 Directory.Delete(tempRoot, recursive: true);
         }
+    }
+
+    private static string ReadWorkspaceFile(string relativePath)
+    {
+        string? directory = TestContext.CurrentContext.TestDirectory;
+        while (!string.IsNullOrEmpty(directory))
+        {
+            if (File.Exists(Path.Combine(directory, "XREngine.slnx")))
+                return File.ReadAllText(Path.Combine(directory, relativePath));
+
+            directory = Directory.GetParent(directory)?.FullName;
+        }
+
+        throw new FileNotFoundException("Could not locate repository root from test directory.");
     }
 }

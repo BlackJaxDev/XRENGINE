@@ -64,11 +64,18 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         directionalSource.ShouldContain("DoesRenderedSampleMatchAllocation");
         directionalSource.ShouldContain("CanUseRenderedSampleForStaleAllocation");
         directionalSource.ShouldContain("sample.RenderedFrame >= allocation.LastRenderedFrame");
-        directionalSource.ShouldContain("allocation.ActiveFallback is ShadowFallbackMode.StaleTile or ShadowFallbackMode.None");
+        directionalSource.ShouldContain("or ShadowFallbackMode.ContactOnly");
+        directionalSource.ShouldContain("ResolvePreservedCascadeFallback");
+        directionalSource.ShouldContain("ResolveStaleCascadeFallback");
         directionalSource.ShouldContain("RenderedSampleStale");
+        directionalSource.ShouldContain("staleSample: true");
         directionalSource.ShouldContain("CreateRenderedSampleAllocation");
         directionalSource.ShouldContain("CreateUnsampledAtlasSlot");
-        directionalSource.ShouldNotContain("previous.ContentVersion == allocation.ContentVersion");
+        directionalSource.ShouldContain("ShouldPreserveCascadeAtlasUniformData");
+        directionalSource.ShouldContain("allocation.ActiveFallback is ShadowFallbackMode.None");
+        directionalSource.ShouldContain("or ShadowFallbackMode.ContactOnly");
+        directionalSource.ShouldContain("previous.PageIndex != allocation.PageIndex");
+        directionalSource.ShouldContain("RefreshStaleAtlasSlotAllocation");
         directionalSource.ShouldContain("ContentVersion = previous.ContentVersion");
         directionalSource.ShouldContain("LastRenderedFrame = previous.LastRenderedFrame");
         directionalSource.ShouldContain("bool enabled = slot.HasCascadeUniformData");
@@ -97,11 +104,18 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         lightStructs.ShouldContain("mat4 RenderedCascadeMatrices[XRENGINE_MAX_CASCADES];");
         lightStructs.ShouldContain("float RenderedCascadeStaleAge[XRENGINE_MAX_CASCADES];");
         forwardShader.ShouldContain("uniform float DirectionalShadowAtlasMaxStaleFrames");
-        forwardShader.ShouldContain("atlasSampleAllowed = atlasPageValid && renderedAge >= 0.0 && renderedAge <= DirectionalShadowAtlasMaxStaleFrames;");
+        forwardShader.ShouldContain("const int XRENGINE_SHADOW_FALLBACK_STALE_TILE = 3;");
+        forwardShader.ShouldContain("bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;");
+        forwardShader.ShouldContain("(!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames)");
+        forwardShader.ShouldContain("fallbackMode > 0 && fallbackMode != XRENGINE_SHADOW_FALLBACK_LEGACY");
         forwardShader.ShouldContain("light.RenderedCascadeMatrices[cascadeIndex]");
         forwardShader.ShouldContain("XRENGINE_ApplyDirectionalStaleAtlasEdgeFade");
 
         deferredShader.ShouldContain("uniform float DirectionalShadowAtlasMaxStaleFrames");
+        deferredShader.ShouldContain("const int XRENGINE_SHADOW_FALLBACK_STALE_TILE = 3;");
+        deferredShader.ShouldContain("bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;");
+        deferredShader.ShouldContain("(!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames)");
+        deferredShader.ShouldContain("fallbackMode > 0 && fallbackMode != XRENGINE_SHADOW_FALLBACK_LEGACY");
         deferredShader.ShouldContain("LightData.RenderedCascadeMatrices[cascadeIndex]");
         deferredShader.ShouldContain("ApplyDirectionalStaleAtlasEdgeFade");
         deferredShader.ShouldContain("DeferredDebugMode == 17");
@@ -154,9 +168,15 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         atlasManager.ShouldContain("public bool TryGetPlanningAllocation(ShadowRequestKey key, out ShadowAtlasAllocation allocation)\n        => TryGetResidentAllocation(key, out allocation);");
         atlasManager.ShouldContain("TryGetDiagnosticAllocationIndex(");
         atlasManager.ShouldContain("MergeReconciledRenderedState(");
-        atlasManager.ShouldNotContain("resident.ContentVersion != request.ContentHash");
         atlasManager.ShouldContain("resident.LastRenderedFrame < allocation.LastRenderedFrame");
         atlasManager.ShouldContain("IsSamePhysicalAllocation(");
+        atlasManager.ShouldContain("bool publishCommittedDirectionalSample =");
+        atlasManager.ShouldContain("ShouldRenderFreshTileBeforeStale(request)");
+        atlasManager.ShouldContain("resident.ContentVersion != request.ContentHash");
+        atlasManager.ShouldContain("ActiveFallback = publishCommittedDirectionalSample\n                ? ShadowFallbackMode.None\n                : resident.ActiveFallback");
+        atlasManager.ShouldContain("SkipReason = publishCommittedDirectionalSample\n                ? SkipReason.None\n                : resident.SkipReason");
+        atlasManager.ShouldContain("ResolveUnavailableShadowFallback(request, allowStaleTile: false)");
+        atlasManager.ShouldContain("return IsDirectionalRequest(request) ? ShadowFallbackMode.ContactOnly : ShadowFallbackMode.Lit;");
 
         string publishDiagnostics = ExtractRegion(
             lightsSource,
@@ -200,9 +220,14 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         lightsSource.ShouldContain("ShouldSkipDirectionalCascadeRefreshByCadence");
         lightsSource.ShouldContain("IsLargeDirectionalCascadeMatrixJump(requestSample, renderedSample, desiredResolution)");
         lightsSource.ShouldContain("ResolveDirectionalCascadeSettledRefreshStableFrames");
+        lightsSource.ShouldContain("private static int ResolveDirectionalCascadeSettledRefreshStableFrames(int activeCascadeCount)\n            => 1;");
         lightsSource.ShouldContain("ResolveDirectionalCascadeRefreshInterval");
         lightsSource.ShouldContain("stableRequestFrames >= ResolveDirectionalCascadeSettledRefreshStableFrames(activeCascadeCount)");
-        lightsSource.ShouldContain("if (staleAge >= (ulong)maxStaleFrames)\n                return true;");
+        lightsSource.ShouldContain("if (staleAge >= (ulong)maxStaleFrames)");
+        lightsSource.ShouldContain("forcedFresh = true;\n                return false;");
+        lightsSource.ShouldNotContain("if (staleAge >= (ulong)maxStaleFrames)\n                return true;");
+        atlasManager.ShouldContain("bool keepDirectionalStaleTileUntilRefresh =\n            fallbackCanUseStaleTile &&\n            IsDirectionalRequest(request) &&\n            !shouldRefreshBeforeStale;");
+        atlasManager.ShouldNotContain("bool keepDirectionalStaleTileUntilRefresh = fallbackCanUseStaleTile && IsDirectionalRequest(request);");
         lightsSource.ShouldContain("SkipReason.StaleTileReused");
     }
 

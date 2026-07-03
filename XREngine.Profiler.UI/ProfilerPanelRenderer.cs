@@ -1250,6 +1250,31 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             ImGui.EndTable();
         }
 
+        if (allocs.Scopes is { Length: > 0 })
+        {
+            ImGui.Separator();
+            ImGui.TextDisabled("Named allocation scopes show subsystem/pass/codec attribution.");
+
+            if (ImGui.BeginTable("AllocationScopes", 7, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+            {
+                ImGui.TableSetupColumn("Scope");
+                ImGui.TableSetupColumn("Category");
+                ImGui.TableSetupColumn("Budget (KB)");
+                ImGui.TableSetupColumn("Last (KB)");
+                ImGui.TableSetupColumn("Avg (KB)");
+                ImGui.TableSetupColumn("Max (KB)");
+                ImGui.TableSetupColumn("Over");
+                ImGui.TableHeadersRow();
+
+                AllocationScopeSlice[] scopes = allocs.Scopes;
+                int count = Math.Min(scopes.Length, 64);
+                for (int i = 0; i < count; i++)
+                    DrawAllocScopeRow(scopes[i]);
+
+                ImGui.EndTable();
+            }
+        }
+
         ImGui.End();
     }
 
@@ -3523,6 +3548,19 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.TableSetColumnIndex(2); ImGui.Text($"{slice.AverageKB:F2}");
         ImGui.TableSetColumnIndex(3); ImGui.Text($"{slice.MaxKB:F2}");
         ImGui.TableSetColumnIndex(4); ImGui.Text($"{slice.Samples}/{slice.Capacity}");
+    }
+
+    private static void DrawAllocScopeRow(AllocationScopeSlice? slice)
+    {
+        if (slice is null) return;
+        ImGui.TableNextRow();
+        ImGui.TableSetColumnIndex(0); ImGui.Text(slice.Name);
+        ImGui.TableSetColumnIndex(1); ImGui.Text(slice.Category);
+        ImGui.TableSetColumnIndex(2); ImGui.Text(slice.BudgetBytes < 0 ? "-" : $"{slice.BudgetKB:F2}");
+        ImGui.TableSetColumnIndex(3); ImGui.Text($"{slice.LastKB:F2}");
+        ImGui.TableSetColumnIndex(4); ImGui.Text($"{slice.AverageKB:F2}");
+        ImGui.TableSetColumnIndex(5); ImGui.Text($"{slice.MaxKB:F2}");
+        ImGui.TableSetColumnIndex(6); ImGui.Text($"{slice.OverBudgetCount:N0}");
     }
 
     private static float GetMedianTailMs(float[] samples, int takeCount, int skipFromEnd)

@@ -78,6 +78,7 @@ You do not need to understand every property up front. These are the ones that u
 - `ProceduralSky`, `ProceduralSkyAutoCycle`, `ProceduralSkyTimeOfDay`: enable the dynamic sky and optionally lock it to a deterministic sun position
 - `InitializeAtmosphericScattering`: spawns the default planetary atmosphere and enables the matching camera post-process stage
 - `GPURenderDispatch`: switches rendering dispatch mode
+- `EditorCameraRenderOnDemand`: starts the editor camera in idle reuse mode, where unchanged views skip 3D scene rendering and present the last camera result
 - `StartInPlayModeWithoutTransitions`: skips the usual edit-to-play transition
 - `EnableProfilerLogging`: turns on profiler logging even without ImGui
 
@@ -127,6 +128,10 @@ When `ProceduralSky` is enabled, the skybox can drive the unit-test directional 
 ### Test dynamic local lights
 
 Use `DynamicPointLightCount` and `DynamicSpotLightCount` to spawn smooth animated debug lights with random colors. `DynamicLightSeed` keeps the generated colors and motion repeatable. `DynamicLightsCastShadows` is enabled by default; when `DynamicLightsForceShadowAtlas` is also enabled, the bootstrap turns on the matching point and spot shadow atlas paths before adding the generated lights.
+
+### Compare continuous rendering and idle reuse
+
+Set `EditorCameraRenderOnDemand` to `true` to make the unit-test editor camera render the 3D scene only when input, camera motion, screenshots, or camera animations invalidate the view. Idle frames reuse the previous camera result, so this is useful for separating swap/present cadence from full scene rendering cost. Leave it `false` when measuring continuous scene render FPS.
 
 ### Test atmospheric scattering
 

@@ -105,6 +105,13 @@ namespace XREngine.Rendering
         /// </summary>
         public bool Suppress3DSceneRendering { get; set; }
 
+        /// <summary>
+        /// When true, post-processing should keep the previous auto-exposure state instead
+        /// of adapting from the current frame. Render-on-demand editor views use this while
+        /// the cached 3D frame may be stale or settling.
+        /// </summary>
+        public bool SuppressAutoExposureUpdates { get; set; }
+
         private FrameOutputPacingDecision _pendingFrameOutputPacing;
         private FrameOutputPacingDecision _renderingFrameOutputPacing;
         private bool _pendingFrameOutputSceneDue = true;
