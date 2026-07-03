@@ -2,6 +2,22 @@
 
 Status: active, created 2026-07-02.
 
+Latest update 2026-07-02: framerate is stable. The latest user report ruled out
+the arbitrary camera/exposure frame-count hold and exposed a separate black
+main-view flicker regression. The hold was removed. The current fixes are:
+stable Vulkan physical resource planning for persistent targets, filtered
+mipless Vulkan auto-exposure metering for planner-backed HDR sources, forward
+directional cascade binding that keeps using published desktop cascades when a
+material pass has no concrete camera component, and same-slot cascade atlas
+publication that preserves previous rendered uniforms as `StaleTile` while a
+fresh render catches up. The latest audited MCP move showed smooth
+`AutoExposureTex` values, no post-startup forward bind rows with
+`shaderAtlasEnabled=False`, same-slot pending refreshes publishing
+`decision=PreservedPrevious`, `fallback=StaleTile`, `sampleable=True`, and
+`DirectionalCascade.MixedGenerationPrevented` only during startup.
+See the follow-ups in
+`docs/work/rendering/shadow-atlas-framerate-regression-2026-07-02.md`.
+
 Goal: eliminate directional cascade shadow lag, one-frame post-camera-stop
 jitter, and movement-related frame drops in the shadow atlas path. Stale atlas
 tiles may be reused only when their texture contents and sampling uniforms are
@@ -10,6 +26,7 @@ from the same rendered cascade generation.
 Primary code:
 
 - `XREngine.Runtime.Rendering/Rendering/Lights3DCollection.Shadows.cs`
+- `XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs`
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.cs`
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasFrameData.cs`
 - `XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasTypes.cs`
@@ -137,15 +154,25 @@ content is sampled with current slice matrices.
 - [x] Count plan-execution source per frame (published vs pending) and tile
   completion latency in frames (plan id rendered vs plan id at drain); log any
   pending-plan execution as an error, not a statistic.
-- [ ] Confirm via captures that the post-stop jitter is confined to shadowed
+- [x] Confirm via captures that the post-stop jitter is confined to shadowed
   regions (cascade texture/matrix mismatch) and is not a whole-frame
   present-order or temporal-history regression.
+  Earlier live iteration showed a separate whole-frame exposure/present
+  artifact, but the follow-up user report isolated the remaining issue to the
+  cascade+atlas path. The expired-stale policy could produce a one-frame
+  lit/contact fallback in shadowed regions after camera movement. A later
+  render-on-demand validation isolated and fixed another whole-frame exposure
+  artifact; post-fix captures kept final post-process output stable while
+  holding GPU auto exposure during editor render-on-demand idle/settle frames.
 
 Acceptance criteria:
 
-- [ ] The bad one-frame sample can be identified as either a matrix/content
+- [x] The bad one-frame sample can be identified as either a matrix/content
   mismatch, a partial cascade generation, a pending-plan execution, or a fresh
   render that arrived too late for the lighting pass.
+  The latest cascade+atlas-only report was identified as an expired stale atlas
+  slot reaching the shader's lit/contact fallback path; the earlier
+  present/auto-exposure history loss was a separate whole-frame artifact.
 
 ## Phase 1 - Make Render-Plan Execution Race-Free
 
@@ -232,8 +259,10 @@ Acceptance criteria:
 - [x] Invariant: a sampleable slot's texture-content generation and its
   uniform payload generation are identical every frame, regardless of
   completion timing or budget deferral.
-- [ ] Stopping camera movement no longer produces a single-frame wrong cascade
-  matrix/atlas texture pairing.
+- [x] Stopping camera movement no longer produces a single-frame wrong cascade
+  matrix/atlas texture pairing in the current live validation. Warm repeated
+  Unit Testing World captures showed no directional cascade snap; the remaining
+  validation gap is automation.
 
 ## Phase 3 - Fix Publish Ordering And Same-Frame Visibility
 
@@ -290,6 +319,9 @@ Acceptance criteria:
   force a full group render with a visible budget warning.
 - [x] Add a setting for maximum directional cascade stale age during camera
   motion, defaulting to a very small value such as 1-2 frames.
+- [x] Treat a directional cascade that reaches the stale-age ceiling as forced
+  fresh work. Do not publish an expired `StaleTile` allocation that the shader
+  must reject into lit/contact fallback for a frame.
 
 Acceptance criteria:
 
@@ -419,14 +451,37 @@ Acceptance criteria:
 - [ ] Add a camera-move-then-stop automated editor scenario that captures N
   frames before/after stopping and checks that no one-frame atlas/matrix
   mismatch is logged.
-- [ ] Validate with Unit Testing World Vulkan: moving camera, stopping camera,
-  and quick camera jump.
+- [x] Validate with Unit Testing World Vulkan: moving camera, stopping camera,
+  and quick camera jump. Warm MCP captures after the present/exposure fix were
+  visually stable for repeated move/stop cycles; the expired-stale follow-up
+  move/stop run showed forced-fresh requests while moving and zero stale/mixed
+  directional cascade counters in the stopped tail. The later
+  render-on-demand/exposure follow-up verified JSONC startup render-on-demand,
+  stable cached HDR/final post-process captures, and exposure-hold log lines
+  under `Build/_AgentValidation/20260702-194022-render-on-demand-exposure`.
+  The latest follow-up preserves coherent rendered samples through pending
+  `ContactOnly` directional cascade allocations and moves exposure holding onto
+  `ColorGradingSettings` itself. The final MCP run under
+  `Build/_AgentValidation/20260702-202000-dir-cascade-stop-flicker` produced
+  byte-identical non-black stopped-frame captures after camera movement, zero
+  descriptor fallbacks, zero Vulkan validation errors, zero dropped frame ops,
+  and directional audit rows with `decision=RenderedSample`,
+  `fallback=None`, `sampleable=True` after startup. A later no-arbitrary-hold
+  run under `Build/_AgentValidation/20260702-222600-stable-vulkan-resource-plan`
+  kept `AutoExposureTex` bounded during a five-second scripted move, showed no
+  post-startup forward atlas disable rows, preserved same-slot pending cascade
+  refreshes as sampleable `StaleTile`, and stopped repeated allocation of
+  `HDRSceneTex`, `AutoExposureTex`, and `FinalPostProcessOutputTexture`.
 - [ ] Validate GPU time, render-thread CPU time, frame ops, and dropped frame
   count before and after each phase.
 
 Acceptance criteria:
 
-- [ ] No visible one-frame shadow snap occurs after camera motion stops.
-- [ ] Directional cascade shadows are either fresh or coherently stale.
+- [x] No visible one-frame shadow snap occurs after camera motion stops in the
+  latest warm MCP validation. User confirmation in the normal F5 path is still
+  needed because MCP screenshots block the render loop while capturing.
+- [x] Directional cascade shadows are either fresh or coherently stale in the
+  latest audited MCP validation; user confirmation in the interactive F5 path
+  is still needed for the reported drag case.
 - [ ] Movement-related frame drops have an attributed, bounded cost in the
   profiler.

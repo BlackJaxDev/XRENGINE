@@ -374,12 +374,21 @@ uniform ColorGradeStruct ColorGrade;";
         private float _lastUpdateTime = float.MinValue;
         private float _lastLumDot = 0.0f;
         private bool _gpuAutoExposureReadyThisFrame;
+        internal const float MaxGpuAutoExposureDeltaSeconds = 1.0f / 15.0f;
 
         [Browsable(false)]
         internal bool UseGpuAutoExposureThisFrame => AutoExposure && _gpuAutoExposureReadyThisFrame;
 
         internal void MarkGpuAutoExposureReady(bool ready)
             => _gpuAutoExposureReadyThisFrame = AutoExposure && ready;
+
+        internal static float SanitizeGpuAutoExposureDeltaSeconds(double deltaSeconds)
+        {
+            if (!double.IsFinite(deltaSeconds) || deltaSeconds <= 0.0)
+                return 0.0f;
+
+            return (float)Math.Min(deltaSeconds, MaxGpuAutoExposureDeltaSeconds);
+        }
 
         public void UpdateExposure(BoundingRectangle rect)
         {
@@ -448,9 +457,12 @@ uniform ColorGradeStruct ColorGrade;";
                 return;
 
             // For GPU auto-exposure, we update every frame to ensure smooth transitions.
-            // The compute shader or the renderer will handle the time-based lerp using deltaTime.
-            float time = RuntimeEngine.ElapsedTime;
-            float deltaTime = _lastUpdateTime == float.MinValue ? 0.0f : time - _lastUpdateTime;
+            // Use the current render tick, not wall-clock elapsed time between successful
+            // exposure writes. Render-on-demand can skip 3D scene frames for seconds; the
+            // next real scene render should advance by the current render tick instead of
+            // catching up in one large adaptation step.
+            double rawRenderDeltaSeconds = RuntimeRenderingHostServices.Current.RenderDeltaSeconds;
+            float deltaTime = _lastUpdateTime == float.MinValue ? 0.0f : SanitizeGpuAutoExposureDeltaSeconds(rawRenderDeltaSeconds);
 
             bool success = renderer.UpdateAutoExposureGpu(sourceTex, exposureTex, this, deltaTime, generateMipmapsNow);
             _gpuAutoExposureReadyThisFrame = success;
@@ -459,7 +471,7 @@ uniform ColorGradeStruct ColorGrade;";
             // If GPU fails, leaving _lastUpdateTime untouched lets the CPU fallback path
             // pass its own throttle check and produce a valid exposure value this frame.
             if (success)
-                _lastUpdateTime = time;
+                _lastUpdateTime = RuntimeEngine.ElapsedTime;
         }
 
         private void LerpExposure(bool success, float lumDot)

@@ -2426,12 +2426,21 @@ public sealed partial class ShadowAtlasManager
             return allocation;
         }
 
+        bool publishCommittedDirectionalSample =
+            IsDirectionalRequest(request) &&
+            ShouldRenderFreshTileBeforeStale(request) &&
+            resident.ContentVersion != request.ContentHash;
+
         return allocation with
         {
             ContentVersion = resident.ContentVersion,
             LastRenderedFrame = resident.LastRenderedFrame,
-            ActiveFallback = resident.ActiveFallback,
-            SkipReason = resident.SkipReason,
+            ActiveFallback = publishCommittedDirectionalSample
+                ? ShadowFallbackMode.None
+                : resident.ActiveFallback,
+            SkipReason = publishCommittedDirectionalSample
+                ? SkipReason.None
+                : resident.SkipReason,
         };
     }
 
@@ -2687,7 +2696,11 @@ public sealed partial class ShadowAtlasManager
         bool fallbackCanUseStaleTile = request.Fallback == ShadowFallbackMode.StaleTile;
         bool shouldRefreshBeforeStale = ShouldRenderFreshTileBeforeStale(request);
         bool allowStaleTile = fallbackCanUseStaleTile && !shouldRefreshBeforeStale;
-        bool keepDirectionalStaleTileUntilRefresh = fallbackCanUseStaleTile && IsDirectionalRequest(request);
+        // Critical directional refreshes must not publish the pre-refresh tile for lighting.
+        bool keepDirectionalStaleTileUntilRefresh =
+            fallbackCanUseStaleTile &&
+            IsDirectionalRequest(request) &&
+            !shouldRefreshBeforeStale;
         bool reuseStaleTile = hasRenderedTile && requiresFreshRender && allowStaleTile;
         ShadowFallbackMode activeFallback = ShadowFallbackMode.None;
         SkipReason skipReason = SkipReason.None;
@@ -2701,18 +2714,12 @@ public sealed partial class ShadowAtlasManager
             }
             else
             {
-                activeFallback = request.Fallback != ShadowFallbackMode.None
-                    ? request.Fallback
-                    : ShadowFallbackMode.Lit;
-                if (activeFallback == ShadowFallbackMode.StaleTile && !allowStaleTile)
-                    activeFallback = ShadowFallbackMode.Lit;
+                activeFallback = ResolveUnavailableShadowFallback(request, allowStaleTile: false);
             }
         }
         else if (!hasRenderedTile && request.Fallback != ShadowFallbackMode.None)
         {
-            activeFallback = request.Fallback;
-            if (activeFallback == ShadowFallbackMode.StaleTile && !allowStaleTile)
-                activeFallback = ShadowFallbackMode.Lit;
+            activeFallback = ResolveUnavailableShadowFallback(request, allowStaleTile);
         }
 
         if (!(hasRenderedTile && requiresFreshRender))
@@ -3754,7 +3761,7 @@ public sealed partial class ShadowAtlasManager
             LastRenderedFrame: 0u,
             IsResident: false,
             IsStaticCacheBacked: false,
-            ActiveFallback: request.Fallback == ShadowFallbackMode.None ? ShadowFallbackMode.Lit : request.Fallback,
+            ActiveFallback: ResolveSkippedShadowFallback(request),
             SkipReason: skipReason);
     }
 
@@ -3775,8 +3782,33 @@ public sealed partial class ShadowAtlasManager
             LastRenderedFrame: 0u,
             IsResident: false,
             IsStaticCacheBacked: false,
-            ActiveFallback: request.Fallback == ShadowFallbackMode.None ? ShadowFallbackMode.Lit : request.Fallback,
+            ActiveFallback: ResolveSkippedShadowFallback(request),
             SkipReason: skipReason);
+    }
+
+    private static ShadowFallbackMode ResolveUnavailableShadowFallback(ShadowMapRequest request, bool allowStaleTile)
+    {
+        if (request.Fallback == ShadowFallbackMode.StaleTile)
+        {
+            if (allowStaleTile)
+                return ShadowFallbackMode.StaleTile;
+
+            return IsDirectionalRequest(request) ? ShadowFallbackMode.ContactOnly : ShadowFallbackMode.Lit;
+        }
+
+        return request.Fallback != ShadowFallbackMode.None
+            ? request.Fallback
+            : ShadowFallbackMode.Lit;
+    }
+
+    private static ShadowFallbackMode ResolveSkippedShadowFallback(ShadowMapRequest request)
+    {
+        if (request.Fallback == ShadowFallbackMode.StaleTile && IsDirectionalRequest(request))
+            return ShadowFallbackMode.ContactOnly;
+
+        return request.Fallback != ShadowFallbackMode.None
+            ? request.Fallback
+            : ShadowFallbackMode.Lit;
     }
 
     private static bool IsValidRequest(ShadowMapRequest request)

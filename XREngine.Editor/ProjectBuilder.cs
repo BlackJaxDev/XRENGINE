@@ -546,8 +546,12 @@ internal static class ProjectBuilder
         public void Dispose()
         {
             Context.Unload();
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
+            Engine.RequestMaintenanceGarbageCollection(new EngineMaintenanceGcRequest(
+                EngineMaintenanceGcReason.DynamicAssemblyUnload,
+                $"Temporary build assembly '{Assembly.GetName().Name}' unloaded.",
+                Generation: GC.MaxGeneration,
+                CompactLargeObjectHeap: false,
+                WaitForPendingFinalizers: true));
         }
     }
 

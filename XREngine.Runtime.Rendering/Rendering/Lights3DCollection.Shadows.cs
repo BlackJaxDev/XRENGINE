@@ -791,7 +791,11 @@ namespace XREngine.Scene
                 ? frameId - previous.LastRenderedFrame
                 : ulong.MaxValue;
             if (staleAge >= (ulong)maxStaleFrames)
-                return true;
+            {
+                // Do not publish an expired stale atlas slot that the shader must reject.
+                forcedFresh = true;
+                return false;
+            }
 
             int interval = ResolveDirectionalCascadeRefreshInterval(activeCascadeCount, maxStaleFrames);
             if (interval <= 1)
@@ -801,9 +805,7 @@ namespace XREngine.Scene
         }
 
         private static int ResolveDirectionalCascadeSettledRefreshStableFrames(int activeCascadeCount)
-            => activeCascadeCount <= 1
-                ? 1
-                : Math.Clamp(activeCascadeCount, 2, 4);
+            => 1;
 
         private static int ResolveDirectionalCascadeRefreshInterval(int activeCascadeCount, int maxStaleFrames)
             => activeCascadeCount <= 1

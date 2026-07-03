@@ -275,6 +275,8 @@ public static class BootstrapPawnFactory
         {
             pawnComp = BootstrapFlyableCameraFactory.CreateFlyableCameraPawn(cameraNode, !isServer) as PawnComponent
                 ?? throw new InvalidOperationException("Bootstrap flyable camera factory did not return a PawnComponent.");
+            if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.EditorCameraRenderOnDemand)))
+                BootstrapInputBridge.Current?.SetFlyableCameraRenderOnDemand(pawnComp, settings.EditorCameraRenderOnDemand);
             pawnComp.Name = "Desktop Camera Pawn (Flyable)";
             if (cameraNode.GetComponent<CameraComponent>() is { } cameraComponent)
                 pawnComp.CameraComponent = cameraComponent;

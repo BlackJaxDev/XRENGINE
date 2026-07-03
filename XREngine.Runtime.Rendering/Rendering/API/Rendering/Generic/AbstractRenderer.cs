@@ -597,6 +597,12 @@ namespace XREngine.Rendering
         public virtual bool SupportsGpuAutoExposure => false;
 
         /// <summary>
+        /// True when a texture can be bound for shader sampling without falling back to a placeholder descriptor.
+        /// </summary>
+        public virtual bool IsTextureReadyForShaderSampling(XRTexture? texture)
+            => texture is not null;
+
+        /// <summary>
         /// Updates a 1x1 exposure texture based on the supplied HDR source texture.
         /// Implementations should avoid CPU readback and keep the exposure value on-GPU.
         /// Returns true only when a valid GPU exposure value was produced for the current frame.

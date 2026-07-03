@@ -364,7 +364,10 @@ public unsafe partial class VulkanRenderer
     private XRFrameBuffer? _boundReadFrameBuffer;
     private XRTexture? _lastWindowPresentColorTexture;
     private XRFrameBuffer? _lastWindowPresentFrameBuffer;
+    private XRTexture? _lastWindowPresentFallbackFrameBufferTexture;
+    private XRFrameBuffer? _lastWindowPresentFallbackFrameBuffer;
     private FrameOpContext? _lastWindowPresentFrameOpContext;
+    private VulkanPhysicalImageGroup? _retainedAutoExposureHistoryGroup;
     private EReadBufferMode _readBufferMode = EReadBufferMode.ColorAttachment0;
     private EVulkanQueueOverlapMode _autoQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
     private EVulkanQueueOverlapMode _lastResolvedQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;

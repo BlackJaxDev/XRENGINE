@@ -13,6 +13,7 @@ using XREngine.Data.Components.Scene;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
@@ -347,7 +348,10 @@ public static partial class EditorUnitTests
             PawnComponent pawnComp;
             if (flyable)
             {
-                pawnComp = cameraNode.AddComponent<EditorFlyingCameraPawnComponent>()!;
+                var editorPawn = cameraNode.AddComponent<EditorFlyingCameraPawnComponent>()!;
+                if (RuntimeBootstrapState.Settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.EditorCameraRenderOnDemand)))
+                    editorPawn.RenderOnDemand = RuntimeBootstrapState.Settings.EditorCameraRenderOnDemand;
+                pawnComp = editorPawn;
                 pawnComp!.Name = "Desktop Camera Pawn (Flyable)";
                 if (cameraNode.GetComponent<CameraComponent>() is { } cameraComponent)
                     pawnComp.CameraComponent = cameraComponent;

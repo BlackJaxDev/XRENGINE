@@ -45,6 +45,7 @@ namespace XREngine.Networking
             // Apply engine settings
             Engine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
             Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = false;
+            Engine.ConfigureMemoryPolicy(EngineMemoryProfile.HeadlessServer);
 
             Engine.ServerSessionResolver = ResolveServerSession;
             Engine.ServerJoinAdmissionResolver = ResolveServerJoin;

@@ -38,6 +38,7 @@ namespace XREngine.VRClient
 
         static void Main(string[] args)
         {
+            Engine.ConfigureMemoryPolicy(EngineMemoryProfile.VRLowLatency);
             IVRGameStartupSettings settings = GenerateSettings();
 
             // Check if this is already running

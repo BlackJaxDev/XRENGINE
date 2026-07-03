@@ -29,13 +29,30 @@ public sealed class DirectionalShadowAtlasFallbackTests
     }
 
     [Test]
-    public void DeferredDirectionalCascadeAtlas_RequiresEveryCascadeSlot()
+    public void DeferredDirectionalCascadeAtlas_AcceptsExplicitFallbackSlots()
     {
         string source = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_LightCombinePass.cs");
 
-        source.ShouldContain("AreRequiredDirectionalAtlasTilesSampleable");
-        source.ShouldContain("packed.X == 0 || packed.Y < 0 || packed.Y >= maxPageCount");
+        source.ShouldContain("AreRequiredDirectionalAtlasSlotsUsable");
+        source.ShouldContain("AnyRequiredDirectionalAtlasSlotSamplesPage");
+        source.ShouldContain("HasExplicitNonLegacyDirectionalAtlasFallback");
+        source.ShouldContain("packed.Z > 0 && packed.Z != (int)ShadowFallbackMode.Legacy");
+        source.ShouldContain("DirectionalShadowAtlasEnabled\", hasUsableAtlasState");
+        source.ShouldNotContain("packed.X == 0 || packed.Y < 0 || packed.Y >= maxPageCount");
         source.ShouldNotContain("HasAnyDirectionalAtlasTileSampleable");
+    }
+
+    [Test]
+    public void ForwardDirectionalCascadeAtlas_AcceptsExplicitFallbackSlots()
+    {
+        string source = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs");
+
+        source.ShouldContain("AreRequiredDirectionalAtlasSlotsUsable");
+        source.ShouldContain("AnyRequiredDirectionalAtlasSlotSamplesPage");
+        source.ShouldContain("HasExplicitNonLegacyDirectionalAtlasFallback");
+        source.ShouldContain("packed.Z > 0 && packed.Z != (int)ShadowFallbackMode.Legacy");
+        source.ShouldContain("!needsDirectionalAtlasTexture ||");
+        source.ShouldNotContain("packed.X == 0 || packed.Y < 0 || packed.Y >= maxPageCount");
     }
 
     [Test]
@@ -130,11 +147,14 @@ public sealed class DirectionalShadowAtlasFallbackTests
 
         source.ShouldContain("PreviousAtlasSlots");
         source.ShouldContain("BeginDirectionalAtlasSlotPublish");
-        source.ShouldContain("ShouldPreserveStaleCascadeAtlasUniformData");
-        source.ShouldNotContain("previous.ContentVersion == allocation.ContentVersion");
+        source.ShouldContain("ShouldPreserveCascadeAtlasUniformData");
+        source.ShouldContain("previous.PageIndex != allocation.PageIndex");
+        source.ShouldContain("RefreshStaleAtlasSlotAllocation");
         source.ShouldContain("ContentVersion = previous.ContentVersion");
         source.ShouldContain("LastRenderedFrame = previous.LastRenderedFrame");
-        source.ShouldContain("allocation.ActiveFallback is ShadowFallbackMode.StaleTile or ShadowFallbackMode.None");
+        source.ShouldContain("or ShadowFallbackMode.ContactOnly");
+        source.ShouldContain("ResolvePreservedCascadeFallback");
+        source.ShouldContain("ResolveStaleCascadeFallback");
         source.ShouldContain("atlasSlot.HasCascadeUniformData");
         source.ShouldContain("CopyPublishedRenderedCascadeUniformData");
         source.ShouldContain("splits[i] = atlasSlot.SplitFarDistance;");

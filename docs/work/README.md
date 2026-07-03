@@ -27,6 +27,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Vulkan descriptor heap optimization | Active | [design/rendering/vulkan-descriptor-heap-optimization-design.md](design/rendering/vulkan-descriptor-heap-optimization-design.md), [todo/rendering/vulkan-dynamic-rendering-migration-todo.md](todo/rendering/vulkan-dynamic-rendering-migration-todo.md) | Preferred modern Vulkan binding model for material tables, Deferred+, RVC shadelets, render graph resources, and future RT/GI scene tables, with descriptor indexing as fallback. |
 | Deferred+ render path | Active | [design/rendering/deferred-plus-render-path-design.md](design/rendering/deferred-plus-render-path-design.md), [todo/rendering/optimization/deferred-plus-render-path-todo.md](todo/rendering/optimization/deferred-plus-render-path-todo.md), [todo/rendering/optimization/visibility-buffer-rendering-todo.md](todo/rendering/optimization/visibility-buffer-rendering-todo.md) | Proposal for a compact visibility-buffer render path with froxel/material classification, deferred texture mapping, and material-region shading. |
 | Runtime modularization | Active | [todo/runtime-modularization-phase3-todo.md](todo/runtime-modularization-phase3-todo.md) | Phase 2 was completed and removed. |
+| GC and hot-path memory control | Stable doc + testing | [../developer-guides/runtime/hot-path-memory.md](../developer-guides/runtime/hot-path-memory.md), [runtime/gc-hot-path-memory-control-2026-07-02.md](runtime/gc-hot-path-memory-control-2026-07-02.md), [testing/memory-control-investigation-template.md](testing/memory-control-investigation-template.md) | Runtime memory profiles, scratch/pool helpers, allocation scopes, ECS/network allocation tests, and validation template are in place. Hardware VR/editor profiler captures remain follow-up validation. |
 | Finalized game builds and asset cooking | Stable doc | [../user-guide/finalized-game-builds.md](../user-guide/finalized-game-builds.md) | User-facing guide for cooked AOT and explicitly non-AOT finalized game builds. |
 | Physics-chain performance | Stable doc + testing | [../developer-guides/rendering/physics-chain-performance.md](../developer-guides/rendering/physics-chain-performance.md) | Remaining validation lives in [testing/physics-chain-performance.md](testing/physics-chain-performance.md). |
 | Native FBX import/export | Active | [todo/fbx-import-export-todo.md](todo/fbx-import-export-todo.md) | Assimp replacement roadmap for a low-allocation native FBX path. |
@@ -178,6 +179,7 @@ Generated audit outputs should be treated as disposable report artifacts rather 
 
 - [testing/ambient-occlusion.md](testing/ambient-occlusion.md)
 - [testing/gltf-import.md](testing/gltf-import.md)
+- [testing/memory-control-investigation-template.md](testing/memory-control-investigation-template.md)
 - [testing/physics-chain-performance.md](testing/physics-chain-performance.md)
 - [testing/texture-management-runtime-baseline-2026-05-01.md](testing/texture-management-runtime-baseline-2026-05-01.md)
 - [testing/texture-runtime-streaming-validation.md](testing/texture-runtime-streaming-validation.md)

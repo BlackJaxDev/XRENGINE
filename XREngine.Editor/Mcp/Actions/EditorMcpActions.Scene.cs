@@ -9,6 +9,7 @@ using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Editor;
+using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
@@ -786,6 +787,37 @@ namespace XREngine.Editor.Mcp
                 targetPosition = ToMcpVector3(targetPosition),
                 targetRotation = ToMcpQuaternion(targetRotation),
                 durationSeconds
+            }));
+        }
+
+        /// <summary>
+        /// Toggles render-on-demand for the active editor camera pawn.
+        /// </summary>
+        [XRMcp(Name = "set_editor_camera_render_on_demand", Permission = McpPermissionLevel.Mutate, PermissionReason = "Changes editor camera viewport rendering diagnostics.")]
+        [McpThreadAffinity(McpThreadAffinity.Update)]
+        [Description("Set render-on-demand for the active editor camera pawn and optionally invalidate the viewport.")]
+        public static Task<McpToolResponse> SetEditorCameraRenderOnDemandAsync(
+            McpToolContext context,
+            [McpName("enabled"), Description("Whether render-on-demand should be enabled.")] bool enabled,
+            [McpName("invalidate_view"), Description("Whether to force one fresh render after changing the setting.")] bool invalidateView = true)
+        {
+            var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
+            if (player?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
+                return Task.FromResult(new McpToolResponse("No editor camera pawn available.", isError: true));
+
+            pawn.RenderOnDemand = enabled;
+            if (invalidateView)
+                pawn.InvalidateView();
+
+            XRViewport? viewport = pawn.Viewport;
+            return Task.FromResult(new McpToolResponse("Updated editor camera render-on-demand state.", new
+            {
+                enabled = pawn.RenderOnDemand,
+                invalidateView,
+                pawnName = pawn.Name,
+                cameraNodeId = pawn.SceneNode?.ID,
+                hasViewport = viewport is not null,
+                suppress3DSceneRendering = viewport?.Suppress3DSceneRendering
             }));
         }
 

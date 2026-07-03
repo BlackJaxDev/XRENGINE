@@ -1352,18 +1352,26 @@ namespace XREngine.Components.Lights
                 WorldToLightSpaceMatrix: worldToLightSpaceMatrix);
         }
 
-        private static bool ShouldPreserveStaleCascadeAtlasUniformData(
+        private static bool ShouldPreserveCascadeAtlasUniformData(
             in ShadowAtlasAllocation allocation,
             in DirectionalCascadeAtlasSlot previous)
-            => previous.HasAllocation &&
-               previous.HasCascadeUniformData &&
-               previous.IsResident &&
-               previous.LastRenderedFrame != 0u &&
-               allocation.IsResident &&
-               previous.PageIndex == allocation.PageIndex &&
-               previous.PixelRect.Equals(allocation.PixelRect) &&
-               previous.InnerPixelRect.Equals(allocation.InnerPixelRect) &&
-               allocation.ActiveFallback == ShadowFallbackMode.StaleTile;
+        {
+            if (!previous.HasAllocation ||
+                !previous.HasCascadeUniformData ||
+                !previous.IsResident ||
+                previous.LastRenderedFrame == 0u ||
+                !allocation.IsResident ||
+                previous.PageIndex != allocation.PageIndex ||
+                !previous.PixelRect.Equals(allocation.PixelRect) ||
+                !previous.InnerPixelRect.Equals(allocation.InnerPixelRect))
+            {
+                return false;
+            }
+
+            return allocation.ActiveFallback is ShadowFallbackMode.None
+                or ShadowFallbackMode.StaleTile
+                or ShadowFallbackMode.ContactOnly;
+        }
 
         private static bool DoesRenderedSampleMatchAllocation(
             in DirectionalCascadeSampleState sample,
@@ -1382,20 +1390,33 @@ namespace XREngine.Components.Lights
                sample.ContentHash != 0u &&
                allocation.IsResident &&
                allocation.LastRenderedFrame != 0u &&
-               allocation.ActiveFallback is ShadowFallbackMode.StaleTile or ShadowFallbackMode.None &&
+               allocation.ActiveFallback is ShadowFallbackMode.StaleTile
+                   or ShadowFallbackMode.None
+                   or ShadowFallbackMode.ContactOnly &&
                (sample.ContentHash == allocation.ContentVersion ||
                 sample.RenderedFrame == allocation.LastRenderedFrame);
 
+        private static ShadowFallbackMode ResolvePreservedCascadeFallback(ShadowFallbackMode fallback)
+            => fallback == ShadowFallbackMode.StaleTile
+                ? ShadowFallbackMode.StaleTile
+                : ShadowFallbackMode.None;
+
+        private static ShadowFallbackMode ResolveStaleCascadeFallback(ShadowFallbackMode fallback)
+            => fallback == ShadowFallbackMode.Legacy
+                ? ShadowFallbackMode.Legacy
+                : ShadowFallbackMode.StaleTile;
+
         private static ShadowAtlasAllocation CreateRenderedSampleAllocation(
             in ShadowAtlasAllocation allocation,
-            in DirectionalCascadeSampleState sample)
+            in DirectionalCascadeSampleState sample,
+            bool staleSample = false)
             => allocation with
             {
                 ContentVersion = sample.ContentHash,
                 LastRenderedFrame = sample.RenderedFrame,
-                ActiveFallback = allocation.ActiveFallback == ShadowFallbackMode.None
-                    ? ShadowFallbackMode.None
-                    : ShadowFallbackMode.StaleTile,
+                ActiveFallback = staleSample
+                    ? ResolveStaleCascadeFallback(allocation.ActiveFallback)
+                    : ResolvePreservedCascadeFallback(allocation.ActiveFallback),
             };
 
         private static DirectionalCascadeAtlasSlot CreateAtlasSlot(
@@ -1465,13 +1486,31 @@ namespace XREngine.Components.Lights
                 TexelSize = texelSize,
                 ResolutionScale = resolutionScale,
                 Resolution = allocation.Resolution,
-                Fallback = allocation.ActiveFallback,
+                Fallback = ResolvePreservedCascadeFallback(allocation.ActiveFallback),
                 PixelRect = allocation.PixelRect,
                 InnerPixelRect = allocation.InnerPixelRect,
                 LastRenderedFrame = previous.LastRenderedFrame,
                 ContentVersion = previous.ContentVersion,
             };
         }
+
+        private static DirectionalCascadeAtlasSlot RefreshStaleAtlasSlotAllocation(
+            in DirectionalCascadeAtlasSlot previous,
+            in ShadowAtlasAllocation allocation,
+            int recordIndex,
+            float nearPlane,
+            float farPlane,
+            uint desiredResolution)
+            => RefreshAtlasSlotAllocation(
+                previous,
+                allocation,
+                recordIndex,
+                nearPlane,
+                farPlane,
+                desiredResolution) with
+                {
+                    Fallback = ResolveStaleCascadeFallback(allocation.ActiveFallback),
+                };
 
         internal void SetCascadeAtlasSlot(
             ShadowRequestSource source,
@@ -1507,7 +1546,7 @@ namespace XREngine.Components.Lights
 
                 if (CanUseRenderedSampleForStaleAllocation(renderedSample, allocation))
                 {
-                    ShadowAtlasAllocation renderedAllocation = CreateRenderedSampleAllocation(allocation, renderedSample);
+                    ShadowAtlasAllocation renderedAllocation = CreateRenderedSampleAllocation(allocation, renderedSample, staleSample: true);
                     DirectionalCascadeAtlasSlot slot = CreateAtlasSlot(
                         renderedAllocation,
                         recordIndex,
@@ -1537,9 +1576,9 @@ namespace XREngine.Components.Lights
                 }
 
                 DirectionalCascadeAtlasSlot previous = state.PreviousAtlasSlots[index];
-                if (ShouldPreserveStaleCascadeAtlasUniformData(allocation, previous))
+                if (ShouldPreserveCascadeAtlasUniformData(allocation, previous))
                 {
-                    DirectionalCascadeAtlasSlot slot = RefreshAtlasSlotAllocation(
+                    DirectionalCascadeAtlasSlot slot = RefreshStaleAtlasSlotAllocation(
                         previous,
                         allocation,
                         recordIndex,

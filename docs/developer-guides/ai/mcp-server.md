@@ -380,6 +380,9 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `batch_create_nodes` | Create multiple scene nodes in a single call. Each entry: {name, parent_id?, components?: string[], transform?: {x?,y?,z?,pitch?,yaw?,roll?,sx?,sy?,sz?}}. |
 | `batch_set_properties` | Set properties on multiple components/nodes in one call. Each operation: {node_id, component_type?, property_name, value}. |
 | `bulk_reparent_nodes` | Reparent multiple scene nodes to a new parent (or root) in one call. |
+| `capture_openxr_desktop_mirror_texture` | Capture the latest OpenXR desktop mirror texture and report pixel statistics. |
+| `capture_openxr_eye_preview_texture` | Capture the latest OpenXR preview copy for the left or right eye and report pixel statistics. |
+| `capture_render_pipeline_texture` | Capture a named live render-pipeline texture to PNG, EXR, or Radiance HDR and report pixel statistics. |
 | `capture_viewport_screenshot` | Capture a screenshot from a viewport or camera for LLM context. |
 | `clear_selection` | Clear the current scene-node selection. |
 | `clone_scene` | Deep-clone a scene for experimentation. The clone is added to the world (hidden by default). |
@@ -398,6 +401,8 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `delete_scene_node` | Delete a scene node and its hierarchy. |
 | `delete_selected_nodes` | Delete all currently selected scene nodes. |
 | `diff_scene_nodes` | Diff two scene node hierarchies and return structural/property differences. |
+| `dump_cpu_frame_profile` | Dump the latest CPU profiler frame snapshot to an LLM-readable log file in the current Build/Logs run directory. |
+| `dump_gpu_render_pipeline_profile` | Dump retained GPU timing history for one render pipeline, or all captured pipelines when pipeline_name is omitted. |
 | `duplicate_scene_node` | Duplicate a scene node (optionally with children). |
 | `enter_play_mode` | Enter play mode. |
 | `evaluate_expression` | Evaluate a dot-separated property chain expression on an XRBase object (e.g. 'Transform.WorldMatrix.Translation.X'). |
@@ -427,16 +432,19 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_game_settings` | Read the current game startup settings (networking, windows, timing, build, etc.). |
 | `get_job_manager_state` | Get job manager queues, workers, and queue capacity. |
 | `get_loaded_game_types` | List all types loaded from the game DLL plugin: components, menu items, and all exported types grouped by assembly. |
+| `get_material_uniforms` | List all shader uniforms (Parameters) on a material, including names, types, and current values. Target the material by asset ID or via a component's Material property. |
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
 | `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
 | `get_parent_types` | Walk the inheritance chain upward from a type, including interfaces. |
 | `get_prefab_structure` | Get the node hierarchy for a prefab source or variant. |
 | `get_render_capabilities` | Get renderer capability flags (GPU, extensions, ray tracing). |
+| `get_render_profiler_stats` | Return the latest render-profiler counters, including Vulkan frame lifecycle timings and command-buffer cache state. |
 | `get_render_state` | Get current rendering pipeline and camera state. |
 | `get_scene_node_info` | Get detailed info about a scene node, including transform and components. |
 | `get_scene_statistics` | Get scene statistics including node and component counts. |
 | `get_selection` | Get the currently selected scene nodes. |
+| `get_texture_streaming_summary` | Return imported texture streaming summary telemetry, including Vulkan freeze and generation state. |
 | `get_time_state` | Get timing, delta, and target frequency information. |
 | `get_transform_decomposed` | Get local/world/render translation, rotation, and scale for a scene node. |
 | `get_transform_matrices` | Get local/world/render matrices for a scene node. |
@@ -462,9 +470,11 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `list_loaded_assets` | List assets currently loaded by the asset manager. |
 | `list_local_players` | List local player controllers, viewports, and input presence. |
 | `list_prefabs` | List loaded prefab assets. |
+| `list_render_pipeline_resources` | List live render-pipeline textures and framebuffers for the selected viewport. |
 | `list_scenes` | List scenes in the active world. |
 | `list_scene_nodes` | List scene nodes in the active world/scene. |
 | `list_tags` | List tags on a node or across the active world. |
+| `list_texture_streaming_textures` | List imported texture streaming texture telemetry rows for live residency validation. |
 | `list_tools` | List all MCP tools currently registered by the editor. |
 | `list_transform_children` | List immediate child transforms for a scene node. |
 | `list_transform_types` | List available transform types. |
@@ -473,6 +483,8 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `move_node_sibling` | Reorder a scene node among siblings. |
 | `prefab_apply_overrides` | Apply an instance's recorded prefab overrides back to its source prefab asset. |
 | `prefab_revert_overrides` | Revert recorded prefab overrides on an instance by restoring source prefab values. |
+| `probe_editor_depth_hit` | Probe the editor camera pawn depth-hit state at a normalized viewport coordinate. |
+| `probe_render_pipeline_depth` | Read depth from a named render-pipeline FBO at a normalized viewport coordinate. |
 | `query_references` | Query references for assets, scene nodes, and components by GUID. |
 | `read_game_asset` | Read the raw text contents of a file from the game project's assets directory (.asset, .json, .xml, .yaml, .cs, etc.). |
 | `read_game_config` | Read the contents of a config file from the project's Config/ directory. |
@@ -498,10 +510,13 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `set_compile_on_change` | Toggle CodeManager.CompileOnChange: when enabled, game scripts auto-compile when .cs files change and editor regains focus. |
 | `set_component_properties` | Set multiple component properties/fields in one call. |
 | `set_component_property` | Set a component property or field value by name. |
+| `set_editor_camera_render_on_demand` | Set render-on-demand for the active editor camera pawn and optionally invalidate the viewport. |
 | `set_editor_camera_view` | Set the editor camera view with interpolation using position plus look-at or Euler rotation. |
-| `set_editor_preference` | Set an editor preference by property name (writes to the global default). |
+| `set_editor_preference` | Set an editor preference by property name or dotted path (writes to the global default). |
 | `set_game_setting` | Set a game startup setting by property name. |
 | `set_layer` | Set the layer for a scene node. |
+| `set_material_uniform` | Set a shader uniform value on a material by uniform name. Supports float, int, uint, vec2 ({X,Y}), vec3 ({X,Y,Z}), vec4 ({X,Y,Z,W}). Target by material asset ID or via a component's Material property. |
+| `set_material_uniforms` | Set multiple shader uniforms on a material in one call. Pass a map of uniform_name -> value. |
 | `set_node_active` | Set whether a scene node is active in the hierarchy. |
 | `set_node_active_recursive` | Set active state on a node and its children. |
 | `set_node_transform` | Set a scene node transform (translation, rotation, scale). |
@@ -510,6 +525,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `set_tag` | Assign or remove a tag on a scene node. |
 | `set_transform` | Set a scene node transform (translation, rotation, scale). |
 | `snapshot_world_state` | Capture an in-memory snapshot of the active world state for later restore. |
+| `sweep_render_pipeline_depth` | Read depth from every live render-pipeline FBO that has a depth/stencil attachment at a normalized viewport coordinate. |
 | `toggle_scene_visibility` | Toggle scene visibility. |
 | `transaction_begin` | Begin an MCP transaction by capturing a rollback snapshot of the current world state. |
 | `transaction_commit` | Commit an MCP transaction and discard its rollback snapshot. |
@@ -521,6 +537,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `write_game_asset` | Write or overwrite a text asset file in the game project's assets directory. |
 | `write_game_config` | Write (create or overwrite) a config file in the project's Config/ directory. |
 | `write_game_script` | Write or create a .cs script file in the game project's assets directory. Optionally triggers immediate compilation. |
+| `zoom_editor_camera_at_depth_hit` | Apply editor camera scroll zoom at a normalized viewport coordinate using the pawn depth-hit mechanic. |
 <!-- MCP_TOOL_TABLE:END -->
 
 ---

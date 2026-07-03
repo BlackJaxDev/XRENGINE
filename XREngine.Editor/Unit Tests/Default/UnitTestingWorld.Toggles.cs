@@ -431,6 +431,7 @@ public static partial class EditorUnitTests
         public bool SinglePassStereoVR = false;
         public bool RenderPhysicsDebug = false;
         public bool RenderWindowsWhileInVR = true;
+        public bool EditorCameraRenderOnDemand = false; //Starts the unit-test editor camera in render-on-demand mode, reusing the last camera result on idle frames.
         public bool RenderTransformDebugInfo = true;
         public bool RenderTransformPoints = true;
         public bool RenderTransformCapsules = false;

@@ -940,6 +940,21 @@ public sealed class ProfilerProtocolTests
             CollectSwap = new AllocationSlice { LastBytes = 512, AverageBytes = 400.0, MaxBytes = 1024, Samples = 60, Capacity = 240 },
             Update = new AllocationSlice { LastBytes = 2048, AverageBytes = 1800.0, MaxBytes = 4096, Samples = 200, Capacity = 240 },
             FixedUpdate = new AllocationSlice { LastBytes = 256, AverageBytes = 200.0, MaxBytes = 512, Samples = 30, Capacity = 240 },
+            Scopes =
+            [
+                new AllocationScopeSlice
+                {
+                    Name = "Render.Frame",
+                    Category = "RenderSubmission",
+                    BudgetBytes = 0,
+                    LastBytes = 0,
+                    AverageBytes = 4.0,
+                    MaxBytes = 16,
+                    Samples = 8,
+                    Capacity = 240,
+                    OverBudgetCount = 1,
+                },
+            ],
         };
 
         var clone = RoundTrip(original);
@@ -950,6 +965,9 @@ public sealed class ProfilerProtocolTests
         clone.CollectSwap.Samples.ShouldBe(60);
         clone.Update.LastKB.ShouldBe(2.0);
         clone.FixedUpdate.Capacity.ShouldBe(240);
+        clone.Scopes.Length.ShouldBe(1);
+        clone.Scopes[0].Name.ShouldBe("Render.Frame");
+        clone.Scopes[0].OverBudgetCount.ShouldBe(1);
     }
 
     // ── BvhMetricsPacket ───────────────────────────────────────────────

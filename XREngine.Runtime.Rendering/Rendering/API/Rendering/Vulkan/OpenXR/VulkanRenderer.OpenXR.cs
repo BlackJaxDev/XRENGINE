@@ -1066,6 +1066,7 @@ public unsafe partial class VulkanRenderer
         variant.RecordedSwapchainImageEverPresented = false;
         variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
         variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
+        variant.RecordedSwapchainRefreshFromLastPresentSource = false;
         variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
         if (!TryComputeOpenXrPrimaryCommandBufferGroupSignature(
                 commandChainImageIndex,
@@ -1954,6 +1955,7 @@ public unsafe partial class VulkanRenderer
             variant.RecordedSwapchainImageEverPresented = false;
             variant.RecordedSwapchainFinalLayout = ImageLayout.ShaderReadOnlyOptimal;
             variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
+            variant.RecordedSwapchainRefreshFromLastPresentSource = false;
             variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
             if (!TryComputeOpenXrPrimaryCommandBufferGroupSignature(
                     commandChainImageIndex,

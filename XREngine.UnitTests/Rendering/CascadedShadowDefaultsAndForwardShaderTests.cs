@@ -1065,16 +1065,21 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         forwardSource.ShouldContain("firstDirLight.CastsShadows");
         forwardSource.ShouldContain("FindDirectionalShadowReceiverTexture(");
         forwardSource.ShouldContain("CopyPublishedDirectionalAtlasUniformData(");
-        forwardSource.ShouldContain("AreRequiredDirectionalAtlasTilesSampleable");
+        forwardSource.ShouldContain("AreRequiredDirectionalAtlasSlotsUsable");
+        forwardSource.ShouldContain("AnyRequiredDirectionalAtlasSlotSamplesPage");
         forwardSource.ShouldContain("perLightShadowTex = FindDirectionalShadowReceiverTexture(dirLight);");
         forwardSource.ShouldNotContain("if (useDirectionalShadowAtlas)\n                    {\n                        forwardShadowTex = null;\n                    }");
         forwardSource.ShouldContain("firstDirLight.GetCascadedShadowReceiverTexture(directionalShadowCamera)");
         forwardSource.ShouldContain("ResolveForwardDirectionalShadowCameraComponent(out XRCamera? directionalShadowCamera)");
-        forwardSource.ShouldContain("firstDirLight.PublishedCascadesMatchCamera(directionalShadowCamera)");
-        forwardSource.ShouldContain("dirLight.PublishedCascadesMatchCamera(directionalShadowCamera)");
+        forwardSource.ShouldContain("ShouldUseForwardDirectionalCascades(");
+        forwardSource.ShouldContain("light.PublishedCascadesMatchCamera(directionalShadowCamera)");
+        forwardSource.ShouldContain("directionalShadowCameraComponent is not null");
+        forwardSource.ShouldContain("return light.HasPublishedCascades(source);");
+        forwardSource.ShouldNotContain("bool directionalShadowCameraWantsCascades");
 
         string deferredBindSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Commands", "Features", "VPRC_LightCombinePass.cs"));
-        deferredBindSource.ShouldContain("AreRequiredDirectionalAtlasTilesSampleable");
+        deferredBindSource.ShouldContain("AreRequiredDirectionalAtlasSlotsUsable");
+        deferredBindSource.ShouldContain("AnyRequiredDirectionalAtlasSlotSamplesPage");
         deferredBindSource.ShouldNotContain("HasAnyDirectionalAtlasTileSampleable");
         deferredBindSource.ShouldContain("selectedDirectionalLight.PrimaryShadowReceiverTexture");
         deferredBindSource.ShouldContain("if (useCascadedDirectionalShadows && directionalCascadeReceiverTexture is not null)");

@@ -908,10 +908,6 @@ namespace XREngine.Scene
             bool useDirectionalShadowAtlas = false;
             bool directionalAtlasSampleable = false;
             bool anyDirectionalShadowEnabled = false;
-            bool directionalShadowCameraWantsCascades =
-                directionalShadowCameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded ||
-                DirectionalLightComponent.IsHmdEyeCameraForDirectionalCascades(directionalShadowCamera);
-
             Array.Clear(_directionalShadowMapEnabled);
             Array.Clear(_directionalUseCascadedShadows);
             Array.Clear(_directionalShadowAtlasEnabled);
@@ -981,11 +977,13 @@ namespace XREngine.Scene
                     // the 2D-map-populated check, so cascaded-only configs silently dropped
                     // all directional shadows (including the volumetric fog scatter pass).
                     useCascadedDirectionalShadows =
-                        directionalShadowCameraWantsCascades &&
-                        firstDirLight.PublishedCascadesMatchCamera(directionalShadowCamera) &&
-                        firstDirLight.EnableCascadedShadows &&
-                        (firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding || firstCascadeReceiverTexture is not null) &&
-                        firstActiveCascadeCount > 0;
+                        ShouldUseForwardDirectionalCascades(
+                            firstDirLight,
+                            directionalShadowCamera,
+                            directionalShadowCameraComponent,
+                            firstDirLight.UsesDirectionalShadowAtlasForCurrentEncoding,
+                            firstCascadeReceiverTexture,
+                            firstActiveCascadeCount);
 
                     if (useCascadedDirectionalShadows)
                         forwardCascadeShadowTex = firstCascadeReceiverTexture;
@@ -1103,11 +1101,13 @@ namespace XREngine.Scene
                         int perLightActiveCascadeCount = dirLight.GetActiveCascadeCount(directionalShadowCamera);
                         perLightShadowTex = FindDirectionalShadowReceiverTexture(dirLight);
                         perLightUseCascades =
-                            directionalShadowCameraWantsCascades &&
-                            dirLight.PublishedCascadesMatchCamera(directionalShadowCamera) &&
-                            dirLight.EnableCascadedShadows &&
-                            (perLightUseAtlas || perLightCascadeReceiverTexture is not null) &&
-                            perLightActiveCascadeCount > 0;
+                            ShouldUseForwardDirectionalCascades(
+                                dirLight,
+                                directionalShadowCamera,
+                                directionalShadowCameraComponent,
+                                perLightUseAtlas,
+                                perLightCascadeReceiverTexture,
+                                perLightActiveCascadeCount);
 
                         if (perLightUseCascades)
                             perLightCascadeTex = perLightCascadeReceiverTexture;
@@ -1343,12 +1343,24 @@ namespace XREngine.Scene
                         _directionalShadowAtlasParams0.AsSpan(atlasRecordOffset, ForwardMaxCascades),
                         _directionalShadowAtlasParams1.AsSpan(atlasRecordOffset, ForwardMaxCascades));
 
-                    bool perLightAtlasSampleable = directionalAtlasTextureAvailable &&
-                        AreRequiredDirectionalAtlasTilesSampleable(
+                    int requiredAtlasSlotCount = perLightUseCascades ? dirLight.GetActiveCascadeCount(directionalShadowCamera) : 1;
+                    bool needsDirectionalAtlasTexture = AnyRequiredDirectionalAtlasSlotSamplesPage(
                         _directionalShadowAtlasPacked0,
                         atlasRecordOffset,
-                        perLightUseCascades ? dirLight.GetActiveCascadeCount(directionalShadowCamera) : 1,
-                        directionalAtlasLayerCount);
+                        requiredAtlasSlotCount);
+                    bool perLightAtlasSampleable =
+                        AreRequiredDirectionalAtlasSlotsUsable(
+                            _directionalShadowAtlasPacked0,
+                            atlasRecordOffset,
+                            requiredAtlasSlotCount,
+                            int.MaxValue) &&
+                        (!needsDirectionalAtlasTexture ||
+                            (directionalAtlasTextureAvailable &&
+                                AreRequiredDirectionalAtlasSlotsUsable(
+                                    _directionalShadowAtlasPacked0,
+                                    atlasRecordOffset,
+                                    requiredAtlasSlotCount,
+                                    directionalAtlasLayerCount)));
                     _directionalShadowAtlasEnabled[i] = perLightAtlasSampleable ? 1 : 0;
                     if (perLightAtlasSampleable)
                     {
@@ -1466,6 +1478,32 @@ namespace XREngine.Scene
             return null;
         }
 
+        private static bool ShouldUseForwardDirectionalCascades(
+            DirectionalLightComponent light,
+            XRCamera? directionalShadowCamera,
+            CameraComponent? directionalShadowCameraComponent,
+            bool useDirectionalShadowAtlas,
+            XRTexture2DArray? cascadeReceiverTexture,
+            int activeCascadeCount)
+        {
+            if (!light.EnableCascadedShadows ||
+                activeCascadeCount <= 0 ||
+                !light.PublishedCascadesMatchCamera(directionalShadowCamera) ||
+                (!useDirectionalShadowAtlas && cascadeReceiverTexture is null))
+            {
+                return false;
+            }
+
+            if (directionalShadowCameraComponent is not null)
+                return directionalShadowCameraComponent.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded;
+
+            if (DirectionalLightComponent.IsHmdEyeCameraForDirectionalCascades(directionalShadowCamera))
+                return true;
+
+            ShadowRequestSource source = DirectionalLightComponent.GetCascadeSourceForCamera(directionalShadowCamera);
+            return light.HasPublishedCascades(source);
+        }
+
         private void LogForwardDirectionalShadowBinding(
             DirectionalLightComponent? light,
             XRCamera? directionalShadowCamera,
@@ -1512,10 +1550,10 @@ namespace XREngine.Scene
                 FormatAtlasPacked(_directionalShadowAtlasPacked0, 3));
         }
 
-        private static bool AreRequiredDirectionalAtlasTilesSampleable(IVector4[] packed0, int count)
-            => AreRequiredDirectionalAtlasTilesSampleable(packed0, 0, count, int.MaxValue);
+        private static bool AreRequiredDirectionalAtlasSlotsUsable(IVector4[] packed0, int count)
+            => AreRequiredDirectionalAtlasSlotsUsable(packed0, 0, count, int.MaxValue);
 
-        private static bool AreRequiredDirectionalAtlasTilesSampleable(IVector4[] packed0, int startIndex, int count, int maxPageCount)
+        private static bool AreRequiredDirectionalAtlasSlotsUsable(IVector4[] packed0, int startIndex, int count, int maxPageCount)
         {
             if ((uint)startIndex >= (uint)packed0.Length)
                 return false;
@@ -1527,12 +1565,38 @@ namespace XREngine.Scene
             for (int i = 0; i < clampedCount; i++)
             {
                 IVector4 packed = packed0[startIndex + i];
-                if (packed.X == 0 || packed.Y < 0 || packed.Y >= maxPageCount)
+                if (DirectionalAtlasSlotSamplesPage(packed))
+                {
+                    if (packed.Y < 0 || packed.Y >= maxPageCount)
+                        return false;
+                    continue;
+                }
+
+                if (!HasExplicitNonLegacyDirectionalAtlasFallback(packed))
                     return false;
             }
 
             return true;
         }
+
+        private static bool AnyRequiredDirectionalAtlasSlotSamplesPage(IVector4[] packed0, int startIndex, int count)
+        {
+            if ((uint)startIndex >= (uint)packed0.Length)
+                return false;
+
+            int clampedCount = Math.Min(Math.Max(count, 0), packed0.Length - startIndex);
+            for (int i = 0; i < clampedCount; i++)
+                if (DirectionalAtlasSlotSamplesPage(packed0[startIndex + i]))
+                    return true;
+
+            return false;
+        }
+
+        private static bool DirectionalAtlasSlotSamplesPage(IVector4 packed)
+            => packed.X != 0;
+
+        private static bool HasExplicitNonLegacyDirectionalAtlasFallback(IVector4 packed)
+            => packed.Z > 0 && packed.Z != (int)ShadowFallbackMode.Legacy;
 
         private static string FormatAtlasPacked(IVector4[] packed0, int index)
         {

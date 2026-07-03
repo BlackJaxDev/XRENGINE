@@ -16,6 +16,7 @@ using XREngine.Components.Animation;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Runtime.Memory;
 using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
@@ -327,6 +328,10 @@ namespace XREngine
 
             private static void UpdateOpenXRRuntime()
             {
+                using var allocationScope = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking
+                    ? Engine.Allocations.BeginScope("VR.OpenXR.RuntimeUpdate", AllocationScopeCategory.VrInput)
+                    : default;
+
                 if (!_openXrRuntimeMonitoring || _openXRApi is null)
                     return;
 
@@ -714,6 +719,10 @@ namespace XREngine
 
             private static void CollectVisibleTwoPass()
             {
+                using var allocationScope = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking
+                    ? Engine.Allocations.BeginScope("VR.Visibility.TwoPass", AllocationScopeCategory.RenderSubmission)
+                    : default;
+
                 if (IsOpenXRActive)
                 {
                     OpenXRApi?.EngineCollectVisibleTick();
@@ -744,6 +753,10 @@ namespace XREngine
             }
             private static void CollectVisibleStereo()
             {
+                using var allocationScope = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking
+                    ? Engine.Allocations.BeginScope("VR.Visibility.Stereo", AllocationScopeCategory.RenderSubmission)
+                    : default;
+
                 if (IsOpenXRActive)
                 {
                     OpenXRApi?.EngineCollectVisibleTick();
@@ -766,6 +779,9 @@ namespace XREngine
             private static void SwapBuffersTwoPass()
             {
                 using var sample = Engine.Profiler.Start("VRState.SwapBuffersTwoPass");
+                using var allocationScope = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking
+                    ? Engine.Allocations.BeginScope("VR.SwapBuffers.TwoPass", AllocationScopeCategory.RenderSubmission)
+                    : default;
 
                 if (IsOpenXRActive)
                 {
@@ -780,6 +796,9 @@ namespace XREngine
             private static void SwapBuffersStereo()
             {
                 using var sample = Engine.Profiler.Start("VRState.SwapBuffersStereo");
+                using var allocationScope = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking
+                    ? Engine.Allocations.BeginScope("VR.SwapBuffers.Stereo", AllocationScopeCategory.RenderSubmission)
+                    : default;
 
                 if (IsOpenXRActive)
                 {
@@ -793,6 +812,9 @@ namespace XREngine
             private static void Render()
             {
                 using var sample = Engine.Profiler.Start("VRState.Render");
+                using var allocationScope = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking
+                    ? Engine.Allocations.BeginScope("VR.Render", AllocationScopeCategory.RenderSubmission)
+                    : default;
 
                 if (IsOpenXRActive)
                 {
@@ -1037,6 +1059,10 @@ namespace XREngine
 
             private static void Update()
             {
+                using var allocationScope = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking
+                    ? Engine.Allocations.BeginScope("VR.OpenVR.InputUpdate", AllocationScopeCategory.VrInput)
+                    : default;
+
                 if (OpenVRApi.Headset is null)
                     OpenVRApi.UpdateInput(0);
                 else

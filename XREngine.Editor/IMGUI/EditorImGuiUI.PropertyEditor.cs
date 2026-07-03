@@ -3786,13 +3786,37 @@ public static partial class EditorImGuiUI
             if (!member.Name.Contains("Dlss", StringComparison.OrdinalIgnoreCase))
                 return false;
 
-            if (NvidiaDlssManager.RequiredRuntimeDllsAvailable)
-                return false;
+            if (!NvidiaDlssManager.RequiredRuntimeDllsAvailable)
+            {
+                warning = "This DLSS setting will not do anything because the NVIDIA Streamline/DLSS runtime DLLs are not deployed. "
+                    + NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason;
+                return true;
+            }
 
-            warning = "This DLSS setting will not do anything because the NVIDIA Streamline/DLSS runtime DLLs are not deployed. "
-                + NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason;
-            return true;
+            if (IsNvidiaDlssFrameGenerationMember(member)
+                && Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration
+                && Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode == ENvidiaDlssFrameGenerationMode.Off)
+            {
+                warning = "DLSS frame generation is enabled, but the frame generation mode is Off. Select OneX, TwoX, or ThreeX to request generated frames.";
+                return true;
+            }
+
+            if (IsNvidiaDlssFrameGenerationMember(member)
+                && Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration
+                && Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode != ENvidiaDlssFrameGenerationMode.Off
+                && !NvidiaDlssManager.FrameGenerationAvailable)
+            {
+                warning = "DLSS frame generation is requested, but it is not available. "
+                    + NvidiaDlssManager.FrameGenerationUnavailableReason;
+                return true;
+            }
+
+            return false;
         }
+
+        private static bool IsNvidiaDlssFrameGenerationMember(MemberInfo member)
+            => string.Equals(member.Name, nameof(Engine.Rendering.EngineSettings.EnableNvidiaDlssFrameGeneration), StringComparison.Ordinal)
+            || string.Equals(member.Name, nameof(Engine.Rendering.EngineSettings.NvidiaDlssFrameGenerationMode), StringComparison.Ordinal);
 
         private static void DrawDlssRuntimeWarningTooltip(string warning)
         {

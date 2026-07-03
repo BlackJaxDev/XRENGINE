@@ -328,7 +328,7 @@ public sealed class ShadowAtlasManagerPhaseTests
             partialDirtyRecordIndices[pair.Key].ShouldBe(pair.Value);
         partialDirtyFrame.Generation.ShouldBe(firstFrame.Generation);
         partialDirtyFrame.TryGetAllocation(partialDirtyRequests[1].Key, out ShadowAtlasAllocation dirtyCascade).ShouldBeTrue();
-        dirtyCascade.ActiveFallback.ShouldBe(ShadowFallbackMode.StaleTile);
+        dirtyCascade.ActiveFallback.ShouldBe(ShadowFallbackMode.ContactOnly);
         dirtyCascade.LastRenderedFrame.ShouldBe(1u);
     }
 
@@ -455,7 +455,7 @@ public sealed class ShadowAtlasManagerPhaseTests
         {
             frameData.TryGetAllocation(requests[i].Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
             allocation.LastRenderedFrame.ShouldBe(0u);
-            allocation.ActiveFallback.ShouldBe(ShadowFallbackMode.Lit);
+            allocation.ActiveFallback.ShouldBe(ShadowFallbackMode.ContactOnly);
         }
 
         ShadowAtlasFrameData reconciled = RunSolvedFrame(manager, 2u, CreateCleanRequests(requests));
@@ -508,8 +508,8 @@ public sealed class ShadowAtlasManagerPhaseTests
         {
             frameData.TryGetAllocation(movedRequests[i].Key, out ShadowAtlasAllocation allocation).ShouldBeTrue();
             allocation.LastRenderedFrame.ShouldBe(1u);
-            allocation.ActiveFallback.ShouldBe(ShadowFallbackMode.StaleTile);
-            allocation.SkipReason.ShouldBe(SkipReason.StaleTileReused);
+            allocation.ActiveFallback.ShouldBe(ShadowFallbackMode.ContactOnly);
+            allocation.SkipReason.ShouldBe(SkipReason.None);
         }
 
         MarkPublishedRequestsRendered(manager, movedRequests);
@@ -566,7 +566,7 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
-    public void SolveAllocations_DirtyDirectionalRefreshKeepsStaleFallbackBeforeRender()
+    public void SolveAllocations_DirtyDirectionalRefreshUsesContactFallbackBeforeRender()
     {
         ShadowAtlasManager manager = CreateManager(pageSize: 1024u, maxPages: 1);
         DirectionalLightComponent light = CreateDirectionalLight(1024u);
@@ -600,8 +600,8 @@ public sealed class ShadowAtlasManagerPhaseTests
         frameData.TryGetAllocation(movedRequest.Key, out ShadowAtlasAllocation movedAllocation).ShouldBeTrue();
         movedAllocation.LastRenderedFrame.ShouldBe(1u);
         movedAllocation.ContentVersion.ShouldBe(firstAllocation.ContentVersion);
-        movedAllocation.ActiveFallback.ShouldBe(ShadowFallbackMode.StaleTile);
-        movedAllocation.SkipReason.ShouldBe(SkipReason.StaleTileReused);
+        movedAllocation.ActiveFallback.ShouldBe(ShadowFallbackMode.ContactOnly);
+        movedAllocation.SkipReason.ShouldBe(SkipReason.None);
     }
 
     [Test]
