@@ -48,11 +48,18 @@ public unsafe partial class OpenXRAPI
         (long)VkFormat.R8G8B8A8Unorm,
     ];
 
-    private readonly long[] _vulkanOpenXrSwapchainFormats = new long[2];
-    private readonly SwapchainUsageFlags[] _vulkanOpenXrSwapchainUsages = new SwapchainUsageFlags[2];
-    private readonly int[] _vulkanOpenXrStartupPrewarmFramesRemaining = [3, 3];
-    private readonly uint[] _vulkanOpenXrPrewarmWidths = new uint[2];
-    private readonly uint[] _vulkanOpenXrPrewarmHeights = new uint[2];
+    private readonly long[] _vulkanOpenXrSwapchainFormats = new long[RenderFrameViewSet.MaxViewCount];
+    private readonly SwapchainUsageFlags[] _vulkanOpenXrSwapchainUsages = new SwapchainUsageFlags[RenderFrameViewSet.MaxViewCount];
+    private readonly int[] _vulkanOpenXrStartupPrewarmFramesRemaining = CreateOpenXrStartupPrewarmFrameCounters();
+    private readonly uint[] _vulkanOpenXrPrewarmWidths = new uint[RenderFrameViewSet.MaxViewCount];
+    private readonly uint[] _vulkanOpenXrPrewarmHeights = new uint[RenderFrameViewSet.MaxViewCount];
+
+    private static int[] CreateOpenXrStartupPrewarmFrameCounters()
+    {
+        int[] counters = new int[RenderFrameViewSet.MaxViewCount];
+        Array.Fill(counters, 3);
+        return counters;
+    }
 
     private readonly record struct OpenXrStereoRenderTarget(
         XRFrameBuffer FrameBuffer,
@@ -379,37 +386,7 @@ public unsafe partial class OpenXRAPI
         var supportedFormatsLog = string.Join(", ", Array.ConvertAll(formats, FormatVulkanSwapchainFormatForLog));
         Debug.Out($"OpenXR Vulkan supported swapchain formats: {supportedFormatsLog}");
 
-        // Get view configuration
-        var viewConfigType = ViewConfigurationType.PrimaryStereo;
-        _viewCount = 0;
-        Api.EnumerateViewConfigurationView(_instance, _systemId, viewConfigType, 0, ref _viewCount, null);
-
-        if (_viewCount != 2)
-        {
-            throw new Exception($"Expected 2 views, got {_viewCount}");
-        }
-
-        _views = new View[_viewCount];
-        for (int i = 0; i < _views.Length; i++)
-            _views[i].Type = StructureType.View;
-
-        for (int i = 0; i < _viewConfigViews.Length; i++)
-            _viewConfigViews[i].Type = StructureType.ViewConfigurationView;
-
-        fixed (ViewConfigurationView* viewConfigViewsPtr = _viewConfigViews)
-        {
-            Api.EnumerateViewConfigurationView(_instance, _systemId, viewConfigType, _viewCount, ref _viewCount, viewConfigViewsPtr);
-        }
-
-        for (int i = 0; i < _viewCount; i++)
-        {
-            uint rw = _viewConfigViews[i].RecommendedImageRectWidth;
-            uint rh = _viewConfigViews[i].RecommendedImageRectHeight;
-            Debug.Out($"OpenXR Vulkan view[{i}] recommended size: {rw}x{rh}, max={_viewConfigViews[i].MaxImageRectWidth}x{_viewConfigViews[i].MaxImageRectHeight}, samples={_viewConfigViews[i].RecommendedSwapchainSampleCount}");
-
-            if (rw == 0 || rh == 0)
-                throw new Exception($"OpenXR runtime reported an invalid recommended image rect size for Vulkan view {i}: {rw}x{rh}. Cannot create swapchains.");
-        }
+        InitializeOpenXrViewsForActiveConfiguration("OpenXR Vulkan");
 
         // Create swapchains for each view
         for (int i = 0; i < _viewCount; i++)
@@ -535,7 +512,7 @@ public unsafe partial class OpenXRAPI
 
             if (OpenXrDebugClearOnly)
             {
-                ColorF4 clearColor = viewIndex == 0
+                ColorF4 clearColor = IsLeftEyeLikeOpenXrView(viewIndex)
                     ? new ColorF4(1f, 0f, 0f, 1f)
                     : new ColorF4(0f, 1f, 0f, 1f);
 
@@ -559,10 +536,11 @@ public unsafe partial class OpenXRAPI
             GetOpenXrSwapchainWidth(1),
             GetOpenXrSwapchainHeight(1));
 
-        XRViewport? eyeViewport = viewIndex == 0 ? _openXrLeftViewport : _openXrRightViewport;
-        XRCamera? eyeCamera = viewIndex == 0 ? _openXrLeftEyeCamera : _openXrRightEyeCamera;
+        XRViewport? eyeViewport = GetOpenXrEyeViewport(viewIndex);
+        XRCamera? eyeCamera = GetOpenXrEyeCamera(viewIndex);
         if (eyeViewport is null || eyeCamera is null)
             return LogVulkanEyeRenderNotReady(viewIndex, imageIndex, "no eye viewport/camera");
+        EnsureOpenXrViewportExtent(eyeViewport, width, height);
         ValidateOpenXrEyeViewportExtent(eyeViewport, viewIndex, width, height);
 
         eyeViewport.WorldInstanceOverride = _openXrFrameWorld;
@@ -623,7 +601,7 @@ public unsafe partial class OpenXRAPI
                 return true;
             }
 
-            int eyeTargetIndex = (int)Math.Min(viewIndex, 1u);
+            int eyeTargetIndex = IsLeftEyeLikeOpenXrView(viewIndex) ? 0 : 1;
             XRFrameBuffer? mirrorFbo = _vulkanEyeMirrorFbos[eyeTargetIndex];
             XRTexture2D? mirrorColor = _vulkanEyeMirrorColors[eyeTargetIndex];
             if (mirrorFbo is null || mirrorColor is null)
@@ -1614,7 +1592,7 @@ public unsafe partial class OpenXRAPI
         if (OpenXrVulkanPrewarmEyes)
             return true;
 
-        int index = (int)Math.Min(viewIndex, 1u);
+        int index = (int)Math.Min(viewIndex, (uint)RenderFrameViewSet.MaxViewCount - 1u);
         uint width = GetOpenXrSwapchainWidth(viewIndex);
         uint height = GetOpenXrSwapchainHeight(viewIndex);
         if (_vulkanOpenXrPrewarmWidths[index] != width ||
@@ -1633,7 +1611,7 @@ public unsafe partial class OpenXRAPI
         if (OpenXrVulkanPrewarmEyes)
             return;
 
-        int index = (int)Math.Min(viewIndex, 1u);
+        int index = (int)Math.Min(viewIndex, (uint)RenderFrameViewSet.MaxViewCount - 1u);
         if (_vulkanOpenXrStartupPrewarmFramesRemaining[index] > 0)
             _vulkanOpenXrStartupPrewarmFramesRemaining[index]--;
     }
@@ -1649,7 +1627,7 @@ public unsafe partial class OpenXRAPI
         if (sourceTexture is null)
             return;
 
-        XRTexture2D? previewTexture = viewIndex == 0 ? _previewLeftEyeTexture : _previewRightEyeTexture;
+        XRTexture2D? previewTexture = GetOpenXrPreviewTexture(viewIndex);
         bool copiedPreview = renderer.TryCopyOpenXrEyeMirrorTexture(
             sourceTexture,
             previewTexture,
@@ -1708,7 +1686,7 @@ public unsafe partial class OpenXRAPI
         uint width,
         uint height)
     {
-        XRTexture2D? previewTexture = viewIndex == 0 ? _previewLeftEyeTexture : _previewRightEyeTexture;
+        XRTexture2D? previewTexture = GetOpenXrPreviewTexture(viewIndex);
         bool shouldCopyPreview = ShouldCopyDirectVulkanEyeSwapchainPreview();
         bool copiedPreview = shouldCopyPreview &&
             renderer.TryCopyOpenXrEyeSwapchainImageToTexture(
@@ -1779,10 +1757,11 @@ public unsafe partial class OpenXRAPI
             GetOpenXrSwapchainWidth(1),
             GetOpenXrSwapchainHeight(1));
 
-        XRViewport? eyeViewport = viewIndex == 0 ? _openXrLeftViewport : _openXrRightViewport;
-        XRCamera? eyeCamera = viewIndex == 0 ? _openXrLeftEyeCamera : _openXrRightEyeCamera;
+        XRViewport? eyeViewport = GetOpenXrEyeViewport(viewIndex);
+        XRCamera? eyeCamera = GetOpenXrEyeCamera(viewIndex);
         if (eyeViewport is null || eyeCamera is null)
             return;
+        EnsureOpenXrViewportExtent(eyeViewport, width, height);
         ValidateOpenXrEyeViewportExtent(eyeViewport, viewIndex, width, height);
 
         long selectedFormat = viewIndex < _vulkanOpenXrSwapchainFormats.Length
@@ -1815,7 +1794,7 @@ public unsafe partial class OpenXRAPI
                 return;
             }
 
-            int eyeTargetIndex = (int)Math.Min(viewIndex, 1u);
+            int eyeTargetIndex = IsLeftEyeLikeOpenXrView(viewIndex) ? 0 : 1;
             XRFrameBuffer? mirrorFbo = _vulkanEyeMirrorFbos[eyeTargetIndex];
             if (mirrorFbo is null)
                 return;

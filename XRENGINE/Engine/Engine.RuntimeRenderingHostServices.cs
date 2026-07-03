@@ -721,6 +721,16 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderVisibilityBuffer(int passDraws, long classifiedPixels, int activeMaterialTiles, int classificationOverflow, TimeSpan reconstruction, TimeSpan materialShading)
         => Engine.Rendering.Stats.GpuDriven.RecordVisibilityBuffer(passDraws, classifiedPixels, activeMaterialTiles, classificationOverflow, reconstruction, materialShading);
 
+    public void RecordRenderRvcFrameCounters(RvcFrameCounters counters)
+    {
+        Engine.Rendering.Stats.Rvc.RecordFrameCounters(counters);
+    }
+
+    public void RecordRenderRvcFrameProfile(RvcFrameProfileSnapshot profile)
+    {
+        Engine.Rendering.Stats.Rvc.RecordFrameProfile(profile);
+    }
+
     public void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands)
         => Engine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(eventCount, recoveredCommands);
 
@@ -1254,6 +1264,11 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public void RecordRenderFrameOutput(in FrameOutputTelemetry telemetry)
         => Engine.Rendering.Stats.FrameOutputs.RecordOutput(telemetry);
     public bool EnableVrFoveatedViewSet => Engine.Rendering.Settings.EnableVrFoveatedViewSet;
+    public ERvcPipelineMode RvcPipelineMode => Engine.Rendering.Settings.RvcPipelineMode;
+    public bool RvcQuadViewEnabled => Engine.Rendering.Settings.RvcQuadViewEnabled;
+    public bool RvcOpenXrVisibilityMaskEnabled
+        => Engine.VRState.IsOpenXRActive &&
+           Engine.VRState.OpenXRApi?.IsRvcOpenXrVisibilityMaskExtensionEnabled == true;
     public EVrFoveationMode VrFoveationMode => Engine.Rendering.Settings.VrFoveationMode;
     public EVrFoveationQualityPreset VrFoveationQualityPreset => Engine.Rendering.Settings.VrFoveationQualityPreset;
     public bool VrFoveationRequireRequested => Engine.Rendering.Settings.VrFoveationRequireRequested;

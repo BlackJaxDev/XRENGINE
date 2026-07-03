@@ -58,4 +58,49 @@ public interface IRuntimeRendererHost
     /// Returns whether this renderer can submit the production zero-readback meshlet/task-mesh path.
     /// </summary>
     bool SupportsMeshletDispatch();
+
+    /// <summary>
+    /// Gets the descriptor backend RVC should share with the renderer-owned material/resource table.
+    /// </summary>
+    ERvcDescriptorBackend RvcDescriptorBackend => ERvcDescriptorBackend.None;
+
+    /// <summary>
+    /// Returns whether the renderer has a material/resource table RVC can consume without duplicating descriptors.
+    /// </summary>
+    bool SupportsRvcMaterialResourceTable => false;
+
+    /// <summary>
+    /// Returns whether RVC can allocate and use per-view depth, visibility-id, velocity, shadelet, and resolve targets.
+    /// </summary>
+    bool SupportsRvcVisibilityTargets => false;
+
+    /// <summary>
+    /// Returns whether RVC can build visibility from the direct static-mesh draw path.
+    /// </summary>
+    bool SupportsRvcStaticMeshVisibilitySource => SupportsRvcVisibilityTargets;
+
+    /// <summary>
+    /// Returns whether RVC can consume compute skinning output without CPU readback.
+    /// </summary>
+    bool SupportsRvcSkinnedComputeVisibilitySource => SupportsRvcVisibilityTargets;
+
+    /// <summary>
+    /// Returns whether RVC can consume GPU-written indirect draw sources without CPU readback.
+    /// </summary>
+    bool SupportsRvcZeroReadbackIndirectVisibilitySource => SupportsIndirectCountDraw();
+
+    /// <summary>
+    /// Returns whether RVC can use meshlet or mesh-shader visibility source expansion.
+    /// </summary>
+    bool SupportsRvcMeshletVisibilitySource => SupportsMeshletDispatch();
+
+    /// <summary>
+    /// Returns whether the renderer can upload and stencil OpenXR hidden-area visibility meshes.
+    /// </summary>
+    bool SupportsRvcOpenXrVisibilityMaskStencil => SupportsRvcVisibilityTargets;
+
+    /// <summary>
+    /// Gets the Vulkan production features surfaced to the RVC planner.
+    /// </summary>
+    ERvcVulkanProductionFeature RvcVulkanProductionFeatures => ERvcVulkanProductionFeature.None;
 }

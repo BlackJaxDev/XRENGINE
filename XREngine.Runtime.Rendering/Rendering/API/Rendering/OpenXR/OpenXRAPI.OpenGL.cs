@@ -268,36 +268,7 @@ public unsafe partial class OpenXRAPI
         var supportedFormatsLog = string.Join(", ", formats.Select(f => $"0x{f:X}"));
         Debug.Out($"OpenXR OpenGL supported swapchain formats: {supportedFormatsLog}");
 
-        // Get view configuration
-        var viewConfigType = ViewConfigurationType.PrimaryStereo;
-        _viewCount = 0;
-        Api.EnumerateViewConfigurationView(_instance, _systemId, viewConfigType, 0, ref _viewCount, null);
-
-        if (_viewCount != 2)
-            throw new Exception($"Expected 2 views, got {_viewCount}");
-
-        _views = new View[_viewCount];
-        for (int i = 0; i < _views.Length; i++)
-            _views[i].Type = StructureType.View;
-
-        // OpenXR requires the input structs to have their Type set.
-        for (int i = 0; i < _viewConfigViews.Length; i++)
-            _viewConfigViews[i].Type = StructureType.ViewConfigurationView;
-
-        fixed (ViewConfigurationView* viewConfigViewsPtr = _viewConfigViews)
-        {
-            Api.EnumerateViewConfigurationView(_instance, _systemId, viewConfigType, _viewCount, ref _viewCount, viewConfigViewsPtr);
-        }
-
-        for (int i = 0; i < _viewCount; i++)
-        {
-            uint rw = _viewConfigViews[i].RecommendedImageRectWidth;
-            uint rh = _viewConfigViews[i].RecommendedImageRectHeight;
-            Debug.Out($"OpenXR view[{i}] recommended size: {rw}x{rh}, max={_viewConfigViews[i].MaxImageRectWidth}x{_viewConfigViews[i].MaxImageRectHeight}, samples={_viewConfigViews[i].RecommendedSwapchainSampleCount}");
-
-            if (rw == 0 || rh == 0)
-                throw new Exception($"OpenXR runtime reported an invalid recommended image rect size for view {i}: {rw}x{rh}. Cannot create swapchains.");
-        }
+        InitializeOpenXrViewsForActiveConfiguration("OpenXR OpenGL");
 
         // Avoid stackalloc inside loops (analyzers treat that as a potential stack overflow).
         GLEnum* drawBuffers = stackalloc GLEnum[1];
@@ -450,7 +421,7 @@ public unsafe partial class OpenXRAPI
             // If this shows solid colors in the HMD, the issue is in mirror rendering or blit source, not OpenXR submission.
             if (OpenXrDebugClearOnly)
             {
-                if (viewIndex == 0)
+                if (IsLeftEyeLikeOpenXrView(viewIndex))
                     _gl.ClearColor(1f, 0f, 0f, 1f);
                 else
                     _gl.ClearColor(0f, 1f, 0f, 1f);
@@ -463,8 +434,8 @@ public unsafe partial class OpenXRAPI
             EnsureViewportMirrorTargets(renderer, width, height);
             EnsureOpenXrPreviewTargets(renderer, width, height);
 
-            var eyeViewport = viewIndex == 0 ? _openXrLeftViewport : _openXrRightViewport;
-            var eyeCamera = viewIndex == 0 ? _openXrLeftEyeCamera : _openXrRightEyeCamera;
+            var eyeViewport = GetOpenXrEyeViewport(viewIndex);
+            var eyeCamera = GetOpenXrEyeCamera(viewIndex);
             if (eyeViewport is null || eyeCamera is null || _openXrFrameWorld is null)
             {
                 Debug.RenderingWarningEvery(
@@ -477,6 +448,8 @@ public unsafe partial class OpenXRAPI
                     _openXrFrameWorld is not null);
                 return;
             }
+
+            EnsureOpenXrViewportExtent(eyeViewport, width, height);
 
             // IMPORTANT: the render pipeline (and GLMaterial lighting uniforms) derive RenderingWorld from
             // RenderState.WindowViewport.World. When rendering OpenXR eyes, we often pass a worldOverride
@@ -505,7 +478,7 @@ public unsafe partial class OpenXRAPI
                 if (srcApiTex is null || srcApiTex.BindingId == 0)
                     return;
 
-                XRTexture2D? previewTexture = viewIndex == 0 ? _previewLeftEyeTexture : _previewRightEyeTexture;
+                XRTexture2D? previewTexture = GetOpenXrPreviewTexture(viewIndex);
                 var previewApiTex = previewTexture is null
                     ? null
                     : TryGetValidOpenXrTexture(renderer, previewTexture, "preview", viewIndex);
@@ -853,24 +826,28 @@ public unsafe partial class OpenXRAPI
         _openXrRightViewport.SetFullScreen();
 
         // Ensure pipeline sizes track our swapchain size, but keep internal resolution exact.
-        if (_openXrLeftViewport.Width != (int)leftWidth || _openXrLeftViewport.Height != (int)leftHeight)
-        {
-            _openXrLeftViewport.Resize(leftWidth, leftHeight, setInternalResolution: false);
-            _openXrLeftViewport.SetInternalResolution((int)leftWidth, (int)leftHeight, correctAspect: false);
-        }
-        else if (_openXrLeftViewport.InternalWidth != (int)leftWidth || _openXrLeftViewport.InternalHeight != (int)leftHeight)
-        {
-            _openXrLeftViewport.SetInternalResolution((int)leftWidth, (int)leftHeight, correctAspect: false);
-        }
+        EnsureOpenXrViewportExtent(_openXrLeftViewport, leftWidth, leftHeight);
+        EnsureOpenXrViewportExtent(_openXrRightViewport, rightWidth, rightHeight);
+    }
 
-        if (_openXrRightViewport.Width != (int)rightWidth || _openXrRightViewport.Height != (int)rightHeight)
+    private static void EnsureOpenXrViewportExtent(XRViewport viewport, uint width, uint height)
+    {
+        if (width > int.MaxValue || height > int.MaxValue)
+            throw new InvalidOperationException($"OpenXR viewport extent {width}x{height} exceeds supported dimensions.");
+
+        int widthInt = (int)width;
+        int heightInt = (int)height;
+
+        viewport.Window = null;
+        viewport.SetFullScreen();
+        if (viewport.Width != widthInt || viewport.Height != heightInt)
         {
-            _openXrRightViewport.Resize(rightWidth, rightHeight, setInternalResolution: false);
-            _openXrRightViewport.SetInternalResolution((int)rightWidth, (int)rightHeight, correctAspect: false);
+            viewport.Resize(width, height, setInternalResolution: false);
+            viewport.SetInternalResolution(widthInt, heightInt, correctAspect: false);
         }
-        else if (_openXrRightViewport.InternalWidth != (int)rightWidth || _openXrRightViewport.InternalHeight != (int)rightHeight)
+        else if (viewport.InternalWidth != widthInt || viewport.InternalHeight != heightInt)
         {
-            _openXrRightViewport.SetInternalResolution((int)rightWidth, (int)rightHeight, correctAspect: false);
+            viewport.SetInternalResolution(widthInt, heightInt, correctAspect: false);
         }
     }
 
@@ -934,12 +911,8 @@ public unsafe partial class OpenXRAPI
 
     private float UpdateOpenXrEyeCameraFromView(XRCamera camera, uint viewIndex)
     {
-        bool leftEye = viewIndex == 0;
-        (float Left, float Right, float Up, float Down) fov;
-        lock (_openXrPoseLock)
-        {
-            fov = leftEye ? _openXrPredLeftEyeFov : _openXrPredRightEyeFov;
-        }
+        if (!TryGetOpenXrViewPoseAndFov(viewIndex, OpenXrPoseTiming.Predicted, out Matrix4x4 localPose, out var fov))
+            return 0.0f;
 
         if (!IsAppVrRigEyeTransform(camera.Transform))
         {
@@ -964,10 +937,6 @@ public unsafe partial class OpenXRAPI
 
         if (camera.Parameters is XROpenXRFovCameraParameters openxrParams)
             openxrParams.SetAngles(fov.Left, fov.Right, fov.Up, fov.Down);
-
-        Matrix4x4 localPose;
-        lock (_openXrPoseLock)
-            localPose = leftEye ? _openXrPredLeftEyeLocalPose : _openXrPredRightEyeLocalPose;
 
         if (TryGetAppVrRigLocomotionRenderMatrix(camera, out Matrix4x4 rootRender))
             camera.Transform.SetRenderMatrix(localPose * rootRender, recalcAllChildRenderMatrices: false);
@@ -1080,25 +1049,20 @@ public unsafe partial class OpenXRAPI
 
     private void ApplyOpenXrEyePoseForRenderThread(uint viewIndex)
     {
-        var camera = viewIndex == 0 ? _openXrLeftEyeCamera : _openXrRightEyeCamera;
+        var camera = GetOpenXrEyeCamera(viewIndex);
         if (camera is null)
             return;
 
         // Always update FOV from late cache (it can shift slightly during head movement).
-        (float angleLeft, float angleRight, float angleUp, float angleDown) fov;
-        lock (_openXrPoseLock)
-            fov = viewIndex == 0 ? _openXrLateLeftEyeFov : _openXrLateRightEyeFov;
+        if (!TryGetOpenXrViewPoseAndFov(viewIndex, OpenXrPoseTiming.Late, out Matrix4x4 localPose, out var fov))
+            return;
 
         if (camera.Parameters is XROpenXRFovCameraParameters openxrParams)
-            openxrParams.SetAngles(fov.angleLeft, fov.angleRight, fov.angleUp, fov.angleDown);
+            openxrParams.SetAngles(fov.Left, fov.Right, fov.Up, fov.Down);
 
         // If this camera is part of the app's VR rig (VREyeTransform), its transform hierarchy is
         // driven by InvokeRecalcMatrixOnDraw via VRHeadsetTransform. But we still need to update
         // the render matrix directly with the late pose to minimize latency.
-        Matrix4x4 localPose;
-        lock (_openXrPoseLock)
-            localPose = viewIndex == 0 ? _openXrLateLeftEyeLocalPose : _openXrLateRightEyeLocalPose;
-
         if (!TryGetAppVrRigLocomotionRenderMatrix(camera, out Matrix4x4 rootRender))
         {
             Debug.RenderingWarningEvery(
@@ -1131,6 +1095,56 @@ public unsafe partial class OpenXRAPI
                 rootRender.M42,
                 rootRender.M43);
         }
+    }
+
+    private bool TryGetOpenXrViewPoseAndFov(
+        uint viewIndex,
+        OpenXrPoseTiming timing,
+        out Matrix4x4 localPose,
+        out (float Left, float Right, float Up, float Down) fov)
+    {
+        if (viewIndex < _viewCount && viewIndex < _views.Length)
+        {
+            View view = _views[viewIndex];
+            localPose = CreateOpenXrViewLocalPoseMatrix(view.Pose);
+            fov = (view.Fov.AngleLeft, view.Fov.AngleRight, view.Fov.AngleUp, view.Fov.AngleDown);
+            return true;
+        }
+
+        bool leftEye = IsLeftEyeLikeOpenXrView(viewIndex);
+        lock (_openXrPoseLock)
+        {
+            if (timing == OpenXrPoseTiming.Late)
+            {
+                localPose = leftEye ? _openXrLateLeftEyeLocalPose : _openXrLateRightEyeLocalPose;
+                var cachedFov = leftEye ? _openXrLateLeftEyeFov : _openXrLateRightEyeFov;
+                fov = (cachedFov.Left, cachedFov.Right, cachedFov.Up, cachedFov.Down);
+            }
+            else
+            {
+                localPose = leftEye ? _openXrPredLeftEyeLocalPose : _openXrPredRightEyeLocalPose;
+                var cachedFov = leftEye ? _openXrPredLeftEyeFov : _openXrPredRightEyeFov;
+                fov = (cachedFov.Left, cachedFov.Right, cachedFov.Up, cachedFov.Down);
+            }
+        }
+
+        return true;
+    }
+
+    private static Matrix4x4 CreateOpenXrViewLocalPoseMatrix(Posef pose)
+    {
+        Quaternion rotation = new(
+            pose.Orientation.X,
+            pose.Orientation.Y,
+            pose.Orientation.Z,
+            pose.Orientation.W);
+        rotation = rotation.LengthSquared() > float.Epsilon
+            ? Quaternion.Normalize(rotation)
+            : Quaternion.Identity;
+
+        Matrix4x4 matrix = Matrix4x4.CreateFromQuaternion(rotation);
+        matrix.Translation = new Vector3(pose.Position.X, pose.Position.Y, pose.Position.Z);
+        return matrix;
     }
 
     private void EnsureViewportMirrorTargets(AbstractRenderer renderer, uint width, uint height)

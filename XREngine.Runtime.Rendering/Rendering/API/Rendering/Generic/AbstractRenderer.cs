@@ -1173,6 +1173,24 @@ namespace XREngine.Rendering
                SupportsIndirectCountMeshTaskDispatch() &&
                SupportsProductionMeshletShaders();
 
+        public virtual ERvcDescriptorBackend RvcDescriptorBackend => ERvcDescriptorBackend.None;
+
+        public virtual bool SupportsRvcMaterialResourceTable => false;
+
+        public virtual bool SupportsRvcVisibilityTargets => false;
+
+        public virtual bool SupportsRvcStaticMeshVisibilitySource => SupportsRvcVisibilityTargets;
+
+        public virtual bool SupportsRvcSkinnedComputeVisibilitySource => SupportsRvcVisibilityTargets;
+
+        public virtual bool SupportsRvcZeroReadbackIndirectVisibilitySource => SupportsIndirectCountDraw();
+
+        public virtual bool SupportsRvcMeshletVisibilitySource => SupportsMeshletDispatch();
+
+        public virtual bool SupportsRvcOpenXrVisibilityMaskStencil => SupportsRvcVisibilityTargets;
+
+        public virtual ERvcVulkanProductionFeature RvcVulkanProductionFeatures => ERvcVulkanProductionFeature.None;
+
         /// <summary>
         /// Blocks the CPU until all GPU commands have completed.
         /// </summary>

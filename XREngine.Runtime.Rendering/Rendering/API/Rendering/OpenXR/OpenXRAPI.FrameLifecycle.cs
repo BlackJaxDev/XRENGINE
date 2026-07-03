@@ -104,6 +104,7 @@ public unsafe partial class OpenXRAPI
         var projectionViews = stackalloc CompositionLayerProjectionView[(int)_viewCount];
         for (uint i = 0; i < _viewCount; i++)
             projectionViews[i] = default;
+        ResetOpenXrRvcFrameProfile();
 
         renderCallback ??= RenderViewportsToSwapchain;
 
@@ -180,6 +181,7 @@ public unsafe partial class OpenXRAPI
         var endFrameResult = EndFrameWithTiming(in frameEndInfo);
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
             Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(layer) => {endFrameResult}");
+        PublishOpenXrRvcFrameProfile(frameNo, endFrameResult);
 
         long submitEnd = Stopwatch.GetTimestamp();
         double submitMs = (submitEnd - submitStart) * 1000.0 / Stopwatch.Frequency;
@@ -328,6 +330,100 @@ public unsafe partial class OpenXRAPI
 
         ValidateProjectionViewSubImage(viewIndex, in projectionViews[viewIndex], expectedWidth, expectedHeight);
         TraceProjectionViewSubImage(viewIndex, in projectionViews[viewIndex], expectedWidth, expectedHeight);
+        RecordOpenXrRvcFrameViewDiagnostics(viewIndex, expectedWidth, expectedHeight);
+    }
+
+    private void ResetOpenXrRvcFrameProfile()
+    {
+        _openXrRvcProfiledViewMask = 0u;
+        int count = (int)Math.Min(_viewCount, (uint)_openXrRvcFrameViewDiagnostics.Length);
+        for (int i = 0; i < count; i++)
+        {
+            _openXrRvcFrameViewDiagnostics[i] = default;
+            _openXrRvcFrameViewProjectionDiagnostics[i] = RvcFrameViewProjectionDiagnostics.Empty;
+        }
+    }
+
+    private void RecordOpenXrRvcFrameViewDiagnostics(uint viewIndex, uint width, uint height)
+    {
+        if (viewIndex >= _openXrRvcFrameViewDiagnostics.Length || viewIndex >= _views.Length)
+            return;
+
+        View view = _views[viewIndex];
+        const float radiansToDegrees = 180.0f / MathF.PI;
+        float horizontalFovDegrees = MathF.Abs(view.Fov.AngleRight - view.Fov.AngleLeft) * radiansToDegrees;
+        float verticalFovDegrees = MathF.Abs(view.Fov.AngleUp - view.Fov.AngleDown) * radiansToDegrees;
+        IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+        double gpuMilliseconds = host.ResolveRvcViewGpuMilliseconds(
+            checked((int)viewIndex),
+            checked((int)Math.Min(_viewCount, (uint)_openXrRvcFrameViewDiagnostics.Length)));
+
+        _openXrRvcFrameViewDiagnostics[viewIndex] = new(
+            viewIndex,
+            ResolveOpenXrRvcViewKind(viewIndex),
+            width,
+            height,
+            horizontalFovDegrees,
+            verticalFovDegrees,
+            _swapchains[viewIndex].Handle,
+            (ulong)width * height,
+            gpuMilliseconds,
+            host.VrViewRenderMode,
+            host.VrFoveationMode,
+            _activeViewConfigurationFallbackReason);
+        RecordOpenXrRvcFrameViewProjectionDiagnostics(viewIndex, width, height);
+        _openXrRvcProfiledViewMask |= 1u << (int)viewIndex;
+    }
+
+    private void RecordOpenXrRvcFrameViewProjectionDiagnostics(uint viewIndex, uint width, uint height)
+    {
+        if (viewIndex >= _openXrRvcFrameViewProjectionDiagnostics.Length)
+            return;
+
+        XRCamera? camera = GetOpenXrEyeCamera(viewIndex);
+        Matrix4x4 viewMatrix = camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
+        Matrix4x4 projectionMatrix = camera?.ProjectionMatrix ?? Matrix4x4.Identity;
+        Matrix4x4 viewProjectionMatrix = camera?.ViewProjectionMatrix ?? viewMatrix * projectionMatrix;
+        Matrix4x4 previousViewProjectionMatrix = _openXrRvcPreviousViewProjectionMatrices[viewIndex];
+        if (previousViewProjectionMatrix == default)
+            previousViewProjectionMatrix = Matrix4x4.Identity;
+
+        _openXrRvcFrameViewProjectionDiagnostics[viewIndex] = new(
+            viewIndex,
+            RuntimeViewIndex: checked((int)viewIndex),
+            ViewportX: 0,
+            ViewportY: 0,
+            ViewportWidth: checked((int)width),
+            ViewportHeight: checked((int)height),
+            viewMatrix,
+            projectionMatrix,
+            viewProjectionMatrix,
+            previousViewProjectionMatrix);
+        _openXrRvcPreviousViewProjectionMatrices[viewIndex] = viewProjectionMatrix;
+    }
+
+    private void PublishOpenXrRvcFrameProfile(int frameNo, Result endFrameResult)
+    {
+        uint count = Math.Min(_viewCount, (uint)_openXrRvcFrameViewDiagnostics.Length);
+        if (count == 0 || _openXrRvcProfiledViewMask == 0u)
+            return;
+
+        ERvcFallbackReason fallbackReason = _activeViewConfigurationFallbackReason;
+        string diagnostic = _activeViewConfigurationDiagnostic;
+        if (endFrameResult != Result.Success)
+        {
+            fallbackReason = ERvcFallbackReason.HardwareValidationUnavailable;
+            diagnostic = $"OpenXR xrEndFrame returned {endFrameResult} for frame {frameNo}.";
+        }
+
+        RvcFrameProfileSnapshot profile = RvcFrameProfileSnapshot.Create(
+            RuntimeRenderingHostServices.Current.CurrentRenderFrameId,
+            _frameState.PredictedDisplayTime,
+            _openXrRvcFrameViewDiagnostics.AsSpan(0, (int)count),
+            _openXrRvcFrameViewProjectionDiagnostics.AsSpan(0, (int)count),
+            fallbackReason,
+            diagnostic);
+        RuntimeRenderingHostServices.Current.RecordRenderRvcFrameProfile(profile);
     }
 
     private void ValidateProjectionViewSubImage(

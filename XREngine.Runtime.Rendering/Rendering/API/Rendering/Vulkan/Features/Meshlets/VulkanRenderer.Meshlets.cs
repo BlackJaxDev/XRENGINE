@@ -81,4 +81,50 @@ public unsafe partial class VulkanRenderer
                 ? "VK_EXT_mesh_shader indirect-count dispatch is available."
                 : "VK_EXT_mesh_shader is visible, but task/mesh shader features or vkCmdDrawMeshTasksIndirectCountEXT dispatch are unavailable."
             : "VK_EXT_mesh_shader is not available on the active Vulkan device.";
+
+    public override ERvcDescriptorBackend RvcDescriptorBackend
+        => ActiveDescriptorBackend switch
+        {
+            EVulkanDescriptorBackend.DescriptorHeap => ERvcDescriptorBackend.DescriptorHeap,
+            EVulkanDescriptorBackend.DescriptorIndexing => ERvcDescriptorBackend.DescriptorIndexing,
+            _ => ERvcDescriptorBackend.None,
+        };
+
+    public override bool SupportsRvcMaterialResourceTable
+        => RvcDescriptorBackend != ERvcDescriptorBackend.None;
+
+    public override bool SupportsRvcVisibilityTargets
+        => SupportsDynamicRendering &&
+           SupportsSynchronization2 &&
+           SupportsFragmentStoresAndAtomics &&
+           SupportsRvcMaterialResourceTable;
+
+    public override bool SupportsRvcOpenXrVisibilityMaskStencil
+        => SupportsRvcVisibilityTargets;
+
+    public override ERvcVulkanProductionFeature RvcVulkanProductionFeatures
+    {
+        get
+        {
+            ERvcVulkanProductionFeature features = ERvcVulkanProductionFeature.None;
+            if (RuntimeEngine.Rendering.State.HasVulkanMultiView)
+                features |= ERvcVulkanProductionFeature.Multiview;
+            if (SupportsDynamicRendering)
+                features |= ERvcVulkanProductionFeature.DynamicRendering;
+            if (SupportsSynchronization2)
+                features |= ERvcVulkanProductionFeature.Synchronization2;
+            if (SupportsDescriptorIndexing)
+                features |= ERvcVulkanProductionFeature.DescriptorIndexing;
+            if (SupportsVulkanFragmentShadingRate)
+                features |= ERvcVulkanProductionFeature.FragmentShadingRate;
+            if (SupportsVulkanFragmentDensityMap)
+                features |= ERvcVulkanProductionFeature.FragmentDensityMap;
+            if (SupportsProductionMeshletShaders())
+                features |= ERvcVulkanProductionFeature.MeshShader;
+            if (_supportsTimelineSemaphores)
+                features |= ERvcVulkanProductionFeature.TimelineSemaphore;
+
+            return features;
+        }
+    }
 }

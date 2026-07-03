@@ -113,7 +113,9 @@ namespace XREngine
                 => NewRenderPipeline(stereo: false);
 
             public static RenderPipeline NewRenderPipeline(bool stereo)
-                => (Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false) && !stereo
+                => Settings.RvcPipelineMode != ERvcPipelineMode.Off
+                    ? NewRvcRenderPipeline(stereo)
+                    : (Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false) && !stereo
                     ? new DebugOpaqueRenderPipeline()
                     : UsePipelineV2
                         ? new DefaultRenderPipeline2(stereo)
@@ -122,6 +124,7 @@ namespace XREngine
             public static void ApplyRenderPipelinePreference()
             {
                 bool preferDebug = Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false;
+                bool preferRvc = Settings.RvcPipelineMode != ERvcPipelineMode.Off;
                 foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                 {
                     RenderPipeline? pipeline = viewport.RenderPipeline;
@@ -135,6 +138,24 @@ namespace XREngine
                     if (pipeline.OverrideProtected)
                         continue;
 
+                    if (preferRvc)
+                    {
+                        if (pipeline is RvcRenderPipeline rvcPipeline)
+                        {
+                            ApplyRvcSettings(rvcPipeline);
+                            continue;
+                        }
+
+                        viewport.RenderPipeline = NewRvcRenderPipeline(IsStereoPipeline(pipeline));
+                        continue;
+                    }
+
+                    if (pipeline is RvcRenderPipeline previousRvcPipeline)
+                    {
+                        viewport.RenderPipeline = NewRenderPipeline(previousRvcPipeline.Stereo);
+                        continue;
+                    }
+
                     if (preferDebug)
                     {
                         if (pipeline is DefaultRenderPipeline { Stereo: false })
@@ -147,6 +168,39 @@ namespace XREngine
                         viewport.RenderPipeline = NewRenderPipeline(stereo: false);
                     }
                 }
+            }
+
+            private static RvcRenderPipeline NewRvcRenderPipeline(bool stereo)
+            {
+                RvcRenderPipeline pipeline = new(stereo, Settings.RvcPipelineMode);
+                ApplyRvcSettings(pipeline);
+                return pipeline;
+            }
+
+            private static void ApplyRvcSettings(RvcRenderPipeline pipeline)
+            {
+                pipeline.ApplyRvcSettings(new RvcRenderingSettings(
+                    Settings.RvcPipelineMode,
+                    Settings.RvcQuadViewEnabled,
+                    Settings.RvcStereoReuseEnabled,
+                    Settings.RvcInsetWideReuseEnabled,
+                    Settings.RvcTemporalReuseEnabled,
+                    Settings.RvcPeripheralLightAggregationEnabled,
+                    Settings.RvcDiagnosticOverlayEnabled,
+                    Settings.RvcDebugViewMode,
+                    Settings.RvcLightGridSpace));
+
+                pipeline.RvcQualitySettings = new RvcQualitySettings(
+                    Settings.RvcFovealRadiusDegrees,
+                    Settings.RvcGuardBandDegrees,
+                    Settings.RvcMidFieldRadiusDegrees,
+                    Settings.RvcPeripheralMaxRate,
+                    Settings.RvcForceFullResNearDistanceMeters,
+                    Settings.RvcDerivativeStrategy,
+                    Settings.RvcFovealAntiAliasingPath,
+                    Settings.RvcReuseMaxNormalAngleDegrees,
+                    Settings.RvcReuseMaxDepthDeltaMeters,
+                    Settings.RvcReuseMaxRoughnessBucketDelta);
             }
 
             public static void ApplyGlobalIlluminationModePreference()

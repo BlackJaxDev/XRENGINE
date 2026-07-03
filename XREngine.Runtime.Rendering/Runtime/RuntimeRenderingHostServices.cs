@@ -637,6 +637,14 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void RecordRenderRvcFrameCounters(RvcFrameCounters counters)
+        {
+        }
+
+        public void RecordRenderRvcFrameProfile(RvcFrameProfileSnapshot profile)
+        {
+        }
+
         public void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands)
         {
         }

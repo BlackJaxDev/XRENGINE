@@ -303,7 +303,7 @@ public unsafe partial class OpenXRAPI
             Type = StructureType.ViewLocateInfo,
             DisplayTime = displayTime,
             Space = _appSpace,
-            ViewConfigurationType = ViewConfigurationType.PrimaryStereo
+            ViewConfigurationType = _activeViewConfigurationType
         };
 
         var viewState = new ViewState { Type = StructureType.ViewState };
@@ -498,7 +498,7 @@ public unsafe partial class OpenXRAPI
                             var beginInfo = new SessionBeginInfo
                             {
                                 Type = StructureType.SessionBeginInfo,
-                                PrimaryViewConfigurationType = ViewConfigurationType.PrimaryStereo
+                                PrimaryViewConfigurationType = _activeViewConfigurationType
                             };
 
                             var beginResult = CheckResult(Api.BeginSession(_session, in beginInfo), "xrBeginSession");
@@ -529,6 +529,8 @@ public unsafe partial class OpenXRAPI
                     }
                     break;
                 default:
+                    if (eventData.Type.ToString().Contains("VisibilityMask", StringComparison.OrdinalIgnoreCase))
+                        InvalidateOpenXrRvcVisibilityMasks($"OpenXR runtime reported {eventData.Type}; RVC visibility masks must be reacquired.");
                     Debug.Out(eventData.Type.ToString());
                     break;
             }

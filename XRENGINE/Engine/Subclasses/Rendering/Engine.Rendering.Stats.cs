@@ -74,6 +74,7 @@ namespace XREngine
                     RendererState.SnapshotAndReset();
                     SceneAssets.SnapshotAndReset();
                     GpuDriven.SnapshotAndReset();
+                    Rvc.SnapshotAndReset();
                     GpuFallback.SnapshotAndReset();
                     GpuTransparency.SnapshotAndReset();
                     GpuMeshlets.SnapshotAndReset();
