@@ -1136,6 +1136,12 @@ public interface IRuntimeRenderingHostServices
     void RecordRenderGpuDrivenHiZMode(string? mode);
     void RecordRenderGpuDrivenHiZPhase(bool twoPhase, long phaseOneDraws, long phaseTwoDraws);
     void RecordRenderVisibilityBuffer(int passDraws, long classifiedPixels, int activeMaterialTiles, int classificationOverflow, TimeSpan reconstruction, TimeSpan materialShading);
+    void RecordRenderRvcFrameCounters(RvcFrameCounters counters)
+    {
+    }
+    void RecordRenderRvcFrameProfile(RvcFrameProfileSnapshot profile)
+    {
+    }
     void RecordRenderGpuCpuFallback(int eventCount, int recoveredCommands);
     void RecordRenderForbiddenGpuFallback(int eventCount = 1);
     void RecordRenderResourceChurn(string resourceKind, string resourceName, string eventName, string? reason = null);
@@ -1380,6 +1386,21 @@ public interface IRuntimeRenderingHostServices
     /// Gets whether VR rendering should configure a foveated multi-view view set.
     /// </summary>
     bool EnableVrFoveatedViewSet { get; }
+
+    ERvcPipelineMode RvcPipelineMode => ERvcPipelineMode.Off;
+    bool RvcQuadViewEnabled => false;
+    bool RvcOpenXrVisibilityMaskEnabled => false;
+    double ResolveRvcViewGpuMilliseconds(int runtimeViewIndex, int runtimeViewCount)
+    {
+        if (!GpuRenderPipelineTimingsReady || runtimeViewCount <= 0)
+            return 0.0;
+
+        double frameMs = GpuRenderPipelineFrameMs;
+        if (frameMs <= 0.0 || double.IsNaN(frameMs) || double.IsInfinity(frameMs))
+            return 0.0;
+
+        return frameMs / runtimeViewCount;
+    }
 
     EVrFoveationMode VrFoveationMode { get; }
     EVrFoveationQualityPreset VrFoveationQualityPreset { get; }

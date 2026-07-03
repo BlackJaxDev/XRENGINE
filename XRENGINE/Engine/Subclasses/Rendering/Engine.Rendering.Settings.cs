@@ -699,6 +699,25 @@ namespace XREngine
                 private EVrFoveationMode _vrFoveationMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationMode;
                 private EVrFoveationQualityPreset _vrFoveationQualityPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
                 private bool _vrFoveationRequireRequested = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
+                private ERvcPipelineMode _rvcPipelineMode = ERvcPipelineMode.Off;
+                private bool _rvcQuadViewEnabled = false;
+                private bool _rvcStereoReuseEnabled = false;
+                private bool _rvcInsetWideReuseEnabled = true;
+                private bool _rvcTemporalReuseEnabled = false;
+                private bool _rvcPeripheralLightAggregationEnabled = false;
+                private bool _rvcDiagnosticOverlayEnabled = false;
+                private ERvcDebugViewMode _rvcDebugViewMode = ERvcDebugViewMode.Disabled;
+                private ERvcLightGridSpace _rvcLightGridSpace = ERvcLightGridSpace.WorldAlignedCameraRelative;
+                private float _rvcFovealRadiusDegrees = RvcQualitySettings.Defaults.FovealRadiusDegrees;
+                private float _rvcGuardBandDegrees = RvcQualitySettings.Defaults.GuardBandDegrees;
+                private float _rvcMidFieldRadiusDegrees = RvcQualitySettings.Defaults.MidFieldRadiusDegrees;
+                private ERvcShadeletDensity _rvcPeripheralMaxRate = RvcQualitySettings.Defaults.PeripheralMaxRate;
+                private float _rvcForceFullResNearDistanceMeters = RvcQualitySettings.Defaults.ForceFullResNearDistanceMeters;
+                private ERvcDerivativeStrategy _rvcDerivativeStrategy = RvcQualitySettings.Defaults.DerivativeStrategy;
+                private ERvcFovealAntiAliasingPath _rvcFovealAntiAliasingPath = RvcQualitySettings.Defaults.FovealAntiAliasingPath;
+                private float _rvcReuseMaxNormalAngleDegrees = RvcQualitySettings.Defaults.ReuseMaxNormalAngleDegrees;
+                private float _rvcReuseMaxDepthDeltaMeters = RvcQualitySettings.Defaults.ReuseMaxDepthDeltaMeters;
+                private byte _rvcReuseMaxRoughnessBucketDelta = RvcQualitySettings.Defaults.ReuseMaxRoughnessBucketDelta;
                 private EOpenXrEyeResolutionPreset _openXrEyeResolutionPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionPreset;
                 private float _openXrEyeResolutionScale = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionScale;
                 private uint _openXrCustomEyeResolutionWidth = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionWidth;
@@ -2504,6 +2523,215 @@ namespace XREngine
                     set => SetField(ref _vrFoveationFullResNearDistanceMeters, Math.Clamp(value, 0.0f, 10.0f));
                 }
 
+                /// <summary>
+                /// Requested Retinal Visibility Cache mode. Non-oracle modes require the RVC GPU pass stack and otherwise report a visible fallback reason.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Requested Retinal Visibility Cache mode. Non-oracle modes require the RVC GPU pass stack and otherwise report a visible fallback reason.")]
+                public ERvcPipelineMode RvcPipelineMode
+                {
+                    get => _rvcPipelineMode;
+                    set => SetField(ref _rvcPipelineMode, value);
+                }
+
+                /// <summary>
+                /// If true, RVC requests quad-view rendering and requires an OpenXR quad-view runtime path.
+                /// </summary>
+                [Category("RVC")]
+                [Description("If true, RVC requests quad-view rendering and requires an OpenXR quad-view runtime path.")]
+                public bool RvcQuadViewEnabled
+                {
+                    get => _rvcQuadViewEnabled;
+                    set => SetField(ref _rvcQuadViewEnabled, value);
+                }
+
+                /// <summary>
+                /// Allows RVC shadelet reuse between stereo views after validation. Defaults off until the A/B harness is green.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Allows RVC shadelet reuse between stereo views after validation. Defaults off until the A/B harness is green.")]
+                public bool RvcStereoReuseEnabled
+                {
+                    get => _rvcStereoReuseEnabled;
+                    set => SetField(ref _rvcStereoReuseEnabled, value);
+                }
+
+                /// <summary>
+                /// Allows validated reuse between wide and inset quad views.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Allows validated reuse between wide and inset quad views.")]
+                public bool RvcInsetWideReuseEnabled
+                {
+                    get => _rvcInsetWideReuseEnabled;
+                    set => SetField(ref _rvcInsetWideReuseEnabled, value);
+                }
+
+                /// <summary>
+                /// Allows temporal shadelet reuse after validation. Defaults off for deterministic oracle comparison.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Allows temporal shadelet reuse after validation. Defaults off for deterministic oracle comparison.")]
+                public bool RvcTemporalReuseEnabled
+                {
+                    get => _rvcTemporalReuseEnabled;
+                    set => SetField(ref _rvcTemporalReuseEnabled, value);
+                }
+
+                /// <summary>
+                /// Enables periphery-only shared-light aggregation through the RVC light-cluster contract.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Enables periphery-only shared-light aggregation through the RVC light-cluster contract.")]
+                public bool RvcPeripheralLightAggregationEnabled
+                {
+                    get => _rvcPeripheralLightAggregationEnabled;
+                    set => SetField(ref _rvcPeripheralLightAggregationEnabled, value);
+                }
+
+                /// <summary>
+                /// Enables RVC diagnostic overlay publishing when a debug mode is selected.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Enables RVC diagnostic overlay publishing when a debug mode is selected.")]
+                public bool RvcDiagnosticOverlayEnabled
+                {
+                    get => _rvcDiagnosticOverlayEnabled;
+                    set => SetField(ref _rvcDiagnosticOverlayEnabled, value);
+                }
+
+                /// <summary>
+                /// Selects the RVC debug view published to the mirror/debug output.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Selects the RVC debug view published to the mirror/debug output.")]
+                public ERvcDebugViewMode RvcDebugViewMode
+                {
+                    get => _rvcDebugViewMode;
+                    set => SetField(ref _rvcDebugViewMode, value);
+                }
+
+                /// <summary>
+                /// Coordinate policy for RVC shared-lighting clusters.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Coordinate policy for RVC shared-lighting clusters.")]
+                public ERvcLightGridSpace RvcLightGridSpace
+                {
+                    get => _rvcLightGridSpace;
+                    set => SetField(ref _rvcLightGridSpace, value);
+                }
+
+                /// <summary>
+                /// Foveal radius in degrees used by RVC density and quality policy.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Foveal radius in degrees used by RVC density and quality policy.")]
+                public float RvcFovealRadiusDegrees
+                {
+                    get => _rvcFovealRadiusDegrees;
+                    set => SetField(ref _rvcFovealRadiusDegrees, Math.Clamp(value, 0.1f, 45.0f));
+                }
+
+                /// <summary>
+                /// Guard-band width in degrees around the foveal region.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Guard-band width in degrees around the foveal region.")]
+                public float RvcGuardBandDegrees
+                {
+                    get => _rvcGuardBandDegrees;
+                    set => SetField(ref _rvcGuardBandDegrees, Math.Clamp(value, 0.0f, 45.0f));
+                }
+
+                /// <summary>
+                /// Mid-field radius in degrees before peripheral shadelet density is used.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Mid-field radius in degrees before peripheral shadelet density is used.")]
+                public float RvcMidFieldRadiusDegrees
+                {
+                    get => _rvcMidFieldRadiusDegrees;
+                    set => SetField(ref _rvcMidFieldRadiusDegrees, Math.Clamp(value, 0.1f, 90.0f));
+                }
+
+                /// <summary>
+                /// Maximum shadelet density used in the peripheral region.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Maximum shadelet density used in the peripheral region.")]
+                public ERvcShadeletDensity RvcPeripheralMaxRate
+                {
+                    get => _rvcPeripheralMaxRate;
+                    set => SetField(ref _rvcPeripheralMaxRate, value);
+                }
+
+                /// <summary>
+                /// Near-distance threshold below which RVC forces 1x1 shadelets for UI, hands, and near-field geometry.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Near-distance threshold below which RVC forces 1x1 shadelets for UI, hands, and near-field geometry.")]
+                public float RvcForceFullResNearDistanceMeters
+                {
+                    get => _rvcForceFullResNearDistanceMeters;
+                    set => SetField(ref _rvcForceFullResNearDistanceMeters, Math.Clamp(value, 0.0f, 10.0f));
+                }
+
+                /// <summary>
+                /// Derivative strategy used for RVC material texture LOD and normal mapping.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Derivative strategy used for RVC material texture LOD and normal mapping.")]
+                public ERvcDerivativeStrategy RvcDerivativeStrategy
+                {
+                    get => _rvcDerivativeStrategy;
+                    set => SetField(ref _rvcDerivativeStrategy, value);
+                }
+
+                /// <summary>
+                /// Foveal anti-aliasing path selected for visibility-buffer resolve.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Foveal anti-aliasing path selected for visibility-buffer resolve.")]
+                public ERvcFovealAntiAliasingPath RvcFovealAntiAliasingPath
+                {
+                    get => _rvcFovealAntiAliasingPath;
+                    set => SetField(ref _rvcFovealAntiAliasingPath, value);
+                }
+
+                /// <summary>
+                /// Maximum normal-angle delta allowed when validating RVC reuse candidates.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Maximum normal-angle delta allowed when validating RVC reuse candidates.")]
+                public float RvcReuseMaxNormalAngleDegrees
+                {
+                    get => _rvcReuseMaxNormalAngleDegrees;
+                    set => SetField(ref _rvcReuseMaxNormalAngleDegrees, Math.Clamp(value, 0.0f, 45.0f));
+                }
+
+                /// <summary>
+                /// Maximum depth delta in meters allowed when validating RVC reuse candidates.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Maximum depth delta in meters allowed when validating RVC reuse candidates.")]
+                public float RvcReuseMaxDepthDeltaMeters
+                {
+                    get => _rvcReuseMaxDepthDeltaMeters;
+                    set => SetField(ref _rvcReuseMaxDepthDeltaMeters, Math.Clamp(value, 0.0f, 10.0f));
+                }
+
+                /// <summary>
+                /// Maximum roughness-bucket delta allowed when validating RVC reuse candidates.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Maximum roughness-bucket delta allowed when validating RVC reuse candidates.")]
+                public byte RvcReuseMaxRoughnessBucketDelta
+                {
+                    get => _rvcReuseMaxRoughnessBucketDelta;
+                    set => SetField(ref _rvcReuseMaxRoughnessBucketDelta, value);
+                }
+
                 private PhysicsGpuMemorySettings _physicsGpuMemorySettings = new();
                 /// <summary>
                 /// Settings related to GPU memory allocation for physics simulations.
@@ -2661,7 +2889,31 @@ namespace XREngine
                 {
                     Engine.Rendering.ApplyIntelXessPreference();
                 }
+
+                if (applyAll || IsRvcPipelineSetting(propertyName))
+                    Engine.Rendering.ApplyRenderPipelinePreference();
             }
+
+            private static bool IsRvcPipelineSetting(string? propertyName)
+                => propertyName is nameof(EngineSettings.RvcPipelineMode)
+                    or nameof(EngineSettings.RvcQuadViewEnabled)
+                    or nameof(EngineSettings.RvcStereoReuseEnabled)
+                    or nameof(EngineSettings.RvcInsetWideReuseEnabled)
+                    or nameof(EngineSettings.RvcTemporalReuseEnabled)
+                    or nameof(EngineSettings.RvcPeripheralLightAggregationEnabled)
+                    or nameof(EngineSettings.RvcDiagnosticOverlayEnabled)
+                    or nameof(EngineSettings.RvcDebugViewMode)
+                    or nameof(EngineSettings.RvcLightGridSpace)
+                    or nameof(EngineSettings.RvcFovealRadiusDegrees)
+                    or nameof(EngineSettings.RvcGuardBandDegrees)
+                    or nameof(EngineSettings.RvcMidFieldRadiusDegrees)
+                    or nameof(EngineSettings.RvcPeripheralMaxRate)
+                    or nameof(EngineSettings.RvcForceFullResNearDistanceMeters)
+                    or nameof(EngineSettings.RvcDerivativeStrategy)
+                    or nameof(EngineSettings.RvcFovealAntiAliasingPath)
+                    or nameof(EngineSettings.RvcReuseMaxNormalAngleDegrees)
+                    or nameof(EngineSettings.RvcReuseMaxDepthDeltaMeters)
+                    or nameof(EngineSettings.RvcReuseMaxRoughnessBucketDelta);
 
             public static void ApplyEditorPreferencesChange(string? propertyName)
             {

@@ -82,9 +82,9 @@ public unsafe partial class OpenXRAPI
     private readonly List<string> _smokeWarnings = [];
     private readonly List<string> _smokeFailures = [];
     private readonly List<OpenXrSmokeSwapchainSummary> _smokeSwapchains = [];
-    private readonly long[] _smokePerEyeAcquireCounts = new long[2];
-    private readonly long[] _smokePerEyeWaitCounts = new long[2];
-    private readonly long[] _smokePerEyeReleaseCounts = new long[2];
+    private readonly long[] _smokePerEyeAcquireCounts = new long[RenderFrameViewSet.MaxViewCount];
+    private readonly long[] _smokePerEyeWaitCounts = new long[RenderFrameViewSet.MaxViewCount];
+    private readonly long[] _smokePerEyeReleaseCounts = new long[RenderFrameViewSet.MaxViewCount];
     private string[] _smokeEnabledExtensions = [];
     private VrViewRenderModeResolution _smokeViewRenderModeResolution;
     private VrFoveationResolution _smokeFoveationResolution;

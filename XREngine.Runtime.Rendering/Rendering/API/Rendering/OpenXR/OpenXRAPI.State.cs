@@ -101,9 +101,23 @@ public unsafe partial class OpenXRAPI
     /// The number of views (1 for AR phone rendering, 2 for stereo rendering, or 4 for fovated rendering).
     /// </summary>
     private uint _viewCount;
+    private ViewConfigurationType _activeViewConfigurationType = ViewConfigurationType.PrimaryStereo;
+    private ERvcFallbackReason _activeViewConfigurationFallbackReason = ERvcFallbackReason.None;
+    private string _activeViewConfigurationDiagnostic = "Primary stereo view configuration selected.";
+    private readonly RvcFrameViewDiagnostics[] _openXrRvcFrameViewDiagnostics = new RvcFrameViewDiagnostics[RenderFrameViewSet.MaxViewCount];
+    private readonly RvcFrameViewProjectionDiagnostics[] _openXrRvcFrameViewProjectionDiagnostics = new RvcFrameViewProjectionDiagnostics[RenderFrameViewSet.MaxViewCount];
+    private readonly Matrix4x4[] _openXrRvcPreviousViewProjectionMatrices = new Matrix4x4[RenderFrameViewSet.MaxViewCount];
+    private readonly RvcOpenXrVisibilityMaskState[] _openXrRvcVisibilityMaskStates = new RvcOpenXrVisibilityMaskState[RenderFrameViewSet.MaxViewCount];
+    private readonly Vector2[][] _openXrRvcHiddenAreaMaskVertices = new Vector2[RenderFrameViewSet.MaxViewCount][];
+    private readonly uint[][] _openXrRvcHiddenAreaMaskIndices = new uint[RenderFrameViewSet.MaxViewCount][];
+    private readonly Vector2[][] _openXrRvcVisibleAreaMaskVertices = new Vector2[RenderFrameViewSet.MaxViewCount][];
+    private readonly uint[][] _openXrRvcVisibleAreaMaskIndices = new uint[RenderFrameViewSet.MaxViewCount][];
+    private XrGetVisibilityMaskKhrDelegate? _xrGetVisibilityMaskKhr;
+    private ulong _openXrRvcVisibilityMaskRevision;
+    private uint _openXrRvcProfiledViewMask;
 
     private Space _appSpace;
-    private View[] _views = new View[2];
+    private View[] _views = new View[RenderFrameViewSet.MaxViewCount];
     private View[]? _lastValidViews;
     private int _hasLastValidViews;
     // Rate-limit flags for tracking-loss warnings: 0 = no streak logged yet, 1 = logged for this streak.
@@ -439,33 +453,37 @@ public unsafe partial class OpenXRAPI
     /// <summary>
     /// Configuration information for each view (eye).
     /// </summary>
-    private readonly ViewConfigurationView[] _viewConfigViews = new ViewConfigurationView[2];
+    private readonly ViewConfigurationView[] _viewConfigViews = new ViewConfigurationView[RenderFrameViewSet.MaxViewCount];
+    private readonly ViewConfigurationView[] _nonFoveatedStereoViewConfigViews = new ViewConfigurationView[RenderFrameViewSet.MaxViewCount];
+    private readonly ViewConfigurationView[] _foveatedQuadViewConfigViews = new ViewConfigurationView[RenderFrameViewSet.MaxViewCount];
+    private uint _nonFoveatedStereoViewConfigViewCount;
+    private uint _foveatedQuadViewConfigViewCount;
 
     /// <summary>
     /// Swapchain handles for each view.
     /// </summary>
-    private readonly Swapchain[] _swapchains = new Swapchain[2];
+    private readonly Swapchain[] _swapchains = new Swapchain[RenderFrameViewSet.MaxViewCount];
 
     /// <summary>
     /// OpenGL swapchain image pointers for each view.
     /// </summary>
-    private readonly SwapchainImageOpenGLKHR*[] _swapchainImagesGL = new SwapchainImageOpenGLKHR*[2];
+    private readonly SwapchainImageOpenGLKHR*[] _swapchainImagesGL = new SwapchainImageOpenGLKHR*[RenderFrameViewSet.MaxViewCount];
 
     /// <summary>
     /// OpenGL framebuffer handles for each swapchain image.
     /// </summary>
-    private readonly uint[]?[] _swapchainFramebuffers = new uint[]?[2];
+    private readonly uint[]?[] _swapchainFramebuffers = new uint[]?[RenderFrameViewSet.MaxViewCount];
 
     /// <summary>
     /// Number of swapchain images per view.
     /// </summary>
-    private readonly uint[] _swapchainImageCounts = new uint[2];
+    private readonly uint[] _swapchainImageCounts = new uint[RenderFrameViewSet.MaxViewCount];
 
     /// <summary>
     /// Actual swapchain extents requested/created for each view.
     /// </summary>
-    private readonly uint[] _swapchainWidths = new uint[2];
-    private readonly uint[] _swapchainHeights = new uint[2];
+    private readonly uint[] _swapchainWidths = new uint[RenderFrameViewSet.MaxViewCount];
+    private readonly uint[] _swapchainHeights = new uint[RenderFrameViewSet.MaxViewCount];
     private EOpenXrEyeResolutionPreset _appliedOpenXrEyeResolutionPreset = RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionPreset;
     private float _appliedOpenXrEyeResolutionScale = RuntimeRenderingHostServiceDefaults.OpenXrEyeResolutionScale;
     private uint _appliedOpenXrCustomEyeResolutionWidth = RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionWidth;
@@ -476,12 +494,12 @@ public unsafe partial class OpenXRAPI
     /// <summary>
     /// Vulkan swapchain image pointers for each view.
     /// </summary>
-    private readonly SwapchainImageVulkan2KHR*[] _swapchainImagesVK = new SwapchainImageVulkan2KHR*[2];
+    private readonly SwapchainImageVulkan2KHR*[] _swapchainImagesVK = new SwapchainImageVulkan2KHR*[RenderFrameViewSet.MaxViewCount];
 
     /// <summary>
     /// DirectX swapchain image pointers for each view.
     /// </summary>
-    private readonly SwapchainImageD3D12KHR*[] _swapchainImagesDX = new SwapchainImageD3D12KHR*[2];
+    private readonly SwapchainImageD3D12KHR*[] _swapchainImagesDX = new SwapchainImageD3D12KHR*[RenderFrameViewSet.MaxViewCount];
 
     #endregion
 
