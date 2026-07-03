@@ -46,6 +46,10 @@ namespace XREngine
                     private static int _gpuIndirectDrawCalls;
                     private static int _gpuMeshletDrawCalls;
                     private static int _unknownStrategyDrawCalls;
+                    private static int _directionalCascadeStaleSampled;
+                    private static int _directionalCascadeMixedGenerationPrevented;
+                    private static int _directionalCascadePhysicalReprojected;
+                    private static int _directionalCascadeForcedFreshRender;
 
                     private static int _lastFrameIndirectCountCalls;
                     private static int _lastFrameShaderProgramSwitches;
@@ -80,6 +84,10 @@ namespace XREngine
                     private static int _lastFrameGpuIndirectDrawCalls;
                     private static int _lastFrameGpuMeshletDrawCalls;
                     private static int _lastFrameUnknownStrategyDrawCalls;
+                    private static int _lastFrameDirectionalCascadeStaleSampled;
+                    private static int _lastFrameDirectionalCascadeMixedGenerationPrevented;
+                    private static int _lastFrameDirectionalCascadePhysicalReprojected;
+                    private static int _lastFrameDirectionalCascadeForcedFreshRender;
 
                     private static readonly object _contextLock = new();
                     private static string _activeTextureBindingRung = "unknown";
@@ -139,6 +147,10 @@ namespace XREngine
                     public static int GpuIndirectDrawCalls => _lastFrameGpuIndirectDrawCalls;
                     public static int GpuMeshletDrawCalls => _lastFrameGpuMeshletDrawCalls;
                     public static int UnknownStrategyDrawCalls => _lastFrameUnknownStrategyDrawCalls;
+                    public static int DirectionalCascadeStaleSampled => _lastFrameDirectionalCascadeStaleSampled;
+                    public static int DirectionalCascadeMixedGenerationPrevented => _lastFrameDirectionalCascadeMixedGenerationPrevented;
+                    public static int DirectionalCascadePhysicalReprojected => _lastFrameDirectionalCascadePhysicalReprojected;
+                    public static int DirectionalCascadeForcedFreshRender => _lastFrameDirectionalCascadeForcedFreshRender;
                     public static string ActiveTextureBindingRung => _lastFrameActiveTextureBindingRung;
                     public static string ActiveStereoMode => _lastFrameActiveStereoMode;
                     public static string ActiveVrViewRenderModeRequested => _lastFrameActiveVrViewRenderModeRequested;
@@ -186,6 +198,10 @@ namespace XREngine
                         _lastFrameGpuIndirectDrawCalls = Interlocked.Exchange(ref _gpuIndirectDrawCalls, 0);
                         _lastFrameGpuMeshletDrawCalls = Interlocked.Exchange(ref _gpuMeshletDrawCalls, 0);
                         _lastFrameUnknownStrategyDrawCalls = Interlocked.Exchange(ref _unknownStrategyDrawCalls, 0);
+                        _lastFrameDirectionalCascadeStaleSampled = Interlocked.Exchange(ref _directionalCascadeStaleSampled, 0);
+                        _lastFrameDirectionalCascadeMixedGenerationPrevented = Interlocked.Exchange(ref _directionalCascadeMixedGenerationPrevented, 0);
+                        _lastFrameDirectionalCascadePhysicalReprojected = Interlocked.Exchange(ref _directionalCascadePhysicalReprojected, 0);
+                        _lastFrameDirectionalCascadeForcedFreshRender = Interlocked.Exchange(ref _directionalCascadeForcedFreshRender, 0);
 
                         lock (_contextLock)
                         {
@@ -319,6 +335,18 @@ namespace XREngine
                                 break;
                             case ERendererProfilerCounter.UnknownStrategyDrawCalls:
                                 Interlocked.Add(ref _unknownStrategyDrawCalls, intCount);
+                                break;
+                            case ERendererProfilerCounter.DirectionalCascadeStaleSampled:
+                                Interlocked.Add(ref _directionalCascadeStaleSampled, intCount);
+                                break;
+                            case ERendererProfilerCounter.DirectionalCascadeMixedGenerationPrevented:
+                                Interlocked.Add(ref _directionalCascadeMixedGenerationPrevented, intCount);
+                                break;
+                            case ERendererProfilerCounter.DirectionalCascadePhysicalReprojected:
+                                Interlocked.Add(ref _directionalCascadePhysicalReprojected, intCount);
+                                break;
+                            case ERendererProfilerCounter.DirectionalCascadeForcedFreshRender:
+                                Interlocked.Add(ref _directionalCascadeForcedFreshRender, intCount);
                                 break;
                         }
                     }

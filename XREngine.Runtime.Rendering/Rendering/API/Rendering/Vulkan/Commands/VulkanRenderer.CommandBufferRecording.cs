@@ -133,6 +133,9 @@ namespace XREngine.Rendering.Vulkan
             bool delayDynamicUiBatchTextOverlayRecording =
                 preserveSwapchainForOverlay &&
                 dynamicUiBatchTextOps.Length > 0;
+            bool requiresTrackedPresentSourceRefresh =
+                !hasStaticFrameOps &&
+                HasLastWindowPresentSourceForSwapchainRefresh();
 
             ulong plannerRevision;
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.ResourcePlan"))
@@ -163,7 +166,8 @@ namespace XREngine.Rendering.Vulkan
                         : ResourcePlannerRevision;
             }
 
-            if (!hasStaticFrameOps &&
+            if (!requiresTrackedPresentSourceRefresh &&
+                !hasStaticFrameOps &&
                 dynamicUiBatchTextOps.Length == 0 &&
                 !preserveSwapchainForOverlay &&
                 TryReuseLastSwapchainWriterVariant(
@@ -194,6 +198,7 @@ namespace XREngine.Rendering.Vulkan
                     dynamicUiBatchTextOps,
                     delayDynamicUiBatchTextOverlayRecording,
                     preserveSwapchainForOverlay,
+                    requiresTrackedPresentSourceRefresh,
                     swapchainImageEverPresentedAtRecord,
                     out CommandBuffer reusableCommandBuffer,
                     out dynamicUiBatchTextSecondaryCommandBuffer,
@@ -310,6 +315,14 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 if (!dirty && variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresentedAtRecord)
+                {
+                    dirty = true;
+                    swapchainLifecycleDirty = true;
+                }
+
+                if (!dirty &&
+                    requiresTrackedPresentSourceRefresh &&
+                    !variant.RecordedSwapchainRefreshFromLastPresentSource)
                 {
                     dirty = true;
                     swapchainLifecycleDirty = true;
@@ -544,6 +557,9 @@ namespace XREngine.Rendering.Vulkan
             variant.RecordedSwapchainImageEverPresented = swapchainImageEverPresentedAtRecord;
             variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
             variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
+            variant.RecordedSwapchainRefreshFromLastPresentSource =
+                requiresTrackedPresentSourceRefresh &&
+                recordedSwapchainWriteCount > 0;
             variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
             variant.CommandChainPrimaryGroupSignature = commandChainSchedule is null || commandChainCache is null
                 ? ulong.MaxValue
@@ -666,6 +682,7 @@ namespace XREngine.Rendering.Vulkan
             variant.RecordedSwapchainImageEverPresented = false;
             variant.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
             variant.RecordedSwapchainWriteCount = 0;
+            variant.RecordedSwapchainRefreshFromLastPresentSource = false;
             variant.CommandChainScheduleSignature = ulong.MaxValue;
             variant.CommandChainPrimaryGroupSignature = ulong.MaxValue;
             variant.CommandChainPrimaryGroupCount = -1;
@@ -689,6 +706,7 @@ namespace XREngine.Rendering.Vulkan
             FrameOp[] dynamicUiBatchTextOps,
             bool delayDynamicUiSecondaryRecording,
             bool preserveSwapchainForOverlay,
+            bool requiresTrackedPresentSourceRefresh,
             bool swapchainImageEverPresented,
             out CommandBuffer commandBuffer,
             out CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer,
@@ -743,6 +761,7 @@ namespace XREngine.Rendering.Vulkan
                     variant.FrameOpsSignature != frameOpsSignature ||
                     variant.PlannerRevision != plannerRevision ||
                     variant.PreserveSwapchainForOverlay != preserveSwapchainForOverlay ||
+                    (requiresTrackedPresentSourceRefresh && !variant.RecordedSwapchainRefreshFromLastPresentSource) ||
                     variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented ||
                     (variant.DynamicUiOpCount > 0) != hasDynamicUiBatchTextOverlay ||
                     (!delayDynamicUiSecondaryRecording &&
@@ -974,6 +993,14 @@ namespace XREngine.Rendering.Vulkan
 
             foreach (KeyValuePair<VkMeshRenderer, int> pair in meshDrawSlotsByRenderer)
                 pair.Key.EnsureUniformDrawSlotCapacity(pair.Value);
+        }
+
+        private bool HasLastWindowPresentSourceForSwapchainRefresh()
+        {
+            XRFrameBuffer? sourceFrameBuffer = _lastWindowPresentFrameBuffer;
+            return sourceFrameBuffer is not null &&
+                   sourceFrameBuffer.Width > 0 &&
+                   sourceFrameBuffer.Height > 0;
         }
 
         private bool IsSwapchainImageEverPresented(uint imageIndex)
@@ -2134,6 +2161,120 @@ namespace XREngine.Rendering.Vulkan
                     1,
                     &presentBarrier);
                 swapchainFinalLayout = ImageLayout.PresentSrcKhr;
+            }
+
+            bool TryRefreshUnwrittenSwapchainFromLastWindowPresentSource()
+            {
+                XRFrameBuffer? sourceFrameBuffer = _lastWindowPresentFrameBuffer;
+                string? unavailableReason = sourceFrameBuffer is null
+                    ? $"no tracked source framebuffer; colorTexture='{_lastWindowPresentColorTexture?.Name ?? "<null>"}'"
+                    : !swapchainTarget.IsValid
+                        ? "swapchain target is invalid"
+                        : sourceFrameBuffer.Width == 0 || sourceFrameBuffer.Height == 0
+                            ? $"tracked source framebuffer '{sourceFrameBuffer.Name ?? "<unnamed fbo>"}' has zero size {sourceFrameBuffer.Width}x{sourceFrameBuffer.Height}"
+                            : swapchainRecordExtent.Width == 0 || swapchainRecordExtent.Height == 0
+                                ? $"swapchain record extent is zero {swapchainRecordExtent.Width}x{swapchainRecordExtent.Height}"
+                                : null;
+                if (unavailableReason is not null)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.LastPresentRefresh.Unavailable.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Unable to refresh unwritten swapchain image from last present source: {0}.",
+                        unavailableReason);
+                    return false;
+                }
+
+                if (sourceFrameBuffer is null)
+                    return false;
+
+                EnsureSwapchainColorAttachmentLayoutForBlit();
+
+                int passIndex = activePassIndex != int.MinValue
+                    ? activePassIndex
+                    : VulkanBarrierPlanner.SwapchainPassIndex;
+                FrameOpContext blitContext = _lastWindowPresentFrameOpContext ?? (hasActiveContext ? activeContext : initialContext);
+                BlitOp replayBlit = new(
+                    passIndex,
+                    sourceFrameBuffer,
+                    null,
+                    0,
+                    0,
+                    sourceFrameBuffer.Width,
+                    sourceFrameBuffer.Height,
+                    0,
+                    0,
+                    swapchainRecordExtent.Width,
+                    swapchainRecordExtent.Height,
+                    EReadBufferMode.ColorAttachment0,
+                    ColorBit: true,
+                    DepthBit: false,
+                    StencilBit: false,
+                    LinearFilter: true,
+                    blitContext);
+
+                bool blitRecorded;
+                CmdBeginLabel(commandBuffer, "RefreshSwapchainFromLastPresentSource");
+                using (EnterFrameOpResourcePlannerReadbackScope(blitContext))
+                {
+                    bool canResolveRefreshSource = TryResolveBlitImage(
+                        sourceFrameBuffer,
+                        imageIndex,
+                        EReadBufferMode.ColorAttachment0,
+                        wantColor: true,
+                        wantDepth: false,
+                        wantStencil: false,
+                        out _,
+                        isSource: true);
+                    bool canResolveRefreshDestination = TryResolveBlitImage(
+                        null,
+                        imageIndex,
+                        EReadBufferMode.ColorAttachment0,
+                        wantColor: true,
+                        wantDepth: false,
+                        wantStencil: false,
+                        out _,
+                        isSource: false);
+                    if (!canResolveRefreshSource || !canResolveRefreshDestination)
+                    {
+                        Debug.VulkanEvery(
+                            $"Vulkan.LastPresentRefresh.ResolveFailure.{GetHashCode()}",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Unable to refresh unwritten swapchain image from last present source: resolve source={0} destination={1} sourceFbo='{2}' colorTexture='{3}' imageIndex={4}.",
+                            canResolveRefreshSource,
+                            canResolveRefreshDestination,
+                            sourceFrameBuffer.Name ?? "<unnamed fbo>",
+                            _lastWindowPresentColorTexture?.Name ?? "<null>",
+                            imageIndex);
+                    }
+
+                    blitRecorded = RecordBlitOp(commandBuffer, imageIndex, replayBlit);
+                }
+                CmdEndLabel(commandBuffer);
+                if (!blitRecorded)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.LastPresentRefresh.BlitRejected.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Unable to refresh unwritten swapchain image from last present source: blit from '{0}' was not recorded.",
+                        sourceFrameBuffer.Name ?? "<unnamed fbo>");
+                    return false;
+                }
+
+                swapchainWrittenOutsideRenderPass = true;
+                swapchainInColorAttachmentLayout = true;
+                swapchainFinalLayout = ImageLayout.ColorAttachmentOptimal;
+                swapchainWriteCount++;
+                actualSwapchainWriteCount++;
+                swapchainBlitWrites++;
+                sceneSwapchainWriters++;
+                MarkSwapchainStaticWriter(
+                    "LastPresentSourceBlit",
+                    $"refreshed acquired swapchain image from '{sourceFrameBuffer.Name ?? "<unnamed fbo>"}'",
+                    passIndex,
+                    ops.Length,
+                    blitContext.PipelineIdentity);
+                return true;
             }
 
             void EndActiveRenderPass(bool finalClose = false)
@@ -4857,7 +4998,8 @@ namespace XREngine.Rendering.Vulkan
                 else
                 {
                     EndActiveRenderPass();
-                    TransitionUnwrittenSwapchainToPresent();
+                    if (!TryRefreshUnwrittenSwapchainFromLastWindowPresentSource())
+                        TransitionUnwrittenSwapchainToPresent();
                 }
 
                 bool hasSceneFrameWork = clearCount > 0 || drawCount > 0 || blitCount > 0 || computeCount > 0;

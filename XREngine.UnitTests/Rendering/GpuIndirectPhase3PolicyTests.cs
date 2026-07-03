@@ -123,8 +123,8 @@ public sealed class GpuIndirectPhase3PolicyTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
 
-        source.ShouldContain("if (mode == EOcclusionCullingMode.CpuQueryAsync && VulkanFeatureProfile.ActiveProfile != EVulkanGpuDrivenProfile.Diagnostics)");
-        source.ShouldContain("return EOcclusionCullingMode.GpuHiZ;");
+        source.ShouldContain("return VulkanFeatureProfile.ResolveOcclusionCullingMode(RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode);");
+        source.ShouldNotContain("CpuQueryAsync && VulkanFeatureProfile.ActiveProfile != EVulkanGpuDrivenProfile.Diagnostics");
         source.ShouldContain("case EOcclusionCullingMode.CpuSoftwareOcclusion:");
         source.ShouldContain("private bool ShouldInvalidateGpuHiZTemporalState(GPUScene scene, XRCamera camera)");
         source.ShouldContain("shared.LastBuiltFrameId = ulong.MaxValue;");

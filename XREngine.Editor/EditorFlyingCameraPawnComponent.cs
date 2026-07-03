@@ -39,6 +39,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private const float FocusRadiusPadding = 0.75f;
     private const float MinimumFocusDistance = 0.5f;
     private const float FocusCompletionThreshold = 0.999f;
+    private const int RenderOnDemandSettleFrameCount = 3;
 
     private CameraFocusLerpState? _cameraFocusLerp = null;
 
@@ -491,13 +492,18 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     private bool _viewInvalidated;
+    private int _renderOnDemandSettleFramesRemaining;
 
     /// <summary>
     /// Marks the camera view as needing a re-render on the next frame.
     /// Called automatically by input handlers when <see cref="RenderOnDemand"/> is enabled.
     /// Also available for external callers that modify the scene programmatically.
     /// </summary>
-    public void InvalidateView() => _viewInvalidated = true;
+    public void InvalidateView()
+    {
+        _viewInvalidated = true;
+        _renderOnDemandSettleFramesRemaining = Math.Max(_renderOnDemandSettleFramesRemaining, RenderOnDemandSettleFrameCount);
+    }
 
     /// <summary>
     /// Returns true when the viewport should render this frame.
@@ -505,6 +511,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// </summary>
     private bool NeedsRender()
         => _viewInvalidated
+        || _renderOnDemandSettleFramesRemaining > 0
         || _scrollSmoothTarget is not null
         || _cameraFocusLerp is not null
         || HasContinuousMovementInput()
@@ -1148,11 +1155,18 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var vp = Viewport;
         ApplyInput(vp);
 
-        if (_renderOnDemand && vp is not null)
+        if (vp is null)
+            return;
+
+        if (_renderOnDemand)
         {
             vp.Suppress3DSceneRendering = !NeedsRender();
             _viewInvalidated = false;
         }
+        else
+            vp.Suppress3DSceneRendering = false;
+
+        vp.SuppressAutoExposureUpdates = _renderOnDemand && vp.Suppress3DSceneRendering;
     }
 
     private void SyncOutlinePreferences()
@@ -1173,6 +1187,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var vp = Viewport;
         if (vp is null)
             return;
+
+        if (_renderOnDemand &&
+            !vp.Suppress3DSceneRendering &&
+            _renderOnDemandSettleFramesRemaining > 0)
+        {
+            _renderOnDemandSettleFramesRemaining--;
+        }
 
         if (_wantsScreenshot)
         {
@@ -2013,8 +2034,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                     _depthQueryRequested = true;
                 break;
             case nameof(RenderOnDemand):
-                if (!_renderOnDemand && Viewport is { } vp)
+                if (_renderOnDemand)
+                    InvalidateView();
+
+                if (Viewport is { } vp)
+                {
                     vp.Suppress3DSceneRendering = false;
+                    vp.SuppressAutoExposureUpdates = false;
+                }
                 break;
         }
     }

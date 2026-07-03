@@ -86,6 +86,7 @@ namespace XREngine
                         LoadSandboxSettings();
                 }
 
+                EnsureMemoryPolicyConfigured(startupSettings);
                 ValidateGpuRenderingStartupConfiguration();
                 ConfigureJobManager(GameSettings);
 

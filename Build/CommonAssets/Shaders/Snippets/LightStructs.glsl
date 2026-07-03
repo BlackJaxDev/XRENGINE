@@ -25,6 +25,13 @@ struct DirLight
     float CascadeBiasMax[XRENGINE_MAX_CASCADES];
     float CascadeReceiverOffsets[XRENGINE_MAX_CASCADES];
     mat4 CascadeMatrices[XRENGINE_MAX_CASCADES];
+    float RenderedCascadeSplits[XRENGINE_MAX_CASCADES];
+    float RenderedCascadeBlendWidths[XRENGINE_MAX_CASCADES];
+    float RenderedCascadeBiasMin[XRENGINE_MAX_CASCADES];
+    float RenderedCascadeBiasMax[XRENGINE_MAX_CASCADES];
+    float RenderedCascadeReceiverOffsets[XRENGINE_MAX_CASCADES];
+    mat4 RenderedCascadeMatrices[XRENGINE_MAX_CASCADES];
+    float RenderedCascadeStaleAge[XRENGINE_MAX_CASCADES];
     int CascadeCount;
 };
 

@@ -993,6 +993,129 @@ Interpretation:
 - Desktop meshes were being drawn, then erased. The HMD path survived because its grouped stereo draw order happened not to hit the same late desktop clear window.
 - The current live evidence shows desktop deferred outputs are present and stable across repeated captures. The remaining visual issue in the capture is exposure/lighting brightness, not the blank/sky-only mesh disappearance.
 
+### 2026-07-02 Directional Shadow Atlas Vulkan Back-Frame Flicker Diagnostic
+
+User report: with directional-light shadow map atlasing enabled, the main view camera sometimes flickers back to an older displayed image by a few frames on Vulkan. The reported symptom only occurs with atlasing enabled, raising the question of swapchain/display starvation.
+
+Diagnostic run:
+
+- Run root: `Build/_AgentValidation/20260702-104157-dir-atlas-vulkan-flicker`.
+- Build: `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore -v:minimal` succeeded with the existing Magick.NET advisory warnings.
+- Editor launch used Unit Testing World, Vulkan, MCP, directional shadow audit, shadow audit, swap/draw tracing, frame-op signature diffing, frame-data reuse diagnostics, and recording diagnostics.
+- Primary command buffer reuse was forced off for the run with `XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE=0` and `XRE_OPENXR_VULKAN_PRIMARY_REUSE=0`.
+- Session inspected: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-02_10-47-41_pid9120`.
+- Captures were saved under `mcp-captures/`, including fixed-camera viewport/final-post captures and moving-camera captures.
+
+Swapchain and presentation evidence:
+
+- The steady-state sampled frames do not look swapchain-starved. Acquire and swapchain-image wait timings were tiny, usually around hundredths or thousandths of a millisecond.
+- Every sampled moving-camera profiler frame recorded fresh Vulkan work: `cleanReuse=0`, `recorded=1`, `swapW=2`, `sceneW=2`, `missingScene=0`, and `dropped=0`.
+- `log_vulkan.log` repeatedly reported live frame ops and two pre-overlay swapchain scene writers. There were no recurring acquire timeout/not-ready/out-of-date errors and no missing scene swapchain writer frames.
+- The moving-camera MCP captures advanced normally during the diagnostic window and did not show a visible backstep in the captured output.
+- There was one startup present skip while resources settled:
+  - `Skipping present tick while resize/presentation resources settle. Reason=VP[0] has no active resource generation; pending=<none> DroppedFrameOps=11 ...`
+  - The preceding render-resource logs show a stale pending TSR generation being discarded after the camera resolved from global `aa=Tsr` to current `aa=None`.
+  - That can explain an early startup old-frame/blank-frame style blip, but it does not match a recurring atlas-only runtime flicker.
+
+Directional atlas evidence:
+
+- Directional atlas was enabled: `[DirectionalShadowAudit][Setting] frame=0 UseDirectionalShadowAtlas=True`.
+- The atlas path submitted desktop cascade requests, allocated four resident cascade tiles on one page, and deferred bind enabled shader atlas sampling with four active cascades.
+- Early startup frames had expected warm-up/stale tile fallback records before all cascades became rendered/resident.
+- After warm-up, atlas summaries stayed coherent: four requests, four allocations, four resident tiles, no skipped/not-relevant tiles, and deferred bind kept using atlas records for all four cascades.
+- During camera movement, atlas tiles were dirtied by `ContentChanged`, `ProjectionOrCameraFitChanged`, `ReuseDisabled`, and `DynamicLight`. That is heavy, but in this run it did not correlate with present starvation, dropped frame ops, or command-buffer clean reuse.
+
+Static source audit:
+
+- Directional shadow atlas work is driven from `XRWorldInstance.GlobalPreRender()` into `Lights3DCollection.RenderShadowMapsInternal()`, then `UpdateShadowAtlasRequests()`, `SubmitDirectionalShadowAtlasRequests()`, and `PublishShadowAtlasDiagnostics()`.
+- Directional-light cascade state is source-keyed for desktop/HMD, and `VPRC_LightCombinePass.BindDirectionalAtlasShadows()` selects atlas state from the active rendering camera source and requires sampleable atlas tiles before enabling atlas sampling.
+- Vulkan frame-loop code waits per in-flight slot and per acquired swapchain image, which would have shown up as acquire/wait/present stalls if ordinary swapchain starvation were the active failure.
+- Desktop primary command-buffer reuse was disabled in this run, but `TryReuseLastSwapchainWriterVariant()` remains an always-reachable fallback when a present tick has no static frame ops, no dynamic UI ops, and no overlay-preserve work. This was not observed in the run, but it remains a plausible place to add a kill switch or diagnostic if the live flicker can be caught.
+
+Current interpretation:
+
+- The captured diagnostic run does not support swapchain starvation as the root cause.
+- The only observed present skip was a startup resource-generation settle caused by stale TSR resources being discarded, not a recurring atlas/render starvation loop.
+- If the user's live symptom still looks exactly like "the main view jumps back a few frames," the next isolation target is a rare no-frame-op present path or temporal-history path, not directional atlas allocation itself.
+- If the symptom is actually a shadow/lighting flash that reads like an old image, the next target is atlas stale-tile publication and cascade dirtying cadence, especially the camera-fit invalidation path while the light is dynamic.
+
+Recommended next isolation:
+
+- Catch a visible flicker with `XRE_VULKAN_FRAME_DATA_REUSE_DIAG=1`, `XRE_VK_TRACE_SWAPDRAW=1`, and primary reuse disabled, then check for any frame with `missingScene>0`, `dropped>0`, `cleanReuse>0`, or no `FrameOps`/swapchain writer entry.
+- Temporarily force temporal AA off for the active camera and global settings in the same user repro. In this diagnostic run the camera settled to `aa=None`, so active TSR did not explain steady-state behavior here.
+- Add a diagnostic guard or env kill switch around `TryReuseLastSwapchainWriterVariant()` so any no-frame-op present that reuses an older swapchain writer becomes visible in logs instead of silently presenting a previous writer variant.
+- During a visible flicker, capture both the viewport and `FinalPostProcessOutputTexture`. If the render target is stable but the window backsteps, the issue is present/command reuse. If the render target also backsteps, it is upstream in the render graph or temporal/shadow inputs.
+
+### 2026-07-02 Directional Atlas Dirty/Clean Record-Index Fix
+
+User follow-up: the flicker is easy to reproduce by moving the camera, setting directional atlas dirty flags, then stopping so the dirty flags clear. User also suspected this was not temporal history.
+
+New focused evidence:
+
+- Run root: `Build/_AgentValidation/20260702-121500-dir-atlas-stop-flicker`.
+- Pre-fix captures showed the final post-process texture changing with the flicker, so the problem was upstream of presentation/swapchain reuse.
+- The pre-fix lighting audit showed dirty directional cascade frames could publish a different record ordering than the following clean frame:
+  - dirty frame example: `c0=(1,0,0,2) c1=(1,0,0,3) c2=(1,0,0,0) c3=(1,0,0,1)`,
+  - clean frame after stop: `c0=(1,0,0,0) c1=(1,0,0,1) c2=(1,0,0,2) c3=(1,0,0,3)`.
+- The physical atlas tile layout also depended on sorted request order. A dirty subset can move ahead of clean reusable cascades, so the 2x2 directional cascade group could be assigned in dirty-priority order instead of cascade-index order.
+
+Root cause:
+
+- Directional cascade atlasing was letting the per-frame dirty-priority request sort leak into two published identities:
+  - physical 2x2 atlas tile placement,
+  - public `ShadowAtlasFrameData` record index used by directional cascade atlas slots and `DirectionalShadowAtlasPacked0`.
+- When camera motion stopped and dirty flags cleared, those identities snapped back to normal cascade order. Vulkan then observed a transient atlas metadata mismatch that looked like the main view jumped to an old/wrong frame.
+- This is not swapchain starvation and is not temporal history.
+
+Implemented fix:
+
+- `TryAllocateDirectionalCascadeGroups` now assigns the grouped directional 2x2 cells by `FaceOrCascadeIndex` instead of by sorted request order.
+- After allocation solving, `ShadowAtlasManager` now sorts the frame allocation record table deterministically by `ShadowRequestKey` and rebuilds `_currentAllocationIndices` before directional/point group publication.
+- Render scheduling still uses the dirty-priority request order, but the published atlas record slots are stable across dirty and clean frames.
+
+Validation:
+
+- Added `SolveAllocations_DirectionalCascadeGroupLayoutIgnoresDirtyRequestOrdering`, which verifies both atlas tile layout and record indices remain stable when only one cascade is dirty and the other cascades reuse prior resident tiles.
+- Passed:
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "Name=SolveAllocations_DirectionalCascadeGroupLayoutIgnoresDirtyRequestOrdering" --logger "console;verbosity=normal"`.
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "Name=SolveAllocations_BalancesDirectionalCascadesIntoOneAtlasPage|Name=SolveAllocations_DirectionalCascadeGroupLayoutIgnoresDirtyRequestOrdering|Name=SolveAllocations_PublishesGroupedDirectionalCascadeRecord|Name=SolveAllocations_PublishesGroupedDirectionalCascadeRecordForResidentSubset|Name=SolveAllocations_DirectionalCameraFitRefreshKeepsStaleCascadeGroupUntilRenderCompletes|Name=RenderScheduledTiles_RendersNeverRenderedDirectionalCascadeGroupPastTileBudget" --logger "console;verbosity=normal"`.
+  - `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore -v:minimal`.
+  - `git diff --check` with line-ending warnings only.
+- Live post-fix Vulkan/MCP run:
+  - Session: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-02_11-28-42_pid19920`.
+  - Captures: `Build/_AgentValidation/20260702-121500-dir-atlas-stop-flicker/mcp-captures/postrecord/`.
+  - Dirty frame `351` and `353` kept stable desktop slots and deferred bind records: `c0=0`, `c1=1`, `c2=2`, `c3=3`.
+  - Clean frame `360` after stopping had `dirtyCascades=0`, `renderedCascades=0`, and still bound `c0=(1,0,0,0) c1=(1,0,0,1) c2=(1,0,0,2) c3=(1,0,0,3)`.
+  - A log sweep found zero reordered enabled deferred binds and zero reordered published desktop cascade slots in the post-fix run.
+  - Vulkan logs during the same window continued to show successful presents and scene swapchain writers; no swapchain starvation evidence appeared.
+
+### 2026-07-02 Directional Atlas Grouped-Render FPS Fix
+
+User follow-up: flicker still reproduces, and the Vulkan editor frame rate is very low. Asked whether shadow-map validation logging is the cause.
+
+New diagnosis:
+
+- Shadow audit logging can materially reduce FPS when `XRE_DIRECTIONAL_SHADOW_AUDIT=1`, `XRE_SHADOW_AUDIT=1`, `XRE_VK_TRACE_SWAPDRAW=1`, `XRE_VK_TRACE_DRAW=1`, or `XRE_VULKAN_FRAME_DATA_REUSE_DIAG=1` are enabled.
+- In the last agent shell, no `XRE_*` diagnostic env vars were set, so logging was not the only plausible explanation for the low frame rate observed there.
+- The post-fix Vulkan logs showed a larger engine-side cost: dirty directional atlas frames attempted a grouped cascade atlas render, failed it, then rendered all four 1024 cascades sequentially. Example audit frames reported `groupedAttempted=True`, `groupedSucceeded=False`, `fallbackReason=GroupedAtlasRenderFailed`, and shadow render time around `42-49ms`.
+- That means the grouped allocation was being treated as a grouped render unit even when the grouped draw path could not actually execute for the current light/backend/published cascade state.
+
+Implemented fix:
+
+- `DirectionalLightComponent.CanRenderGroupedCascadeShadowAtlasTiles(...)` now preflights the same hard prerequisites the grouped renderer needs: active cascades, layered atlas render plan, shadow render pipeline, valid published matrices, and valid indexed tile rects.
+- `ShadowAtlasManager.RenderScheduledTiles()` now enters the grouped directional render scheduling branch only when that preflight succeeds.
+- If the grouped allocation exists but the grouped draw path is unavailable, render scheduling falls through to normal per-tile rendering. Clean cascades in the same 2x2 directional group are skipped instead of being forced through the four-cascade sequential fallback.
+- The sequential fallback still remains inside `TryRenderDirectionalCascadeGroup()` for unexpected grouped-render failures after the preflight succeeds.
+
+Validation:
+
+- Passed:
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "Name=DirectionalCascadeAtlasGroupedPath_UsesAtlasBackendAndLayeredRendering" --logger "console;verbosity=normal"`.
+  - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "Name~DirectionalCascadeAtlasGroupedPath_UsesAtlasBackendAndLayeredRendering|Name~GroupedDirectionalCascadeAtlasFailure_RendersSequentialAtlasTiles|Name~SolveAllocations_DirectionalCascadeGroupLayoutIgnoresDirtyRequestOrdering|Name~RenderScheduledTiles_RendersNeverRenderedDirectionalCascadeGroupPastTileBudget" --logger "console;verbosity=minimal"`.
+  - `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore -v:minimal`.
+- The first editor build attempt was invalid because it ran in parallel with a test build and hit a compiler-server file lock on `XREngine.dll`; rerunning serially after `dotnet build-server shutdown` passed.
+- Existing Magick.NET vulnerability warnings remain unrelated.
+
 ## Active Questions
 
 - Does flicker show up in saved viewport screenshots, or only live in the editor window?

@@ -761,6 +761,7 @@ namespace XREngine
                 private long _maxShadowAtlasMemoryBytes = 0L;
                 private int _maxShadowTilesRenderedPerFrame = 16;
                 private float _maxShadowRenderMilliseconds = 2.0f;
+            private int _maxDirectionalCascadeAtlasStaleFrames = 2;
                 private uint _minShadowAtlasTileResolution = 128u;
                 private uint _maxShadowAtlasTileResolution = 4096u;
 
@@ -915,6 +916,21 @@ namespace XREngine
                 {
                     get => _maxShadowRenderMilliseconds;
                     set => SetField(ref _maxShadowRenderMilliseconds, MathF.Max(0.0f, value));
+                }
+
+                [Category("Shadows")]
+                [Description("Maximum rendered-frame age for directional cascade atlas stale reprojection. Older atlas samples fall back to lit or legacy sampling.")]
+                public int MaxDirectionalCascadeAtlasStaleFrames
+                {
+                    get => Volatile.Read(ref _maxDirectionalCascadeAtlasStaleFrames);
+                    set
+                    {
+                        int clamped = Math.Clamp(value, 0, 120);
+                        if (!SetField(ref _maxDirectionalCascadeAtlasStaleFrames, clamped))
+                            return;
+
+                        Volatile.Write(ref _maxDirectionalCascadeAtlasStaleFrames, clamped);
+                    }
                 }
 
                 [Category("Shadows")]

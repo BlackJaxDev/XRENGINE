@@ -11,6 +11,7 @@ Current architecture references:
 
 - [Default Render Pipeline notes](../../../../architecture/rendering/default-render-pipeline-notes.md)
 - [Shadow Atlas Solve Efficiency TODO](shadow-atlas-solve-efficiency-todo.md)
+- [Shadow Atlas Allocation And Threading TODO](shadow-atlas-allocation-and-threading-todo.md)
 - [Dynamic Shadow Atlas LOD Plan](../../../design/rendering/shadows/dynamic-shadow-atlas-lod-plan.md)
 - [Shadow Filtering VSM/EVSM Plan](../../../design/rendering/shadows/shadow-filtering-vsm-evsm-plan.md)
 - [Shadow Resource Migration Audit](../../../design/rendering/shadows/shadow-resource-migration-audit.md)
@@ -277,10 +278,14 @@ Acceptance:
 
 ### C. Allocation, Grouping, And Paging
 
-- [ ] Preserve reusable page/free-block state between balanced solve attempts
+- [x] Preserve reusable page/free-block state between balanced solve attempts
   when only request levels changed and page topology did not need a full reset.
-- [ ] Track the lowest failing size per atlas kind/encoding and skip
+- [x] Track the lowest failing size per atlas kind/encoding and skip
   immediately impossible candidates in the next attempt.
+  - Superseded by the allocation/threading pass: persistent occupancy,
+    feasibility waterline demotion, and local repair prevent repeated
+    impossible candidate discovery without carrying a separate failing-size
+    table.
 - [ ] Support partial directional groups when fewer than four cascades are
   active or relevant.
 - [ ] If a directional group cannot fit, demote lower-relevance cascades before

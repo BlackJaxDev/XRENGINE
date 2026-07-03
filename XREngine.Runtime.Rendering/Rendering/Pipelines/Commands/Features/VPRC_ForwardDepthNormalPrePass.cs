@@ -85,7 +85,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
                 else
                 {
-                    commands.RenderCPU(pass, false, camera);
+                    commands.RenderCPU(pass, false, camera, suppressCpuOcclusionForPass: true);
                 }
             }
         }

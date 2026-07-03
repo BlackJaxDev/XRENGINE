@@ -109,6 +109,8 @@ internal partial class Program
         // Initialize logging as early as possible to capture output from all subsystems, including during project initialization.
         InitLogging();
         WriteBootstrapTrace("Engine logging initialized.");
+        Engine.ConfigureMemoryPolicy(EngineMemoryProfile.EditorInteractive);
+        WriteBootstrapTrace("Engine memory policy configured for editor.");
 
         // Check for project initialization arguments and handle them if present. 
         // Returns false for failed initialization (e.g., missing or invalid parameters), 

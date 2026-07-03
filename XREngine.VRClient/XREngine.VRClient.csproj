@@ -10,6 +10,9 @@
     <StartupObject>XREngine.VRClient.Program</StartupObject>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <SignAssembly>False</SignAssembly>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">

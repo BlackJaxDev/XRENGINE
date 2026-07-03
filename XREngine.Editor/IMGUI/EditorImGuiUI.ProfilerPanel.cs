@@ -15,9 +15,6 @@ namespace XREngine.Editor;
 /// </summary>
 public static partial class EditorImGuiUI
 {
-    private const string ProfilerDockSpaceWindowId = "Profiler Dockspace";
-    private const string ProfilerDockSpaceId = "ProfilerDockSpace";
-
     internal static void HandleProfilerToggleHotkey()
     {
         var io = ImGui.GetIO();
@@ -41,18 +38,18 @@ public static partial class EditorImGuiUI
 
     internal static void SetProfilerVisible(bool visible)
     {
-        bool changed = _showProfiler != visible;
-        _showProfiler = visible;
-
-        if (visible && changed)
-            RequestProfilerDockLayoutReset();
+        if (visible)
+            OpenAllProfilerPanels();
+        else
+            CloseAllProfilerPanels();
     }
 
     internal static void ToggleProfilerVisible()
     {
-        _showProfiler = !_showProfiler;
         if (_showProfiler)
-            RequestProfilerDockLayoutReset();
+            CloseAllProfilerPanels();
+        else
+            OpenAllProfilerPanels();
     }
 
     internal static void RenderProfilerOverlay()
@@ -65,22 +62,132 @@ public static partial class EditorImGuiUI
         DrawProfilerPanel();
     }
 
+    internal static void DrawProfilerMenuItems()
+    {
+        if (!ImGui.BeginMenu("Profiler"))
+            return;
+
+        if (ImGui.MenuItem("Open All", "F11"))
+            OpenAllProfilerPanels();
+        if (ImGui.MenuItem("Close All", null, false, _showProfiler || IsAnyProfilerChildPanelVisible()))
+            CloseAllProfilerPanels();
+
+        ImGui.Separator();
+
+        DrawProfilerPanelMenuItem("Settings", ref _showProfilerSettings, persistProfilerPanelVisibility: false);
+        DrawProfilerPanelMenuItem("CPU Timings", ref _showProfilerTree, persistProfilerPanelVisibility: true);
+        DrawProfilerPanelMenuItem("FPS Drop Spikes", ref _showFpsDropSpikes, persistProfilerPanelVisibility: true);
+        DrawProfilerPanelMenuItem("Render Stats", ref _showRenderStats, persistProfilerPanelVisibility: true);
+        DrawProfilerPanelMenuItem("GPU Timings", ref _showGpuPipeline, persistProfilerPanelVisibility: true);
+        DrawProfilerPanelMenuItem("Thread Allocations", ref _showThreadAllocations, persistProfilerPanelVisibility: true);
+        DrawProfilerPanelMenuItem("Component Timings", ref _showComponentTimings, persistProfilerPanelVisibility: true);
+        DrawProfilerPanelMenuItem("BVH Metrics", ref _showBvhMetrics, persistProfilerPanelVisibility: true);
+        DrawProfilerPanelMenuItem("Job System", ref _showJobSystem, persistProfilerPanelVisibility: true);
+        DrawProfilerPanelMenuItem("Main Thread Invokes", ref _showMainThreadInvokes, persistProfilerPanelVisibility: true);
+
+        ImGui.EndMenu();
+    }
+
+    private static void DrawProfilerPanelMenuItem(string label, ref bool open, bool persistProfilerPanelVisibility)
+    {
+        bool wasProfilerVisible = _showProfiler;
+        if (!ImGui.MenuItem(label, null, ref open))
+            return;
+
+        if (open)
+        {
+            if (!wasProfilerVisible)
+            {
+                CloseProfilerChildPanels();
+                open = true;
+            }
+
+            _showProfiler = true;
+            _profilerPanelVisibilityInitialized = true;
+        }
+        else if (!IsAnyProfilerChildPanelVisible())
+        {
+            _showProfiler = false;
+        }
+
+        if (persistProfilerPanelVisibility)
+            PersistProfilerPanelVisibilitySettings();
+    }
+
+    private static void OpenAllProfilerPanels()
+    {
+        _showProfiler = true;
+        _showProfilerSettings = true;
+        _showProfilerTree = true;
+        _showFpsDropSpikes = true;
+        _showRenderStats = true;
+        _showGpuPipeline = true;
+        _showThreadAllocations = true;
+        _showComponentTimings = true;
+        _showBvhMetrics = true;
+        _showJobSystem = true;
+        _showMainThreadInvokes = true;
+        _profilerPanelVisibilityInitialized = true;
+        PersistProfilerPanelVisibilitySettings();
+    }
+
+    private static void CloseAllProfilerPanels()
+    {
+        _showProfiler = false;
+        CloseProfilerChildPanels();
+        _profilerPanelVisibilityInitialized = true;
+        PersistProfilerPanelVisibilitySettings();
+    }
+
+    private static void CloseProfilerChildPanels()
+    {
+        _showProfilerSettings = false;
+        _showProfilerTree = false;
+        _showFpsDropSpikes = false;
+        _showRenderStats = false;
+        _showGpuPipeline = false;
+        _showThreadAllocations = false;
+        _showComponentTimings = false;
+        _showBvhMetrics = false;
+        _showJobSystem = false;
+        _showMainThreadInvokes = false;
+    }
+
+    private static bool IsAnyProfilerChildPanelVisible()
+        => _showProfilerSettings ||
+           _showProfilerTree ||
+           _showFpsDropSpikes ||
+           _showRenderStats ||
+           _showGpuPipeline ||
+           _showThreadAllocations ||
+           _showComponentTimings ||
+           _showBvhMetrics ||
+           _showJobSystem ||
+           _showMainThreadInvokes;
+
     // Shared renderer + data source (created on first use)
     private static EngineProfilerDataSource? _engineProfilerDataSource;
     private static ProfilerPanelRenderer? _engineProfilerRenderer;
 
-    // Panel visibility toggles (controlled by _showProfiler in ImGui.cs)
-    private static bool _showProfilerTree = true;
-    private static bool _showFpsDropSpikes = true;
-    private static bool _showRenderStats = true;
-    private static bool _showGpuPipeline = true;
-    private static bool _showThreadAllocations = true;
-    private static bool _showComponentTimings = true;
-    private static bool _showBvhMetrics = true;
-    private static bool _showJobSystem = true;
-    private static bool _showMainThreadInvokes = true;
-    private static bool _profilerDockLayoutInitialized;
-    private static bool _profilerDockLayoutRequested;
+    private static readonly Action ProfilerFrameLoggingHeader = DrawProfilerFrameLoggingHeader;
+    private static readonly Action ProfilerComponentTimingHeader = DrawProfilerComponentTimingHeader;
+    private static readonly Action ProfilerRenderStatsHeader = DrawProfilerRenderStatsHeader;
+    private static readonly Action ProfilerGpuTimingHeader = DrawProfilerGpuTimingHeader;
+    private static readonly Action ProfilerThreadAllocationHeader = DrawProfilerThreadAllocationHeader;
+    private static readonly Action ProfilerMainThreadInvokeHeader = DrawProfilerMainThreadInvokeHeader;
+
+    // Panel visibility toggles. _showProfiler is the group gate/F11 state, not a window.
+    private static bool _showProfilerSettings;
+    private static bool _showProfilerTree;
+    private static bool _showFpsDropSpikes;
+    private static bool _showRenderStats;
+    private static bool _showGpuPipeline;
+    private static bool _showThreadAllocations;
+    private static bool _showComponentTimings;
+    private static bool _showBvhMetrics;
+    private static bool _showJobSystem;
+    private static bool _showMainThreadInvokes;
+    private static bool _profilerPanelVisibilityInitialized;
     private static int _speedProfileDurationSeconds = 15;
     private static string _speedProfileStatus = string.Empty;
     private static string _speedProfileLastSummaryPath = string.Empty;
@@ -271,6 +378,133 @@ public static partial class EditorImGuiUI
         globalSetter(Engine.GlobalEditorPreferences.Debug, value);
     }
 
+    private static void DrawProfilerFrameLoggingHeader()
+    {
+        DrawProfilerFrameLoggingToggle();
+        ImGui.Separator();
+    }
+
+    private static void DrawProfilerComponentTimingHeader()
+    {
+        DrawProfilerFrameLoggingToggle();
+        ImGui.SameLine();
+        DrawProfilerComponentTimingToggle();
+        ImGui.Separator();
+    }
+
+    private static void DrawProfilerRenderStatsHeader()
+    {
+        DrawProfilerStatsTrackingToggle();
+        ImGui.Separator();
+    }
+
+    private static void DrawProfilerGpuTimingHeader()
+    {
+        DrawProfilerStatsTrackingToggle();
+        ImGui.SameLine();
+        DrawProfilerGpuPipelineToggle();
+        ImGui.Separator();
+    }
+
+    private static void DrawProfilerThreadAllocationHeader()
+    {
+        DrawProfilerAllocationTrackingToggle();
+        ImGui.Separator();
+    }
+
+    private static void DrawProfilerMainThreadInvokeHeader()
+    {
+        DrawProfilerInvokeDiagnosticsToggle();
+        ImGui.Separator();
+    }
+
+    private static void DrawProfilerFrameLoggingToggle()
+    {
+        bool enabled = Engine.EditorPreferences.Debug.EnableProfilerFrameLogging;
+        if (ImGui.Checkbox("Frame Logging", ref enabled))
+            PersistProfilerDebugSetting(enabled,
+                static current => current.EnableProfilerFrameLogging,
+                static overrides => overrides.EnableProfilerFrameLoggingOverride,
+                static (global, value) => global.EnableProfilerFrameLogging = value);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When disabled, profiler method timing is skipped to reduce overhead.");
+    }
+
+    private static void DrawProfilerComponentTimingToggle()
+    {
+        bool enabled = Engine.EditorPreferences.Debug.EnableProfilerComponentTiming;
+        if (ImGui.Checkbox("Component Timing", ref enabled))
+            PersistProfilerDebugSetting(enabled,
+                static current => current.EnableProfilerComponentTiming,
+                static overrides => overrides.EnableProfilerComponentTimingOverride,
+                static (global, value) => global.EnableProfilerComponentTiming = value);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When disabled, per-component tick timings are not recorded for the Components panel.");
+    }
+
+    private static void DrawProfilerStatsTrackingToggle()
+    {
+        bool enabled = Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking;
+        if (ImGui.Checkbox("Stats Tracking", ref enabled))
+            PersistProfilerDebugSetting(enabled,
+                static current => current.EnableRenderStatisticsTracking,
+                static overrides => overrides.EnableRenderStatisticsTrackingOverride,
+                static (global, value) => global.EnableRenderStatisticsTracking = value);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When disabled, per-frame render statistics (draw calls, triangles) are not tracked.");
+    }
+
+    private static void DrawProfilerGpuPipelineToggle()
+    {
+        bool enabled = Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
+        if (ImGui.Checkbox("GPU Pipeline", ref enabled))
+            PersistProfilerDebugSetting(enabled,
+                static current => current.EnableGpuRenderPipelineProfiling,
+                static overrides => overrides.EnableGpuRenderPipelineProfilingOverride,
+                static (global, value) => global.EnableGpuRenderPipelineProfiling = value);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Collect GPU timestamp timings for generic render-pipeline commands when supported by the active renderer.");
+    }
+
+    private static void DrawProfilerAllocationTrackingToggle()
+    {
+        bool enabled = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
+        if (ImGui.Checkbox("Alloc Tracking", ref enabled))
+            PersistProfilerDebugSetting(enabled,
+                static current => current.EnableThreadAllocationTracking,
+                static overrides => overrides.EnableThreadAllocationTrackingOverride,
+                static (global, value) => global.EnableThreadAllocationTracking = value);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When disabled, GC allocation deltas are not measured per tick/frame.");
+    }
+
+    private static void DrawProfilerInvokeDiagnosticsToggle()
+    {
+        bool enabled = Engine.EditorPreferences.Debug.EnableMainThreadInvokeDiagnostics;
+        if (ImGui.Checkbox("Invoke Diagnostics", ref enabled))
+            PersistProfilerDebugSetting(enabled,
+                static current => current.EnableMainThreadInvokeDiagnostics,
+                static overrides => overrides.EnableMainThreadInvokeDiagnosticsOverride,
+                static (global, value) => global.EnableMainThreadInvokeDiagnostics = value);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Writes verbose main-thread invoke diagnostics with stack traces to disk. Keep this off unless you are actively investigating invoke stalls because it adds overhead.");
+    }
+
+    private static void DrawProfilerUdpSendingToggle()
+    {
+        bool enabled = _profilerUdpEnabled;
+        if (ImGui.Checkbox("Enable UDP Sending", ref enabled))
+        {
+            _profilerUdpEnabled = enabled;
+            PersistProfilerDebugSetting(enabled,
+                static current => current.EnableProfilerUdpSending,
+                static overrides => overrides.EnableProfilerUdpSendingOverride,
+                static (global, value) => global.EnableProfilerUdpSending = value);
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Send profiler telemetry via UDP to the external XREngine.Profiler application.\nWhen enabled, this in-editor profiler panel is disabled to avoid duplicate overhead.");
+    }
+
     private static void EnsureProfilerInitialized()
     {
         if (_engineProfilerDataSource is not null) return;
@@ -396,7 +630,7 @@ public static partial class EditorImGuiUI
 
     /// <summary>
     /// Main entry point called from <see cref="RenderEditor"/>.
-    /// Draws the in-editor profiler window when <c>_showProfiler</c> is true.
+    /// Draws the in-editor profiler windows when the profiler group is open.
     /// </summary>
     private static void DrawProfilerPanel()
     {
@@ -408,279 +642,135 @@ public static partial class EditorImGuiUI
         {
             EnsureProfilerInitialized();
             SyncProfilerRendererFromPreferences(debug);
-            SyncProfilerPanelVisibilityFromPreferences(debug);
+            if (!_profilerPanelVisibilityInitialized)
+            {
+                SyncProfilerPanelVisibilityFromPreferences(debug);
+                _profilerPanelVisibilityInitialized = true;
+                if (!IsAnyProfilerChildPanelVisible())
+                    _showProfilerSettings = true;
+            }
         }
 
-        using (Engine.Profiler.Start("UI.DrawProfilerPanel.DockSpace"))
-            DrawProfilerDockSpace();
-
-        if (!_showProfiler)
+        if (!IsAnyProfilerChildPanelVisible())
+        {
+            _showProfiler = false;
             return;
+        }
 
-        // If UDP sending is active, show a thin notice instead of the full panels.
+        // If UDP sending is active, keep local profiler controls available but avoid drawing
+        // stale in-editor telemetry while the external profiler owns collection.
         if (_profilerUdpEnabled)
         {
             using (Engine.Profiler.Start("UI.DrawProfilerPanel.UdpNotice"))
             {
-                if (!ImGui.Begin("Settings"))
-                {
-                    ImGui.End();
-                    return;
-                }
-
-                ImGui.TextColored(new Vector4(0.3f, 0.85f, 1f, 1f),
-                    "UDP profiler sending is active — use the external profiler for live telemetry.");
-                ImGui.Spacing();
-
-                DrawLaunchExternalProfilerButton();
-
-                ImGui.Spacing();
-                if (ImGui.Button("Disable UDP Sending"))
-                {
-                    _profilerUdpEnabled = false;
-                    PersistProfilerDebugSetting(false,
-                        static current => current.EnableProfilerUdpSending,
-                        static overrides => overrides.EnableProfilerUdpSendingOverride,
-                        static (global, value) => global.EnableProfilerUdpSending = value);
-                }
-
-                ImGui.End();
+                _showProfilerSettings = true;
+                DrawProfilerSettingsPanel(showUdpNotice: true);
             }
             return;
         }
 
-        // ── Normal in-editor profiler ──
+        // Normal in-editor profiler.
 
         // CollectFromEngine runs on the app thread (see CollectProfilerDataOnAppThread).
         // ProcessLatestData stays here because it mutates renderer display state that the
         // subsequent Draw* calls read; it self-skips when no new frame has been collected, so the
         // per-frame cost on this thread is small.
+        ProfilerPanelRenderer.PanelVisibility visibility = CaptureProfilerPanelVisibility();
         using (Engine.Profiler.Start("UI.DrawProfilerPanel.ProcessLatestData"))
-            _engineProfilerRenderer!.ProcessLatestData(CaptureProfilerPanelVisibility());
+            _engineProfilerRenderer!.ProcessLatestData(visibility);
 
         // Controls / toggles window
         using (Engine.Profiler.Start("UI.DrawProfilerPanel.SettingsWindow"))
         {
-            if (ImGui.Begin("Settings"))
+            if (_showProfilerSettings)
             {
-                // ── Graph / Display Settings (shared) ──
-                _engineProfilerRenderer!.DrawSettingsContent();
-                PersistProfilerRendererSettings();
-
-                ImGui.Separator();
-
-                // ── Engine Data Collection ──
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Data Collection:");
-
-                bool enableFrameLogging = Engine.EditorPreferences.Debug.EnableProfilerFrameLogging;
-                if (ImGui.Checkbox("Frame Logging", ref enableFrameLogging))
-                    PersistProfilerDebugSetting(enableFrameLogging,
-                        static current => current.EnableProfilerFrameLogging,
-                        static overrides => overrides.EnableProfilerFrameLoggingOverride,
-                        static (global, value) => global.EnableProfilerFrameLogging = value);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("When disabled, profiler method timing is skipped to reduce overhead.");
-
-                ImGui.SameLine();
-                bool enableComponentTiming = Engine.EditorPreferences.Debug.EnableProfilerComponentTiming;
-                if (ImGui.Checkbox("Component Timing", ref enableComponentTiming))
-                    PersistProfilerDebugSetting(enableComponentTiming,
-                        static current => current.EnableProfilerComponentTiming,
-                        static overrides => overrides.EnableProfilerComponentTimingOverride,
-                        static (global, value) => global.EnableProfilerComponentTiming = value);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("When disabled, per-component tick timings are not recorded for the Components panel.");
-
-                ImGui.SameLine();
-                bool enableStatsTracking = Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking;
-                if (ImGui.Checkbox("Stats Tracking", ref enableStatsTracking))
-                    PersistProfilerDebugSetting(enableStatsTracking,
-                        static current => current.EnableRenderStatisticsTracking,
-                        static overrides => overrides.EnableRenderStatisticsTrackingOverride,
-                        static (global, value) => global.EnableRenderStatisticsTracking = value);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("When disabled, per-frame render statistics (draw calls, triangles) are not tracked.");
-
-                ImGui.SameLine();
-                bool enableGpuPipelineProfiling = Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
-                if (ImGui.Checkbox("GPU Pipeline", ref enableGpuPipelineProfiling))
-                    PersistProfilerDebugSetting(enableGpuPipelineProfiling,
-                        static current => current.EnableGpuRenderPipelineProfiling,
-                        static overrides => overrides.EnableGpuRenderPipelineProfilingOverride,
-                        static (global, value) => global.EnableGpuRenderPipelineProfiling = value);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Collect GPU timestamp timings for generic render-pipeline commands when supported by the active renderer.");
-
-                ImGui.SameLine();
-                bool enableAllocTracking = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
-                if (ImGui.Checkbox("Alloc Tracking", ref enableAllocTracking))
-                    PersistProfilerDebugSetting(enableAllocTracking,
-                        static current => current.EnableThreadAllocationTracking,
-                        static overrides => overrides.EnableThreadAllocationTrackingOverride,
-                        static (global, value) => global.EnableThreadAllocationTracking = value);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("When disabled, GC allocation deltas are not measured per tick/frame.");
-
-                ImGui.SameLine();
-                bool enableInvokeDiagnostics = Engine.EditorPreferences.Debug.EnableMainThreadInvokeDiagnostics;
-                if (ImGui.Checkbox("Invoke Diagnostics", ref enableInvokeDiagnostics))
-                    PersistProfilerDebugSetting(enableInvokeDiagnostics,
-                        static current => current.EnableMainThreadInvokeDiagnostics,
-                        static overrides => overrides.EnableMainThreadInvokeDiagnosticsOverride,
-                        static (global, value) => global.EnableMainThreadInvokeDiagnostics = value);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Writes verbose main-thread invoke diagnostics with stack traces to disk. Keep this off unless you are actively investigating invoke stalls because it adds overhead.");
-
-                ImGui.Separator();
-
-                // ── External Profiler ──
-                DrawSpeedProfileControls();
-
-                ImGui.Separator();
-
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "External Profiler:");
-                ImGui.SameLine();
-                bool udpEnabled = _profilerUdpEnabled;
-                if (ImGui.Checkbox("Enable UDP Sending", ref udpEnabled))
+                if (ImGui.Begin("Profiler Settings", ref _showProfilerSettings))
                 {
-                    _profilerUdpEnabled = udpEnabled;
-                    PersistProfilerDebugSetting(udpEnabled,
-                        static current => current.EnableProfilerUdpSending,
-                        static overrides => overrides.EnableProfilerUdpSendingOverride,
-                        static (global, value) => global.EnableProfilerUdpSending = value);
+                    _engineProfilerRenderer!.DrawSettingsContent();
+                    PersistProfilerRendererSettings();
+
+                    ImGui.Separator();
+
+                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Data Collection:");
+                    DrawProfilerFrameLoggingToggle();
+                    ImGui.SameLine();
+                    DrawProfilerComponentTimingToggle();
+                    ImGui.SameLine();
+                    DrawProfilerStatsTrackingToggle();
+                    ImGui.SameLine();
+                    DrawProfilerGpuPipelineToggle();
+                    ImGui.SameLine();
+                    DrawProfilerAllocationTrackingToggle();
+                    ImGui.SameLine();
+                    DrawProfilerInvokeDiagnosticsToggle();
+
+                    ImGui.Separator();
+
+                    DrawSpeedProfileControls();
+
+                    ImGui.Separator();
+
+                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "External Profiler:");
+                    ImGui.SameLine();
+                    DrawProfilerUdpSendingToggle();
+                    ImGui.SameLine();
+                    DrawLaunchExternalProfilerButton();
                 }
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Send profiler telemetry via UDP to the external XREngine.Profiler application.\nWhen enabled, this in-editor profiler panel is disabled to avoid duplicate overhead.");
-
-                ImGui.SameLine();
-                DrawLaunchExternalProfilerButton();
-
-                ImGui.Separator();
-
-                // ── Panel Visibility ──
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Panels:");
-                ImGui.SameLine(); ImGui.Checkbox("Tree", ref _showProfilerTree);
-                ImGui.SameLine(); ImGui.Checkbox("Spikes", ref _showFpsDropSpikes);
-                ImGui.SameLine(); ImGui.Checkbox("Render", ref _showRenderStats);
-                ImGui.SameLine(); ImGui.Checkbox("GPU", ref _showGpuPipeline);
-                ImGui.SameLine(); ImGui.Checkbox("Allocs", ref _showThreadAllocations);
-                ImGui.SameLine(); ImGui.Checkbox("Components", ref _showComponentTimings);
-                ImGui.SameLine(); ImGui.Checkbox("BVH", ref _showBvhMetrics);
-                ImGui.SameLine(); ImGui.Checkbox("Jobs", ref _showJobSystem);
-                ImGui.SameLine(); ImGui.Checkbox("Invokes", ref _showMainThreadInvokes);
-                PersistProfilerPanelVisibilitySettings();
+                ImGui.End();
             }
-            ImGui.End();
         }
 
-        // Draw shared profiler panels (no separate settings panel — settings are embedded above)
+        // Draw shared profiler panels.
         using (Engine.Profiler.Start("UI.DrawProfilerPanel.CorePanels"))
         {
-            bool showSettingsFalse = false;
-            _engineProfilerRenderer!.DrawCorePanels(
-                ref showSettingsFalse,
-                ref _showProfilerTree,
-                ref _showFpsDropSpikes,
-                ref _showRenderStats,
-                ref _showGpuPipeline,
-                ref _showThreadAllocations,
-                ref _showComponentTimings,
-                ref _showBvhMetrics,
-                ref _showJobSystem,
-                ref _showMainThreadInvokes,
-                allowClose: false);
+            _engineProfilerRenderer!.DrawProfilerTreePanel(ref _showProfilerTree, drawHeader: ProfilerFrameLoggingHeader);
+            _engineProfilerRenderer!.DrawFpsDropSpikesPanel(ref _showFpsDropSpikes, drawHeader: ProfilerFrameLoggingHeader);
+            _engineProfilerRenderer!.DrawRenderStatsPanel(ref _showRenderStats, drawHeader: ProfilerRenderStatsHeader);
+            _engineProfilerRenderer!.DrawGpuPipelinePanel(ref _showGpuPipeline, drawHeader: ProfilerGpuTimingHeader);
+            _engineProfilerRenderer!.DrawThreadAllocationsPanel(ref _showThreadAllocations, drawHeader: ProfilerThreadAllocationHeader);
+            _engineProfilerRenderer!.DrawComponentTimingsPanel(ref _showComponentTimings, drawHeader: ProfilerComponentTimingHeader);
+            _engineProfilerRenderer!.DrawBvhMetricsPanel(ref _showBvhMetrics);
+            _engineProfilerRenderer!.DrawJobSystemPanel(ref _showJobSystem);
+            _engineProfilerRenderer!.DrawMainThreadInvokesPanel(ref _showMainThreadInvokes, drawHeader: ProfilerMainThreadInvokeHeader);
             PersistProfilerPanelVisibilitySettings();
         }
+
+        if (!IsAnyProfilerChildPanelVisible())
+            _showProfiler = false;
     }
 
-    private static void RequestProfilerDockLayoutReset()
+    private static void DrawProfilerSettingsPanel(bool showUdpNotice)
     {
-        _profilerDockLayoutInitialized = false;
-        _profilerDockLayoutRequested = true;
-    }
-
-    private static void DrawProfilerDockSpace()
-    {
-        var viewport = ImGui.GetMainViewport();
-        Vector2 defaultSize = new(viewport.Size.X * 0.78f, viewport.Size.Y * 0.78f);
-        Vector2 defaultPos = new(
-            viewport.Pos.X + (viewport.Size.X - defaultSize.X) * 0.5f,
-            viewport.Pos.Y + (viewport.Size.Y - defaultSize.Y) * 0.5f);
-
-        ImGui.SetNextWindowSize(defaultSize, ImGuiCond.FirstUseEver);
-        ImGui.SetNextWindowPos(defaultPos, ImGuiCond.FirstUseEver);
-
-        ImGuiWindowFlags flags =
-            ImGuiWindowFlags.NoCollapse |
-            ImGuiWindowFlags.NoScrollbar |
-            ImGuiWindowFlags.NoScrollWithMouse;
-
-        bool profilerDockOpen = _showProfiler;
-        bool dockWindowVisible = ImGui.Begin(ProfilerDockSpaceWindowId, ref profilerDockOpen, flags);
-
-        if (!profilerDockOpen)
-        {
-            ImGui.End();
-            if (_showProfiler)
-                HandleProfilerToggleShortcutFromImGui();
+        if (!_showProfilerSettings)
             return;
-        }
 
-        if (!dockWindowVisible)
+        if (!ImGui.Begin("Profiler Settings", ref _showProfilerSettings))
         {
             ImGui.End();
             return;
         }
 
-        uint dockSpaceId = ImGui.GetID(ProfilerDockSpaceId);
-        ImGui.DockSpace(dockSpaceId, Vector2.Zero, ImGuiDockNodeFlags.PassthruCentralNode);
-
-        if (_profilerDockLayoutRequested || !_profilerDockLayoutInitialized)
+        if (showUdpNotice)
         {
-            InitializeProfilerDockingLayout(dockSpaceId, ImGui.GetWindowSize());
-            _profilerDockLayoutInitialized = true;
-            _profilerDockLayoutRequested = false;
+            ImGui.TextColored(new Vector4(0.3f, 0.85f, 1f, 1f),
+                "UDP profiler sending is active - use the external profiler for live telemetry.");
+            ImGui.Spacing();
+            if (ImGui.Button("Disable UDP Sending"))
+            {
+                _profilerUdpEnabled = false;
+                PersistProfilerDebugSetting(false,
+                    static current => current.EnableProfilerUdpSending,
+                    static overrides => overrides.EnableProfilerUdpSendingOverride,
+                    static (global, value) => global.EnableProfilerUdpSending = value);
+            }
+            ImGui.Separator();
         }
+
+        DrawProfilerUdpSendingToggle();
+        ImGui.SameLine();
+        DrawLaunchExternalProfilerButton();
 
         ImGui.End();
-    }
-
-    private static void InitializeProfilerDockingLayout(uint dockSpaceId, Vector2 dockSize)
-    {
-        float availableWidth = dockSize.X;
-        float availableHeight = dockSize.Y;
-
-        ImGuiDockBuilderNative.RemoveNode(dockSpaceId);
-        ImGuiDockBuilderNative.AddNode(dockSpaceId, ImGuiDockNodeFlags.PassthruCentralNode);
-        ImGuiDockBuilderNative.SetNodeSize(dockSpaceId, new Vector2(availableWidth, availableHeight));
-
-        ImGuiDockBuilderNative.SplitNode(dockSpaceId, ImGuiDir.Left, 0.58f,
-            out uint leftMainId, out uint rightDockId);
-
-        ImGuiDockBuilderNative.SplitNode(rightDockId, ImGuiDir.Up, 0.32f,
-            out uint rightTopId, out uint rightBottomId);
-
-        ImGuiDockBuilderNative.SplitNode(rightBottomId, ImGuiDir.Up, 0.28f,
-            out uint rightUpperBandId, out uint rightLowerBlockId);
-
-        ImGuiDockBuilderNative.SplitNode(rightUpperBandId, ImGuiDir.Right, 0.50f,
-            out uint rightUpperRightId, out uint rightUpperLeftId);
-
-        ImGuiDockBuilderNative.SplitNode(rightLowerBlockId, ImGuiDir.Up, 0.42f,
-            out uint rightLowerMidId, out uint rightBottomId2);
-
-        ImGuiDockBuilderNative.DockWindow("Settings", rightTopId);
-        ImGuiDockBuilderNative.DockWindow("CPU Timings", leftMainId);
-        ImGuiDockBuilderNative.DockWindow("GPU Timings", leftMainId);
-        ImGuiDockBuilderNative.DockWindow("Render Stats", leftMainId);
-        ImGuiDockBuilderNative.DockWindow("Thread Allocations", rightUpperLeftId);
-        ImGuiDockBuilderNative.DockWindow("BVH Metrics", rightUpperRightId);
-        ImGuiDockBuilderNative.DockWindow("Component Timings", rightLowerMidId);
-        ImGuiDockBuilderNative.DockWindow("Job System", rightBottomId2);
-        ImGuiDockBuilderNative.DockWindow("Main Thread Invokes", rightBottomId2);
-        ImGuiDockBuilderNative.DockWindow("FPS Drop Spikes", rightBottomId2);
-
-        ImGuiDockBuilderNative.Finish(dockSpaceId);
     }
 
     private static void DrawLaunchExternalProfilerButton()

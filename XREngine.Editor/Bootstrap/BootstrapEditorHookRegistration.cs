@@ -58,5 +58,11 @@ public static class BootstrapEditorHookRegistration
     {
         public XRComponent? CreateFlyableCameraPawn(SceneNode cameraNode)
             => cameraNode.AddComponent<EditorFlyingCameraPawnComponent>();
+
+        public void SetFlyableCameraRenderOnDemand(XRComponent pawn, bool enabled)
+        {
+            if (pawn is EditorFlyingCameraPawnComponent editorPawn)
+                editorPawn.RenderOnDemand = enabled;
+        }
     }
 }

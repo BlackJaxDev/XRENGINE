@@ -109,13 +109,11 @@ internal sealed class VulkanResourceAllocator
         _physicalBufferGroups.Clear();
         _resourceToPhysicalBufferGroup.Clear();
 
-        Dictionary<string, VulkanUsageProfile> usageProfiles = BuildUsageProfiles(passMetadata, planner);
-
         foreach (VulkanImageAliasGroup group in _aliasGroups.Values)
         {
             Extent3D extent = ResolveExtent(group.CreateInfoTemplate.SizePolicy, extentContext);
             Format format = ResolveFormat(group.CreateInfoTemplate);
-            ImageUsageFlags usage = InferImageUsage(group, format, usageProfiles, planner);
+            ImageUsageFlags usage = InferImageUsage(group, format, planner);
             uint mipLevels = ResolveMipLevelCount(group, extent, usage, planner);
             SampleCountFlags samples = ResolveSampleCount(group.CreateInfoTemplate.Samples);
             VulkanTransientAttachmentPolicy transientAttachmentPolicy = ResolveTransientAttachmentPolicy(group);
@@ -148,7 +146,7 @@ internal sealed class VulkanResourceAllocator
 
         foreach (VulkanBufferAliasGroup group in _bufferAliasGroups.Values)
         {
-            BufferUsageFlags usage = InferBufferUsage(group, usageProfiles, renderer.SupportsTransformFeedback);
+            BufferUsageFlags usage = InferBufferUsage(group, renderer.SupportsTransformFeedback);
             VulkanPhysicalBufferGroup physicalGroup = new(group, usage);
 
             foreach (VulkanBufferAllocation allocation in group.Allocations)
@@ -267,10 +265,15 @@ internal sealed class VulkanResourceAllocator
             group.EnsureAllocated(renderer);
     }
 
-    public void DestroyPhysicalImages(VulkanRenderer renderer)
+    public void DestroyPhysicalImages(VulkanRenderer renderer, VulkanPhysicalImageGroup? exceptGroup = null)
     {
         foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
+        {
+            if (ReferenceEquals(group, exceptGroup))
+                continue;
+
             group.Destroy(renderer);
+        }
     }
 
     public void DestroyPhysicalBuffers(VulkanRenderer renderer)
@@ -283,45 +286,32 @@ internal sealed class VulkanResourceAllocator
         VulkanResourcePlanner planner,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
-        Dictionary<string, VulkanUsageProfile> usageProfiles = BuildUsageProfiles(passMetadata, planner);
-        HashCode hash = new();
-        hash.Add(usageProfiles.Count);
+        // Pass metadata can legitimately flap as optional passes enter and leave the active graph.
+        // Physical allocations are descriptor-driven so those metadata changes rebuild barriers
+        // without destroying persistent render targets.
+        _ = passMetadata;
 
-        foreach (KeyValuePair<string, VulkanUsageProfile> pair in usageProfiles.OrderBy(static p => p.Key, StringComparer.OrdinalIgnoreCase))
+        HashCode hash = new();
+
+        foreach (KeyValuePair<string, FrameBufferResourceDescriptor> pair in planner.FrameBufferDescriptors.OrderBy(static p => p.Key, StringComparer.OrdinalIgnoreCase))
         {
             hash.Add(pair.Key, StringComparer.OrdinalIgnoreCase);
-            hash.Add(pair.Value.Signature);
-        }
-
-        return hash.ToHashCode();
-    }
-
-    private static Dictionary<string, VulkanUsageProfile> BuildUsageProfiles(
-        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
-        VulkanResourcePlanner planner)
-    {
-        Dictionary<string, VulkanUsageProfile> profiles = new(StringComparer.OrdinalIgnoreCase);
-        if (passMetadata is null || passMetadata.Count == 0)
-            return profiles;
-
-        foreach (RenderPassMetadata pass in passMetadata)
-        {
-            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            hash.Add((int)pair.Value.Lifetime);
+            hash.Add((int)pair.Value.SizePolicy.SizeClass);
+            hash.Add(pair.Value.SizePolicy.ScaleX);
+            hash.Add(pair.Value.SizePolicy.ScaleY);
+            hash.Add(pair.Value.SizePolicy.Width);
+            hash.Add(pair.Value.SizePolicy.Height);
+            foreach (FrameBufferAttachmentDescriptor attachment in pair.Value.Attachments)
             {
-                foreach (string resource in ExpandLogicalResources(usage, planner))
-                {
-                    if (!profiles.TryGetValue(resource, out VulkanUsageProfile? profile))
-                    {
-                        profile = new VulkanUsageProfile();
-                        profiles[resource] = profile;
-                    }
-
-                    profile.Add(usage.ResourceType);
-                }
+                hash.Add(planner.ResolveImageResourceName(attachment.ResourceName), StringComparer.OrdinalIgnoreCase);
+                hash.Add((int)attachment.Attachment);
+                hash.Add(attachment.MipLevel);
+                hash.Add(attachment.LayerIndex);
             }
         }
 
-        return profiles;
+        return hash.ToHashCode();
     }
 
     private static IEnumerable<string> ExpandLogicalResources(RenderPassResourceUsage usage, VulkanResourcePlanner planner)
@@ -547,11 +537,9 @@ internal sealed class VulkanResourceAllocator
     private static ImageUsageFlags InferImageUsage(
         VulkanImageAliasGroup group,
         Format resolvedFormat,
-        IReadOnlyDictionary<string, VulkanUsageProfile> usageProfiles,
         VulkanResourcePlanner planner)
     {
         ImageUsageFlags usage = ImageUsageFlags.TransferSrcBit | ImageUsageFlags.TransferDstBit;
-        bool matchedProfile = false;
         bool inferredFromDescriptor = false;
 
         foreach (VulkanImageAllocation allocation in group.Allocations)
@@ -561,23 +549,6 @@ internal sealed class VulkanResourceAllocator
                 inferredFromDescriptor = true;
                 usage |= ToVkUsageFlags(allocation.Descriptor.Usage);
             }
-
-            if (!usageProfiles.TryGetValue(allocation.Name, out VulkanUsageProfile? profile))
-                continue;
-
-            matchedProfile = true;
-            if (profile.Has(ERenderPassResourceType.SampledTexture))
-                usage |= ImageUsageFlags.SampledBit;
-            if (profile.Has(ERenderPassResourceType.StorageTexture))
-                usage |= ImageUsageFlags.StorageBit;
-            if (profile.Has(ERenderPassResourceType.ColorAttachment) || profile.Has(ERenderPassResourceType.ResolveAttachment))
-                usage |= ImageUsageFlags.ColorAttachmentBit;
-            if (profile.Has(ERenderPassResourceType.DepthAttachment) || profile.Has(ERenderPassResourceType.StencilAttachment))
-                usage |= ImageUsageFlags.DepthStencilAttachmentBit;
-            if (profile.Has(ERenderPassResourceType.TransferSource))
-                usage |= ImageUsageFlags.TransferSrcBit;
-            if (profile.Has(ERenderPassResourceType.TransferDestination))
-                usage |= ImageUsageFlags.TransferDstBit;
         }
 
         // Always infer attachment usage from FBO descriptors as an additive source.
@@ -621,21 +592,15 @@ internal sealed class VulkanResourceAllocator
             }
         }
 
-        if ((usage & ImageUsageFlags.DepthStencilAttachmentBit) != 0)
-            usage |= ImageUsageFlags.SampledBit;
-
-        if (!matchedProfile)
+        if (!inferredFromDescriptor)
         {
-            if (!inferredFromDescriptor)
-            {
-                // Final fallback: use format analysis when no descriptor data is available.
-                usage |= IsDepthStencilFormat(resolvedFormat)
-                    ? ImageUsageFlags.DepthStencilAttachmentBit
-                    : ImageUsageFlags.ColorAttachmentBit;
-            }
-
-            usage |= ImageUsageFlags.SampledBit;
+            // Final fallback: use format analysis when no descriptor data is available.
+            usage |= IsDepthStencilFormat(resolvedFormat)
+                ? ImageUsageFlags.DepthStencilAttachmentBit
+                : ImageUsageFlags.ColorAttachmentBit;
         }
+
+        usage |= ImageUsageFlags.SampledBit;
 
         if (IsDepthStencilFormat(resolvedFormat))
         {
@@ -691,39 +656,21 @@ internal sealed class VulkanResourceAllocator
 
     private static BufferUsageFlags InferBufferUsage(
         VulkanBufferAliasGroup group,
-        IReadOnlyDictionary<string, VulkanUsageProfile> usageProfiles,
         bool supportsTransformFeedback)
     {
         BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit;
-        bool matchedProfile = false;
 
         foreach (VulkanBufferAllocation allocation in group.Allocations)
         {
             usage |= ToVkUsageFlags(allocation.Target, supportsTransformFeedback);
             usage |= ToVkUsageFlags(allocation.Usage);
-
-            if (!usageProfiles.TryGetValue(allocation.Name, out VulkanUsageProfile? profile))
-                continue;
-
-            matchedProfile = true;
-            if (profile.Has(ERenderPassResourceType.UniformBuffer))
-                usage |= BufferUsageFlags.UniformBufferBit;
-            if (profile.Has(ERenderPassResourceType.StorageBuffer))
-                usage |= BufferUsageFlags.StorageBufferBit;
-            if (profile.Has(ERenderPassResourceType.VertexBuffer))
-                usage |= BufferUsageFlags.VertexBufferBit;
-            if (profile.Has(ERenderPassResourceType.IndexBuffer))
-                usage |= BufferUsageFlags.IndexBufferBit;
-            if (profile.Has(ERenderPassResourceType.IndirectBuffer))
-                usage |= BufferUsageFlags.IndirectBufferBit;
-            if (profile.Has(ERenderPassResourceType.TransferSource))
-                usage |= BufferUsageFlags.TransferSrcBit;
-            if (profile.Has(ERenderPassResourceType.TransferDestination))
-                usage |= BufferUsageFlags.TransferDstBit;
         }
 
-        if (!matchedProfile && usage == (BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit))
-            usage |= BufferUsageFlags.StorageBufferBit;
+        usage |= BufferUsageFlags.UniformBufferBit |
+                 BufferUsageFlags.StorageBufferBit |
+                 BufferUsageFlags.VertexBufferBit |
+                 BufferUsageFlags.IndexBufferBit |
+                 BufferUsageFlags.IndirectBufferBit;
 
         return usage;
     }
@@ -870,28 +817,6 @@ internal sealed class VulkanResourceAllocator
             or Format.X8D24UnormPack32
             or Format.D16UnormS8Uint;
 
-    private sealed class VulkanUsageProfile
-    {
-        private readonly HashSet<ERenderPassResourceType> _types = [];
-
-        public int Signature
-        {
-            get
-            {
-                HashCode hash = new();
-                foreach (ERenderPassResourceType type in _types.OrderBy(static t => (int)t))
-                    hash.Add((int)type);
-
-                return hash.ToHashCode();
-            }
-        }
-
-        public void Add(ERenderPassResourceType type)
-            => _types.Add(type);
-
-        public bool Has(ERenderPassResourceType type)
-            => _types.Contains(type);
-    }
 }
 
 internal sealed class VulkanImageAliasGroup

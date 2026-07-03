@@ -4,6 +4,7 @@ using System.Threading;
 using System;
 using XREngine.Data.Core;
 using XREngine.Data.Profiling;
+using XREngine.Data.Runtime.Memory;
 
 namespace XREngine.Timers
 {
@@ -357,8 +358,13 @@ namespace XREngine.Timers
             {
 #if !XRE_PUBLISHED
                 long allocStart = 0;
-                if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
+                Engine.AllocationScope allocationScope = default;
+                bool trackAlloc = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
+                if (trackAlloc)
+                {
                     allocStart = GC.GetAllocatedBytesForCurrentThread();
+                    allocationScope = Engine.Allocations.BeginScope("CollectSwap.Frame", AllocationScopeCategory.RenderSubmission);
+                }
 #endif
 
                 using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread", ProfilerScopeKind.AlwaysOnHotPathLoop))
@@ -391,8 +397,9 @@ namespace XREngine.Timers
                 }
 
 #if !XRE_PUBLISHED
-                if (allocStart != 0)
+                if (trackAlloc)
                 {
+                    allocationScope.Dispose();
                     long allocEnd = GC.GetAllocatedBytesForCurrentThread();
                     Engine.Allocations.RecordCollectSwap(allocEnd - allocStart);
                 }
@@ -454,14 +461,15 @@ namespace XREngine.Timers
 
 #if !XRE_PUBLISHED
                     long allocStart = 0;
-                    if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
+                    bool trackAlloc = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
+                    if (trackAlloc)
                         allocStart = GC.GetAllocatedBytesForCurrentThread();
 #endif
 
                     DispatchFixedUpdate();
 
 #if !XRE_PUBLISHED
-                    if (allocStart != 0)
+                    if (trackAlloc)
                     {
                         long allocEnd = GC.GetAllocatedBytesForCurrentThread();
                         Engine.Allocations.RecordFixedUpdateTick(allocEnd - allocStart);
@@ -589,8 +597,13 @@ namespace XREngine.Timers
 
 #if !XRE_PUBLISHED
                     long allocStart = 0;
-                    if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
+                    Engine.AllocationScope allocationScope = default;
+                    bool trackAlloc = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
+                    if (trackAlloc)
+                    {
                         allocStart = GC.GetAllocatedBytesForCurrentThread();
+                        allocationScope = Engine.Allocations.BeginScope("Render.Frame", AllocationScopeCategory.RenderSubmission);
+                    }
 #endif
 
                     Render.DeltaTicks = elapsedTicks;
@@ -611,8 +624,9 @@ namespace XREngine.Timers
                     }
 
 #if !XRE_PUBLISHED
-                    if (allocStart != 0)
+                    if (trackAlloc)
                     {
+                        allocationScope.Dispose();
                         long allocEnd = GC.GetAllocatedBytesForCurrentThread();
                         Engine.Allocations.RecordRender(allocEnd - allocStart);
                     }
@@ -642,6 +656,11 @@ namespace XREngine.Timers
             try
             {
                 using var sample = Engine.Profiler.Start("EngineTimer.DispatchCollectVisible", ProfilerScopeKind.AlwaysOnHotPathLoop);
+#if !XRE_PUBLISHED
+                using var allocationScope = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking
+                    ? Engine.Allocations.BeginScope("Visibility.Collect", AllocationScopeCategory.RenderSubmission)
+                    : default;
+#endif
 
                 long timestampTicks = TimeTicks();
                 long elapsedTicks = Math.Clamp(timestampTicks - Collect.LastTimestampTicks, 0L, Stopwatch.Frequency);
@@ -666,6 +685,11 @@ namespace XREngine.Timers
         public void DispatchSwapBuffers()
         {
             using var sample = Engine.Profiler.Start("EngineTimer.DispatchSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop);
+#if !XRE_PUBLISHED
+            using var allocationScope = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking
+                ? Engine.Allocations.BeginScope("Render.SwapBuffers", AllocationScopeCategory.RenderSubmission)
+                : default;
+#endif
             unchecked
             {
                 SwapFrameId++;
@@ -676,6 +700,11 @@ namespace XREngine.Timers
         private void DispatchFixedUpdate()
         {
             using var sample = Engine.Profiler.Start("EngineTimer.DispatchFixedUpdate", ProfilerScopeKind.AlwaysOnHotPathLoop);
+#if !XRE_PUBLISHED
+            using var allocationScope = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking
+                ? Engine.Allocations.BeginScope("FixedUpdate.Frame", AllocationScopeCategory.RuntimeSystem)
+                : default;
+#endif
             FixedUpdate?.Invoke();
         }
 
@@ -710,8 +739,13 @@ namespace XREngine.Timers
 
 #if !XRE_PUBLISHED
                     long allocStart = 0;
-                    if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
+                    Engine.AllocationScope allocationScope = default;
+                    bool trackAlloc = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
+                    if (trackAlloc)
+                    {
                         allocStart = GC.GetAllocatedBytesForCurrentThread();
+                        allocationScope = Engine.Allocations.BeginScope("Update.Frame", AllocationScopeCategory.RuntimeSystem);
+                    }
 #endif
 
                     Update.DeltaTicks = elapsedTicks;
@@ -749,8 +783,9 @@ namespace XREngine.Timers
                     }
 
 #if !XRE_PUBLISHED
-                    if (allocStart != 0)
+                    if (trackAlloc)
                     {
+                        allocationScope.Dispose();
                         long allocEnd = GC.GetAllocatedBytesForCurrentThread();
                         Engine.Allocations.RecordUpdateTick(allocEnd - allocStart);
                     }

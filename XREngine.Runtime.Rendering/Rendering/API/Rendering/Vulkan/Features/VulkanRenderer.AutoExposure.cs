@@ -49,6 +49,7 @@ public unsafe partial class VulkanRenderer
         int smallestMip;
         int sampledSmallestMip;
         int layerCount = 1;
+        bool useMiplessMeteringFallback = false;
 
         if (sourceTex is XRTexture2D source2D)
         {
@@ -77,10 +78,11 @@ public unsafe partial class VulkanRenderer
             if (GetOrCreateAPIRenderObject(source2D, generateNow: true) is VkTexture2D { UsesAllocatorImage: true })
             {
                 sampledSmallestMip = 0;
+                useMiplessMeteringFallback = true;
                 Debug.VulkanWarningEvery(
                     "Vulkan.AutoExposure.PlannerMip0Fallback2D",
                     TimeSpan.FromSeconds(2),
-                    "[Vulkan] Auto exposure is sampling mip 0 for planner-backed source texture '{0}' because render-graph mip generation is not available yet.",
+                    "[Vulkan] Auto exposure is using filtered mipless metering for planner-backed source texture '{0}' because render-graph mip generation is not available yet.",
                     source2D.Name ?? "<unnamed>");
             }
             program = _autoExposureComputeProgram2D;
@@ -112,10 +114,11 @@ public unsafe partial class VulkanRenderer
             if (GetOrCreateAPIRenderObject(source2DArray, generateNow: true) is VkTexture2DArray { UsesAllocatorImage: true })
             {
                 sampledSmallestMip = 0;
+                useMiplessMeteringFallback = true;
                 Debug.VulkanWarningEvery(
                     "Vulkan.AutoExposure.PlannerMip0Fallback2DArray",
                     TimeSpan.FromSeconds(2),
-                    "[Vulkan] Auto exposure is sampling mip 0 for planner-backed array source texture '{0}' because render-graph mip generation is not available yet.",
+                    "[Vulkan] Auto exposure is using filtered mipless metering for planner-backed array source texture '{0}' because render-graph mip generation is not available yet.",
                     source2DArray.Name ?? "<unnamed>");
             }
             layerCount = (int)Math.Max(source2DArray.Depth, 1u);
@@ -181,9 +184,15 @@ public unsafe partial class VulkanRenderer
         program.Uniform("ExposureBase", settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
             ? settings.ComputePhysicalExposureMultiplier()
             : 1.0f);
+        float fallbackExposure = settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
+            ? settings.ComputePhysicalExposureMultiplier()
+            : settings.Exposure;
+        program.Uniform("FallbackExposure", Math.Clamp(fallbackExposure, minExposure, maxExposure));
 
         program.Uniform("MeteringMode", (int)settings.AutoExposureMetering);
         program.Uniform("MeteringMip", meteringMip);
+        program.Uniform("MeteringTargetSize", settings.AutoExposureMeteringTargetSize);
+        program.Uniform("UseMiplessMeteringFallback", useMiplessMeteringFallback ? 1 : 0);
         program.Uniform("IgnoreTopPercent", settings.AutoExposureIgnoreTopPercent);
         program.Uniform("CenterWeightStrength", settings.AutoExposureCenterWeightStrength);
         program.Uniform("CenterWeightPower", settings.AutoExposureCenterWeightPower);
@@ -309,47 +318,83 @@ uniform float MinExposure;
 uniform float MaxExposure;
 uniform float ExposureTransitionSpeed;
 uniform float ExposureBase;
+uniform float FallbackExposure;
 
 uniform int MeteringMode;
 uniform int MeteringMip;
+uniform int MeteringTargetSize;
+uniform int UseMiplessMeteringFallback;
 uniform float IgnoreTopPercent;
 uniform float CenterWeightStrength;
 uniform float CenterWeightPower;
 
 const int MAX_SAMPLES = 256;
 const int SAMPLE_GRID = 16;
+const int BLOCK_TAPS_PER_AXIS = 4;
 const float PAD_LUM = 3.402823e38;
 
 shared float s_lums[MAX_SAMPLES];
+shared float s_weights[MAX_SAMPLES];
 
 float SafeLum(vec3 rgb)
 {
-    float l = dot(max(rgb, vec3(0.0)), LuminanceWeights);
-    return max(l, 1e-6);
+    rgb = max(rgb, vec3(0.0));
+    if (any(isnan(rgb)) || any(isinf(rgb)))
+        rgb = vec3(0.0);
+
+    return max(dot(rgb, LuminanceWeights), 0.0);
 }
 
 float SampleGridLuminance(int tid, int gridX, int gridY, int w, int h, int mip)
 {
     int gy = tid / gridX;
     int gx = tid - gy * gridX;
-    int y = min((gy * h + h / 2) / gridY, h - 1);
-    int x = min((gx * w + w / 2) / gridX, w - 1);
-    vec3 rgb = texelFetch(SourceTex, ivec2(x, y), mip).rgb;
-    float lum = SafeLum(rgb);
 
-    if (MeteringMode == 1)
-        lum = log2(lum);
-    else if (MeteringMode == 2)
+    int x0 = (gx * w) / gridX;
+    int x1 = max(x0 + 1, ((gx + 1) * w) / gridX);
+    int y0 = (gy * h) / gridY;
+    int y1 = max(y0 + 1, ((gy + 1) * h) / gridY);
+    int bw = max(x1 - x0, 1);
+    int bh = max(y1 - y0, 1);
+
+    float sum = 0.0;
+    for (int ty = 0; ty < BLOCK_TAPS_PER_AXIS; ++ty)
     {
-        vec2 uv = (vec2(x, y) + vec2(0.5)) / vec2(w, h);
-        vec2 d = uv - vec2(0.5);
-        float r = length(d) / 0.70710678;
-        float weight = mix(1.0, max(0.0, 1.0 - r), clamp(CenterWeightStrength, 0.0, 1.0));
-        weight = pow(max(weight, 1e-4), max(CenterWeightPower, 0.01));
-        lum *= weight;
+        int y = min(y0 + ((ty * 2 + 1) * bh) / (BLOCK_TAPS_PER_AXIS * 2), h - 1);
+        for (int tx = 0; tx < BLOCK_TAPS_PER_AXIS; ++tx)
+        {
+            int x = min(x0 + ((tx * 2 + 1) * bw) / (BLOCK_TAPS_PER_AXIS * 2), w - 1);
+            sum += SafeLum(texelFetch(SourceTex, ivec2(x, y), mip).rgb);
+        }
     }
 
-    return lum;
+    return sum / float(BLOCK_TAPS_PER_AXIS * BLOCK_TAPS_PER_AXIS);
+}
+
+float SampleGridWeight(int tid, int gridX, int gridY)
+{
+    int gy = tid / gridX;
+    int gx = tid - gy * gridX;
+    vec2 uv = (vec2(gx, gy) + vec2(0.5)) / vec2(gridX, gridY);
+    vec2 d = uv - vec2(0.5);
+    float r = length(d) / 0.70710678;
+    float center = pow(clamp(1.0 - r, 0.0, 1.0), max(CenterWeightPower, 0.1));
+    return mix(1.0, center, clamp(CenterWeightStrength, 0.0, 1.0));
+}
+
+void ComputeAspectGrid(int w, int h, out int gridX, out int gridY)
+{
+    int target = clamp(MeteringTargetSize, 1, SAMPLE_GRID);
+    if (w >= h)
+    {
+        gridX = min(w, target);
+        gridY = max(1, min(h, (h * gridX + max(w / 2, 1)) / max(w, 1)));
+    }
+    else
+    {
+        gridY = min(h, target);
+        gridX = max(1, min(w, (w * gridY + max(h / 2, 1)) / max(h, 1)));
+    }
 }
 
 // Parallel tree sum over the shared array. Every invocation must call this
@@ -367,6 +412,23 @@ float ReduceSum(int tid)
     float total = s_lums[0];
     // Keep the array stable until every invocation has read the total
     // (the shared array is reused by subsequent reductions).
+    barrier();
+    return total;
+}
+
+float ReduceWeightedAverage(int tid)
+{
+    for (int offset = MAX_SAMPLES >> 1; offset > 0; offset >>= 1)
+    {
+        if (tid < offset)
+        {
+            s_lums[tid] += s_lums[tid + offset];
+            s_weights[tid] += s_weights[tid + offset];
+        }
+        barrier();
+    }
+
+    float total = s_lums[0] / max(s_weights[0], 1e-6);
     barrier();
     return total;
 }
@@ -406,12 +468,40 @@ float ComputeMeteredLuminance()
     ivec2 sz = textureSize(SourceTex, mip);
     int w = max(sz.x, 1);
     int h = max(sz.y, 1);
-    int gridX = min(w, SAMPLE_GRID);
-    int gridY = min(h, SAMPLE_GRID);
+    int gridX;
+    int gridY;
+    ComputeAspectGrid(w, h, gridX, gridY);
     int sampleCount = clamp(gridX * gridY, 1, MAX_SAMPLES);
 
     int tid = int(gl_LocalInvocationIndex);
     float lum = (tid < sampleCount) ? SampleGridLuminance(tid, gridX, gridY, w, h, mip) : 0.0;
+
+    if (UseMiplessMeteringFallback != 0 && MeteringMode == 1)
+    {
+        s_lums[tid] = (tid < sampleCount) ? lum : 0.0;
+        barrier();
+        return ReduceSum(tid) / float(sampleCount);
+    }
+
+    if (MeteringMode == 1)
+    {
+        s_lums[tid] = (tid < sampleCount) ? lum : 0.0;
+        barrier();
+        float meanLum = ReduceSum(tid) / float(sampleCount);
+        float logFloor = max(meanLum * 0.25, 1e-4);
+        s_lums[tid] = (tid < sampleCount) ? log2(max(lum, logFloor)) : 0.0;
+        barrier();
+        return exp2(ReduceSum(tid) / float(sampleCount));
+    }
+
+    if (MeteringMode == 2)
+    {
+        float weight = (tid < sampleCount) ? SampleGridWeight(tid, gridX, gridY) : 0.0;
+        s_lums[tid] = lum * weight;
+        s_weights[tid] = weight;
+        barrier();
+        return ReduceWeightedAverage(tid);
+    }
 
     float drop = (MeteringMode == 0) ? 0.0 : clamp(IgnoreTopPercent, 0.0, 0.5);
     if (drop > 0.0)
@@ -427,14 +517,13 @@ float ComputeMeteredLuminance()
         barrier();
 
         float avg = ReduceSum(tid) / float(keep);
-        return (MeteringMode == 1) ? exp2(avg) : avg;
+        return avg;
     }
 
     s_lums[tid] = (tid < sampleCount) ? lum : 0.0;
     barrier();
 
-    float avg = ReduceSum(tid) / float(sampleCount);
-    return (MeteringMode == 1) ? exp2(avg) : avg;
+    return ReduceSum(tid) / float(sampleCount);
 }
 
 void main()
@@ -449,13 +538,12 @@ void main()
     lumDot = min(lumDot, maxLumForMinExposure);
 
     float current = imageLoad(ExposureOut, ivec2(0, 0)).r;
-    if (isnan(current) || isinf(current))
-        current = 1.0;
-    float clampedCurrent = clamp(current, MinExposure, MaxExposure);
+    bool currentValid = !(isnan(current) || isinf(current)) && current >= MinExposure && current <= MaxExposure;
+    float stableCurrent = currentValid ? current : clamp(FallbackExposure, MinExposure, MaxExposure);
 
     if (!(lumDot > 0.0) || isnan(lumDot) || isinf(lumDot))
     {
-        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
         return;
     }
 
@@ -466,13 +554,11 @@ void main()
 
     if (isnan(target) || isinf(target))
     {
-        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
         return;
     }
 
-    float outExposure = (current < MinExposure || current > MaxExposure)
-        ? target
-        : mix(current, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
+    float outExposure = mix(stableCurrent, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
 
     imageStore(ExposureOut, ivec2(0, 0), vec4(outExposure, 0.0, 0.0, 0.0));
 }
@@ -493,9 +579,12 @@ uniform float MinExposure;
 uniform float MaxExposure;
 uniform float ExposureTransitionSpeed;
 uniform float ExposureBase;
+uniform float FallbackExposure;
 
 uniform int MeteringMode;
 uniform int MeteringMip;
+uniform int MeteringTargetSize;
+uniform int UseMiplessMeteringFallback;
 uniform float IgnoreTopPercent;
 uniform float CenterWeightStrength;
 uniform float CenterWeightPower;
@@ -503,38 +592,71 @@ uniform int LayerCount;
 
 const int MAX_SAMPLES = 256;
 const int SAMPLE_GRID = 16;
+const int BLOCK_TAPS_PER_AXIS = 4;
 const float PAD_LUM = 3.402823e38;
 
 shared float s_lums[MAX_SAMPLES];
+shared float s_weights[MAX_SAMPLES];
 
 float SafeLum(vec3 rgb)
 {
-    float l = dot(max(rgb, vec3(0.0)), LuminanceWeights);
-    return max(l, 1e-6);
+    rgb = max(rgb, vec3(0.0));
+    if (any(isnan(rgb)) || any(isinf(rgb)))
+        rgb = vec3(0.0);
+
+    return max(dot(rgb, LuminanceWeights), 0.0);
 }
 
 float SampleGridLuminance(int tid, int gridX, int gridY, int w, int h, int mip, int layer)
 {
     int gy = tid / gridX;
     int gx = tid - gy * gridX;
-    int y = min((gy * h + h / 2) / gridY, h - 1);
-    int x = min((gx * w + w / 2) / gridX, w - 1);
-    vec3 rgb = texelFetch(SourceTex, ivec3(x, y, layer), mip).rgb;
-    float lum = SafeLum(rgb);
 
-    if (MeteringMode == 1)
-        lum = log2(lum);
-    else if (MeteringMode == 2)
+    int x0 = (gx * w) / gridX;
+    int x1 = max(x0 + 1, ((gx + 1) * w) / gridX);
+    int y0 = (gy * h) / gridY;
+    int y1 = max(y0 + 1, ((gy + 1) * h) / gridY);
+    int bw = max(x1 - x0, 1);
+    int bh = max(y1 - y0, 1);
+
+    float sum = 0.0;
+    for (int ty = 0; ty < BLOCK_TAPS_PER_AXIS; ++ty)
     {
-        vec2 uv = (vec2(x, y) + vec2(0.5)) / vec2(w, h);
-        vec2 d = uv - vec2(0.5);
-        float r = length(d) / 0.70710678;
-        float weight = mix(1.0, max(0.0, 1.0 - r), clamp(CenterWeightStrength, 0.0, 1.0));
-        weight = pow(max(weight, 1e-4), max(CenterWeightPower, 0.01));
-        lum *= weight;
+        int y = min(y0 + ((ty * 2 + 1) * bh) / (BLOCK_TAPS_PER_AXIS * 2), h - 1);
+        for (int tx = 0; tx < BLOCK_TAPS_PER_AXIS; ++tx)
+        {
+            int x = min(x0 + ((tx * 2 + 1) * bw) / (BLOCK_TAPS_PER_AXIS * 2), w - 1);
+            sum += SafeLum(texelFetch(SourceTex, ivec3(x, y, layer), mip).rgb);
+        }
     }
 
-    return lum;
+    return sum / float(BLOCK_TAPS_PER_AXIS * BLOCK_TAPS_PER_AXIS);
+}
+
+float SampleGridWeight(int tid, int gridX, int gridY)
+{
+    int gy = tid / gridX;
+    int gx = tid - gy * gridX;
+    vec2 uv = (vec2(gx, gy) + vec2(0.5)) / vec2(gridX, gridY);
+    vec2 d = uv - vec2(0.5);
+    float r = length(d) / 0.70710678;
+    float center = pow(clamp(1.0 - r, 0.0, 1.0), max(CenterWeightPower, 0.1));
+    return mix(1.0, center, clamp(CenterWeightStrength, 0.0, 1.0));
+}
+
+void ComputeAspectGrid(int w, int h, out int gridX, out int gridY)
+{
+    int target = clamp(MeteringTargetSize, 1, SAMPLE_GRID);
+    if (w >= h)
+    {
+        gridX = min(w, target);
+        gridY = max(1, min(h, (h * gridX + max(w / 2, 1)) / max(w, 1)));
+    }
+    else
+    {
+        gridY = min(h, target);
+        gridX = max(1, min(w, (w * gridY + max(h / 2, 1)) / max(h, 1)));
+    }
 }
 
 // Parallel tree sum over the shared array. Every invocation must call this
@@ -552,6 +674,23 @@ float ReduceSum(int tid)
     float total = s_lums[0];
     // Keep the array stable until every invocation has read the total
     // (the shared array is reused by the next layer's reduction).
+    barrier();
+    return total;
+}
+
+float ReduceWeightedAverage(int tid)
+{
+    for (int offset = MAX_SAMPLES >> 1; offset > 0; offset >>= 1)
+    {
+        if (tid < offset)
+        {
+            s_lums[tid] += s_lums[tid + offset];
+            s_weights[tid] += s_weights[tid + offset];
+        }
+        barrier();
+    }
+
+    float total = s_lums[0] / max(s_weights[0], 1e-6);
     barrier();
     return total;
 }
@@ -591,12 +730,40 @@ float ComputeMeteredLuminanceForLayer(int layer)
     ivec2 sz = textureSize(SourceTex, mip).xy;
     int w = max(sz.x, 1);
     int h = max(sz.y, 1);
-    int gridX = min(w, SAMPLE_GRID);
-    int gridY = min(h, SAMPLE_GRID);
+    int gridX;
+    int gridY;
+    ComputeAspectGrid(w, h, gridX, gridY);
     int sampleCount = clamp(gridX * gridY, 1, MAX_SAMPLES);
 
     int tid = int(gl_LocalInvocationIndex);
     float lum = (tid < sampleCount) ? SampleGridLuminance(tid, gridX, gridY, w, h, mip, layer) : 0.0;
+
+    if (UseMiplessMeteringFallback != 0 && MeteringMode == 1)
+    {
+        s_lums[tid] = (tid < sampleCount) ? lum : 0.0;
+        barrier();
+        return ReduceSum(tid) / float(sampleCount);
+    }
+
+    if (MeteringMode == 1)
+    {
+        s_lums[tid] = (tid < sampleCount) ? lum : 0.0;
+        barrier();
+        float meanLum = ReduceSum(tid) / float(sampleCount);
+        float logFloor = max(meanLum * 0.25, 1e-4);
+        s_lums[tid] = (tid < sampleCount) ? log2(max(lum, logFloor)) : 0.0;
+        barrier();
+        return exp2(ReduceSum(tid) / float(sampleCount));
+    }
+
+    if (MeteringMode == 2)
+    {
+        float weight = (tid < sampleCount) ? SampleGridWeight(tid, gridX, gridY) : 0.0;
+        s_lums[tid] = lum * weight;
+        s_weights[tid] = weight;
+        barrier();
+        return ReduceWeightedAverage(tid);
+    }
 
     float drop = (MeteringMode == 0) ? 0.0 : clamp(IgnoreTopPercent, 0.0, 0.5);
     if (drop > 0.0)
@@ -612,14 +779,13 @@ float ComputeMeteredLuminanceForLayer(int layer)
         barrier();
 
         float avg = ReduceSum(tid) / float(keep);
-        return (MeteringMode == 1) ? exp2(avg) : avg;
+        return avg;
     }
 
     s_lums[tid] = (tid < sampleCount) ? lum : 0.0;
     barrier();
 
-    float avg = ReduceSum(tid) / float(sampleCount);
-    return (MeteringMode == 1) ? exp2(avg) : avg;
+    return ReduceSum(tid) / float(sampleCount);
 }
 
 void main()
@@ -638,13 +804,12 @@ void main()
     lumDot = min(lumDot, maxLumForMinExposure);
 
     float current = imageLoad(ExposureOut, ivec2(0, 0)).r;
-    if (isnan(current) || isinf(current))
-        current = 1.0;
-    float clampedCurrent = clamp(current, MinExposure, MaxExposure);
+    bool currentValid = !(isnan(current) || isinf(current)) && current >= MinExposure && current <= MaxExposure;
+    float stableCurrent = currentValid ? current : clamp(FallbackExposure, MinExposure, MaxExposure);
 
     if (!(lumDot > 0.0) || isnan(lumDot) || isinf(lumDot))
     {
-        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
         return;
     }
 
@@ -655,13 +820,11 @@ void main()
 
     if (isnan(target) || isinf(target))
     {
-        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        imageStore(ExposureOut, ivec2(0, 0), vec4(stableCurrent, 0.0, 0.0, 0.0));
         return;
     }
 
-    float outExposure = (current < MinExposure || current > MaxExposure)
-        ? target
-        : mix(current, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
+    float outExposure = mix(stableCurrent, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
 
     imageStore(ExposureOut, ivec2(0, 0), vec4(outExposure, 0.0, 0.0, 0.0));
 }

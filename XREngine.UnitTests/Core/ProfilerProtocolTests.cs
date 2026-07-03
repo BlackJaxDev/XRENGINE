@@ -146,6 +146,8 @@ public sealed class ProfilerProtocolTests
                 PointGroupSeedCount = 1,
                 PointGroupMemberCount = 6,
                 PointGroupCoLocationFailureCount = 0,
+                IncrementalReuseCount = 9,
+                WaterlineDemotionCount = 2,
                 LastFailureReason = "PageBudgetExceeded",
             },
             RenderProfilerV2 = new RenderProfilerV2Data
@@ -283,6 +285,43 @@ public sealed class ProfilerProtocolTests
                     VisibilityClassificationOverflow = 91,
                     VisibilityReconstructionMs = 0.92,
                     VisibilityMaterialShadingMs = 0.93,
+                },
+                Occlusion = new RenderProfilerOcclusionData
+                {
+                    EffectiveMode = "CpuQueryAsync",
+                    SubmissionStrategy = "CpuDirect",
+                    CpuPassesActive = 94,
+                    CpuPassesSkippedNoCamera = 95,
+                    CpuPassesSkippedShadow = 96,
+                    CpuPassesSkippedDepthNormalPrePass = 97,
+                    CpuPassesSkippedModeOff = 98,
+                    CpuTested = 99,
+                    CpuCulled = 100,
+                    CpuRendered = 101,
+                    CpuDecisionSeed = 102,
+                    CpuDecisionCached = 103,
+                    CpuDecisionVisibleQuery = 104,
+                    CpuDecisionVisibleHysteresis = 105,
+                    CpuDecisionProbe = 106,
+                    CpuDecisionSkip = 107,
+                    CpuDecisionForcedVisible = 108,
+                    CpuMotionTier = "SmallMotion",
+                    CpuActiveViewScope = "Mono",
+                    CpuGlobalConservativeFrames = 109,
+                    CpuPendingQueries = 110,
+                    CpuQuerySubmittedTotal = 111,
+                    CpuQueryResolvedTotal = 112,
+                    CpuQueryLatencySamples = 113,
+                    CpuQueryLatencyAverageFrames = 1.14,
+                    CpuQueryLatencyMaxFrames = 115,
+                    CpuBudgetSkippedTotal = 116,
+                    CpuForcedVisibleTotal = 117,
+                    CpuUnsupportedStereoQueryMode = 118,
+                    CpuQueryAsyncSubmitted = 119,
+                    CpuQueryAsyncResolved = 120,
+                    CpuQueryAsyncOccluded = 121,
+                    CpuSocTested = 122,
+                    CpuSocCulled = 123,
                 },
             },
             GpuMeshletRequestedFrames = 5,
@@ -544,8 +583,10 @@ public sealed class ProfilerProtocolTests
         clone.ShadowAtlasSolve.DirectionalGroupMemberCount.ShouldBe(4);
         clone.ShadowAtlasSolve.PointGroupSeedCount.ShouldBe(1);
         clone.ShadowAtlasSolve.PointGroupMemberCount.ShouldBe(6);
+        clone.ShadowAtlasSolve.IncrementalReuseCount.ShouldBe(9);
+        clone.ShadowAtlasSolve.WaterlineDemotionCount.ShouldBe(2);
         clone.ShadowAtlasSolve.LastFailureReason.ShouldBe("PageBudgetExceeded");
-        clone.RenderProfilerV2.ProfileCaptureSchemaVersion.ShouldBe(2);
+        clone.RenderProfilerV2.ProfileCaptureSchemaVersion.ShouldBe(3);
         var rendererState = clone.RenderProfilerV2.RendererState;
         rendererState.IndirectCountCalls.ShouldBe(6);
         rendererState.ShaderProgramSwitches.ShouldBe(7);
@@ -665,6 +706,43 @@ public sealed class ProfilerProtocolTests
         gpuDriven.VisibilityClassificationOverflow.ShouldBe(91);
         gpuDriven.VisibilityReconstructionMs.ShouldBe(0.92);
         gpuDriven.VisibilityMaterialShadingMs.ShouldBe(0.93);
+
+        var occlusion = clone.RenderProfilerV2.Occlusion;
+        occlusion.EffectiveMode.ShouldBe("CpuQueryAsync");
+        occlusion.SubmissionStrategy.ShouldBe("CpuDirect");
+        occlusion.CpuPassesActive.ShouldBe(94);
+        occlusion.CpuPassesSkippedNoCamera.ShouldBe(95);
+        occlusion.CpuPassesSkippedShadow.ShouldBe(96);
+        occlusion.CpuPassesSkippedDepthNormalPrePass.ShouldBe(97);
+        occlusion.CpuPassesSkippedModeOff.ShouldBe(98);
+        occlusion.CpuTested.ShouldBe(99);
+        occlusion.CpuCulled.ShouldBe(100);
+        occlusion.CpuRendered.ShouldBe(101);
+        occlusion.CpuDecisionSeed.ShouldBe(102);
+        occlusion.CpuDecisionCached.ShouldBe(103);
+        occlusion.CpuDecisionVisibleQuery.ShouldBe(104);
+        occlusion.CpuDecisionVisibleHysteresis.ShouldBe(105);
+        occlusion.CpuDecisionProbe.ShouldBe(106);
+        occlusion.CpuDecisionSkip.ShouldBe(107);
+        occlusion.CpuDecisionForcedVisible.ShouldBe(108);
+        occlusion.CpuMotionTier.ShouldBe("SmallMotion");
+        occlusion.CpuActiveViewScope.ShouldBe("Mono");
+        occlusion.CpuGlobalConservativeFrames.ShouldBe(109);
+        occlusion.CpuPendingQueries.ShouldBe(110);
+        occlusion.CpuQuerySubmittedTotal.ShouldBe(111);
+        occlusion.CpuQueryResolvedTotal.ShouldBe(112);
+        occlusion.CpuQueryLatencySamples.ShouldBe(113);
+        occlusion.CpuQueryLatencyAverageFrames.ShouldBe(1.14);
+        occlusion.CpuQueryLatencyMaxFrames.ShouldBe(115);
+        occlusion.CpuBudgetSkippedTotal.ShouldBe(116);
+        occlusion.CpuForcedVisibleTotal.ShouldBe(117);
+        occlusion.CpuUnsupportedStereoQueryMode.ShouldBe(118);
+        occlusion.CpuQueryAsyncSubmitted.ShouldBe(119);
+        occlusion.CpuQueryAsyncResolved.ShouldBe(120);
+        occlusion.CpuQueryAsyncOccluded.ShouldBe(121);
+        occlusion.CpuSocTested.ShouldBe(122);
+        occlusion.CpuSocCulled.ShouldBe(123);
+
         clone.GpuMeshletRequestedFrames.ShouldBe(5);
         clone.GpuMeshletProductionFrames.ShouldBe(4);
         clone.GpuMeshletFallbackFrames.ShouldBe(1);
@@ -862,6 +940,21 @@ public sealed class ProfilerProtocolTests
             CollectSwap = new AllocationSlice { LastBytes = 512, AverageBytes = 400.0, MaxBytes = 1024, Samples = 60, Capacity = 240 },
             Update = new AllocationSlice { LastBytes = 2048, AverageBytes = 1800.0, MaxBytes = 4096, Samples = 200, Capacity = 240 },
             FixedUpdate = new AllocationSlice { LastBytes = 256, AverageBytes = 200.0, MaxBytes = 512, Samples = 30, Capacity = 240 },
+            Scopes =
+            [
+                new AllocationScopeSlice
+                {
+                    Name = "Render.Frame",
+                    Category = "RenderSubmission",
+                    BudgetBytes = 0,
+                    LastBytes = 0,
+                    AverageBytes = 4.0,
+                    MaxBytes = 16,
+                    Samples = 8,
+                    Capacity = 240,
+                    OverBudgetCount = 1,
+                },
+            ],
         };
 
         var clone = RoundTrip(original);
@@ -872,6 +965,9 @@ public sealed class ProfilerProtocolTests
         clone.CollectSwap.Samples.ShouldBe(60);
         clone.Update.LastKB.ShouldBe(2.0);
         clone.FixedUpdate.Capacity.ShouldBe(240);
+        clone.Scopes.Length.ShouldBe(1);
+        clone.Scopes[0].Name.ShouldBe("Render.Frame");
+        clone.Scopes[0].OverBudgetCount.ShouldBe(1);
     }
 
     // ── BvhMetricsPacket ───────────────────────────────────────────────

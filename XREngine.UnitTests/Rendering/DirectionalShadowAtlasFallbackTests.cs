@@ -29,13 +29,30 @@ public sealed class DirectionalShadowAtlasFallbackTests
     }
 
     [Test]
-    public void DeferredDirectionalCascadeAtlas_RequiresEveryCascadeSlot()
+    public void DeferredDirectionalCascadeAtlas_AcceptsExplicitFallbackSlots()
     {
         string source = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_LightCombinePass.cs");
 
-        source.ShouldContain("AreRequiredDirectionalAtlasTilesSampleable");
-        source.ShouldContain("packed.X == 0 || packed.Y < 0 || packed.Y >= maxPageCount");
+        source.ShouldContain("AreRequiredDirectionalAtlasSlotsUsable");
+        source.ShouldContain("AnyRequiredDirectionalAtlasSlotSamplesPage");
+        source.ShouldContain("HasExplicitNonLegacyDirectionalAtlasFallback");
+        source.ShouldContain("packed.Z > 0 && packed.Z != (int)ShadowFallbackMode.Legacy");
+        source.ShouldContain("DirectionalShadowAtlasEnabled\", hasUsableAtlasState");
+        source.ShouldNotContain("packed.X == 0 || packed.Y < 0 || packed.Y >= maxPageCount");
         source.ShouldNotContain("HasAnyDirectionalAtlasTileSampleable");
+    }
+
+    [Test]
+    public void ForwardDirectionalCascadeAtlas_AcceptsExplicitFallbackSlots()
+    {
+        string source = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardLighting.cs");
+
+        source.ShouldContain("AreRequiredDirectionalAtlasSlotsUsable");
+        source.ShouldContain("AnyRequiredDirectionalAtlasSlotSamplesPage");
+        source.ShouldContain("HasExplicitNonLegacyDirectionalAtlasFallback");
+        source.ShouldContain("packed.Z > 0 && packed.Z != (int)ShadowFallbackMode.Legacy");
+        source.ShouldContain("!needsDirectionalAtlasTexture ||");
+        source.ShouldNotContain("packed.X == 0 || packed.Y < 0 || packed.Y >= maxPageCount");
     }
 
     [Test]
@@ -130,12 +147,19 @@ public sealed class DirectionalShadowAtlasFallbackTests
 
         source.ShouldContain("PreviousAtlasSlots");
         source.ShouldContain("BeginDirectionalAtlasSlotPublish");
-        source.ShouldContain("ShouldPreserveStaleCascadeAtlasUniformData");
-        source.ShouldContain("previous.ContentVersion == allocation.ContentVersion");
-        source.ShouldContain("allocation.ActiveFallback == ShadowFallbackMode.StaleTile");
+        source.ShouldContain("ShouldPreserveCascadeAtlasUniformData");
+        source.ShouldContain("previous.PageIndex != allocation.PageIndex");
+        source.ShouldContain("RefreshStaleAtlasSlotAllocation");
+        source.ShouldContain("ContentVersion = previous.ContentVersion");
+        source.ShouldContain("LastRenderedFrame = previous.LastRenderedFrame");
+        source.ShouldContain("or ShadowFallbackMode.ContactOnly");
+        source.ShouldContain("ResolvePreservedCascadeFallback");
+        source.ShouldContain("ResolveStaleCascadeFallback");
         source.ShouldContain("atlasSlot.HasCascadeUniformData");
+        source.ShouldContain("CopyPublishedRenderedCascadeUniformData");
         source.ShouldContain("splits[i] = atlasSlot.SplitFarDistance;");
         source.ShouldContain("matrices[i] = atlasSlot.WorldToLightSpaceMatrix;");
+        source.ShouldContain("staleAges[i] = ResolveRenderedCascadeStaleAge(frameId, atlasSlot.LastRenderedFrame);");
     }
 
     [Test]
@@ -161,9 +185,9 @@ public sealed class DirectionalShadowAtlasFallbackTests
         string source = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.cs")
             .Replace("\r\n", "\n");
 
-        source.ShouldContain("int lastGroupRequestIndex = FindLastDirectionalCascadeGroupRequestIndex(group, i);");
-        source.ShouldContain("int nextRequestIndex = lastGroupRequestIndex + 1;");
-        source.ShouldContain("i = lastGroupRequestIndex;");
+        source.ShouldContain("int lastGroupRequestIndex = FindLastDirectionalCascadeGroupRequestIndex(directionalGroup, i);");
+        source.ShouldContain("lastGroupRequestIndex,");
+        source.ShouldContain("i = Math.Max(i, lastGroupRequestIndex);");
         source.ShouldContain("private int FindLastDirectionalCascadeGroupRequestIndex(");
     }
 
@@ -224,7 +248,10 @@ public sealed class DirectionalShadowAtlasFallbackTests
             .Replace("\r\n", "\n");
 
         atlasManagerSource.ShouldContain("TryRenderDirectionalCascadeGroupSequentially");
-        atlasManagerSource.ShouldContain("usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(light, group, collectVisibleNow);");
+        atlasManagerSource.ShouldContain("TryRenderDirectionalCascadeGroupSequentially(plan, light, entry, collectVisibleNow)");
+        atlasManagerSource.ShouldNotContain("CanRenderDirectionalCascadeGroup(request, group)");
+        atlasManagerSource.ShouldContain("light.CanRenderGroupedCascadeShadowAtlasTiles(group)");
+        atlasManagerSource.ShouldContain("usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(plan, light, entry, collectVisibleNow);");
         atlasManagerSource.ShouldContain("light.RenderCascadeShadowAtlasTile(request.Key.Source, request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow)");
         atlasManagerSource.ShouldContain("_directionalSequentialFallbackFrame = true;");
         atlasManagerSource.ShouldContain("FallbackReason: usedSequentialFallback ? \"GroupedAtlasRenderFailed\" : light.CascadeShadowRenderFallbackReason");

@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptDir "..\..")
 $projectPath = Join-Path $repoRoot "Tools\Reports\McpDocsGenerator\McpDocsGenerator.csproj"
-$docPath = Join-Path $repoRoot "docs\features\mcp-server.md"
+$docPath = Join-Path $repoRoot "docs\developer-guides\ai\mcp-server.md"
 
 function Update-DocFromTable([string]$tableText) {
     $startMarker = '<!-- MCP_TOOL_TABLE:START -->'

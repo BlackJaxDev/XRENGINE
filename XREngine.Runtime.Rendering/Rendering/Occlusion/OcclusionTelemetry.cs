@@ -25,12 +25,14 @@ namespace XREngine.Rendering.Occlusion
         private static int _cpuPassesActive;
         private static int _cpuPassesSkippedNoCamera;
         private static int _cpuPassesSkippedShadow;
+        private static int _cpuPassesSkippedDepthNormalPrePass;
         private static int _cpuPassesSkippedModeOff;
         private static int _lastFrameCpuTested;
         private static int _lastFrameCpuCulled;
         private static int _lastFrameCpuPassesActive;
         private static int _lastFrameCpuPassesSkippedNoCamera;
         private static int _lastFrameCpuPassesSkippedShadow;
+        private static int _lastFrameCpuPassesSkippedDepthNormalPrePass;
         private static int _lastFrameCpuPassesSkippedModeOff;
 
         // GPU Hi-Z path (compute cull on GPU; counts only available when readback is permitted).
@@ -160,6 +162,8 @@ namespace XREngine.Rendering.Occlusion
         public static int CpuPassesSkippedNoCamera => _lastFrameCpuPassesSkippedNoCamera;
         /// <summary>Last completed frame: RenderCPU calls that skipped occlusion because the pass was a shadow pass.</summary>
         public static int CpuPassesSkippedShadow => _lastFrameCpuPassesSkippedShadow;
+        /// <summary>Last completed frame: RenderCPU calls that skipped occlusion because the pass was a depth-normal prepass.</summary>
+        public static int CpuPassesSkippedDepthNormalPrePass => _lastFrameCpuPassesSkippedDepthNormalPrePass;
         /// <summary>Last completed frame: RenderCPU calls that skipped occlusion because the effective mode wasn't CpuQueryAsync.</summary>
         public static int CpuPassesSkippedModeOff => _lastFrameCpuPassesSkippedModeOff;
 
@@ -277,6 +281,7 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameCpuPassesActive = _cpuPassesActive;
             _lastFrameCpuPassesSkippedNoCamera = _cpuPassesSkippedNoCamera;
             _lastFrameCpuPassesSkippedShadow = _cpuPassesSkippedShadow;
+            _lastFrameCpuPassesSkippedDepthNormalPrePass = _cpuPassesSkippedDepthNormalPrePass;
             _lastFrameCpuPassesSkippedModeOff = _cpuPassesSkippedModeOff;
             _lastFrameGpuCandidates = _gpuCandidates;
             _lastFrameGpuOccluded = _gpuOccluded;
@@ -339,6 +344,7 @@ namespace XREngine.Rendering.Occlusion
             _cpuPassesActive = 0;
             _cpuPassesSkippedNoCamera = 0;
             _cpuPassesSkippedShadow = 0;
+            _cpuPassesSkippedDepthNormalPrePass = 0;
             _cpuPassesSkippedModeOff = 0;
             _gpuCandidates = 0;
             _gpuOccluded = 0;
@@ -462,12 +468,14 @@ namespace XREngine.Rendering.Occlusion
         }
 
         /// <summary>Records a RenderCPU invocation that was eligible for CPU-query occlusion but bypassed it.</summary>
-        public static void RecordCpuPassSkipped(bool noCamera, bool shadowPass, bool modeOff)
+        public static void RecordCpuPassSkipped(bool noCamera, bool shadowPass, bool depthNormalPrePass, bool modeOff)
         {
             if (noCamera)
                 Interlocked.Increment(ref _cpuPassesSkippedNoCamera);
             if (shadowPass)
                 Interlocked.Increment(ref _cpuPassesSkippedShadow);
+            if (depthNormalPrePass)
+                Interlocked.Increment(ref _cpuPassesSkippedDepthNormalPrePass);
             if (modeOff)
                 Interlocked.Increment(ref _cpuPassesSkippedModeOff);
         }

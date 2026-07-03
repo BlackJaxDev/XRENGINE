@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using XREngine;
 using XREngine.Rendering;
@@ -105,6 +106,32 @@ namespace XREngine.Rendering.DLSS
                 EnsureFrameGenerationRuntimeDllsProbed();
                 return _frameGenerationRuntimeDllsUnavailableReason
                     ?? "DLSS frame generation runtime is incomplete: required NVIDIA Streamline/DLSS-G DLLs are missing. " + MissingRuntimeRecoveryMessage;
+            }
+        }
+
+        public static bool FrameGenerationAvailable
+        {
+            get
+            {
+                EnsureDetected();
+                if (!_cachedIsSupported)
+                    return false;
+
+                return Native.IsFrameGenerationAvailable(out _);
+            }
+        }
+
+        public static string FrameGenerationUnavailableReason
+        {
+            get
+            {
+                EnsureDetected();
+                if (!_cachedIsSupported)
+                    return _lastError ?? "NVIDIA DLSS is not available.";
+
+                return Native.IsFrameGenerationAvailable(out string? reason)
+                    ? string.Empty
+                    : reason ?? Native.LastError ?? "NVIDIA DLSS frame generation is not available.";
             }
         }
 
@@ -273,18 +300,34 @@ namespace XREngine.Rendering.DLSS
 
         private static bool TryProbeRuntimeLibrary(string libraryName)
         {
+            if (!TryLoadRuntimeLibrary(libraryName, out nint handle))
+                return false;
+
+            NativeLibrary.Free(handle);
+            return true;
+        }
+
+        private static bool TryLoadRuntimeLibrary(string libraryName, out nint handle)
+        {
+            string runtimePath = Path.Combine(AppContext.BaseDirectory, libraryName);
+            if (File.Exists(runtimePath) && TryLoadNativeLibrary(runtimePath, out handle))
+                return true;
+
+            return TryLoadNativeLibrary(libraryName, out handle);
+        }
+
+        private static bool TryLoadNativeLibrary(string pathOrLibraryName, out nint handle)
+        {
             try
             {
-                if (NativeLibrary.TryLoad(libraryName, out nint handle))
-                {
-                    NativeLibrary.Free(handle);
+                if (NativeLibrary.TryLoad(pathOrLibraryName, out handle) && handle != IntPtr.Zero)
                     return true;
-                }
             }
             catch
             {
             }
 
+            handle = IntPtr.Zero;
             return false;
         }
 

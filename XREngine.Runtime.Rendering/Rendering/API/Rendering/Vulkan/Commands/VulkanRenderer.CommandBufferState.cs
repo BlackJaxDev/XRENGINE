@@ -194,6 +194,7 @@ namespace XREngine.Rendering.Vulkan
             public bool RecordedSwapchainImageEverPresented { get; set; }
             public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;
             public int RecordedSwapchainWriteCount { get; set; }
+            public bool RecordedSwapchainRefreshFromLastPresentSource { get; set; }
             public ulong CommandChainScheduleSignature { get; set; } = ulong.MaxValue;
             public ulong CommandChainPrimaryGroupSignature { get; set; } = ulong.MaxValue;
             public int CommandChainPrimaryGroupCount { get; set; } = -1;

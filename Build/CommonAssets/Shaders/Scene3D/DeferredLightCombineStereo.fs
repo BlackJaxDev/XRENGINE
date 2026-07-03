@@ -357,7 +357,7 @@ void main()
         if (DeferredDebugMode == 2) { OutLo = vec4(inLo, 1.0f); return; }
         if (DeferredDebugMode == 3) { OutLo = vec4(rmse.rgb, 1.0f); return; }
         if (DeferredDebugMode == 4) { OutLo = vec4(normal * 0.5f + 0.5f, 1.0f); return; }
-        if ((DeferredDebugMode >= 6 && DeferredDebugMode <= 9) || (DeferredDebugMode >= 11 && DeferredDebugMode <= 14)) { OutLo = vec4(inLo, 1.0f); return; }
+        if ((DeferredDebugMode >= 6 && DeferredDebugMode <= 9) || (DeferredDebugMode >= 11 && DeferredDebugMode <= 18)) { OutLo = vec4(inLo, 1.0f); return; }
         if (DeferredDebugMode == 10) { OutLo = vec4(vec3(ao), 1.0f); return; }
     }
 

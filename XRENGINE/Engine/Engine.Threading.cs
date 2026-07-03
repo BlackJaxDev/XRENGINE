@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Core;
 using XREngine.Data.Profiling;
+using XREngine.Data.Runtime.Memory;
 
 namespace XREngine
 {
@@ -556,6 +557,10 @@ namespace XREngine
         /// <param name="maxTasks">Maximum number of tasks to process per call.</param>
         internal static void ProcessUpdateThreadTasks(int maxTasks = 1024)
         {
+            using var allocationScope = EditorPreferences.Debug.EnableThreadAllocationTracking
+                ? Allocations.BeginScope("UpdateThreadJobs.Dispatch", AllocationScopeCategory.RuntimeSystem)
+                : default;
+
             int processed = 0;
             while (processed < maxTasks && _pendingUpdateThreadWork.TryDequeue(out var task))
             {
@@ -580,6 +585,10 @@ namespace XREngine
         /// <param name="maxTasks">Maximum number of tasks to process per call.</param>
         internal static void ProcessPhysicsThreadTasks(int maxTasks = 4096)
         {
+            using var allocationScope = EditorPreferences.Debug.EnableThreadAllocationTracking
+                ? Allocations.BeginScope("PhysicsThreadJobs.Dispatch", AllocationScopeCategory.RuntimeSystem)
+                : default;
+
             int processed = 0;
             while (processed < maxTasks && _pendingPhysicsThreadWork.TryDequeue(out var task))
             {
@@ -598,6 +607,9 @@ namespace XREngine
         private static void ProcessPendingMainThreadWork()
         {
             using var scope = Engine.Profiler.Start("MainThreadJobs.Dispatch", ProfilerScopeKind.ConditionalLoop);
+            using var allocationScope = EditorPreferences.Debug.EnableThreadAllocationTracking
+                ? Allocations.BeginScope("RenderThreadJobs.Dispatch", AllocationScopeCategory.GpuUploadPreparation)
+                : default;
 
             ulong frameId = Rendering.State.RenderFrameId;
             if (_renderThreadJobBudgetFrameId != frameId)
@@ -656,6 +668,9 @@ namespace XREngine
                 return;
 
             using var scope = Engine.Profiler.Start("AppThreadJobs.Dispatch", ProfilerScopeKind.ConditionalLoop);
+            using var allocationScope = EditorPreferences.Debug.EnableThreadAllocationTracking
+                ? Allocations.BeginScope("AppThreadJobs.Dispatch", AllocationScopeCategory.RuntimeSystem)
+                : default;
             Jobs.ProcessAppThreadJobs(maxJobs);
         }
 

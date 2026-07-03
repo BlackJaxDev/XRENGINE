@@ -122,6 +122,7 @@ public static class RuntimeRenderingHostServiceDefaults
     public const long MaxShadowAtlasMemoryBytes = 0L;
     public const int MaxShadowTilesRenderedPerFrame = 16;
     public const float MaxShadowRenderMilliseconds = 2.0f;
+    public const int MaxDirectionalCascadeAtlasStaleFrames = 2;
     public const uint MinShadowAtlasTileResolution = 128u;
     public const uint MaxShadowAtlasTileResolution = 4096u;
 

@@ -43,6 +43,10 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         DirectionalShadowLocalUvY = 12,
         DirectionalShadowAtlasUvX = 13,
         DirectionalShadowAtlasUvY = 14,
+        DirectionalShadowCurrentMatrixUvX = 15,
+        DirectionalShadowRenderedMatrixUvX = 16,
+        DirectionalShadowStaleAge = 17,
+        DirectionalShadowStaleUvValidity = 18,
     }
 
     public const string SceneShaderPath = "Scene3D";
@@ -1562,10 +1566,10 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     {
         Stereo = stereo;
         // Honor the deferred-debug pref (seeded from XRE_DEFERRED_DEBUG, also settable from the
-        // editor Diagnostics preferences). 0..14: Disabled/RawAlbedo/DirectLighting/Rmse/Normal/Depth plus directional shadow, AO, and shadow-UV probes.
+        // editor Diagnostics preferences). 0..18: Disabled/RawAlbedo/DirectLighting/Rmse/Normal/Depth plus directional shadow, AO, and shadow-UV probes.
         // See the shader comment in DeferredLightCombine.fs.
         int debugMode = RenderDiagnosticsFlags.DeferredDebugView;
-        if (debugMode >= 0 && debugMode <= 14)
+        if (debugMode >= 0 && debugMode <= 18)
             _deferredDebugView = (DeferredDebugViewMode)debugMode;
         GlobalIlluminationMode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
         WarmDeferredLightingShaders();
@@ -3411,7 +3415,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     private static int ResolveDeferredDebugMode()
     {
         int debugMode = RenderDiagnosticsFlags.DeferredDebugView;
-        return debugMode >= 0 && debugMode <= 14 ? debugMode : (int)DeferredDebugViewMode.Disabled;
+        return debugMode >= 0 && debugMode <= 18 ? debugMode : (int)DeferredDebugViewMode.Disabled;
     }
 
     private void LightCombineFBO_SettingUniforms(XRRenderProgram program)

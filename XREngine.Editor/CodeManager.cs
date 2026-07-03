@@ -258,7 +258,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 new XElement("PublishSingleFile", publishSingleFile ? "true" : "false"), //https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview?tabs=cli
                 new XElement("SelfContained", selfContained ? "true" : "false"),
                 new XElement("RuntimeIdentifier", "win-x64"),
-                new XElement("BaseOutputPath", "Build")
+                new XElement("BaseOutputPath", "Build"),
+                new XElement("ServerGarbageCollection", "false"),
+                new XElement("ConcurrentGarbageCollection", "true"),
+                new XElement("GarbageCollectionAdaptationMode", "1")
             ),
         ];
 
@@ -899,7 +902,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     new XElement("RuntimeIdentifier", "win-x64"),
                     new XElement("AssemblyName", assemblyName),
                     new XElement("RootNamespace", assemblyName.Replace('.', '_')),
-                    new XElement("BaseOutputPath", "Build")
+                    new XElement("BaseOutputPath", "Build"),
+                    new XElement("ServerGarbageCollection", "false"),
+                    new XElement("ConcurrentGarbageCollection", "true"),
+                    new XElement("GarbageCollectionAdaptationMode", "1")
                 ),
                 new XElement("ItemGroup",
                     new XElement("Compile", new XAttribute("Include", relativeProgramPath)))
@@ -1091,6 +1097,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine($"        var userSettings = Engine.Assets.Load<UserSettings>(\"{escapedUser}\");");
         sb.AppendLine("        if (userSettings is not null)");
         sb.AppendLine("            Engine.UserSettings = userSettings;");
+        sb.AppendLine();
+        sb.AppendLine("        Engine.ConfigureMemoryPolicy(startup is IVRGameStartupSettings ? EngineMemoryProfile.VRLowLatency : EngineMemoryProfile.PublishedDefault);");
         sb.AppendLine();
         sb.AppendLine("#if XRE_PUBLISHED");
         sb.AppendLine("        if (HasArg(args, \"--aot-smoke\"))");

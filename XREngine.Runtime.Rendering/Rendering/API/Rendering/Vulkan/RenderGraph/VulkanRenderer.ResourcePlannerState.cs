@@ -1600,33 +1600,64 @@ public unsafe partial class VulkanRenderer
         if (IsDeviceLost)
             return;
 
-        PreserveAutoExposureHistory(oldAllocator);
+        VulkanPhysicalImageGroup? retainedAutoExposureGroup = PreserveAutoExposureHistory(oldAllocator);
 
-        oldAllocator.DestroyPhysicalImages(this);
+        oldAllocator.DestroyPhysicalImages(this, retainedAutoExposureGroup);
         oldAllocator.DestroyPhysicalBuffers(this);
     }
 
-    private void PreserveAutoExposureHistory(VulkanResourceAllocator oldAllocator)
+    private VulkanPhysicalImageGroup? PreserveAutoExposureHistory(VulkanResourceAllocator oldAllocator)
     {
         if (ShouldSkipAutoExposureHistoryPreserve())
-            return;
+            return null;
 
-        if (!oldAllocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.AutoExposureTextureName, out VulkanPhysicalImageGroup? oldGroup) ||
-            !ResourceAllocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.AutoExposureTextureName, out VulkanPhysicalImageGroup? newGroup) ||
-            oldGroup is null ||
-            newGroup is null ||
+        bool hasOldGroup = TryGetAutoExposurePhysicalGroup(oldAllocator, out VulkanPhysicalImageGroup? oldGroup);
+        bool hasNewGroup = TryGetAutoExposurePhysicalGroup(ResourceAllocator, out VulkanPhysicalImageGroup? newGroup);
+
+        if (hasNewGroup && newGroup is not null)
+        {
+            if (TryCopyAutoExposureHistory(oldGroup, newGroup, "active-plan"))
+            {
+                DestroyRetainedAutoExposureHistory("superseded by active-plan copy");
+                return null;
+            }
+
+            if (TryCopyAutoExposureHistory(_retainedAutoExposureHistoryGroup, newGroup, "retained-plan-gap"))
+            {
+                DestroyRetainedAutoExposureHistory("restored into active plan");
+                return null;
+            }
+
+            DestroyRetainedAutoExposureHistory("new active plan could not use retained history");
+            return null;
+        }
+
+        if (hasOldGroup && IsUsableAutoExposureHistoryGroup(oldGroup))
+            return RetainAutoExposureHistory(oldGroup!);
+
+        return null;
+    }
+
+    private static bool TryGetAutoExposurePhysicalGroup(
+        VulkanResourceAllocator allocator,
+        out VulkanPhysicalImageGroup? group)
+        => allocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.AutoExposureTextureName, out group) &&
+           group is not null;
+
+    private bool TryCopyAutoExposureHistory(
+        VulkanPhysicalImageGroup? oldGroup,
+        VulkanPhysicalImageGroup newGroup,
+        string sourceLabel)
+    {
+        if (!IsUsableAutoExposureHistoryGroup(oldGroup) ||
+            !IsUsableAutoExposureTargetGroup(newGroup) ||
             ReferenceEquals(oldGroup, newGroup) ||
-            !oldGroup.IsAllocated ||
-            !newGroup.IsAllocated ||
-            oldGroup.Image.Handle == 0 ||
-            newGroup.Image.Handle == 0 ||
-            oldGroup.LastKnownLayout == ImageLayout.Undefined ||
-            oldGroup.Format != newGroup.Format ||
+            oldGroup!.Format != newGroup.Format ||
             oldGroup.ResolvedExtent.Width != newGroup.ResolvedExtent.Width ||
             oldGroup.ResolvedExtent.Height != newGroup.ResolvedExtent.Height ||
             oldGroup.ResolvedExtent.Depth != newGroup.ResolvedExtent.Depth)
         {
-            return;
+            return false;
         }
 
         ImageLayout oldLayout = oldGroup.LastKnownLayout;
@@ -1705,12 +1736,63 @@ public unsafe partial class VulkanRenderer
 
         oldGroup.LastKnownLayout = ImageLayout.TransferSrcOptimal;
         newGroup.LastKnownLayout = newLayout;
+        Debug.VulkanEvery(
+            $"Vulkan.AutoExposure.HistoryPreserve.{sourceLabel}",
+            TimeSpan.FromSeconds(2),
+            "[Vulkan] Preserved auto exposure history via {0}: src=0x{1:X} dst=0x{2:X} layout={3}->{4}.",
+            sourceLabel,
+            oldGroup.Image.Handle,
+            newGroup.Image.Handle,
+            oldLayout,
+            newLayout);
+        return true;
+    }
+
+    private VulkanPhysicalImageGroup RetainAutoExposureHistory(VulkanPhysicalImageGroup oldGroup)
+    {
+        if (!ReferenceEquals(_retainedAutoExposureHistoryGroup, oldGroup))
+            DestroyRetainedAutoExposureHistory("replaced by newer active history");
+
+        _retainedAutoExposureHistoryGroup = oldGroup;
+        Debug.VulkanEvery(
+            "Vulkan.AutoExposure.HistoryRetain",
+            TimeSpan.FromSeconds(2),
+            "[Vulkan] Retained auto exposure history while switching to a planner context without AutoExposureTex: image=0x{0:X} layout={1}.",
+            oldGroup.Image.Handle,
+            oldGroup.LastKnownLayout);
+        return oldGroup;
+    }
+
+    private void DestroyRetainedAutoExposureHistory(string reason)
+    {
+        VulkanPhysicalImageGroup? group = _retainedAutoExposureHistoryGroup;
+        if (group is null)
+            return;
+
+        group.Destroy(this);
+        _retainedAutoExposureHistoryGroup = null;
+        Debug.VulkanEvery(
+            "Vulkan.AutoExposure.HistoryRetainedDestroy",
+            TimeSpan.FromSeconds(2),
+            "[Vulkan] Destroyed retained auto exposure history ({0}).",
+            reason);
     }
 
     private bool ShouldSkipAutoExposureHistoryPreserve()
         => IsDeviceLost ||
            ActiveResourcePlannerRevision == 0 ||
            RuntimeRenderingHostServices.Current.IsInVR;
+
+    private static bool IsUsableAutoExposureHistoryGroup(VulkanPhysicalImageGroup? group)
+        => group is not null &&
+           group.IsAllocated &&
+           group.Image.Handle != 0 &&
+           group.LastKnownLayout != ImageLayout.Undefined;
+
+    private static bool IsUsableAutoExposureTargetGroup(VulkanPhysicalImageGroup? group)
+        => group is not null &&
+           group.IsAllocated &&
+           group.Image.Handle != 0;
 
     private void TransitionPhysicalGroupForCopy(
         CommandBuffer commandBuffer,
