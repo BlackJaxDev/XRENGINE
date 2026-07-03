@@ -80,6 +80,27 @@ namespace XREngine.Networking
         }
     }
 
+    public readonly record struct FixedQuantizedHumanoidPose(
+        QuantizedRootPose Root,
+        QuantizedTrackerPose Hip,
+        QuantizedTrackerPose Head,
+        QuantizedTrackerPose LeftHand,
+        QuantizedTrackerPose RightHand,
+        QuantizedTrackerPose LeftFoot,
+        QuantizedTrackerPose RightFoot)
+    {
+        public QuantizedTrackerPose this[HumanoidTrackerSlot slot] => slot switch
+        {
+            HumanoidTrackerSlot.Hip => Hip,
+            HumanoidTrackerSlot.Head => Head,
+            HumanoidTrackerSlot.LeftHand => LeftHand,
+            HumanoidTrackerSlot.RightHand => RightHand,
+            HumanoidTrackerSlot.LeftFoot => LeftFoot,
+            HumanoidTrackerSlot.RightFoot => RightFoot,
+            _ => default
+        };
+    }
+
     public readonly record struct HumanoidPoseAvatarHeader(ushort EntityId, HumanoidPoseFlags Flags, ushort Sequence);
     public static class HumanoidPoseCodec
     {
@@ -133,6 +154,34 @@ namespace XREngine.Networking
             return new QuantizedHumanoidPose(root, trackers);
         }
 
+        public static FixedQuantizedHumanoidPose QuantizeFixed(HumanoidPoseSample sample, HumanoidQuantizationSettings? settings = null)
+        {
+            HumanoidQuantizationSettings config = settings ?? HumanoidQuantizationSettings.Default;
+            float halfTile = config.TileSize * 0.5f;
+
+            short sectorX = (short)MathF.Floor(sample.RootPosition.X / config.TileSize);
+            short sectorZ = (short)MathF.Floor(sample.RootPosition.Z / config.TileSize);
+            float sectorCenterX = (sectorX + 0.5f) * config.TileSize;
+            float sectorCenterZ = (sectorZ + 0.5f) * config.TileSize;
+
+            QuantizedRootPose root = new(
+                sectorX,
+                sectorZ,
+                QuantizeSigned(sample.RootPosition.X - sectorCenterX, halfTile),
+                QuantizeSigned(sample.RootPosition.Y, halfTile),
+                QuantizeSigned(sample.RootPosition.Z - sectorCenterZ, halfTile),
+                QuantizeYaw(sample.RootYawRadians));
+
+            return new FixedQuantizedHumanoidPose(
+                root,
+                QuantizeTracker(sample.Hip, config.TrackerRange),
+                QuantizeTracker(sample.Head, config.TrackerRange),
+                QuantizeTracker(sample.LeftHand, config.TrackerRange),
+                QuantizeTracker(sample.RightHand, config.TrackerRange),
+                QuantizeTracker(sample.LeftFoot, config.TrackerRange),
+                QuantizeTracker(sample.RightFoot, config.TrackerRange));
+        }
+
         public static HumanoidPoseSample Dequantize(QuantizedHumanoidPose quantized, HumanoidQuantizationSettings? settings = null)
         {
             HumanoidQuantizationSettings config = settings ?? HumanoidQuantizationSettings.Default;
@@ -157,6 +206,94 @@ namespace XREngine.Networking
                 trackers[3],
                 trackers[4],
                 trackers[5]);
+        }
+
+        public static HumanoidPoseSample Dequantize(FixedQuantizedHumanoidPose quantized, HumanoidQuantizationSettings? settings = null)
+        {
+            HumanoidQuantizationSettings config = settings ?? HumanoidQuantizationSettings.Default;
+            float halfTile = config.TileSize * 0.5f;
+
+            Vector3 rootPosition = new(
+                DequantizeSector(quantized.Root.SectorX, quantized.Root.LocalX, config.TileSize, halfTile),
+                DequantizeSigned(quantized.Root.LocalY, halfTile),
+                DequantizeSector(quantized.Root.SectorZ, quantized.Root.LocalZ, config.TileSize, halfTile));
+
+            return new HumanoidPoseSample(
+                rootPosition,
+                DequantizeYaw(quantized.Root.Yaw),
+                DequantizeTracker(quantized.Hip, config.TrackerRange),
+                DequantizeTracker(quantized.Head, config.TrackerRange),
+                DequantizeTracker(quantized.LeftHand, config.TrackerRange),
+                DequantizeTracker(quantized.RightHand, config.TrackerRange),
+                DequantizeTracker(quantized.LeftFoot, config.TrackerRange),
+                DequantizeTracker(quantized.RightFoot, config.TrackerRange));
+        }
+
+        public static bool TryWriteBaselineAvatar(
+            Span<byte> destination,
+            ushort entityId,
+            in FixedQuantizedHumanoidPose pose,
+            byte lod,
+            out int bytesWritten,
+            byte trackerMask = AllTrackersMask,
+            ushort baselineSequence = 0)
+        {
+            bytesWritten = 0;
+            if (destination.Length < BaselineAvatarBytes)
+                return false;
+
+            Span<byte> span = destination.Slice(0, BaselineAvatarBytes);
+            BinaryPrimitives.WriteUInt16LittleEndian(span, entityId);
+            HumanoidPoseFlags flags = BuildFlags(lod, trackerMask, isBaseline: true, rootChanged: true, forceResend: false);
+            BinaryPrimitives.WriteUInt16LittleEndian(span[2..], (ushort)flags);
+            const ushort payloadLength = BaselineAvatarBytes - 6;
+            BinaryPrimitives.WriteUInt16LittleEndian(span[4..], payloadLength);
+            WriteRoot(span[6..], pose.Root);
+
+            int trackerOffset = 18;
+            for (int i = 0; i < TrackerCount; i++)
+            {
+                WriteTracker(span[trackerOffset..], pose[(HumanoidTrackerSlot)i]);
+                trackerOffset += 6;
+            }
+
+            BinaryPrimitives.WriteUInt16LittleEndian(span[^2..], baselineSequence);
+            bytesWritten = BaselineAvatarBytes;
+            return true;
+        }
+
+        public static bool TryReadBaselineAvatarFixed(
+            ReadOnlySpan<byte> data,
+            out HumanoidPoseAvatarHeader header,
+            out FixedQuantizedHumanoidPose pose,
+            out int bytesConsumed)
+        {
+            header = default;
+            pose = default;
+            bytesConsumed = 0;
+            if (data.Length < BaselineAvatarBytes)
+                return false;
+
+            ushort entity = BinaryPrimitives.ReadUInt16LittleEndian(data);
+            HumanoidPoseFlags flags = (HumanoidPoseFlags)BinaryPrimitives.ReadUInt16LittleEndian(data[2..]);
+            ushort payloadLength = BinaryPrimitives.ReadUInt16LittleEndian(data[4..]);
+            if (data.Length < 6 + payloadLength || payloadLength < 50)
+                return false;
+
+            QuantizedRootPose root = ReadRoot(data[6..]);
+            int offset = 18;
+            QuantizedTrackerPose hip = ReadTracker(data[offset..]); offset += 6;
+            QuantizedTrackerPose head = ReadTracker(data[offset..]); offset += 6;
+            QuantizedTrackerPose leftHand = ReadTracker(data[offset..]); offset += 6;
+            QuantizedTrackerPose rightHand = ReadTracker(data[offset..]); offset += 6;
+            QuantizedTrackerPose leftFoot = ReadTracker(data[offset..]); offset += 6;
+            QuantizedTrackerPose rightFoot = ReadTracker(data[offset..]);
+            ushort sequence = BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(6 + payloadLength - 2));
+
+            header = new HumanoidPoseAvatarHeader(entity, flags, sequence);
+            pose = new FixedQuantizedHumanoidPose(root, hip, head, leftHand, rightHand, leftFoot, rightFoot);
+            bytesConsumed = 6 + payloadLength;
+            return true;
         }
 
         public static int WriteBaselineAvatar(
@@ -318,6 +455,121 @@ namespace XREngine.Networking
             return header.Length + bytesUsed;
         }
 
+        public static bool TryWriteDeltaAvatar(
+            Span<byte> destination,
+            ushort entityId,
+            in FixedQuantizedHumanoidPose current,
+            in FixedQuantizedHumanoidPose baseline,
+            byte lod,
+            out int bytesWritten,
+            HumanoidPoseDeltaSettings? deltaSettings = null,
+            byte trackerMask = AllTrackersMask,
+            bool forceFullResend = false)
+        {
+            bytesWritten = 0;
+            if (destination.Length < 6)
+                return false;
+
+            HumanoidPoseDeltaSettings settings = deltaSettings ?? HumanoidPoseDeltaSettings.Default;
+            Span<short> trackerDeltaX = stackalloc short[TrackerCount];
+            Span<short> trackerDeltaY = stackalloc short[TrackerCount];
+            Span<short> trackerDeltaZ = stackalloc short[TrackerCount];
+            Span<byte> trackerAxisMask = stackalloc byte[TrackerCount];
+
+            byte changedTrackerMask = 0;
+            for (int i = 0; i < TrackerCount; i++)
+            {
+                if (((trackerMask >> i) & 1) == 0)
+                    continue;
+
+                QuantizedTrackerPose source = current[(HumanoidTrackerSlot)i];
+                QuantizedTrackerPose baseTracker = baseline[(HumanoidTrackerSlot)i];
+                short dx = (short)(source.X - baseTracker.X);
+                short dy = (short)(source.Y - baseTracker.Y);
+                short dz = (short)(source.Z - baseTracker.Z);
+
+                byte axisMask = 0;
+                if (Math.Abs(dx) > settings.Deadzone)
+                {
+                    axisMask |= 1;
+                    trackerDeltaX[i] = dx;
+                }
+
+                if (Math.Abs(dy) > settings.Deadzone)
+                {
+                    axisMask |= 1 << 1;
+                    trackerDeltaY[i] = dy;
+                }
+
+                if (Math.Abs(dz) > settings.Deadzone)
+                {
+                    axisMask |= 1 << 2;
+                    trackerDeltaZ[i] = dz;
+                }
+
+                trackerAxisMask[i] = axisMask;
+                if (axisMask != 0)
+                    changedTrackerMask |= (byte)(1 << i);
+            }
+
+            bool rootXChanged = Math.Abs(current.Root.LocalX - baseline.Root.LocalX) > settings.Deadzone;
+            bool rootYChanged = Math.Abs(current.Root.LocalY - baseline.Root.LocalY) > settings.Deadzone;
+            bool rootZChanged = Math.Abs(current.Root.LocalZ - baseline.Root.LocalZ) > settings.Deadzone;
+            int yawDelta = DeltaYaw(current.Root.Yaw, baseline.Root.Yaw);
+            bool yawChanged = Math.Abs(yawDelta) > settings.Deadzone;
+            bool rootChanged = rootXChanged || rootYChanged || rootZChanged || yawChanged;
+
+            destination.Clear();
+            SpanBitWriter writer = new(destination[6..]);
+
+            if (rootChanged)
+            {
+                byte rootMask = 0;
+                if (rootXChanged) rootMask |= 1;
+                if (rootYChanged) rootMask |= 1 << 1;
+                if (rootZChanged) rootMask |= 1 << 2;
+                if (yawChanged) rootMask |= 1 << 3;
+
+                if (!writer.TryWriteUnsigned(rootMask, 4))
+                    return false;
+                if (rootXChanged && !WriteDeltaValue(ref writer, current.Root.LocalX - baseline.Root.LocalX, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFullResend))
+                    return false;
+                if (rootYChanged && !WriteDeltaValue(ref writer, current.Root.LocalY - baseline.Root.LocalY, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFullResend))
+                    return false;
+                if (rootZChanged && !WriteDeltaValue(ref writer, current.Root.LocalZ - baseline.Root.LocalZ, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFullResend))
+                    return false;
+                if (yawChanged && !WriteDeltaValue(ref writer, yawDelta, settings.YawSmallThreshold, settings.SmallDeltaBits, forceFullResend, 16))
+                    return false;
+            }
+
+            for (int i = 0; i < TrackerCount; i++)
+            {
+                if (((changedTrackerMask >> i) & 1) == 0)
+                    continue;
+
+                byte axisMask = trackerAxisMask[i];
+                if (!writer.TryWriteUnsigned(axisMask, 3))
+                    return false;
+                if ((axisMask & 1) != 0 && !WriteDeltaValue(ref writer, trackerDeltaX[i], settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFullResend))
+                    return false;
+                if ((axisMask & (1 << 1)) != 0 && !WriteDeltaValue(ref writer, trackerDeltaY[i], settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFullResend))
+                    return false;
+                if ((axisMask & (1 << 2)) != 0 && !WriteDeltaValue(ref writer, trackerDeltaZ[i], settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFullResend))
+                    return false;
+            }
+
+            int payloadLength = (writer.Position + 7) >> 3;
+            if (payloadLength > ushort.MaxValue)
+                return false;
+
+            HumanoidPoseFlags flags = BuildFlags(lod, changedTrackerMask, isBaseline: false, rootChanged, forceFullResend);
+            BinaryPrimitives.WriteUInt16LittleEndian(destination, entityId);
+            BinaryPrimitives.WriteUInt16LittleEndian(destination[2..], (ushort)flags);
+            BinaryPrimitives.WriteUInt16LittleEndian(destination[4..], (ushort)payloadLength);
+            bytesWritten = 6 + payloadLength;
+            return true;
+        }
+
         public static bool TryReadBaselineAvatar(
             ReadOnlySpan<byte> data,
             out HumanoidPoseAvatarHeader header,
@@ -459,6 +711,99 @@ namespace XREngine.Networking
             return true;
         }
 
+        public static bool TryReadDeltaAvatar(
+            ReadOnlySpan<byte> data,
+            in FixedQuantizedHumanoidPose baseline,
+            out HumanoidPoseAvatarHeader header,
+            out FixedQuantizedHumanoidPose pose,
+            out int bytesConsumed,
+            HumanoidPoseDeltaSettings? deltaSettings = null)
+        {
+            header = default;
+            pose = default;
+            bytesConsumed = 0;
+
+            if (data.Length < 6)
+                return false;
+
+            HumanoidPoseDeltaSettings settings = deltaSettings ?? HumanoidPoseDeltaSettings.Default;
+            ushort entity = BinaryPrimitives.ReadUInt16LittleEndian(data);
+            HumanoidPoseFlags flags = (HumanoidPoseFlags)BinaryPrimitives.ReadUInt16LittleEndian(data[2..]);
+            ushort payloadLength = BinaryPrimitives.ReadUInt16LittleEndian(data[4..]);
+            if (data.Length < 6 + payloadLength)
+                return false;
+
+            header = new HumanoidPoseAvatarHeader(entity, flags, 0);
+            SpanBitReader reader = new(data.Slice(6, payloadLength));
+            QuantizedRootPose root = baseline.Root;
+            bool forceFull = (flags & HumanoidPoseFlags.ForceResend) != 0;
+
+            if ((flags & HumanoidPoseFlags.RootChanged) != 0)
+            {
+                if (!reader.TryReadUnsigned(4, out uint rootMask))
+                    return false;
+
+                short lx = root.LocalX;
+                short ly = root.LocalY;
+                short lz = root.LocalZ;
+                ushort yaw = root.Yaw;
+                short dx = 0, dy = 0, dz = 0;
+
+                if ((rootMask & 1) != 0 && !TryReadDeltaValue(ref reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull, out dx))
+                    return false;
+                if ((rootMask & (1 << 1)) != 0 && !TryReadDeltaValue(ref reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull, out dy))
+                    return false;
+                if ((rootMask & (1 << 2)) != 0 && !TryReadDeltaValue(ref reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull, out dz))
+                    return false;
+                if ((rootMask & (1 << 3)) != 0 && !TryReadYawDelta(ref reader, root.Yaw, settings.YawSmallThreshold, settings.SmallDeltaBits, forceFull, out yaw))
+                    return false;
+
+                if ((rootMask & 1) != 0) lx = (short)(root.LocalX + dx);
+                if ((rootMask & (1 << 1)) != 0) ly = (short)(root.LocalY + dy);
+                if ((rootMask & (1 << 2)) != 0) lz = (short)(root.LocalZ + dz);
+                root = new QuantizedRootPose(baseline.Root.SectorX, baseline.Root.SectorZ, lx, ly, lz, yaw);
+            }
+
+            Span<QuantizedTrackerPose> trackers = stackalloc QuantizedTrackerPose[TrackerCount];
+            trackers[0] = baseline.Hip;
+            trackers[1] = baseline.Head;
+            trackers[2] = baseline.LeftHand;
+            trackers[3] = baseline.RightHand;
+            trackers[4] = baseline.LeftFoot;
+            trackers[5] = baseline.RightFoot;
+
+            byte changedTrackerMask = GetTrackerMask(flags);
+            for (int i = 0; i < TrackerCount; i++)
+            {
+                if (((changedTrackerMask >> i) & 1) == 0)
+                    continue;
+
+                if (!reader.TryReadUnsigned(3, out uint axisMask))
+                    return false;
+
+                short dx = 0;
+                short dy = 0;
+                short dz = 0;
+
+                if ((axisMask & 1) != 0 && !TryReadDeltaValue(ref reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull, out dx))
+                    return false;
+                if ((axisMask & (1 << 1)) != 0 && !TryReadDeltaValue(ref reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull, out dy))
+                    return false;
+                if ((axisMask & (1 << 2)) != 0 && !TryReadDeltaValue(ref reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull, out dz))
+                    return false;
+
+                QuantizedTrackerPose source = trackers[i];
+                trackers[i] = new QuantizedTrackerPose(
+                    (short)(source.X + dx),
+                    (short)(source.Y + dy),
+                    (short)(source.Z + dz));
+            }
+
+            pose = new FixedQuantizedHumanoidPose(root, trackers[0], trackers[1], trackers[2], trackers[3], trackers[4], trackers[5]);
+            bytesConsumed = 6 + payloadLength;
+            return true;
+        }
+
         public static int GetDeltaSizeBytes(
             QuantizedHumanoidPose current,
             QuantizedHumanoidPose baseline,
@@ -469,6 +814,19 @@ namespace XREngine.Networking
             List<byte> scratch = new();
             WriteDeltaAvatar(scratch, 0, current, baseline, 0, deltaSettings, trackerMask, forceFullResend);
             return scratch.Count;
+        }
+
+        public static int GetDeltaSizeBytes(
+            in FixedQuantizedHumanoidPose current,
+            in FixedQuantizedHumanoidPose baseline,
+            HumanoidPoseDeltaSettings? deltaSettings = null,
+            byte trackerMask = AllTrackersMask,
+            bool forceFullResend = false)
+        {
+            Span<byte> scratch = stackalloc byte[MaxDeltaBytes + 6];
+            return TryWriteDeltaAvatar(scratch, 0, current, baseline, 0, out int bytesWritten, deltaSettings, trackerMask, forceFullResend)
+                ? bytesWritten
+                : -1;
         }
 
         private static void ValidateTrackers(QuantizedHumanoidPose pose)
@@ -580,6 +938,13 @@ namespace XREngine.Networking
             writer.WriteInt16LSB((short)delta, useSmall ? smallBits : fullBits);
         }
 
+        private static bool WriteDeltaValue(ref SpanBitWriter writer, int delta, short smallThreshold, int smallBits, bool forceFull, int fullBits = 16)
+        {
+            bool useSmall = !forceFull && Math.Abs(delta) <= smallThreshold;
+            return writer.TryWriteUnsigned(useSmall ? 1u : 0u, 1)
+                && writer.TryWriteSigned(delta, useSmall ? smallBits : fullBits);
+        }
+
         private static bool TryReadDeltaValue(BitReader reader, short smallThreshold, int smallBits, bool forceFull, out short result)
         {
             result = 0;
@@ -595,6 +960,20 @@ namespace XREngine.Networking
             {
                 return false;
             }
+
+            result = (short)delta;
+            return Math.Abs(delta) <= short.MaxValue;
+        }
+
+        private static bool TryReadDeltaValue(ref SpanBitReader reader, short smallThreshold, int smallBits, bool forceFull, out short result)
+        {
+            result = 0;
+            if (!reader.TryReadUnsigned(1, out uint smallFlag))
+                return false;
+
+            int bits = (smallFlag == 1 && !forceFull) ? smallBits : 16;
+            if (!reader.TryReadSigned(bits, out int delta))
+                return false;
 
             result = (short)delta;
             return Math.Abs(delta) <= short.MaxValue;
@@ -623,10 +1002,116 @@ namespace XREngine.Networking
             return true;
         }
 
+        private static bool TryReadYawDelta(ref SpanBitReader reader, ushort baseline, short smallThreshold, int smallBits, bool forceFull, out ushort yaw)
+        {
+            yaw = baseline;
+            if (!reader.TryReadUnsigned(1, out uint smallFlag))
+                return false;
+
+            int bits = (smallFlag == 1 && !forceFull) ? smallBits : 16;
+            if (!reader.TryReadSigned(bits, out int delta))
+                return false;
+
+            if (Math.Abs(delta) > smallThreshold && smallFlag == 1 && !forceFull)
+                return false;
+
+            yaw = ApplyYawDelta(baseline, delta);
+            return true;
+        }
+
         private static void EnsureCapacity(List<byte> buffer, int additional)
         {
             if (buffer.Capacity < buffer.Count + additional)
                 buffer.Capacity = buffer.Count + additional;
+        }
+
+        private ref struct SpanBitWriter
+        {
+            private Span<byte> _buffer;
+
+            public SpanBitWriter(Span<byte> buffer)
+            {
+                _buffer = buffer;
+                Position = 0;
+            }
+
+            public int Position { get; private set; }
+
+            public bool TryWriteUnsigned(uint value, int bitCount)
+            {
+                if ((uint)bitCount > 31u)
+                    return false;
+
+                for (int i = 0; i < bitCount; i++)
+                {
+                    int byteIndex = Position >> 3;
+                    if ((uint)byteIndex >= (uint)_buffer.Length)
+                        return false;
+
+                    if (((value >> i) & 1u) != 0u)
+                        _buffer[byteIndex] |= (byte)(1 << (Position & 7));
+
+                    Position++;
+                }
+
+                return true;
+            }
+
+            public bool TryWriteSigned(int value, int bitCount)
+            {
+                if ((uint)bitCount > 31u || bitCount <= 0)
+                    return false;
+
+                uint mask = (1u << bitCount) - 1u;
+                return TryWriteUnsigned((uint)value & mask, bitCount);
+            }
+        }
+
+        private ref struct SpanBitReader
+        {
+            private ReadOnlySpan<byte> _buffer;
+            private readonly int _bitLength;
+
+            public SpanBitReader(ReadOnlySpan<byte> buffer)
+            {
+                _buffer = buffer;
+                _bitLength = buffer.Length * 8;
+                Position = 0;
+            }
+
+            public int Position { get; private set; }
+
+            public bool TryReadUnsigned(int bitCount, out uint value)
+            {
+                value = 0u;
+                if ((uint)bitCount > 31u || Position + bitCount > _bitLength)
+                    return false;
+
+                for (int i = 0; i < bitCount; i++)
+                {
+                    int byteIndex = Position >> 3;
+                    uint bit = (uint)((_buffer[byteIndex] >> (Position & 7)) & 1);
+                    value |= bit << i;
+                    Position++;
+                }
+
+                return true;
+            }
+
+            public bool TryReadSigned(int bitCount, out int value)
+            {
+                value = 0;
+                if (bitCount <= 0 || !TryReadUnsigned(bitCount, out uint raw))
+                    return false;
+
+                int signed = (int)raw;
+                int signBit = 1 << (bitCount - 1);
+                if ((signed & signBit) != 0)
+                    signed |= -1 << bitCount;
+
+                value = signed;
+                return true;
+            }
         }
     }
 
@@ -702,6 +1187,130 @@ namespace XREngine.Networking
         {
             if (!_building || Kind != kind)
                 throw new InvalidOperationException($"BeginFrame must be called with kind '{kind}' before adding avatars.");
+        }
+    }
+
+    public ref struct HumanoidPoseSpanPacketWriter
+    {
+        private Span<byte> _destination;
+        private readonly HumanoidQuantizationSettings _quantSettings;
+        private readonly HumanoidPoseDeltaSettings _deltaSettings;
+        private int _bytesWritten;
+        private bool _building;
+
+        public HumanoidPoseSpanPacketWriter(
+            Span<byte> destination,
+            HumanoidQuantizationSettings? quantSettings = null,
+            HumanoidPoseDeltaSettings? deltaSettings = null)
+        {
+            _destination = destination;
+            _quantSettings = quantSettings ?? HumanoidQuantizationSettings.Default;
+            _deltaSettings = deltaSettings ?? HumanoidPoseDeltaSettings.Default;
+            _bytesWritten = 0;
+            _building = false;
+            Kind = default;
+            BaselineSequence = 0;
+            AvatarCount = 0;
+        }
+
+        public HumanoidPosePacketKind Kind { get; private set; }
+        public ushort BaselineSequence { get; private set; }
+        public int AvatarCount { get; private set; }
+        public int BytesWritten => _bytesWritten;
+        public ReadOnlySpan<byte> Payload => _destination.Slice(0, _bytesWritten);
+
+        public void BeginFrame(HumanoidPosePacketKind kind, ushort baselineSequence)
+        {
+            _bytesWritten = 0;
+            AvatarCount = 0;
+            Kind = kind;
+            BaselineSequence = baselineSequence;
+            _building = true;
+        }
+
+        public bool TryAddBaselineAvatar(ushort entityId, HumanoidPoseSample sample, byte lod = 0, byte trackerMask = HumanoidPoseCodec.AllTrackersMask)
+            => TryAddBaselineAvatar(entityId, HumanoidPoseCodec.QuantizeFixed(sample, _quantSettings), lod, trackerMask);
+
+        public bool TryAddBaselineAvatar(ushort entityId, in FixedQuantizedHumanoidPose pose, byte lod = 0, byte trackerMask = HumanoidPoseCodec.AllTrackersMask)
+        {
+            EnsureBuilding(HumanoidPosePacketKind.Baseline);
+            if (!HumanoidPoseCodec.TryWriteBaselineAvatar(_destination[_bytesWritten..], entityId, pose, lod, out int written, trackerMask, BaselineSequence))
+                return false;
+
+            _bytesWritten += written;
+            AvatarCount++;
+            return true;
+        }
+
+        public bool TryAddDeltaAvatar(
+            ushort entityId,
+            in FixedQuantizedHumanoidPose current,
+            in FixedQuantizedHumanoidPose baseline,
+            byte lod = 0,
+            byte trackerMask = HumanoidPoseCodec.AllTrackersMask,
+            bool forceFullResend = false)
+        {
+            EnsureBuilding(HumanoidPosePacketKind.Delta);
+            if (!HumanoidPoseCodec.TryWriteDeltaAvatar(
+                _destination[_bytesWritten..],
+                entityId,
+                current,
+                baseline,
+                lod,
+                out int written,
+                _deltaSettings,
+                trackerMask,
+                forceFullResend))
+            {
+                return false;
+            }
+
+            _bytesWritten += written;
+            AvatarCount++;
+            return true;
+        }
+
+        private readonly void EnsureBuilding(HumanoidPosePacketKind kind)
+        {
+            if (!_building || Kind != kind)
+                throw new InvalidOperationException($"BeginFrame must be called with kind '{kind}' before adding avatars.");
+        }
+    }
+
+    public ref struct HumanoidPosePacketCursor
+    {
+        private ReadOnlySpan<byte> _payload;
+        private int _offset;
+
+        public HumanoidPosePacketCursor(ReadOnlySpan<byte> payload)
+        {
+            _payload = payload;
+            _offset = 0;
+        }
+
+        public int BytesConsumed => _offset;
+        public bool HasRemaining => _offset < _payload.Length;
+
+        public bool TryReadNextBaseline(out HumanoidPoseAvatarHeader header, out FixedQuantizedHumanoidPose pose)
+        {
+            if (!HumanoidPoseCodec.TryReadBaselineAvatarFixed(_payload[_offset..], out header, out pose, out int consumed))
+                return false;
+
+            _offset += consumed;
+            return true;
+        }
+
+        public bool TryReadNextDelta(
+            in FixedQuantizedHumanoidPose baseline,
+            out HumanoidPoseAvatarHeader header,
+            out FixedQuantizedHumanoidPose pose,
+            HumanoidPoseDeltaSettings? deltaSettings = null)
+        {
+            if (!HumanoidPoseCodec.TryReadDeltaAvatar(_payload[_offset..], baseline, out header, out pose, out int consumed, deltaSettings))
+                return false;
+
+            _offset += consumed;
+            return true;
         }
     }
 }

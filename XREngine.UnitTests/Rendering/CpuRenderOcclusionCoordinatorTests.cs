@@ -76,6 +76,29 @@ public sealed class CpuRenderOcclusionCoordinatorTests
     }
 
     [Test]
+    public void BeginPass_MediumMotionDoesNotForceStaleOcclusionVisible()
+    {
+        CpuRenderOcclusionCoordinator coordinator = new();
+        XRCamera camera = new();
+        const uint queryKey = 144u;
+
+        BeginPassForPolicyTest(coordinator, camera);
+        SeedOccludedQuery(coordinator, camera, queryKey, TestFrameId - 30UL);
+
+        camera.Transform.SetRenderMatrix(Matrix4x4.CreateTranslation(0.5f, 0.0f, 0.0f)).GetAwaiter().GetResult();
+        BeginPassForPolicyTest(coordinator, camera);
+
+        ECpuOcclusionDecision decision = coordinator.ShouldRender(RenderPass, camera, queryKey, out CpuOcclusionProbeRequest request);
+
+        GetMotionTier(coordinator, camera).ShouldBe(ECpuOcclusionMotionTier.MediumMotion);
+        decision.ShouldBe(ECpuOcclusionDecision.ProbeOnly);
+        request.Requested.ShouldBeTrue();
+        request.RecoveryProbe.ShouldBeTrue();
+        request.Reason.ShouldBe(ECpuOcclusionQueryReason.CameraMotionRevalidation);
+        coordinator.PeekShouldRender(RenderPass, camera, queryKey).ShouldBeFalse();
+    }
+
+    [Test]
     public void BeginPass_LargeMotionDoesNotResetOccludedState()
     {
         CpuRenderOcclusionCoordinator coordinator = new();

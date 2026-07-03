@@ -34,6 +34,13 @@ namespace XREngine.Components.Lights
         private readonly float[] _uniformCascadeBiasMaxes = new float[MaxCascadeRenderCount];
         private readonly float[] _uniformCascadeReceiverOffsets = new float[MaxCascadeRenderCount];
         private readonly Matrix4x4[] _uniformCascadeMatrices = new Matrix4x4[MaxCascadeRenderCount];
+        private readonly float[] _uniformRenderedCascadeSplits = new float[MaxCascadeRenderCount];
+        private readonly float[] _uniformRenderedCascadeBlendWidths = new float[MaxCascadeRenderCount];
+        private readonly float[] _uniformRenderedCascadeBiasMins = new float[MaxCascadeRenderCount];
+        private readonly float[] _uniformRenderedCascadeBiasMaxes = new float[MaxCascadeRenderCount];
+        private readonly float[] _uniformRenderedCascadeReceiverOffsets = new float[MaxCascadeRenderCount];
+        private readonly float[] _uniformRenderedCascadeStaleAges = new float[MaxCascadeRenderCount];
+        private readonly Matrix4x4[] _uniformRenderedCascadeMatrices = new Matrix4x4[MaxCascadeRenderCount];
 
         /// <summary>
         /// Creates a directional light with tuned default shadow filtering and contact-shadow settings.
@@ -243,6 +250,13 @@ namespace XREngine.Components.Lights
             float[] cascadeBiasMaxes = _uniformCascadeBiasMaxes;
             float[] cascadeReceiverOffsets = _uniformCascadeReceiverOffsets;
             Matrix4x4[] cascadeMatrices = _uniformCascadeMatrices;
+            float[] renderedCascadeSplits = _uniformRenderedCascadeSplits;
+            float[] renderedCascadeBlendWidths = _uniformRenderedCascadeBlendWidths;
+            float[] renderedCascadeBiasMins = _uniformRenderedCascadeBiasMins;
+            float[] renderedCascadeBiasMaxes = _uniformRenderedCascadeBiasMaxes;
+            float[] renderedCascadeReceiverOffsets = _uniformRenderedCascadeReceiverOffsets;
+            float[] renderedCascadeStaleAges = _uniformRenderedCascadeStaleAges;
+            Matrix4x4[] renderedCascadeMatrices = _uniformRenderedCascadeMatrices;
             CopyPublishedCascadeUniformData(
                 RuntimeEngine.Rendering.State.RenderingCamera,
                 cascadeSplits,
@@ -252,6 +266,16 @@ namespace XREngine.Components.Lights
                 cascadeReceiverOffsets,
                 cascadeMatrices,
                 out int cascadeCount);
+            CopyPublishedRenderedCascadeUniformData(
+                RuntimeEngine.Rendering.State.RenderingCamera,
+                renderedCascadeSplits,
+                renderedCascadeBlendWidths,
+                renderedCascadeBiasMins,
+                renderedCascadeBiasMaxes,
+                renderedCascadeReceiverOffsets,
+                renderedCascadeMatrices,
+                renderedCascadeStaleAges,
+                out _);
 
             program.Uniform($"{flatPrefix}CascadeCount", cascadeCount);
             if (IsVulkanDirectionalShadowBackend())
@@ -262,6 +286,13 @@ namespace XREngine.Components.Lights
                 program.Uniform($"{flatPrefix}CascadeBiasMax", cascadeBiasMaxes);
                 program.Uniform($"{flatPrefix}CascadeReceiverOffsets", cascadeReceiverOffsets);
                 program.Uniform($"{flatPrefix}CascadeMatrices", cascadeMatrices);
+                program.Uniform($"{flatPrefix}RenderedCascadeSplits", renderedCascadeSplits);
+                program.Uniform($"{flatPrefix}RenderedCascadeBlendWidths", renderedCascadeBlendWidths);
+                program.Uniform($"{flatPrefix}RenderedCascadeBiasMin", renderedCascadeBiasMins);
+                program.Uniform($"{flatPrefix}RenderedCascadeBiasMax", renderedCascadeBiasMaxes);
+                program.Uniform($"{flatPrefix}RenderedCascadeReceiverOffsets", renderedCascadeReceiverOffsets);
+                program.Uniform($"{flatPrefix}RenderedCascadeMatrices", renderedCascadeMatrices);
+                program.Uniform($"{flatPrefix}RenderedCascadeStaleAge", renderedCascadeStaleAges);
             }
 
             for (int i = 0; i < MaxCascadeRenderCount; i++)
@@ -272,9 +303,17 @@ namespace XREngine.Components.Lights
                 program.Uniform($"{flatPrefix}CascadeBiasMax[{i}]", cascadeBiasMaxes[i]);
                 program.Uniform($"{flatPrefix}CascadeReceiverOffsets[{i}]", cascadeReceiverOffsets[i]);
                 program.Uniform($"{flatPrefix}CascadeMatrices[{i}]", cascadeMatrices[i]);
+                program.Uniform($"{flatPrefix}RenderedCascadeSplits[{i}]", renderedCascadeSplits[i]);
+                program.Uniform($"{flatPrefix}RenderedCascadeBlendWidths[{i}]", renderedCascadeBlendWidths[i]);
+                program.Uniform($"{flatPrefix}RenderedCascadeBiasMin[{i}]", renderedCascadeBiasMins[i]);
+                program.Uniform($"{flatPrefix}RenderedCascadeBiasMax[{i}]", renderedCascadeBiasMaxes[i]);
+                program.Uniform($"{flatPrefix}RenderedCascadeReceiverOffsets[{i}]", renderedCascadeReceiverOffsets[i]);
+                program.Uniform($"{flatPrefix}RenderedCascadeMatrices[{i}]", renderedCascadeMatrices[i]);
+                program.Uniform($"{flatPrefix}RenderedCascadeStaleAge[{i}]", renderedCascadeStaleAges[i]);
             }
 
             program.Uniform("DebugCascadeColors", _debugCascadeColors);
+            program.Uniform("DirectionalShadowAtlasMaxStaleFrames", (float)RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeAtlasStaleFrames);
 
             program.Uniform($"{basePrefix}Color", _color);
             program.Uniform($"{basePrefix}DiffuseIntensity", _diffuseIntensity);

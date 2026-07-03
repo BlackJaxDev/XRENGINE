@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Buffers;
 using System.Net;
 using System.Net.Sockets;
 using MemoryPack;
@@ -129,6 +130,8 @@ public static class UdpProfilerSender
     {
         // Pre-allocate a reusable send buffer to avoid per-frame allocations.
         byte[] sendBuffer = new byte[ProfilerProtocol.MaxDatagramSize];
+        byte[] payloadBuffer = new byte[ProfilerProtocol.MaxPayloadSize];
+        FixedBufferWriter payloadWriter = new(payloadBuffer);
         var endpoint = new IPEndPoint(IPAddress.Loopback, port);
 
         using var udp = new UdpClient();
@@ -141,6 +144,11 @@ public static class UdpProfilerSender
 
         string processName = Process.GetCurrentProcess().ProcessName;
         int processId = Environment.ProcessId;
+        var heartbeat = new HeartbeatPacket
+        {
+            ProcessName = processName,
+            ProcessId = processId,
+        };
 
         while (!token.IsCancellationRequested)
         {
@@ -153,25 +161,20 @@ public static class UdpProfilerSender
                 {
                     lastSendMs = nowMs;
 
-                    TrySend(udp, sendBuffer, ProfilerProtocol.MessageType.ProfilerFrame, CollectProfilerFrame);
-                    TrySend(udp, sendBuffer, ProfilerProtocol.MessageType.RenderStats, CollectRenderStats);
-                    TrySend(udp, sendBuffer, ProfilerProtocol.MessageType.ThreadAllocations, CollectThreadAllocations);
-                    TrySend(udp, sendBuffer, ProfilerProtocol.MessageType.BvhMetrics, CollectBvhMetrics);
-                    TrySend(udp, sendBuffer, ProfilerProtocol.MessageType.JobSystemStats, CollectJobSystemStats);
-                    TrySend(udp, sendBuffer, ProfilerProtocol.MessageType.MainThreadInvokes, CollectMainThreadInvokes);
+                    TrySend(udp, sendBuffer, payloadWriter, ProfilerProtocol.MessageType.ProfilerFrame, CollectProfilerFrame);
+                    TrySend(udp, sendBuffer, payloadWriter, ProfilerProtocol.MessageType.RenderStats, CollectRenderStats);
+                    TrySend(udp, sendBuffer, payloadWriter, ProfilerProtocol.MessageType.ThreadAllocations, CollectThreadAllocations);
+                    TrySend(udp, sendBuffer, payloadWriter, ProfilerProtocol.MessageType.BvhMetrics, CollectBvhMetrics);
+                    TrySend(udp, sendBuffer, payloadWriter, ProfilerProtocol.MessageType.JobSystemStats, CollectJobSystemStats);
+                    TrySend(udp, sendBuffer, payloadWriter, ProfilerProtocol.MessageType.MainThreadInvokes, CollectMainThreadInvokes);
                 }
 
                 // ── 1 Hz heartbeat ─────────────────────────────
                 if (nowMs - lastHeartbeatMs >= ProfilerProtocol.HeartbeatIntervalMs)
                 {
                     lastHeartbeatMs = nowMs;
-                    var heartbeat = new HeartbeatPacket
-                    {
-                        ProcessName = processName,
-                        ProcessId = processId,
-                        UptimeMs = nowMs,
-                    };
-                    TrySendPacket(udp, sendBuffer, ProfilerProtocol.MessageType.Heartbeat, heartbeat);
+                    heartbeat.UptimeMs = nowMs;
+                    TrySendPacket(udp, sendBuffer, payloadWriter, ProfilerProtocol.MessageType.Heartbeat, heartbeat);
                 }
 
                 // Sleep to avoid busy-spinning. Target ~30 Hz but don't over-sleep.
@@ -195,7 +198,12 @@ public static class UdpProfilerSender
 
     // ── helpers ─────────────────────────────────────────────────────────
 
-    private static void TrySend<T>(UdpClient udp, byte[] buffer, ProfilerProtocol.MessageType type, Func<T?>? collector)
+    private static void TrySend<T>(
+        UdpClient udp,
+        byte[] buffer,
+        FixedBufferWriter payloadWriter,
+        ProfilerProtocol.MessageType type,
+        Func<T?>? collector)
         where T : class
     {
         if (collector is null)
@@ -208,13 +216,23 @@ public static class UdpProfilerSender
         if (packet is null)
             return;
 
-        TrySendPacket(udp, buffer, type, packet);
+        TrySendPacket(udp, buffer, payloadWriter, type, packet);
     }
 
-    private static void TrySendPacket<T>(UdpClient udp, byte[] buffer, ProfilerProtocol.MessageType type, T packet)
+    private static void TrySendPacket<T>(
+        UdpClient udp,
+        byte[] buffer,
+        FixedBufferWriter payloadWriter,
+        ProfilerProtocol.MessageType type,
+        T packet)
     {
-        byte[] payload;
-        try { payload = MemoryPackSerializer.Serialize(packet); }
+        ReadOnlySpan<byte> payload;
+        try
+        {
+            payloadWriter.Reset();
+            MemoryPackSerializer.Serialize<T, FixedBufferWriter>(in payloadWriter, in packet);
+            payload = payloadWriter.WrittenSpan;
+        }
         catch { return; }
 
         if (payload.Length <= ProfilerProtocol.MaxPayloadSize)
@@ -227,7 +245,12 @@ public static class UdpProfilerSender
         {
             // Attempt pruning for oversized profiler frames, then retry.
             PruneProfilerFrame(frame);
-            try { payload = MemoryPackSerializer.Serialize(frame); }
+            try
+            {
+                payloadWriter.Reset();
+                MemoryPackSerializer.Serialize<ProfilerFramePacket, FixedBufferWriter>(in payloadWriter, in frame);
+                payload = payloadWriter.WrittenSpan;
+            }
             catch { return; }
 
             int written = ProfilerProtocol.WriteFrame(buffer, type, payload);
@@ -236,6 +259,47 @@ public static class UdpProfilerSender
             // If still too large after pruning, drop this frame silently.
         }
         // Other packet types that are too large are silently dropped.
+    }
+
+    private sealed class FixedBufferWriter(byte[] buffer) : IBufferWriter<byte>
+    {
+        private readonly byte[] _buffer = buffer;
+        private int _written;
+
+        public ReadOnlySpan<byte> WrittenSpan => _buffer.AsSpan(0, _written);
+
+        public void Reset()
+            => _written = 0;
+
+        public void Advance(int count)
+        {
+            if (count < 0 || _written + count > _buffer.Length)
+                throw new InvalidOperationException("Profiler UDP serialization exceeded the reusable payload buffer.");
+
+            _written += count;
+        }
+
+        public Memory<byte> GetMemory(int sizeHint = 0)
+        {
+            Ensure(sizeHint);
+            return _buffer.AsMemory(_written);
+        }
+
+        public Span<byte> GetSpan(int sizeHint = 0)
+        {
+            Ensure(sizeHint);
+            return _buffer.AsSpan(_written);
+        }
+
+        private void Ensure(int sizeHint)
+        {
+            if (sizeHint < 0)
+                throw new ArgumentOutOfRangeException(nameof(sizeHint));
+
+            int required = sizeHint == 0 ? 1 : sizeHint;
+            if (_buffer.Length - _written < required)
+                throw new InvalidOperationException("Profiler UDP serialization exceeded the reusable payload buffer.");
+        }
     }
 
     /// <summary>

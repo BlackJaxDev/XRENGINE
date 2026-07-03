@@ -602,6 +602,11 @@ public interface IRuntimeRenderingHostServices
     float MaxShadowRenderMilliseconds { get; }
 
     /// <summary>
+    /// Gets the maximum rendered-frame age for directional cascade atlas stale reprojection.
+    /// </summary>
+    int MaxDirectionalCascadeAtlasStaleFrames { get; }
+
+    /// <summary>
     /// Gets the minimum tile resolution allowed in the shadow atlas.
     /// </summary>
     uint MinShadowAtlasTileResolution { get; }

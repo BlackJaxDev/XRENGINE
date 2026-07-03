@@ -142,13 +142,12 @@ namespace XREngine.Components.Scripting
 
             OnAssemblyUnloaded?.Invoke(id);
 
-            // Encourage garbage collection to release the assembly
-            // This helps ensure file locks are released before recompilation
-            for (int i = 0; i < 3; i++)
-            {
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-            }
+            Engine.RequestMaintenanceGarbageCollection(new EngineMaintenanceGcRequest(
+                EngineMaintenanceGcReason.DynamicAssemblyUnload,
+                $"Game assembly '{id}' unloaded; reclaim collectible AssemblyLoadContext file locks.",
+                Generation: GC.MaxGeneration,
+                CompactLargeObjectHeap: false,
+                WaitForPendingFinalizers: true));
         }
 
         /// <summary>

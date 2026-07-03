@@ -9,12 +9,14 @@ using XREngine.Rendering;
 
 namespace XREngine.Rendering.Shadows;
 
-public sealed class ShadowAtlasManager
+public sealed partial class ShadowAtlasManager
 {
     private const int AtlasKindCount = 3;
     private const int ShadowEncodingCount = 4;
     private const string DirectionalGroupedFramesCounterName = "ShadowAtlas.Directional.GroupedFrames";
     private const string DirectionalSequentialFallbackFramesCounterName = "ShadowAtlas.Directional.SequentialFallbackFrames";
+    private const int MaxDirectionalCascadeGroupTileCount = 4;
+    private const int SequentialDirectionalCascadeBudgetCost = MaxDirectionalCascadeGroupTileCount * MaxDirectionalCascadeGroupTileCount;
     private const ulong LodVoluntaryChangeCooldownFrames = 6u;
     private const ulong LodDownsizeRePromotionCooldownFrames = 36u;
     private const ulong DemotionPromotionCooldownFrames = 12u;
@@ -22,6 +24,7 @@ public sealed class ShadowAtlasManager
     // relevance gaps without repacking visible cascades a few frames later.
     private const ulong ResidentEvictionTtlFrames = 240u;
     private const float DemotionSwitchMargin = 0.25f;
+    private static readonly Lazy<double?> SlowSolveWarningThresholdOverride = new(ReadSlowSolveWarningThresholdOverride);
 
     private sealed class RequestComparer : IComparer<ShadowMapRequest>
     {
@@ -83,6 +86,45 @@ public sealed class ShadowAtlasManager
         }
     }
 
+    private sealed class AllocationRecordComparer : IComparer<ShadowAtlasAllocation>
+    {
+        public static readonly AllocationRecordComparer Instance = new();
+
+        public int Compare(ShadowAtlasAllocation x, ShadowAtlasAllocation y)
+        {
+            int result = x.Key.CompareTo(y.Key);
+            if (result != 0)
+                return result;
+
+            result = x.AtlasKind.CompareTo(y.AtlasKind);
+            if (result != 0)
+                return result;
+
+            result = x.PageIndex.CompareTo(y.PageIndex);
+            if (result != 0)
+                return result;
+
+            result = x.PixelRect.Y.CompareTo(y.PixelRect.Y);
+            if (result != 0)
+                return result;
+
+            result = x.PixelRect.X.CompareTo(y.PixelRect.X);
+            if (result != 0)
+                return result;
+
+            result = x.PixelRect.Width.CompareTo(y.PixelRect.Width);
+            if (result != 0)
+                return result;
+
+            result = x.PixelRect.Height.CompareTo(y.PixelRect.Height);
+            if (result != 0)
+                return result;
+
+            result = x.Resolution.CompareTo(y.Resolution);
+            return result != 0 ? result : x.SkipReason.CompareTo(y.SkipReason);
+        }
+    }
+
     private struct BalancedAllocationEntry
     {
         public required ShadowMapRequest Request { get; init; }
@@ -123,12 +165,33 @@ public sealed class ShadowAtlasManager
         int AtlasId,
         int PageIndex);
 
+    private readonly record struct DirectionalCascadeSolveGroupKey(
+        Guid LightId,
+        ShadowRequestDomain Domain,
+        ShadowRequestSource Source,
+        EShadowMapEncoding Encoding);
+
     private readonly record struct PointFaceGroupKey(
         Guid LightId,
         ShadowRequestDomain Domain,
         EShadowMapEncoding Encoding,
         int AtlasId,
         int PageIndex);
+
+    private readonly record struct ShadowAtlasPageKey(int AtlasId, int PageIndex);
+
+    private readonly record struct ShadowTileCompletion(
+        ShadowRequestKey Key,
+        LightComponent Light,
+        ulong ContentHash,
+        ulong FrameId,
+        ulong PlanId,
+        int RecordIndex,
+        ShadowAtlasAllocation Allocation,
+        float NearPlane,
+        float FarPlane,
+        uint DesiredResolution,
+        DirectionalCascadeSampleState DirectionalCascadeSample);
 
     private readonly record struct DirectionalAtlasRenderEvent(
         Guid LightId,
@@ -172,10 +235,15 @@ public sealed class ShadowAtlasManager
         public int PointGroupSeedCount;
         public int PointGroupMemberCount;
         public int PointGroupCoLocationFailureCount;
+        public int IncrementalReuseCount;
+        public int WaterlineDemotionCount;
         public SkipReason LastFailureReason;
 
         public void Reset()
-            => this = default;
+        {
+            this = default;
+            DeterministicFallbackDemotionCount = 0;
+        }
 
         public ShadowAtlasSolveDiagnostics ToSnapshot(double elapsedMilliseconds)
             => new(
@@ -209,6 +277,8 @@ public sealed class ShadowAtlasManager
                 PointGroupSeedCount,
                 PointGroupMemberCount,
                 PointGroupCoLocationFailureCount,
+                IncrementalReuseCount,
+                WaterlineDemotionCount,
                 LastFailureReason);
     }
 
@@ -220,22 +290,37 @@ public sealed class ShadowAtlasManager
     private readonly List<ShadowAtlasGroupedDirectionalCascadeAllocation> _directionalCascadeGroups = new();
     private readonly Dictionary<DirectionalCascadeGroupKey, List<ShadowAtlasGroupedAllocationMember>> _directionalCascadeGroupMembersByKey = new();
     private readonly List<DirectionalCascadeGroupKey> _directionalCascadeGroupKeyScratch = new(16);
+    private readonly Dictionary<ShadowRequestKey, int> _directionalCascadeGroupIndexByRequest = new();
+    private readonly List<int> _directionalCascadeGroupLastRequestIndex = new();
+    private readonly Dictionary<DirectionalCascadeSolveGroupKey, int> _directionalCascadeSolveGroupCounts = new();
+    private readonly List<DirectionalCascadeSolveGroupKey> _directionalCascadeSolveGroupKeyScratch = new(16);
     private readonly List<ShadowAtlasGroupedPointFaceAllocation> _pointFaceGroups = new();
     private readonly Dictionary<PointFaceGroupKey, List<ShadowAtlasGroupedAllocationMember>> _pointFaceGroupMembersByKey = new();
     private readonly List<PointFaceGroupKey> _pointFaceGroupKeyScratch = new(16);
+    private readonly Dictionary<ShadowRequestKey, int> _pointFaceGroupIndexByFirstRequest = new();
     private readonly List<ShadowDirectionalAtlasLightDiagnostic> _directionalAtlasLightDiagnostics = new();
     private readonly List<DirectionalAtlasRenderEvent> _directionalAtlasRenderEvents = new();
     private readonly List<DirectionalGroupReservationFailure> _directionalGroupReservationFailures = new();
     private readonly List<ShadowAtlasPageDescriptor> _pageDescriptors;
     private readonly ShadowAtlasEncodingState[] _encodingStates;
-    private readonly object _submitSync = new();
+    private readonly Dictionary<ShadowRequestKey, int> _requestIndexByKey = new();
+    private readonly List<ShadowAtlasRenderPlanEntry> _renderPlanEntries = new();
+    private readonly List<ShadowAtlasRenderPlanMember> _renderPlanMembers = new();
+    private readonly ShadowAtlasRenderPlan[] _renderPlans = [new(), new()];
+    private readonly object _completionSync = new();
+    private readonly List<ShadowTileCompletion> _completionDrainScratch = new();
+    private ShadowTileCompletion[] _tileCompletions = new ShadowTileCompletion[256];
+    private int _tileCompletionHead;
+    private int _tileCompletionTail;
     private Dictionary<ShadowRequestKey, ShadowAtlasAllocation> _previousAllocations = new();
-    private readonly Dictionary<ShadowRequestKey, ShadowAtlasAllocation> _currentAllocations = new();
+    private Dictionary<ShadowRequestKey, ShadowAtlasAllocation> _currentAllocations = new();
     private readonly Dictionary<ShadowRequestKey, int> _currentAllocationIndices = new();
     private readonly Dictionary<ShadowRequestKey, ShadowResidentEntry> _residentAllocations = new();
+    private readonly Dictionary<ShadowAtlasPageKey, List<ShadowRequestKey>> _residentKeysByPage = new();
     private readonly Dictionary<ShadowRequestKey, ShadowLodState> _lodStates = new();
     private readonly Dictionary<ShadowRequestKey, ShadowDemotionState> _demotionStates = new();
     private readonly List<ShadowRequestKey> _residentRemovalScratch = new();
+    private readonly List<ShadowRequestKey> _residentPageRemovalScratch = new();
     private readonly List<ShadowRequestKey> _demotionRemovalScratch = new();
     private readonly List<PendingSkippedAllocation> _pendingSkippedAllocations = new();
     private readonly ShadowAtlasFrameData[] _frameBuffers = [new(), new()];
@@ -244,6 +329,7 @@ public sealed class ShadowAtlasManager
     private ulong _frameId;
     private ulong _fallbackFrameId;
     private ulong _generation;
+    private ulong _nextRenderPlanId;
     private int _queueOverflowCount;
     private int _tilesScheduledThisFrame;
     private int _activeCameraCount;
@@ -252,6 +338,8 @@ public sealed class ShadowAtlasManager
     private bool _repackRequested;
     private ShadowAtlasSolveDiagnosticsBuilder _solveDiagnostics;
     private ShadowAtlasSolveDiagnostics _lastSolveDiagnostics;
+    private int _publishedRenderPlanIndex;
+    private int _planningThreadId;
 
     public ShadowAtlasManager()
         : this(ShadowAtlasManagerSettings.Default)
@@ -301,12 +389,21 @@ public sealed class ShadowAtlasManager
         _previousAllocations.EnsureCapacity(_settings.MaxRequestsPerFrame);
         _currentAllocations.EnsureCapacity(_settings.MaxRequestsPerFrame);
         _currentAllocationIndices.EnsureCapacity(_settings.MaxRequestsPerFrame);
+        _requestIndexByKey.EnsureCapacity(_settings.MaxRequestsPerFrame);
+        _directionalCascadeGroupIndexByRequest.EnsureCapacity(_settings.MaxRequestsPerFrame);
+        _pointFaceGroupIndexByFirstRequest.EnsureCapacity(_settings.MaxRequestsPerFrame);
+        _renderPlanEntries.Capacity = Math.Max(_renderPlanEntries.Capacity, _settings.MaxRequestsPerFrame);
+        _renderPlanMembers.Capacity = Math.Max(_renderPlanMembers.Capacity, _settings.MaxRequestsPerFrame);
         _residentAllocations.EnsureCapacity(_settings.MaxRequestsPerFrame);
+        _residentKeysByPage.EnsureCapacity(_settings.MaxRequestsPerFrame);
         _lodStates.EnsureCapacity(_settings.MaxRequestsPerFrame);
         _demotionStates.EnsureCapacity(_settings.MaxRequestsPerFrame);
         _residentRemovalScratch.Capacity = Math.Max(_residentRemovalScratch.Capacity, _settings.MaxRequestsPerFrame);
+        _residentPageRemovalScratch.Capacity = Math.Max(_residentPageRemovalScratch.Capacity, _settings.MaxRequestsPerFrame);
         _demotionRemovalScratch.Capacity = Math.Max(_demotionRemovalScratch.Capacity, _settings.MaxRequestsPerFrame);
         _pendingSkippedAllocations.Capacity = Math.Max(_pendingSkippedAllocations.Capacity, _settings.MaxRequestsPerFrame);
+        _completionDrainScratch.Capacity = Math.Max(_completionDrainScratch.Capacity, _settings.MaxRequestsPerFrame);
+        EnsureCompletionCapacity(_settings.MaxRequestsPerFrame + 1);
         _directionalAtlasLightDiagnostics.Capacity = Math.Max(_directionalAtlasLightDiagnostics.Capacity, Math.Min(8, _settings.MaxRequestsPerFrame));
         _directionalAtlasRenderEvents.Capacity = Math.Max(_directionalAtlasRenderEvents.Capacity, Math.Min(16, _settings.MaxRequestsPerFrame));
         _directionalGroupReservationFailures.Capacity = Math.Max(_directionalGroupReservationFailures.Capacity, Math.Min(16, _settings.MaxRequestsPerFrame));
@@ -321,7 +418,13 @@ public sealed class ShadowAtlasManager
     }
 
     public void ConfigureFromEngineSettings()
-        => Configure(ShadowAtlasManagerSettings.FromCurrentRuntimeSettings());
+    {
+        ShadowAtlasManagerSettings normalized = NormalizeSettings(ShadowAtlasManagerSettings.FromCurrentRuntimeSettings());
+        if (normalized == _settings)
+            return;
+
+        Configure(normalized);
+    }
 
     public void BeginFrame(IRuntimeRenderWorld world, ReadOnlySpan<XRCamera> activeCameras)
     {
@@ -347,11 +450,17 @@ public sealed class ShadowAtlasManager
         }
 
         _activeCameraCount = Math.Max(0, activeCameraCount);
+        _planningThreadId = Environment.CurrentManagedThreadId;
         _queueOverflowCount = 0;
         _tilesScheduledThisFrame = 0;
+        DrainTileCompletions();
         _requests.Clear();
+        _requestIndexByKey.Clear();
         _frameAllocations.Clear();
         _directionalCascadeGroups.Clear();
+        _directionalCascadeGroupIndexByRequest.Clear();
+        _directionalCascadeGroupLastRequestIndex.Clear();
+        _pointFaceGroupIndexByFirstRequest.Clear();
         _pointFaceGroups.Clear();
         _directionalAtlasLightDiagnostics.Clear();
         _directionalAtlasRenderEvents.Clear();
@@ -372,41 +481,40 @@ public sealed class ShadowAtlasManager
 
     public bool Submit(in ShadowMapRequest request)
     {
-        lock (_submitSync)
+        AssertPlanningThread();
+
+        if (!IsValidRequest(request))
         {
-            if (!IsValidRequest(request))
-            {
-                _frameAllocations.Add(CreateSkippedAllocation(request, SkipReason.InvalidRequest));
-                return false;
-            }
-
-            if (_activeCameraCount <= 0 && request.ProjectionType != EShadowProjectionType.DirectionalPrimary)
-            {
-                _frameAllocations.Add(CreateSkippedAllocation(request, SkipReason.NoConsumerCamera));
-                return false;
-            }
-
-            if (_requests.Count >= _settings.MaxRequestsPerFrame)
-            {
-                _queueOverflowCount++;
-                int worstIndex = FindWorstQueuedRequestIndex();
-                ShadowMapRequest dropped = _requests[worstIndex];
-                if (RequestComparer.Instance.Compare(request, dropped) < 0)
-                {
-                    _requests[worstIndex] = request;
-                    _frameAllocations.Add(CreateSkippedAllocation(dropped, SkipReason.QueueOverflow));
-                    XREngine.Debug.Lighting($"[ShadowAtlas] Dropped shadow request for {dropped.Key} because the per-frame request queue is full ({_settings.MaxRequestsPerFrame}).");
-                    return true;
-                }
-
-                _frameAllocations.Add(CreateSkippedAllocation(request, SkipReason.QueueOverflow));
-                XREngine.Debug.Lighting($"[ShadowAtlas] Dropped shadow request for {request.Key} because the per-frame request queue is full ({_settings.MaxRequestsPerFrame}).");
-                return false;
-            }
-
-            _requests.Add(request);
-            return true;
+            _frameAllocations.Add(CreateSkippedAllocation(request, SkipReason.InvalidRequest));
+            return false;
         }
+
+        if (_activeCameraCount <= 0 && request.ProjectionType != EShadowProjectionType.DirectionalPrimary)
+        {
+            _frameAllocations.Add(CreateSkippedAllocation(request, SkipReason.NoConsumerCamera));
+            return false;
+        }
+
+        if (_requests.Count >= _settings.MaxRequestsPerFrame)
+        {
+            _queueOverflowCount++;
+            int worstIndex = FindWorstQueuedRequestIndex();
+            ShadowMapRequest dropped = _requests[worstIndex];
+            if (RequestComparer.Instance.Compare(request, dropped) < 0)
+            {
+                _requests[worstIndex] = request;
+                _frameAllocations.Add(CreateSkippedAllocation(dropped, SkipReason.QueueOverflow));
+                XREngine.Debug.Lighting($"[ShadowAtlas] Dropped shadow request for {dropped.Key} because the per-frame request queue is full ({_settings.MaxRequestsPerFrame}).");
+                return true;
+            }
+
+            _frameAllocations.Add(CreateSkippedAllocation(request, SkipReason.QueueOverflow));
+            XREngine.Debug.Lighting($"[ShadowAtlas] Dropped shadow request for {request.Key} because the per-frame request queue is full ({_settings.MaxRequestsPerFrame}).");
+            return false;
+        }
+
+        _requests.Add(request);
+        return true;
     }
 
     private int FindWorstQueuedRequestIndex()
@@ -423,18 +531,22 @@ public sealed class ShadowAtlasManager
 
     public void SolveAllocations()
     {
+        AssertPlanningThread();
         using var sample = RuntimeEngine.Profiler.Start("ShadowAtlasManager.SolveAllocations");
         long solveStart = Stopwatch.GetTimestamp();
         _solveDiagnostics.Reset();
 
         ClassifyRequestsForSolve();
+        PreparePersistentAllocatorForSolve();
 
         for (int kind = 0; kind < AtlasKindCount; kind++)
             for (int encoding = 0; encoding < ShadowEncodingCount; encoding++)
                 SolveAllocationsForState((EShadowAtlasKind)kind, (EShadowMapEncoding)encoding);
 
+        StabilizeFrameAllocationRecordOrder();
         BuildDirectionalCascadeGroups();
         BuildPointFaceGroups();
+        BuildRenderPlan();
 
         _lastSolveDiagnostics = _solveDiagnostics.ToSnapshot(ElapsedMilliseconds(solveStart));
         RuntimeEngine.Rendering.Stats.RecordShadowAtlasSolveDiagnostics(_lastSolveDiagnostics);
@@ -458,6 +570,10 @@ public sealed class ShadowAtlasManager
         AppendSortedBucketsToRequestList(EShadowAtlasKind.Directional);
         AppendSortedBucketsToRequestList(EShadowAtlasKind.Spot);
         AppendSortedBucketsToRequestList(EShadowAtlasKind.Point);
+        _requestIndexByKey.Clear();
+        _requestIndexByKey.EnsureCapacity(_requests.Count);
+        for (int i = 0; i < _requests.Count; i++)
+            _requestIndexByKey[_requests[i].Key] = i;
     }
 
     private void AppendSortedBucketsToRequestList(EShadowAtlasKind atlasKind)
@@ -513,10 +629,13 @@ public sealed class ShadowAtlasManager
         if (diagnostics.ElapsedMilliseconds < thresholdMs)
             return;
 
-        XREngine.Debug.LightingWarningEvery(
-            "ShadowAtlas.SolveAllocations.Slow",
-            TimeSpan.FromSeconds(2.0),
-            "[ShadowAtlas] Slow allocation solve: elapsedMs={0:F2}, thresholdMs={1:F2}, requests={2}, attempts={3}, failedCandidates={4}, demotions={5}, stickyDemotions={6}, directionalGroupDemotions={7}, fallbackDemotions={8}, pageAlloc={9}/{10}, pageCreates={11}/{12}, pageClears={13}, priorReserve={14}/{15}, priorSubBlock={16}/{17}, directionalGroups={18}/{19}/{20}, pointGroups={21}/{22}/{23}, lastFailure={24}.",
+        if (!XREngine.Debug.ShouldLogEvery("ShadowAtlas.SolveAllocations.Slow", TimeSpan.FromSeconds(2.0)))
+            return;
+
+        XREngine.Debug.Lighting(
+            XREngine.EOutputVerbosity.Normal,
+            false,
+            "[WARN] [ShadowAtlas] Slow allocation solve: elapsedMs={0:F2}, thresholdMs={1:F2}, requests={2}, attempts={3}, failedCandidates={4}, demotions={5}, stickyDemotions={6}, directionalGroupDemotions={7}, fallbackDemotions={8}, pageAlloc={9}/{10}, pageCreates={11}/{12}, pageClears={13}, priorReserve={14}/{15}, priorSubBlock={16}/{17}, directionalGroups={18}/{19}/{20}, pointGroups={21}/{22}/{23}, incrementalReuse={24}, waterlineDemotions={25}, lastFailure={26}.",
             diagnostics.ElapsedMilliseconds,
             thresholdMs,
             diagnostics.ClassifiedRequestCount,
@@ -541,15 +660,20 @@ public sealed class ShadowAtlasManager
             diagnostics.PointGroupSeedCount,
             diagnostics.PointGroupMemberCount,
             diagnostics.PointGroupCoLocationFailureCount,
+            diagnostics.IncrementalReuseCount,
+            diagnostics.WaterlineDemotionCount,
             diagnostics.LastFailureReason);
     }
 
     private void WarnDeterministicFallbackDemotion(int demotionCount, int attempt, int maxAttempts, int entryCount)
     {
-        XREngine.Debug.LightingWarningEvery(
-            "ShadowAtlas.SolveAllocations.FallbackDemotion",
-            TimeSpan.FromSeconds(2.0),
-            "[ShadowAtlas] Allocation solve reached the attempt ceiling and applied deterministic fallback demotion: demotions={0}, attempt={1}, maxAttempts={2}, entries={3}, frame={4}.",
+        if (!XREngine.Debug.ShouldLogEvery("ShadowAtlas.SolveAllocations.FallbackDemotion", TimeSpan.FromSeconds(2.0)))
+            return;
+
+        XREngine.Debug.Lighting(
+            XREngine.EOutputVerbosity.Normal,
+            false,
+            "[WARN] [ShadowAtlas] Allocation solve reached the attempt ceiling and applied deterministic fallback demotion: demotions={0}, attempt={1}, maxAttempts={2}, entries={3}, frame={4}.",
             demotionCount,
             attempt,
             maxAttempts,
@@ -558,6 +682,9 @@ public sealed class ShadowAtlasManager
     }
 
     private static double ResolveSlowSolveWarningThresholdMilliseconds(ShadowAtlasManagerSettings settings)
+        => SlowSolveWarningThresholdOverride.Value ?? Math.Max(2.0, settings.MaxRenderMilliseconds);
+
+    private static double? ReadSlowSolveWarningThresholdOverride()
     {
         string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShadowAtlasSolveWarnMs);
         if (!string.IsNullOrWhiteSpace(value) &&
@@ -567,7 +694,7 @@ public sealed class ShadowAtlasManager
             return threshold;
         }
 
-        return Math.Max(2.0, settings.MaxRenderMilliseconds);
+        return null;
     }
 
     private bool TryComparePriorPlacement(ShadowRequestKey x, ShadowRequestKey y, out int result)
@@ -617,6 +744,42 @@ public sealed class ShadowAtlasManager
         return false;
     }
 
+    private void PreparePersistentAllocatorForSolve()
+    {
+        if (_repackRequested)
+        {
+            for (int i = 0; i < _encodingStates.Length; i++)
+            {
+                _solveDiagnostics.PageClearCount += _encodingStates[i].PageCount;
+                _encodingStates[i].ResetOccupancy();
+            }
+
+            _residentAllocations.Clear();
+            _residentKeysByPage.Clear();
+            _previousAllocations.Clear();
+            return;
+        }
+
+        _residentRemovalScratch.Clear();
+        bool overCapacity = _residentAllocations.Count > _settings.MaxRequestsPerFrame;
+        foreach (var pair in _residentAllocations)
+        {
+            bool requestedThisFrame = _requestIndexByKey.ContainsKey(pair.Key);
+            ulong age = _frameId >= pair.Value.LastRequestedFrame
+                ? _frameId - pair.Value.LastRequestedFrame
+                : ulong.MaxValue;
+            if ((!requestedThisFrame && age > ResidentEvictionTtlFrames) ||
+                (overCapacity && !requestedThisFrame) ||
+                !IsUsableResidentAllocation(pair.Value.Allocation))
+            {
+                _residentRemovalScratch.Add(pair.Key);
+            }
+        }
+
+        for (int i = 0; i < _residentRemovalScratch.Count; i++)
+            ReleaseResidentAllocation(_residentRemovalScratch[i]);
+    }
+
     private void SolveAllocationsForState(EShadowAtlasKind atlasKind, EShadowMapEncoding encoding)
     {
         _balancedAllocationEntries.Clear();
@@ -639,6 +802,7 @@ public sealed class ShadowAtlasManager
                 if (allocation.IsResident)
                 {
                     _pendingSkippedAllocations.Add(new PendingSkippedAllocation(request, allocation));
+                    ReleaseResidentAllocation(request.Key);
                     continue;
                 }
 
@@ -668,6 +832,7 @@ public sealed class ShadowAtlasManager
         int entryCount = _balancedAllocationEntries.Count;
         ApplyDirectionalCascadeGroupResolutionCaps(entryCount);
         ShadowAtlasEncodingState state = GetEncodingState(atlasKind, encoding);
+        ApplyFeasibilityWaterlineDemotions(entryCount);
         if (entryCount == 0)
         {
             PublishPendingSkippedAllocations(state);
@@ -687,10 +852,12 @@ public sealed class ShadowAtlasManager
         {
             BalancedAllocationEntry entry = _balancedAllocationEntries[i];
             ShadowAtlasAllocation allocation = entry.Allocation;
-            _currentAllocations[entry.Request.Key] = allocation;
             _currentAllocationIndices[entry.Request.Key] = _frameAllocations.Count;
             if (allocation.IsResident)
+            {
+                _currentAllocations[entry.Request.Key] = allocation;
                 UpdateLodState(entry.Request.Key, allocation.Resolution);
+            }
             _frameAllocations.Add(allocation);
         }
 
@@ -736,18 +903,31 @@ public sealed class ShadowAtlasManager
     private void PublishCurrentAllocation(in ShadowMapRequest request, in ShadowAtlasAllocation allocation)
     {
         int allocationIndex = _frameAllocations.Count;
+        _currentAllocationIndices[request.Key] = allocationIndex;
         if (allocation.IsResident)
-        {
             _currentAllocations[request.Key] = allocation;
-            _currentAllocationIndices[request.Key] = allocationIndex;
-        }
 
         _frameAllocations.Add(allocation);
+    }
+
+    private void StabilizeFrameAllocationRecordOrder()
+    {
+        if (_frameAllocations.Count > 1)
+            _frameAllocations.Sort(AllocationRecordComparer.Instance);
+
+        _currentAllocationIndices.Clear();
+        for (int i = 0; i < _frameAllocations.Count; i++)
+        {
+            ShadowAtlasAllocation allocation = _frameAllocations[i];
+            _currentAllocationIndices[allocation.Key] = i;
+        }
     }
 
     private void BuildDirectionalCascadeGroups()
     {
         _directionalCascadeGroups.Clear();
+        _directionalCascadeGroupIndexByRequest.Clear();
+        _directionalCascadeGroupLastRequestIndex.Clear();
         ClearDirectionalCascadeGroupBuildMap();
 
         for (int i = 0; i < _requests.Count; i++)
@@ -810,6 +990,7 @@ public sealed class ShadowAtlasManager
                 publishedMembers[memberIndex] = member with { ViewportScissorIndex = memberIndex };
             }
 
+            int groupIndex = _directionalCascadeGroups.Count;
             _directionalCascadeGroups.Add(new ShadowAtlasGroupedDirectionalCascadeAllocation(
                 key.LightId,
                 key.Domain,
@@ -820,6 +1001,22 @@ public sealed class ShadowAtlasManager
                 key.PageIndex,
                 publishedMembers.Length,
                 publishedMembers));
+            int lastRequestIndex = -1;
+            for (int memberIndex = 0; memberIndex < publishedMembers.Length; memberIndex++)
+            {
+                ShadowRequestKey requestKey = new(
+                    key.LightId,
+                    key.Domain,
+                    key.Source,
+                    EShadowProjectionType.DirectionalCascade,
+                    publishedMembers[memberIndex].CascadeIndex,
+                    key.Encoding);
+                _directionalCascadeGroupIndexByRequest[requestKey] = groupIndex;
+                if (_requestIndexByKey.TryGetValue(requestKey, out int requestIndex))
+                    lastRequestIndex = Math.Max(lastRequestIndex, requestIndex);
+            }
+
+            _directionalCascadeGroupLastRequestIndex.Add(lastRequestIndex);
         }
     }
 
@@ -842,6 +1039,7 @@ public sealed class ShadowAtlasManager
     private void BuildPointFaceGroups()
     {
         _pointFaceGroups.Clear();
+        _pointFaceGroupIndexByFirstRequest.Clear();
         ClearPointFaceGroupBuildMap();
 
         for (int i = 0; i < _requests.Count; i++)
@@ -905,6 +1103,7 @@ public sealed class ShadowAtlasManager
                 publishedMembers[memberIndex] = member with { ViewportScissorIndex = memberIndex };
             }
 
+            int groupIndex = _pointFaceGroups.Count;
             _pointFaceGroups.Add(new ShadowAtlasGroupedPointFaceAllocation(
                 key.LightId,
                 key.Domain,
@@ -914,6 +1113,17 @@ public sealed class ShadowAtlasManager
                 key.PageIndex,
                 publishedMembers.Length,
                 publishedMembers));
+            if (publishedMembers.Length > 0)
+            {
+                ShadowRequestKey firstRequestKey = new(
+                    key.LightId,
+                    key.Domain,
+                    ShadowRequestSource.Default,
+                    EShadowProjectionType.PointFace,
+                    publishedMembers[0].CascadeIndex,
+                    key.Encoding);
+                _pointFaceGroupIndexByFirstRequest[firstRequestKey] = groupIndex;
+            }
         }
     }
 
@@ -939,88 +1149,138 @@ public sealed class ShadowAtlasManager
         out SkipReason failureReason)
     {
         failureReason = SkipReason.None;
-        int maxAttempts = CalculateMaxBalancedSolveAttempts(entryCount);
-        bool fallbackDemotionApplied = false;
-        int attempt = 0;
+        _solveDiagnostics.BalancedSolveAttemptCount++;
+        ResetBalancedAllocationSolveState(entryCount);
+        TryReusePersistentAllocations(state, entryCount);
+        TryAllocateDirectionalCascadeGroups(state, entryCount);
 
-        while (true)
+        for (int i = 0; i < entryCount; i++)
         {
-            attempt++;
-            _solveDiagnostics.BalancedSolveAttemptCount++;
-            _solveDiagnostics.PageClearCount += state.PageCount;
-            state.BeginFrame();
-            ResetBalancedAllocationSolveState(entryCount);
-            TryAllocateDirectionalCascadeGroups(state, entryCount);
+            BalancedAllocationEntry entry = _balancedAllocationEntries[i];
+            if (entry.AllocationSolved)
+                continue;
 
-            bool success = true;
-            for (int i = 0; i < entryCount; i++)
+            if (TryAllocateCandidate(state, entry.Request, entry.Resolution, out ShadowAtlasAllocation allocation, out failureReason))
             {
-                BalancedAllocationEntry entry = _balancedAllocationEntries[i];
-                if (entry.AllocationSolved)
-                    continue;
-
-                if (!TryAllocateCandidate(state, entry.Request, entry.Resolution, out ShadowAtlasAllocation allocation, out failureReason))
-                {
-                    _solveDiagnostics.FailedCandidateCount++;
-                    RecordSolveFailureReason(failureReason == SkipReason.None ? state.LastFailureReason : failureReason);
-
-                    if (entry.Resolution >= _settings.PageSize)
-                    {
-                        int fullPageDemotions = TryReduceAllocationsAtResolution(entryCount, entry.Resolution);
-                        if (fullPageDemotions > 0)
-                        {
-                            success = false;
-                            break;
-                        }
-                    }
-
-                    if (!fallbackDemotionApplied && attempt >= maxAttempts)
-                    {
-                        int fallbackDemotions = ReduceDemotableAllocationsToMinimum(entryCount);
-                        if (fallbackDemotions > 0)
-                        {
-                            _solveDiagnostics.DeterministicFallbackDemotionCount += fallbackDemotions;
-                            fallbackDemotionApplied = true;
-                            WarnDeterministicFallbackDemotion(fallbackDemotions, attempt, maxAttempts, entryCount);
-                            success = false;
-                            break;
-                        }
-
-                        fallbackDemotionApplied = true;
-                    }
-
-                    int demotions = TryReduceBalancedAllocations(entryCount, CalculateBalancedDemotionBatchSize(entryCount));
-                    if (demotions > 0)
-                    {
-                        success = false;
-                        break;
-                    }
-
-                    if (failureReason == SkipReason.None)
-                        failureReason = state.LastFailureReason is SkipReason.None ? SkipReason.AllocationFailed : state.LastFailureReason;
-
-                    entry.Allocation = CreateSkippedAllocation(entry.Request, failureReason);
-                    entry.AllocationSolved = true;
-                    _balancedAllocationEntries[i] = entry;
-                    failureReason = SkipReason.None;
-                    continue;
-                }
-
                 entry.Allocation = allocation;
                 entry.AllocationSolved = true;
                 _balancedAllocationEntries[i] = entry;
+                continue;
             }
 
-            if (success)
-                return true;
+            _solveDiagnostics.FailedCandidateCount++;
+            RecordSolveFailureReason(failureReason == SkipReason.None ? state.LastFailureReason : failureReason);
+            if (TryRepairAllocationLocally(state, i, entryCount, out allocation, out failureReason))
+            {
+                entry = _balancedAllocationEntries[i];
+                entry.Allocation = allocation;
+                entry.AllocationSolved = true;
+                _balancedAllocationEntries[i] = entry;
+                continue;
+            }
+
+            if (failureReason == SkipReason.None)
+                failureReason = state.LastFailureReason is SkipReason.None ? SkipReason.AllocationFailed : state.LastFailureReason;
+
+            entry.Allocation = CreateSkippedAllocation(entry.Request, failureReason);
+            entry.AllocationSolved = true;
+            _balancedAllocationEntries[i] = entry;
+            failureReason = SkipReason.None;
         }
+
+        return true;
     }
 
     private static int CalculateMaxBalancedSolveAttempts(int entryCount)
-        => Math.Clamp((entryCount * 4) + 8, 8, 128);
+        => Math.Clamp(entryCount / 64 + 1, 1, 4);
 
     private static int CalculateBalancedDemotionBatchSize(int entryCount)
         => Math.Clamp(entryCount / 16, 1, 8);
+
+    private void TryReusePersistentAllocations(ShadowAtlasEncodingState state, int entryCount)
+    {
+        if (_repackRequested)
+            return;
+
+        for (int i = 0; i < entryCount; i++)
+        {
+            BalancedAllocationEntry entry = _balancedAllocationEntries[i];
+            if (entry.AllocationSolved ||
+                !TryGetResidentEntry(entry.Request.Key, out ShadowResidentEntry resident) ||
+                !IsReusablePersistentAllocation(entry.Request, resident.Allocation, state, entry.Resolution))
+            {
+                continue;
+            }
+
+            ShadowAtlasAllocation allocation = CreateResidentAllocation(
+                entry.Request,
+                state.AtlasKind,
+                resident.Allocation.PageIndex,
+                resident.Allocation.PixelRect.X,
+                resident.Allocation.PixelRect.Y,
+                entry.Resolution);
+            entry.Allocation = allocation;
+            entry.AllocationSolved = true;
+            _balancedAllocationEntries[i] = entry;
+            _solveDiagnostics.IncrementalReuseCount++;
+        }
+    }
+
+    private static bool IsReusablePersistentAllocation(
+        ShadowMapRequest request,
+        in ShadowAtlasAllocation allocation,
+        ShadowAtlasEncodingState state,
+        uint resolution)
+        => allocation.IsResident &&
+           allocation.AtlasKind == state.AtlasKind &&
+           allocation.AtlasId == GetAtlasId(state.AtlasKind, request.Encoding) &&
+           allocation.PageIndex >= 0 &&
+           allocation.Resolution == resolution &&
+           allocation.PixelRect.Width == resolution &&
+           allocation.PixelRect.Height == resolution;
+
+    private bool TryRepairAllocationLocally(
+        ShadowAtlasEncodingState state,
+        int entryIndex,
+        int entryCount,
+        out ShadowAtlasAllocation allocation,
+        out SkipReason failureReason)
+    {
+        int attempts = 0;
+        while (attempts < CalculateMaxBalancedSolveAttempts(entryCount) &&
+               TryReduceAllocationAtIndex(entryIndex, entryCount, out bool demotedSolvedAllocation))
+        {
+            attempts++;
+            if (demotedSolvedAllocation)
+                ReleaseSolvedAllocation(state, entryIndex);
+
+            BalancedAllocationEntry repaired = _balancedAllocationEntries[entryIndex];
+            if (TryAllocateCandidate(state, repaired.Request, repaired.Resolution, out allocation, out failureReason))
+                return true;
+
+            _solveDiagnostics.FailedCandidateCount++;
+            RecordSolveFailureReason(failureReason == SkipReason.None ? state.LastFailureReason : failureReason);
+        }
+
+        allocation = default;
+        failureReason = state.LastFailureReason is SkipReason.None ? SkipReason.AllocationFailed : state.LastFailureReason;
+        return false;
+    }
+
+    private void ReleaseSolvedAllocation(ShadowAtlasEncodingState state, int entryIndex)
+    {
+        if ((uint)entryIndex >= (uint)_balancedAllocationEntries.Count)
+            return;
+
+        BalancedAllocationEntry entry = _balancedAllocationEntries[entryIndex];
+        if (!entry.AllocationSolved || !entry.Allocation.IsResident)
+            return;
+
+        state.TryFree(entry.Allocation);
+        entry.Allocation = default;
+        entry.AllocationSolved = false;
+        _balancedAllocationEntries[entryIndex] = entry;
+    }
 
     private int TryReduceBalancedAllocations(int entryCount, int maxDemotions)
     {
@@ -1239,34 +1499,47 @@ public sealed class ShadowAtlasManager
         => MathF.Max(0.0f, request.Priority);
 
     private static uint ResolveBalancedMinimumResolution(ShadowMapRequest request, uint desired, uint pageSize)
-    {
-        if (GetAtlasKind(request.ProjectionType) == EShadowAtlasKind.Directional)
-            return NormalizeTileResolution(request.MinimumResolution, 1u, desired, pageSize);
-
-        return NormalizeTileResolution(request.MinimumResolution, 1u, desired, pageSize);
-    }
+        => GetAtlasKind(request.ProjectionType) == EShadowAtlasKind.Directional
+            ? NormalizeTileResolution(request.MinimumResolution, 1u, desired, pageSize)
+            : NormalizeTileResolution(request.MinimumResolution, 1u, desired, pageSize);
 
     private void ApplyDirectionalCascadeGroupResolutionCaps(int entryCount)
     {
+        _directionalCascadeSolveGroupCounts.Clear();
+        _directionalCascadeSolveGroupKeyScratch.Clear();
+
         for (int i = 0; i < entryCount; i++)
         {
-            ShadowMapRequest seed = _balancedAllocationEntries[i].Request;
-            if (seed.ProjectionType != EShadowProjectionType.DirectionalCascade ||
-                HasEarlierDirectionalCascadeGroup(seed, i))
-            {
+            ShadowMapRequest request = _balancedAllocationEntries[i].Request;
+            if (request.ProjectionType != EShadowProjectionType.DirectionalCascade)
                 continue;
-            }
 
-            int cascadeCount = CountDirectionalCascadeGroupMembers(seed, entryCount);
+            DirectionalCascadeSolveGroupKey key = new(request.Key.LightId, request.Key.Domain, request.Key.Source, request.Encoding);
+            if (!_directionalCascadeSolveGroupCounts.ContainsKey(key))
+                _directionalCascadeSolveGroupKeyScratch.Add(key);
+            _directionalCascadeSolveGroupCounts[key] = _directionalCascadeSolveGroupCounts.TryGetValue(key, out int count) ? count + 1 : 1;
+        }
+
+        for (int i = 0; i < _directionalCascadeSolveGroupKeyScratch.Count; i++)
+        {
+            DirectionalCascadeSolveGroupKey key = _directionalCascadeSolveGroupKeyScratch[i];
+            int cascadeCount = _directionalCascadeSolveGroupCounts[key];
             if (cascadeCount <= 1)
                 continue;
 
             uint fairResolution = CalculateDirectionalCascadeGroupResolutionCap(cascadeCount);
-            for (int j = i; j < entryCount; j++)
+            for (int j = 0; j < entryCount; j++)
             {
                 BalancedAllocationEntry entry = _balancedAllocationEntries[j];
-                if (!IsSameDirectionalCascadeGroup(seed, entry.Request))
+                ShadowMapRequest request = entry.Request;
+                if (request.ProjectionType != EShadowProjectionType.DirectionalCascade ||
+                    request.Key.LightId != key.LightId ||
+                    request.Key.Domain != key.Domain ||
+                    request.Key.Source != key.Source ||
+                    request.Encoding != key.Encoding)
+                {
                     continue;
+                }
 
                 uint cappedResolution = Math.Min(entry.Resolution, fairResolution);
                 uint cappedMinimum = Math.Min(entry.MinimumResolution, cappedResolution);
@@ -1277,17 +1550,6 @@ public sealed class ShadowAtlasManager
                 };
             }
         }
-    }
-
-    private bool HasEarlierDirectionalCascadeGroup(ShadowMapRequest request, int currentIndex)
-    {
-        for (int i = 0; i < currentIndex; i++)
-        {
-            if (IsSameDirectionalCascadeGroup(request, _balancedAllocationEntries[i].Request))
-                return true;
-        }
-
-        return false;
     }
 
     private int CountDirectionalCascadeGroupMembers(ShadowMapRequest request, int entryCount)
@@ -1306,6 +1568,52 @@ public sealed class ShadowAtlasManager
            x.Key.Domain == y.Key.Domain &&
            x.Key.Source == y.Key.Source &&
            x.Encoding == y.Encoding;
+
+    private void ApplyFeasibilityWaterlineDemotions(int entryCount)
+    {
+        if (entryCount <= 1)
+            return;
+
+        long capacity = checked((long)_settings.PageSize * _settings.PageSize * Math.Max(1, _settings.MaxPages));
+        long waterline = capacity;
+        long requested = CalculateRequestedTexels(entryCount);
+        while (requested > waterline && TryReduceWaterlineAllocation(entryCount))
+        {
+            _solveDiagnostics.WaterlineDemotionCount++;
+            requested = CalculateRequestedTexels(entryCount);
+        }
+    }
+
+    private bool TryReduceWaterlineAllocation(int entryCount)
+    {
+        int selectedIndex = -1;
+        for (int i = 0; i < entryCount; i++)
+        {
+            BalancedAllocationEntry entry = _balancedAllocationEntries[i];
+            if (entry.Resolution <= entry.MinimumResolution || entry.Request.EditorPinned)
+                continue;
+
+            if (selectedIndex < 0 ||
+                ShouldPreferDemotionCandidate(entry, _balancedAllocationEntries[selectedIndex]))
+            {
+                selectedIndex = i;
+            }
+        }
+
+        return selectedIndex >= 0 && TryReduceAllocationAtIndex(selectedIndex, entryCount, out _);
+    }
+
+    private long CalculateRequestedTexels(int entryCount)
+    {
+        long texels = 0L;
+        for (int i = 0; i < entryCount; i++)
+        {
+            uint resolution = _balancedAllocationEntries[i].Resolution;
+            texels += (long)resolution * resolution;
+        }
+
+        return texels;
+    }
 
     private uint CalculateDirectionalCascadeGroupResolutionCap(int cascadeCount)
     {
@@ -1326,14 +1634,250 @@ public sealed class ShadowAtlasManager
         return result;
     }
 
+    public ShadowAtlasRenderPlan PublishedRenderPlan => _renderPlans[_publishedRenderPlanIndex];
+
+    private ShadowAtlasRenderPlan GetPendingRenderPlan()
+        => _renderPlans[1 - _publishedRenderPlanIndex];
+
+    private void BuildRenderPlan()
+    {
+        AssertPlanningThread();
+        _renderPlanEntries.Clear();
+        _renderPlanMembers.Clear();
+
+        for (int i = 0; i < _requests.Count; i++)
+        {
+            ShadowMapRequest request = _requests[i];
+            if (request.ForcedSkipReason != SkipReason.None)
+                continue;
+
+            if (!TryGetFrameAllocation(request.Key, out ShadowAtlasAllocation allocation) ||
+                !_currentAllocationIndices.TryGetValue(request.Key, out int recordIndex) ||
+                !allocation.IsResident ||
+                !TryGetPageResource(allocation, request.Encoding, out ShadowAtlasPageResource? page))
+            {
+                continue;
+            }
+
+            if (TryGetDirectionalCascadeGroupContainingRequest(request, out ShadowAtlasGroupedDirectionalCascadeAllocation directionalGroup) &&
+                TryGetDirectionalCascadeGroupRenderRequirement(directionalGroup, out bool requiresDirectionalGroupRender))
+            {
+                int memberStart = _renderPlanMembers.Count;
+                AppendDirectionalGroupPlanMembers(directionalGroup);
+                ShadowAtlasRenderBudgetClass budgetClass = ResolveBudgetClass(request);
+                int lastGroupRequestIndex = FindLastDirectionalCascadeGroupRequestIndex(directionalGroup, i);
+                _renderPlanEntries.Add(new ShadowAtlasRenderPlanEntry(
+                    ShadowAtlasRenderPlanEntryKind.DirectionalCascadeGroup,
+                    request,
+                    allocation,
+                    page,
+                    directionalGroup,
+                    default,
+                    memberStart,
+                    _renderPlanMembers.Count - memberStart,
+                    i,
+                    lastGroupRequestIndex,
+                    recordIndex,
+                    requiresDirectionalGroupRender,
+                    budgetClass == ShadowAtlasRenderBudgetClass.CriticalBypass,
+                    budgetClass));
+                i = Math.Max(i, lastGroupRequestIndex);
+                continue;
+            }
+
+            if (TryGetFirstPointFaceGroup(request, out ShadowAtlasGroupedPointFaceAllocation pointGroup) &&
+                TryGetPointFaceGroupRenderRequirement(pointGroup, out bool requiresPointGroupRender))
+            {
+                int memberStart = _renderPlanMembers.Count;
+                AppendPointGroupPlanMembers(pointGroup);
+                ShadowAtlasRenderBudgetClass budgetClass = ResolveBudgetClass(request);
+                _renderPlanEntries.Add(new ShadowAtlasRenderPlanEntry(
+                    ShadowAtlasRenderPlanEntryKind.PointFaceGroup,
+                    request,
+                    allocation,
+                    page,
+                    default,
+                    pointGroup,
+                    memberStart,
+                    _renderPlanMembers.Count - memberStart,
+                    i,
+                    i,
+                    recordIndex,
+                    requiresPointGroupRender,
+                    budgetClass == ShadowAtlasRenderBudgetClass.CriticalBypass,
+                    budgetClass));
+                continue;
+            }
+
+            ShadowAtlasRenderBudgetClass tileBudgetClass = ResolveBudgetClass(request);
+            _renderPlanEntries.Add(new ShadowAtlasRenderPlanEntry(
+                ShadowAtlasRenderPlanEntryKind.Tile,
+                request,
+                allocation,
+                page,
+                default,
+                default,
+                MemberStart: 0,
+                MemberCount: 0,
+                RequestStartIndex: i,
+                RequestEndIndex: i,
+                RecordIndex: recordIndex,
+                RequiresRender: RequiresTileRender(request, allocation),
+                TimeBudgetBypass: tileBudgetClass == ShadowAtlasRenderBudgetClass.CriticalBypass,
+                BudgetClass: tileBudgetClass));
+        }
+
+        GetPendingRenderPlan().SetData(_frameId, AllocateRenderPlanId(), _requests.Count, _renderPlanEntries, _renderPlanMembers);
+    }
+
+    private ulong AllocateRenderPlanId()
+    {
+        unchecked
+        {
+            _nextRenderPlanId++;
+            if (_nextRenderPlanId == 0u)
+                _nextRenderPlanId = 1u;
+
+            return _nextRenderPlanId;
+        }
+    }
+
+    private void AppendDirectionalGroupPlanMembers(in ShadowAtlasGroupedDirectionalCascadeAllocation group)
+    {
+        if (group.Members is null)
+            return;
+
+        int count = Math.Min(group.CascadeCount, group.Members.Length);
+        for (int i = 0; i < count; i++)
+        {
+            ShadowAtlasGroupedAllocationMember member = group.Members[i];
+            if ((uint)member.RecordIndex >= (uint)_frameAllocations.Count)
+                continue;
+
+            ShadowAtlasAllocation allocation = _frameAllocations[member.RecordIndex];
+            if (TryFindRequest(allocation.Key, out ShadowMapRequest request) &&
+                RequiresTileRender(request, allocation))
+            {
+                _renderPlanMembers.Add(new ShadowAtlasRenderPlanMember(request, allocation, member.RecordIndex));
+            }
+        }
+    }
+
+    private void AppendPointGroupPlanMembers(in ShadowAtlasGroupedPointFaceAllocation group)
+    {
+        if (group.Members is null)
+            return;
+
+        int count = Math.Min(group.FaceCount, group.Members.Length);
+        for (int i = 0; i < count; i++)
+        {
+            ShadowAtlasGroupedAllocationMember member = group.Members[i];
+            if ((uint)member.RecordIndex >= (uint)_frameAllocations.Count)
+                continue;
+
+            ShadowAtlasAllocation allocation = _frameAllocations[member.RecordIndex];
+            if (TryFindRequest(allocation.Key, out ShadowMapRequest request))
+                _renderPlanMembers.Add(new ShadowAtlasRenderPlanMember(request, allocation, member.RecordIndex));
+        }
+    }
+
+    private bool TryGetPageResource(
+        in ShadowAtlasAllocation allocation,
+        EShadowMapEncoding encoding,
+        out ShadowAtlasPageResource? page)
+        => GetEncodingState(allocation.AtlasKind, encoding).TryGetPageResource(allocation.PageIndex, out page) &&
+           page is not null;
+
+    private static ShadowAtlasRenderBudgetClass ResolveBudgetClass(ShadowMapRequest request)
+        => ShouldRenderDirectionalRefreshPastBudget(request)
+            ? ShadowAtlasRenderBudgetClass.CriticalBypass
+            : RenderWorkBudgetCoordinator.ShouldDeferShadowAtlasLowPriorityTile(request.Priority, request.EditorPinned)
+                ? ShadowAtlasRenderBudgetClass.Deferrable
+                : ShadowAtlasRenderBudgetClass.Normal;
+
+    private ShadowAtlasRenderPlan SelectRenderPlanForExecution()
+    {
+        ShadowAtlasRenderPlan plan = PublishedRenderPlan;
+        LogRenderPlanExecutionSource(plan);
+        return plan;
+    }
+
+    private void LogRenderPlanExecutionSource(ShadowAtlasRenderPlan plan)
+    {
+        if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+            !XREngine.Debug.ShouldLogEvery(
+                $"DirectionalShadowAudit.AtlasPlanExecution.{GetHashCode()}",
+                TimeSpan.FromSeconds(1.0)))
+        {
+            return;
+        }
+
+        XREngine.Debug.Lighting(
+            XREngine.EOutputVerbosity.Normal,
+            false,
+            "[DirectionalShadowAudit][AtlasPlanExecution] frame={0} planFrame={1} planId={2} source=Published pendingPlanExecution=0 entries={3} members={4} requests={5}",
+            _frameId,
+            plan.FrameId,
+            plan.PlanId,
+            plan.EntryCount,
+            plan.MemberCount,
+            plan.RequestCount);
+    }
+
+    private static int GetPlanEntryTileCost(in ShadowAtlasRenderPlanEntry entry)
+        => entry.Kind switch
+        {
+            ShadowAtlasRenderPlanEntryKind.DirectionalCascadeGroup => Math.Max(1, entry.MemberCount),
+            ShadowAtlasRenderPlanEntryKind.PointFaceGroup => Math.Max(1, entry.PointGroup.FaceCount),
+            _ => 1,
+        };
+
+    private static int GetPlanEntryBudgetCost(in ShadowAtlasRenderPlanEntry entry, int tileCost)
+        => entry.Kind == ShadowAtlasRenderPlanEntryKind.Tile &&
+           entry.Request.ProjectionType == EShadowProjectionType.DirectionalCascade
+            ? Math.Max(tileCost, SequentialDirectionalCascadeBudgetCost)
+            : tileCost;
+
+    private bool RecordDirectionalGroupedRenderEventAndReturnSuccess(
+        in ShadowAtlasRenderPlanEntry entry,
+        double elapsedMs,
+        bool usedSequentialFallback,
+        bool criticalDirectionalRefresh)
+    {
+        RecordDirectionalGroupedRenderEvent(
+            entry.Request,
+            entry.DirectionalGroup,
+            elapsedMs,
+            succeeded: true,
+            usedSequentialFallback,
+            criticalDirectionalRefresh);
+        return true;
+    }
+
+    private bool RecordTileRenderEventAndReturnSuccess(
+        ShadowAtlasRenderPlan plan,
+        in ShadowAtlasRenderPlanEntry entry,
+        double elapsedMs,
+        bool criticalDirectionalRefresh)
+    {
+        ShadowMapRequest request = entry.Request;
+        ShadowAtlasAllocation allocation = entry.Allocation;
+        RecordDirectionalTileRenderEvent(request, elapsedMs, criticalDirectionalRefresh);
+        MarkTileRendered(plan, request, allocation, entry.RecordIndex);
+        LogDirectionalRequestRenderState(request, allocation, "Rendered", requiresRender: true);
+        return true;
+    }
+
     public int RenderScheduledTiles(bool collectVisibleNow = false)
     {
+        AssertRenderThread();
         long frameStart = Stopwatch.GetTimestamp();
         int budget = Math.Max(0, _settings.MaxTilesRenderedPerFrame);
         long startTimestamp = _settings.MaxRenderMilliseconds > 0.0f
             ? Stopwatch.GetTimestamp()
             : 0L;
         int scheduled = 0;
+        int scheduledBudgetCost = 0;
         int checkedTiles = 0;
         int skippedClean = 0;
         int failedRender = 0;
@@ -1341,167 +1885,96 @@ public sealed class ShadowAtlasManager
         int deferredByTexture = 0;
         int firstDeferredRequestIndex = -1;
 
-        for (int i = 0; i < _requests.Count; i++)
+        ShadowAtlasRenderPlan plan = SelectRenderPlanForExecution();
+        ReadOnlySpan<ShadowAtlasRenderPlanEntry> entries = plan.Entries;
+        int requestCount = plan.RequestCount;
+
+        for (int i = 0; i < entries.Length; i++)
         {
-            ShadowMapRequest request = _requests[i];
-            if (request.ForcedSkipReason != SkipReason.None)
-            {
-                skippedClean++;
-                continue;
-            }
+            ShadowAtlasRenderPlanEntry entry = entries[i];
+            ShadowMapRequest request = entry.Request;
+            ShadowAtlasAllocation allocation = entry.Allocation;
+            int tileCost = GetPlanEntryTileCost(entry);
+            int budgetCost = GetPlanEntryBudgetCost(entry, tileCost);
+            bool criticalDirectionalRefresh = entry.BudgetClass == ShadowAtlasRenderBudgetClass.CriticalBypass;
 
-            bool criticalDirectionalRefresh = ShouldRenderDirectionalRefreshPastBudget(request);
-            bool criticalRefreshPastTimeBudget = criticalDirectionalRefresh || ShouldRenderRefreshPastTimeBudget(request);
-            if (scheduled >= budget && !(budget > 0 && criticalDirectionalRefresh))
+            if (scheduledBudgetCost >= budget && !(budget > 0 && criticalDirectionalRefresh))
             {
-                deferredByBudget = _requests.Count - i;
-                firstDeferredRequestIndex = i;
+                LogDirectionalCascadeGroupBudgetDeferral(entry, "tile-budget-exhausted", scheduledBudgetCost, budget, budgetCost);
+                deferredByBudget = Math.Max(0, requestCount - entry.RequestStartIndex);
+                firstDeferredRequestIndex = entry.RequestStartIndex;
                 break;
             }
 
-            if (scheduled > 0 &&
-                !criticalRefreshPastTimeBudget &&
-                HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
+            bool renderTimeBudgetExpired = scheduled > 0 && HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds);
+            if (renderTimeBudgetExpired && !entry.TimeBudgetBypass)
             {
-                deferredByBudget = _requests.Count - i;
-                firstDeferredRequestIndex = i;
+                LogDirectionalCascadeGroupBudgetDeferral(entry, "time-budget-exhausted", scheduledBudgetCost, budget, budgetCost);
+                deferredByBudget = Math.Max(0, requestCount - entry.RequestStartIndex);
+                firstDeferredRequestIndex = entry.RequestStartIndex;
                 break;
             }
 
-            if (!_currentAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation allocation))
-            {
-                LogDirectionalRequestRenderState(request, default, "NoCurrentAllocation", requiresRender: false);
-                skippedClean++;
-                continue;
-            }
-
-            if (TryGetDirectionalCascadeGroupContainingRequest(request, out ShadowAtlasGroupedDirectionalCascadeAllocation group) &&
-                TryGetDirectionalCascadeGroupRenderRequirement(group, out bool requiresGroupedRender))
-            {
-                if (requiresGroupedRender &&
-                    !criticalDirectionalRefresh &&
-                    RenderWorkBudgetCoordinator.ShouldDeferShadowAtlasLowPriorityTile(request.Priority, request.EditorPinned))
-                {
-                    deferredByTexture = _requests.Count - i;
-                    firstDeferredRequestIndex = i;
-                    break;
-                }
-
-                bool canRenderGroupedNow =
-                    requiresGroupedRender &&
-                    (CanRenderGroupedTileSet(scheduled, budget, group.CascadeCount) || (budget > 0 && criticalDirectionalRefresh));
-                if (canRenderGroupedNow)
-                {
-                    bool groupedSucceeded = TryRenderDirectionalCascadeGroup(
-                        request,
-                        group,
-                        collectVisibleNow,
-                        out double groupedElapsedMs,
-                        out bool usedSequentialFallback);
-                    RecordDirectionalGroupedRenderEvent(request, group, groupedElapsedMs, groupedSucceeded, usedSequentialFallback, criticalDirectionalRefresh);
-                    if (groupedSucceeded)
-                    {
-                        int lastGroupRequestIndex = FindLastDirectionalCascadeGroupRequestIndex(group, i);
-                        scheduled += group.CascadeCount;
-                        checkedTiles += group.CascadeCount;
-
-                        if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds) &&
-                            !ShouldRenderRefreshPastTimeBudgetAtIndex(lastGroupRequestIndex + 1))
-                        {
-                            int nextRequestIndex = lastGroupRequestIndex + 1;
-                            deferredByBudget = _requests.Count - nextRequestIndex;
-                            firstDeferredRequestIndex = nextRequestIndex;
-                            break;
-                        }
-
-                        i = lastGroupRequestIndex;
-                        continue;
-                    }
-
-                    checkedTiles += group.CascadeCount;
-                    failedRender += group.CascadeCount;
-                    deferredByBudget = _requests.Count - i;
-                    firstDeferredRequestIndex = i;
-                    break;
-                }
-                else if (requiresGroupedRender)
-                {
-                    deferredByBudget = _requests.Count - i;
-                    firstDeferredRequestIndex = i;
-                    break;
-                }
-            }
-
-            if (TryGetFirstPointFaceGroup(request, out ShadowAtlasGroupedPointFaceAllocation pointGroup) &&
-                TryGetPointFaceGroupRenderRequirement(pointGroup, out bool requiresGroupedPointRender))
-            {
-                if (requiresGroupedPointRender &&
-                    RenderWorkBudgetCoordinator.ShouldDeferShadowAtlasLowPriorityTile(request.Priority, request.EditorPinned))
-                {
-                    deferredByTexture = _requests.Count - i;
-                    firstDeferredRequestIndex = i;
-                    break;
-                }
-
-                if (requiresGroupedPointRender &&
-                    CanRenderGroupedTileSet(scheduled, budget, pointGroup.FaceCount) &&
-                    TryRenderPointFaceGroup(request, pointGroup, collectVisibleNow))
-                {
-                    scheduled += pointGroup.FaceCount;
-                    checkedTiles += pointGroup.FaceCount;
-
-                    if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds) &&
-                        !ShouldRenderRefreshPastTimeBudgetAtIndex(i + 1))
-                    {
-                        int nextRequestIndex = i + 1;
-                        deferredByBudget = _requests.Count - nextRequestIndex;
-                        firstDeferredRequestIndex = nextRequestIndex;
-                        break;
-                    }
-
-                    continue;
-                }
-            }
-
-            bool requiresRender = RequiresTileRender(request, allocation);
-            if (!requiresRender)
+            if (!entry.RequiresRender)
             {
                 LogDirectionalRequestRenderState(request, allocation, "SkippedClean", requiresRender: false);
                 skippedClean++;
                 continue;
             }
 
-            if (!criticalDirectionalRefresh &&
-                RenderWorkBudgetCoordinator.ShouldDeferShadowAtlasLowPriorityTile(request.Priority, request.EditorPinned))
+            if (entry.BudgetClass == ShadowAtlasRenderBudgetClass.Deferrable)
             {
-                deferredByTexture = _requests.Count - i;
-                firstDeferredRequestIndex = i;
+                LogDirectionalCascadeGroupBudgetDeferral(entry, "texture-budget-deferrable", scheduledBudgetCost, budget, budgetCost);
+                deferredByTexture = Math.Max(0, requestCount - entry.RequestStartIndex);
+                firstDeferredRequestIndex = entry.RequestStartIndex;
                 break;
             }
 
-            bool forceCollectVisible = collectVisibleNow;
-            checkedTiles++;
+            if (!CanRenderGroupedTileSet(scheduledBudgetCost, budget, budgetCost) &&
+                !(budget > 0 && criticalDirectionalRefresh))
+            {
+                LogDirectionalCascadeGroupBudgetDeferral(entry, "group-does-not-fit", scheduledBudgetCost, budget, budgetCost);
+                deferredByBudget = Math.Max(0, requestCount - entry.RequestStartIndex);
+                firstDeferredRequestIndex = entry.RequestStartIndex;
+                break;
+            }
 
-            if (!TryRenderTile(request, allocation, forceCollectVisible, out double tileElapsedMs))
+            checkedTiles += tileCost;
+            bool rendered = entry.Kind switch
+            {
+                ShadowAtlasRenderPlanEntryKind.DirectionalCascadeGroup => TryRenderDirectionalCascadeGroup(plan, entry, collectVisibleNow, out double groupedElapsedMs, out bool usedSequentialFallback) &&
+                    RecordDirectionalGroupedRenderEventAndReturnSuccess(entry, groupedElapsedMs, usedSequentialFallback, criticalDirectionalRefresh),
+                ShadowAtlasRenderPlanEntryKind.PointFaceGroup => TryRenderPointFaceGroup(plan, entry, collectVisibleNow),
+                _ => TryRenderTile(entry.Request, entry.Allocation, collectVisibleNow, out double tileElapsedMs) &&
+                    RecordTileRenderEventAndReturnSuccess(plan, entry, tileElapsedMs, criticalDirectionalRefresh),
+            };
+
+            if (!rendered)
             {
                 LogDirectionalRequestRenderState(request, allocation, "RenderFailed", requiresRender: true);
-                failedRender++;
+                failedRender += tileCost;
+                if (entry.Kind != ShadowAtlasRenderPlanEntryKind.Tile)
+                {
+                    deferredByBudget = Math.Max(0, requestCount - entry.RequestStartIndex);
+                    firstDeferredRequestIndex = entry.RequestStartIndex;
+                    break;
+                }
+
                 continue;
             }
 
-            RecordDirectionalTileRenderEvent(request, tileElapsedMs, criticalDirectionalRefresh);
-            MarkTileRendered(request, allocation);
-            if (_currentAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation renderedAllocation))
-                LogDirectionalRequestRenderState(request, renderedAllocation, "Rendered", requiresRender: true);
-            scheduled++;
+            scheduled += tileCost;
+            scheduledBudgetCost += budgetCost;
 
-            if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds) &&
-                !ShouldRenderRefreshPastTimeBudgetAtIndex(i + 1))
+            if (HasRenderBudgetExpired(startTimestamp, _settings.MaxRenderMilliseconds))
             {
-                int nextRequestIndex = i + 1;
-                deferredByBudget = _requests.Count - nextRequestIndex;
-                firstDeferredRequestIndex = nextRequestIndex;
-                break;
+                if (i + 1 >= entries.Length || !entries[i + 1].TimeBudgetBypass)
+                {
+                    int nextRequestIndex = entry.RequestEndIndex + 1;
+                    deferredByBudget = Math.Max(0, requestCount - nextRequestIndex);
+                    firstDeferredRequestIndex = nextRequestIndex;
+                    break;
+                }
             }
         }
 
@@ -1531,26 +2004,31 @@ public sealed class ShadowAtlasManager
                     "shadow atlas render budget deferred while texture uploads were queued");
             }
 
-            XREngine.Debug.LightingEvery(
-                "ShadowAtlas.RenderBudget.Deferred",
-                TimeSpan.FromSeconds(2.0),
+            if (XREngine.Debug.ShouldLogEvery("ShadowAtlas.RenderBudget.Deferred", TimeSpan.FromSeconds(2.0)))
+            {
+                XREngine.Debug.Lighting(
+                    XREngine.EOutputVerbosity.Verbose,
+                    false,
                 "[ShadowAtlas] Deferred {0} shadow request(s) after rendering {1}/{2} tile(s) in {3:F2}ms (budget {4:F2}ms, textureDeferred={5}, firstDeferredIndex={6}).",
-                deferredTotal,
-                scheduled,
-                budget,
-                elapsedMs,
-                _settings.MaxRenderMilliseconds,
-                deferredByTexture,
-                firstDeferredRequestIndex);
+                    deferredTotal,
+                    scheduled,
+                    budget,
+                    elapsedMs,
+                    _settings.MaxRenderMilliseconds,
+                    deferredByTexture,
+                    firstDeferredRequestIndex);
+            }
         }
 
         double slowThresholdMs = Math.Max(16.0, _settings.MaxRenderMilliseconds * 4.0);
-        if (scheduled > 0 && elapsedMs > slowThresholdMs)
+        if (scheduled > 0 &&
+            elapsedMs > slowThresholdMs &&
+            XREngine.Debug.ShouldLogEvery("ShadowAtlas.RenderScheduledTiles.Slow", TimeSpan.FromSeconds(2.0)))
         {
-            XREngine.Debug.LightingWarningEvery(
-                "ShadowAtlas.RenderScheduledTiles.Slow",
-                TimeSpan.FromSeconds(2.0),
-                "[ShadowAtlas] Shadow tile rendering exceeded its frame budget: rendered={0}, checked={1}, skippedClean={2}, failed={3}, deferred={4}, elapsedMs={5:F2}, budgetMs={6:F2}.",
+            XREngine.Debug.Lighting(
+                XREngine.EOutputVerbosity.Normal,
+                false,
+                "[WARN] [ShadowAtlas] Shadow tile rendering exceeded its frame budget: rendered={0}, checked={1}, skippedClean={2}, failed={3}, deferred={4}, elapsedMs={5:F2}, budgetMs={6:F2}.",
                 scheduled,
                 checkedTiles,
                 skippedClean,
@@ -1573,29 +2051,37 @@ public sealed class ShadowAtlasManager
         return scheduled;
     }
 
-    private bool ShouldRenderDirectionalRefreshPastBudgetAtIndex(int requestIndex)
+    private void LogDirectionalCascadeGroupBudgetDeferral(
+        in ShadowAtlasRenderPlanEntry entry,
+        string reason,
+        int scheduledBudgetCost,
+        int budget,
+        int entryBudgetCost)
     {
-        if ((uint)requestIndex >= (uint)_requests.Count)
-            return false;
+        if (entry.Kind != ShadowAtlasRenderPlanEntryKind.DirectionalCascadeGroup ||
+            !entry.RequiresRender ||
+            !XREngine.Debug.ShouldLogEvery(
+                $"ShadowAtlas.Directional.CascadeGroupBudgetDeferred.{entry.Request.Key.LightId}.{reason}",
+                TimeSpan.FromSeconds(2.0)))
+        {
+            return;
+        }
 
-        return ShouldRenderDirectionalRefreshPastBudget(_requests[requestIndex]);
-    }
-
-    private bool ShouldRenderRefreshPastTimeBudgetAtIndex(int requestIndex)
-    {
-        if ((uint)requestIndex >= (uint)_requests.Count)
-            return false;
-
-        return ShouldRenderRefreshPastTimeBudget(_requests[requestIndex]);
+        XREngine.Debug.Lighting(
+            XREngine.EOutputVerbosity.Normal,
+            false,
+            "[WARN] [ShadowAtlas] Deferred full directional cascade group for '{0}' ({1}); keeping the previous coherent atlas generation. cascades={2}, scheduledBudgetCost={3}, entryBudgetCost={4}, budget={5}, dirtyReason={6}.",
+            LightName(entry.Request.Light),
+            reason,
+            entry.MemberCount,
+            scheduledBudgetCost,
+            entryBudgetCost,
+            budget,
+            entry.Request.DirtyReason);
     }
 
     private static bool ShouldRenderDirectionalRefreshPastBudget(ShadowMapRequest request)
-    {
-        if (!IsDirectionalRequest(request) || !request.IsDirty)
-            return false;
-
-        return HasHardBudgetBypassDirtyReason(request);
-    }
+        => !IsDirectionalRequest(request) || !request.IsDirty ? false : HasCriticalDirtyReason(request);
 
     private static bool ShouldRenderFreshTileBeforeStale(ShadowMapRequest request)
     {
@@ -1622,7 +2108,7 @@ public sealed class ShadowAtlasManager
             return false;
 
         if (IsDirectionalRequest(request))
-            return HasHardBudgetBypassDirtyReason(request);
+            return HasCriticalDirtyReason(request);
 
         return request.ProjectionType is EShadowProjectionType.PointFace or EShadowProjectionType.SpotPrimary
             && HasCriticalDirtyReason(request);
@@ -1662,21 +2148,36 @@ public sealed class ShadowAtlasManager
     }
 
     private static bool CanRenderGroupedTileSet(int scheduled, int budget, int groupedTileCount)
-    {
-        if (groupedTileCount <= 0 || budget <= 0)
-            return false;
-
-        return groupedTileCount <= budget - scheduled;
-    }
+        => groupedTileCount <= 0 || budget <= 0 ? false : groupedTileCount <= budget - scheduled;
 
     private static double ElapsedMilliseconds(long startTimestamp)
         => (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
+
+    [Conditional("DEBUG")]
+    private void AssertPlanningThread()
+    {
+        if (_planningThreadId == 0)
+            return;
+
+        System.Diagnostics.Debug.Assert(
+            Environment.CurrentManagedThreadId == _planningThreadId,
+            "Shadow atlas planning must stay on the collect/planning thread for this frame.");
+    }
+
+    [Conditional("DEBUG")]
+    private static void AssertRenderThread()
+    {
+        System.Diagnostics.Debug.Assert(
+            RuntimeEngine.IsRenderThread,
+            "Shadow atlas render-plan execution must run on the render thread.");
+    }
 
     private static string LightName(LightComponent light)
         => light.SceneNode?.Name ?? light.Name ?? light.GetType().Name;
 
     public void PublishFrameData()
     {
+        AssertPlanningThread();
         using var sample = RuntimeEngine.Profiler.Start("ShadowAtlasManager.PublishFrameData");
 
         bool layoutChanged = HasLayoutChanged();
@@ -1700,11 +2201,14 @@ public sealed class ShadowAtlasManager
         _publishedFrameIndex = writeIndex;
 
         UpdateResidentAllocations();
-        _previousAllocations.Clear();
-        foreach (var pair in _currentAllocations)
-            _previousAllocations[pair.Key] = pair.Value;
+        Dictionary<ShadowRequestKey, ShadowAtlasAllocation> oldPrevious = _previousAllocations;
+        Dictionary<ShadowRequestKey, ShadowAtlasAllocation> publishedCurrentAllocations = _currentAllocations;
+        _previousAllocations = _currentAllocations;
+        _currentAllocations = oldPrevious;
+        _currentAllocations.Clear();
+        _publishedRenderPlanIndex = 1 - _publishedRenderPlanIndex;
 
-        TrimResidentAllocations();
+        TrimResidentAllocations(publishedCurrentAllocations);
         TrimDemotionStates();
         _repackRequested = false;
     }
@@ -1718,34 +2222,36 @@ public sealed class ShadowAtlasManager
                 continue;
 
             RemoveOverlappingResidentAllocations(pair.Key, allocation);
-            _residentAllocations[pair.Key] = new ShadowResidentEntry(allocation, _frameId);
+            AddOrUpdateResidentAllocation(pair.Key, allocation, _frameId);
         }
     }
 
     private void RemoveOverlappingResidentAllocations(ShadowRequestKey key, in ShadowAtlasAllocation allocation)
     {
         _residentRemovalScratch.Clear();
-        foreach (var pair in _residentAllocations)
+        ShadowAtlasPageKey pageKey = new(allocation.AtlasId, allocation.PageIndex);
+        if (!_residentKeysByPage.TryGetValue(pageKey, out List<ShadowRequestKey>? pageResidents))
+            return;
+
+        for (int i = 0; i < pageResidents.Count; i++)
         {
-            if (pair.Key == key)
+            ShadowRequestKey residentKey = pageResidents[i];
+            if (residentKey == key ||
+                !_residentAllocations.TryGetValue(residentKey, out ShadowResidentEntry residentEntry))
                 continue;
 
-            ShadowAtlasAllocation resident = pair.Value.Allocation;
-            if (resident.AtlasId != allocation.AtlasId ||
-                resident.PageIndex != allocation.PageIndex ||
-                !RectanglesOverlap(resident.PixelRect, allocation.PixelRect))
-            {
+            ShadowAtlasAllocation resident = residentEntry.Allocation;
+            if (!RectanglesOverlap(resident.PixelRect, allocation.PixelRect))
                 continue;
-            }
 
-            _residentRemovalScratch.Add(pair.Key);
+            _residentRemovalScratch.Add(residentKey);
         }
 
         for (int i = 0; i < _residentRemovalScratch.Count; i++)
-            _residentAllocations.Remove(_residentRemovalScratch[i]);
+            ReleaseResidentAllocation(_residentRemovalScratch[i]);
     }
 
-    private void TrimResidentAllocations()
+    private void TrimResidentAllocations(IReadOnlyDictionary<ShadowRequestKey, ShadowAtlasAllocation> activeAllocations)
     {
         _residentRemovalScratch.Clear();
         bool overCapacity = _residentAllocations.Count > _settings.MaxRequestsPerFrame;
@@ -1755,7 +2261,7 @@ public sealed class ShadowAtlasManager
                 ? _frameId - pair.Value.LastRequestedFrame
                 : ulong.MaxValue;
             if (age > ResidentEvictionTtlFrames ||
-                (overCapacity && !_currentAllocations.ContainsKey(pair.Key)) ||
+                (overCapacity && !activeAllocations.ContainsKey(pair.Key)) ||
                 !IsUsableResidentAllocation(pair.Value.Allocation))
             {
                 _residentRemovalScratch.Add(pair.Key);
@@ -1763,7 +2269,7 @@ public sealed class ShadowAtlasManager
         }
 
         for (int i = 0; i < _residentRemovalScratch.Count; i++)
-            _residentAllocations.Remove(_residentRemovalScratch[i]);
+            ReleaseResidentAllocation(_residentRemovalScratch[i]);
     }
 
     private static bool IsUsableResidentAllocation(in ShadowAtlasAllocation allocation)
@@ -1775,7 +2281,7 @@ public sealed class ShadowAtlasManager
 
     private bool TryGetResidentAllocation(ShadowRequestKey key, out ShadowAtlasAllocation allocation)
     {
-        if (_residentAllocations.TryGetValue(key, out ShadowResidentEntry resident) &&
+        if (TryGetResidentEntry(key, out ShadowResidentEntry resident) &&
             IsUsableResidentAllocation(resident.Allocation))
         {
             allocation = resident.Allocation;
@@ -1790,6 +2296,56 @@ public sealed class ShadowAtlasManager
 
         allocation = default;
         return false;
+    }
+
+    private bool TryGetResidentEntry(ShadowRequestKey key, out ShadowResidentEntry resident)
+        => _residentAllocations.TryGetValue(key, out resident) &&
+           IsUsableResidentAllocation(resident.Allocation);
+
+    private void AddOrUpdateResidentAllocation(ShadowRequestKey key, in ShadowAtlasAllocation allocation, ulong lastRequestedFrame)
+    {
+        if (_residentAllocations.TryGetValue(key, out ShadowResidentEntry existing))
+            RemoveResidentPageIndex(key, existing.Allocation);
+
+        _residentAllocations[key] = new ShadowResidentEntry(allocation, lastRequestedFrame);
+        AddResidentPageIndex(key, allocation);
+    }
+
+    private void ReleaseResidentAllocation(ShadowRequestKey key)
+    {
+        if (!_residentAllocations.TryGetValue(key, out ShadowResidentEntry resident))
+            return;
+
+        GetEncodingState(resident.Allocation.AtlasKind, resident.Allocation.Key.Encoding).TryFree(resident.Allocation);
+        _residentAllocations.Remove(key);
+        RemoveResidentPageIndex(key, resident.Allocation);
+    }
+
+    private void AddResidentPageIndex(ShadowRequestKey key, in ShadowAtlasAllocation allocation)
+    {
+        if (!IsUsableResidentAllocation(allocation))
+            return;
+
+        ShadowAtlasPageKey pageKey = new(allocation.AtlasId, allocation.PageIndex);
+        if (!_residentKeysByPage.TryGetValue(pageKey, out List<ShadowRequestKey>? keys))
+        {
+            keys = new List<ShadowRequestKey>(8);
+            _residentKeysByPage.Add(pageKey, keys);
+        }
+
+        if (!keys.Contains(key))
+            keys.Add(key);
+    }
+
+    private void RemoveResidentPageIndex(ShadowRequestKey key, in ShadowAtlasAllocation allocation)
+    {
+        ShadowAtlasPageKey pageKey = new(allocation.AtlasId, allocation.PageIndex);
+        if (!_residentKeysByPage.TryGetValue(pageKey, out List<ShadowRequestKey>? keys))
+            return;
+
+        keys.Remove(key);
+        if (keys.Count == 0)
+            _residentKeysByPage.Remove(pageKey);
     }
 
     private void TrimDemotionStates()
@@ -1812,15 +2368,109 @@ public sealed class ShadowAtlasManager
     public bool TryGetAllocation(ShadowRequestKey key, out ShadowAtlasAllocation allocation)
         => PublishedFrameData.TryGetAllocation(key, out allocation);
 
+    public bool TryGetPlanningAllocation(ShadowRequestKey key, out ShadowAtlasAllocation allocation)
+        => TryGetResidentAllocation(key, out allocation);
+
+    internal bool TryGetDiagnosticAllocationIndex(
+        in ShadowMapRequest request,
+        out int recordIndex,
+        out ShadowAtlasAllocation allocation)
+    {
+        AssertPlanningThread();
+
+        if (TryGetCurrentFrameAllocationIndex(request.Key, out recordIndex, out allocation))
+        {
+            allocation = MergeReconciledRenderedState(request, allocation);
+            return true;
+        }
+
+        if (PublishedFrameData.TryGetAllocationIndex(request.Key, out recordIndex, out allocation))
+        {
+            allocation = MergeReconciledRenderedState(request, allocation);
+            return true;
+        }
+
+        recordIndex = -1;
+        allocation = default;
+        return false;
+    }
+
+    private bool TryGetCurrentFrameAllocationIndex(
+        ShadowRequestKey key,
+        out int recordIndex,
+        out ShadowAtlasAllocation allocation)
+    {
+        AssertPlanningThread();
+
+        if (_currentAllocationIndices.TryGetValue(key, out recordIndex) &&
+            (uint)recordIndex < (uint)_frameAllocations.Count)
+        {
+            allocation = _frameAllocations[recordIndex];
+            return true;
+        }
+
+        recordIndex = -1;
+        allocation = default;
+        return false;
+    }
+
+    private ShadowAtlasAllocation MergeReconciledRenderedState(
+        in ShadowMapRequest request,
+        in ShadowAtlasAllocation allocation)
+    {
+        if (!TryGetResidentAllocation(request.Key, out ShadowAtlasAllocation resident) ||
+            !IsSamePhysicalAllocation(allocation, resident) ||
+            resident.LastRenderedFrame == 0u ||
+            resident.LastRenderedFrame < allocation.LastRenderedFrame)
+        {
+            return allocation;
+        }
+
+        bool publishCommittedDirectionalSample =
+            IsDirectionalRequest(request) &&
+            ShouldRenderFreshTileBeforeStale(request) &&
+            resident.ContentVersion != request.ContentHash;
+
+        return allocation with
+        {
+            ContentVersion = resident.ContentVersion,
+            LastRenderedFrame = resident.LastRenderedFrame,
+            ActiveFallback = publishCommittedDirectionalSample
+                ? ShadowFallbackMode.None
+                : resident.ActiveFallback,
+            SkipReason = publishCommittedDirectionalSample
+                ? SkipReason.None
+                : resident.SkipReason,
+        };
+    }
+
+    private static bool IsSamePhysicalAllocation(
+        in ShadowAtlasAllocation left,
+        in ShadowAtlasAllocation right)
+        => left.IsResident == right.IsResident &&
+           left.AtlasKind == right.AtlasKind &&
+           left.AtlasId == right.AtlasId &&
+           left.PageIndex == right.PageIndex &&
+           left.Resolution == right.Resolution &&
+           RectEquals(left.PixelRect, right.PixelRect) &&
+           RectEquals(left.InnerPixelRect, right.InnerPixelRect);
+
     public bool TryGetPageTexture(EShadowAtlasKind atlasKind, EShadowMapEncoding encoding, int pageIndex, out XRTexture2DArray texture)
     {
         if (GetEncodingState(atlasKind, encoding).TryGetPageResource(pageIndex, out ShadowAtlasPageResource? resource) &&
             resource is not null)
         {
-            texture = ShouldSampleRasterDepth(atlasKind, encoding)
-                ? resource.RasterDepthTexture
-                : resource.Texture;
-            return true;
+            if (ShouldSampleRasterDepth(atlasKind, encoding))
+            {
+                texture = resource.RasterDepthTexture;
+                return true;
+            }
+
+            if (resource.Texture is not null)
+            {
+                texture = resource.Texture;
+                return true;
+            }
         }
 
         texture = null!;
@@ -1847,30 +2497,46 @@ public sealed class ShadowAtlasManager
     public void Reset()
     {
         _requests.Clear();
+        _requestIndexByKey.Clear();
         for (int i = 0; i < _requestBuckets.Length; i++)
             _requestBuckets[i].Clear();
         _frameAllocations.Clear();
         _directionalCascadeGroups.Clear();
+        _directionalCascadeGroupIndexByRequest.Clear();
+        _directionalCascadeGroupLastRequestIndex.Clear();
         ClearDirectionalCascadeGroupBuildMap();
         _pointFaceGroups.Clear();
+        _pointFaceGroupIndexByFirstRequest.Clear();
         ClearPointFaceGroupBuildMap();
         _pageDescriptors.Clear();
         _previousAllocations.Clear();
         _currentAllocations.Clear();
         _currentAllocationIndices.Clear();
         _residentAllocations.Clear();
+        _residentKeysByPage.Clear();
         _residentRemovalScratch.Clear();
+        _residentPageRemovalScratch.Clear();
         _lodStates.Clear();
         _demotionStates.Clear();
         _demotionRemovalScratch.Clear();
         _pendingSkippedAllocations.Clear();
         _directionalGroupReservationFailures.Clear();
+        _renderPlanEntries.Clear();
+        _renderPlanMembers.Clear();
+        for (int i = 0; i < _renderPlans.Length; i++)
+            _renderPlans[i].Clear();
+        lock (_completionSync)
+        {
+            _tileCompletionHead = 0;
+            _tileCompletionTail = 0;
+        }
         _solveDiagnostics.Reset();
         _lastSolveDiagnostics = default;
         _queueOverflowCount = 0;
         _tilesScheduledThisFrame = 0;
         _fallbackFrameId = 0u;
         _generation = 0;
+        _nextRenderPlanId = 0u;
         _repackRequested = false;
         ResetResources();
     }
@@ -1907,6 +2573,16 @@ public sealed class ShadowAtlasManager
             prior.AtlasKind == state.AtlasKind)
         {
             if (prior.Resolution == candidate &&
+                TryGetResidentEntry(request.Key, out _) &&
+                IsReusablePersistentAllocation(request, prior, state, candidate))
+            {
+                _solveDiagnostics.IncrementalReuseCount++;
+                allocation = CreateResidentAllocation(request, state.AtlasKind, prior.PageIndex, prior.PixelRect.X, prior.PixelRect.Y, candidate);
+                skipReason = SkipReason.None;
+                return true;
+            }
+
+            if (prior.Resolution == candidate &&
                 state.TryReserve(prior.PageIndex, prior.PixelRect.X, prior.PixelRect.Y, size))
             {
                 _solveDiagnostics.PriorReserveHitCount++;
@@ -1917,6 +2593,11 @@ public sealed class ShadowAtlasManager
             else if (prior.Resolution == candidate)
             {
                 _solveDiagnostics.PriorReserveMissCount++;
+            }
+
+            if (TryGetResidentEntry(request.Key, out _))
+            {
+                ReleaseResidentAllocation(request.Key);
             }
 
             if (candidate < prior.Resolution &&
@@ -1956,7 +2637,8 @@ public sealed class ShadowAtlasManager
                 _solveDiagnostics.PriorSubBlockMissCount++;
 
                 int priorSize = checked((int)prior.Resolution);
-                if (state.TryReserve(prior.PageIndex, prior.PixelRect.X, prior.PixelRect.Y, priorSize))
+                if (state.TryReserve(prior.PageIndex, prior.PixelRect.X, prior.PixelRect.Y, priorSize) &&
+                    prior.Resolution <= _settings.MaxTileResolution)
                 {
                     _solveDiagnostics.PriorReserveHitCount++;
                     allocation = CreateResidentAllocation(request, state.AtlasKind, prior.PageIndex, prior.PixelRect.X, prior.PixelRect.Y, prior.Resolution);
@@ -2014,7 +2696,11 @@ public sealed class ShadowAtlasManager
         bool fallbackCanUseStaleTile = request.Fallback == ShadowFallbackMode.StaleTile;
         bool shouldRefreshBeforeStale = ShouldRenderFreshTileBeforeStale(request);
         bool allowStaleTile = fallbackCanUseStaleTile && !shouldRefreshBeforeStale;
-        bool keepDirectionalStaleTileUntilRefresh = fallbackCanUseStaleTile && IsDirectionalRequest(request);
+        // Critical directional refreshes must not publish the pre-refresh tile for lighting.
+        bool keepDirectionalStaleTileUntilRefresh =
+            fallbackCanUseStaleTile &&
+            IsDirectionalRequest(request) &&
+            !shouldRefreshBeforeStale;
         bool reuseStaleTile = hasRenderedTile && requiresFreshRender && allowStaleTile;
         ShadowFallbackMode activeFallback = ShadowFallbackMode.None;
         SkipReason skipReason = SkipReason.None;
@@ -2028,18 +2714,12 @@ public sealed class ShadowAtlasManager
             }
             else
             {
-                activeFallback = request.Fallback != ShadowFallbackMode.None
-                    ? request.Fallback
-                    : ShadowFallbackMode.Lit;
-                if (activeFallback == ShadowFallbackMode.StaleTile && !allowStaleTile)
-                    activeFallback = ShadowFallbackMode.Lit;
+                activeFallback = ResolveUnavailableShadowFallback(request, allowStaleTile: false);
             }
         }
         else if (!hasRenderedTile && request.Fallback != ShadowFallbackMode.None)
         {
-            activeFallback = request.Fallback;
-            if (activeFallback == ShadowFallbackMode.StaleTile && !allowStaleTile)
-                activeFallback = ShadowFallbackMode.Lit;
+            activeFallback = ResolveUnavailableShadowFallback(request, allowStaleTile);
         }
 
         if (!(hasRenderedTile && requiresFreshRender))
@@ -2092,30 +2772,199 @@ public sealed class ShadowAtlasManager
             y + size <= prior.PixelRect.Y + prior.PixelRect.Height;
     }
 
+    private void MarkTileRendered(
+        ShadowAtlasRenderPlan plan,
+        ShadowMapRequest request,
+        ShadowAtlasAllocation allocation,
+        int recordIndex)
+        => MarkTileRendered(plan.FrameId, plan.PlanId, request, allocation, recordIndex);
+
     private void MarkTileRendered(ShadowMapRequest request, ShadowAtlasAllocation allocation)
     {
-        ShadowAtlasAllocation rendered = allocation with
+        int recordIndex = _currentAllocationIndices.TryGetValue(request.Key, out int index) ? index : -1;
+        MarkTileRendered(_frameId, planId: 0u, request, allocation, recordIndex);
+    }
+
+    private void MarkTileRendered(
+        ulong frameId,
+        ulong planId,
+        ShadowMapRequest request,
+        ShadowAtlasAllocation allocation,
+        int recordIndex)
+    {
+        DirectionalCascadeSampleState sample = request.DirectionalCascadeSample;
+        if (sample.IsValid)
+        {
+            sample = sample with
+            {
+                ContentHash = request.ContentHash,
+                RenderedFrame = frameId,
+            };
+        }
+
+        ShadowAtlasAllocation renderedAllocation = allocation with
         {
             ContentVersion = request.ContentHash,
-            LastRenderedFrame = _frameId,
+            LastRenderedFrame = frameId,
             ActiveFallback = ShadowFallbackMode.None,
             SkipReason = SkipReason.None,
         };
-        _currentAllocations[request.Key] = rendered;
-        if (_currentAllocationIndices.TryGetValue(request.Key, out int index))
-            _frameAllocations[index] = rendered;
+
+        ShadowTileCompletion completion = new(
+            request.Key,
+            request.Light,
+            request.ContentHash,
+            frameId,
+            planId,
+            recordIndex,
+            renderedAllocation,
+            request.NearPlane,
+            request.FarPlane,
+            request.DesiredResolution,
+            sample);
+
+        CommitRenderedTileToLightSlot(completion);
+        EnqueueTileCompletion(completion);
+    }
+
+    private void EnqueueTileCompletion(in ShadowTileCompletion completion)
+    {
+        lock (_completionSync)
+        {
+            int nextTail = (_tileCompletionTail + 1) % _tileCompletions.Length;
+            if (nextTail == _tileCompletionHead)
+            {
+                _queueOverflowCount++;
+                return;
+            }
+
+            _tileCompletions[_tileCompletionTail] = completion;
+            _tileCompletionTail = nextTail;
+        }
+    }
+
+    private static void CommitRenderedTileToLightSlot(in ShadowTileCompletion completion)
+    {
+        if (completion.Light is not DirectionalLightComponent directionalLight ||
+            completion.Key.ProjectionType != EShadowProjectionType.DirectionalCascade ||
+            !completion.DirectionalCascadeSample.IsValid)
+        {
+            return;
+        }
+
+        directionalLight.CommitRenderedCascadeAtlasSlot(
+            completion.Key.Source,
+            completion.Key.FaceOrCascadeIndex,
+            completion.Allocation,
+            completion.RecordIndex,
+            completion.NearPlane,
+            completion.FarPlane,
+            completion.DesiredResolution,
+            completion.DirectionalCascadeSample);
+    }
+
+    private void DrainTileCompletions()
+    {
+        _completionDrainScratch.Clear();
+        lock (_completionSync)
+        {
+            while (_tileCompletionHead != _tileCompletionTail)
+            {
+                _completionDrainScratch.Add(_tileCompletions[_tileCompletionHead]);
+                _tileCompletions[_tileCompletionHead] = default;
+                _tileCompletionHead = (_tileCompletionHead + 1) % _tileCompletions.Length;
+            }
+        }
+
+        for (int i = 0; i < _completionDrainScratch.Count; i++)
+            ReconcileTileCompletion(_completionDrainScratch[i]);
+
+        _completionDrainScratch.Clear();
+    }
+
+    private void ReconcileTileCompletion(in ShadowTileCompletion completion)
+    {
+        LogTileCompletionLatency(completion);
+
+        if (!TryGetResidentAllocation(completion.Key, out ShadowAtlasAllocation allocation) ||
+            !allocation.IsResident)
+        {
+            return;
+        }
+
+        ShadowAtlasAllocation rendered = allocation with
+        {
+            ContentVersion = completion.ContentHash,
+            LastRenderedFrame = completion.FrameId,
+            ActiveFallback = ShadowFallbackMode.None,
+            SkipReason = SkipReason.None,
+        };
+
+        ulong lastRequestedFrame = _frameId;
+        if (_residentAllocations.TryGetValue(completion.Key, out ShadowResidentEntry existing))
+            lastRequestedFrame = existing.LastRequestedFrame;
+
+        AddOrUpdateResidentAllocation(completion.Key, rendered, lastRequestedFrame);
+        _previousAllocations[completion.Key] = rendered;
+    }
+
+    private void LogTileCompletionLatency(in ShadowTileCompletion completion)
+    {
+        if (!RenderDiagnosticsFlags.DirectionalShadowAudit ||
+            completion.Key.ProjectionType != EShadowProjectionType.DirectionalCascade ||
+            !XREngine.Debug.ShouldLogEvery(
+                $"DirectionalShadowAudit.TileCompletionLatency.{completion.Key}",
+                TimeSpan.FromSeconds(1.0)))
+        {
+            return;
+        }
+
+        ulong latencyFrames = _frameId >= completion.FrameId ? _frameId - completion.FrameId : 0u;
+        XREngine.Debug.Lighting(
+            XREngine.EOutputVerbosity.Normal,
+            false,
+            "[DirectionalShadowAudit][TileCompletionLatency] frame={0} key={1} renderedFrame={2} renderedPlanId={3} drainFrame={4} latencyFrames={5} content={6}",
+            RuntimeEngine.Rendering.State.RenderFrameId,
+            completion.Key,
+            completion.FrameId,
+            completion.PlanId,
+            _frameId,
+            latencyFrames,
+            completion.ContentHash);
+    }
+
+    private void EnsureCompletionCapacity(int requestedCapacity)
+    {
+        requestedCapacity = Math.Max(2, requestedCapacity);
+        lock (_completionSync)
+        {
+            if (_tileCompletions.Length >= requestedCapacity)
+                return;
+
+            ShadowTileCompletion[] old = _tileCompletions;
+            ShadowTileCompletion[] resized = new ShadowTileCompletion[requestedCapacity];
+            int count = 0;
+            while (_tileCompletionHead != _tileCompletionTail)
+            {
+                resized[count++] = old[_tileCompletionHead];
+                _tileCompletionHead = (_tileCompletionHead + 1) % old.Length;
+            }
+
+            _tileCompletions = resized;
+            _tileCompletionHead = 0;
+            _tileCompletionTail = count;
+        }
     }
 
     private bool RequiresTileRender(ShadowMapRequest request, ShadowAtlasAllocation allocation)
     {
+        AssertPlanningThread();
         if (allocation.LastRenderedFrame == 0u)
             return true;
 
         if (allocation.LastRenderedFrame == _frameId &&
             allocation.ContentVersion == request.ContentHash)
-        {
             return false;
-        }
 
         if (!request.CanReusePreviousFrame)
             return true;
@@ -2130,6 +2979,7 @@ public sealed class ShadowAtlasManager
 
     private bool RequiresTileRender(ShadowMapRequest request, int pageIndex, int x, int y, uint resolution)
     {
+        AssertPlanningThread();
         if (request.IsDirty)
             return true;
 
@@ -2148,27 +2998,17 @@ public sealed class ShadowAtlasManager
         ShadowMapRequest request,
         out ShadowAtlasGroupedDirectionalCascadeAllocation group)
     {
+        AssertPlanningThread();
         if (request.ProjectionType != EShadowProjectionType.DirectionalCascade)
         {
             group = default;
             return false;
         }
 
-        for (int i = 0; i < _directionalCascadeGroups.Count; i++)
+        if (_directionalCascadeGroupIndexByRequest.TryGetValue(request.Key, out int groupIndex) &&
+            (uint)groupIndex < (uint)_directionalCascadeGroups.Count)
         {
-            ShadowAtlasGroupedDirectionalCascadeAllocation candidate = _directionalCascadeGroups[i];
-            if (candidate.LightId != request.Key.LightId ||
-                candidate.Domain != request.Key.Domain ||
-                candidate.Source != request.Key.Source ||
-                candidate.Encoding != request.Encoding ||
-                candidate.Members is null ||
-                candidate.Members.Length == 0 ||
-                !DirectionalCascadeGroupContainsCascade(candidate, request.FaceOrCascadeIndex))
-            {
-                continue;
-            }
-
-            group = candidate;
+            group = _directionalCascadeGroups[groupIndex];
             return true;
         }
 
@@ -2180,24 +3020,22 @@ public sealed class ShadowAtlasManager
         in ShadowAtlasGroupedDirectionalCascadeAllocation group,
         int firstRequestIndex)
     {
-        int lastRequestIndex = firstRequestIndex;
-        for (int i = firstRequestIndex + 1; i < _requests.Count; i++)
+        AssertPlanningThread();
+        if (group.Members is not null && group.Members.Length > 0)
         {
-            ShadowMapRequest candidate = _requests[i];
-            if (candidate.ProjectionType != EShadowProjectionType.DirectionalCascade ||
-                candidate.Key.LightId != group.LightId ||
-                candidate.Key.Domain != group.Domain ||
-                candidate.Key.Source != group.Source ||
-                candidate.Encoding != group.Encoding ||
-                !DirectionalCascadeGroupContainsCascade(group, candidate.FaceOrCascadeIndex))
-            {
-                continue;
-            }
-
-            lastRequestIndex = i;
+            ShadowRequestKey firstKey = new(
+                group.LightId,
+                group.Domain,
+                group.Source,
+                EShadowProjectionType.DirectionalCascade,
+                group.Members[0].CascadeIndex,
+                group.Encoding);
+            if (_directionalCascadeGroupIndexByRequest.TryGetValue(firstKey, out int groupIndex) &&
+                (uint)groupIndex < (uint)_directionalCascadeGroupLastRequestIndex.Count)
+                return Math.Max(firstRequestIndex, _directionalCascadeGroupLastRequestIndex[groupIndex]);
         }
 
-        return lastRequestIndex;
+        return firstRequestIndex;
     }
 
     private static bool DirectionalCascadeGroupContainsCascade(
@@ -2215,10 +3053,17 @@ public sealed class ShadowAtlasManager
         return false;
     }
 
+    private static bool CanRenderDirectionalCascadeGroup(
+        ShadowMapRequest seedRequest,
+        in ShadowAtlasGroupedDirectionalCascadeAllocation group)
+        => seedRequest.Light is DirectionalLightComponent light &&
+            light.CanRenderGroupedCascadeShadowAtlasTiles(group);
+
     private bool TryGetDirectionalCascadeGroupRenderRequirement(
         in ShadowAtlasGroupedDirectionalCascadeAllocation group,
         out bool requiresRender)
     {
+        AssertPlanningThread();
         requiresRender = false;
         if (group.Members is null)
             return false;
@@ -2241,49 +3086,49 @@ public sealed class ShadowAtlasManager
     }
 
     private bool TryRenderDirectionalCascadeGroup(
-        ShadowMapRequest seedRequest,
-        in ShadowAtlasGroupedDirectionalCascadeAllocation group,
+        ShadowAtlasRenderPlan plan,
+        in ShadowAtlasRenderPlanEntry entry,
         bool collectVisibleNow,
         out double elapsedMs,
         out bool usedSequentialFallback)
     {
+        using var sample = RuntimeEngine.Profiler.Start("ShadowAtlas.Directional.GroupRender");
         long start = Stopwatch.GetTimestamp();
         elapsedMs = 0.0;
         usedSequentialFallback = false;
+        ShadowMapRequest seedRequest = entry.Request;
+        ShadowAtlasGroupedDirectionalCascadeAllocation group = entry.DirectionalGroup;
         if (seedRequest.Light is not DirectionalLightComponent light ||
-            !GetEncodingState(group.AtlasKind, group.Encoding).TryGetPageResource(group.PageIndex, out ShadowAtlasPageResource? page) ||
-            page is null)
+            entry.Page is null)
         {
             elapsedMs = ElapsedMilliseconds(start);
             return false;
         }
 
-        if (!light.RenderGroupedCascadeShadowAtlasTiles(group, page.FrameBuffer, collectVisibleNow))
+        bool canRenderFullGroup = entry.MemberCount == group.CascadeCount;
+        if (!canRenderFullGroup ||
+            !light.RenderGroupedCascadeShadowAtlasTiles(group, entry.Page.FrameBuffer, collectVisibleNow))
         {
-            usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(light, group, collectVisibleNow);
+            usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(plan, light, entry, collectVisibleNow);
             if (!usedSequentialFallback)
             {
                 elapsedMs = ElapsedMilliseconds(start);
+                RecordDirectionalGroupedRenderEvent(seedRequest, group, elapsedMs, succeeded: false, usedSequentialFallback: false, criticalBudgetBypassUsed: false);
                 return false;
             }
         }
 
-        for (int i = 0; i < group.CascadeCount; i++)
-        {
-            ShadowAtlasGroupedAllocationMember member = group.Members[i];
-            ShadowAtlasAllocation allocation = _frameAllocations[member.RecordIndex];
-            if (TryFindRequest(allocation.Key, out ShadowMapRequest request))
-                MarkTileRendered(request, allocation);
-        }
+        EnqueuePlanMemberCompletions(plan, entry);
 
         elapsedMs = ElapsedMilliseconds(start);
         double slowThresholdMs = Math.Max(16.0, _settings.MaxRenderMilliseconds * 4.0);
-        if (elapsedMs > slowThresholdMs)
+        if (elapsedMs > slowThresholdMs &&
+            XREngine.Debug.ShouldLogEvery($"ShadowAtlas.GroupedDirectionalCascade.Slow.{seedRequest.Key.LightId}", TimeSpan.FromSeconds(2.0)))
         {
-            XREngine.Debug.LightingWarningEvery(
-                $"ShadowAtlas.GroupedDirectionalCascade.Slow.{seedRequest.Key.LightId}",
-                TimeSpan.FromSeconds(2.0),
-                "[ShadowAtlas] Slow grouped directional cascade render: light='{0}', cascades={1}, page={2}, elapsedMs={3:F2}, frameBudgetMs={4:F2}.",
+            XREngine.Debug.Lighting(
+                XREngine.EOutputVerbosity.Normal,
+                false,
+                "[WARN] [ShadowAtlas] Slow grouped directional cascade render: light='{0}', cascades={1}, page={2}, elapsedMs={3:F2}, frameBudgetMs={4:F2}.",
                 LightName(seedRequest.Light),
                 group.CascadeCount,
                 group.PageIndex,
@@ -2295,67 +3140,65 @@ public sealed class ShadowAtlasManager
     }
 
     private bool TryRenderDirectionalCascadeGroupSequentially(
+        ShadowAtlasRenderPlan plan,
         DirectionalLightComponent light,
-        in ShadowAtlasGroupedDirectionalCascadeAllocation group,
+        in ShadowAtlasRenderPlanEntry entry,
         bool collectVisibleNow)
     {
-        if (group.Members is null)
-            return false;
+        if (collectVisibleNow)
+            PrepareDirectionalCascadeGroupSequentialCommands(light);
 
-        bool renderedAny = false;
-        for (int i = 0; i < group.CascadeCount; i++)
+        for (int i = 0; i < entry.MemberCount; i++)
         {
-            ShadowAtlasGroupedAllocationMember member = group.Members[i];
-            if ((uint)member.RecordIndex >= (uint)_frameAllocations.Count)
-                return false;
-
-            ShadowAtlasAllocation allocation = _frameAllocations[member.RecordIndex];
-            if (!TryFindRequest(allocation.Key, out ShadowMapRequest request) ||
-                request.Light != light ||
-                request.ProjectionType != EShadowProjectionType.DirectionalCascade)
-            {
-                return false;
-            }
-
-            if (!GetEncodingState(allocation.AtlasKind, request.Encoding).TryGetPageResource(allocation.PageIndex, out ShadowAtlasPageResource? page) ||
+            ShadowAtlasRenderPlanMember member = plan.GetMember(entry.MemberStart + i);
+            ShadowMapRequest request = member.Request;
+            ShadowAtlasAllocation allocation = member.Allocation;
+            if (request.Light != light ||
+                request.ProjectionType != EShadowProjectionType.DirectionalCascade ||
+                !TryGetPageResource(allocation, request.Encoding, out ShadowAtlasPageResource? page) ||
                 page is null)
-            {
-                return false;
-            }
-
-            if (!light.RenderCascadeShadowAtlasTile(request.Key.Source, request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow))
                 return false;
 
-            renderedAny = true;
+            if (!light.RenderCascadeShadowAtlasTile(request.Key.Source, request.FaceOrCascadeIndex, page.FrameBuffer, allocation.InnerPixelRect, collectVisibleNow: false))
+                return false;
         }
 
-        return renderedAny;
+        return entry.MemberCount > 0;
+    }
+
+    private static void PrepareDirectionalCascadeGroupSequentialCommands(DirectionalLightComponent light)
+    {
+        using var sample = RuntimeEngine.Profiler.Start("ShadowAtlas.Directional.SequentialCommandGeneration");
+        light.CollectVisibleItems();
+        light.SwapBuffers();
+    }
+
+    private void EnqueuePlanMemberCompletions(
+        ShadowAtlasRenderPlan plan,
+        in ShadowAtlasRenderPlanEntry entry)
+    {
+        for (int i = 0; i < entry.MemberCount; i++)
+        {
+            ShadowAtlasRenderPlanMember member = plan.GetMember(entry.MemberStart + i);
+            MarkTileRendered(plan, member.Request, member.Allocation, member.RecordIndex);
+        }
     }
 
     private bool TryGetFirstPointFaceGroup(
         ShadowMapRequest request,
         out ShadowAtlasGroupedPointFaceAllocation group)
     {
+        AssertPlanningThread();
         if (request.ProjectionType != EShadowProjectionType.PointFace)
         {
             group = default;
             return false;
         }
 
-        for (int i = 0; i < _pointFaceGroups.Count; i++)
+        if (_pointFaceGroupIndexByFirstRequest.TryGetValue(request.Key, out int groupIndex) &&
+            (uint)groupIndex < (uint)_pointFaceGroups.Count)
         {
-            ShadowAtlasGroupedPointFaceAllocation candidate = _pointFaceGroups[i];
-            if (candidate.LightId != request.Key.LightId ||
-                candidate.Domain != request.Key.Domain ||
-                candidate.Encoding != request.Encoding ||
-                candidate.Members is null ||
-                candidate.Members.Length == 0 ||
-                candidate.Members[0].CascadeIndex != request.FaceOrCascadeIndex)
-            {
-                continue;
-            }
-
-            group = candidate;
+            group = _pointFaceGroups[groupIndex];
             return true;
         }
 
@@ -2367,6 +3210,7 @@ public sealed class ShadowAtlasManager
         in ShadowAtlasGroupedPointFaceAllocation group,
         out bool requiresRender)
     {
+        AssertPlanningThread();
         requiresRender = false;
         if (group.Members is null)
             return false;
@@ -2490,37 +3334,33 @@ public sealed class ShadowAtlasManager
     }
 
     private bool TryRenderPointFaceGroup(
-        ShadowMapRequest seedRequest,
-        in ShadowAtlasGroupedPointFaceAllocation group,
+        ShadowAtlasRenderPlan plan,
+        in ShadowAtlasRenderPlanEntry entry,
         bool collectVisibleNow)
     {
         long start = Stopwatch.GetTimestamp();
+        ShadowMapRequest seedRequest = entry.Request;
+        ShadowAtlasGroupedPointFaceAllocation group = entry.PointGroup;
         if (seedRequest.Light is not PointLightComponent light ||
-            !GetEncodingState(group.AtlasKind, group.Encoding).TryGetPageResource(group.PageIndex, out ShadowAtlasPageResource? page) ||
-            page is null)
+            entry.Page is null)
         {
             return false;
         }
 
-        if (!light.RenderGroupedShadowAtlasFaceTiles(group, page.FrameBuffer, collectVisibleNow))
+        if (!light.RenderGroupedShadowAtlasFaceTiles(group, entry.Page.FrameBuffer, collectVisibleNow))
             return false;
 
-        for (int i = 0; i < group.FaceCount; i++)
-        {
-            ShadowAtlasGroupedAllocationMember member = group.Members[i];
-            ShadowAtlasAllocation allocation = _frameAllocations[member.RecordIndex];
-            if (TryFindRequest(allocation.Key, out ShadowMapRequest request))
-                MarkTileRendered(request, allocation);
-        }
+        EnqueuePlanMemberCompletions(plan, entry);
 
         double elapsedMs = ElapsedMilliseconds(start);
         double slowThresholdMs = Math.Max(16.0, _settings.MaxRenderMilliseconds * 4.0);
-        if (elapsedMs > slowThresholdMs)
+        if (elapsedMs > slowThresholdMs &&
+            XREngine.Debug.ShouldLogEvery($"ShadowAtlas.GroupedPointFace.Slow.{seedRequest.Key.LightId}.{group.PageIndex}", TimeSpan.FromSeconds(2.0)))
         {
-            XREngine.Debug.LightingWarningEvery(
-                $"ShadowAtlas.GroupedPointFace.Slow.{seedRequest.Key.LightId}.{group.PageIndex}",
-                TimeSpan.FromSeconds(2.0),
-                "[ShadowAtlas] Slow grouped point-face render: light='{0}', faces={1}, page={2}, elapsedMs={3:F2}, frameBudgetMs={4:F2}.",
+            XREngine.Debug.Lighting(
+                XREngine.EOutputVerbosity.Normal,
+                false,
+                "[WARN] [ShadowAtlas] Slow grouped point-face render: light='{0}', faces={1}, page={2}, elapsedMs={3:F2}, frameBudgetMs={4:F2}.",
                 LightName(seedRequest.Light),
                 group.FaceCount,
                 group.PageIndex,
@@ -2533,13 +3373,12 @@ public sealed class ShadowAtlasManager
 
     private bool TryFindRequest(ShadowRequestKey key, out ShadowMapRequest request)
     {
-        for (int i = 0; i < _requests.Count; i++)
+        AssertPlanningThread();
+        if (_requestIndexByKey.TryGetValue(key, out int index) &&
+            (uint)index < (uint)_requests.Count)
         {
-            if (_requests[i].Key == key)
-            {
-                request = _requests[i];
-                return true;
-            }
+            request = _requests[index];
+            return true;
         }
 
         request = default;
@@ -2692,22 +3531,20 @@ public sealed class ShadowAtlasManager
         if (state.AtlasKind != EShadowAtlasKind.Directional)
             return;
 
-        for (int i = 0; i < entryCount; i++)
+        for (int keyIndex = 0; keyIndex < _directionalCascadeSolveGroupKeyScratch.Count; keyIndex++)
         {
-            BalancedAllocationEntry seedEntry = _balancedAllocationEntries[i];
-            ShadowMapRequest seed = seedEntry.Request;
-            if (seed.ProjectionType != EShadowProjectionType.DirectionalCascade ||
-                seedEntry.AllocationSolved ||
-                HasEarlierDirectionalCascadeGroup(seed, i))
-            {
+            DirectionalCascadeSolveGroupKey groupKey = _directionalCascadeSolveGroupKeyScratch[keyIndex];
+            int seedIndex = FindFirstUnsolvedDirectionalCascadeGroupMember(groupKey, entryCount);
+            if (seedIndex < 0)
                 continue;
-            }
 
-            int cascadeCount = CountDirectionalCascadeGroupMembers(seed, entryCount);
+            BalancedAllocationEntry seedEntry = _balancedAllocationEntries[seedIndex];
+            ShadowMapRequest seed = seedEntry.Request;
+            int cascadeCount = _directionalCascadeSolveGroupCounts.TryGetValue(groupKey, out int count) ? count : 0;
             if (cascadeCount <= 1)
                 continue;
 
-            if (cascadeCount > 4)
+            if (cascadeCount > MaxDirectionalCascadeGroupTileCount)
                 continue;
 
             if (!TryGetEqualDirectionalCascadeGroupResolution(seed, entryCount, out uint resolution))
@@ -2752,21 +3589,47 @@ public sealed class ShadowAtlasManager
             }
 
             int ordinal = 0;
-            for (int j = 0; j < entryCount; j++)
+            for (int cascadeIndex = 0; cascadeIndex < MaxDirectionalCascadeGroupTileCount; cascadeIndex++)
             {
-                BalancedAllocationEntry entry = _balancedAllocationEntries[j];
-                if (!IsSameDirectionalCascadeGroup(seed, entry.Request))
-                    continue;
+                for (int j = 0; j < entryCount; j++)
+                {
+                    BalancedAllocationEntry entry = _balancedAllocationEntries[j];
+                    if (!IsSameDirectionalCascadeGroup(groupKey, entry.Request) ||
+                        entry.Request.FaceOrCascadeIndex != cascadeIndex)
+                    {
+                        continue;
+                    }
 
-                int x = originX + ((ordinal & 1) * tileSize);
-                int y = originY + ((ordinal >> 1) * tileSize);
-                entry.Allocation = CreateResidentAllocation(entry.Request, state.AtlasKind, pageIndex, x, y, resolution);
-                entry.AllocationSolved = true;
-                _balancedAllocationEntries[j] = entry;
-                ordinal++;
+                    int x = originX + ((ordinal & 1) * tileSize);
+                    int y = originY + ((ordinal >> 1) * tileSize);
+                    entry.Allocation = CreateResidentAllocation(entry.Request, state.AtlasKind, pageIndex, x, y, resolution);
+                    entry.AllocationSolved = true;
+                    _balancedAllocationEntries[j] = entry;
+                    ordinal++;
+                    break;
+                }
             }
         }
     }
+
+    private int FindFirstUnsolvedDirectionalCascadeGroupMember(DirectionalCascadeSolveGroupKey key, int entryCount)
+    {
+        for (int i = 0; i < entryCount; i++)
+        {
+            BalancedAllocationEntry entry = _balancedAllocationEntries[i];
+            if (!entry.AllocationSolved && IsSameDirectionalCascadeGroup(key, entry.Request))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static bool IsSameDirectionalCascadeGroup(DirectionalCascadeSolveGroupKey key, ShadowMapRequest request)
+        => request.ProjectionType == EShadowProjectionType.DirectionalCascade &&
+           request.Key.LightId == key.LightId &&
+           request.Key.Domain == key.Domain &&
+           request.Key.Source == key.Source &&
+           request.Encoding == key.Encoding;
 
     private bool TryGetEqualDirectionalCascadeGroupResolution(
         ShadowMapRequest seed,
@@ -2868,7 +3731,7 @@ public sealed class ShadowAtlasManager
     {
         EShadowAtlasKind atlasKind = GetAtlasKind(request.ProjectionType);
         int atlasId = GetAtlasId(atlasKind, request.Encoding);
-        if (skipReason == SkipReason.NotRelevant &&
+        if (skipReason is SkipReason.NotRelevant or SkipReason.StaleTileReused &&
             TryGetResidentAllocation(request.Key, out ShadowAtlasAllocation previous) &&
             previous.IsResident &&
             previous.AtlasKind == atlasKind &&
@@ -2880,7 +3743,7 @@ public sealed class ShadowAtlasManager
             return previous with
             {
                 ActiveFallback = ShadowFallbackMode.StaleTile,
-                SkipReason = SkipReason.NotRelevant,
+                SkipReason = skipReason,
             };
         }
 
@@ -2898,7 +3761,7 @@ public sealed class ShadowAtlasManager
             LastRenderedFrame: 0u,
             IsResident: false,
             IsStaticCacheBacked: false,
-            ActiveFallback: request.Fallback == ShadowFallbackMode.None ? ShadowFallbackMode.Lit : request.Fallback,
+            ActiveFallback: ResolveSkippedShadowFallback(request),
             SkipReason: skipReason);
     }
 
@@ -2919,8 +3782,33 @@ public sealed class ShadowAtlasManager
             LastRenderedFrame: 0u,
             IsResident: false,
             IsStaticCacheBacked: false,
-            ActiveFallback: request.Fallback == ShadowFallbackMode.None ? ShadowFallbackMode.Lit : request.Fallback,
+            ActiveFallback: ResolveSkippedShadowFallback(request),
             SkipReason: skipReason);
+    }
+
+    private static ShadowFallbackMode ResolveUnavailableShadowFallback(ShadowMapRequest request, bool allowStaleTile)
+    {
+        if (request.Fallback == ShadowFallbackMode.StaleTile)
+        {
+            if (allowStaleTile)
+                return ShadowFallbackMode.StaleTile;
+
+            return IsDirectionalRequest(request) ? ShadowFallbackMode.ContactOnly : ShadowFallbackMode.Lit;
+        }
+
+        return request.Fallback != ShadowFallbackMode.None
+            ? request.Fallback
+            : ShadowFallbackMode.Lit;
+    }
+
+    private static ShadowFallbackMode ResolveSkippedShadowFallback(ShadowMapRequest request)
+    {
+        if (request.Fallback == ShadowFallbackMode.StaleTile && IsDirectionalRequest(request))
+            return ShadowFallbackMode.ContactOnly;
+
+        return request.Fallback != ShadowFallbackMode.None
+            ? request.Fallback
+            : ShadowFallbackMode.Lit;
     }
 
     private static bool IsValidRequest(ShadowMapRequest request)
@@ -2997,6 +3885,7 @@ public sealed class ShadowAtlasManager
 
     private void BuildDirectionalAtlasLightDiagnostics()
     {
+        AssertPlanningThread();
         _directionalAtlasLightDiagnostics.Clear();
         if (!RenderDiagnosticsFlags.DirectionalShadowAudit)
             return;
@@ -3097,14 +3986,15 @@ public sealed class ShadowAtlasManager
 
     private bool TryGetFrameAllocation(ShadowRequestKey key, out ShadowAtlasAllocation allocation)
     {
+        AssertPlanningThread();
         if (_currentAllocations.TryGetValue(key, out allocation))
             return true;
 
-        for (int i = 0; i < _frameAllocations.Count; i++)
+        if (_currentAllocationIndices.TryGetValue(key, out int index) &&
+            (uint)index < (uint)_frameAllocations.Count)
         {
-            allocation = _frameAllocations[i];
-            if (allocation.Key == key)
-                return true;
+            allocation = _frameAllocations[index];
+            return true;
         }
 
         allocation = default;
@@ -3113,6 +4003,7 @@ public sealed class ShadowAtlasManager
 
     private ShadowAtlasMetrics BuildMetrics()
     {
+        AssertPlanningThread();
         int residentCount = 0;
         int skippedCount = 0;
         int notRelevantSkipCount = 0;
@@ -3148,13 +4039,28 @@ public sealed class ShadowAtlasManager
             SkippedRequestCount: skippedCount,
             PageCount: pageCount,
             ResidentBytes: residentBytes,
-            TilesScheduledThisFrame: _tilesScheduledThisFrame,
+            TilesScheduledThisFrame: ResolveTilesScheduledMetric(),
             QueueOverflowCount: _queueOverflowCount,
             NotRelevantSkipCount: notRelevantSkipCount,
             LargestFreeRect: largestFreeRect,
             FreeTexelCount: freeTexels,
             DirectionalGroupedFrameCount: _directionalGroupedFrame ? 1 : 0,
             DirectionalSequentialFallbackFrameCount: _directionalSequentialFallbackFrame ? 1 : 0);
+    }
+
+    private int ResolveTilesScheduledMetric()
+    {
+        int planned = 0;
+        ShadowAtlasRenderPlan pending = GetPendingRenderPlan();
+        ReadOnlySpan<ShadowAtlasRenderPlanEntry> entries = pending.Entries;
+        for (int i = 0; i < entries.Length; i++)
+        {
+            ShadowAtlasRenderPlanEntry entry = entries[i];
+            if (entry.RequiresRender)
+                planned += GetPlanEntryTileCost(entry);
+        }
+
+        return Math.Max(_tilesScheduledThisFrame, planned);
     }
 
     private bool HasLayoutChanged()
@@ -3202,12 +4108,18 @@ public sealed class ShadowAtlasManager
         _previousAllocations.Clear();
         _currentAllocations.Clear();
         _currentAllocationIndices.Clear();
+        _requestIndexByKey.Clear();
         _residentAllocations.Clear();
+        _residentKeysByPage.Clear();
         _residentRemovalScratch.Clear();
+        _residentPageRemovalScratch.Clear();
         _lodStates.Clear();
         _demotionStates.Clear();
         _demotionRemovalScratch.Clear();
         _pendingSkippedAllocations.Clear();
+        _directionalCascadeGroupIndexByRequest.Clear();
+        _directionalCascadeGroupLastRequestIndex.Clear();
+        _pointFaceGroupIndexByFirstRequest.Clear();
         _pointFaceGroups.Clear();
     }
 
@@ -3277,572 +4189,5 @@ public sealed class ShadowAtlasManager
             MaxTileResolution = maxTile,
             MaxRequestsPerFrame = Math.Clamp(settings.MaxRequestsPerFrame, 1, 65536),
         };
-    }
-
-    private sealed class ShadowAtlasEncodingState(EShadowAtlasKind atlasKind, EShadowMapEncoding encoding)
-    {
-        private readonly List<ShadowAtlasPageResource> _pages = new();
-        private readonly List<ShadowBuddyPageAllocator> _allocators = new();
-        private XRTexture2DArray? _textureArray;
-        private XRTexture2DArray? _rasterDepthTextureArray;
-
-        public EShadowAtlasKind AtlasKind { get; } = atlasKind;
-        public EShadowMapEncoding Encoding { get; } = encoding;
-        public SkipReason LastFailureReason { get; private set; }
-        public int PageCount => _pages.Count;
-        public long ResidentBytes { get; private set; }
-        public int LargestFreeRect { get; private set; }
-        public long FreeTexelCount { get; private set; }
-
-        public void BeginFrame()
-        {
-            LastFailureReason = SkipReason.None;
-            LargestFreeRect = 0;
-            FreeTexelCount = 0L;
-
-            for (int i = 0; i < _allocators.Count; i++)
-                _allocators[i].Reset();
-        }
-
-        public bool TryReserve(int pageIndex, int x, int y, int size)
-        {
-            if ((uint)pageIndex >= (uint)_allocators.Count)
-                return false;
-
-            return _allocators[pageIndex].TryReserve(x, y, size);
-        }
-
-        public bool TryReserveAlignedSubBlock(
-            int pageIndex,
-            int x,
-            int y,
-            int size,
-            out int reservedX,
-            out int reservedY)
-        {
-            if ((uint)pageIndex >= (uint)_allocators.Count)
-            {
-                reservedX = 0;
-                reservedY = 0;
-                return false;
-            }
-
-            return _allocators[pageIndex].TryReserveAlignedSubBlock(x, y, size, out reservedX, out reservedY);
-        }
-
-        public bool TryAllocate(
-            int size,
-            ShadowAtlasManagerSettings settings,
-            long currentTotalResidentBytes,
-            out int pageIndex,
-            out int x,
-            out int y,
-            out SkipReason skipReason)
-        {
-            for (int i = 0; i < _allocators.Count; i++)
-            {
-                if (_allocators[i].TryAllocate(size, out x, out y))
-                {
-                    pageIndex = i;
-                    skipReason = SkipReason.None;
-                    return true;
-                }
-            }
-
-            if (!CanCreatePage(settings, currentTotalResidentBytes, out skipReason))
-            {
-                LastFailureReason = skipReason;
-                pageIndex = -1;
-                x = 0;
-                y = 0;
-                return false;
-            }
-
-            CreatePage(settings);
-            pageIndex = _allocators.Count - 1;
-            if (_allocators[pageIndex].TryAllocate(size, out x, out y))
-            {
-                skipReason = SkipReason.None;
-                return true;
-            }
-
-            skipReason = SkipReason.AllocationFailed;
-            LastFailureReason = skipReason;
-            return false;
-        }
-
-        public bool TryAllocateContiguousGrid(
-            int tileSize,
-            int tilesPerAxis,
-            ShadowAtlasManagerSettings settings,
-            long currentTotalResidentBytes,
-            out int pageIndex,
-            out int x,
-            out int y,
-            out SkipReason skipReason)
-        {
-            if (tileSize <= 0 || tilesPerAxis <= 0)
-            {
-                pageIndex = -1;
-                x = 0;
-                y = 0;
-                skipReason = SkipReason.InvalidRequest;
-                LastFailureReason = skipReason;
-                return false;
-            }
-
-            int groupSize = checked(tileSize * tilesPerAxis);
-            if (groupSize > checked((int)settings.PageSize))
-            {
-                pageIndex = -1;
-                x = 0;
-                y = 0;
-                skipReason = SkipReason.AllocationFailed;
-                LastFailureReason = skipReason;
-                return false;
-            }
-
-            for (int i = 0; i < _allocators.Count; i++)
-            {
-                if (_allocators[i].TryAllocate(groupSize, out x, out y))
-                {
-                    pageIndex = i;
-                    skipReason = SkipReason.None;
-                    return true;
-                }
-            }
-
-            if (!CanCreatePage(settings, currentTotalResidentBytes, out skipReason))
-            {
-                LastFailureReason = skipReason;
-                pageIndex = -1;
-                x = 0;
-                y = 0;
-                return false;
-            }
-
-            CreatePage(settings);
-            pageIndex = _allocators.Count - 1;
-            if (_allocators[pageIndex].TryAllocate(groupSize, out x, out y))
-            {
-                skipReason = SkipReason.None;
-                return true;
-            }
-
-            skipReason = SkipReason.AllocationFailed;
-            LastFailureReason = skipReason;
-            x = 0;
-            y = 0;
-            return false;
-        }
-
-        public void AppendPageDescriptors(List<ShadowAtlasPageDescriptor> output)
-        {
-            for (int i = 0; i < _pages.Count; i++)
-                output.Add(_pages[i].Descriptor);
-
-            LargestFreeRect = 0;
-            FreeTexelCount = 0L;
-            for (int i = 0; i < _allocators.Count; i++)
-            {
-                LargestFreeRect = Math.Max(LargestFreeRect, _allocators[i].LargestFreeBlockSize);
-                FreeTexelCount += _allocators[i].FreeTexelCount;
-            }
-        }
-
-        public void ResetResources()
-        {
-            for (int i = 0; i < _pages.Count; i++)
-                _pages[i].FrameBuffer.Destroy();
-
-            _pages.Clear();
-            _allocators.Clear();
-            _textureArray?.Destroy();
-            _textureArray = null;
-            _rasterDepthTextureArray?.Destroy();
-            _rasterDepthTextureArray = null;
-            ResidentBytes = 0L;
-            LargestFreeRect = 0;
-            FreeTexelCount = 0L;
-            LastFailureReason = SkipReason.None;
-        }
-
-        private bool CanCreatePage(ShadowAtlasManagerSettings settings, long currentTotalResidentBytes, out SkipReason skipReason)
-        {
-            int pageLimit = GetPageLimit(settings);
-            if (_pages.Count >= pageLimit)
-            {
-                skipReason = SkipReason.PageBudgetExceeded;
-                return false;
-            }
-
-            long allocationBytes = _textureArray is null
-                ? GetArrayBytes(settings)
-                : 0L;
-            if (settings.MaxMemoryBytes > 0 && currentTotalResidentBytes + allocationBytes > settings.MaxMemoryBytes)
-            {
-                skipReason = SkipReason.MemoryBudgetExceeded;
-                return false;
-            }
-
-            skipReason = SkipReason.None;
-            return true;
-        }
-
-        private static int GetPageLimit(ShadowAtlasManagerSettings settings)
-            => Math.Max(1, settings.MaxPages);
-
-        private void CreatePage(ShadowAtlasManagerSettings settings)
-        {
-            EnsureTextureArrays(settings);
-            ShadowAtlasPageDescriptor descriptor = CreateDescriptor(AtlasKind, Encoding, _pages.Count, settings.PageSize);
-            _pages.Add(new ShadowAtlasPageResource(descriptor, _textureArray!, _rasterDepthTextureArray!));
-            _allocators.Add(new ShadowBuddyPageAllocator(checked((int)settings.PageSize)));
-        }
-
-        public bool TryGetPageResource(int pageIndex, out ShadowAtlasPageResource? resource)
-        {
-            if ((uint)pageIndex < (uint)_pages.Count)
-            {
-                resource = _pages[pageIndex];
-                return true;
-            }
-
-            resource = null;
-            return false;
-        }
-
-        private long GetArrayBytes(ShadowAtlasManagerSettings settings)
-            => checked(CreateDescriptor(AtlasKind, Encoding, 0, settings.PageSize).EstimatedBytes * GetPageLimit(settings));
-
-        private void EnsureTextureArrays(ShadowAtlasManagerSettings settings)
-        {
-            if (_textureArray is not null && _rasterDepthTextureArray is not null)
-                return;
-
-            int pageLimit = GetPageLimit(settings);
-            ShadowAtlasPageDescriptor descriptor = CreateDescriptor(AtlasKind, Encoding, 0, settings.PageSize);
-            ShadowMapFormatDescriptor format = ShadowMapResourceFactory.GetPreferredFormat(Encoding);
-            ETexMinFilter minFilter = format.RequiresLinearFiltering ? ETexMinFilter.Linear : ETexMinFilter.Nearest;
-            ETexMagFilter magFilter = format.RequiresLinearFiltering ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
-            _textureArray = new XRTexture2DArray(
-                checked((uint)pageLimit),
-                descriptor.PageSize,
-                descriptor.PageSize,
-                descriptor.InternalFormat,
-                descriptor.PixelFormat,
-                descriptor.PixelType,
-                allocateData: false)
-            {
-                SamplerName = $"ShadowAtlas_{AtlasKind}_{Encoding}",
-                UWrap = ETexWrapMode.ClampToEdge,
-                VWrap = ETexWrapMode.ClampToEdge,
-                MinFilter = minFilter,
-                MagFilter = magFilter,
-                FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
-            };
-            _rasterDepthTextureArray = new XRTexture2DArray(
-                checked((uint)pageLimit),
-                descriptor.PageSize,
-                descriptor.PageSize,
-                EPixelInternalFormat.DepthComponent24,
-                EPixelFormat.DepthComponent,
-                EPixelType.UnsignedInt,
-                allocateData: false)
-            {
-                SamplerName = $"ShadowAtlasDepth_{AtlasKind}_{Encoding}",
-                UWrap = ETexWrapMode.ClampToEdge,
-                VWrap = ETexWrapMode.ClampToEdge,
-                MinFilter = ETexMinFilter.Nearest,
-                MagFilter = ETexMagFilter.Nearest,
-                FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
-            };
-            ResidentBytes = GetArrayBytes(settings);
-        }
-
-        private static ShadowAtlasPageDescriptor CreateDescriptor(EShadowAtlasKind atlasKind, EShadowMapEncoding encoding, int pageIndex, uint pageSize)
-        {
-            ShadowMapFormatDescriptor format = ShadowMapResourceFactory.GetPreferredFormat(encoding);
-            long rasterDepthBytes = checked((long)pageSize * pageSize * 4L);
-            long bytes = checked((long)pageSize * pageSize * format.BytesPerTexel + rasterDepthBytes);
-            return new ShadowAtlasPageDescriptor(atlasKind, encoding, pageIndex, pageSize, format.InternalFormat, format.PixelFormat, format.PixelType, bytes);
-        }
-    }
-
-    private readonly record struct ShadowBlock(int X, int Y, int Size)
-    {
-        public bool Contains(int x, int y, int size)
-            => x >= X && y >= Y && x + size <= X + Size && y + size <= Y + Size;
-    }
-
-    private sealed class ShadowBuddyPageAllocator
-    {
-        private readonly int _pageSize;
-        private readonly int[] _levelSizes;
-        private readonly List<ShadowBlock>[] _freeBlocksByLevel;
-
-        public ShadowBuddyPageAllocator(int pageSize)
-        {
-            _pageSize = pageSize;
-            int levelCount = CalculateLevelCount(pageSize);
-            _levelSizes = new int[levelCount];
-            _freeBlocksByLevel = new List<ShadowBlock>[levelCount];
-            int size = pageSize;
-            for (int level = 0; level < levelCount; level++)
-            {
-                _levelSizes[level] = size;
-                _freeBlocksByLevel[level] = new List<ShadowBlock>();
-                size = Math.Max(1, size >> 1);
-            }
-
-            Reset();
-        }
-
-        public int LargestFreeBlockSize { get; private set; }
-        public long FreeTexelCount { get; private set; }
-
-        public void Reset()
-        {
-            for (int i = 0; i < _freeBlocksByLevel.Length; i++)
-                _freeBlocksByLevel[i].Clear();
-
-            LargestFreeBlockSize = 0;
-            FreeTexelCount = 0L;
-            AddFreeBlock(new ShadowBlock(0, 0, _pageSize));
-        }
-
-        public bool TryAllocate(int requestedSize, out int x, out int y)
-        {
-            int size = NormalizeBlockSize(requestedSize);
-            int targetLevel = GetLevelForSize(size);
-            if (!TryTakeFreeBlockAtOrAbove(targetLevel, out ShadowBlock block))
-            {
-                x = 0;
-                y = 0;
-                return false;
-            }
-
-            ShadowBlock allocated = SplitToSize(block, size, targetX: block.X, targetY: block.Y);
-            x = allocated.X;
-            y = allocated.Y;
-            return true;
-        }
-
-        public bool TryReserve(int x, int y, int requestedSize)
-        {
-            int size = NormalizeBlockSize(requestedSize);
-            if (!IsValidAlignedRegion(x, y, size))
-                return false;
-
-            int targetLevel = GetLevelForSize(size);
-            for (int searchLevel = targetLevel; searchLevel >= 0; searchLevel--)
-            {
-                int ancestorSize = _levelSizes[searchLevel];
-                int ancestorX = AlignDown(x, ancestorSize);
-                int ancestorY = AlignDown(y, ancestorSize);
-                if (!TryTakeExactFreeBlock(searchLevel, ancestorX, ancestorY, out ShadowBlock foundBlock))
-                    continue;
-
-                ShadowBlock reserved = SplitToSize(foundBlock, size, x, y);
-                if (reserved.X != x || reserved.Y != y || reserved.Size != size)
-                    throw new InvalidOperationException("Buddy reservation produced an unexpected block.");
-
-                return true;
-            }
-
-            return false;
-        }
-
-        public bool TryReserveAlignedSubBlock(
-            int x,
-            int y,
-            int requestedSize,
-            out int reservedX,
-            out int reservedY)
-        {
-            int size = NormalizeBlockSize(requestedSize);
-            reservedX = AlignDown(x, size);
-            reservedY = AlignDown(y, size);
-            if (!IsValidAlignedRegion(reservedX, reservedY, size))
-            {
-                reservedX = 0;
-                reservedY = 0;
-                return false;
-            }
-
-            if (TryReserve(reservedX, reservedY, size))
-                return true;
-
-            reservedX = 0;
-            reservedY = 0;
-            return false;
-        }
-
-        private ShadowBlock SplitToSize(ShadowBlock block, int size, int targetX, int targetY)
-        {
-            ShadowBlock current = block;
-            while (current.Size > size)
-            {
-                int half = current.Size / 2;
-                ShadowBlock bottomLeft = new(current.X, current.Y, half);
-                ShadowBlock bottomRight = new(current.X + half, current.Y, half);
-                ShadowBlock topLeft = new(current.X, current.Y + half, half);
-                ShadowBlock topRight = new(current.X + half, current.Y + half, half);
-
-                if (bottomLeft.Contains(targetX, targetY, size))
-                {
-                    current = bottomLeft;
-                    AddFreeBlock(bottomRight);
-                    AddFreeBlock(topLeft);
-                    AddFreeBlock(topRight);
-                }
-                else if (bottomRight.Contains(targetX, targetY, size))
-                {
-                    current = bottomRight;
-                    AddFreeBlock(bottomLeft);
-                    AddFreeBlock(topLeft);
-                    AddFreeBlock(topRight);
-                }
-                else if (topLeft.Contains(targetX, targetY, size))
-                {
-                    current = topLeft;
-                    AddFreeBlock(bottomLeft);
-                    AddFreeBlock(bottomRight);
-                    AddFreeBlock(topRight);
-                }
-                else
-                {
-                    current = topRight;
-                    AddFreeBlock(bottomLeft);
-                    AddFreeBlock(bottomRight);
-                    AddFreeBlock(topLeft);
-                }
-            }
-
-            return current;
-        }
-
-        private bool TryTakeFreeBlockAtOrAbove(int targetLevel, out ShadowBlock block)
-        {
-            for (int level = targetLevel; level >= 0; level--)
-            {
-                List<ShadowBlock> blocks = _freeBlocksByLevel[level];
-                if (blocks.Count == 0)
-                    continue;
-
-                block = blocks[0];
-                RemoveFreeBlockAt(level, 0);
-                return true;
-            }
-
-            block = default;
-            return false;
-        }
-
-        private bool TryTakeExactFreeBlock(int level, int x, int y, out ShadowBlock block)
-        {
-            List<ShadowBlock> blocks = _freeBlocksByLevel[level];
-            for (int i = 0; i < blocks.Count; i++)
-            {
-                ShadowBlock candidate = blocks[i];
-                if (candidate.X != x || candidate.Y != y)
-                    continue;
-
-                RemoveFreeBlockAt(level, i);
-                block = candidate;
-                return true;
-            }
-
-            block = default;
-            return false;
-        }
-
-        private void AddFreeBlock(ShadowBlock block)
-        {
-            int level = GetLevelForSize(block.Size);
-            InsertFreeBlockSorted(_freeBlocksByLevel[level], block);
-            FreeTexelCount += (long)block.Size * block.Size;
-            if (block.Size > LargestFreeBlockSize)
-                LargestFreeBlockSize = block.Size;
-        }
-
-        private static void InsertFreeBlockSorted(List<ShadowBlock> blocks, ShadowBlock block)
-        {
-            int insertIndex = blocks.Count;
-            for (int i = 0; i < blocks.Count; i++)
-            {
-                ShadowBlock candidate = blocks[i];
-                if (block.Y < candidate.Y ||
-                    (block.Y == candidate.Y && block.X < candidate.X))
-                {
-                    insertIndex = i;
-                    break;
-                }
-            }
-
-            blocks.Insert(insertIndex, block);
-        }
-
-        private void RemoveFreeBlockAt(int level, int index)
-        {
-            List<ShadowBlock> blocks = _freeBlocksByLevel[level];
-            ShadowBlock block = blocks[index];
-            blocks.RemoveAt(index);
-            FreeTexelCount -= (long)block.Size * block.Size;
-            if (block.Size == LargestFreeBlockSize && blocks.Count == 0)
-                LargestFreeBlockSize = FindLargestFreeBlockSize();
-        }
-
-        private int NormalizeBlockSize(int requestedSize)
-        {
-            int size = 1;
-            requestedSize = Math.Clamp(requestedSize, 1, _pageSize);
-            while (size < requestedSize)
-                size <<= 1;
-            return Math.Min(size, _pageSize);
-        }
-
-        private int GetLevelForSize(int size)
-        {
-            for (int i = 0; i < _levelSizes.Length; i++)
-                if (_levelSizes[i] == size)
-                    return i;
-
-            throw new InvalidOperationException($"Shadow buddy allocator cannot represent block size {size}.");
-        }
-
-        private int FindLargestFreeBlockSize()
-        {
-            for (int i = 0; i < _freeBlocksByLevel.Length; i++)
-                if (_freeBlocksByLevel[i].Count > 0)
-                    return _levelSizes[i];
-
-            return 0;
-        }
-
-        private bool IsValidAlignedRegion(int x, int y, int size)
-            => size > 0 &&
-               x >= 0 &&
-               y >= 0 &&
-               x + size <= _pageSize &&
-               y + size <= _pageSize &&
-               x % size == 0 &&
-               y % size == 0;
-
-        private static int AlignDown(int value, int alignment)
-            => alignment <= 1 ? value : value - (value % alignment);
-
-        private static int CalculateLevelCount(int pageSize)
-        {
-            int levels = 1;
-            int size = Math.Max(1, pageSize);
-            while (size > 1)
-            {
-                levels++;
-                size >>= 1;
-            }
-
-            return levels;
-        }
     }
 }

@@ -116,6 +116,7 @@ namespace XREngine.Rendering.Vulkan
             // (they are swapchain-independent). Clean them up here at full shutdown.
             DestroyFrameBufferRenderPasses();
             DestroyDescriptorSetLayout();
+            DestroyRetainedAutoExposureHistory("renderer shutdown");
             ResourceAllocator.DestroyPhysicalImages(this);
             ResourceAllocator.DestroyPhysicalBuffers(this);
             _stagingManager.Destroy(this);
@@ -607,8 +608,46 @@ namespace XREngine.Rendering.Vulkan
         public override void TrackWindowPresentSource(XRTexture? colorTexture, XRFrameBuffer? sourceFrameBuffer)
         {
             _lastWindowPresentColorTexture = colorTexture;
-            _lastWindowPresentFrameBuffer = sourceFrameBuffer;
+            _lastWindowPresentFrameBuffer = sourceFrameBuffer ?? ResolveWindowPresentFallbackFrameBuffer(colorTexture);
             _lastWindowPresentFrameOpContext = CaptureFrameOpContext();
+        }
+
+        public override bool IsTextureReadyForShaderSampling(XRTexture? texture)
+        {
+            if (texture is null)
+                return false;
+
+            if (GetOrCreateAPIRenderObject(texture, generateNow: false) is not IVkImageDescriptorSource source)
+                return false;
+
+            if (!source.TryGetDescriptorSnapshot(
+                    requestedViewType: null,
+                    requestedAspectMask: null,
+                    "shader sampling readiness",
+                    allowSynchronousUpload: false,
+                    out VkImageDescriptorSnapshot snapshot))
+                return false;
+
+            return snapshot.View.Handle != 0 &&
+                IsLiveImageView(snapshot.View) &&
+                (snapshot.Usage & ImageUsageFlags.SampledBit) != 0;
+        }
+
+        private XRFrameBuffer? ResolveWindowPresentFallbackFrameBuffer(XRTexture? colorTexture)
+        {
+            if (colorTexture is not IFrameBufferAttachement attachment)
+                return null;
+
+            if (!ReferenceEquals(_lastWindowPresentFallbackFrameBufferTexture, colorTexture))
+            {
+                _lastWindowPresentFallbackFrameBuffer = new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+                {
+                    Name = $"{colorTexture.Name ?? "WindowPresentSource"}FBO"
+                };
+                _lastWindowPresentFallbackFrameBufferTexture = colorTexture;
+            }
+
+            return _lastWindowPresentFallbackFrameBuffer;
         }
         public override void BindFrameBuffer(EFramebufferTarget fboTarget, XRFrameBuffer? fbo)
         {

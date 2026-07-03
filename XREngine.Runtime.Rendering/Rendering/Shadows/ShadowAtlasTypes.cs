@@ -45,6 +45,20 @@ public enum ShadowFallbackMode
     Legacy = 5,
 }
 
+public enum ShadowAtlasRenderPlanEntryKind
+{
+    Tile = 0,
+    DirectionalCascadeGroup = 1,
+    PointFaceGroup = 2,
+}
+
+public enum ShadowAtlasRenderBudgetClass
+{
+    Deferrable = 0,
+    Normal = 1,
+    CriticalBypass = 2,
+}
+
 public enum ShadowCasterFilterMode
 {
     Opaque = 0,
@@ -158,7 +172,21 @@ public readonly record struct ShadowMapRequest(
     bool CanReusePreviousFrame,
     bool EditorPinned,
     StereoVisibility StereoVis,
-    SkipReason ForcedSkipReason = SkipReason.None);
+    SkipReason ForcedSkipReason = SkipReason.None,
+    DirectionalCascadeSampleState DirectionalCascadeSample = default);
+
+public readonly record struct DirectionalCascadeSampleState(
+    bool IsValid,
+    ShadowRequestSource Source,
+    int CascadeIndex,
+    ulong ContentHash,
+    ulong RenderedFrame,
+    float SplitFarDistance,
+    float BlendWidth,
+    float BiasMin,
+    float BiasMax,
+    float ReceiverOffset,
+    Matrix4x4 WorldToLightSpaceMatrix);
 
 public readonly record struct ShadowAtlasAllocation(
     ShadowRequestKey Key,
@@ -205,6 +233,27 @@ public readonly record struct ShadowAtlasGroupedPointFaceAllocation(
     int PageIndex,
     int FaceCount,
     ShadowAtlasGroupedAllocationMember[] Members);
+
+public readonly record struct ShadowAtlasRenderPlanMember(
+    ShadowMapRequest Request,
+    ShadowAtlasAllocation Allocation,
+    int RecordIndex);
+
+public readonly record struct ShadowAtlasRenderPlanEntry(
+    ShadowAtlasRenderPlanEntryKind Kind,
+    ShadowMapRequest Request,
+    ShadowAtlasAllocation Allocation,
+    ShadowAtlasPageResource? Page,
+    ShadowAtlasGroupedDirectionalCascadeAllocation DirectionalGroup,
+    ShadowAtlasGroupedPointFaceAllocation PointGroup,
+    int MemberStart,
+    int MemberCount,
+    int RequestStartIndex,
+    int RequestEndIndex,
+    int RecordIndex,
+    bool RequiresRender,
+    bool TimeBudgetBypass,
+    ShadowAtlasRenderBudgetClass BudgetClass);
 
 public readonly record struct ShadowAtlasPageDescriptor(
     EShadowAtlasKind AtlasKind,
@@ -263,6 +312,8 @@ public readonly record struct ShadowAtlasSolveDiagnostics(
     int PointGroupSeedCount,
     int PointGroupMemberCount,
     int PointGroupCoLocationFailureCount,
+    int IncrementalReuseCount,
+    int WaterlineDemotionCount,
     SkipReason LastFailureReason);
 
 public readonly record struct ShadowDirectionalAtlasLightDiagnostic(

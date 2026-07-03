@@ -154,7 +154,7 @@ The profiler can collect GPU timestamp timings around generic `ViewportRenderCom
 execution, which makes it possible to see where render-pipeline time is being spent
 without instrumenting each pass manually.
 
-- Enable it from the in-editor profiler window with **Enable GPU Pipeline Profiling**.
+- Enable it from **Profiler Settings** with **Enable GPU Pipeline Profiling**.
 - Results appear in the new **GPU Pipeline** panel in both the in-process and remote profilers.
 - The panel shows backend/status text, a resolved whole-frame GPU total, root-series history plots, and a hierarchical per-command timing tree.
 - In the in-editor profiler, each render-pipeline root history graph has a **Dump** button that writes a unique `profiler-gpu-pipeline-*.log` file under the active `Build/Logs/.../<session>/` folder. The dump includes retained frame samples, warmup-excluded summaries, worst frames, render-thread CPU/present deltas, named XRWindow CPU phase aggregates, slow command/scope rankings, shader/material hint rankings, and full aggregate tables for LLM analysis.
@@ -215,10 +215,11 @@ If you want the external profiler every time the editor boots, enable
 Editor Preferences Overrides. Startup uses that setting to launch
 `XREngine.Profiler` and force profiler UDP sending on for the session.
 
-The in-editor profiler window also exposes **Enable GPU Pipeline Profiling**,
-which turns on command-level GPU timestamp collection for supported renderers.
+The in-editor **Profiler Settings** panel also exposes **Enable GPU Pipeline
+Profiling**, which turns on command-level GPU timestamp collection for supported
+renderers.
 
-Use **Dump Speed Profile** in the in-editor profiler window after the editor has
+Use **Dump Speed Profile** in **Profiler Settings** after the editor has
 settled into the workload you care about. It captures the same per-frame render
 stats stream for the selected number of seconds and writes
 `profiler-render-stats.ndjson`, `profiler-capture-manifest.json`, and
@@ -362,9 +363,10 @@ default and read results with a delayed, non-blocking policy. Dense timestamp
 mode is reserved for diagnostics, is marked in manifests and samples via
 `gpu_timestamps_dense_mode`, and can perturb very small passes.
 
-The in-editor profiler window also exposes **Enable Profiler Component Timing**,
-which independently controls per-component tick timing capture for the
-Components panel without affecting frame logging or render statistics.
+The in-editor **Profiler Settings** panel also exposes **Enable Profiler
+Component Timing**, which independently controls per-component tick timing
+capture for the Components panel without affecting frame logging or render
+statistics.
 
 When code-profiler frame logging is enabled, the stats thread also writes
 disk diagnostics for severe frame anomalies:
@@ -437,16 +439,39 @@ XREngine.Profiler/
 └── XREngine.Profiler.csproj     # Depends only on XREngine.Data (not the engine)
 ```
 
-## In-Process Profiler Panel (Legacy)
+## In-Process Profiler Panels
 
-The editor still contains the original in-process profiler panel at
-`XREngine.Editor/IMGUI/EditorImGuiUI.ProfilerPanel.cs` (1,308 lines). It
-operates **independently** of the remote profiler:
+The editor also contains in-process profiler panels at
+`XREngine.Editor/IMGUI/EditorImGuiUI.ProfilerPanel.cs`. They operate
+independently of the remote profiler and are opened from **View > Profiler**.
+There is no in-editor profiler dockspace host; each view is a normal standalone
+ImGui panel with its own menu item:
 
-- When hidden (`_showProfiler == false`), it returns immediately — zero cost.
-- When open, it reads the same engine snapshots on the main/render thread and
-  performs its own aggregation, caching, and ImGui rendering.
-- It can run simultaneously with the UDP sender without conflict.
+- **Profiler Settings**
+- **CPU Timings**
+- **FPS Drop Spikes**
+- **Render Stats**
+- **GPU Timings**
+- **Thread Allocations**
+- **Component Timings**
+- **BVH Metrics**
+- **Job System**
+- **Main Thread Invokes**
 
-For minimal overhead, keep the in-process panel closed and use the remote
-profiler instead.
+Panels that depend on a profiler collection setting expose that toggle at the
+top of the panel. CPU Timings and FPS Drop Spikes expose **Frame Logging**;
+Component Timings exposes **Frame Logging** and **Component Timing**; Render
+Stats exposes **Stats Tracking**; GPU Timings exposes **Stats Tracking** and
+**GPU Pipeline**; Thread Allocations exposes **Alloc Tracking**; Main Thread
+Invokes exposes **Invoke Diagnostics**.
+
+- When the profiler group is hidden (`_showProfiler == false`), it returns
+  immediately.
+- Engine snapshot collection is throttled on the app thread and only requests
+  telemetry needed by visible panels.
+- When UDP sending is enabled, the editor keeps Profiler Settings available and
+  avoids drawing local telemetry panels while the external profiler owns live
+  collection.
+
+For minimal editor overhead, keep in-process profiler panels closed and use the
+remote profiler instead.

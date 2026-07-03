@@ -98,6 +98,13 @@ public static class XREngineEnvironmentVariables
 
     public const string ProfilerEnabled = "XRE_PROFILER_ENABLED";
     public const string ProfilerPort = "XRE_PROFILER_PORT";
+    public const string MemoryProfile = "XRE_MEMORY_PROFILE";
+    public const string MemoryDiagnostics = "XRE_MEMORY_DIAGNOSTICS";
+    public const string GcLatencyMode = "XRE_GC_LATENCY_MODE";
+    public const string DisableMaintenanceGc = "XRE_DISABLE_MAINTENANCE_GC";
+    public const string BenchmarkNoGcRegion = "XRE_BENCHMARK_NOGC_REGION";
+    public const string BenchmarkNoGcBytes = "XRE_BENCHMARK_NOGC_BYTES";
+    public const string DotNetGcConcurrent = "DOTNET_gcConcurrent";
     public const string ProfileCapture = "XRE_PROFILE_CAPTURE";
     public const string ProfileAutoDump = "XRE_PROFILE_AUTO_DUMP";
     public const string ProfileRunLabel = "XRE_PROFILE_RUN_LABEL";

@@ -286,9 +286,7 @@ void main()
     return;
     }
 
-    float outExposure = !currentValid
-    ? target
-    : mix(current, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
+    float outExposure = mix(stableCurrent, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
 
     imageStore(ExposureOut, ivec2(0, 0), vec4(outExposure, 0.0, 0.0, 0.0));
 }
@@ -468,9 +466,7 @@ void main()
     return;
     }
 
-    float outExposure = !currentValid
-    ? target
-    : mix(current, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
+    float outExposure = mix(stableCurrent, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
 
     imageStore(ExposureOut, ivec2(0, 0), vec4(outExposure, 0.0, 0.0, 0.0));
 }

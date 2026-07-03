@@ -27,6 +27,7 @@ internal sealed class RuntimeRenderSettings
     private long _maxShadowAtlasMemoryBytes;
     private int _maxShadowTilesRenderedPerFrame = 16;
     private float _maxShadowRenderMilliseconds = 2.0f;
+    private int _maxDirectionalCascadeAtlasStaleFrames = RuntimeRenderingHostServiceDefaults.MaxDirectionalCascadeAtlasStaleFrames;
     private uint _minShadowAtlasTileResolution = 128u;
     private uint _maxShadowAtlasTileResolution = 4096u;
     private int _shaderConfigVersion = RuntimeRenderingHostServiceDefaults.ShaderConfigVersion;
@@ -295,6 +296,14 @@ internal sealed class RuntimeRenderSettings
             ? services.MaxShadowRenderMilliseconds
             : _maxShadowRenderMilliseconds;
         set => _maxShadowRenderMilliseconds = MathF.Max(0.0f, value);
+    }
+
+    public int MaxDirectionalCascadeAtlasStaleFrames
+    {
+        get => TryGetHostShadowAtlasSettings(out IRuntimeRenderingHostServices services)
+            ? services.MaxDirectionalCascadeAtlasStaleFrames
+            : _maxDirectionalCascadeAtlasStaleFrames;
+        set => _maxDirectionalCascadeAtlasStaleFrames = Math.Clamp(value, 0, 120);
     }
 
     public int MaxShadowTilesRenderedPerFrame

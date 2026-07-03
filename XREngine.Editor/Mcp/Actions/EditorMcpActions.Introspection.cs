@@ -15,6 +15,7 @@ using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.DLSS;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
@@ -805,6 +806,27 @@ namespace XREngine.Editor.Mcp
                 hasNvRayTracing = Engine.Rendering.State.HasNvRayTracing,
                 hasVulkanRayTracing = Engine.Rendering.State.HasVulkanRayTracing,
                 hasOvrMultiView = Engine.Rendering.State.HasOvrMultiViewExtension,
+                nvidiaDlss = new
+                {
+                    runtimeDllsAvailable = NvidiaDlssManager.RequiredRuntimeDllsAvailable,
+                    runtimeDllsUnavailableReason = NvidiaDlssManager.RequiredRuntimeDllsAvailable
+                        ? string.Empty
+                        : NvidiaDlssManager.RequiredRuntimeDllsUnavailableReason,
+                    supported = NvidiaDlssManager.IsSupported,
+                    lastError = NvidiaDlssManager.LastError,
+                    effectiveEnabled = Engine.EffectiveSettings.EnableNvidiaDlss,
+                    effectiveQuality = Engine.EffectiveSettings.DlssQuality.ToString(),
+                    frameGenerationRuntimeDllsAvailable = NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable,
+                    frameGenerationRuntimeDllsUnavailableReason = NvidiaDlssManager.FrameGenerationRuntimeDllsAvailable
+                        ? string.Empty
+                        : NvidiaDlssManager.FrameGenerationRuntimeDllsUnavailableReason,
+                    frameGenerationAvailable = NvidiaDlssManager.FrameGenerationAvailable,
+                    frameGenerationUnavailableReason = NvidiaDlssManager.FrameGenerationUnavailableReason,
+                    effectiveFrameGenerationEnabled = Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration,
+                    effectiveFrameGenerationMode = Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode.ToString(),
+                    effectiveFrameGenerationRequested = Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration
+                        && Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode != ENvidiaDlssFrameGenerationMode.Off
+                },
                 openGlExtensions = Engine.Rendering.State.OpenGLExtensions
             };
 

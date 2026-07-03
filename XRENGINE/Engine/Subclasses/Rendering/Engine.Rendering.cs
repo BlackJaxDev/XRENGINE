@@ -664,15 +664,57 @@ namespace XREngine
             {
                 static void Apply()
                 {
+                    bool supported = NvidiaDlssManager.IsSupported;
+                    bool enableDlss = EffectiveSettings.EnableNvidiaDlss;
+                    bool enableFrameGeneration = EffectiveSettings.EnableNvidiaDlssFrameGeneration;
+                    ENvidiaDlssFrameGenerationMode frameGenerationMode = EffectiveSettings.NvidiaDlssFrameGenerationMode;
+                    bool frameGenerationRequested = enableFrameGeneration && frameGenerationMode != ENvidiaDlssFrameGenerationMode.Off;
+                    bool frameGenerationAvailable = false;
+                    string? frameGenerationUnavailableReason = null;
+                    if (frameGenerationRequested)
+                        frameGenerationAvailable = NvidiaDlssManager.Native.IsFrameGenerationAvailable(out frameGenerationUnavailableReason);
+
                     foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                     {
-                        if (!NvidiaDlssManager.IsSupported || !EffectiveSettings.EnableNvidiaDlss)
+                        if (!supported || !enableDlss)
                             NvidiaDlssManager.ResetViewport(viewport);
                         else
                             NvidiaDlssManager.ApplyToViewport(viewport, Settings);
                     }
 
+                    XREngine.Debug.Rendering(
+                        "[NvidiaDLSS] Preference changed. RuntimeDlls={0} Supported={1} EnableDLSS={2} Quality={3} CustomScale={4:F2} Sharpness={5:F2} FrameGenerationEnabled={6} FrameGenerationMode={7} FrameGenerationRequested={8} FrameGenerationAvailable={9} FrameGenerationUnavailableReason={10} LastError={11}",
+                        NvidiaDlssManager.RequiredRuntimeDllsAvailable,
+                        supported,
+                        enableDlss,
+                        EffectiveSettings.DlssQuality,
+                        Settings.DlssCustomScale,
+                        Settings.DlssSharpness,
+                        enableFrameGeneration,
+                        frameGenerationMode,
+                        frameGenerationRequested,
+                        frameGenerationAvailable,
+                        frameGenerationUnavailableReason ?? "<none>",
+                        NvidiaDlssManager.LastError ?? "<none>");
+
+                    if (enableFrameGeneration && frameGenerationMode == ENvidiaDlssFrameGenerationMode.Off)
+                    {
+                        XREngine.Debug.RenderingWarningEvery(
+                            "NvidiaDLSS.FrameGenerationModeOff",
+                            TimeSpan.FromSeconds(5),
+                            "[NvidiaDLSS] Frame generation is enabled, but NvidiaDlssFrameGenerationMode is Off. Select OneX, TwoX, or ThreeX to request DLSS-G.");
+                    }
+                    else if (frameGenerationRequested && !frameGenerationAvailable)
+                    {
+                        XREngine.Debug.RenderingWarningEvery(
+                            "NvidiaDLSS.FrameGenerationUnavailable",
+                            TimeSpan.FromSeconds(5),
+                            "[NvidiaDLSS] Frame generation is requested, but unavailable: {0}",
+                            frameGenerationUnavailableReason ?? NvidiaDlssManager.Native.LastError ?? "unknown reason");
+                    }
+
                     NotifyVulkanUpscaleBridgeVendorSelectionChanged("NVIDIA DLSS preference changed");
+                    RefreshWindowsAfterVendorUpscalePreferenceChanged();
                 }
                 Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyNvidiaDlssPreference", true);
             }
@@ -690,8 +732,18 @@ namespace XREngine
                     }
 
                     NotifyVulkanUpscaleBridgeVendorSelectionChanged("Intel XeSS preference changed");
+                    RefreshWindowsAfterVendorUpscalePreferenceChanged();
                 }
                 Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyIntelXessPreference", true);
+            }
+
+            private static void RefreshWindowsAfterVendorUpscalePreferenceChanged()
+            {
+                foreach (var window in Engine.Windows)
+                {
+                    window.InvalidateScenePanelResources();
+                    window.RequestRenderStateRecheck(resetCircuitBreaker: true);
+                }
             }
 
             /// <summary>

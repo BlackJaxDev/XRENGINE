@@ -520,6 +520,10 @@
       "type": "boolean",
       "description": "Enables or disables RenderWindowsWhileInVR."
     },
+    "EditorCameraRenderOnDemand": {
+      "type": "boolean",
+      "description": "Starts the unit-test editor camera in render-on-demand mode, reusing the last camera result on idle frames."
+    },
     "RenderTransformDebugInfo": {
       "type": "boolean",
       "description": "Enables or disables RenderTransformDebugInfo."

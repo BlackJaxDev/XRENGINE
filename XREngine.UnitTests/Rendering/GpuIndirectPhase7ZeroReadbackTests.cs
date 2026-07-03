@@ -196,7 +196,7 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         source.ShouldContain("if (useGpuRenderPath)");
         source.ShouldContain("commands.RenderCPUNonMeshAndExcluded(pass);");
         source.ShouldContain("commands.RenderGPU(pass, prepassStrategy);");
-        source.ShouldContain("commands.RenderCPU(pass, false, camera);");
+        source.ShouldContain("commands.RenderCPU(pass, false, camera, suppressCpuOcclusionForPass: true);");
         source.ShouldNotContain("allowExcludedGpuFallbackMeshes: false");
     }
 

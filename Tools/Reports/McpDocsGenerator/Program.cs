@@ -5,7 +5,7 @@ const string StartMarker = "<!-- MCP_TOOL_TABLE:START -->";
 const string EndMarker = "<!-- MCP_TOOL_TABLE:END -->";
 
 string repoRoot = FindRepositoryRoot(Directory.GetCurrentDirectory());
-string docPath = Path.Combine(repoRoot, "docs", "features", "mcp-server.md");
+string docPath = Path.Combine(repoRoot, "docs", "developer-guides", "ai", "mcp-server.md");
 
 if (!File.Exists(docPath))
 {

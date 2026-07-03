@@ -237,6 +237,7 @@ public static partial class EditorImGuiUI
             bool EngineState,
             bool PlayerCameras,
             bool Profiler,
+            bool ProfilerSettings,
             bool RenderApiObjects,
             bool RenderApiErrors,
             bool RenderApiExtensions,
@@ -1389,7 +1390,7 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Render Pipeline Graph", null, ref _showRenderPipelineGraph);
                 ImGui.MenuItem("Engine State", null, ref _showStatePanel);
                 ImGui.MenuItem("Player Cameras", null, ref _showPlayerCameras);
-                ImGui.MenuItem("Profiler", "F11", ref _showProfiler);
+                DrawProfilerMenuItems();
                 ImGui.MenuItem("Occlusion", null, ref _showOcclusionPanel);
                 ImGui.MenuItem("Render API Objects", null, ref _showOpenGLApiObjects);
                 ImGui.MenuItem("Render API Errors", null, ref _showOpenGLErrors);
@@ -2284,6 +2285,7 @@ public static partial class EditorImGuiUI
                 EngineState: _showStatePanel,
                 PlayerCameras: _showPlayerCameras,
                 Profiler: _showProfiler,
+                ProfilerSettings: _showProfilerSettings,
                 RenderApiObjects: _showOpenGLApiObjects,
                 RenderApiErrors: _showOpenGLErrors,
                 RenderApiExtensions: _showRenderApiExtensions,
@@ -2343,6 +2345,9 @@ public static partial class EditorImGuiUI
                 case "Profiler":
                     _showProfiler = value;
                     break;
+                case "ProfilerSettings":
+                    _showProfilerSettings = value;
+                    break;
                 case "RenderApiObjects":
                     _showOpenGLApiObjects = value;
                     break;
@@ -2394,6 +2399,7 @@ public static partial class EditorImGuiUI
             builder.AppendLine($"EngineState={FormatIniBoolean(state.EngineState)}");
             builder.AppendLine($"PlayerCameras={FormatIniBoolean(state.PlayerCameras)}");
             builder.AppendLine($"Profiler={FormatIniBoolean(state.Profiler)}");
+            builder.AppendLine($"ProfilerSettings={FormatIniBoolean(state.ProfilerSettings)}");
             builder.AppendLine($"RenderApiObjects={FormatIniBoolean(state.RenderApiObjects)}");
             builder.AppendLine($"RenderApiErrors={FormatIniBoolean(state.RenderApiErrors)}");
             builder.AppendLine($"RenderApiExtensions={FormatIniBoolean(state.RenderApiExtensions)}");

@@ -39,6 +39,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Physics API](developer-guides/physics/physics-api.md)
 - [Scene Graph Developer Guide](developer-guides/scene/scene-graph.md)
 - [Engine API](developer-guides/runtime/engine-api.md)
+- [Hot-Path Memory Control](developer-guides/runtime/hot-path-memory.md)
 - [Job System](developer-guides/runtime/job-system.md)
 - [Skinning](developer-guides/rendering/skinning.md)
 - [Blendshaping](developer-guides/rendering/blendshaping.md)

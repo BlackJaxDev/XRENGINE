@@ -281,7 +281,17 @@ void main()
 
             ColorGradingSettings settings = ResolveSettings();
             bool hasExposureTexture = instance.TryGetTexture(AutoExposureTextureName, out XRTexture? exposureTexture) && exposureTexture is not null;
-            bool useGpuAutoExposure = settings.UseGpuAutoExposureThisFrame && hasExposureTexture;
+            bool exposureTextureReady = hasExposureTexture &&
+                AbstractRenderer.Current?.IsTextureReadyForShaderSampling(exposureTexture) == true;
+            bool useGpuAutoExposure = settings.UseGpuAutoExposureThisFrame && exposureTextureReady;
+            if (settings.UseGpuAutoExposureThisFrame && hasExposureTexture && !exposureTextureReady)
+            {
+                Debug.RenderingWarningEvery(
+                    "ColorGrading.GpuAutoExposureDescriptorNotReady",
+                    TimeSpan.FromSeconds(2),
+                    "[ColorGrading] GPU auto exposure texture '{0}' is not shader-sample ready; using scalar exposure fallback for this frame.",
+                    exposureTexture?.Name ?? AutoExposureTextureName);
+            }
 
             program.Sampler("SourceTexture", sourceTexture, 0);
             program.Sampler("AutoExposureTex", useGpuAutoExposure ? exposureTexture! : sourceTexture, 1);

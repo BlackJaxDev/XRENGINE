@@ -350,7 +350,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     //  Panel draw methods
     // ═══════════════════════════════════════════════════════════════
 
-    public void DrawProfilerTreePanel(ref bool open, bool allowClose = true)
+    public void DrawProfilerTreePanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -370,6 +370,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var nowUtc = DateTime.UtcNow;
 
@@ -516,7 +518,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             ImGui.SetTooltip("Write a unique LLM-oriented log for the latest CPU profiler frame snapshot.");
     }
 
-    public void DrawFpsDropSpikesPanel(ref bool open, bool allowClose = true)
+    public void DrawFpsDropSpikesPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -536,6 +538,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         if (ImGui.Button("Clear Spikes"))
         {
@@ -600,7 +604,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
-    public void DrawRenderStatsPanel(ref bool open, bool allowClose = true)
+    public void DrawRenderStatsPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -620,6 +624,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var stats = _source.LatestRenderStats;
         if (stats is null)
@@ -1039,7 +1045,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
-    public void DrawGpuPipelinePanel(ref bool open, bool allowClose = true)
+    public void DrawGpuPipelinePanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1060,6 +1066,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         if (_source.LatestRenderStats is null)
         {
@@ -1192,7 +1200,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         => root.Children is { Length: > 0 } &&
            !string.Equals(root.Name, "Render Thread (CPU+Present)", StringComparison.Ordinal);
 
-    public void DrawThreadAllocationsPanel(ref bool open, bool allowClose = true)
+    public void DrawThreadAllocationsPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1212,6 +1220,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var allocs = _source.LatestAllocations;
         if (allocs is null)
@@ -1240,10 +1250,35 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             ImGui.EndTable();
         }
 
+        if (allocs.Scopes is { Length: > 0 })
+        {
+            ImGui.Separator();
+            ImGui.TextDisabled("Named allocation scopes show subsystem/pass/codec attribution.");
+
+            if (ImGui.BeginTable("AllocationScopes", 7, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+            {
+                ImGui.TableSetupColumn("Scope");
+                ImGui.TableSetupColumn("Category");
+                ImGui.TableSetupColumn("Budget (KB)");
+                ImGui.TableSetupColumn("Last (KB)");
+                ImGui.TableSetupColumn("Avg (KB)");
+                ImGui.TableSetupColumn("Max (KB)");
+                ImGui.TableSetupColumn("Over");
+                ImGui.TableHeadersRow();
+
+                AllocationScopeSlice[] scopes = allocs.Scopes;
+                int count = Math.Min(scopes.Length, 64);
+                for (int i = 0; i < count; i++)
+                    DrawAllocScopeRow(scopes[i]);
+
+                ImGui.EndTable();
+            }
+        }
+
         ImGui.End();
     }
 
-    public void DrawComponentTimingsPanel(ref bool open, bool allowClose = true)
+    public void DrawComponentTimingsPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1263,6 +1298,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var frame = _source.LatestFrame;
         var components = frame?.ComponentTimings;
@@ -1322,7 +1359,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
-    public void DrawBvhMetricsPanel(ref bool open, bool allowClose = true)
+    public void DrawBvhMetricsPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1343,6 +1380,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             }
         }
 
+        drawHeader?.Invoke();
+
         var bvh = _source.LatestBvhMetrics;
         if (bvh is null)
         {
@@ -1359,7 +1398,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
-    public void DrawJobSystemPanel(ref bool open, bool allowClose = true)
+    public void DrawJobSystemPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1379,6 +1418,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var jobs = _source.LatestJobStats;
         if (jobs is null)
@@ -1423,7 +1464,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
-    public void DrawMainThreadInvokesPanel(ref bool open, bool allowClose = true)
+    public void DrawMainThreadInvokesPanel(ref bool open, bool allowClose = true, Action? drawHeader = null)
     {
         if (!open)
             return;
@@ -1443,6 +1484,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 return;
             }
         }
+
+        drawHeader?.Invoke();
 
         var invokes = _source.LatestMainThreadInvokes;
         if (invokes is null || invokes.Entries is null)
@@ -3505,6 +3548,19 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.TableSetColumnIndex(2); ImGui.Text($"{slice.AverageKB:F2}");
         ImGui.TableSetColumnIndex(3); ImGui.Text($"{slice.MaxKB:F2}");
         ImGui.TableSetColumnIndex(4); ImGui.Text($"{slice.Samples}/{slice.Capacity}");
+    }
+
+    private static void DrawAllocScopeRow(AllocationScopeSlice? slice)
+    {
+        if (slice is null) return;
+        ImGui.TableNextRow();
+        ImGui.TableSetColumnIndex(0); ImGui.Text(slice.Name);
+        ImGui.TableSetColumnIndex(1); ImGui.Text(slice.Category);
+        ImGui.TableSetColumnIndex(2); ImGui.Text(slice.BudgetBytes < 0 ? "-" : $"{slice.BudgetKB:F2}");
+        ImGui.TableSetColumnIndex(3); ImGui.Text($"{slice.LastKB:F2}");
+        ImGui.TableSetColumnIndex(4); ImGui.Text($"{slice.AverageKB:F2}");
+        ImGui.TableSetColumnIndex(5); ImGui.Text($"{slice.MaxKB:F2}");
+        ImGui.TableSetColumnIndex(6); ImGui.Text($"{slice.OverBudgetCount:N0}");
     }
 
     private static float GetMedianTailMs(float[] samples, int takeCount, int skipFromEnd)

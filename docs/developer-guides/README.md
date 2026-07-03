@@ -20,6 +20,7 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Rendering Buffer Writes](rendering/xrdatabuffer-write-model.md)
 - [Runtime](runtime/engine-api.md)
 - [AOT Final Game Builds](runtime/aot-final-game-builds.md)
+- [Hot-Path Memory Control](runtime/hot-path-memory.md)
 - [Scene](scene/scene-graph.md)
 - [Testing](testing/unit-testing-world.md)
 - [UI](ui/native-hierarchy-panel.md)

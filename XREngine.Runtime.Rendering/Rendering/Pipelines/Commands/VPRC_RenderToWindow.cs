@@ -255,7 +255,7 @@ void main()
         if (!useBoundOutputFbo)
             RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
         if (!isExternalSwapchainTarget && !useBoundOutputFbo)
-            renderer.TrackWindowPresentSource(sourceTexture, ResolveSourceFrameBuffer(instance));
+            renderer.TrackWindowPresentSource(sourceTexture, ResolveSourceFrameBuffer(instance, sourceTexture));
 
         using var areaScope = instance.RenderState.PushRenderArea(region);
         if (ClearColor || ClearDepth || ClearStencil)
@@ -349,10 +349,39 @@ void main()
     private string GetSourceDisplayName()
         => SourceTextureName ?? SourceFBOName ?? "Output";
 
-    private XRFrameBuffer? ResolveSourceFrameBuffer(XRRenderPipelineInstance instance)
-        => !string.IsNullOrWhiteSpace(SourceFBOName)
-            ? instance.GetFBO<XRFrameBuffer>(SourceFBOName!)
-            : instance.RenderState.OutputFBO;
+    private XRFrameBuffer? ResolveSourceFrameBuffer(XRRenderPipelineInstance instance, XRTexture sourceTexture)
+    {
+        if (!string.IsNullOrWhiteSpace(SourceFBOName))
+            return instance.GetFBO<XRFrameBuffer>(SourceFBOName!);
+
+        if (FrameBufferContainsColorTexture(instance.RenderState.OutputFBO, sourceTexture))
+            return instance.RenderState.OutputFBO;
+
+        foreach (XRFrameBuffer candidate in instance.Resources.EnumerateFrameBufferInstances())
+        {
+            if (FrameBufferContainsColorTexture(candidate, sourceTexture))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static bool FrameBufferContainsColorTexture(XRFrameBuffer? frameBuffer, XRTexture sourceTexture)
+    {
+        if (frameBuffer?.Targets is null)
+            return false;
+
+        foreach (var (target, attachment, _, _) in frameBuffer.Targets)
+        {
+            if (attachment is < EFrameBufferAttachment.ColorAttachment0 or > EFrameBufferAttachment.ColorAttachment31)
+                continue;
+
+            if (ReferenceEquals(target, sourceTexture))
+                return true;
+        }
+
+        return false;
+    }
 
     private static XRMaterial CreatePresentMaterial(string fragmentShaderCode)
         => new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, fragmentShaderCode))

@@ -33,6 +33,7 @@ namespace XREngine.Scene
             // switch over to ShadowMapArray while the cascade buffers are still empty.
             PrepareDirectionalShadowMaps();
             PopulateLocalShadowRelevanceCameras(scratch);
+            PlanShadowAtlasRequests(scratch);
 
             _shadowLightsCollectedThisTick.Clear();
 
@@ -260,7 +261,14 @@ namespace XREngine.Scene
             RenderingShadowMaps = true;
             try
             {
-                UpdateShadowAtlasRequests(collectVisibleNow, scratch);
+                if (collectVisibleNow)
+                {
+                    PopulateLocalShadowRelevanceCameras(scratch);
+                    PlanShadowAtlasRequests(scratch);
+                    PublishShadowAtlasFrame(collectVisibleNow, scratch);
+                }
+
+                ShadowAtlas.RenderScheduledTiles(collectVisibleNow);
 
                 // Index-based iteration avoids EventList ThreadSafe snapshot allocation.
                 for (int i = 0; i < DynamicDirectionalLights.Count; i++)
@@ -272,16 +280,13 @@ namespace XREngine.Scene
                 for (int i = 0; i < DynamicSpotLights.Count; i++)
                 {
                     SpotLightComponent light = DynamicSpotLights[i];
-                    bool relevant = IsSpotShadowRelevant(light, scratch);
-                    light.SetShadowRelevance(relevant, RuntimeEngine.Rendering.State.RenderFrameId);
+                    bool relevant = IsSpotShadowRelevantForRender(light, scratch);
                     if (relevant && (!light.UsesSpotShadowAtlasForCurrentEncoding || ShouldRenderLegacySpotShadowMap(light)))
                         light.RenderShadowMap(collectVisibleNow);
                 }
                 for (int i = 0; i < DynamicPointLights.Count; i++)
                 {
                     PointLightComponent light = DynamicPointLights[i];
-                    int faceMask = CalculatePointShadowFaceMask(light, scratch);
-                    light.SetShadowFaceRelevanceMask(faceMask, RuntimeEngine.Rendering.State.RenderFrameId);
                     if (!light.UsesPointShadowAtlasForCurrentEncoding)
                         light.RenderShadowMap(collectVisibleNow);
                 }
@@ -342,7 +347,7 @@ namespace XREngine.Scene
 
         #region Shadow Atlas Requests
 
-        private void UpdateShadowAtlasRequests(bool collectVisibleNow, ShadowScratch scratch)
+        private void PlanShadowAtlasRequests(ShadowScratch scratch)
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.UpdateShadowAtlasRequests");
 
@@ -355,7 +360,10 @@ namespace XREngine.Scene
             SubmitPointShadowAtlasRequests(scratch);
 
             ShadowAtlas.SolveAllocations();
-            ShadowAtlas.RenderScheduledTiles(collectVisibleNow);
+        }
+
+        private void PublishShadowAtlasFrame(bool collectVisibleNow, ShadowScratch scratch)
+        {
             ShadowAtlas.PublishFrameData();
             PublishShadowAtlasDiagnostics();
             LogShadowAtlasFrameSummary(collectVisibleNow, scratch);
@@ -465,6 +473,17 @@ namespace XREngine.Scene
             return LocalShadowFrustumRelevance.IsSpotShadowRelevant(light, cameras, scratch.LocalShadowIntersections);
         }
 
+        private bool IsSpotShadowRelevantForRender(SpotLightComponent light, ShadowScratch scratch)
+        {
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            if (light.LastShadowRelevanceFrame != 0u)
+                return light.ShadowFrustumRelevant;
+
+            bool relevant = IsSpotShadowRelevant(light, scratch);
+            light.SetShadowRelevance(relevant, frameId);
+            return relevant;
+        }
+
         private void SubmitDirectionalShadowAtlasRequests()
         {
             if (!RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas)
@@ -514,6 +533,7 @@ namespace XREngine.Scene
             if (!useCascadeAtlas)
                 return;
 
+            light.BeginDirectionalCascadeAtlasRequestFrame(source, activeCascadeCount);
             for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
             {
                 XRCamera? cascadeCamera = light.GetCascadeCamera(source, cascadeIndex);
@@ -528,7 +548,8 @@ namespace XREngine.Scene
                     priority: 10000.0f - cascadeIndex * 100.0f + (source == ShadowRequestSource.Hmd ? 25.0f : 0.0f),
                     fallback: ShadowFallbackMode.StaleTile,
                     encoding: encoding,
-                    source: source);
+                    source: source,
+                    directionalCascadeCount: activeCascadeCount);
             }
         }
 
@@ -608,7 +629,8 @@ namespace XREngine.Scene
             EShadowMapEncoding encoding = EShadowMapEncoding.Depth,
             uint? desiredResolutionOverride = null,
             SkipReason forcedSkipReason = SkipReason.None,
-            ShadowRequestSource source = ShadowRequestSource.Default)
+            ShadowRequestSource source = ShadowRequestSource.Default,
+            int directionalCascadeCount = 0)
         {
             ShadowRequestKey key = light.CreateShadowRequestKey(projectionType, faceOrCascadeIndex, encoding, source: source);
             Matrix4x4 view = camera.Transform.InverseRenderMatrix;
@@ -617,8 +639,17 @@ namespace XREngine.Scene
             float projFar = MathF.Max(camera.FarZ, camera.NearZ + 0.001f);
             uint desiredResolution = desiredResolutionOverride ?? GetDesiredShadowAtlasResolution(light);
             uint minimumResolution = GetMinimumShadowAtlasResolution(desiredResolution);
-            bool hasPrevious = ShadowAtlas.PublishedFrameData.TryGetAllocation(key, out ShadowAtlasAllocation previous);
-            ulong contentHash = BuildShadowContentHash(light, projectionType, faceOrCascadeIndex, encoding, view, projection, projNear, projFar);
+            bool hasPrevious = ShadowAtlas.TryGetPlanningAllocation(key, out ShadowAtlasAllocation previous);
+            ulong contentHash = BuildShadowContentHash(
+                light,
+                projectionType,
+                faceOrCascadeIndex,
+                encoding,
+                view,
+                projection,
+                projNear,
+                projFar,
+                desiredResolution);
             bool canReusePreviousFrame = CanReuseShadowAtlasPreviousFrame(light, hasPrevious, previous, contentHash);
             ShadowDirtyReason dirtyReason = ResolveShadowDirtyReason(
                 light,
@@ -630,6 +661,49 @@ namespace XREngine.Scene
                 previous);
             bool isDirty = dirtyReason != ShadowDirtyReason.None;
             float refreshPriority = priority + EstimateRefreshPriorityBonus(hasPrevious, previous);
+            SkipReason effectiveForcedSkipReason = forcedSkipReason;
+            DirectionalCascadeSampleState directionalCascadeSample = default;
+            if (projectionType == EShadowProjectionType.DirectionalCascade &&
+                light is DirectionalLightComponent directionalLight)
+            {
+                directionalLight.TryCreateDirectionalCascadeSampleState(
+                    source,
+                    faceOrCascadeIndex,
+                    contentHash,
+                    renderedFrame: 0u,
+                    out directionalCascadeSample);
+
+                bool forcedFreshByCadence = false;
+                if (effectiveForcedSkipReason == SkipReason.None &&
+                    ShouldSkipDirectionalCascadeRefreshByCadence(
+                        directionalLight,
+                        source,
+                        faceOrCascadeIndex,
+                        directionalCascadeCount,
+                        desiredResolution,
+                        hasPrevious,
+                        previous,
+                        dirtyReason,
+                        directionalCascadeSample,
+                        out forcedFreshByCadence))
+                {
+                    effectiveForcedSkipReason = SkipReason.StaleTileReused;
+                }
+
+                if (forcedFreshByCadence)
+                {
+                    RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(
+                        ERendererProfilerCounter.DirectionalCascadeForcedFreshRender);
+                }
+
+                bool renderRequested = effectiveForcedSkipReason == SkipReason.None &&
+                    (isDirty || !canReusePreviousFrame);
+                directionalLight.MarkDirectionalCascadeAtlasRequest(
+                    source,
+                    faceOrCascadeIndex,
+                    contentHash,
+                    renderRequested);
+            }
 
             ShadowMapRequest request = new(
                 key,
@@ -652,10 +726,133 @@ namespace XREngine.Scene
                 canReusePreviousFrame,
                 EditorPinned: false,
                 StereoVis: RuntimeEngine.VRState.IsInVR ? StereoVisibility.BothEyes : StereoVisibility.Mono,
-                ForcedSkipReason: forcedSkipReason);
+                ForcedSkipReason: effectiveForcedSkipReason,
+                DirectionalCascadeSample: directionalCascadeSample);
 
             LogDirectionalAtlasSubmit(light, request, hasPrevious, previous);
             ShadowAtlas.Submit(request);
+        }
+
+        private static bool ShouldSkipDirectionalCascadeRefreshByCadence(
+            DirectionalLightComponent light,
+            ShadowRequestSource source,
+            int cascadeIndex,
+            int activeCascadeCount,
+            uint desiredResolution,
+            bool hasPrevious,
+            in ShadowAtlasAllocation previous,
+            ShadowDirtyReason dirtyReason,
+            in DirectionalCascadeSampleState requestSample,
+            out bool forcedFresh)
+        {
+            forcedFresh = false;
+            if ((dirtyReason & ShadowDirtyReason.ContentChanged) == 0 ||
+                activeCascadeCount <= 1 ||
+                !hasPrevious ||
+                !previous.IsResident ||
+                previous.LastRenderedFrame == 0u ||
+                previous.ActiveFallback == ShadowFallbackMode.Disabled)
+            {
+                return false;
+            }
+
+            int maxStaleFrames = RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeAtlasStaleFrames;
+            if (maxStaleFrames <= 0)
+                return false;
+
+            bool hasRenderedSample = light.TryGetRenderedDirectionalCascadeSampleState(
+                source,
+                cascadeIndex,
+                out DirectionalCascadeSampleState renderedSample);
+            if (!hasRenderedSample)
+            {
+                forcedFresh = true;
+                return false;
+            }
+
+            if (IsLargeDirectionalCascadeMatrixJump(requestSample, renderedSample, desiredResolution))
+            {
+                forcedFresh = true;
+                return false;
+            }
+
+            int stableRequestFrames = light.GetDirectionalCascadeStableRequestFrameCount(
+                source,
+                cascadeIndex,
+                requestSample.ContentHash);
+            if (stableRequestFrames >= ResolveDirectionalCascadeSettledRefreshStableFrames(activeCascadeCount))
+            {
+                forcedFresh = true;
+                return false;
+            }
+
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong staleAge = frameId >= previous.LastRenderedFrame
+                ? frameId - previous.LastRenderedFrame
+                : ulong.MaxValue;
+            if (staleAge >= (ulong)maxStaleFrames)
+            {
+                // Do not publish an expired stale atlas slot that the shader must reject.
+                forcedFresh = true;
+                return false;
+            }
+
+            int interval = ResolveDirectionalCascadeRefreshInterval(activeCascadeCount, maxStaleFrames);
+            if (interval <= 1)
+                return false;
+
+            return staleAge < (ulong)interval;
+        }
+
+        private static int ResolveDirectionalCascadeSettledRefreshStableFrames(int activeCascadeCount)
+            => 1;
+
+        private static int ResolveDirectionalCascadeRefreshInterval(int activeCascadeCount, int maxStaleFrames)
+            => activeCascadeCount <= 1
+                ? 1
+                : Math.Clamp(maxStaleFrames, 1, 120);
+
+        private static bool IsLargeDirectionalCascadeMatrixJump(
+            in DirectionalCascadeSampleState current,
+            in DirectionalCascadeSampleState rendered,
+            uint desiredResolution)
+        {
+            if (!current.IsValid || !rendered.IsValid)
+                return true;
+
+            Matrix4x4 a = current.WorldToLightSpaceMatrix;
+            Matrix4x4 b = rendered.WorldToLightSpaceMatrix;
+            float maxLinearDelta = 0.0f;
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M11, b.M11);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M12, b.M12);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M13, b.M13);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M14, b.M14);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M21, b.M21);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M22, b.M22);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M23, b.M23);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M24, b.M24);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M31, b.M31);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M32, b.M32);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M33, b.M33);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M34, b.M34);
+            AccumulateMaxAbsDelta(ref maxLinearDelta, a.M44, b.M44);
+            if (maxLinearDelta > 1e-3f)
+                return true;
+
+            float maxTranslationDelta = 0.0f;
+            AccumulateMaxAbsDelta(ref maxTranslationDelta, a.M41, b.M41);
+            AccumulateMaxAbsDelta(ref maxTranslationDelta, a.M42, b.M42);
+            AccumulateMaxAbsDelta(ref maxTranslationDelta, a.M43, b.M43);
+            float clipTexel = 2.0f / MathF.Max(1.0f, desiredResolution);
+            float jumpThreshold = MathF.Max(0.10f, clipTexel * 128.0f);
+            return maxTranslationDelta > jumpThreshold;
+        }
+
+        private static void AccumulateMaxAbsDelta(ref float maxDelta, float current, float previous)
+        {
+            float delta = MathF.Abs(current - previous);
+            if (delta > maxDelta)
+                maxDelta = delta;
         }
 
         private static bool CanReuseShadowAtlasPreviousFrame(
@@ -846,6 +1043,7 @@ namespace XREngine.Scene
             for (int i = 0; i < count; i++)
             {
                 if (!light.TryGetCascadeAtlasSlot(source, i, out DirectionalLightComponent.DirectionalCascadeAtlasSlot slot) ||
+                    !slot.HasCascadeUniformData ||
                     !IsSampleableDirectionalAtlasSlot(slot, pageCount))
                 {
                     return false;
@@ -970,7 +1168,7 @@ namespace XREngine.Scene
 
         private void PublishShadowAtlasDiagnostics()
         {
-            ShadowAtlasFrameData frameData = ShadowAtlas.PublishedFrameData;
+            ulong frameId = ShadowAtlas.CurrentFrameId;
             for (int i = 0; i < DynamicDirectionalLights.Count; i++)
             {
                 DynamicDirectionalLights[i].BeginDirectionalAtlasSlotPublish();
@@ -989,10 +1187,10 @@ namespace XREngine.Scene
             for (int i = 0; i < ShadowAtlas.Requests.Count; i++)
             {
                 ShadowMapRequest request = ShadowAtlas.Requests[i];
-                if (!frameData.TryGetAllocationIndex(request.Key, out int recordIndex, out ShadowAtlasAllocation allocation))
+                if (!ShadowAtlas.TryGetDiagnosticAllocationIndex(request, out int recordIndex, out ShadowAtlasAllocation allocation))
                     continue;
 
-                AccumulateShadowAtlasDiagnostic(request.Light, request, allocation, recordIndex, frameData.FrameId);
+                AccumulateShadowAtlasDiagnostic(request.Light, request, allocation, recordIndex, frameId);
             }
         }
 
@@ -1044,7 +1242,8 @@ namespace XREngine.Scene
                         recordIndex,
                         request.NearPlane,
                         request.FarPlane,
-                        request.DesiredResolution);
+                        request.DesiredResolution,
+                        request.DirectionalCascadeSample);
                 }
                 else if (request.ProjectionType == EShadowProjectionType.DirectionalPrimary)
                 {
@@ -1332,7 +1531,8 @@ namespace XREngine.Scene
             in Matrix4x4 view,
             in Matrix4x4 projection,
             float projectionNear,
-            float projectionFar)
+            float projectionFar,
+            uint desiredResolution)
         {
             ulong hash = 14695981039346656037UL;
             AddGuid(ref hash, light.ID);
@@ -1345,8 +1545,13 @@ namespace XREngine.Scene
             Add(ref hash, (uint)light.SoftShadowMode);
             AddFloat(ref hash, light.ShadowMinBias);
             AddFloat(ref hash, light.ShadowMaxBias);
-            AddMatrix(ref hash, view);
-            AddMatrix(ref hash, projection);
+            if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary)
+                AddDirectionalCascadeMatrix(ref hash, view, projection, desiredResolution);
+            else
+            {
+                AddMatrix(ref hash, view);
+                AddMatrix(ref hash, projection);
+            }
             AddFloat(ref hash, projectionNear);
             AddFloat(ref hash, projectionFar);
             return hash;
@@ -1366,6 +1571,40 @@ namespace XREngine.Scene
             AddFloat(ref hash, value.M21); AddFloat(ref hash, value.M22); AddFloat(ref hash, value.M23); AddFloat(ref hash, value.M24);
             AddFloat(ref hash, value.M31); AddFloat(ref hash, value.M32); AddFloat(ref hash, value.M33); AddFloat(ref hash, value.M34);
             AddFloat(ref hash, value.M41); AddFloat(ref hash, value.M42); AddFloat(ref hash, value.M43); AddFloat(ref hash, value.M44);
+        }
+
+        private static void AddDirectionalCascadeMatrix(
+            ref ulong hash,
+            in Matrix4x4 view,
+            in Matrix4x4 projection,
+            uint desiredResolution)
+        {
+            Matrix4x4 viewProjection = view * projection;
+            float clipTexel = 2.0f / MathF.Max(1.0f, desiredResolution);
+            float quantum = MathF.Max(1e-7f, clipTexel / 4096.0f);
+            AddQuantizedMatrix(ref hash, viewProjection, quantum);
+        }
+
+        private static void AddQuantizedMatrix(ref ulong hash, in Matrix4x4 value, float quantum)
+        {
+            AddQuantizedFloat(ref hash, value.M11, quantum); AddQuantizedFloat(ref hash, value.M12, quantum); AddQuantizedFloat(ref hash, value.M13, quantum); AddQuantizedFloat(ref hash, value.M14, quantum);
+            AddQuantizedFloat(ref hash, value.M21, quantum); AddQuantizedFloat(ref hash, value.M22, quantum); AddQuantizedFloat(ref hash, value.M23, quantum); AddQuantizedFloat(ref hash, value.M24, quantum);
+            AddQuantizedFloat(ref hash, value.M31, quantum); AddQuantizedFloat(ref hash, value.M32, quantum); AddQuantizedFloat(ref hash, value.M33, quantum); AddQuantizedFloat(ref hash, value.M34, quantum);
+            AddQuantizedFloat(ref hash, value.M41, quantum); AddQuantizedFloat(ref hash, value.M42, quantum); AddQuantizedFloat(ref hash, value.M43, quantum); AddQuantizedFloat(ref hash, value.M44, quantum);
+        }
+
+        private static void AddQuantizedFloat(ref ulong hash, float value, float quantum)
+        {
+            if (!float.IsFinite(value) || quantum <= 0.0f)
+            {
+                AddFloat(ref hash, value);
+                return;
+            }
+
+            float quantized = MathF.Round(value / quantum) * quantum;
+            if (quantized == 0.0f)
+                quantized = 0.0f;
+            AddFloat(ref hash, quantized);
         }
 
         private static void AddFloat(ref ulong hash, float value)
