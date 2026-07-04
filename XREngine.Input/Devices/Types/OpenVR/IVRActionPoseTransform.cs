@@ -8,7 +8,7 @@ namespace XREngine.Input.Devices.Types.OpenVR
     {
         public bool QueryNextFrame { get; set; }
         public float QuerySecondsFromNow { get; set; }
-        public Vector3 Velocity { get; }
-        public Vector3 AngularVelocity { get; }
+        public Vector3 Velocity { get; set; }
+        public Vector3 AngularVelocity { get; set; }
     }
 }

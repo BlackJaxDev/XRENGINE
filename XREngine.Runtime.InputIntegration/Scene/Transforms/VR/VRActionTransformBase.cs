@@ -27,14 +27,14 @@ namespace XREngine.Data.Components.Scene
         public Vector3 Position
         {
             get => _position;
-            internal set => SetField(ref _position, value);
+            set => SetField(ref _position, value);
         }
 
         private Quaternion _rotation = Quaternion.Identity;
         public Quaternion Rotation
         {
             get => _rotation;
-            internal set => SetField(ref _rotation, value);
+            set => SetField(ref _rotation, value);
         }
 
         public string ActionPath => MakeVRActionPath(ActionCategory.ToString(), ActionName.ToString(), false);

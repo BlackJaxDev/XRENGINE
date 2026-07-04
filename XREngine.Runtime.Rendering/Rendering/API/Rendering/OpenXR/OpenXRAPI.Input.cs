@@ -92,8 +92,7 @@ public unsafe partial class OpenXRAPI
                 _openXrKnownTrackerPaths.Add(p);
         }
 
-        // Best-effort: runtime may not expose the extension; we still keep default role paths.
-        _ = Api.TryGetInstanceExtension<HtcxViveTrackerInteraction>(string.Empty, _instance, out _);
+        InitializeViveTrackerExtension();
     }
 
     private static void WriteUtf8Z(byte* dest, int maxBytes, string text)
@@ -196,6 +195,8 @@ public unsafe partial class OpenXRAPI
                 }
             }
         }
+
+        CreateRuntimeNeutralInputActions();
     }
 
     private void CreateActionSpaces()
@@ -249,6 +250,8 @@ public unsafe partial class OpenXRAPI
                     _trackerSpaces[userPath] = trackerSpace;
             }
         }
+
+        CreateRuntimeNeutralActionSpaces();
     }
 
     private void AttachActionSets()
@@ -294,6 +297,7 @@ public unsafe partial class OpenXRAPI
             SuggestForProfile("/interaction_profiles/valve/index_controller", bindings);
             SuggestForProfile("/interaction_profiles/htc/vive_controller", bindings);
             SuggestForProfile("/interaction_profiles/microsoft/motion_controller", bindings);
+            SuggestRuntimeNeutralBindings();
 
             if (_trackerPoseAction.Handle != 0 && _trackerSubactionPaths.Count > 0)
             {
@@ -493,6 +497,7 @@ public unsafe partial class OpenXRAPI
             }
         }
 
+        UpdateRuntimeNeutralInputStateCaches(displayTime, timing);
         RecordSmokeActionPoseCache(timing);
     }
 
@@ -500,6 +505,8 @@ public unsafe partial class OpenXRAPI
     {
         try
         {
+            DestroyRuntimeNeutralInput();
+
             foreach (var s in _trackerSpaces.Values)
                 if (s.Handle != 0)
                     Api.DestroySpace(s);

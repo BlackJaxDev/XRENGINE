@@ -165,6 +165,21 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Start-Editor-UnitTesting-OpenXR-SteamVR-NoDebug",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=Default && set XRE_UNIT_TEST_VR_MODE=OpenXR && set XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1 && set XRE_OCCLUSION_CULLING_MODE=Disabled && set XRE_WINDOW_TITLE=XRE Editor (OpenXR SteamVR, Occlusion=Disabled) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+			],
+			"dependsOn": "Build-Editor",
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Install-Monado",
 			"type": "shell",
 			"command": "powershell",
@@ -191,6 +206,23 @@
 				"Bypass",
 				"-File",
 				"${workspaceFolder}\\Tools\\OpenXR\\Run-OpenXrMonadoSmoke.ps1"
+			],
+			"group": "test",
+			"presentation": {
+				"reveal": "always"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Test-OpenXR-SteamVR-Smoke",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\Tools\\OpenXR\\Run-OpenXrSteamVrSmoke.ps1"
 			],
 			"group": "test",
 			"presentation": {

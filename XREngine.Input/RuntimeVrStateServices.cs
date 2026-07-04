@@ -141,6 +141,12 @@ public interface IRuntimeVrStateServices
     IEnumerable<VrDevice> TrackedDevices { get; }
 
     /// <summary>
+    /// OpenXR tracker user paths currently known to the runtime.
+    /// Includes SteamVR role paths and persistent paths when the active runtime exposes them.
+    /// </summary>
+    string[] GetKnownOpenXrTrackerUserPaths();
+
+    /// <summary>
     /// Returns true when the OpenVR tracked device index represents a generic tracker.
     /// </summary>
     bool IsGenericTracker(uint deviceIndex);
@@ -254,6 +260,10 @@ public static class RuntimeVrStateServices
     /// <inheritdoc cref="IRuntimeVrStateServices.TrackedDevices"/>
     public static IEnumerable<VrDevice> TrackedDevices
         => Current.TrackedDevices;
+
+    /// <inheritdoc cref="IRuntimeVrStateServices.GetKnownOpenXrTrackerUserPaths"/>
+    public static string[] GetKnownOpenXrTrackerUserPaths()
+        => Current.GetKnownOpenXrTrackerUserPaths();
 
     #endregion
 
@@ -439,6 +449,9 @@ public static class RuntimeVrStateServices
         public VrDevice? LeftController => null;
         public VrDevice? RightController => null;
         public IEnumerable<VrDevice> TrackedDevices => Array.Empty<VrDevice>();
+
+        public string[] GetKnownOpenXrTrackerUserPaths()
+            => [];
 
         public bool IsGenericTracker(uint deviceIndex)
             => false;

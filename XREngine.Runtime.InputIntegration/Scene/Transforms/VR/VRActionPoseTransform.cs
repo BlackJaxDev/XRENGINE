@@ -27,12 +27,12 @@ namespace XREngine.Data.Components.Scene
         public Vector3 Velocity
         {
             get => _velocity;
-            internal set => SetField(ref _velocity, value);
+            set => SetField(ref _velocity, value);
         }
         public Vector3 AngularVelocity
         {
             get => _angularVelocity;
-            internal set => SetField(ref _angularVelocity, value);
+            set => SetField(ref _angularVelocity, value);
         }
     }
 }

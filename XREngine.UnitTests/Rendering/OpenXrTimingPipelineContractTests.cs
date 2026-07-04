@@ -457,7 +457,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string openGl = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs");
         string state = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
-        string runtimeVrState = ReadWorkspaceFile("XREngine.Runtime.Core/Input/RuntimeVrStateServices.cs");
+        string runtimeVrState = ReadWorkspaceFile("XREngine.Input/RuntimeVrStateServices.cs");
         string engineVrState = ReadWorkspaceFile("XRENGINE/Engine/Engine.VRState.cs");
 
         string collectCameraUpdate = SliceMethod(

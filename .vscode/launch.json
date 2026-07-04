@@ -31,6 +31,26 @@
             }
         },
         {
+            "name": "Editor (Unit Testing OpenXR SteamVR)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "Build-Editor",
+            "program": "${workspaceFolder}/Build/Editor/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.Editor.exe",
+            "args": ["--unit-testing"],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "stopAtEntry": false,
+            "env": {
+                "XRE_WORLD_MODE": "UnitTesting",
+                "XRE_UNIT_TEST_WORLD_KIND": "Default",
+                "XRE_UNIT_TEST_VR_MODE": "OpenXR",
+                "XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS": "1",
+                "XRE_OCCLUSION_CULLING_MODE": "Disabled",
+                "XRE_WINDOW_TITLE": "XRE Editor (OpenXR SteamVR)",
+                "XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL": "1"
+            }
+        },
+        {
             "name": "Editor (Unit Testing World, Validation Layers)",
             "type": "coreclr",
             "request": "launch",

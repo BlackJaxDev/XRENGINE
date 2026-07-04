@@ -199,7 +199,9 @@ Useful tasks:
 
 - `Install-Monado`
 - `Start-Editor-UnitTesting-OpenXR-Monado-NoDebug`
+- `Start-Editor-UnitTesting-OpenXR-SteamVR-NoDebug`
 - `Test-OpenXR-Monado-Smoke`
+- `Test-OpenXR-SteamVR-Smoke`
 - `Test-OpenXR-SceneOnlyVR-Smoke`
 
 Monado does not currently provide a generic Windows binary installer, so the repo tool builds and stages it from source:
@@ -232,6 +234,41 @@ For script-driven launches, these process-scoped overrides select the lane witho
 - `XRE_UNIT_TEST_RENDER_API=OpenGL|Vulkan` maps into `Rendering.RenderBackend`
 
 For highest-framerate Monado Vulkan validation, set `XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=0`, `XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR=0`, and `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0` so the editor does not also render the smoothed HMD desktop camera while submitting OpenXR eye frames.
+
+### Test SteamVR OpenXR hardware
+
+Use the SteamVR hardware lane when a real SteamVR headset is connected and SteamVR is the intended OpenXR runtime. This lane is separate from Monado and uses `VR.Mode=OpenXR`; it does not install Monado service recovery callbacks and it does not fall back to OpenVR.
+
+VS Code entry points:
+
+- `Start-Editor-UnitTesting-OpenXR-SteamVR-NoDebug`
+- `Test-OpenXR-SteamVR-Smoke`
+- `Editor (Unit Testing OpenXR SteamVR)`
+
+Primary smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Tools\OpenXR\Run-OpenXrSteamVrSmoke.ps1 -UseActiveRuntime -Renderer Vulkan
+```
+
+Explicit runtime manifest command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File Tools\OpenXR\Run-OpenXrSteamVrSmoke.ps1 -RuntimeJson "C:\Program Files (x86)\Steam\steamapps\common\SteamVR\steamxr_win64.json" -Renderer Vulkan
+```
+
+OpenGL can be checked with `-Renderer OpenGL`, but SteamVR OpenXR OpenGL session creation is known to be runtime/driver sensitive. When OpenGL fails and Vulkan succeeds, keep the Vulkan row as the primary hardware lane and record the OpenGL failure diagnostics in `docs/work/testing/`.
+
+The SteamVR smoke writes:
+
+- `reports/steamvr-openxr-startup-diagnostics.json`
+- `reports/openxr-loader-preflight.json`
+- `reports/openxr-steamvr-smoke-summary.json`
+- `reports/openxr-steamvr-smoke-summary.normalized.json`
+- `logs/editor.stdout.log`
+- `logs/editor.stderr.log`
+
+Record each hardware matrix pass under `docs/work/testing/` with the headset model, controller models, tracker count/roles, expected hand/finger data, runtime version, renderer, summary path, and relevant `Build/Logs/...` session path.
 
 ### Test networking pose sync
 

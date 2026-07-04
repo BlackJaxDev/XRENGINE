@@ -9,7 +9,7 @@ namespace XREngine.Input.Devices.Types.OpenVR
         public TCategory ActionCategory { get; set; }
         public TName ActionName { get; set; }
         public string ActionPath { get; }
-        public Vector3 Position { get; }
-        public Quaternion Rotation { get; }
+        public Vector3 Position { get; set; }
+        public Quaternion Rotation { get; set; }
     }
 }
