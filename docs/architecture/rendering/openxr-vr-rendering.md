@@ -364,6 +364,12 @@ path so `SinglePassStereo` never implies a path that was not actually used.
 | `SinglePassStereo` | `TrueSinglePassStereo` when staged stereo is available | Engine-owned `XRTexture2DArray` color/depth staging target with layer 0 = left eye and layer 1 = right eye, then explicit layer publish/copy to OpenXR swapchains. | Stereo array-layer history is allowed for validated stereo-aware temporal resources. |
 | `SinglePassStereo` | `OpenXrSinglePassCompatibility` fallback | Per-eye swapchain rendering in a batch, not true multiview. | External per-eye history remains disabled. |
 
+SteamVR OpenXR Vulkan defaults to `OpenXrSinglePassCompatibility` even when the
+engine has multiview support, because the current true-stereo staging publish
+path blits into runtime-owned swapchain images and is not considered SteamVR
+stable. Set `XRE_OPENXR_VULKAN_TRUE_STEREO=1` only for focused diagnostics or
+RenderDoc work on that path.
+
 The Vulkan true-stereo path uses the engine stereo pipeline through
 `XRViewport.RenderStereo(...)`; it does not render multiview directly into an
 OpenXR array swapchain yet. The direct array-swapchain path is a future
@@ -399,6 +405,8 @@ Useful diagnostics:
 - View-mode logs from `OpenXRAPI.Vulkan.cs` report requested mode, effective
   path, temporal history policy, parallel gate state, swapchain formats, and
   true-stereo support.
+- `XRE_OPENXR_VULKAN_TRUE_STEREO=1` opts into the diagnostic true-stereo
+  staging path for runtimes where it is guarded off by default.
 - `VPRC_ExposureUpdate` logs the VR exposure policy and source texture type.
 - `VPRC_VendorUpscale` logs the VR vendor support matrix before throwing for
   explicit unsupported vendor requests.

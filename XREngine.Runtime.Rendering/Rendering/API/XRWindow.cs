@@ -1557,6 +1557,14 @@ namespace XREngine.Rendering
             if (!lostRenderer.IsDeviceLost)
                 return false;
 
+            if (IsOpenXrOwnedVulkanDeviceLoss(lostRenderer))
+            {
+                DisableRenderingPermanently(
+                    $"OpenXR-owned Vulkan renderer reported device loss and cannot be safely recreated in-place. Restart the editor or OpenXR runtime before launching OpenXR again. Reason: {reason}",
+                    exception);
+                return false;
+            }
+
             if (_rendererRecreationInProgress)
                 return false;
 
@@ -1627,6 +1635,9 @@ namespace XREngine.Rendering
                 _rendererRecreationInProgress = false;
             }
         }
+
+        private static bool IsOpenXrOwnedVulkanDeviceLoss(AbstractRenderer renderer)
+            => renderer is VulkanRenderer { UsesOpenXrVulkanEnable2Creation: true };
 
         private void InvalidateRendererDependentResourcesAfterRecovery()
         {

@@ -110,6 +110,7 @@ public sealed class OpenXrStereoTemporalIsolationCompletionTests
         openXrDoc.ShouldContain("Vendor upscalers are intentionally unsupported for headset stereo today");
         openXrDoc.ShouldContain("Run-OpenXrModeProfileMatrix.ps1");
         openXrDoc.ShouldContain("DisabledExternalPerEyeSwapchain");
+        openXrDoc.ShouldContain("XRE_OPENXR_VULKAN_TRUE_STEREO");
 
         openVrDoc.ShouldContain("OpenVR `SinglePassStereo` is the engine-owned stereo-array");
         openVrDoc.ShouldContain("OpenXrSinglePassCompatibility");

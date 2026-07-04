@@ -40,6 +40,12 @@ public unsafe partial class OpenXRAPI
             "1",
             StringComparison.Ordinal);
 
+    private static bool OpenXrVulkanTrueStereoOverride =>
+        string.Equals(
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanTrueStereo),
+            "1",
+            StringComparison.Ordinal);
+
     private static readonly long[] VulkanSwapchainFormatPreferences =
     [
         (long)VkFormat.B8G8R8A8Srgb,
@@ -290,6 +296,12 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
+        if (!OpenXrVulkanTrueStereoOverride && IsSteamVrOpenXrRuntime())
+        {
+            reason = $"SteamVR OpenXR Vulkan uses the per-eye compatibility path by default; the true-stereo publish path can be enabled for diagnostics with {XREngineEnvironmentVariables.OpenXrVulkanTrueStereo}=1";
+            return false;
+        }
+
         if (_viewCount != 2)
         {
             reason = $"view count is {_viewCount}, expected 2";
@@ -360,10 +372,27 @@ public unsafe partial class OpenXRAPI
     }
 
     private string DescribeOpenXrTrueStereoMultiviewSupport()
-        => $"isStereoPass={RuntimeEngine.Rendering.State.IsStereoPass}," +
-           $"vulkanMultiview={RuntimeEngine.Rendering.State.HasVulkanMultiView}," +
-           $"ovrMultiview={RuntimeEngine.Rendering.State.HasOvrMultiViewExtension}," +
-           $"dynamicRendering={(Window?.Renderer is VulkanRenderer renderer && renderer.UseDynamicRenderingRenderTargets)}";
+    {
+        _ = CanUseOpenXrTrueSinglePassStereo(out string reason);
+        return $"available={string.IsNullOrWhiteSpace(reason)}," +
+               $"reason={(string.IsNullOrWhiteSpace(reason) ? "<none>" : reason)}," +
+               $"isStereoPass={RuntimeEngine.Rendering.State.IsStereoPass}," +
+               $"vulkanMultiview={RuntimeEngine.Rendering.State.HasVulkanMultiView}," +
+               $"ovrMultiview={RuntimeEngine.Rendering.State.HasOvrMultiViewExtension}," +
+               $"dynamicRendering={(Window?.Renderer is VulkanRenderer renderer && renderer.UseDynamicRenderingRenderTargets)}," +
+               $"override={OpenXrVulkanTrueStereoOverride}";
+    }
+
+    private static bool IsSteamVrOpenXrRuntime()
+    {
+        string? runtimePath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        if (string.IsNullOrWhiteSpace(runtimePath))
+            runtimePath = TryGetOpenXRActiveRuntime();
+
+        return !string.IsNullOrWhiteSpace(runtimePath) &&
+               (runtimePath.Contains("steamvr", StringComparison.OrdinalIgnoreCase) ||
+                runtimePath.Contains("steamxr", StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>
     /// Initializes Vulkan swapchains for stereo rendering
