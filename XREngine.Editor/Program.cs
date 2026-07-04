@@ -146,6 +146,7 @@ internal partial class Program
         UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.Load(false);
         UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
         UnitTestingWorldSettingsStore.ApplyVrLaunchOverrides(settings);
+        UnitTestingWorldSettingsStore.PublishVrLaunchModeForBootstrap(settings);
         UnitTestingWorldSettingsStore.ApplyAudioOverrides(settings);
         ConfigureOpenXrRuntimeServiceRecovery(settings);
         WarnForMixedOpenXrSceneOnlyVr(settings);

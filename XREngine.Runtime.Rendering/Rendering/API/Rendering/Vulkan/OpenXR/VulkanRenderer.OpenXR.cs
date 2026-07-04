@@ -241,7 +241,15 @@ public unsafe partial class VulkanRenderer
     private static bool ShouldReserveOpenXrFrameDataSlots()
         => RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
            RuntimeEngine.VRState.IsOpenXRActive ||
+           IsUnitTestingOpenXrLaunchMode() ||
            IsTruthyEnvironmentValue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
+
+    private static bool IsUnitTestingOpenXrLaunchMode()
+    {
+        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        return string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsTruthyEnvironmentValue(string? value)
         => !string.IsNullOrWhiteSpace(value) &&

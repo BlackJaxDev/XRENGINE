@@ -35,7 +35,10 @@ public sealed class OpenXrTimingPipelineContractTests
         environmentVariables.ShouldContain("XRE_OPENXR_VULKAN_MIRROR_FBO");
         environmentVariables.ShouldContain("XRE_OPENXR_VULKAN_PREWARM_EYES");
         environmentVariables.ShouldContain("XRE_OPENXR_VULKAN_SERIAL_EYE_SUBMIT");
+        environmentVariables.ShouldContain("XRE_OPENXR_VULKAN_TRUE_STEREO");
         vulkanOpenXr.ShouldContain("OpenXrVulkanPrewarmEyes");
+        vulkanOpenXr.ShouldContain("OpenXrVulkanTrueStereoOverride");
+        vulkanOpenXr.ShouldContain("IsSteamVrOpenXrRuntime");
         vulkanOpenXr.ShouldContain("Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanMirrorFbo)");
         vulkanOpenXr.ShouldContain("\"1\"");
         vulkanOpenXr.ShouldContain("leave it unset for direct swapchain rendering");

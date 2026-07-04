@@ -760,10 +760,20 @@ public unsafe partial class OpenXRAPI
         if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson)))
             return true;
 
+        if (IsUnitTestingOpenXrLaunchMode())
+            return true;
+
         if (TryParseBooleanEnvironment(XREngineEnvironmentVariables.UnitTestUseOpenXr))
             return true;
 
         return RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR;
+    }
+
+    private static bool IsUnitTestingOpenXrLaunchMode()
+    {
+        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        return string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryParseBooleanEnvironment(string variableName)
@@ -782,6 +792,7 @@ public unsafe partial class OpenXRAPI
         => string.Join("|",
             Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson) ?? string.Empty,
             Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson) ?? string.Empty,
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode) ?? string.Empty,
             Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr) ?? string.Empty,
             RuntimeEngine.GameSettings?.VRRuntime.ToString() ?? string.Empty);
 

@@ -246,6 +246,7 @@ public static class XREngineEnvironmentVariables
     public const string OpenXrVulkanMirrorFbo = "XRE_OPENXR_VULKAN_MIRROR_FBO";
     public const string OpenXrVulkanPrewarmEyes = "XRE_OPENXR_VULKAN_PREWARM_EYES";
     public const string OpenXrVulkanSerialEyeSubmit = "XRE_OPENXR_VULKAN_SERIAL_EYE_SUBMIT";
+    public const string OpenXrVulkanTrueStereo = "XRE_OPENXR_VULKAN_TRUE_STEREO";
     public const string OpenXrVulkanPrimaryReuse = "XRE_OPENXR_VULKAN_PRIMARY_REUSE";
     public const string VulkanAllowCpuMeshSafetyNet = "XRE_VULKAN_ALLOW_CPU_MESH_SAFETY_NET";
     public const string VulkanParallelRecordingValidate = "XRE_VULKAN_PARALLEL_RECORDING_VALIDATE";

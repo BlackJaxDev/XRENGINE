@@ -239,6 +239,18 @@ public static class UnitTestingWorldSettingsStore
     public static void ApplyOpenXrLaneOverrides(UnitTestingWorldSettings settings)
         => ApplyVrLaunchOverrides(settings);
 
+    public static void PublishVrLaunchModeForBootstrap(UnitTestingWorldSettings settings)
+    {
+        string? existingVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        if (!string.IsNullOrWhiteSpace(existingVrMode))
+            return;
+
+        Environment.SetEnvironmentVariable(
+            XREngineEnvironmentVariables.UnitTestVrMode,
+            settings.VR.Mode.ToString(),
+            EnvironmentVariableTarget.Process);
+    }
+
     public static void ApplyVrLaunchOverrides(UnitTestingWorldSettings settings)
     {
         bool applied = false;
