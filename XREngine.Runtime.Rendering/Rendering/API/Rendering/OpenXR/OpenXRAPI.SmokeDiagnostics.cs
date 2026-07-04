@@ -62,7 +62,16 @@ public sealed class OpenXrSmokeSummary
     public bool LateViewPoseCached { get; set; }
     public bool PredictedActionPoseCacheUpdated { get; set; }
     public bool LateActionPoseCacheUpdated { get; set; }
+    public bool LeftControllerGripPoseAvailable { get; set; }
+    public bool RightControllerGripPoseAvailable { get; set; }
+    public bool LeftControllerAimPoseAvailable { get; set; }
+    public bool RightControllerAimPoseAvailable { get; set; }
+    public bool TrackerPoseAvailable { get; set; }
+    public string[] KnownTrackerUserPaths { get; set; } = [];
+    public bool LeftHandJointsActive { get; set; }
+    public bool RightHandJointsActive { get; set; }
     public bool DesktopMirrorComposed { get; set; }
+    public long MissedDeadlineCount { get; set; }
     public long[] PerEyeAcquireCounts { get; set; } = [];
     public long[] PerEyeWaitCounts { get; set; } = [];
     public long[] PerEyeReleaseCounts { get; set; } = [];
@@ -106,6 +115,7 @@ public unsafe partial class OpenXRAPI
     private long _smokeSubmittedFrameCount;
     private long _smokeNoLayerFrameCount;
     private long _smokeEndFrameFailureCount;
+    private long _smokeMissedDeadlineCount;
     private uint _smokeLocatedViewCount;
 
     public long SmokeSubmittedFrameCount => Volatile.Read(ref _smokeSubmittedFrameCount);
@@ -164,7 +174,16 @@ public unsafe partial class OpenXRAPI
                 LateViewPoseCached = Volatile.Read(ref _smokeLateViewPoseCached) != 0,
                 PredictedActionPoseCacheUpdated = Volatile.Read(ref _smokePredictedActionPoseCacheUpdated) != 0,
                 LateActionPoseCacheUpdated = Volatile.Read(ref _smokeLateActionPoseCacheUpdated) != 0,
+                LeftControllerGripPoseAvailable = Volatile.Read(ref _openXrPredLeftControllerValid) != 0 || Volatile.Read(ref _openXrLateLeftControllerValid) != 0,
+                RightControllerGripPoseAvailable = Volatile.Read(ref _openXrPredRightControllerValid) != 0 || Volatile.Read(ref _openXrLateRightControllerValid) != 0,
+                LeftControllerAimPoseAvailable = Volatile.Read(ref _openXrPredLeftControllerAimValid) != 0 || Volatile.Read(ref _openXrLateLeftControllerAimValid) != 0,
+                RightControllerAimPoseAvailable = Volatile.Read(ref _openXrPredRightControllerAimValid) != 0 || Volatile.Read(ref _openXrLateRightControllerAimValid) != 0,
+                TrackerPoseAvailable = HasAnyTrackerPoseAvailable(),
+                KnownTrackerUserPaths = GetKnownTrackerUserPaths(),
+                LeftHandJointsActive = Volatile.Read(ref _leftHandJointsActive) != 0,
+                RightHandJointsActive = Volatile.Read(ref _rightHandJointsActive) != 0,
                 DesktopMirrorComposed = Volatile.Read(ref _smokeDesktopMirrorComposed) != 0,
+                MissedDeadlineCount = Volatile.Read(ref _smokeMissedDeadlineCount),
                 PerEyeAcquireCounts = CopyCounterArray(_smokePerEyeAcquireCounts),
                 PerEyeWaitCounts = CopyCounterArray(_smokePerEyeWaitCounts),
                 PerEyeReleaseCounts = CopyCounterArray(_smokePerEyeReleaseCounts),
@@ -264,6 +283,7 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _smokeSubmittedFrameCount, 0);
         Volatile.Write(ref _smokeNoLayerFrameCount, 0);
         Volatile.Write(ref _smokeEndFrameFailureCount, 0);
+        Volatile.Write(ref _smokeMissedDeadlineCount, 0);
         Volatile.Write(ref _smokeLocatedViewCount, 0);
     }
 
@@ -401,6 +421,9 @@ public unsafe partial class OpenXRAPI
     private void RecordSmokeDesktopMirrorComposed()
         => Volatile.Write(ref _smokeDesktopMirrorComposed, 1);
 
+    private void RecordSmokeMissedDeadline()
+        => Interlocked.Increment(ref _smokeMissedDeadlineCount);
+
     private void RecordSmokeTeardownCompleted()
         => Volatile.Write(ref _smokeTeardownCompleted, 1);
 
@@ -462,6 +485,12 @@ public unsafe partial class OpenXRAPI
         if (capabilities.OpenGlMultiResolution)
             names.Add(nameof(capabilities.OpenGlMultiResolution));
         return [.. names];
+    }
+
+    private bool HasAnyTrackerPoseAvailable()
+    {
+        lock (_openXrPoseLock)
+            return _openXrPredTrackerLocalPose.Count > 0 || _openXrLateTrackerLocalPose.Count > 0;
     }
 
     private static (string? RuntimeName, string? RuntimeVersion) TryReadRuntimeManifestMetadata(string? runtimeManifestPath)

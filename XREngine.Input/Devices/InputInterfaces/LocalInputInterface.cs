@@ -1,6 +1,7 @@
 ﻿using OpenVR.NET.Input;
 using Silk.NET.Input;
 using XREngine.Data.Core;
+using XREngine.Input;
 using XREngine.Input.Devices.Glfw;
 using XREngine.Input.Devices.Types.OpenVR;
 using YamlDotNet.Serialization;
@@ -56,8 +57,14 @@ namespace XREngine.Input.Devices
 
         public override void TryRegisterInput()
         {
-            if (Gamepad is null && Keyboard is null && Mouse is null && OpenVRActions is null)
+            if (Gamepad is null &&
+                Keyboard is null &&
+                Mouse is null &&
+                OpenVRActions is null &&
+                RuntimeVrInputServices.ActiveRuntime == RuntimeVrRuntimeKind.None)
+            {
                 return;
+            }
             
             TryUnregisterInput();
 
@@ -72,8 +79,14 @@ namespace XREngine.Input.Devices
 
         public override void TryUnregisterInput()
         {
-            if (Gamepad is null && Keyboard is null && Mouse is null && OpenVRActions is null)
+            if (Gamepad is null &&
+                Keyboard is null &&
+                Mouse is null &&
+                OpenVRActions is null &&
+                RuntimeVrInputServices.ActiveRuntime == RuntimeVrRuntimeKind.None)
+            {
                 return;
+            }
             
             //Call for regular old input registration, but in the backend,
             //unregister all calls instead of registering them.
@@ -279,8 +292,7 @@ namespace XREngine.Input.Devices
             Gamepad?.TickStates(delta);
             Keyboard?.TickStates(delta);
             Mouse?.TickStates(delta);
-            foreach (var a in _registeredOpenVRActions.Values)
-                a.TickStates(delta);
+            RuntimeVrInputServices.Update(delta);
         }
 
         /// <summary>
@@ -290,203 +302,185 @@ namespace XREngine.Input.Devices
         public void ClearMouseScrollBuffer()
             => Mouse?.ClearScrollBuffer();
 
-        private readonly Dictionary<string, OpenVRActionSetInputs> _registeredOpenVRActions = [];
+        private readonly Dictionary<(string Category, string Name, Delegate Callback), RuntimeVrScalarChanged> _runtimeFloatCallbacks = [];
+        private readonly Dictionary<(string Category, string Name, Delegate Callback), RuntimeVrVector2Changed> _runtimeVector2Callbacks = [];
+        private readonly Dictionary<(string Category, string Name, Delegate Callback), RuntimeVrVector3Changed> _runtimeVector3Callbacks = [];
+        private readonly Dictionary<object, RuntimeVrPoseChanged> _runtimePoseCallbacks = [];
+        private readonly Dictionary<(string Category, string Name, bool LeftHand, Delegate Callback), RuntimeVrSkeletonSummaryChanged> _runtimeSkeletonSummaryCallbacks = [];
 
-        public class OpenVRActionSetInputs : XRBase
-        {
-            private bool _enabled = true;
-            public bool Enabled
-            {
-                get => _enabled;
-                set => SetField(ref _enabled, value);
-            }
-
-            private readonly Dictionary<string, (BooleanAction action, List<Action<bool>> callbacks)> _registeredBooleanActions = [];
-            private readonly Dictionary<string, (ScalarAction action, List<ScalarAction.ValueChangedHandler> callbacks)> _registeredFloatActions = [];
-            private readonly Dictionary<string, (Vector2Action action, List<Vector2Action.ValueChangedHandler> callbacks)> _registeredVector2Actions = [];
-            private readonly Dictionary<string, (Vector3Action action, List<Vector3Action.ValueChangedHandler> callbacks)> _registeredVector3Actions = [];
-            private readonly Dictionary<string, (HandSkeletonAction action, List<DelVRSkeletonSummary> summaryCallbacks)> _registeredHandSkeletonActions = [];
-
-            public void RegisterBooleanAction(string name, BooleanAction action, Action<bool> callback)
-            {
-                if (!_registeredBooleanActions.TryGetValue(name, out var data))
-                    _registeredBooleanActions.Add(name, data = (action, []));
-                
-                data.callbacks.Add(callback);
-                action.ValueUpdated += callback;
-            }
-            public void RegisterFloatAction(string name, ScalarAction action, ScalarAction.ValueChangedHandler callback)
-            {
-                if (!_registeredFloatActions.TryGetValue(name, out var data))
-                    _registeredFloatActions.Add(name, data = (action, []));
-                
-                data.callbacks.Add(callback);
-                action.ValueChanged += callback;
-            }
-            public void RegisterVector2Action(string name, Vector2Action action, Vector2Action.ValueChangedHandler callback)
-            {
-                if (!_registeredVector2Actions.TryGetValue(name, out var data))
-                    _registeredVector2Actions.Add(name, data = (action, []));
-                
-                data.callbacks.Add(callback);
-                action.ValueChanged += callback;
-            }
-            public void RegisterVector3Action(string name, Vector3Action action, Vector3Action.ValueChangedHandler callback)
-            {
-                if (!_registeredVector3Actions.TryGetValue(name, out var data))
-                    _registeredVector3Actions.Add(name, data = (action, []));
-                
-                data.callbacks.Add(callback);
-                action.ValueChanged += callback;
-            }
-            public void RegisterHandSkeletonActionQuery(string name, HandSkeletonAction action, DelVRSkeletonSummary? callback)
-            {
-                if (!_registeredHandSkeletonActions.TryGetValue(name, out var data))
-                    _registeredHandSkeletonActions.Add(name, data = (action, []));
-
-                if (callback is not null)
-                    data.summaryCallbacks.Add(callback);
-            }
-
-            public void UnregisterBooleanAction(string name, Action<bool> callback)
-            {
-                if (_registeredBooleanActions.TryGetValue(name, out var data))
-                {
-                    data.action.ValueUpdated -= callback;
-                    data.callbacks.Remove(callback);
-                }
-
-                if (data.callbacks.Count == 0)
-                    _registeredBooleanActions.Remove(name);
-            }
-            public void UnregisterFloatAction(string name, ScalarAction.ValueChangedHandler callback)
-            {
-                if (_registeredFloatActions.TryGetValue(name, out var data))
-                {
-                    data.action.ValueChanged -= callback;
-                    data.callbacks.Remove(callback);
-                }
-
-                if (data.callbacks.Count == 0)
-                    _registeredFloatActions.Remove(name);
-            }
-            public void UnregisterVector2Action(string name, Vector2Action.ValueChangedHandler callback)
-            {
-                if (_registeredVector2Actions.TryGetValue(name, out var data))
-                {
-                    data.action.ValueChanged -= callback;
-                    data.callbacks.Remove(callback);
-                }
-
-                if (data.callbacks.Count == 0)
-                    _registeredVector2Actions.Remove(name);
-            }
-            public void UnregisterVector3Action(string name, Vector3Action.ValueChangedHandler callback)
-            {
-                if (_registeredVector3Actions.TryGetValue(name, out var data))
-                {
-                    data.action.ValueChanged -= callback;
-                    data.callbacks.Remove(callback);
-                }
-
-                if (data.callbacks.Count == 0)
-                    _registeredVector3Actions.Remove(name);
-            }
-            public void UnregisterHandSkeletonActionQuery(string name, DelVRSkeletonSummary? callback)
-            {
-                if (_registeredHandSkeletonActions.TryGetValue(name, out var data))
-                {
-                    if (callback is not null)
-                        data.summaryCallbacks.Remove(callback);
-                }
-
-                if (data.summaryCallbacks.Count == 0)
-                    _registeredHandSkeletonActions.Remove(name);
-            }
-
-            public void TickStates(float delta)
-            {
-                if (!Enabled)
-                    return;
-                
-                //TODO: Is OpenVR thread safe? We could execute all these with async tasks if it is.
-                foreach (var a in _registeredBooleanActions.Values)
-                    a.action.Update();
-                foreach (var a in _registeredFloatActions.Values)
-                    a.action.Update();
-                foreach (var a in _registeredVector2Actions.Values)
-                    a.action.Update();
-                foreach (var a in _registeredVector3Actions.Values)
-                    a.action.Update();
-                foreach (var a in _registeredHandSkeletonActions.Values)
-                    a.action.Update();
-            }
-        }
+        private static string RuntimeActionPart<T>(T value)
+            => value?.ToString() ?? string.Empty;
 
         public override void RegisterVRBoolAction<TCategory, TName>(TCategory category, TName name, Action<bool> func)
         {
-            var c = category.ToString();
-            if (!_registeredOpenVRActions.TryGetValue(c, out var actions))
-                _registeredOpenVRActions.Add(c, actions = new OpenVRActionSetInputs());
-            
-            BooleanAction? action = TryGetOpenVRAction(c, name.ToString()) as BooleanAction;
-            if (action is not null)
-                actions.RegisterBooleanAction(name.ToString(), action, func);
+            string c = RuntimeActionPart(category);
+            string n = RuntimeActionPart(name);
+            RuntimeVrInputServices.RegisterBoolAction(c, n, func, Unregister);
         }
 
         public override void RegisterVRFloatAction<TCategory, TName>(TCategory category, TName name, ScalarAction.ValueChangedHandler func)
         {
-            var c = category.ToString();
-            if (!_registeredOpenVRActions.TryGetValue(c, out var actions))
-                _registeredOpenVRActions.Add(c, actions = new OpenVRActionSetInputs());
+            string c = RuntimeActionPart(category);
+            string n = RuntimeActionPart(name);
+            var key = (c, n, (Delegate)func);
+            if (Unregister)
+            {
+                if (_runtimeFloatCallbacks.TryGetValue(key, out RuntimeVrScalarChanged? callback))
+                {
+                    RuntimeVrInputServices.RegisterFloatAction(c, n, callback, unregister: true);
+                    _runtimeFloatCallbacks.Remove(key);
+                }
+                return;
+            }
 
-            ScalarAction? action = TryGetOpenVRAction(c, name.ToString()) as ScalarAction;
-            if (action is not null)
-                actions.RegisterFloatAction(name.ToString(), action, func);
+            if (!_runtimeFloatCallbacks.TryGetValue(key, out RuntimeVrScalarChanged? runtimeCallback))
+                _runtimeFloatCallbacks.Add(key, runtimeCallback = func.Invoke);
+
+            RuntimeVrInputServices.RegisterFloatAction(c, n, runtimeCallback, unregister: false);
         }
 
         public override void RegisterVRVector2Action<TCategory, TName>(TCategory category, TName name, Vector2Action.ValueChangedHandler func)
         {
-            var c = category.ToString();
-            if (!_registeredOpenVRActions.TryGetValue(c, out var actions))
-                _registeredOpenVRActions.Add(c, actions = new OpenVRActionSetInputs());
+            string c = RuntimeActionPart(category);
+            string n = RuntimeActionPart(name);
+            var key = (c, n, (Delegate)func);
+            if (Unregister)
+            {
+                if (_runtimeVector2Callbacks.TryGetValue(key, out RuntimeVrVector2Changed? callback))
+                {
+                    RuntimeVrInputServices.RegisterVector2Action(c, n, callback, unregister: true);
+                    _runtimeVector2Callbacks.Remove(key);
+                }
+                return;
+            }
 
-            Vector2Action? action = TryGetOpenVRAction(c, name.ToString()) as Vector2Action;
-            if (action is not null)
-                actions.RegisterVector2Action(name.ToString(), action, func);
+            if (!_runtimeVector2Callbacks.TryGetValue(key, out RuntimeVrVector2Changed? runtimeCallback))
+                _runtimeVector2Callbacks.Add(key, runtimeCallback = func.Invoke);
+
+            RuntimeVrInputServices.RegisterVector2Action(c, n, runtimeCallback, unregister: false);
         }
 
         public override void RegisterVRVector3Action<TCategory, TName>(TCategory category, TName name, Vector3Action.ValueChangedHandler func)
         {
-            var c = category.ToString();
-            if (!_registeredOpenVRActions.TryGetValue(c, out var actions))
-                _registeredOpenVRActions.Add(c, actions = new OpenVRActionSetInputs());
+            string c = RuntimeActionPart(category);
+            string n = RuntimeActionPart(name);
+            var key = (c, n, (Delegate)func);
+            if (Unregister)
+            {
+                if (_runtimeVector3Callbacks.TryGetValue(key, out RuntimeVrVector3Changed? callback))
+                {
+                    RuntimeVrInputServices.RegisterVector3Action(c, n, callback, unregister: true);
+                    _runtimeVector3Callbacks.Remove(key);
+                }
+                return;
+            }
 
-            Vector3Action? action = TryGetOpenVRAction(c, name.ToString()) as Vector3Action;
-            if (action is not null)
-                actions.RegisterVector3Action(name.ToString(), action, func);
+            if (!_runtimeVector3Callbacks.TryGetValue(key, out RuntimeVrVector3Changed? runtimeCallback))
+                _runtimeVector3Callbacks.Add(key, runtimeCallback = func.Invoke);
+
+            RuntimeVrInputServices.RegisterVector3Action(c, n, runtimeCallback, unregister: false);
         }
 
         public override bool VibrateVRAction<TCategory, TName>(TCategory category, TName name, double duration, double frequency = 40, double amplitude = 1, double delay = 0) 
-            => OpenVRActions is not null &&
-            OpenVRActions.TryGetValue(category.ToString(), out var actions) &&
-            actions.TryGetValue(name.ToString(), out var action) &&
-            action is HapticAction h &&
-            h.TriggerVibration(duration, frequency, amplitude, delay);
+            => RuntimeVrInputServices.VibrateAction(RuntimeActionPart(category), RuntimeActionPart(name), duration, frequency, amplitude, delay);
 
         public override void RegisterVRHandSkeletonQuery<TCategory, TName>(TCategory category, TName name, bool left, EVRSkeletalTransformSpace transformSpace = EVRSkeletalTransformSpace.Model, EVRSkeletalMotionRange motionRange = EVRSkeletalMotionRange.WithController, EVRSkeletalReferencePose? overridePose = null)
         {
-
+            RuntimeVrInputServices.RegisterHandSkeletonQuery(RuntimeActionPart(category), RuntimeActionPart(name), left, Unregister);
         }
 
         public override void RegisterVRHandSkeletonSummaryAction<TCategory, TName>(TCategory category, TName name, bool left, DelVRSkeletonSummary func, EVRSummaryType type)
         {
+            string c = RuntimeActionPart(category);
+            string n = RuntimeActionPart(name);
+            var key = (c, n, left, (Delegate)func);
+            if (Unregister)
+            {
+                if (_runtimeSkeletonSummaryCallbacks.TryGetValue(key, out RuntimeVrSkeletonSummaryChanged? callback))
+                {
+                    RuntimeVrInputServices.RegisterHandSkeletonSummaryAction(c, n, left, callback, unregister: true);
+                    _runtimeSkeletonSummaryCallbacks.Remove(key);
+                }
+                return;
+            }
 
+            if (!_runtimeSkeletonSummaryCallbacks.TryGetValue(key, out RuntimeVrSkeletonSummaryChanged? runtimeCallback))
+            {
+                runtimeCallback = (in RuntimeVrSkeletonSummary summary) =>
+                {
+                    var level = summary.HasRealHandJoints
+                        ? EVRSkeletalTrackingLevel.VRSkeletalTracking_Full
+                        : summary.IsActive
+                            ? EVRSkeletalTrackingLevel.VRSkeletalTracking_Estimated
+                            : EVRSkeletalTrackingLevel.VRSkeletalTracking_Partial;
+                    func(
+                        summary.ThumbCurl,
+                        summary.IndexCurl,
+                        summary.MiddleCurl,
+                        summary.RingCurl,
+                        summary.LittleCurl,
+                        summary.ThumbIndexSplay,
+                        summary.IndexMiddleSplay,
+                        summary.MiddleRingSplay,
+                        summary.RingLittleSplay,
+                        level);
+                };
+                _runtimeSkeletonSummaryCallbacks.Add(key, runtimeCallback);
+            }
+
+            RuntimeVrInputServices.RegisterHandSkeletonSummaryAction(c, n, left, runtimeCallback, unregister: false);
         }
 
         public override void RegisterVRPose<TCategory, TName>(IVRActionPoseTransform<TCategory, TName> poseTransform)
         {
+            if (Unregister)
+            {
+                if (_runtimePoseCallbacks.TryGetValue(poseTransform, out RuntimeVrPoseChanged? callback))
+                {
+                    RuntimeVrInputServices.RegisterPoseAction(
+                        poseTransform.ActionCategory.ToString(),
+                        poseTransform.ActionName.ToString(),
+                        ResolvePoseKind(poseTransform.ActionName.ToString()),
+                        ResolveLeftHand(poseTransform.ActionName.ToString()),
+                        callback,
+                        unregister: true);
+                    _runtimePoseCallbacks.Remove(poseTransform);
+                }
+                return;
+            }
 
+            if (!_runtimePoseCallbacks.TryGetValue(poseTransform, out RuntimeVrPoseChanged? runtimeCallback))
+            {
+                runtimeCallback = (in RuntimeVrPoseState pose) =>
+                {
+                    if (!pose.IsValid)
+                        return;
+
+                    poseTransform.Position = pose.Position;
+                    poseTransform.Rotation = pose.Rotation;
+                    poseTransform.Velocity = pose.Velocity;
+                    poseTransform.AngularVelocity = pose.AngularVelocity;
+                };
+                _runtimePoseCallbacks.Add(poseTransform, runtimeCallback);
+            }
+
+            RuntimeVrInputServices.RegisterPoseAction(
+                poseTransform.ActionCategory.ToString(),
+                poseTransform.ActionName.ToString(),
+                ResolvePoseKind(poseTransform.ActionName.ToString()),
+                ResolveLeftHand(poseTransform.ActionName.ToString()),
+                runtimeCallback,
+                unregister: false);
         }
+
+        private static RuntimeVrPoseKind ResolvePoseKind(string actionName)
+            => actionName.Contains("Aim", StringComparison.OrdinalIgnoreCase) ||
+               actionName.Contains("Ray", StringComparison.OrdinalIgnoreCase) ||
+               actionName.Contains("Pointer", StringComparison.OrdinalIgnoreCase)
+                ? RuntimeVrPoseKind.Aim
+                : RuntimeVrPoseKind.Grip;
+
+        private static bool ResolveLeftHand(string actionName)
+            => actionName.Contains("Left", StringComparison.OrdinalIgnoreCase);
     }
 }

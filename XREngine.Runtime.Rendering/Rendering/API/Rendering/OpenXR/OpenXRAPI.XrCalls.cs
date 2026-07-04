@@ -270,7 +270,10 @@ public unsafe partial class OpenXRAPI
 
         double safetyMarginNanoseconds = Math.Max(0.0, OpenXrDeadlineSafetyMarginMs) * 1_000_000.0;
         if (submitEndXrTime + safetyMarginNanoseconds >= displayTime)
+        {
             RuntimeEngine.Rendering.Stats.Vr.RecordVrXrMissedDeadlineFrame();
+            RecordSmokeMissedDeadline();
+        }
     }
 
     private Result EndFrameWithTiming(in FrameEndInfo frameEndInfo)
@@ -527,6 +530,9 @@ public unsafe partial class OpenXRAPI
                                 : OpenXrRuntimeLossReason.SessionExiting);
                         }
                     }
+                    break;
+                case StructureType.EventDataViveTrackerConnectedHtcx:
+                    HandleViveTrackerConnectedEvent((EventDataViveTrackerConnectedHTCX*)eventDataPtr);
                     break;
                 default:
                     if (eventData.Type.ToString().Contains("VisibilityMask", StringComparison.OrdinalIgnoreCase))
