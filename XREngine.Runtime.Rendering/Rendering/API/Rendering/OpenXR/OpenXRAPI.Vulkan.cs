@@ -48,10 +48,10 @@ public unsafe partial class OpenXRAPI
 
     private static readonly long[] VulkanSwapchainFormatPreferences =
     [
-        (long)VkFormat.B8G8R8A8Srgb,
         (long)VkFormat.R8G8B8A8Srgb,
-        (long)VkFormat.B8G8R8A8Unorm,
         (long)VkFormat.R8G8B8A8Unorm,
+        (long)VkFormat.B8G8R8A8Srgb,
+        (long)VkFormat.B8G8R8A8Unorm,
     ];
 
     private readonly long[] _vulkanOpenXrSwapchainFormats = new long[RenderFrameViewSet.MaxViewCount];
@@ -336,8 +336,71 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
+        if (!TryResolveVulkanStereoColorTextureFormat(
+                (VkFormat)_vulkanOpenXrSwapchainFormats[0],
+                (VkFormat)_vulkanOpenXrSwapchainFormats[1],
+                out _,
+                out _,
+                out _,
+                out reason))
+        {
+            return false;
+        }
+
         reason = string.Empty;
         return true;
+    }
+
+    private static bool TryResolveVulkanStereoColorTextureFormat(
+        VkFormat leftSwapchainFormat,
+        VkFormat rightSwapchainFormat,
+        out EPixelInternalFormat internalFormat,
+        out EPixelFormat pixelFormat,
+        out ESizedInternalFormat sizedFormat,
+        out string reason)
+    {
+        internalFormat = EPixelInternalFormat.Rgba8;
+        pixelFormat = EPixelFormat.Rgba;
+        sizedFormat = ESizedInternalFormat.Rgba8;
+        reason = string.Empty;
+
+        if (leftSwapchainFormat != rightSwapchainFormat)
+        {
+            reason = $"OpenXR eye swapchain formats differ ({leftSwapchainFormat} vs {rightSwapchainFormat})";
+            return false;
+        }
+
+        switch (leftSwapchainFormat)
+        {
+            case VkFormat.R8G8B8A8Srgb:
+                internalFormat = EPixelInternalFormat.Srgb8Alpha8;
+                sizedFormat = ESizedInternalFormat.Srgb8Alpha8;
+                return true;
+            case VkFormat.R8G8B8A8Unorm:
+                internalFormat = EPixelInternalFormat.Rgba8;
+                sizedFormat = ESizedInternalFormat.Rgba8;
+                return true;
+            default:
+                reason = $"OpenXR true stereo staging does not have a native engine texture format for {leftSwapchainFormat}";
+                return false;
+        }
+    }
+
+    private void EnsureVulkanOpenXrPreviewTargets(VulkanRenderer renderer, uint width, uint height)
+    {
+        if (TryResolveVulkanStereoColorTextureFormat(
+                (VkFormat)_vulkanOpenXrSwapchainFormats[0],
+                (VkFormat)_vulkanOpenXrSwapchainFormats[1],
+                out EPixelInternalFormat internalFormat,
+                out _,
+                out ESizedInternalFormat sizedFormat,
+                out _))
+        {
+            EnsureOpenXrPreviewTargets(renderer, width, height, internalFormat, sizedFormat);
+            return;
+        }
+
+        EnsureVulkanOpenXrPreviewTargets(renderer, width, height);
     }
 
     private void LogOpenXrViewRenderModeResolution(
@@ -537,7 +600,7 @@ public unsafe partial class OpenXRAPI
         uint height = GetOpenXrSwapchainHeight(viewIndex);
         if (OpenXrVulkanMirrorFbo)
             EnsureVulkanEyeMirrorTargets(renderer, width, height);
-        EnsureOpenXrPreviewTargets(renderer, width, height);
+        EnsureVulkanOpenXrPreviewTargets(renderer, width, height);
 
             if (OpenXrDebugClearOnly)
             {
@@ -693,10 +756,36 @@ public unsafe partial class OpenXRAPI
             _vulkanStereoLeftColorView is null ||
             _vulkanStereoRightColorView is null ||
             _vulkanStereoWidth != width ||
-            _vulkanStereoHeight != height)
+            _vulkanStereoHeight != height ||
+            _vulkanStereoColorFormat != leftSwapchainFormat)
         {
+            if (!TryResolveVulkanStereoColorTextureFormat(
+                    leftSwapchainFormat,
+                    rightSwapchainFormat,
+                    out EPixelInternalFormat colorInternalFormat,
+                    out EPixelFormat colorPixelFormat,
+                    out ESizedInternalFormat colorSizedFormat,
+                    out string formatReason))
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.TrueStereo.UnsupportedStagingFormat.{GetHashCode()}.{leftSwapchainFormat}.{rightSwapchainFormat}",
+                    TimeSpan.FromSeconds(2),
+                    "[OpenXR] Vulkan true stereo render target cannot be created for swapchain formats {0}/{1}: {2}",
+                    leftSwapchainFormat,
+                    rightSwapchainFormat,
+                    formatReason);
+                return false;
+            }
+
             DestroyVulkanStereoRenderTarget();
-            CreateVulkanStereoRenderTarget(renderer, width, height);
+            CreateVulkanStereoRenderTarget(
+                renderer,
+                width,
+                height,
+                leftSwapchainFormat,
+                colorInternalFormat,
+                colorPixelFormat,
+                colorSizedFormat);
         }
 
         if (_vulkanStereoFbo is null ||
@@ -759,19 +848,23 @@ public unsafe partial class OpenXRAPI
     private void CreateVulkanStereoRenderTarget(
         VulkanRenderer renderer,
         uint width,
-        uint height)
+        uint height,
+        VkFormat swapchainFormat,
+        EPixelInternalFormat colorInternalFormat,
+        EPixelFormat colorPixelFormat,
+        ESizedInternalFormat colorSizedFormat)
     {
         XRTexture2DArray color = XRTexture2DArray.CreateFrameBufferTexture(
             2,
             width,
             height,
-            EPixelInternalFormat.Rgba8,
-            EPixelFormat.Rgba,
+            colorInternalFormat,
+            colorPixelFormat,
             EPixelType.UnsignedByte,
             EFrameBufferAttachment.ColorAttachment0);
         color.Name = "OpenXRVulkanStereoColorArray";
         color.Resizable = false;
-        color.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+        color.SizedInternalFormat = colorSizedFormat;
         color.OVRMultiViewParameters = new(0, 2u);
         color.MinFilter = ETexMinFilter.Linear;
         color.MagFilter = ETexMagFilter.Linear;
@@ -789,11 +882,11 @@ public unsafe partial class OpenXRAPI
         depth.SizedInternalFormat = ESizedInternalFormat.DepthComponent24;
         depth.OVRMultiViewParameters = new(0, 2u);
 
-        XRTexture2DArrayView leftView = new(color, 0u, 1u, 0u, 1u, ESizedInternalFormat.Rgba8, array: false, multisample: false)
+        XRTexture2DArrayView leftView = new(color, 0u, 1u, 0u, 1u, colorSizedFormat, array: false, multisample: false)
         {
             Name = "OpenXRVulkanStereoLeftColorView"
         };
-        XRTexture2DArrayView rightView = new(color, 0u, 1u, 1u, 1u, ESizedInternalFormat.Rgba8, array: false, multisample: false)
+        XRTexture2DArrayView rightView = new(color, 0u, 1u, 1u, 1u, colorSizedFormat, array: false, multisample: false)
         {
             Name = "OpenXRVulkanStereoRightColorView"
         };
@@ -812,6 +905,7 @@ public unsafe partial class OpenXRAPI
         _vulkanStereoFbo = fbo;
         _vulkanStereoWidth = width;
         _vulkanStereoHeight = height;
+        _vulkanStereoColorFormat = swapchainFormat;
 
         renderer.GetOrCreateAPIRenderObject(color, generateNow: true);
         renderer.GetOrCreateAPIRenderObject(depth, generateNow: true);
@@ -842,6 +936,7 @@ public unsafe partial class OpenXRAPI
         _vulkanStereoColorArray = null;
         _vulkanStereoWidth = 0;
         _vulkanStereoHeight = 0;
+        _vulkanStereoColorFormat = VkFormat.Undefined;
     }
 
     private void EnsureVulkanEyeMirrorTargets(AbstractRenderer renderer, uint width, uint height)
@@ -1180,7 +1275,7 @@ public unsafe partial class OpenXRAPI
 
         uint width = GetOpenXrSwapchainWidth(0);
         uint height = GetOpenXrSwapchainHeight(0);
-        EnsureOpenXrPreviewTargets(renderer, width, height);
+        EnsureVulkanOpenXrPreviewTargets(renderer, width, height);
         EnsureOpenXrViewports(
             GetOpenXrSwapchainWidth(0),
             GetOpenXrSwapchainHeight(0),
@@ -1286,23 +1381,36 @@ public unsafe partial class OpenXRAPI
                 },
                 RendersExternalSwapchainTarget: false);
 
-            bool stereoRendered = renderer.TryRenderOpenXrEyeMirrorFrameBuffer(in renderRequest);
-            if (!stereoRendered)
-            {
-                Debug.VulkanWarningEvery(
-                    $"OpenXR.Vulkan.TrueSinglePassStereo.RenderFailed.{GetHashCode()}",
-                    TimeSpan.FromSeconds(1),
-                    "[OpenXR] Vulkan true stereo render failed before layer publish. fbo='{0}' color='{1}' extent={2}x{3} pipeline='{4}'",
-                    target.FrameBuffer.Name ?? "<unnamed FBO>",
-                    target.ColorArrayTexture.Name ?? "<unnamed color>",
-                    target.Extent.Width,
-                    target.Extent.Height,
-                    stereoPipeline.DebugName);
-                return false;
-            }
+            bool stereoRenderedAndPublished = renderer.TryRenderAndBlitTextureArrayLayersToOpenXrSwapchainImages(
+                in renderRequest,
+                stereoViewport.RenderPipelineInstance,
+                target.ColorArrayTexture,
+                target.LeftSwapchainImage,
+                target.LeftSwapchainFormat,
+                target.Extent,
+                $"true stereo left eye swapchain image {leftImageIndex}",
+                target.RightSwapchainImage,
+                target.RightSwapchainFormat,
+                target.Extent,
+                $"true stereo right eye swapchain image {rightImageIndex}",
+                flipY: false);
 
-            if (stereoViewport.RenderPipelineInstance.SkippedResizeCatchUpThisFrame)
+            if (!stereoRenderedAndPublished)
             {
+                if (!stereoViewport.RenderPipelineInstance.SkippedResizeCatchUpThisFrame)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.TrueSinglePassStereo.RenderFailed.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Vulkan true stereo render+publish failed. fbo='{0}' color='{1}' extent={2}x{3} pipeline='{4}'",
+                        target.FrameBuffer.Name ?? "<unnamed FBO>",
+                        target.ColorArrayTexture.Name ?? "<unnamed color>",
+                        target.Extent.Width,
+                        target.Extent.Height,
+                        stereoPipeline.DebugName);
+                    return false;
+                }
+
                 Debug.VulkanWarningEvery(
                     $"OpenXR.Vulkan.TrueSinglePassStereo.ResizeCatchUpSkipped.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
@@ -1314,44 +1422,27 @@ public unsafe partial class OpenXRAPI
                 return false;
             }
 
-            Debug.VulkanEvery(
-                $"OpenXR.Vulkan.TrueSinglePassStereo.Rendered.{GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[OpenXR] Vulkan true stereo render completed. fbo='{0}' color='{1}' depth='{2}' extent={3}x{4} leftImage={5} rightImage={6} pipeline='{7}' commands={8}",
-                target.FrameBuffer.Name ?? "<unnamed FBO>",
-                target.ColorArrayTexture.Name ?? "<unnamed color>",
-                target.DepthArrayTexture.Name ?? "<unnamed depth>",
-                target.Extent.Width,
-                target.Extent.Height,
-                leftImageIndex,
-                rightImageIndex,
-                stereoPipeline.DebugName,
-                stereoRenderingCommands);
-
-            bool leftPublished = renderer.TryBlitTextureArrayLayerToOpenXrSwapchainImage(
-                target.ColorArrayTexture,
-                sourceLayer: 0,
-                target.LeftSwapchainImage,
-                target.LeftSwapchainFormat,
-                target.Extent,
-                $"true stereo left eye swapchain image {leftImageIndex}",
-                flipY: false);
-            bool rightPublished = renderer.TryBlitTextureArrayLayerToOpenXrSwapchainImage(
-                target.ColorArrayTexture,
-                sourceLayer: 1,
-                target.RightSwapchainImage,
-                target.RightSwapchainFormat,
-                target.Extent,
-                $"true stereo right eye swapchain image {rightImageIndex}",
-                flipY: false);
-
-            if (!leftPublished || !rightPublished)
-                return false;
+            if (VulkanCaptureEyeOutputs || OpenXrDebugLifecycle || XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw)
+            {
+                Debug.VulkanEvery(
+                    $"OpenXR.Vulkan.TrueSinglePassStereo.Rendered.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Vulkan true stereo render+publish completed. fbo='{0}' color='{1}' depth='{2}' extent={3}x{4} leftImage={5} rightImage={6} pipeline='{7}' commands={8}",
+                    target.FrameBuffer.Name ?? "<unnamed FBO>",
+                    target.ColorArrayTexture.Name ?? "<unnamed color>",
+                    target.DepthArrayTexture.Name ?? "<unnamed depth>",
+                    target.Extent.Width,
+                    target.Extent.Height,
+                    leftImageIndex,
+                    rightImageIndex,
+                    stereoPipeline.DebugName,
+                    stereoRenderingCommands);
+            }
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishLeft"))
-                PublishVulkanEyeSwapchain(renderer, leftImage, leftFormat, extent, 0, leftImageIndex, width, height);
+                PublishVulkanEyeMirror(renderer, target.LeftColorView, 0, leftImageIndex, width, height);
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.TrueSinglePassStereo.PublishRight"))
-                PublishVulkanEyeSwapchain(renderer, rightImage, rightFormat, extent, 1, rightImageIndex, width, height);
+                PublishVulkanEyeMirror(renderer, target.RightColorView, 1, rightImageIndex, width, height);
 
             MarkVulkanEyeResourceWarmupComplete(0);
             MarkVulkanEyeResourceWarmupComplete(1);
@@ -1401,7 +1492,7 @@ public unsafe partial class OpenXRAPI
         {
             if (OpenXrVulkanMirrorFbo)
                 EnsureVulkanEyeMirrorTargets(renderer, width, height);
-            EnsureOpenXrPreviewTargets(renderer, width, height);
+            EnsureVulkanOpenXrPreviewTargets(renderer, width, height);
         }
 
         if (OpenXrDebugClearOnly)
@@ -1535,6 +1626,26 @@ public unsafe partial class OpenXRAPI
 
                 LogVulkanEyeMirrorPublish(leftMirrorColor, _previewLeftEyeTexture, 0, leftImageIndex, width, height, leftPreviewCopied);
                 LogVulkanEyeMirrorPublish(rightMirrorColor, _previewRightEyeTexture, 1, rightImageIndex, width, height, rightPreviewCopied);
+                if (ShouldCopyVulkanEyeToDesktopMirror(0))
+                {
+                    EnsureViewportMirrorTargets(renderer, width, height);
+                    bool desktopMirrorCopied = renderer.TryCopyOpenXrEyeMirrorTexture(
+                        leftMirrorColor,
+                        _viewportMirrorColor,
+                        $"desktop mirror eye 0",
+                        flipY: false);
+                    LogVulkanEyeMirrorPublish(
+                        leftMirrorColor,
+                        _previewLeftEyeTexture,
+                        0,
+                        leftImageIndex,
+                        width,
+                        height,
+                        leftPreviewCopied,
+                        desktopMirrorCopied);
+                    if (desktopMirrorCopied)
+                        RecordSmokeDesktopMirrorComposed();
+                }
                 if (leftPreviewCopied)
                     RecordSmokeDesktopMirrorComposed();
                 if (rightPreviewCopied)
@@ -1647,7 +1758,7 @@ public unsafe partial class OpenXRAPI
 
     private void PublishVulkanEyeMirror(
         VulkanRenderer renderer,
-        XRTexture2D? sourceTexture,
+        XRTexture? sourceTexture,
         uint viewIndex,
         uint imageIndex,
         uint width,
@@ -1657,11 +1768,13 @@ public unsafe partial class OpenXRAPI
             return;
 
         XRTexture2D? previewTexture = GetOpenXrPreviewTexture(viewIndex);
-        bool copiedPreview = renderer.TryCopyOpenXrEyeMirrorTexture(
-            sourceTexture,
-            previewTexture,
-            $"preview eye {viewIndex}",
-            flipY: false);
+        bool shouldCopyPreview = ShouldCopyDirectVulkanEyeSwapchainPreview();
+        bool copiedPreview = shouldCopyPreview &&
+            renderer.TryCopyOpenXrEyeMirrorTexture(
+                sourceTexture,
+                previewTexture,
+                $"preview eye {viewIndex}",
+                flipY: false);
         bool copiedDesktopMirror = false;
         if (ShouldCopyVulkanEyeToDesktopMirror(viewIndex))
         {
@@ -1681,7 +1794,7 @@ public unsafe partial class OpenXRAPI
     }
 
     private static void LogVulkanEyeMirrorPublish(
-        XRTexture2D? sourceTexture,
+        XRTexture? sourceTexture,
         XRTexture2D? previewTexture,
         uint viewIndex,
         uint imageIndex,

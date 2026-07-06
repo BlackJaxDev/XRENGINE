@@ -322,8 +322,6 @@ public unsafe partial class VulkanRenderer
             group is not null)
         {
             group.EnsureAllocated(this);
-            if (group.LastKnownLayout == ImageLayout.Undefined)
-                TransitionNewPhysicalImagesToInitialLayout();
             return group.IsAllocated;
         }
 
@@ -346,6 +344,7 @@ public unsafe partial class VulkanRenderer
         HashSet<int>? activePassIndices = BuildActiveFrameOpPassSet(ops);
         HashSet<string>? activeFrameBufferNames = BuildActiveFrameOpFrameBufferSet(ops);
         int activeResourceSetSignature = ComputeActiveFrameBufferSetSignature(activeFrameBufferNames);
+        int activePassSetSignature = ComputeActivePassSetSignature(activePassIndices);
         FrameOpContext primary = SelectPrimaryPlannerContext(ops);
         RenderResourceRegistry? mergedRegistry = BuildMergedFrameOpRegistry(ops, primary.ResourceRegistry);
         FrameOpContext plannerContext = mergedRegistry is null
@@ -353,11 +352,22 @@ public unsafe partial class VulkanRenderer
             : primary with { ResourceRegistry = mergedRegistry };
 
         plannerContext = RefreshPlannerExtentsFromLiveContext(plannerContext, ops);
+        FrameOpPlannerStateKey stateKey = BuildFrameOpPlannerStateKey(
+            plannerContext,
+            activePassSetSignature,
+            activeResourceSetSignature);
+        bool cachePlannerState = FrameOpContextHasPlannerResources(plannerContext);
+        if (cachePlannerState)
+            ActivateCachedFrameOpResourcePlannerState(stateKey);
+
         UpdateResourcePlannerFromContext(
             plannerContext,
             activePassIndices,
             activeFrameBufferNames,
             activeResourceSetSignature);
+        if (cachePlannerState)
+            StoreCachedFrameOpResourcePlannerState(stateKey);
+
         return plannerContext;
     }
 
@@ -405,12 +415,15 @@ public unsafe partial class VulkanRenderer
             return ResourcePlannerRevision;
 
         ulong signature = ComputeActiveFrameOpResourcePlannerStatesSignature();
-        Debug.VulkanEvery(
-            $"Vulkan.ResourcePlanner.FrameOpContextStates.{GetHashCode()}",
-            TimeSpan.FromSeconds(1),
-            "[VulkanResourcePlanner] Prepared {0} frame-op context resource planner states. Signature=0x{1:X16}.",
-            switchingState.ActiveKeys.Count,
-            signature);
+        if (VulkanFrameDiagnosticsTraceEnabled)
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.ResourcePlanner.FrameOpContextStates.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[VulkanResourcePlanner] Prepared {0} frame-op context resource planner states. Signature=0x{1:X16}.",
+                switchingState.ActiveKeys.Count,
+                signature);
+        }
         return signature;
     }
 
@@ -419,14 +432,52 @@ public unsafe partial class VulkanRenderer
         HashSet<int>? activePassIndices = BuildActiveFrameOpPassSet(ops, key);
         HashSet<string>? activeFrameBufferNames = BuildActiveFrameOpFrameBufferSet(ops, key);
         int activeResourceSetSignature = ComputeActiveFrameBufferSetSignature(activeFrameBufferNames);
+        int activePassSetSignature = ComputeActivePassSetSignature(activePassIndices);
         FrameOpContext plannerContext = SelectPrimaryPlannerContext(ops, key);
         plannerContext = RefreshPlannerExtentsFromLiveContext(plannerContext, ops, filterByPlannerKey: true, plannerKey: key);
+        FrameOpPlannerStateKey stateKey = BuildFrameOpPlannerStateKey(
+            plannerContext,
+            activePassSetSignature,
+            activeResourceSetSignature);
+        bool cachePlannerState = FrameOpContextHasPlannerResources(plannerContext);
+        if (cachePlannerState)
+            ActivateCachedFrameOpResourcePlannerState(stateKey);
+
         UpdateResourcePlannerFromContext(
             plannerContext,
             activePassIndices,
             activeFrameBufferNames,
             activeResourceSetSignature);
+        if (cachePlannerState)
+            StoreCachedFrameOpResourcePlannerState(stateKey);
+
         return plannerContext;
+    }
+
+    private void ActivateCachedFrameOpResourcePlannerState(in FrameOpPlannerStateKey key)
+    {
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        if (switchingState.HasActiveKey && key.Equals(switchingState.ActiveKey))
+            return;
+
+        if (switchingState.HasActiveKey)
+            switchingState.States[switchingState.ActiveKey] = CaptureResourcePlannerRuntimeState();
+
+        ResourcePlannerRuntimeState state = switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState existingState)
+            ? existingState
+            : ResourcePlannerRuntimeState.CreateEmpty();
+
+        RestoreResourcePlannerRuntimeState(state);
+        switchingState.ActiveKey = key;
+        switchingState.HasActiveKey = true;
+    }
+
+    private void StoreCachedFrameOpResourcePlannerState(in FrameOpPlannerStateKey key)
+    {
+        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
+        switchingState.States[key] = CaptureResourcePlannerRuntimeState();
+        switchingState.ActiveKey = key;
+        switchingState.HasActiveKey = true;
     }
 
     private void CollectFrameOpPlannerStateKeys(FrameOp[] ops, List<FrameOpPlannerStateKey> keys)
@@ -440,6 +491,18 @@ public unsafe partial class VulkanRenderer
             FrameOpPlannerStateKey key = BuildFrameOpPlannerStateKey(context);
             if (!keys.Contains(key))
                 keys.Add(key);
+        }
+
+        for (int i = 0; i < keys.Count; i++)
+        {
+            FrameOpPlannerStateKey key = keys[i];
+            HashSet<int>? activePassIndices = BuildActiveFrameOpPassSet(ops, key);
+            HashSet<string>? activeFrameBufferNames = BuildActiveFrameOpFrameBufferSet(ops, key);
+            keys[i] = key with
+            {
+                ActivePassSetSignature = ComputeActivePassSetSignature(activePassIndices),
+                ActiveResourceSetSignature = ComputeActiveFrameBufferSetSignature(activeFrameBufferNames)
+            };
         }
 
         keys.Sort(static (left, right) =>
@@ -456,7 +519,15 @@ public unsafe partial class VulkanRenderer
             if (compare != 0)
                 return compare;
 
-            return left.PassMetadataIdentity.CompareTo(right.PassMetadataIdentity);
+            compare = left.PassMetadataIdentity.CompareTo(right.PassMetadataIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = left.ActivePassSetSignature.CompareTo(right.ActivePassSetSignature);
+            if (compare != 0)
+                return compare;
+
+            return left.ActiveResourceSetSignature.CompareTo(right.ActiveResourceSetSignature);
         });
     }
 
@@ -482,7 +553,15 @@ public unsafe partial class VulkanRenderer
             if (compare != 0)
                 return compare;
 
-            return left.PassMetadataIdentity.CompareTo(right.PassMetadataIdentity);
+            compare = left.PassMetadataIdentity.CompareTo(right.PassMetadataIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = left.ActivePassSetSignature.CompareTo(right.ActivePassSetSignature);
+            if (compare != 0)
+                return compare;
+
+            return left.ActiveResourceSetSignature.CompareTo(right.ActiveResourceSetSignature);
         });
 
         hash.Add(keys.Count);
@@ -494,6 +573,8 @@ public unsafe partial class VulkanRenderer
             hash.Add(key.ViewportIdentity);
             hash.Add(key.ResourceRegistryIdentity);
             hash.Add(key.PassMetadataIdentity);
+            hash.Add(key.ActivePassSetSignature);
+            hash.Add(key.ActiveResourceSetSignature);
 
             if (!switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state))
             {
@@ -522,8 +603,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        FrameOpPlannerStateKey key = BuildFrameOpPlannerStateKey(context);
-        if (!switchingState.ActiveKeys.Contains(key))
+        if (!TryFindActiveFrameOpPlannerStateKey(context, switchingState, out FrameOpPlannerStateKey key))
             return false;
 
         if (switchingState.HasActiveKey &&
@@ -541,6 +621,24 @@ public unsafe partial class VulkanRenderer
         switchingState.ActiveKey = key;
         switchingState.HasActiveKey = true;
         return true;
+    }
+
+    private static bool TryFindActiveFrameOpPlannerStateKey(
+        in FrameOpContext context,
+        FrameOpResourcePlannerSwitchingState switchingState,
+        out FrameOpPlannerStateKey key)
+    {
+        foreach (FrameOpPlannerStateKey activeKey in switchingState.ActiveKeys)
+        {
+            if (!FrameOpContextMatchesPlannerStateKey(context, activeKey))
+                continue;
+
+            key = activeKey;
+            return true;
+        }
+
+        key = default;
+        return false;
     }
 
     private void SaveActiveFrameOpResourcePlannerState()
@@ -657,15 +755,29 @@ public unsafe partial class VulkanRenderer
             context.PassMetadata is { Count: > 0 };
 
     private static FrameOpPlannerStateKey BuildFrameOpPlannerStateKey(in FrameOpContext context)
+        => BuildFrameOpPlannerStateKey(context, 0, 0);
+
+    private static FrameOpPlannerStateKey BuildFrameOpPlannerStateKey(
+        in FrameOpContext context,
+        int activePassSetSignature,
+        int activeResourceSetSignature)
         => new(
             context.PipelineIdentity,
             context.ViewportIdentity,
             context.ResourceRegistry is null ? 0 : RuntimeHelpers.GetHashCode(context.ResourceRegistry),
-            context.PassMetadata is null ? 0 : RuntimeHelpers.GetHashCode(context.PassMetadata));
+            context.PassMetadata is null ? 0 : RuntimeHelpers.GetHashCode(context.PassMetadata),
+            activePassSetSignature,
+            activeResourceSetSignature);
 
     private static bool FrameOpMatchesPlannerStateKey(FrameOp op, in FrameOpPlannerStateKey key)
         => FrameOpContextHasPlannerResources(op.Context) &&
-            BuildFrameOpPlannerStateKey(op.Context).Equals(key);
+            FrameOpContextMatchesPlannerStateKey(op.Context, key);
+
+    private static bool FrameOpContextMatchesPlannerStateKey(in FrameOpContext context, in FrameOpPlannerStateKey key)
+        => context.PipelineIdentity == key.PipelineIdentity &&
+            context.ViewportIdentity == key.ViewportIdentity &&
+            (context.ResourceRegistry is null ? 0 : RuntimeHelpers.GetHashCode(context.ResourceRegistry)) == key.ResourceRegistryIdentity &&
+            (context.PassMetadata is null ? 0 : RuntimeHelpers.GetHashCode(context.PassMetadata)) == key.PassMetadataIdentity;
 
     private FrameOpContext RefreshPlannerExtentsFromLiveContext(FrameOpContext context, FrameOp[] ops)
     {
@@ -751,18 +863,21 @@ public unsafe partial class VulkanRenderer
             return context;
         }
 
-        Debug.VulkanEvery(
-            $"Vulkan.ResourcePlanner.RefreshFrameOpExtents.{context.PipelineIdentity}.{context.ViewportIdentity}",
-            TimeSpan.FromSeconds(1),
-            "[VulkanResourcePlanner] Refreshing frame-op planner extents from live viewport. Old={0}x{1}/{2}x{3} Live={4}x{5}/{6}x{7}.",
-            context.DisplayWidth,
-            context.DisplayHeight,
-            context.InternalWidth,
-            context.InternalHeight,
-            displayWidth,
-            displayHeight,
-            internalWidth,
-            internalHeight);
+        if (VulkanFrameDiagnosticsTraceEnabled)
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.ResourcePlanner.RefreshFrameOpExtents.{context.PipelineIdentity}.{context.ViewportIdentity}",
+                TimeSpan.FromSeconds(1),
+                "[VulkanResourcePlanner] Refreshing frame-op planner extents from live viewport. Old={0}x{1}/{2}x{3} Live={4}x{5}/{6}x{7}.",
+                context.DisplayWidth,
+                context.DisplayHeight,
+                context.InternalWidth,
+                context.InternalHeight,
+                displayWidth,
+                displayHeight,
+                internalWidth,
+                internalHeight);
+        }
 
         return context with
         {
@@ -1032,26 +1147,10 @@ public unsafe partial class VulkanRenderer
             RenderResourceRegistry registry = registries[i];
             sources[i] = new FrameOpRegistryCacheSource(
                 registry,
-                ComputeResourceRegistrySignature(registry),
-                FindRegistryGenerationStamp(ops, registry));
+                ComputeResourceRegistrySignature(registry));
         }
 
         return sources;
-    }
-
-    private static int FindRegistryGenerationStamp(FrameOp[] ops, RenderResourceRegistry registry)
-    {
-        int stamp = 0;
-        foreach (FrameOp op in ops)
-        {
-            if (ReferenceEquals(op.Context.ResourceRegistry, registry) &&
-                op.Context.PipelineInstance is { } pipeline)
-            {
-                stamp = Math.Max(stamp, pipeline.ResourceGeneration);
-            }
-        }
-
-        return stamp;
     }
 
     private bool TryGetCachedMergedFrameOpRegistry(
@@ -1117,8 +1216,7 @@ public unsafe partial class VulkanRenderer
         for (int i = 0; i < cached.Length; i++)
         {
             if (!ReferenceEquals(cached[i].Registry, current[i].Registry) ||
-                cached[i].DescriptorSignature != current[i].DescriptorSignature ||
-                cached[i].ResourceGenerationStamp != current[i].ResourceGenerationStamp)
+                cached[i].DescriptorSignature != current[i].DescriptorSignature)
             {
                 return false;
             }
@@ -1583,13 +1681,6 @@ public unsafe partial class VulkanRenderer
         if (!physicalPlanChanged)
             return;
 
-        // Transition every newly-allocated physical image from VK_IMAGE_LAYOUT_UNDEFINED
-        // to a usable initial layout so that the first render pass that references them
-        // does not hit a validation error (images stuck in UNDEFINED). Depth/stencil
-        // images go to DEPTH_STENCIL_ATTACHMENT_OPTIMAL; colour images go to GENERAL
-        // which is compatible with attachment, sampled, and storage usage.
-        TransitionNewPhysicalImagesToInitialLayout();
-
         if (retiredImageCount > 0 || retiredBufferCount > 0)
         {
             LogDeferredResourcePlanReplacementRetirement(retiredImageCount, retiredBufferCount);
@@ -1661,9 +1752,10 @@ public unsafe partial class VulkanRenderer
         }
 
         ImageLayout oldLayout = oldGroup.LastKnownLayout;
-        ImageLayout newLayout = newGroup.LastKnownLayout == ImageLayout.Undefined
+        ImageLayout newCurrentLayout = newGroup.LastKnownLayout;
+        ImageLayout newRestoreLayout = newCurrentLayout == ImageLayout.Undefined
             ? ResolveInitialPhysicalGroupLayout(newGroup.Usage, VulkanResourceAllocator.IsDepthStencilFormat(newGroup.Format))
-            : newGroup.LastKnownLayout;
+            : newCurrentLayout;
 
         using var scope = NewCommandScope();
 
@@ -1686,11 +1778,11 @@ public unsafe partial class VulkanRenderer
         TransitionPhysicalGroupForCopy(
             scope.CommandBuffer,
             newGroup,
-            newLayout,
+            newCurrentLayout,
             ImageLayout.TransferDstOptimal,
-            AccessFlags.ShaderWriteBit,
+            newCurrentLayout == ImageLayout.Undefined ? AccessFlags.None : AccessFlags.ShaderWriteBit,
             AccessFlags.TransferWriteBit,
-            autoExposureStages,
+            newCurrentLayout == ImageLayout.Undefined ? PipelineStageFlags.TopOfPipeBit : autoExposureStages,
             PipelineStageFlags.TransferBit);
 
         ImageCopy copy = new()
@@ -1728,14 +1820,14 @@ public unsafe partial class VulkanRenderer
             scope.CommandBuffer,
             newGroup,
             ImageLayout.TransferDstOptimal,
-            newLayout,
+            newRestoreLayout,
             AccessFlags.TransferWriteBit,
             AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
             PipelineStageFlags.TransferBit,
             autoExposureStages);
 
         oldGroup.LastKnownLayout = ImageLayout.TransferSrcOptimal;
-        newGroup.LastKnownLayout = newLayout;
+        newGroup.LastKnownLayout = newRestoreLayout;
         Debug.VulkanEvery(
             $"Vulkan.AutoExposure.HistoryPreserve.{sourceLabel}",
             TimeSpan.FromSeconds(2),
@@ -1744,7 +1836,7 @@ public unsafe partial class VulkanRenderer
             oldGroup.Image.Handle,
             newGroup.Image.Handle,
             oldLayout,
-            newLayout);
+            newRestoreLayout);
         return true;
     }
 

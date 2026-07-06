@@ -761,8 +761,9 @@ public class GpuRenderingBacklogTests
             .Replace("\r\n", "\n");
 
         frameTiming.ShouldContain("private const bool EnableVulkanGpuProfilerCommandBufferInstrumentation = false;");
-        frameTiming.ShouldContain("Vulkan GPU pipeline command timing is quarantined");
+        frameTiming.ShouldContain("Vulkan GPU pipeline command timing is disabled; set XRE_GPU_TIMESTAMP_DENSE=1");
         frameTiming.ShouldContain("internal static string VulkanGpuProfilerCommandTimingStatusMessage");
+        frameTiming.ShouldContain("XREngineEnvironmentVariables.GpuTimestampDense");
         frameTiming.ShouldContain("if (!IsVulkanGpuProfilerCommandBufferInstrumentationEnabled)\n            return false;");
         frameTiming.ShouldContain("RecordBackendGpuTimingStatus(");
         gpuProfiler.ShouldContain("public bool ShouldInstrumentCommandScopes\n        => IsProfilingActive && AbstractRenderer.Current is OpenGLRenderer;");
@@ -785,7 +786,7 @@ public class GpuRenderingBacklogTests
 
         commandBuffers.ShouldContain("bool gpuPipelineProfilingActive =\n                IsVulkanGpuProfilerCommandBufferInstrumentationEnabled &&\n                RenderPipelineGpuProfiler.Instance.IsProfilingActive;");
         commandBuffers.ShouldContain("bool gpuProfilerCommandBufferStateDirty = IsVulkanGpuProfilerCommandBufferStateDirty");
-        commandBuffers.ShouldContain("ClearVulkanGpuProfilerPendingQueries();\n                MarkCommandBufferVariantsDirty(imageIndex);");
+        commandBuffers.ShouldContain("ClearVulkanGpuProfilerPendingQueries();\n                MarkCommandBufferVariantsDirty(imageIndex, \"gpu-profiler-command-buffer-state\");");
         commandBuffers.ShouldContain("UpdateVulkanGpuProfilerCommandBufferState(");
 
         frameTiming.ShouldContain("private void ClearVulkanGpuProfilerPendingQueries()");

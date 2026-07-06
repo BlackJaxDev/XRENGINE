@@ -367,12 +367,15 @@ namespace XREngine.Rendering.Vulkan
                 ImageLayout.ColorAttachmentOptimal,
                 ImageLayout.PresentSrcKhr);
 
-            Debug.VulkanEvery(
-                $"Vulkan.DynamicUiText.LateOverlay.{GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] Recorded dynamic UI text late overlay after ImGui. image={0} ops={1}",
-                imageIndex,
-                dynamicUiBatchTextOpCount);
+            if (VulkanFrameDiagnosticsTraceEnabled)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.DynamicUiText.LateOverlay.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Recorded dynamic UI text late overlay after ImGui. image={0} ops={1}",
+                    imageIndex,
+                    dynamicUiBatchTextOpCount);
+            }
 
             CmdEndLabel(commandBuffer);
 

@@ -735,6 +735,7 @@ public sealed class VrViewRenderModeContractTests
         stats.ShouldContain("VR120");
         host.ShouldContain("EvaluateFrameOutputPacing");
         host.ShouldContain("RecordForcedSkip");
+        host.ShouldContain("HasRecentRenderedDesktopOutput");
         viewport.ShouldContain("CollectVisibleAutomatic");
         viewport.ShouldContain("RecordFrameOutput");
         viewport.ShouldContain("AccumulateSkippedSceneRenderDelta");
@@ -911,7 +912,7 @@ public sealed class VrViewRenderModeContractTests
         int labelIndex = openXrVulkanSource.IndexOf(publishLabel, StringComparison.Ordinal);
         labelIndex.ShouldBeGreaterThanOrEqualTo(0);
 
-        string publishCallTail = openXrVulkanSource.Substring(labelIndex, Math.Min(200, openXrVulkanSource.Length - labelIndex));
+        string publishCallTail = openXrVulkanSource.Substring(labelIndex, Math.Min(500, openXrVulkanSource.Length - labelIndex));
         publishCallTail.ShouldContain("flipY: false");
         publishCallTail.ShouldNotContain("flipY: true");
     }

@@ -775,7 +775,7 @@ public unsafe partial class OpenXRAPI
                 colorBit: true,
                 depthBit: false,
                 stencilBit: false,
-                linearFilter: true);
+                linearFilter: false);
             renderer.TrackWindowPresentSource(_viewportMirrorColor, _viewportMirrorFbo);
 
             RecordSmokeDesktopMirrorComposed();
@@ -1103,13 +1103,9 @@ public unsafe partial class OpenXRAPI
         out Matrix4x4 localPose,
         out (float Left, float Right, float Up, float Down) fov)
     {
-        if (viewIndex < _viewCount && viewIndex < _views.Length)
-        {
-            View view = _views[viewIndex];
-            localPose = CreateOpenXrViewLocalPoseMatrix(view.Pose);
-            fov = (view.Fov.AngleLeft, view.Fov.AngleRight, view.Fov.AngleUp, view.Fov.AngleDown);
-            return true;
-        }
+        bool allowPredictedFallback = timing == OpenXrPoseTiming.Late;
+        if (TryGetCachedOpenXrViewForTiming(viewIndex, timing, allowPredictedFallback, out View view))
+            return CreateOpenXrViewPoseAndFov(view, out localPose, out fov);
 
         bool leftEye = IsLeftEyeLikeOpenXrView(viewIndex);
         lock (_openXrPoseLock)
@@ -1128,6 +1124,80 @@ public unsafe partial class OpenXRAPI
             }
         }
 
+        return true;
+    }
+
+    private bool TryGetOpenXrProjectionLayerView(uint viewIndex, out View view)
+    {
+        if (TryGetCachedOpenXrViewForTiming(viewIndex, OpenXrPoseTiming.Late, allowPredictedFallback: true, out view))
+            return true;
+
+        if (viewIndex < _viewCount && viewIndex < _views.Length)
+        {
+            view = _views[viewIndex];
+            return true;
+        }
+
+        view = default;
+        return false;
+    }
+
+    private bool TryGetCachedOpenXrViewForTiming(
+        uint viewIndex,
+        OpenXrPoseTiming timing,
+        bool allowPredictedFallback,
+        out View view)
+    {
+        int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+        int index = checked((int)viewIndex);
+
+        lock (_openXrPoseLock)
+        {
+            if (TryGetCachedOpenXrViewForTimingNoLock(index, timing, frameNo, out view))
+                return true;
+
+            if (allowPredictedFallback &&
+                timing == OpenXrPoseTiming.Late &&
+                TryGetCachedOpenXrViewForTimingNoLock(index, OpenXrPoseTiming.Predicted, frameNo, out view))
+            {
+                return true;
+            }
+        }
+
+        view = default;
+        return false;
+    }
+
+    private bool TryGetCachedOpenXrViewForTimingNoLock(
+        int viewIndex,
+        OpenXrPoseTiming timing,
+        int frameNo,
+        out View view)
+    {
+        View[] views = timing == OpenXrPoseTiming.Late ? _openXrLateViews : _openXrPredictedViews;
+        int count = timing == OpenXrPoseTiming.Late ? _openXrLateViewCount : _openXrPredictedViewCount;
+        int cacheFrameNo = timing == OpenXrPoseTiming.Late ? _openXrLateViewFrameNumber : _openXrPredictedViewFrameNumber;
+
+        if (viewIndex >= 0 &&
+            viewIndex < count &&
+            viewIndex < views.Length &&
+            cacheFrameNo == frameNo)
+        {
+            view = views[viewIndex];
+            return true;
+        }
+
+        view = default;
+        return false;
+    }
+
+    private static bool CreateOpenXrViewPoseAndFov(
+        View view,
+        out Matrix4x4 localPose,
+        out (float Left, float Right, float Up, float Down) fov)
+    {
+        localPose = CreateOpenXrViewLocalPoseMatrix(view.Pose);
+        fov = (view.Fov.AngleLeft, view.Fov.AngleRight, view.Fov.AngleUp, view.Fov.AngleDown);
         return true;
     }
 
@@ -1205,6 +1275,19 @@ public unsafe partial class OpenXRAPI
     }
 
     private void EnsureOpenXrPreviewTargets(AbstractRenderer renderer, uint width, uint height)
+        => EnsureOpenXrPreviewTargets(
+            renderer,
+            width,
+            height,
+            EPixelInternalFormat.Rgba8,
+            ESizedInternalFormat.Rgba8);
+
+    private void EnsureOpenXrPreviewTargets(
+        AbstractRenderer renderer,
+        uint width,
+        uint height,
+        EPixelInternalFormat internalFormat,
+        ESizedInternalFormat sizedFormat)
     {
         width = Math.Max(1u, width);
         height = Math.Max(1u, height);
@@ -1212,7 +1295,9 @@ public unsafe partial class OpenXRAPI
         if (_previewLeftEyeTexture is not null &&
             _previewRightEyeTexture is not null &&
             _previewEyeTextureWidth == width &&
-            _previewEyeTextureHeight == height)
+            _previewEyeTextureHeight == height &&
+            _previewEyeTextureInternalFormat == internalFormat &&
+            _previewEyeTextureSizedFormat == sizedFormat)
         {
             return;
         }
@@ -1221,22 +1306,30 @@ public unsafe partial class OpenXRAPI
 
         _previewEyeTextureWidth = width;
         _previewEyeTextureHeight = height;
-        _previewLeftEyeTexture = CreateOpenXrPreviewTexture(width, height, "OpenXRPreviewLeftEyeColor");
-        _previewRightEyeTexture = CreateOpenXrPreviewTexture(width, height, "OpenXRPreviewRightEyeColor");
+        _previewEyeTextureInternalFormat = internalFormat;
+        _previewEyeTextureSizedFormat = sizedFormat;
+        _previewLeftEyeTexture = CreateOpenXrPreviewTexture(width, height, internalFormat, sizedFormat, "OpenXRPreviewLeftEyeColor");
+        _previewRightEyeTexture = CreateOpenXrPreviewTexture(width, height, internalFormat, sizedFormat, "OpenXRPreviewRightEyeColor");
 
         renderer.GetOrCreateAPIRenderObject(_previewLeftEyeTexture, generateNow: true);
         renderer.GetOrCreateAPIRenderObject(_previewRightEyeTexture, generateNow: true);
     }
 
-    private static XRTexture2D CreateOpenXrPreviewTexture(uint width, uint height, string name)
+    private static XRTexture2D CreateOpenXrPreviewTexture(
+        uint width,
+        uint height,
+        EPixelInternalFormat internalFormat,
+        ESizedInternalFormat sizedFormat,
+        string name)
     {
         var texture = XRTexture2D.CreateFrameBufferTexture(
             width,
             height,
-            EPixelInternalFormat.Rgba8,
+            internalFormat,
             EPixelFormat.Rgba,
             EPixelType.UnsignedByte,
             EFrameBufferAttachment.ColorAttachment0);
+        texture.SizedInternalFormat = sizedFormat;
         texture.Resizable = true;
         texture.MinFilter = ETexMinFilter.Linear;
         texture.MagFilter = ETexMagFilter.Linear;
@@ -1294,5 +1387,7 @@ public unsafe partial class OpenXRAPI
 
         _previewEyeTextureWidth = 0;
         _previewEyeTextureHeight = 0;
+        _previewEyeTextureInternalFormat = EPixelInternalFormat.Rgba8;
+        _previewEyeTextureSizedFormat = ESizedInternalFormat.Rgba8;
     }
 }

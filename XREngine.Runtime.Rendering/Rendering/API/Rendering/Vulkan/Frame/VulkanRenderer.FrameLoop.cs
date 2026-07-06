@@ -68,7 +68,6 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ActiveState.SetIndexedViewportScissors(viewports[..count], scissors[..count]);
-            MarkCommandBuffersDirty();
             return true;
         }
 
@@ -78,7 +77,6 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             ActiveState.ClearIndexedViewportScissors();
-            MarkCommandBuffersDirty();
         }
 
         // =========== API Render Object Factory ===========
@@ -744,15 +742,18 @@ namespace XREngine.Rendering.Vulkan
             drainRetiredResourcesTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
             // Helpful when tracking down DPI / resize issues.
-            Debug.VulkanEvery(
-                $"Vulkan.Frame.{GetHashCode()}.Sizes",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] Frame={0} WindowFB={1}x{2} Swapchain={3}x{4}",
-                frameNumber,
-                liveFramebufferSize.X,
-                liveFramebufferSize.Y,
-                swapChainExtent.Width,
-                swapChainExtent.Height);
+            if (VulkanFrameDiagnosticsTraceEnabled)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.Sizes",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Frame={0} WindowFB={1}x{2} Swapchain={3}x{4}",
+                    frameNumber,
+                    liveFramebufferSize.X,
+                    liveFramebufferSize.Y,
+                    swapChainExtent.Width,
+                    swapChainExtent.Height);
+            }
 
             // 2. Acquire the next image from the swap chain
             uint imageIndex = 0;
@@ -783,14 +784,17 @@ namespace XREngine.Rendering.Vulkan
             }
             acquireImageTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
-            Debug.VulkanEvery(
-                $"Vulkan.Frame.{GetHashCode()}.Acquire",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] Frame={0} InFlightSlot={1} AcquiredImage={2} LastPresented={3}",
-                frameNumber,
-                currentFrame,
-                imageIndex,
-                _lastPresentedImageIndex);
+            if (VulkanFrameDiagnosticsTraceEnabled)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.Acquire",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Frame={0} InFlightSlot={1} AcquiredImage={2} LastPresented={3}",
+                    frameNumber,
+                    currentFrame,
+                    imageIndex,
+                    _lastPresentedImageIndex);
+            }
 
             if (result == Result.ErrorDeviceLost)
             {
@@ -1043,14 +1047,17 @@ namespace XREngine.Rendering.Vulkan
 
             if (dynamicUiBatchTextOverlayOpCount > 0)
             {
-                Debug.VulkanEvery(
-                    $"Vulkan.DynamicUiText.LateOverlayDecision.{GetHashCode()}",
-                    TimeSpan.FromSeconds(1),
-                    "[Vulkan] Dynamic UI text late-overlay decision: preserveForImGui={0} hasImGui={1} ops={2} secondary=0x{3:X}",
-                    preserveSwapchainForImGuiOverlay,
-                    hasImGuiOverlayCommandBuffer,
-                    dynamicUiBatchTextOverlayOpCount,
-                    dynamicUiBatchTextSecondaryCommandBuffer.Handle);
+                if (VulkanFrameDiagnosticsTraceEnabled)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.DynamicUiText.LateOverlayDecision.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Dynamic UI text late-overlay decision: preserveForImGui={0} hasImGui={1} ops={2} secondary=0x{3:X}",
+                        preserveSwapchainForImGuiOverlay,
+                        hasImGuiOverlayCommandBuffer,
+                        dynamicUiBatchTextOverlayOpCount,
+                        dynamicUiBatchTextSecondaryCommandBuffer.Handle);
+                }
             }
 
             if (preserveSwapchainForImGuiOverlay &&
@@ -1191,6 +1198,10 @@ namespace XREngine.Rendering.Vulkan
                 _swapchainImageTimelineValues[imageIndex] = graphicsSignalValue;
             QueueRecordedTextureUploadsForTimeline(graphicsSignalValue, "graphics frame");
 
+            // QueuePresent can block on desktop swapchain pacing. The submitted commands have
+            // consumed this frame's render buffers, so release CollectVisible before that wait.
+            RuntimeRenderingHostServices.Current.MarkRenderFrameReadyForCollect(XRWindow);
+
             // Trim idle staging buffers so the pool does not grow unbounded.
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.TrimStaging"))
@@ -1199,12 +1210,15 @@ namespace XREngine.Rendering.Vulkan
             }
             trimStagingTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
-            Debug.VulkanEvery(
-                $"Vulkan.Frame.{GetHashCode()}.Submit",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] Frame={0} SubmittedImage={1}",
-                frameNumber,
-                imageIndex);
+            if (VulkanFrameDiagnosticsTraceEnabled)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.Submit",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Frame={0} SubmittedImage={1}",
+                    frameNumber,
+                    imageIndex);
+            }
 
             // 6. Present the image
             var swapChains = stackalloc[] { swapChain };
@@ -1251,13 +1265,16 @@ namespace XREngine.Rendering.Vulkan
             if (_swapchainImageEverPresented is not null && imageIndex < _swapchainImageEverPresented.Length)
                 _swapchainImageEverPresented[imageIndex] = true;
 
-            Debug.VulkanEvery(
-                $"Vulkan.Frame.{GetHashCode()}.Present",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] Frame={0} PresentedImage={1} Result={2}",
-                frameNumber,
-                imageIndex,
-                result);
+            if (VulkanFrameDiagnosticsTraceEnabled)
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.Present",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Frame={0} PresentedImage={1} Result={2}",
+                    frameNumber,
+                    imageIndex,
+                    result);
+            }
 
             if (result == Result.ErrorDeviceLost)
             {

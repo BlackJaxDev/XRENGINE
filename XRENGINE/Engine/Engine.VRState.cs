@@ -682,6 +682,8 @@ namespace XREngine
                 VRStereoRenderTarget = new XRFrameBuffer((outputTextures, EFrameBufferAttachment.ColorAttachment0, 0, -1));
                 StereoLeftViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 0u, 1u, ESizedInternalFormat.Rgb8, false, false);
                 StereoRightViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 1u, 1u, ESizedInternalFormat.Rgb8, false, false);
+
+                ConfigureDesktopViewportForVrWindow(window);
             }
 
             private static Matrix4x4 _combinedProjectionMatrix = Matrix4x4.Identity;

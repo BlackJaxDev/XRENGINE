@@ -537,6 +537,28 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
+    public void ShadowRenderPipeline_BindsEveryMeshPassToShadowFbo()
+    {
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "ShadowRenderPipeline.cs"));
+
+        int bindIndex = source.IndexOf("using (c.AddUsing<VPRC_BindOutputFBO>(t => t.SetOptions(write: true, clearColor: false, clearDepth: false, clearStencil: false)))", System.StringComparison.Ordinal);
+        int clearIndex = source.IndexOf("c.Add<VPRC_ClearShadowOutputFBO>();", System.StringComparison.Ordinal);
+        int preRenderIndex = source.IndexOf("c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PreRender;", System.StringComparison.Ordinal);
+        int opaqueDeferredIndex = source.IndexOf("c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;", System.StringComparison.Ordinal);
+        int opaqueForwardIndex = source.IndexOf("c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;", System.StringComparison.Ordinal);
+        int maskedForwardIndex = source.IndexOf("c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.MaskedForward;", System.StringComparison.Ordinal);
+        int postRenderIndex = source.IndexOf("c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;", System.StringComparison.Ordinal);
+
+        bindIndex.ShouldBeGreaterThanOrEqualTo(0);
+        clearIndex.ShouldBeGreaterThan(bindIndex);
+        preRenderIndex.ShouldBeGreaterThan(clearIndex);
+        opaqueDeferredIndex.ShouldBeGreaterThan(preRenderIndex);
+        opaqueForwardIndex.ShouldBeGreaterThan(opaqueDeferredIndex);
+        maskedForwardIndex.ShouldBeGreaterThan(opaqueForwardIndex);
+        postRenderIndex.ShouldBeGreaterThan(maskedForwardIndex);
+    }
+
+    [Test]
     public void GroupedShadowAtlasPasses_ClearEachIndexedTileBeforeDrawing()
     {
         string shadowPipelineSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "ShadowRenderPipeline.cs"));

@@ -102,6 +102,8 @@ public static partial class EditorUnitTests
             usesRuntimeDesktopCamera)
             s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;
         s.VrMirrorComposeFromEyeTextures = false;
+        if (vrPawnRequested && s.RenderWindowsWhileInVR)
+            s.VrMirrorMode = EVrMirrorMode.FullIndependentRender;
         s.VrCopyEyePreviewTextures = previewVrStereoViews;
 
         bool groupedRenderingSpecified = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));
@@ -153,6 +155,7 @@ public static partial class EditorUnitTests
             $"[UnitTestingWorld] Applied render toggles AllowSkinning={s.AllowSkinning} " +
             $"AllowShaderPipelines={s.AllowShaderPipelines} VrViewRenderMode={s.VrViewRenderMode} " +
             $"VrFoveationMode={s.VrFoveationMode} RenderWindowsWhileInVR={s.RenderWindowsWhileInVR} " +
+            $"VrMirrorMode={s.VrMirrorMode} " +
             $"VrMirrorComposeFromEyeTextures={s.VrMirrorComposeFromEyeTextures} " +
             $"VrCopyEyePreviewTextures={s.VrCopyEyePreviewTextures}");
         if (!groupedRenderingSpecified)

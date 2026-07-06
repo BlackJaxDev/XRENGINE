@@ -409,8 +409,7 @@ public unsafe partial class VulkanRenderer
 
     private readonly record struct FrameOpRegistryCacheSource(
         RenderResourceRegistry Registry,
-        int DescriptorSignature,
-        int ResourceGenerationStamp);
+        int DescriptorSignature);
 
     private sealed class MergedFrameOpRegistryCacheEntry(
         RenderResourceRegistry? primaryRegistry,
@@ -594,7 +593,9 @@ public unsafe partial class VulkanRenderer
         int PipelineIdentity,
         int ViewportIdentity,
         int ResourceRegistryIdentity,
-        int PassMetadataIdentity);
+        int PassMetadataIdentity,
+        int ActivePassSetSignature,
+        int ActiveResourceSetSignature);
 
     private readonly record struct ResourcePlannerSignatureBreakdown(
         int Registry,
@@ -890,6 +891,21 @@ public unsafe partial class VulkanRenderer
 
     internal XRFrameBuffer? GetCurrentDrawFrameBuffer()
         => XRFrameBuffer.BoundForWriting ?? _boundDrawFrameBuffer;
+
+    internal XRFrameBuffer? ResolveCurrentFrameOpDrawTarget()
+    {
+        XRFrameBuffer? target = GetCurrentDrawFrameBuffer();
+        if (target is not null)
+            return target;
+
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        XRRenderPipelineInstance.RenderingState.ScopedRenderTargetBinding? binding =
+            pipeline?.RenderState.CurrentRenderTargetBinding;
+        if (binding is { Write: true, FrameBuffer: { } scopedTarget })
+            return scopedTarget;
+
+        return null;
+    }
 
     internal static Extent2D ResolveFrameBufferDrawExtent(XRFrameBuffer fbo)
     {

@@ -126,6 +126,29 @@ namespace XREngine
                         bool autoSkipWhenOverBudget)
                     {
                         float sourceRateHz = ResolveSourceRateHz();
+                        bool desktopFacing = IsDesktopFacing(viewKind);
+                        if (!xrCritical &&
+                            autoSkipWhenOverBudget &&
+                            desktopFacing &&
+                            Engine.VRState.IsInVR)
+                        {
+                            FrameBudgetSnapshot budget = ResolveCurrentBudget();
+                            double lastWholeFrameMs = LastWholeFrameMs;
+                            if (budget.BudgetMs > 0.0 && lastWholeFrameMs > budget.BudgetMs)
+                            {
+                                return RecordPacingDecision(
+                                    viewKind,
+                                    outputKind,
+                                    frameId,
+                                    isDue: false,
+                                    cadenceSkipped: false,
+                                    autoSkipped: true,
+                                    EFrameOutputSkipReason.Budget,
+                                    configuredTargetRateHz,
+                                    sourceRateHz);
+                            }
+                        }
+
                         if (xrCritical || configuredTargetRateHz <= 0.0f || configuredTargetRateHz >= sourceRateHz - 0.001f)
                             return RecordPacingDecision(viewKind, outputKind, frameId, true, false, false, EFrameOutputSkipReason.None, configuredTargetRateHz, sourceRateHz);
 
@@ -133,7 +156,7 @@ namespace XREngine
                         bool autoSkip = false;
                         EFrameOutputSkipReason reason = cadenceDue ? EFrameOutputSkipReason.None : EFrameOutputSkipReason.Cadence;
 
-                        if (cadenceDue && autoSkipWhenOverBudget && IsDesktopFacing(viewKind))
+                        if (cadenceDue && autoSkipWhenOverBudget && desktopFacing)
                         {
                             FrameBudgetSnapshot budget = ResolveCurrentBudget();
                             double lastWholeFrameMs = LastWholeFrameMs;
@@ -341,6 +364,7 @@ namespace XREngine
                         public bool Active;
                         public bool Rendered;
                         public bool SceneRendered;
+                        public bool RenderPhaseSceneRendered;
                         public bool Mirror;
                         public bool SeparateSceneRender;
                         public bool SharedVisibility;
@@ -375,6 +399,7 @@ namespace XREngine
                             Active |= telemetry.Active;
                             Rendered |= telemetry.Rendered;
                             SceneRendered |= telemetry.SceneRendered;
+                            RenderPhaseSceneRendered |= telemetry.Phase == EFrameOutputPhase.Render && telemetry.SceneRendered;
                             Mirror |= telemetry.Mirror;
                             SeparateSceneRender |= telemetry.SeparateSceneRender;
                             SharedVisibility |= telemetry.SharedVisibility;
@@ -429,6 +454,7 @@ namespace XREngine
                                 Active,
                                 Rendered,
                                 SceneRendered,
+                                RenderPhaseSceneRendered,
                                 Mirror,
                                 SeparateSceneRender,
                                 SharedVisibility,
@@ -500,6 +526,7 @@ namespace XREngine
                     bool Active,
                     bool Rendered,
                     bool SceneRendered,
+                    bool RenderPhaseSceneRendered,
                     bool Mirror,
                     bool SeparateSceneRender,
                     bool SharedVisibility,

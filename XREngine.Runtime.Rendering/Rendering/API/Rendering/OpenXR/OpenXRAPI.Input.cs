@@ -437,8 +437,8 @@ public unsafe partial class OpenXRAPI
         if (!_inputCreated)
             return;
 
-        // Poses are always located at the runtime's predicted display time for the current frame.
-        long displayTime = _frameState.PredictedDisplayTime;
+        // Poses are located at the frame display time plus the optional app-level prediction bias.
+        long displayTime = ResolveOpenXrPoseDisplayTime(timing);
 
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         bool shouldSyncActions = timing == OpenXrPoseTiming.Predicted

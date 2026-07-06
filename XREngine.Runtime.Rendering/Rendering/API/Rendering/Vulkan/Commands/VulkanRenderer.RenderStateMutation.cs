@@ -172,27 +172,45 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
-        public void SetIndexedViewportScissors(
+        public bool SetIndexedViewportScissors(
             ReadOnlySpan<BoundingRectangle> viewports,
             ReadOnlySpan<BoundingRectangle> scissors)
         {
             int count = Math.Min(viewports.Length, scissors.Length);
             if (count <= 0)
-            {
-                ClearIndexedViewportScissors();
-                return;
-            }
+                return ClearIndexedViewportScissors();
 
-            BoundingRectangle[] viewportRegions = new BoundingRectangle[count];
-            BoundingRectangle[] scissorRegions = new BoundingRectangle[count];
+            BoundingRectangle[]? currentViewports = _indexedViewportRegions;
+            BoundingRectangle[]? currentScissors = _indexedScissorRegions;
+            bool unchanged =
+                currentViewports is not null &&
+                currentScissors is not null &&
+                currentViewports.Length == count &&
+                currentScissors.Length == count;
+
             for (int i = 0; i < count; i++)
             {
                 BoundingRectangle viewport = viewports[i];
                 BoundingRectangle scissor = scissors[i];
                 viewport.CheckProperDimensions();
                 scissor.CheckProperDimensions();
-                viewportRegions[i] = viewport;
-                scissorRegions[i] = scissor;
+                if (unchanged &&
+                    (!SameRectangle(currentViewports![i], viewport) ||
+                     !SameRectangle(currentScissors![i], scissor)))
+                {
+                    unchanged = false;
+                }
+            }
+
+            if (unchanged)
+                return false;
+
+            BoundingRectangle[] viewportRegions = new BoundingRectangle[count];
+            BoundingRectangle[] scissorRegions = new BoundingRectangle[count];
+            for (int i = 0; i < count; i++)
+            {
+                viewportRegions[i] = viewports[i];
+                scissorRegions[i] = scissors[i];
             }
 
             _indexedViewportRegions = viewportRegions;
@@ -200,15 +218,27 @@ public unsafe partial class VulkanRenderer
             _indexedViewportCache = null;
             _indexedScissorCache = null;
             _indexedCacheExtent = default;
+            return true;
         }
 
-        public void ClearIndexedViewportScissors()
+        public bool ClearIndexedViewportScissors()
         {
+            if (_indexedViewportRegions is null &&
+                _indexedScissorRegions is null &&
+                _indexedViewportCache is null &&
+                _indexedScissorCache is null &&
+                _indexedCacheExtent.Width == 0 &&
+                _indexedCacheExtent.Height == 0)
+            {
+                return false;
+            }
+
             _indexedViewportRegions = null;
             _indexedScissorRegions = null;
             _indexedViewportCache = null;
             _indexedScissorCache = null;
             _indexedCacheExtent = default;
+            return true;
         }
 
         public IndexedViewportScissorSnapshot GetIndexedViewportScissorSnapshot(Extent2D targetExtent)

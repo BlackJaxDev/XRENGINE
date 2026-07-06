@@ -1821,14 +1821,18 @@ public unsafe partial class VulkanRenderer
         {
             Data.Resized += OnFramebufferResized;
             Data.BindForReadRequested += BindForReading;
+            Data.BindForWriteRequested += BindForWriting;
             Data.UnbindFromReadRequested += UnbindFromReading;
+            Data.UnbindFromWriteRequested += UnbindFromWriting;
         }
 
         protected override void UnlinkData()
         {
             Data.Resized -= OnFramebufferResized;
             Data.BindForReadRequested -= BindForReading;
+            Data.BindForWriteRequested -= BindForWriting;
             Data.UnbindFromReadRequested -= UnbindFromReading;
+            Data.UnbindFromWriteRequested -= UnbindFromWriting;
         }
 
         private void BindForReading()
@@ -1836,6 +1840,12 @@ public unsafe partial class VulkanRenderer
 
         private void UnbindFromReading()
             => Renderer.BindFrameBuffer(EFramebufferTarget.ReadFramebuffer, null);
+
+        private void BindForWriting()
+            => Renderer.BindFrameBuffer(EFramebufferTarget.DrawFramebuffer, Data);
+
+        private void UnbindFromWriting()
+            => Renderer.BindFrameBuffer(EFramebufferTarget.DrawFramebuffer, null);
 
         private void OnFramebufferResized()
             => Destroy();

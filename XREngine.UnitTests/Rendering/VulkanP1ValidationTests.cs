@@ -162,10 +162,12 @@ public sealed class VulkanP1ValidationTests
         plannerUpdate.ShouldContain("LogDeferredResourcePlanReplacementRetirement");
         stateSource.ShouldContain("Deferring replaced physical resource plan retirement through frame-slot queues");
         stateSource.ShouldContain("ShouldSkipAutoExposureHistoryPreserve");
-        stateSource.ShouldContain("_resourcePlannerRevision == 0");
+        stateSource.ShouldContain("ActiveResourcePlannerRevision == 0");
         stateSource.ShouldContain("RuntimeRenderingHostServices.Current.IsInVR");
         plannerUpdate.ShouldNotContain("WaitForAllInFlightWork()");
         plannerUpdate.ShouldNotContain("DeviceWaitIdle()");
+        plannerUpdate.ShouldNotContain("TransitionNewPhysicalImagesToInitialLayout");
+        resourceRegistrationSource.ShouldNotContain("TransitionNewPhysicalImagesToInitialLayout");
         resourceRegistrationSource.ShouldContain("RetireBuffer(buffer, memory)");
 
         string statsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.Vulkan.cs");
@@ -175,6 +177,22 @@ public sealed class VulkanP1ValidationTests
         statsSource.ShouldContain("RecordVulkanRetiredResourcePlanReplacement");
         packetSource.ShouldContain("VulkanRetiredResourcePlanReplacements");
         profilerUiSource.ShouldContain("Retired Plan Resources:");
+    }
+
+    [Test]
+    public void AutoExposureHistoryCopy_HandlesUndefinedNewPhysicalTarget()
+    {
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string preserveSource = SliceBetween(
+            stateSource,
+            "private bool TryCopyAutoExposureHistory",
+            "private VulkanPhysicalImageGroup RetainAutoExposureHistory");
+
+        preserveSource.ShouldContain("ImageLayout newCurrentLayout = newGroup.LastKnownLayout;");
+        preserveSource.ShouldContain("newCurrentLayout == ImageLayout.Undefined ? AccessFlags.None : AccessFlags.ShaderWriteBit");
+        preserveSource.ShouldContain("newCurrentLayout == ImageLayout.Undefined ? PipelineStageFlags.TopOfPipeBit : autoExposureStages");
+        preserveSource.ShouldContain("newGroup.LastKnownLayout = newRestoreLayout;");
+        preserveSource.ShouldNotContain("newGroup,\n            newLayout,\n            ImageLayout.TransferDstOptimal");
     }
 
     [Test]
@@ -308,7 +326,7 @@ public sealed class VulkanP1ValidationTests
     [Test]
     public void ResourcePlannerMergedRegistry_ReusesPrimaryWhenOtherContextsAreCovered()
     {
-        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
         string mergeSource = SliceBetween(
             stateSource,
             "private RenderResourceRegistry? BuildMergedFrameOpRegistry",
@@ -319,7 +337,8 @@ public sealed class VulkanP1ValidationTests
         mergeSource.ShouldContain("FrameBufferDescriptorsEquivalent");
         mergeSource.ShouldContain("TryGetCachedMergedFrameOpRegistry");
         mergeSource.ShouldContain("RememberMergedFrameOpRegistry");
-        mergeSource.ShouldContain("ResourceGenerationStamp");
+        mergeSource.ShouldContain("DescriptorSignature");
+        mergeSource.ShouldNotContain("ResourceGenerationStamp");
     }
 
     [Test]

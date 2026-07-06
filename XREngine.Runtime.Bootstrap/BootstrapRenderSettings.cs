@@ -73,6 +73,8 @@ public static class BootstrapRenderSettings
             usesRuntimeDesktopCamera)
             renderSettings.RenderWindowsWhileInVR = settings.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;
         renderSettings.VrMirrorComposeFromEyeTextures = false;
+        if (settings.VRPawn && renderSettings.RenderWindowsWhileInVR)
+            renderSettings.VrMirrorMode = EVrMirrorMode.FullIndependentRender;
         renderSettings.VrCopyEyePreviewTextures = settings.PreviewVRStereoViews;
 
         bool groupedRenderingSpecified = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));
@@ -115,6 +117,7 @@ public static class BootstrapRenderSettings
             $"EnableVrFoveatedViewSet={renderSettings.EnableVrFoveatedViewSet} " +
             $"EffectiveAntiAliasingMode={Engine.EffectiveSettings.AntiAliasingMode} " +
             $"RenderWindowsWhileInVR={renderSettings.RenderWindowsWhileInVR} " +
+            $"VrMirrorMode={renderSettings.VrMirrorMode} " +
             $"VrMirrorComposeFromEyeTextures={renderSettings.VrMirrorComposeFromEyeTextures} " +
             $"VrCopyEyePreviewTextures={renderSettings.VrCopyEyePreviewTextures}");
         if (settings.RenderPhysicsDebug)

@@ -913,6 +913,11 @@ public interface IRuntimeRenderingHostServices
     /// </summary>
     void ProcessRenderThreadTasks();
 
+    /// <summary>
+    /// Signals that the active render frame has finished consuming render-side command buffers.
+    /// </summary>
+    void MarkRenderFrameReadyForCollect(IRuntimeRenderWindowHost window);
+
     #endregion
 
     #region Debug drawing and scene maintenance
@@ -1477,6 +1482,7 @@ public interface IRuntimeRenderingHostServices
     bool OpenXrDebugRenderRightThenLeft { get; }
     bool OpenXrPrepareFrameAfterDesktopRender { get; }
     float OpenXrDeadlineSafetyMarginMs { get; }
+    float OpenXrPoseTimeOffsetMs { get; }
     OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy { get; }
     float OpenXrCollectVisibleFrustumPaddingDegrees { get; }
     OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy { get; }

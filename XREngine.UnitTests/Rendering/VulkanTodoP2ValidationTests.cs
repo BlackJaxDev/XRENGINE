@@ -114,6 +114,21 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
     }
 
     [Test]
+    public void UiMaterialComponent_SetQuadMaterial_ReusesExistingMesh()
+    {
+        var component = new UIMaterialComponent();
+        XRMeshRenderer? originalMesh = component.Mesh;
+        originalMesh.ShouldNotBeNull();
+
+        XRMaterial replacement = XRMaterial.CreateUnlitColorMaterialForward();
+        component.SetQuadMaterial(replacement);
+
+        component.Mesh.ShouldBeSameAs(originalMesh);
+        component.Material.ShouldBeSameAs(replacement);
+        component.Mesh!.Material.ShouldBeSameAs(replacement);
+    }
+
+    [Test]
     public void StrictOneByOneMode_RendersExpectedPerItemDrawCalls()
     {
         var canvas = new UICanvasComponent

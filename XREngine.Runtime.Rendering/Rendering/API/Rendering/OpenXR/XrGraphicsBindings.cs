@@ -38,7 +38,11 @@ internal sealed class VulkanXrGraphicsBinding : IXrGraphicsBinding
         => api.CleanupSwapchains();
 
     public void WaitForGpuIdle(OpenXRAPI api, AbstractRenderer renderer)
-        => ((VulkanRenderer)renderer).DeviceWaitIdle();
+    {
+        VulkanRenderer vulkanRenderer = (VulkanRenderer)renderer;
+        if (!vulkanRenderer.IsDeviceLost)
+            vulkanRenderer.DeviceWaitIdle();
+    }
 
     public void AcquireSwapchainImage(OpenXRAPI api, Swapchain swapchain, out uint imageIndex)
     {

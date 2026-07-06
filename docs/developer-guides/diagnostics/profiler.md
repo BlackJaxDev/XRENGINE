@@ -358,10 +358,11 @@ per-frame paths must not allocate.
 
 GPU timestamp instrumentation is opt-in diagnostic work, not a hidden benchmark
 variable. Production frames keep GPU pipeline profiling disabled by default.
-Profile captures issue coarse begin/end timestamps per render command by
-default and read results with a delayed, non-blocking policy. Dense timestamp
+Vulkan keeps a coarse whole-command-buffer GPU timing path available for frame
+lifecycle stats, but dense per-command Vulkan render-pipeline histories are
+recorded only when `XRE_GPU_TIMESTAMP_DENSE=1` is set at launch. Dense timestamp
 mode is reserved for diagnostics, is marked in manifests and samples via
-`gpu_timestamps_dense_mode`, and can perturb very small passes.
+`gpu_timestamps_dense_mode`, and can perturb frame pacing.
 
 The in-editor **Profiler Settings** panel also exposes **Enable Profiler
 Component Timing**, which independently controls per-component tick timing

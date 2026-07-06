@@ -299,7 +299,7 @@ public unsafe partial class OpenXRAPI
     private bool LocateViews(OpenXrPoseTiming timing)
     {
         AssertOpenXrRenderThread(nameof(LocateViews));
-        var displayTime = _frameState.PredictedDisplayTime;
+        var displayTime = ResolveOpenXrPoseDisplayTime(timing);
 
         var viewLocateInfo = new ViewLocateInfo
         {
@@ -327,6 +327,17 @@ public unsafe partial class OpenXRAPI
         RecordSmokeLocatedViews(viewCountOutput);
         StoreViewPosesToCache(timing);
         return true;
+    }
+
+    private long ResolveOpenXrPoseDisplayTime(OpenXrPoseTiming timing)
+    {
+        long displayTime = _frameState.PredictedDisplayTime;
+        float offsetMs = Math.Clamp(OpenXrPoseTimeOffsetMs, OpenXrMinPoseTimeOffsetMs, OpenXrMaxPoseTimeOffsetMs);
+        if (MathF.Abs(offsetMs) <= float.Epsilon)
+            return displayTime;
+
+        long offsetNanoseconds = (long)Math.Round(offsetMs * 1_000_000.0f);
+        return displayTime + offsetNanoseconds;
     }
 
     private bool HandleLocatedViewState(ViewState viewState)
@@ -403,8 +414,13 @@ public unsafe partial class OpenXRAPI
 
     private void StoreViewPosesToCache(OpenXrPoseTiming timing)
     {
+        StoreLocatedViewsToTimingCache(timing);
+
         if (_viewCount < 2)
+        {
+            RecordSmokeViewPoseCache(timing);
             return;
+        }
 
         var l = _views[0].Pose;
         var r = _views[1].Pose;
@@ -456,6 +472,30 @@ public unsafe partial class OpenXRAPI
             }
         }
         RecordSmokeViewPoseCache(timing);
+    }
+
+    private void StoreLocatedViewsToTimingCache(OpenXrPoseTiming timing)
+    {
+        int count = checked((int)Math.Min(_viewCount, (uint)_views.Length));
+        int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+
+        lock (_openXrPoseLock)
+        {
+            View[] target = timing == OpenXrPoseTiming.Late ? _openXrLateViews : _openXrPredictedViews;
+            for (int i = 0; i < count; i++)
+                target[i] = _views[i];
+
+            if (timing == OpenXrPoseTiming.Late)
+            {
+                _openXrLateViewCount = count;
+                _openXrLateViewFrameNumber = frameNo;
+            }
+            else
+            {
+                _openXrPredictedViewCount = count;
+                _openXrPredictedViewFrameNumber = frameNo;
+            }
+        }
     }
 
     /// <summary>

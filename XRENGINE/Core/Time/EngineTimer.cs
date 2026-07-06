@@ -168,6 +168,7 @@ namespace XREngine.Timers
             //_updateDone = new(false);
 
         private int _hasCompletedCollectSwap;
+        private int _renderReadyForNextCollectSignaled;
         private long _fixedUpdateAccumulatorTicks;
         private long _fixedUpdateClockTimestampTicks;
         private ECollectVisibleLatePolicy _collectVisibleLatePolicy = ReadCollectVisibleLatePolicyFromEnvironment();
@@ -218,6 +219,7 @@ namespace XREngine.Timers
             _renderDone = new ManualResetEventSlim(false);
             _swapDone = new ManualResetEventSlim(true);
             _hasCompletedCollectSwap = 0;
+            _renderReadyForNextCollectSignaled = 0;
             _collectVisibleLatePolicy = ReadCollectVisibleLatePolicyFromEnvironment();
 
             // Critical engine loops must NOT run on the shared ThreadPool; bursts of mesh/asset
@@ -262,7 +264,7 @@ namespace XREngine.Timers
         {
             string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy);
             if (string.IsNullOrWhiteSpace(raw))
-                return ECollectVisibleLatePolicy.BlockUntilFresh;
+                return ECollectVisibleLatePolicy.ReusePreviousVisibility;
 
             string value = raw.Trim();
             if (Enum.TryParse(value, ignoreCase: true, out ECollectVisibleLatePolicy parsed))
@@ -274,7 +276,7 @@ namespace XREngine.Timers
                 "fresh" => ECollectVisibleLatePolicy.BlockUntilFresh,
                 "reuse" => ECollectVisibleLatePolicy.ReusePreviousVisibility,
                 "stale" => ECollectVisibleLatePolicy.ReusePreviousVisibility,
-                _ => ECollectVisibleLatePolicy.BlockUntilFresh,
+                _ => ECollectVisibleLatePolicy.ReusePreviousVisibility,
             };
         }
 
@@ -534,7 +536,19 @@ namespace XREngine.Timers
             if (!IsRunning)
                 return;
 
-            // Inform the update thread that the render is done
+            MarkRenderFrameReadyForCollect();
+        }
+
+        /// <summary>
+        /// Signals that the active render dispatch has finished consuming render-side command buffers.
+        /// Backends may call this before a blocking native present so CollectVisible can publish the
+        /// next frame while the desktop swapchain waits on the OS/driver.
+        /// </summary>
+        public void MarkRenderFrameReadyForCollect()
+        {
+            if (Interlocked.CompareExchange(ref _renderReadyForNextCollectSignaled, 1, 0) != 0)
+                return;
+
             _renderDone.Set();
         }
 
@@ -608,6 +622,7 @@ namespace XREngine.Timers
 
                     Render.DeltaTicks = elapsedTicks;
                     Render.LastTimestampTicks = timestampTicks;
+                    Volatile.Write(ref _renderReadyForNextCollectSignaled, 0);
 
                     Engine.Rendering.State.BeginRenderFrame();
                     ulong renderFrameId = Engine.Rendering.State.RenderFrameId;
