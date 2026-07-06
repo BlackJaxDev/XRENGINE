@@ -729,6 +729,7 @@ namespace XREngine
                 private bool _openXrDebugRenderRightThenLeft = false;
                 private bool _openXrPrepareFrameAfterDesktopRender = true;
                 private float _openXrDeadlineSafetyMarginMs = 1.0f;
+                private float _openXrPoseTimeOffsetMs = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrPoseTimeOffsetMs;
                 private OpenXRAPI.OpenXrCollectVisiblePosePolicy _openXrCollectVisiblePosePolicy = OpenXRAPI.OpenXrCollectVisiblePosePolicy.Predicted;
                 private float _openXrCollectVisibleFrustumPaddingDegrees = 2.0f;
                 private OpenXRAPI.OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
@@ -2360,6 +2361,19 @@ namespace XREngine
                 {
                     get => _openXrDeadlineSafetyMarginMs;
                     set => SetField(ref _openXrDeadlineSafetyMarginMs, MathF.Max(0.0f, value));
+                }
+
+                /// <summary>
+                /// Signed millisecond bias added to OpenXR pose location time.
+                /// </summary>
+                [Category("VR")]
+                [Description("Signed millisecond bias added to OpenXR pose location time. Positive values ask the runtime to predict poses further ahead without changing xrEndFrame display time.")]
+                public float OpenXrPoseTimeOffsetMs
+                {
+                    get => _openXrPoseTimeOffsetMs;
+                    set => SetField(
+                        ref _openXrPoseTimeOffsetMs,
+                        Math.Clamp(value, OpenXRAPI.OpenXrMinPoseTimeOffsetMs, OpenXRAPI.OpenXrMaxPoseTimeOffsetMs));
                 }
 
                 /// <summary>

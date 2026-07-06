@@ -189,7 +189,7 @@ namespace XREngine.Rendering.Vulkan
 
                 Renderer.EnqueueFrameOp(new TransformFeedbackOp(
                     passIndex,
-                    Renderer.GetCurrentDrawFrameBuffer(),
+                    Renderer.ResolveCurrentFrameOpDrawTarget(),
                     this,
                     operation,
                     counterBuffer,

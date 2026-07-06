@@ -2641,11 +2641,38 @@ namespace XREngine.Rendering
             bool sharedVisibility,
             long elapsedTicks)
         {
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            var pacing = FrameOutputPacingDecision.Due(viewKind, outputKind, frameId);
+            RecordWindowFrameOutput(
+                outputKind,
+                viewKind,
+                phase,
+                name,
+                rendered,
+                sceneRendered,
+                mirror,
+                separateSceneRender,
+                sharedVisibility,
+                pacing,
+                elapsedTicks);
+        }
+
+        private static void RecordWindowFrameOutput(
+            EFrameOutputKind outputKind,
+            EVrOutputViewKind viewKind,
+            EFrameOutputPhase phase,
+            string name,
+            bool rendered,
+            bool sceneRendered,
+            bool mirror,
+            bool separateSceneRender,
+            bool sharedVisibility,
+            in FrameOutputPacingDecision pacing,
+            long elapsedTicks)
+        {
             double cpuMs = elapsedTicks <= 0L
                 ? 0.0
                 : elapsedTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-            var pacing = FrameOutputPacingDecision.Due(viewKind, outputKind, frameId);
             RuntimeRenderingHostServices.Current.RecordRenderFrameOutput(
                 new FrameOutputTelemetry(
                     outputKind,
@@ -2666,6 +2693,19 @@ namespace XREngine.Rendering
                     0,
                     cpuMs,
                     0.0));
+        }
+
+        private static FrameOutputPacingDecision EvaluateWindowPresentPacing(bool mirrorByComposition)
+        {
+            IRuntimeRenderingHostServices services = RuntimeRenderingHostServices.Current;
+            EVrOutputViewKind viewKind = services.IsInVR && mirrorByComposition
+                ? EVrOutputViewKind.CyclopeanDesktop
+                : EVrOutputViewKind.DesktopEditor;
+            return FrameOutputPacingDecision.Due(
+                viewKind,
+                EFrameOutputKind.Present,
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                services.GetVrOutputTargetRateHz(viewKind));
         }
 
         private bool ShouldBeRendering()
@@ -2795,6 +2835,8 @@ namespace XREngine.Rendering
                     (!RuntimeRenderingHostServices.Current.IsInVR ||
                      (RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR && !mirrorByComposition));
 
+                FrameOutputPacingDecision windowPresentPacing = EvaluateWindowPresentPacing(mirrorByComposition);
+
                 //LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports, forceFullViewport);
                 ApplyForcedDebugOpaquePipelineOverride();
 
@@ -2920,14 +2962,15 @@ namespace XREngine.Rendering
                     frameRenderer.RenderWindow(delta);
                     RecordWindowFrameOutput(
                         EFrameOutputKind.Present,
-                        EVrOutputViewKind.DesktopEditor,
+                        windowPresentPacing.ViewKind,
                         EFrameOutputPhase.Present,
                         "Window present",
                         rendered: true,
                         sceneRendered: false,
                         mirror: false,
                         separateSceneRender: false,
-                        sharedVisibility: false,
+                        sharedVisibility: windowPresentPacing.ViewKind == EVrOutputViewKind.CyclopeanDesktop,
+                        windowPresentPacing,
                         System.Diagnostics.Stopwatch.GetTimestamp() - presentStart);
                 }
 
@@ -2949,6 +2992,8 @@ namespace XREngine.Rendering
                     _consecutiveRenderFailures = 0;
                     _renderDisabledUntilUtc = default;
                 }
+
+                RuntimeRenderingHostServices.Current.MarkRenderFrameReadyForCollect(this);
             }
             catch (Exception ex)
             {

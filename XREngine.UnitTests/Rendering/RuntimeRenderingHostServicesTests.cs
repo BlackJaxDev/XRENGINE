@@ -518,6 +518,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool OpenXrDebugRenderRightThenLeft => false;
         public bool OpenXrPrepareFrameAfterDesktopRender => true;
         public float OpenXrDeadlineSafetyMarginMs => 1.0f;
+        public float OpenXrPoseTimeOffsetMs => RuntimeRenderingHostServiceDefaults.OpenXrPoseTimeOffsetMs;
         public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => OpenXRAPI.OpenXrCollectVisiblePosePolicy.Predicted;
         public float OpenXrCollectVisibleFrustumPaddingDegrees => 2.0f;
         public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
@@ -694,6 +695,10 @@ public sealed class RuntimeRenderingHostServicesTests
             => task();
 
         public void ProcessRenderThreadTasks()
+        {
+        }
+
+        public void MarkRenderFrameReadyForCollect(IRuntimeRenderWindowHost window)
         {
         }
 

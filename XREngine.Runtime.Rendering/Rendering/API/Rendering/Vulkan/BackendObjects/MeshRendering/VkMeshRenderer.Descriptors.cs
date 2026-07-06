@@ -866,7 +866,8 @@ public unsafe partial class VulkanRenderer
 				!string.IsNullOrWhiteSpace(binding.Name);
 
 		private static bool IsFrameSourceSamplerBinding(DescriptorBindingInfo binding)
-			=> IsFrameSourceSamplerName(binding.Name);
+			=> IsFrameSourceSamplerName(binding.Name) ||
+				BindingResolvesPipelineResourceTexture(binding);
 
 		private ulong ComputeReferencedProgramSamplerFingerprintItem(DescriptorBindingInfo binding)
 		{
@@ -905,12 +906,17 @@ public unsafe partial class VulkanRenderer
 			out string reason)
 		{
 			reason = "no frame-source sampler descriptors";
-			if (!SnapshotHasFrameSourceSampler(snapshot))
-				return true;
 
 			if (_program is null ||
 				_program.DescriptorSetLayouts.Count == 0 ||
 				_program.DescriptorBindings.Count == 0)
+			{
+				return true;
+			}
+
+			XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+			if (!SnapshotHasFrameSourceSampler(snapshot, pipeline) &&
+				!DescriptorBindingsHaveFrameSourceSampler(_program.DescriptorBindings))
 			{
 				return true;
 			}
@@ -938,13 +944,22 @@ public unsafe partial class VulkanRenderer
 				out reason);
 		}
 
-		private static bool SnapshotHasFrameSourceSampler(ComputeDispatchSnapshot? snapshot)
+		private static bool SnapshotHasFrameSourceSampler(ComputeDispatchSnapshot? snapshot, XRRenderPipelineInstance? pipeline)
 		{
 			if (snapshot is null)
 				return false;
 
 			foreach (string name in snapshot.SamplersByName.Keys)
-				if (IsFrameSourceSamplerName(name))
+				if (IsMutableFrameSourceSamplerName(name, pipeline))
+					return true;
+
+			return false;
+		}
+
+		private static bool DescriptorBindingsHaveFrameSourceSampler(IReadOnlyList<DescriptorBindingInfo> bindings)
+		{
+			for (int i = 0; i < bindings.Count; i++)
+				if (IsFrameSourceSamplerBinding(bindings[i]))
 					return true;
 
 			return false;

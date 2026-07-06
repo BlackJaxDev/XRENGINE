@@ -13,9 +13,11 @@ public unsafe partial class VulkanRenderer
     private const uint VulkanGpuProfilerMaxScopesPerFrame = 512;
     private const uint VulkanGpuProfilerQueryCount = VulkanGpuProfilerMaxScopesPerFrame * 2;
     private const string VulkanGpuProfilerBackendName = "Vulkan";
-    private const bool EnableVulkanGpuProfilerCommandBufferInstrumentation = true;
+    private const bool EnableVulkanGpuProfilerCommandBufferInstrumentation = false;
     private const string VulkanGpuProfilerQuarantinedMessage =
-        "Vulkan GPU pipeline command timing is quarantined because timestamp instrumentation must not mutate main render command buffers.";
+        "Vulkan GPU pipeline command timing is disabled; set XRE_GPU_TIMESTAMP_DENSE=1 for dense diagnostic command timestamps. Coarse Vulkan command-buffer GPU timing remains available.";
+    private static readonly bool VulkanGpuTimestampDenseModeEnabled =
+        IsEnabledEnvironmentFlag(XREngineEnvironmentVariables.GpuTimestampDense);
 
     private QueryPool[]? _frameTimingQueryPools;
     private bool[]? _frameTimingQueryReady;
@@ -35,12 +37,26 @@ public unsafe partial class VulkanRenderer
     private int[]? _vulkanGpuProfilerCommandBufferFrameSlots;
 
     private static bool IsVulkanGpuProfilerCommandBufferInstrumentationEnabled
-        => EnableVulkanGpuProfilerCommandBufferInstrumentation;
+        => EnableVulkanGpuProfilerCommandBufferInstrumentation ||
+           VulkanGpuTimestampDenseModeEnabled;
 
     internal static string VulkanGpuProfilerCommandTimingStatusMessage
         => IsVulkanGpuProfilerCommandBufferInstrumentationEnabled
             ? "Vulkan GPU timings are collected from recorded command buffers."
             : VulkanGpuProfilerQuarantinedMessage;
+
+    private static bool IsEnabledEnvironmentFlag(string name)
+    {
+        string? value = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        value = value.Trim();
+        return value == "1" ||
+               value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("on", StringComparison.OrdinalIgnoreCase);
+    }
 
     private readonly struct VulkanGpuProfilerPendingScope(string[] path, uint startQuery, uint endQuery)
     {

@@ -52,6 +52,7 @@ public static partial class EditorUnitTests
         private static bool _vrStereoPreviewRefreshHooked;
         private static bool _vrStereoPreviewWasActive;
         private static bool _vrStereoPreviewForceLayoutRefresh;
+        private static int _vrStereoPreviewTextureMissFrames;
         private const float VRStereoPreviewEyeWidth = 300.0f;
         private const float VRStereoPreviewEyeHeight = 170.0f;
         private const float VRStereoPreviewGap = 8.0f;
@@ -755,21 +756,37 @@ public static partial class EditorUnitTests
 
             if (!TryResolveVRStereoPreviewTextures(out XRTexture? leftTex, out XRTexture? rightTex, out bool isArray))
             {
-                _vrStereoPreviewRoot.IsActiveSelf = false;
-                _vrStereoPreviewWasActive = false;
+                if (_vrStereoPreviewWasActive &&
+                    _vrStereoPreviewLastLeft is not null &&
+                    _vrStereoPreviewLastRight is not null &&
+                    ++_vrStereoPreviewTextureMissFrames < 15)
+                {
+                    return;
+                }
+
+                HideVRStereoPreviewOverlay();
                 return;
             }
             if (leftTex is null || rightTex is null)
             {
-                _vrStereoPreviewRoot.IsActiveSelf = false;
-                _vrStereoPreviewWasActive = false;
+                HideVRStereoPreviewOverlay();
                 return;
             }
 
+            _vrStereoPreviewTextureMissFrames = 0;
             UpdateVRStereoPreviewAspect(leftTex, rightTex);
             bool flipVerticalUv = ShouldFlipOpenXrVulkanStereoPreviewUv();
             ApplyPreviewTexture(_vrStereoPreviewLeft, leftTex, isArray, flipVerticalUv, ref _vrStereoPreviewLeftWasArray, ref _vrStereoPreviewLastLeft);
             ApplyPreviewTexture(_vrStereoPreviewRight, rightTex, isArray, flipVerticalUv, ref _vrStereoPreviewRightWasArray, ref _vrStereoPreviewLastRight);
+        }
+
+        private static void HideVRStereoPreviewOverlay()
+        {
+            if (_vrStereoPreviewRoot is not null)
+                _vrStereoPreviewRoot.IsActiveSelf = false;
+
+            _vrStereoPreviewWasActive = false;
+            _vrStereoPreviewTextureMissFrames = 0;
         }
 
         private static bool ShouldFlipOpenXrVulkanStereoPreviewUv()
@@ -892,9 +909,9 @@ public static partial class EditorUnitTests
             if (!ReferenceEquals(lastTexture, texture))
             {
                 target.Material.Textures[0] = texture;
-                InvalidateVRStereoPreviewTransform(target.BoundableTransform);
+                target.RenderCommand2D.MarkDirty();
+                target.RenderCommand3D.MarkDirty();
                 lastTexture = texture;
-                _vrStereoPreviewForceLayoutRefresh = true;
             }
         }
 

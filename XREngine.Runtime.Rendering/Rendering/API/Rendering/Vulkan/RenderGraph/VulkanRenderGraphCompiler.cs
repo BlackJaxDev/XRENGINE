@@ -143,6 +143,7 @@ public unsafe partial class VulkanRenderer
 
             // passIndex -> topological order index lookup used by SortFrameOps.
             Dictionary<int, int> passOrder = new(orderedPasses.Count);
+            int screenSpaceUiPassOrder = int.MaxValue;
 
             // Graphics passes with compatible attachment signatures are merged into batches.
             List<VulkanCompiledPassBatch> batches = [];
@@ -151,6 +152,11 @@ public unsafe partial class VulkanRenderer
             {
                 RenderPassMetadata pass = orderedPasses[i];
                 passOrder[pass.PassIndex] = i;
+                if (screenSpaceUiPassOrder == int.MaxValue &&
+                    string.Equals(pass.Name, ScreenSpaceUiPassName, StringComparison.OrdinalIgnoreCase))
+                {
+                    screenSpaceUiPassOrder = i;
+                }
 
                 // Signature captures the effective attachment contract for compatibility checks.
                 string signature = BuildAttachmentSignature(pass);
@@ -172,7 +178,8 @@ public unsafe partial class VulkanRenderer
                 orderedPasses,
                 passOrder,
                 batches,
-                synchronization);
+                synchronization,
+                screenSpaceUiPassOrder);
         }
 
         /// <summary>
@@ -321,15 +328,11 @@ public unsafe partial class VulkanRenderer
             if (!OpTargetsSwapchain(op) || !IsNestedUiPipelineOp(op))
                 return false;
 
-            foreach (RenderPassMetadata pass in graph.OrderedPasses)
-            {
-                if (!string.Equals(pass.Name, ScreenSpaceUiPassName, StringComparison.OrdinalIgnoreCase))
-                    continue;
+            if (graph.ScreenSpaceUiPassOrder == int.MaxValue)
+                return false;
 
-                return graph.PassOrder.TryGetValue(pass.PassIndex, out passOrder);
-            }
-
-            return false;
+            passOrder = graph.ScreenSpaceUiPassOrder;
+            return true;
         }
 
         private static bool IsNestedUiPipelineOp(FrameOp op)
@@ -545,7 +548,8 @@ public unsafe partial class VulkanRenderer
             Array.Empty<RenderPassMetadata>(),
             new Dictionary<int, int>(),
             Array.Empty<VulkanCompiledPassBatch>(),
-            RenderGraphSynchronizationInfo.Empty);
+            RenderGraphSynchronizationInfo.Empty,
+            int.MaxValue);
 
         /// <summary>
         /// Initializes a compiled graph snapshot.
@@ -554,12 +558,14 @@ public unsafe partial class VulkanRenderer
             IReadOnlyList<RenderPassMetadata> orderedPasses,
             IReadOnlyDictionary<int, int> passOrder,
             IReadOnlyList<VulkanCompiledPassBatch> batches,
-            RenderGraphSynchronizationInfo synchronization)
+            RenderGraphSynchronizationInfo synchronization,
+            int screenSpaceUiPassOrder = int.MaxValue)
         {
             OrderedPasses = orderedPasses;
             PassOrder = passOrder;
             Batches = batches;
             Synchronization = synchronization;
+            ScreenSpaceUiPassOrder = screenSpaceUiPassOrder;
         }
 
         /// <summary>Topologically sorted passes from the source graph.</summary>
@@ -567,6 +573,9 @@ public unsafe partial class VulkanRenderer
 
         /// <summary>Lookup from pass index to its topological order rank.</summary>
         public IReadOnlyDictionary<int, int> PassOrder { get; }
+
+        /// <summary>Precomputed topological order for nested screen-space UI, or int.MaxValue when absent.</summary>
+        public int ScreenSpaceUiPassOrder { get; }
 
         /// <summary>Adjacent compatible graphics pass batches.</summary>
         public IReadOnlyList<VulkanCompiledPassBatch> Batches { get; }

@@ -16,6 +16,9 @@ public unsafe partial class VulkanRenderer
 {
     private const int OpenXrEyeResourcePlannerStateCount = 2;
     private const uint OpenXrExternalSwapchainTargetImageIndex = 0;
+    private static bool TraceOpenXrStereoBlits =>
+        XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
+        XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
 
     internal readonly record struct OpenXrDepthTarget(
         Image Image,
@@ -139,6 +142,23 @@ public unsafe partial class VulkanRenderer
         ImageAspectFlags PreviewAspect,
         string DestinationLabel,
         bool FlipPreviewY);
+
+    private readonly record struct OpenXrStereoLayerBlitPlan(
+        IVkImageDescriptorSource Source,
+        Image SourceImage,
+        Format SourceFormat,
+        ImageAspectFlags SourceAspect,
+        Extent2D LeftSourceExtent,
+        ImageLayout LeftSourceOldLayout,
+        Extent2D RightSourceExtent,
+        ImageLayout RightSourceOldLayout,
+        Image LeftDestinationImage,
+        Format LeftDestinationFormat,
+        Extent2D LeftDestinationExtent,
+        Image RightDestinationImage,
+        Format RightDestinationFormat,
+        Extent2D RightDestinationExtent,
+        bool FlipY);
 
     private readonly record struct OpenXrRecordedEyeCommandBuffer(
         CommandBuffer CommandBuffer,
@@ -599,7 +619,8 @@ public unsafe partial class VulkanRenderer
                 FrameOpContext plannerContext;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule"))
                 {
-                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                    using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Sort"))
+                        ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                     plannerContext = PrepareResourcePlannerForFrameOps(ops);
                     RefreshFrameOpResourceWrappers(
                         ops,
@@ -608,7 +629,8 @@ public unsafe partial class VulkanRenderer
                         AllowSynchronousResourceUploads);
                     PrewarmOpenXrFrameOpResources(ops);
                     plannerRevision = ResourcePlannerRevision;
-                    frameOpsSignature = ComputeFrameOpsSignature(ops);
+                    using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Signature"))
+                        frameOpsSignature = ComputeFrameOpsSignature(ops);
                     commandChainSchedule = TryBuildOpenXrEyeCommandChainSchedule(
                         targetContext.CommandChainImageKey,
                         targetContext.OpenXrViewIndex,
@@ -1655,6 +1677,103 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    internal bool TryRenderAndBlitTextureArrayLayersToOpenXrSwapchainImages(
+        in OpenXrEyeMirrorRenderRequest renderRequest,
+        XRRenderPipelineInstance? renderPipelineInstance,
+        XRTexture2DArray? sourceTexture,
+        Image leftDestinationImage,
+        Format leftDestinationFormat,
+        Extent2D leftDestinationExtent,
+        string leftDestinationLabel,
+        Image rightDestinationImage,
+        Format rightDestinationFormat,
+        Extent2D rightDestinationExtent,
+        string rightDestinationLabel,
+        bool flipY = false)
+    {
+        _openXrRecordedTextureUploadsForSubmit.Clear();
+        OpenXrRecordedEyeCommandBuffer recorded = default;
+        CommandBuffer publishCommandBuffer = default;
+        bool hasRecorded = false;
+        bool hasPublish = false;
+        bool submitted = false;
+        bool commandBuffersCompleted = false;
+
+        try
+        {
+            hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(in renderRequest, out recorded);
+            if (!hasRecorded)
+                return false;
+
+            if (renderPipelineInstance?.SkippedResizeCatchUpThisFrame == true)
+                return false;
+
+            if (!TryPrepareStereoLayerBlit(
+                    sourceTexture,
+                    leftDestinationImage,
+                    leftDestinationFormat,
+                    leftDestinationExtent,
+                    leftDestinationLabel,
+                    rightDestinationImage,
+                    rightDestinationFormat,
+                    rightDestinationExtent,
+                    rightDestinationLabel,
+                    flipY,
+                    out OpenXrStereoLayerBlitPlan plan))
+            {
+                return false;
+            }
+
+            hasPublish = TryRecordStereoLayerBlitCommandBuffer(in plan, out publishCommandBuffer);
+            if (!hasPublish)
+                return false;
+
+            CommandBuffer* commandBuffers = stackalloc CommandBuffer[2];
+            commandBuffers[0] = recorded.CommandBuffer;
+            commandBuffers[1] = publishCommandBuffer;
+
+            submitted = SubmitAndWaitOpenXrCommandBuffers(
+                commandBuffers,
+                2,
+                out commandBuffersCompleted);
+
+            if (submitted)
+            {
+                CompleteOpenXrGpuProfilerSubmission(in recorded);
+                UpdateStereoLayerBlitTrackedLayouts(in plan);
+                PublishRecordedTextureUploadsAfterCompletedSubmit(_openXrRecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch");
+                DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
+            }
+            else if (!commandBuffersCompleted && !IsDeviceLost)
+            {
+                CancelRecordedTextureUploads(_openXrRecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch command buffers did not complete");
+            }
+
+            return submitted;
+        }
+        catch (Exception ex)
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.TrueStereo.RenderPublishBatchFailed.{GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[OpenXR] Vulkan true stereo render+publish batch failed: {0}",
+                ex.Message);
+            return false;
+        }
+        finally
+        {
+            if (!submitted && !commandBuffersCompleted && !IsDeviceLost)
+                CancelRecordedTextureUploads(_openXrRecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch command buffer submit failed");
+
+            if (hasPublish)
+                FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, commandBuffersCompleted);
+            if (hasRecorded)
+                FreeOpenXrRecordedEyeCommandBuffer(recorded);
+
+            _openXrRecordedTextureUploadsForSubmit.Clear();
+        }
+    }
+
     private bool TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(
         in OpenXrEyeMirrorRenderRequest request,
         out OpenXrRecordedEyeCommandBuffer recorded)
@@ -1708,10 +1827,13 @@ public unsafe partial class VulkanRenderer
                         "eye mirror render");
                 }
 
-                ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Sort"))
+                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                 _ = PrepareResourcePlannerForFrameOps(ops);
                 ulong plannerRevision = ResourcePlannerRevision;
-                ulong frameOpsSignature = ComputeFrameOpsSignature(ops);
+                ulong frameOpsSignature;
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Signature"))
+                    frameOpsSignature = ComputeFrameOpsSignature(ops);
                 uint mirrorCommandChainImageIndex = recordImageIndex;
 
                 CommandChainSchedule? commandChainSchedule = TryBuildOpenXrEyeCommandChainSchedule(
@@ -2266,7 +2388,7 @@ public unsafe partial class VulkanRenderer
             ImageLayout.TransferDstOptimal,
             1,
             ref blit,
-            Filter.Linear);
+            Filter.Nearest);
 
         TransitionOpenXrMirrorImage(
             commandBuffer,
@@ -2541,7 +2663,7 @@ public unsafe partial class VulkanRenderer
             ImageLayout.TransferDstOptimal,
             1,
             ref swapchainBlit,
-            Filter.Linear);
+            Filter.Nearest);
 
         TransitionOpenXrMirrorImage(
             commandBuffer,
@@ -2576,7 +2698,7 @@ public unsafe partial class VulkanRenderer
                 ImageLayout.TransferDstOptimal,
                 1,
                 ref previewBlit,
-                Filter.Linear);
+                Filter.Nearest);
 
             TransitionOpenXrMirrorImage(
                 commandBuffer,
@@ -2656,12 +2778,12 @@ public unsafe partial class VulkanRenderer
     }
 
     internal bool TryCopyOpenXrEyeMirrorTexture(
-        XRTexture2D? sourceTexture,
+        XRTexture? sourceTexture,
         XRTexture2D? destinationTexture,
         string destinationLabel,
         bool flipY = false)
     {
-        if (sourceTexture is null || destinationTexture is null)
+        if (IsDeviceLost || sourceTexture is null || destinationTexture is null)
             return false;
 
         try
@@ -2701,7 +2823,7 @@ public unsafe partial class VulkanRenderer
             if (sourceImage.Handle == 0 || destinationImage.Handle == 0)
                 return false;
 
-            Extent2D sourceExtent = ResolveOpenXrMirrorDestinationExtent(sourceTexture, source);
+            Extent2D sourceExtent = ResolveOpenXrMirrorSourceExtent(sourceTexture, source);
             Extent2D destinationExtent = ResolveOpenXrMirrorDestinationExtent(destinationTexture, destination);
             if (sourceExtent.Width == 0 || sourceExtent.Height == 0 ||
                 destinationExtent.Width == 0 || destinationExtent.Height == 0)
@@ -2715,6 +2837,7 @@ public unsafe partial class VulkanRenderer
 
             ImageAspectFlags sourceAspect = NormalizeOpenXrMirrorAspect(source.DescriptorFormat, source.DescriptorAspect);
             ImageAspectFlags destinationAspect = NormalizeOpenXrMirrorAspect(destination.DescriptorFormat, destination.DescriptorAspect);
+            uint sourceBaseArrayLayer = ResolveOpenXrMirrorBaseArrayLayer(sourceTexture);
 
             using CommandScope scope = NewCommandScope();
             CommandBuffer commandBuffer = scope.CommandBuffer;
@@ -2725,7 +2848,9 @@ public unsafe partial class VulkanRenderer
                 source.DescriptorFormat,
                 sourceOldLayout,
                 ImageLayout.TransferSrcOptimal,
-                sourceAspect);
+                sourceAspect,
+                sourceBaseArrayLayer,
+                1u);
 
             TransitionOpenXrMirrorImage(
                 commandBuffer,
@@ -2741,7 +2866,7 @@ public unsafe partial class VulkanRenderer
                 {
                     AspectMask = sourceAspect,
                     MipLevel = 0,
-                    BaseArrayLayer = 0,
+                    BaseArrayLayer = sourceBaseArrayLayer,
                     LayerCount = 1
                 },
                 DstSubresource = new ImageSubresourceLayers
@@ -2783,7 +2908,7 @@ public unsafe partial class VulkanRenderer
                 ImageLayout.TransferDstOptimal,
                 1,
                 ref blit,
-                Filter.Linear);
+                Filter.Nearest);
 
             TransitionOpenXrMirrorImage(
                 commandBuffer,
@@ -2791,7 +2916,9 @@ public unsafe partial class VulkanRenderer
                 source.DescriptorFormat,
                 ImageLayout.TransferSrcOptimal,
                 sourceOldLayout,
-                sourceAspect);
+                sourceAspect,
+                sourceBaseArrayLayer,
+                1u);
 
             TransitionOpenXrMirrorImage(
                 commandBuffer,
@@ -2803,6 +2930,8 @@ public unsafe partial class VulkanRenderer
 
             if (destination is IVkFrameBufferAttachmentSource destinationAttachmentSource)
                 destinationAttachmentSource.UpdateAttachmentTrackedLayout(ImageLayout.ShaderReadOnlyOptimal, 0, 0);
+            if (source is IVkFrameBufferAttachmentSource sourceAttachmentSource)
+                sourceAttachmentSource.UpdateAttachmentTrackedLayout(sourceOldLayout, 0, 0);
 
             return true;
         }
@@ -2817,6 +2946,9 @@ public unsafe partial class VulkanRenderer
             return false;
         }
     }
+
+    private static uint ResolveOpenXrMirrorBaseArrayLayer(XRTexture texture)
+        => texture is XRTextureViewBase view ? view.MinLayer : 0u;
 
     internal bool TryBlitTextureToOpenXrSwapchainImage(
         XRTexture2D? sourceTexture,
@@ -2916,7 +3048,7 @@ public unsafe partial class VulkanRenderer
                 ImageLayout.TransferDstOptimal,
                 1,
                 ref blit,
-                Filter.Linear);
+                Filter.Nearest);
 
             TransitionOpenXrMirrorImage(
                 commandBuffer,
@@ -3012,20 +3144,23 @@ public unsafe partial class VulkanRenderer
                 sourceOldLayout = ImageLayout.ColorAttachmentOptimal;
             }
 
-            Debug.VulkanEvery(
-                $"OpenXR.Vulkan.StereoBlit.Source.{GetHashCode()}.{sourceTexture.GetHashCode()}.{sourceLayer}",
-                TimeSpan.FromSeconds(1),
-                "[OpenXR] Vulkan stereo blit source='{0}' layer={1}/{2} oldLayout={3} aspect={4} image=0x{5:X} dst='{6}' dstImage=0x{7:X} extent={8}x{9}",
-                sourceTexture.Name ?? "<unnamed>",
-                sourceLayer,
-                sourceLayerCount,
-                sourceOldLayout,
-                sourceAspect,
-                sourceImage.Handle,
-                destinationLabel,
-                destinationImage.Handle,
-                destinationExtent.Width,
-                destinationExtent.Height);
+            if (TraceOpenXrStereoBlits)
+            {
+                Debug.VulkanEvery(
+                    $"OpenXR.Vulkan.StereoBlit.Source.{GetHashCode()}.{sourceTexture.GetHashCode()}.{sourceLayer}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Vulkan stereo blit source='{0}' layer={1}/{2} oldLayout={3} aspect={4} image=0x{5:X} dst='{6}' dstImage=0x{7:X} extent={8}x{9}",
+                    sourceTexture.Name ?? "<unnamed>",
+                    sourceLayer,
+                    sourceLayerCount,
+                    sourceOldLayout,
+                    sourceAspect,
+                    sourceImage.Handle,
+                    destinationLabel,
+                    destinationImage.Handle,
+                    destinationExtent.Width,
+                    destinationExtent.Height);
+            }
 
             using CommandScope scope = NewCommandScope();
             CommandBuffer commandBuffer = scope.CommandBuffer;
@@ -3095,7 +3230,7 @@ public unsafe partial class VulkanRenderer
                 ImageLayout.TransferDstOptimal,
                 1,
                 ref blit,
-                Filter.Linear);
+                Filter.Nearest);
 
             TransitionOpenXrMirrorImage(
                 commandBuffer,
@@ -3130,6 +3265,371 @@ public unsafe partial class VulkanRenderer
                 ex.Message);
             return false;
         }
+    }
+
+    internal bool TryBlitTextureArrayLayersToOpenXrSwapchainImages(
+        XRTexture2DArray? sourceTexture,
+        Image leftDestinationImage,
+        Format leftDestinationFormat,
+        Extent2D leftDestinationExtent,
+        string leftDestinationLabel,
+        Image rightDestinationImage,
+        Format rightDestinationFormat,
+        Extent2D rightDestinationExtent,
+        string rightDestinationLabel,
+        bool flipY = false)
+    {
+        try
+        {
+            if (!TryPrepareStereoLayerBlit(
+                    sourceTexture,
+                    leftDestinationImage,
+                    leftDestinationFormat,
+                    leftDestinationExtent,
+                    leftDestinationLabel,
+                    rightDestinationImage,
+                    rightDestinationFormat,
+                    rightDestinationExtent,
+                    rightDestinationLabel,
+                    flipY,
+                    out OpenXrStereoLayerBlitPlan plan))
+            {
+                return false;
+            }
+
+            using CommandScope scope = NewCommandScope();
+            RecordStereoLayerBlits(scope.CommandBuffer, in plan);
+            UpdateStereoLayerBlitTrackedLayouts(in plan);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.StereoBlit.BatchedCopyFailed.{GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[OpenXR] Vulkan stereo batched layer blit failed: {0}",
+                ex.Message);
+            return false;
+        }
+    }
+
+    private bool TryRecordStereoLayerBlitCommandBuffer(
+        in OpenXrStereoLayerBlitPlan plan,
+        out CommandBuffer commandBuffer)
+    {
+        commandBuffer = default;
+        CommandBufferAllocateInfo allocateInfo = new()
+        {
+            SType = StructureType.CommandBufferAllocateInfo,
+            Level = CommandBufferLevel.Primary,
+            CommandPool = commandPool,
+            CommandBufferCount = 1,
+        };
+
+        Result allocateResult = Api!.AllocateCommandBuffers(device, ref allocateInfo, out commandBuffer);
+        if (allocateResult != Result.Success || commandBuffer.Handle == 0)
+        {
+            Debug.VulkanWarning($"[OpenXR] Failed to allocate stereo layer publish command buffer: {allocateResult}");
+            commandBuffer = default;
+            return false;
+        }
+
+        bool begun = false;
+        try
+        {
+            CommandBufferBeginInfo beginInfo = new()
+            {
+                SType = StructureType.CommandBufferBeginInfo,
+                Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+            };
+
+            Result beginResult = Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
+            if (beginResult != Result.Success)
+            {
+                Debug.VulkanWarning($"[OpenXR] Failed to begin stereo layer publish command buffer: {beginResult}");
+                FreeOpenXrMirrorPublishCommandBuffer(commandBuffer, commandBufferCompleted: true);
+                commandBuffer = default;
+                return false;
+            }
+
+            begun = true;
+            ResetCommandBufferBindState(commandBuffer);
+            RecordStereoLayerBlits(commandBuffer, in plan);
+
+            Result endResult = Api.EndCommandBuffer(commandBuffer);
+            if (endResult != Result.Success)
+            {
+                Debug.VulkanWarning($"[OpenXR] Failed to end stereo layer publish command buffer: {endResult}");
+                FreeOpenXrMirrorPublishCommandBuffer(commandBuffer, commandBufferCompleted: true);
+                commandBuffer = default;
+                return false;
+            }
+
+            return true;
+        }
+        catch
+        {
+            if (begun)
+                RemoveCommandBufferBindState(commandBuffer);
+            FreeOpenXrMirrorPublishCommandBuffer(commandBuffer, commandBufferCompleted: true);
+            commandBuffer = default;
+            throw;
+        }
+    }
+
+    private bool TryPrepareStereoLayerBlit(
+        XRTexture2DArray? sourceTexture,
+        Image leftDestinationImage,
+        Format leftDestinationFormat,
+        Extent2D leftDestinationExtent,
+        string leftDestinationLabel,
+        Image rightDestinationImage,
+        Format rightDestinationFormat,
+        Extent2D rightDestinationExtent,
+        string rightDestinationLabel,
+        bool flipY,
+        out OpenXrStereoLayerBlitPlan plan)
+    {
+        plan = default;
+        if (sourceTexture is null ||
+            leftDestinationImage.Handle == 0 ||
+            rightDestinationImage.Handle == 0 ||
+            leftDestinationExtent.Width == 0 ||
+            leftDestinationExtent.Height == 0 ||
+            rightDestinationExtent.Width == 0 ||
+            rightDestinationExtent.Height == 0)
+        {
+            return false;
+        }
+
+        if (GetOrCreateAPIRenderObject(sourceTexture, generateNow: true) is not IVkImageDescriptorSource source)
+            return false;
+
+        uint sourceLayerCount = Math.Max(source.DescriptorArrayLayers, sourceTexture.Depth);
+        if (sourceLayerCount < 2)
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.StereoBlit.LayerCountTooSmall.{GetHashCode()}.{sourceTexture.GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[OpenXR] Vulkan stereo blit source '{0}' has {1} layer(s); expected at least 2.",
+                sourceTexture.Name ?? "<unnamed>",
+                sourceLayerCount);
+            return false;
+        }
+
+        if (!source.TryEnsureDescriptorReadyForUse(
+                "OpenXR Vulkan stereo array source batched blit",
+                AllowSynchronousResourceUploads))
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.StereoBlit.SourceNotReady.{GetHashCode()}.{sourceTexture.GetHashCode()}",
+                TimeSpan.FromSeconds(2),
+                "[OpenXR] Vulkan stereo blit source '{0}' is not descriptor-ready.",
+                sourceTexture.Name ?? "<unnamed>");
+            return false;
+        }
+
+        Image sourceImage = source.DescriptorImage;
+        if (sourceImage.Handle == 0)
+            return false;
+
+        ImageAspectFlags sourceAspect = NormalizeOpenXrMirrorAspect(source.DescriptorFormat, source.DescriptorAspect);
+        if (!TryResolveStereoBlitLayer(0, leftDestinationLabel, out Extent2D leftSourceExtent, out ImageLayout leftSourceOldLayout) ||
+            !TryResolveStereoBlitLayer(1, rightDestinationLabel, out Extent2D rightSourceExtent, out ImageLayout rightSourceOldLayout))
+        {
+            return false;
+        }
+
+        plan = new OpenXrStereoLayerBlitPlan(
+            source,
+            sourceImage,
+            source.DescriptorFormat,
+            sourceAspect,
+            leftSourceExtent,
+            leftSourceOldLayout,
+            rightSourceExtent,
+            rightSourceOldLayout,
+            leftDestinationImage,
+            leftDestinationFormat,
+            leftDestinationExtent,
+            rightDestinationImage,
+            rightDestinationFormat,
+            rightDestinationExtent,
+            flipY);
+        return true;
+
+        bool TryResolveStereoBlitLayer(
+            uint sourceLayer,
+            string destinationLabel,
+            out Extent2D sourceExtent,
+            out ImageLayout sourceOldLayout)
+        {
+            sourceExtent = ResolveOpenXrMirrorDestinationExtent(sourceTexture, source, sourceLayer);
+            if (sourceExtent.Width == 0 || sourceExtent.Height == 0)
+            {
+                sourceOldLayout = ImageLayout.Undefined;
+                return false;
+            }
+
+            sourceOldLayout = ResolveOpenXrAttachmentLayout(source, sourceLayer);
+            if (sourceOldLayout == ImageLayout.Undefined)
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.StereoBlit.SourceLayoutUndefined.{GetHashCode()}.{sourceTexture.GetHashCode()}.{sourceLayer}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Vulkan stereo blit source layer {0} of '{1}' had undefined tracked layout before publishing to '{2}'; falling back to ColorAttachmentOptimal.",
+                    sourceLayer,
+                    sourceTexture.Name ?? "<unnamed>",
+                    destinationLabel);
+                sourceOldLayout = ImageLayout.ColorAttachmentOptimal;
+            }
+
+            if (TraceOpenXrStereoBlits)
+            {
+                Debug.VulkanEvery(
+                    $"OpenXR.Vulkan.StereoBlit.Source.{GetHashCode()}.{sourceTexture.GetHashCode()}.{sourceLayer}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Vulkan stereo blit source='{0}' layer={1}/{2} oldLayout={3} aspect={4} image=0x{5:X} dst='{6}'",
+                    sourceTexture.Name ?? "<unnamed>",
+                    sourceLayer,
+                    sourceLayerCount,
+                    sourceOldLayout,
+                    sourceAspect,
+                    sourceImage.Handle,
+                    destinationLabel);
+            }
+            return true;
+        }
+    }
+
+    private void RecordStereoLayerBlits(
+        CommandBuffer commandBuffer,
+        in OpenXrStereoLayerBlitPlan plan)
+    {
+        EmitStereoLayerBlit(
+            commandBuffer,
+            plan,
+            sourceLayer: 0,
+            plan.LeftSourceExtent,
+            plan.LeftSourceOldLayout,
+            plan.LeftDestinationImage,
+            plan.LeftDestinationFormat,
+            plan.LeftDestinationExtent);
+        EmitStereoLayerBlit(
+            commandBuffer,
+            plan,
+            sourceLayer: 1,
+            plan.RightSourceExtent,
+            plan.RightSourceOldLayout,
+            plan.RightDestinationImage,
+            plan.RightDestinationFormat,
+            plan.RightDestinationExtent);
+    }
+
+    private void EmitStereoLayerBlit(
+        CommandBuffer commandBuffer,
+        in OpenXrStereoLayerBlitPlan plan,
+        uint sourceLayer,
+        Extent2D sourceExtent,
+        ImageLayout sourceOldLayout,
+        Image destinationImage,
+        Format destinationFormat,
+        Extent2D destinationExtent)
+    {
+        TransitionOpenXrMirrorImage(
+            commandBuffer,
+            plan.SourceImage,
+            plan.SourceFormat,
+            sourceOldLayout,
+            ImageLayout.TransferSrcOptimal,
+            plan.SourceAspect,
+            sourceLayer,
+            1u);
+
+        TransitionOpenXrMirrorImage(
+            commandBuffer,
+            destinationImage,
+            destinationFormat,
+            ImageLayout.Undefined,
+            ImageLayout.TransferDstOptimal,
+            ImageAspectFlags.ColorBit);
+
+        ImageBlit blit = new()
+        {
+            SrcSubresource = new ImageSubresourceLayers
+            {
+                AspectMask = plan.SourceAspect,
+                MipLevel = 0,
+                BaseArrayLayer = sourceLayer,
+                LayerCount = 1
+            },
+            DstSubresource = new ImageSubresourceLayers
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                MipLevel = 0,
+                BaseArrayLayer = 0,
+                LayerCount = 1
+            }
+        };
+        blit.SrcOffsets.Element0 = new Offset3D { X = 0, Y = 0, Z = 0 };
+        blit.SrcOffsets.Element1 = new Offset3D
+        {
+            X = checked((int)Math.Min(sourceExtent.Width, (uint)int.MaxValue)),
+            Y = checked((int)Math.Min(sourceExtent.Height, (uint)int.MaxValue)),
+            Z = 1
+        };
+        int destinationWidth = checked((int)Math.Min(destinationExtent.Width, (uint)int.MaxValue));
+        int destinationHeight = checked((int)Math.Min(destinationExtent.Height, (uint)int.MaxValue));
+        blit.DstOffsets.Element0 = new Offset3D
+        {
+            X = 0,
+            Y = plan.FlipY ? destinationHeight : 0,
+            Z = 0
+        };
+        blit.DstOffsets.Element1 = new Offset3D
+        {
+            X = destinationWidth,
+            Y = plan.FlipY ? 0 : destinationHeight,
+            Z = 1
+        };
+
+        Api!.CmdBlitImage(
+            commandBuffer,
+            plan.SourceImage,
+            ImageLayout.TransferSrcOptimal,
+            destinationImage,
+            ImageLayout.TransferDstOptimal,
+            1,
+            ref blit,
+            Filter.Nearest);
+
+        TransitionOpenXrMirrorImage(
+            commandBuffer,
+            plan.SourceImage,
+            plan.SourceFormat,
+            ImageLayout.TransferSrcOptimal,
+            sourceOldLayout,
+            plan.SourceAspect,
+            sourceLayer,
+            1u);
+
+        TransitionOpenXrMirrorImage(
+            commandBuffer,
+            destinationImage,
+            destinationFormat,
+            ImageLayout.TransferDstOptimal,
+            ImageLayout.ColorAttachmentOptimal,
+            ImageAspectFlags.ColorBit);
+    }
+
+    private static void UpdateStereoLayerBlitTrackedLayouts(in OpenXrStereoLayerBlitPlan plan)
+    {
+        if (plan.Source is not IVkFrameBufferAttachmentSource attachmentSource)
+            return;
+
+        attachmentSource.UpdateAttachmentTrackedLayout(plan.LeftSourceOldLayout, 0, 0);
+        attachmentSource.UpdateAttachmentTrackedLayout(plan.RightSourceOldLayout, 0, 1);
     }
 
     internal void PrewarmOpenXrEyeSwapchainResources(
@@ -3168,7 +3668,8 @@ public unsafe partial class VulkanRenderer
                     (uint)Math.Max(resourcePlannerStateIndex, 0),
                     "eye swapchain prewarm");
 
-                ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.PrewarmEye.Sort"))
+                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                 _ = PrepareResourcePlannerForFrameOps(ops);
                 PrewarmOpenXrFrameOpResources(ops);
             }
@@ -3221,7 +3722,8 @@ public unsafe partial class VulkanRenderer
                     (uint)Math.Max(resourcePlannerStateIndex, 0),
                     "eye mirror prewarm");
 
-                ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.PrewarmEyeMirror.Sort"))
+                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
                 _ = PrepareResourcePlannerForFrameOps(ops);
                 PrewarmOpenXrFrameOpResources(ops);
             }
@@ -3635,6 +4137,33 @@ public unsafe partial class VulkanRenderer
                 : new Extent2D(
                 Math.Max(destinationTexture.Width, 1u),
                 Math.Max(destinationTexture.Height, 1u));
+    }
+
+    private static Extent2D ResolveOpenXrMirrorSourceExtent(
+        XRTexture sourceTexture,
+        IVkImageDescriptorSource source)
+    {
+        if (source is IVkFrameBufferAttachmentSource attachmentSource &&
+            attachmentSource.TryGetAttachmentExtent(0, 0, out Extent2D attachmentExtent) &&
+            attachmentExtent.Width > 0 &&
+            attachmentExtent.Height > 0)
+        {
+            return attachmentExtent;
+        }
+
+        return sourceTexture switch
+        {
+            XRTexture2D texture2D => new Extent2D(
+                Math.Max(texture2D.Width, 1u),
+                Math.Max(texture2D.Height, 1u)),
+            XRTexture2DArray textureArray => new Extent2D(
+                Math.Max(textureArray.Width, 1u),
+                Math.Max(textureArray.Height, 1u)),
+            XRTexture2DArrayView textureArrayView => new Extent2D(
+                Math.Max(textureArrayView.Width, 1u),
+                Math.Max(textureArrayView.Height, 1u)),
+            _ => new Extent2D(1u, 1u)
+        };
     }
 
     private static Extent2D ResolveOpenXrMirrorDestinationExtent(

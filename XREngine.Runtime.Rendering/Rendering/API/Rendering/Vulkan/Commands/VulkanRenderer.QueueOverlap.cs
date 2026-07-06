@@ -55,24 +55,27 @@ public unsafe partial class VulkanRenderer
 
         _lastResolvedQueueOverlapMode = overlapMode;
 
-        Debug.VulkanEvery(
-            "Vulkan.QueueOwnership.Policy",
-            TimeSpan.FromSeconds(2),
-            "Queue ownership policy: profile={0} mode={1} gfx={2} compute={3} transfer={4} useCompute={5} useTransfer={6} computePasses={7} overlapCandidates={8} transferUsages={9} transferCost={10} qTransfers={11} stageFlushes={12} frameDeltaMs={13:F3}",
-            profile,
-            overlapMode,
-            graphicsFamily,
-            computeFamily,
-            transferFamily,
-            useComputeOwnership,
-            useTransferOwnership,
-            metrics.ComputePassCount,
-            metrics.OverlapCandidatePassCount,
-            metrics.TransferUsageCount,
-            metrics.TransferCost,
-            metrics.QueueOwnershipTransfers,
-            metrics.BarrierStageFlushes,
-            metrics.FrameDelta.TotalMilliseconds);
+        if (VulkanFrameDiagnosticsTraceEnabled)
+        {
+            Debug.VulkanEvery(
+                "Vulkan.QueueOwnership.Policy",
+                TimeSpan.FromSeconds(2),
+                "Queue ownership policy: profile={0} mode={1} gfx={2} compute={3} transfer={4} useCompute={5} useTransfer={6} computePasses={7} overlapCandidates={8} transferUsages={9} transferCost={10} qTransfers={11} stageFlushes={12} frameDeltaMs={13:F3}",
+                profile,
+                overlapMode,
+                graphicsFamily,
+                computeFamily,
+                transferFamily,
+                useComputeOwnership,
+                useTransferOwnership,
+                metrics.ComputePassCount,
+                metrics.OverlapCandidatePassCount,
+                metrics.TransferUsageCount,
+                metrics.TransferCost,
+                metrics.QueueOwnershipTransfers,
+                metrics.BarrierStageFlushes,
+                metrics.FrameDelta.TotalMilliseconds);
+        }
 
         return new VulkanBarrierPlanner.QueueOwnershipConfig(
             graphicsFamily,

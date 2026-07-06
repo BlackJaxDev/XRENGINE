@@ -15,6 +15,9 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public unsafe partial class OpenXRAPI
 {
+    public const float OpenXrMinPoseTimeOffsetMs = -20.0f;
+    public const float OpenXrMaxPoseTimeOffsetMs = 20.0f;
+
     public enum OpenXrRuntimeState
     {
         DesktopOnly,
@@ -118,6 +121,12 @@ public unsafe partial class OpenXRAPI
 
     private Space _appSpace;
     private View[] _views = new View[RenderFrameViewSet.MaxViewCount];
+    private readonly View[] _openXrPredictedViews = new View[RenderFrameViewSet.MaxViewCount];
+    private readonly View[] _openXrLateViews = new View[RenderFrameViewSet.MaxViewCount];
+    private int _openXrPredictedViewCount;
+    private int _openXrLateViewCount;
+    private int _openXrPredictedViewFrameNumber;
+    private int _openXrLateViewFrameNumber;
     private View[]? _lastValidViews;
     private int _hasLastValidViews;
     // Rate-limit flags for tracking-loss warnings: 0 = no streak logged yet, 1 = logged for this streak.
@@ -342,6 +351,7 @@ public unsafe partial class OpenXRAPI
         string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanCaptureEyeOutputs), "1", StringComparison.Ordinal);
     private static bool OpenXrPrepareFrameAfterDesktopRender => RuntimeEngine.Rendering.Settings.OpenXrPrepareFrameAfterDesktopRender;
     private static float OpenXrDeadlineSafetyMarginMs => RuntimeEngine.Rendering.Settings.OpenXrDeadlineSafetyMarginMs;
+    private static float OpenXrPoseTimeOffsetMs => RuntimeEngine.Rendering.Settings.OpenXrPoseTimeOffsetMs;
     private static OpenXrCollectVisiblePosePolicy OpenXrCollectPosePolicy => RuntimeEngine.Rendering.Settings.OpenXrCollectVisiblePosePolicy;
     private static float OpenXrCollectFrustumPaddingDegrees => RuntimeEngine.Rendering.Settings.OpenXrCollectVisibleFrustumPaddingDegrees;
     private static OpenXrTrackingLossPolicy OpenXrTrackingLossHandling => RuntimeEngine.Rendering.Settings.OpenXrTrackingLossPolicy;
@@ -386,11 +396,14 @@ public unsafe partial class OpenXRAPI
     private XRFrameBuffer? _vulkanStereoFbo;
     private uint _vulkanStereoWidth;
     private uint _vulkanStereoHeight;
+    private Silk.NET.Vulkan.Format _vulkanStereoColorFormat;
 
     private XRTexture2D? _previewLeftEyeTexture;
     private XRTexture2D? _previewRightEyeTexture;
     private uint _previewEyeTextureWidth;
     private uint _previewEyeTextureHeight;
+    private EPixelInternalFormat _previewEyeTextureInternalFormat = EPixelInternalFormat.Rgba8;
+    private ESizedInternalFormat _previewEyeTextureSizedFormat = ESizedInternalFormat.Rgba8;
 
     public XRTexture2D? PreviewLeftEyeTexture => _previewLeftEyeTexture;
     public XRTexture2D? PreviewRightEyeTexture => _previewRightEyeTexture;

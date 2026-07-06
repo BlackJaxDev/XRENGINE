@@ -405,6 +405,10 @@ public static class RuntimeRenderingHostServices
         {
         }
 
+        public void MarkRenderFrameReadyForCollect(IRuntimeRenderWindowHost window)
+        {
+        }
+
         #endregion
 
         #region Debug drawing and scene maintenance
@@ -1067,6 +1071,7 @@ public static class RuntimeRenderingHostServices
         public bool OpenXrDebugRenderRightThenLeft => RuntimeRenderingHostServiceDefaults.OpenXrDebugRenderRightThenLeft;
         public bool OpenXrPrepareFrameAfterDesktopRender => RuntimeRenderingHostServiceDefaults.OpenXrPrepareFrameAfterDesktopRender;
         public float OpenXrDeadlineSafetyMarginMs => RuntimeRenderingHostServiceDefaults.OpenXrDeadlineSafetyMarginMs;
+        public float OpenXrPoseTimeOffsetMs => RuntimeRenderingHostServiceDefaults.OpenXrPoseTimeOffsetMs;
         public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => OpenXRAPI.OpenXrCollectVisiblePosePolicy.Predicted;
         public float OpenXrCollectVisibleFrustumPaddingDegrees => RuntimeRenderingHostServiceDefaults.OpenXrCollectVisibleFrustumPaddingDegrees;
         public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;

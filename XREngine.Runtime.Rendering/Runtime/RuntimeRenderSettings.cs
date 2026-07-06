@@ -40,6 +40,7 @@ internal sealed class RuntimeRenderSettings
     private bool _openXrDebugRenderRightThenLeft = RuntimeRenderingHostServiceDefaults.OpenXrDebugRenderRightThenLeft;
     private bool _openXrPrepareFrameAfterDesktopRender = RuntimeRenderingHostServiceDefaults.OpenXrPrepareFrameAfterDesktopRender;
     private float _openXrDeadlineSafetyMarginMs = RuntimeRenderingHostServiceDefaults.OpenXrDeadlineSafetyMarginMs;
+    private float _openXrPoseTimeOffsetMs = RuntimeRenderingHostServiceDefaults.OpenXrPoseTimeOffsetMs;
     private OpenXRAPI.OpenXrCollectVisiblePosePolicy _openXrCollectVisiblePosePolicy = OpenXRAPI.OpenXrCollectVisiblePosePolicy.Predicted;
     private float _openXrCollectVisibleFrustumPaddingDegrees = RuntimeRenderingHostServiceDefaults.OpenXrCollectVisibleFrustumPaddingDegrees;
     private OpenXRAPI.OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXRAPI.OpenXrTrackingLossPolicy.FreezeLastValid;
@@ -370,6 +371,16 @@ internal sealed class RuntimeRenderSettings
             ? services.OpenXrDeadlineSafetyMarginMs
             : _openXrDeadlineSafetyMarginMs;
         set => _openXrDeadlineSafetyMarginMs = MathF.Max(0.0f, value);
+    }
+    public float OpenXrPoseTimeOffsetMs
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.OpenXrPoseTimeOffsetMs
+            : _openXrPoseTimeOffsetMs;
+        set => _openXrPoseTimeOffsetMs = Math.Clamp(
+            value,
+            OpenXRAPI.OpenXrMinPoseTimeOffsetMs,
+            OpenXRAPI.OpenXrMaxPoseTimeOffsetMs);
     }
     public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy
     {

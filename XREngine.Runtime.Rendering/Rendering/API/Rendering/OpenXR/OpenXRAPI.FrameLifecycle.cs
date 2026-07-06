@@ -310,12 +310,15 @@ public unsafe partial class OpenXRAPI
     {
         uint expectedWidth = GetOpenXrSwapchainWidth(viewIndex);
         uint expectedHeight = GetOpenXrSwapchainHeight(viewIndex);
+        View view = TryGetOpenXrProjectionLayerView(viewIndex, out View cachedView)
+            ? cachedView
+            : _views[viewIndex];
 
         projectionViews[viewIndex] = default;
         projectionViews[viewIndex].Type = StructureType.CompositionLayerProjectionView;
         projectionViews[viewIndex].Next = null;
-        projectionViews[viewIndex].Fov = _views[viewIndex].Fov;
-        projectionViews[viewIndex].Pose = _views[viewIndex].Pose;
+        projectionViews[viewIndex].Fov = view.Fov;
+        projectionViews[viewIndex].Pose = view.Pose;
         projectionViews[viewIndex].SubImage.Swapchain = _swapchains[viewIndex];
         projectionViews[viewIndex].SubImage.ImageArrayIndex = 0;
         projectionViews[viewIndex].SubImage.ImageRect = new Rect2Di
@@ -349,7 +352,9 @@ public unsafe partial class OpenXRAPI
         if (viewIndex >= _openXrRvcFrameViewDiagnostics.Length || viewIndex >= _views.Length)
             return;
 
-        View view = _views[viewIndex];
+        View view = TryGetOpenXrProjectionLayerView(viewIndex, out View cachedView)
+            ? cachedView
+            : _views[viewIndex];
         const float radiansToDegrees = 180.0f / MathF.PI;
         float horizontalFovDegrees = MathF.Abs(view.Fov.AngleRight - view.Fov.AngleLeft) * radiansToDegrees;
         float verticalFovDegrees = MathF.Abs(view.Fov.AngleUp - view.Fov.AngleDown) * radiansToDegrees;

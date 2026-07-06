@@ -107,13 +107,20 @@ namespace XREngine.Rendering.Vulkan
             {
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps"))
                 {
-                    ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
-                    SplitDynamicUiBatchTextFrameOps(ops, out FrameOp[] staticOps, out dynamicUiBatchTextOps);
-                    ops = staticOps;
-                    frameOpsSignature = ComputeFrameOpsSignature(ops);
-                    dynamicUiBatchTextSignature = dynamicUiBatchTextOps.Length == 0
-                        ? 0
-                        : ComputeFrameOpsSignature(dynamicUiBatchTextOps);
+                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps.Sort"))
+                        ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps.SplitDynamicUiBatchText"))
+                    {
+                        SplitDynamicUiBatchTextFrameOps(ops, out FrameOp[] staticOps, out dynamicUiBatchTextOps);
+                        ops = staticOps;
+                    }
+                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.NormalizeFrameOps.Signature"))
+                    {
+                        frameOpsSignature = ComputeFrameOpsSignature(ops);
+                        dynamicUiBatchTextSignature = dynamicUiBatchTextOps.Length == 0
+                            ? 0
+                            : ComputeFrameOpsSignature(dynamicUiBatchTextOps);
+                    }
                 }
 
                 if (FrameOpSignatureDiffDiagnosticsEnabled && rawFrameOpsSignature != frameOpsSignature)
@@ -1697,8 +1704,22 @@ namespace XREngine.Rendering.Vulkan
                 swapchainWriterDetailByPipeline.Remove(pipelineIdentity);
             }
 
+            static bool IsOverlayContext(FrameOpContext context)
+                => context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline;
+
+            void CountLogicalSwapchainWriter(FrameOpContext context)
+            {
+                if (IsOverlayContext(context))
+                    overlaySwapchainWriters++;
+                else
+                    sceneSwapchainWriters++;
+            }
+
             void LogSwapchainWritersByPipeline(string phase)
             {
+                if (!VulkanFrameDiagnosticsTraceEnabled)
+                    return;
+
                 if (swapchainWritesByPipeline.Count == 0)
                     return;
 
@@ -1768,6 +1789,7 @@ namespace XREngine.Rendering.Vulkan
                             {
                                 swapchainWriteCount++;
                                 swapchainClearWrites++;
+                                CountLogicalSwapchainWriter(clear.Context);
                                 MarkSwapchainFrameOpWriter(nameof(ClearOp), clear, clear.PassIndex, opScanIndex, clear.Context.PipelineIdentity);
                             }
                             break;
@@ -1779,6 +1801,7 @@ namespace XREngine.Rendering.Vulkan
                             {
                                 swapchainWriteCount++;
                                 swapchainDrawWrites++;
+                                CountLogicalSwapchainWriter(meshDraw.Context);
                                 MarkSwapchainFrameOpWriter(nameof(MeshDrawOp), meshDraw, meshDraw.PassIndex, opScanIndex, meshDraw.Context.PipelineIdentity);
                             }
                             else
@@ -1794,6 +1817,7 @@ namespace XREngine.Rendering.Vulkan
                             {
                                 swapchainWriteCount++;
                                 swapchainDrawWrites++;
+                                CountLogicalSwapchainWriter(indirectDraw.Context);
                                 MarkSwapchainFrameOpWriter(nameof(IndirectDrawOp), indirectDraw, indirectDraw.PassIndex, opScanIndex, indirectDraw.Context.PipelineIdentity);
                             }
                             else
@@ -1807,6 +1831,7 @@ namespace XREngine.Rendering.Vulkan
                             meshTaskDispatchCount++;
                             swapchainWriteCount++;
                             swapchainDrawWrites++;
+                            CountLogicalSwapchainWriter(meshTaskDispatch.Context);
                             MarkSwapchainFrameOpWriter(nameof(MeshTaskDispatchIndirectCountOp), meshTaskDispatch, meshTaskDispatch.PassIndex, opScanIndex, meshTaskDispatch.Context.PipelineIdentity);
                             break;
                         case BlitOp blit:
@@ -1816,6 +1841,7 @@ namespace XREngine.Rendering.Vulkan
                             {
                                 swapchainWriteCount++;
                                 swapchainBlitWrites++;
+                                CountLogicalSwapchainWriter(blit.Context);
                                 MarkSwapchainFrameOpWriter(nameof(BlitOp), blit, blit.PassIndex, opScanIndex, blit.Context.PipelineIdentity);
                             }
                             else
@@ -1847,7 +1873,6 @@ namespace XREngine.Rendering.Vulkan
                     opScanIndex++;
                 }
 
-                sceneSwapchainWriters = swapchainWriteCount;
                 RecordVulkanFrameOpCensus(
                     ops,
                     clearCount,
@@ -1859,27 +1884,30 @@ namespace XREngine.Rendering.Vulkan
                     swapchainWriteCount,
                     fboOnlyDrawOps + fboOnlyBlitOps);
 
-                Debug.VulkanEvery(
-                    $"Vulkan.FrameOps.{GetHashCode()}",
-                    TimeSpan.FromSeconds(1),
-                    "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3} computes={4} swapchainWrites={5} (C{6}/D{7}/B{8}) VkReq={9} VkCull={10} VkEmit={11} VkConsume={12} GpuVisible(O/M/A/E)={13}/{14}/{15}/{16}",
-                    ops.Length,
-                    clearCount,
-                    drawCount,
-                    blitCount,
-                    computeCount,
-                    swapchainWriteCount,
-                    swapchainClearWrites,
-                    swapchainDrawWrites,
-                    swapchainBlitWrites,
-                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanRequestedDraws,
-                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanCulledDraws,
-                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanEmittedIndirectDraws,
-                    RuntimeEngine.Rendering.Stats.Vulkan.VulkanConsumedDraws,
-                    RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyOpaqueOrOtherVisible,
-                    RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyMaskedVisible,
-                    RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyApproximateVisible,
-                    RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyExactVisible);
+                if (VulkanFrameDiagnosticsTraceEnabled)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.FrameOps.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3} computes={4} swapchainWrites={5} (C{6}/D{7}/B{8}) VkReq={9} VkCull={10} VkEmit={11} VkConsume={12} GpuVisible(O/M/A/E)={13}/{14}/{15}/{16}",
+                        ops.Length,
+                        clearCount,
+                        drawCount,
+                        blitCount,
+                        computeCount,
+                        swapchainWriteCount,
+                        swapchainClearWrites,
+                        swapchainDrawWrites,
+                        swapchainBlitWrites,
+                        RuntimeEngine.Rendering.Stats.Vulkan.VulkanRequestedDraws,
+                        RuntimeEngine.Rendering.Stats.Vulkan.VulkanCulledDraws,
+                        RuntimeEngine.Rendering.Stats.Vulkan.VulkanEmittedIndirectDraws,
+                        RuntimeEngine.Rendering.Stats.Vulkan.VulkanConsumedDraws,
+                        RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyOpaqueOrOtherVisible,
+                        RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyMaskedVisible,
+                        RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyApproximateVisible,
+                        RuntimeEngine.Rendering.Stats.GpuTransparency.GpuTransparencyExactVisible);
+                }
 
                 LogSwapchainWritersByPipeline("PreOverlay");
             }
@@ -2448,7 +2476,12 @@ namespace XREngine.Rendering.Vulkan
                         ImageLayout colorOldLayout = ResolveCurrentSwapchainColorLayout();
 
                         // Preserve swapchain contents on re-entry so composited scene is not wiped.
-                        AttachmentLoadOp colorLoadOp = (swapchainClearedThisFrame || swapchainWrittenOutsideRenderPass)
+                        bool overlaySwapchainPass = IsOverlayContext(context);
+                        bool loadExistingSwapchainColor =
+                            swapchainClearedThisFrame ||
+                            swapchainWrittenOutsideRenderPass ||
+                            (overlaySwapchainPass && imageWasEverPresentedAtRecordStart);
+                        AttachmentLoadOp colorLoadOp = loadExistingSwapchainColor
                             ? AttachmentLoadOp.Load
                             : AttachmentLoadOp.Clear;
 
@@ -2595,10 +2628,15 @@ namespace XREngine.Rendering.Vulkan
 
                     // Fallback: traditional render pass path.
                     // Use _renderPassLoad (LoadOp.Load) on re-entry to preserve contents.
-                    AttachmentLoadOp legacySwapchainLoadOp = (swapchainClearedThisFrame || swapchainWrittenOutsideRenderPass)
+                    bool legacyOverlaySwapchainPass = IsOverlayContext(context);
+                    bool legacyLoadExistingSwapchainColor =
+                        swapchainClearedThisFrame ||
+                        swapchainWrittenOutsideRenderPass ||
+                        (legacyOverlaySwapchainPass && imageWasEverPresentedAtRecordStart);
+                    AttachmentLoadOp legacySwapchainLoadOp = legacyLoadExistingSwapchainColor
                         ? AttachmentLoadOp.Load
                         : AttachmentLoadOp.Clear;
-                    RenderPass selectedRenderPass = (swapchainClearedThisFrame || swapchainWrittenOutsideRenderPass)
+                    RenderPass selectedRenderPass = legacyLoadExistingSwapchainColor
                         ? _renderPassLoad
                         : _renderPass;
 
@@ -2933,7 +2971,9 @@ namespace XREngine.Rendering.Vulkan
                     CompiledRenderGraph.Synchronization,
                     preserveTrackedClearLoads: targetReenteredThisCommandBuffer);
 
-                Debug.VulkanEvery(
+                if (VulkanFrameDiagnosticsTraceEnabled)
+                {
+                    Debug.VulkanEvery(
                     $"Vulkan.BeginRP.FBO.{fboName}.{passRenderPass.Handle:X}",
                     TimeSpan.FromSeconds(2),
                     "[Vulkan] BeginRenderPassForTarget FBO='{0}' pass={1} renderPass=0x{2:X} attachments={3} fbDims={4}x{5} trackedLayouts={6}",
@@ -2944,6 +2984,7 @@ namespace XREngine.Rendering.Vulkan
                     vkFrameBuffer.FramebufferWidth,
                     vkFrameBuffer.FramebufferHeight,
                     trackedLayouts is not null ? string.Join(",", trackedLayouts) : "null");
+                }
                 RenderPassBeginInfo fboPassInfo = new()
                 {
                     SType = StructureType.RenderPassBeginInfo,
@@ -4181,7 +4222,11 @@ namespace XREngine.Rendering.Vulkan
                     {
                         ImageLayout colorOldLayout = ResolveCurrentSwapchainColorLayout();
 
-                        AttachmentLoadOp colorLoadOp = (swapchainClearedThisFrame || swapchainWrittenOutsideRenderPass)
+                        bool loadExistingSwapchainColor =
+                            swapchainClearedThisFrame ||
+                            swapchainWrittenOutsideRenderPass ||
+                            imageWasEverPresentedAtRecordStart;
+                        AttachmentLoadOp colorLoadOp = loadExistingSwapchainColor
                             ? AttachmentLoadOp.Load
                             : AttachmentLoadOp.Clear;
 
@@ -5004,12 +5049,28 @@ namespace XREngine.Rendering.Vulkan
 
                 bool hasSceneFrameWork = clearCount > 0 || drawCount > 0 || blitCount > 0 || computeCount > 0;
                 bool expectsSceneSwapchainWriters = transitionSwapchainToPresent && !IsRenderingExternalSwapchainTarget;
-                bool missingSceneSwapchainWriters = expectsSceneSwapchainWriters && hasSceneFrameWork && sceneSwapchainWriters == 0;
+                bool preservingOverlayOnlyFrame =
+                    sceneActualSwapchainWritesBeforeOverlay == 0 &&
+                    sceneSwapchainWriters == 0 &&
+                    overlaySwapchainWriters > 0 &&
+                    !forceMagentaSwapchain;
+                bool preservingPresentedSwapchainImage =
+                    sceneActualSwapchainWritesBeforeOverlay == 0 &&
+                    actualSwapchainWriteCount == 0 &&
+                    imageWasEverPresentedAtRecordStart &&
+                    !forceMagentaSwapchain;
+                bool missingSceneSwapchainWriters =
+                    expectsSceneSwapchainWriters &&
+                    hasSceneFrameWork &&
+                    sceneSwapchainWriters == 0 &&
+                    actualSwapchainWriteCount == 0 &&
+                    !preservingOverlayOnlyFrame &&
+                    !preservingPresentedSwapchainImage;
                 if (missingSceneSwapchainWriters)
                 {
                     Debug.VulkanWarningEvery(
                         $"Vulkan.MissingSceneSwapchainWrites.{GetHashCode()}",
-                        TimeSpan.FromSeconds(1),
+                        TimeSpan.FromSeconds(10),
                         "[Vulkan][FrameFailure] Scene frame recorded zero pre-overlay swapchain writers (clears={0}, draws={1}, blits={2}, computes={3}, fboOnlyDraws={4}, fboOnlyBlits={5}). Overlay or diagnostic clears may still present.",
                         clearCount,
                         drawCount,
@@ -5018,11 +5079,13 @@ namespace XREngine.Rendering.Vulkan
                         fboOnlyDrawOps,
                         fboOnlyBlitOps);
                 }
-                else if (expectsSceneSwapchainWriters && swapchainWriteCount == 0)
+                else if (expectsSceneSwapchainWriters &&
+                         swapchainWriteCount == 0 &&
+                         !preservingPresentedSwapchainImage)
                 {
                     Debug.VulkanWarningEvery(
                         $"Vulkan.NoSwapchainWrites.{GetHashCode()}",
-                        TimeSpan.FromSeconds(1),
+                        TimeSpan.FromSeconds(10),
                         "[Vulkan] No swapchain write commands were recorded this frame (clears={0}, draws={1}, blits={2}, computes={3}). Preserving acquired swapchain image contents when already initialised.",
                         clearCount,
                         drawCount,
@@ -5199,7 +5262,9 @@ namespace XREngine.Rendering.Vulkan
 
             if (clearLayerCount > 1u)
             {
-                Debug.VulkanEvery(
+                if (VulkanFrameDiagnosticsTraceEnabled)
+                {
+                    Debug.VulkanEvery(
                     $"Vulkan.CmdClearAttachments.Layered.{op.Target?.Name ?? "<swapchain>"}",
                     TimeSpan.FromSeconds(2),
                     "[Vulkan] CmdClearAttachments layered clear target='{0}' layers={1} activeLayers={2} activeViewMask=0x{3:X} fboLayers={4} fboViewMask=0x{5:X}",
@@ -5209,6 +5274,7 @@ namespace XREngine.Rendering.Vulkan
                     activeRenderViewMask,
                     clearTargetFrameBuffer?.FramebufferLayers ?? 0u,
                     clearTargetFrameBuffer?.MultiviewViewMask ?? 0u);
+                }
             }
 
             ClearRect clearRect = new()
@@ -5582,15 +5648,18 @@ namespace XREngine.Rendering.Vulkan
                     resolvedDestination.StageMask,
                     PipelineStageFlags.TransferBit);
 
-                Debug.VulkanEvery(
-                    "Vulkan.Blit.Record",
+                if (VulkanFrameDiagnosticsTraceEnabled)
+                {
+                    Debug.VulkanEvery(
+                        "Vulkan.Blit.Record",
                     TimeSpan.FromSeconds(2),
                     "[Vulkan] CmdBlitImage: src=0x{0:X}({1}) dst=0x{2:X}({3}) region={4},{5}+{6}x{7}â†’{8},{9}+{10}x{11} filter={12}",
                     resolvedSource.Image.Handle, resolvedSource.Format,
                     resolvedDestination.Image.Handle, resolvedDestination.Format,
                     op.InX, op.InY, op.InW, op.InH,
-                    op.OutX, op.OutY, op.OutW, op.OutH,
-                    filter);
+                        op.OutX, op.OutY, op.OutW, op.OutH,
+                        filter);
+                }
 
                 Api!.CmdBlitImage(
                     commandBuffer,
@@ -6480,7 +6549,12 @@ namespace XREngine.Rendering.Vulkan
                         }
                     };
 
-                    if (vkFbo.MultiviewViewMask != 0u || BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(fbo.Name))
+                    bool traceDynamicFboTransition =
+                        CommandRecordingDiagnosticsEnabled ||
+                        XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
+                        XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw ||
+                        BloomVulkanDiagnosticsEnabled && IsBloomDiagnosticName(fbo.Name);
+                    if (traceDynamicFboTransition)
                     {
                         string targetName = target switch
                         {
@@ -6907,12 +6981,9 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// When the barrier planner has no known passes, emit image memory barriers to
         /// transition any physical-group images still in <see cref="ImageLayout.Undefined"/>
-        /// to a usable layout inside the current command buffer.  This is the in-CB
-        /// counterpart of <see cref="TransitionNewPhysicalImagesToInitialLayout"/> (which
-        /// runs one-shot commands outside the frame).  Both paths are necessary:
-        /// the one-shot path handles newly-allocated images before recording starts,
-        /// and this path covers images that became UNDEFINED due to mid-frame recreation
-        /// or races with resource planner rebuilds.
+        /// to a usable layout inside the current command buffer. Keeping this transition
+        /// in-frame avoids out-of-band one-shot submissions while resource-planner states
+        /// switch between desktop and OpenXR targets.
         /// </summary>
         private void EmitInitialImageBarriersForUnknownPass(CommandBuffer commandBuffer)
         {

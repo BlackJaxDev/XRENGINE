@@ -912,6 +912,7 @@ public static partial class Engine
                     active = output.Active,
                     rendered = output.Rendered,
                     scene_rendered = output.SceneRendered,
+                    render_phase_scene_rendered = output.RenderPhaseSceneRendered,
                     mirror = output.Mirror,
                     separate_scene_render = output.SeparateSceneRender,
                     shared_visibility = output.SharedVisibility,

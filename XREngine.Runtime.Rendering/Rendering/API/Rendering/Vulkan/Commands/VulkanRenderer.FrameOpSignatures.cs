@@ -194,7 +194,7 @@ namespace XREngine.Rendering.Vulkan
             AddMeshDrawViewportSignaturePart(parts, opIndex, opType, draw);
             AddMeshDrawPipelineStateSignaturePart(parts, opIndex, opType, draw);
             AddMeshDrawMaterialSignaturePart(parts, opIndex, opType, draw);
-            AddProgramBindingSignatureParts(parts, opIndex, opType, "program", draw.ProgramBindingSnapshot);
+            AddProgramBindingSignatureParts(parts, opIndex, opType, "program", draw.ProgramBindingSnapshot, meshDraw.Context.PipelineInstance);
         }
 
         private static void AddMeshDrawViewportSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, in PendingMeshDraw draw)
@@ -428,7 +428,7 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(compute.GroupsY);
             hash.Add(compute.GroupsZ);
             AddSignaturePart(parts, opIndex, opType, "compute", hash, $"program='{compute.Program.Data.Name ?? "<unnamed program>"}' groups={compute.GroupsX},{compute.GroupsY},{compute.GroupsZ}");
-            AddProgramBindingSignatureParts(parts, opIndex, opType, "computeProgram", compute.Snapshot);
+            AddProgramBindingSignatureParts(parts, opIndex, opType, "computeProgram", compute.Snapshot, compute.Context.PipelineInstance);
         }
 
         private static void AddTextureUploadSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, TextureUploadFrameOp upload)
@@ -453,7 +453,8 @@ namespace XREngine.Rendering.Vulkan
             int opIndex,
             string opType,
             string prefix,
-            ComputeDispatchSnapshot? snapshot)
+            ComputeDispatchSnapshot? snapshot,
+            XRRenderPipelineInstance? pipeline)
         {
             if (snapshot is null)
             {
@@ -473,15 +474,15 @@ namespace XREngine.Rendering.Vulkan
                 opIndex,
                 opType,
                 $"{prefix}.samplerUnits",
-                HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit),
-                $"count={snapshot.Samplers.Count} stable=0x{unchecked((ulong)HashSamplerUnitBindingsStable(snapshot.Samplers, snapshot.SamplerNamesByUnit)):X16} keys=[{SampleKeys(snapshot.Samplers.Keys)}]");
+                HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline),
+                $"count={snapshot.Samplers.Count} stable=0x{unchecked((ulong)HashSamplerUnitBindingsStable(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline)):X16} keys=[{SampleKeys(snapshot.Samplers.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 $"{prefix}.samplerNames",
-                HashSamplerNameBindings(snapshot.SamplersByName),
-                $"count={snapshot.SamplersByName.Count} stable=0x{unchecked((ulong)HashSamplerNameBindingsStable(snapshot.SamplersByName)):X16} keys=[{SampleKeys(snapshot.SamplersByName.Keys)}]");
+                HashSamplerNameBindings(snapshot.SamplersByName, pipeline),
+                $"count={snapshot.SamplersByName.Count} stable=0x{unchecked((ulong)HashSamplerNameBindingsStable(snapshot.SamplersByName, pipeline)):X16} keys=[{SampleKeys(snapshot.SamplersByName.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
@@ -542,46 +543,54 @@ namespace XREngine.Rendering.Vulkan
             return hash.ToHashCode();
         }
 
-        private static int HashSamplerUnitBindingsStable(Dictionary<uint, XRTexture> samplers, Dictionary<uint, string> samplerNamesByUnit)
+        private static int HashSamplerUnitBindingsStable(
+            Dictionary<uint, XRTexture> samplers,
+            Dictionary<uint, string> samplerNamesByUnit,
+            XRRenderPipelineInstance? pipeline)
         {
             HashCode hash = new();
             hash.Add(samplers.Count);
             foreach (var pair in samplers.OrderBy(p => p.Key))
             {
                 hash.Add(pair.Key);
-                if (samplerNamesByUnit.TryGetValue(pair.Key, out string? samplerName) && IsFrameSourceSamplerName(samplerName))
-                {
-                    hash.Add(FrameSourceMutableDescriptorSignature);
-                }
-                else
-                {
-                    hash.Add(pair.Value.GetHashCode());
-                    hash.Add(ComputeTextureDescriptorSignature(pair.Value));
-                }
+                bool mutableFrameSource = samplerNamesByUnit.TryGetValue(pair.Key, out string? samplerName) &&
+                    IsMutableFrameSourceSamplerNameForSignatureDebug(samplerName, pipeline);
+                hash.Add(mutableFrameSource
+                    ? FrameSourceMutableDescriptorSignature
+                    : ComputeTextureDescriptorSignature(pair.Value));
             }
 
             return hash.ToHashCode();
         }
 
-        private static int HashSamplerNameBindingsStable(Dictionary<string, XRTexture> samplers)
+        private static int HashSamplerNameBindingsStable(Dictionary<string, XRTexture> samplers, XRRenderPipelineInstance? pipeline)
         {
             HashCode hash = new();
             hash.Add(samplers.Count);
             foreach (var pair in samplers.OrderBy(p => p.Key, StringComparer.Ordinal))
             {
                 hash.Add(pair.Key, StringComparer.Ordinal);
-                if (IsFrameSourceSamplerName(pair.Key))
-                {
-                    hash.Add(FrameSourceMutableDescriptorSignature);
-                }
-                else
-                {
-                    hash.Add(pair.Value.GetHashCode());
-                    hash.Add(ComputeTextureDescriptorSignature(pair.Value));
-                }
+                hash.Add(IsMutableFrameSourceSamplerNameForSignatureDebug(pair.Key, pipeline)
+                    ? FrameSourceMutableDescriptorSignature
+                    : ComputeTextureDescriptorSignature(pair.Value));
             }
 
             return hash.ToHashCode();
+        }
+
+        private static bool IsMutableFrameSourceSamplerNameForSignatureDebug(string? name, XRRenderPipelineInstance? pipeline)
+        {
+            if (string.Equals(name, "SourceTexture", StringComparison.Ordinal) ||
+                string.Equals(name, "SourceTexture0", StringComparison.Ordinal) ||
+                string.Equals(name, "SourceTexture1", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            return !string.IsNullOrWhiteSpace(name) &&
+                pipeline is not null &&
+                pipeline.TryGetTexture(name, out XRTexture? texture) &&
+                texture is not null;
         }
 
         private static int HashImageBindingsStable(Dictionary<uint, ProgramImageBinding> images)

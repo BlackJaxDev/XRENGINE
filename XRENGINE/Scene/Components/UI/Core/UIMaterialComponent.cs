@@ -60,7 +60,10 @@ namespace XREngine.Rendering.UI
         {
             RenderPass = material.RenderPass;
             material.RenderOptions = _renderParameters;
-            RemakeMesh(material);
+            if (Mesh is null)
+                RemakeMesh(material);
+            else
+                Material = material;
         }
 
         private void RemakeMesh()
@@ -133,7 +136,13 @@ namespace XREngine.Rendering.UI
         /// or use textures (which require per-instance texture binds).
         /// </summary>
         public override bool SupportsBatchedRendering
-            => !ClipToBounds && (Material?.Textures is null || Material.Textures.Count == 0);
+        {
+            get
+            {
+                XRMaterial? material = Material;
+                return !ClipToBounds && (material?.Textures is null || material.Textures.Count == 0);
+            }
+        }
 
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {

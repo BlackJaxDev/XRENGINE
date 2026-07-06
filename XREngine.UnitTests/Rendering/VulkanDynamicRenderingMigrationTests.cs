@@ -94,6 +94,47 @@ public sealed class VulkanDynamicRenderingMigrationTests
     }
 
     [Test]
+    public void VulkanFramebuffer_WriteBindingTracksDrawFramebufferState()
+    {
+        string glFrameBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/BackendObjects/Framebuffers/GLFrameBuffer.cs");
+        string vkFrameBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
+        string bindFboCommand = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/State/VPRC_BindFBO.cs");
+
+        glFrameBuffer.ShouldContain("Data.BindForWriteRequested += BindForWriting;");
+        glFrameBuffer.ShouldContain("Data.BindForWriteRequested -= BindForWriting;");
+        glFrameBuffer.ShouldContain("Data.UnbindFromWriteRequested += UnbindFromWriting;");
+        glFrameBuffer.ShouldContain("Data.UnbindFromWriteRequested -= UnbindFromWriting;");
+
+        vkFrameBuffer.ShouldContain("Data.BindForWriteRequested += BindForWriting;");
+        vkFrameBuffer.ShouldContain("Data.BindForWriteRequested -= BindForWriting;");
+        vkFrameBuffer.ShouldContain("Data.UnbindFromWriteRequested += UnbindFromWriting;");
+        vkFrameBuffer.ShouldContain("Data.UnbindFromWriteRequested -= UnbindFromWriting;");
+        vkFrameBuffer.ShouldContain("Renderer.BindFrameBuffer(EFramebufferTarget.DrawFramebuffer, Data);");
+        vkFrameBuffer.ShouldContain("Renderer.BindFrameBuffer(EFramebufferTarget.DrawFramebuffer, null);");
+
+        bindFboCommand.ShouldContain("FrameBuffer.BindForWriting();");
+        bindFboCommand.ShouldContain("PopCommand.Write = true;");
+        bindFboCommand.ShouldNotContain("FrameBuffer.Bind();");
+    }
+
+    [Test]
+    public void VulkanSwapchainOverlayPasses_LoadPresentedImageInsteadOfClearing()
+    {
+        string commandBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+
+        commandBuffer.ShouldContain("static bool IsOverlayContext(FrameOpContext context)");
+        commandBuffer.ShouldContain("context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline");
+        commandBuffer.ShouldContain("CountLogicalSwapchainWriter(meshDraw.Context);");
+        commandBuffer.ShouldContain("CountLogicalSwapchainWriter(blit.Context);");
+        commandBuffer.ShouldNotContain("sceneSwapchainWriters = swapchainWriteCount;");
+
+        commandBuffer.ShouldContain("(overlaySwapchainPass && imageWasEverPresentedAtRecordStart)");
+        commandBuffer.ShouldContain("(legacyOverlaySwapchainPass && imageWasEverPresentedAtRecordStart)");
+        commandBuffer.ShouldContain("void ExecuteDynamicUiBatchTextOverlay()");
+        commandBuffer.ShouldContain("imageWasEverPresentedAtRecordStart;");
+    }
+
+    [Test]
     public void StereoMeshVersionSelection_PreservesAuthoredVertexShadersWithoutStereoVariants()
     {
         string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRMeshRenderer.cs");

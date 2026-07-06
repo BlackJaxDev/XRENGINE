@@ -191,7 +191,7 @@ namespace XREngine.Rendering.Vulkan
                     programIdentity,
                     bindingSnapshot,
                     state.ModelMatrix,
-                    GetCurrentDrawFrameBuffer(),
+                    ResolveCurrentFrameOpDrawTarget(),
                     out draw,
                     out string reason))
             {
@@ -257,7 +257,7 @@ namespace XREngine.Rendering.Vulkan
 
             FrameOpContext context = CaptureFrameOpContext();
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
-            XRFrameBuffer? target = GetCurrentDrawFrameBuffer();
+            XRFrameBuffer? target = ResolveCurrentFrameOpDrawTarget();
             EnqueueFrameOp(new IndirectDrawOp(
                 EnsureValidPassIndex(passIndex, "IndirectDraw", context.PassMetadata),
                 target,
@@ -308,7 +308,7 @@ namespace XREngine.Rendering.Vulkan
 
             FrameOpContext context = CaptureFrameOpContext();
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
-            XRFrameBuffer? target = GetCurrentDrawFrameBuffer();
+            XRFrameBuffer? target = ResolveCurrentFrameOpDrawTarget();
             EnqueueFrameOp(new IndirectDrawOp(
                 EnsureValidPassIndex(passIndex, "IndirectCountDraw", context.PassMetadata),
                 target,

@@ -27,6 +27,11 @@ namespace XREngine;
 
 internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHostServices
 {
+    private readonly object _vrDesktopPressureLock = new();
+    private int _vrDesktopPressureHoldFramesRemaining;
+    private ulong _vrDesktopPressureFrameId;
+    private bool _vrDesktopPressureHoldCurrentFrame;
+
     public IDisposable? StartProfileScope(string? scopeName)
     {
         // Fast path when profiling is off: avoid the ProfilerScope -> IDisposable box entirely.
@@ -488,6 +493,26 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
 
     public void ProcessRenderThreadTasks()
         => Engine.ProcessMainThreadTasks();
+
+    public void MarkRenderFrameReadyForCollect(IRuntimeRenderWindowHost window)
+    {
+        if (window is not XRWindow currentWindow || !currentWindow.IsTickLinked)
+            return;
+
+        int tickLinkedWindowCount = 0;
+        for (int i = 0; i < Engine.Windows.Count; i++)
+        {
+            if (!Engine.Windows[i].IsTickLinked)
+                continue;
+
+            tickLinkedWindowCount++;
+            if (tickLinkedWindowCount > 1)
+                return;
+        }
+
+        if (tickLinkedWindowCount == 1)
+            Engine.Time.Timer.MarkRenderFrameReadyForCollect();
+    }
 
     public IDisposable? PushTransformId(uint transformId)
         => Engine.Rendering.State.PushTransformId(transformId);
@@ -1227,12 +1252,17 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     {
         ulong frameId = Engine.Time.Timer.CollectFrameId;
         float targetRateHz = GetVrOutputTargetRateHz(viewKind);
+        bool autoSkipWhenOverBudget = Engine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget;
 
         if (!xrCritical &&
             Engine.VRState.IsInVR &&
             viewKind is EVrOutputViewKind.DesktopEditor or EVrOutputViewKind.CyclopeanDesktop)
         {
+            Engine.Rendering.Stats.FrameOutputManifestSnapshot manifest = Engine.Rendering.Stats.FrameOutputs.LastManifest;
             EVrMirrorMode mode = Engine.Rendering.Settings.VrMirrorMode;
+            if (autoSkipWhenOverBudget && !HasRecentRenderedDesktopOutput(manifest, viewKind))
+                autoSkipWhenOverBudget = false;
+
             if (mode == EVrMirrorMode.Off)
             {
                 return Engine.Rendering.Stats.FrameOutputs.RecordForcedSkip(
@@ -1252,6 +1282,16 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
                     EFrameOutputSkipReason.HeldLastImage,
                     targetRateHz);
             }
+
+            if (autoSkipWhenOverBudget && ShouldHoldDesktopOutputForVrPressure(frameId, manifest))
+            {
+                return Engine.Rendering.Stats.FrameOutputs.RecordForcedSkip(
+                    viewKind,
+                    outputKind,
+                    frameId,
+                    EFrameOutputSkipReason.Budget,
+                    targetRateHz);
+            }
         }
 
         return Engine.Rendering.Stats.FrameOutputs.EvaluatePacing(
@@ -1260,8 +1300,62 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             frameId,
             xrCritical,
             targetRateHz,
-            Engine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget);
+            autoSkipWhenOverBudget);
     }
+
+    private static bool HasRecentRenderedDesktopOutput(
+        Engine.Rendering.Stats.FrameOutputManifestSnapshot manifest,
+        EVrOutputViewKind viewKind)
+    {
+        Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs = manifest.Outputs;
+        for (int i = 0; i < outputs.Length; i++)
+        {
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
+            if (output.ViewKind != viewKind || !output.Active)
+                continue;
+
+            if ((output.OutputKind == EFrameOutputKind.DesktopScene && output.RenderPhaseSceneRendered) ||
+                (output.OutputKind == EFrameOutputKind.DesktopMirror && output.Rendered))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool ShouldHoldDesktopOutputForVrPressure(
+        ulong frameId,
+        Engine.Rendering.Stats.FrameOutputManifestSnapshot manifest)
+    {
+        double budgetMs = manifest.BudgetMs > 0.0 ? manifest.BudgetMs : 1000.0 / 90.0;
+        double lastWholeFrameMs = manifest.WholeFrameMs;
+        if (budgetMs <= 0.0)
+            return false;
+
+        lock (_vrDesktopPressureLock)
+        {
+            if (_vrDesktopPressureFrameId == frameId)
+                return _vrDesktopPressureHoldCurrentFrame;
+
+            _vrDesktopPressureFrameId = frameId;
+            _vrDesktopPressureHoldCurrentFrame = false;
+
+            if (lastWholeFrameMs > budgetMs)
+            {
+                int holdFrames = Math.Clamp((int)Math.Ceiling(lastWholeFrameMs / budgetMs), 1, 90);
+                _vrDesktopPressureHoldFramesRemaining = Math.Max(_vrDesktopPressureHoldFramesRemaining, holdFrames);
+            }
+
+            if (_vrDesktopPressureHoldFramesRemaining <= 0)
+                return false;
+
+            _vrDesktopPressureHoldFramesRemaining--;
+            _vrDesktopPressureHoldCurrentFrame = true;
+            return true;
+        }
+    }
+
     public void RecordRenderFrameOutput(in FrameOutputTelemetry telemetry)
         => Engine.Rendering.Stats.FrameOutputs.RecordOutput(telemetry);
     public bool EnableVrFoveatedViewSet => Engine.Rendering.Settings.EnableVrFoveatedViewSet;
@@ -1297,6 +1391,7 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool OpenXrDebugRenderRightThenLeft => Engine.Rendering.Settings.OpenXrDebugRenderRightThenLeft;
     public bool OpenXrPrepareFrameAfterDesktopRender => Engine.Rendering.Settings.OpenXrPrepareFrameAfterDesktopRender;
     public float OpenXrDeadlineSafetyMarginMs => Engine.Rendering.Settings.OpenXrDeadlineSafetyMarginMs;
+    public float OpenXrPoseTimeOffsetMs => Engine.Rendering.Settings.OpenXrPoseTimeOffsetMs;
     public OpenXRAPI.OpenXrCollectVisiblePosePolicy OpenXrCollectVisiblePosePolicy => Engine.Rendering.Settings.OpenXrCollectVisiblePosePolicy;
     public float OpenXrCollectVisibleFrustumPaddingDegrees => Engine.Rendering.Settings.OpenXrCollectVisibleFrustumPaddingDegrees;
     public OpenXRAPI.OpenXrTrackingLossPolicy OpenXrTrackingLossPolicy => Engine.Rendering.Settings.OpenXrTrackingLossPolicy;

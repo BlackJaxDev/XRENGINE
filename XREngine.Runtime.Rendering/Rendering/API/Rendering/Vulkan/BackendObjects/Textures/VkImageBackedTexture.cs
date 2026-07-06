@@ -1193,10 +1193,8 @@ public unsafe partial class VulkanRenderer
             IsInvalidated = false;
             MarkDescriptorPublished();
 
-            // The physical group may have been transitioned to an initial layout during
-            // allocation (see TransitionNewPhysicalImagesToInitialLayout). Adopt that
-            // layout so that subsequent barrier calculations use the correct old layout.
-            // If it is still UNDEFINED the barrier planner will transition on first use.
+            // Adopt the physical group's live layout. If it is still UNDEFINED, the
+            // barrier planner will transition it inside the command buffer at first use.
         }
 
         private void CreateDedicatedImage()

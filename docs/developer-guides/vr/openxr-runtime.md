@@ -100,6 +100,8 @@ The runtime maintains predicted and late pose caches for:
 
 Callers pass an explicit runtime pose timing when asking VR transforms to update render matrices. This avoids process-global timing switches and lets update, collection, and rendering readers use the correct pose cache for their phase.
 
+OpenXR pose location normally uses the runtime's `xrWaitFrame` predicted display time. For runtime-specific tuning, `OpenXrPoseTimeOffsetMs` or `XRE_OPENXR_POSE_TIME_OFFSET_MS` adds a small signed millisecond bias to `xrLocateViews` and action-space pose location only. Positive values ask the runtime to predict poses further ahead; negative values reduce the prediction lead. The frame is still submitted with the runtime-provided predicted display time.
+
 ## OpenGL Swapchain Safety
 
 The OpenXR OpenGL path avoids forced WGL context switching from arbitrary threads. Session setup is deferred until the render side can safely initialize GL-backed swapchains.
@@ -160,6 +162,17 @@ The smoke preflight requires `XR_KHR_opengl_enable` for OpenGL and either `XR_KH
 ### SteamVR is running but the headset is unavailable
 
 Check SteamVR status, HMD power/USB/DisplayPort, SteamVR dashboard focus, and the OpenXR smoke summary. Startup should fail visibly rather than falling back to OpenVR.
+
+### Head motion feels late or over-predicted
+
+Start by enabling OpenXR lifecycle/profiler diagnostics and checking predicted display lead time, predicted-to-late pose delta, and missed-deadline counts. If those look healthy but a specific runtime still feels consistently behind or ahead, test a small pose-time bias:
+
+```powershell
+$env:XRE_OPENXR_POSE_TIME_OFFSET_MS = "2.0"
+dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -- --unit-testing
+```
+
+Use small values first, usually within a few milliseconds. Large positive values can make head motion overshoot; large negative values can make it feel laggy.
 
 ### Action bindings are missing or inactive
 

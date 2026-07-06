@@ -199,6 +199,17 @@ public unsafe partial class VulkanRenderer
         => string.Equals(name, "SourceTexture", StringComparison.Ordinal) ||
             string.Equals(name, "SourceTex", StringComparison.Ordinal);
 
+    private static bool IsMutableFrameSourceSamplerName(string? name, XRRenderPipelineInstance? pipeline)
+    {
+        if (IsFrameSourceSamplerName(name))
+            return true;
+
+        return !string.IsNullOrWhiteSpace(name) &&
+            pipeline is not null &&
+            pipeline.TryGetTexture(name, out XRTexture? texture) &&
+            texture is not null;
+    }
+
     internal sealed record ComputeDispatchOp(
         int PassIndex,
         VkRenderProgram Program,
@@ -272,7 +283,7 @@ public unsafe partial class VulkanRenderer
 
         EnqueueFrameOp(new QueryOp(
             passIndex,
-            GetCurrentDrawFrameBuffer(),
+            ResolveCurrentFrameOpDrawTarget(),
             vkQuery,
             target,
             operation,
@@ -620,7 +631,7 @@ public unsafe partial class VulkanRenderer
                     hash.Add(meshDraw.Draw.IsStereoPass);
                     hash.Add(meshDraw.Draw.UseUnjitteredProjection);
                     hash.Add(meshDraw.Draw.PreparedProgramIdentity);
-                    HashProgramBindingSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot);
+                    HashProgramBindingSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot, meshDraw.Context.PipelineInstance);
                     break;
                 case QueryOp query:
                     hash.Add(query.Query.GetHashCode());
@@ -710,7 +721,7 @@ public unsafe partial class VulkanRenderer
                     hash.Add(compute.GroupsX);
                     hash.Add(compute.GroupsY);
                     hash.Add(compute.GroupsZ);
-                    HashProgramBindingSnapshot(ref hash, compute.Snapshot);
+                    HashProgramBindingSnapshot(ref hash, compute.Snapshot, compute.Context.PipelineInstance);
                     break;
                 case TextureUploadFrameOp upload:
                     hash.Add(upload.Upload.PublicationToken);
@@ -815,6 +826,7 @@ public unsafe partial class VulkanRenderer
     private static void HashProgramBindingSnapshot(
         ref FrameOpSignatureHasher hash,
         ComputeDispatchSnapshot? snapshot,
+        XRRenderPipelineInstance? pipeline = null,
         bool includeMutableFrameSourceDescriptors = false)
     {
         if (snapshot is null)
@@ -825,8 +837,8 @@ public unsafe partial class VulkanRenderer
 
         hash.Add(1);
         hash.Add(HashUniformBindingLayout(snapshot.Uniforms));
-        hash.Add(HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, includeMutableFrameSourceDescriptors));
-        hash.Add(HashSamplerNameBindings(snapshot.SamplersByName, includeMutableFrameSourceDescriptors));
+        hash.Add(HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline, includeMutableFrameSourceDescriptors));
+        hash.Add(HashSamplerNameBindings(snapshot.SamplersByName, pipeline, includeMutableFrameSourceDescriptors));
         hash.Add(HashImageBindings(snapshot.Images));
         hash.Add(HashBufferBindings(snapshot.Buffers));
     }
@@ -867,6 +879,7 @@ public unsafe partial class VulkanRenderer
     private static ulong HashSamplerUnitBindings(
         Dictionary<uint, XRTexture> samplers,
         Dictionary<uint, string> samplerNamesByUnit,
+        XRRenderPipelineInstance? pipeline = null,
         bool includeMutableFrameSourceDescriptors = false)
     {
         ulong xor = 0;
@@ -875,9 +888,9 @@ public unsafe partial class VulkanRenderer
         {
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
-            if (!includeMutableFrameSourceDescriptors &&
-                samplerNamesByUnit.TryGetValue(pair.Key, out string? samplerName) &&
-                IsFrameSourceSamplerName(samplerName))
+            bool mutableFrameSource = samplerNamesByUnit.TryGetValue(pair.Key, out string? samplerName) &&
+                IsMutableFrameSourceSamplerName(samplerName, pipeline);
+            if (!includeMutableFrameSourceDescriptors && mutableFrameSource)
                 AddFrameSourceTextureDescriptorSignature(ref item, pair.Value);
             else
                 AddTextureDescriptorSignature(ref item, pair.Value);
@@ -889,6 +902,7 @@ public unsafe partial class VulkanRenderer
 
     private static ulong HashSamplerNameBindings(
         Dictionary<string, XRTexture> samplers,
+        XRRenderPipelineInstance? pipeline = null,
         bool includeMutableFrameSourceDescriptors = false)
     {
         ulong xor = 0;
@@ -897,7 +911,7 @@ public unsafe partial class VulkanRenderer
         {
             FrameOpSignatureHasher item = new();
             item.Add(pair.Key);
-            if (!includeMutableFrameSourceDescriptors && IsFrameSourceSamplerName(pair.Key))
+            if (!includeMutableFrameSourceDescriptors && IsMutableFrameSourceSamplerName(pair.Key, pipeline))
                 AddFrameSourceTextureDescriptorSignature(ref item, pair.Value);
             else
                 AddTextureDescriptorSignature(ref item, pair.Value);
@@ -1448,7 +1462,7 @@ public unsafe partial class VulkanRenderer
                 return;
 
             int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
-            XRFrameBuffer? target = Renderer.GetCurrentDrawFrameBuffer();
+            XRFrameBuffer? target = Renderer.ResolveCurrentFrameOpDrawTarget();
 
             // Resolve the effective material and its render options so the
             // pipeline key captures per-material state (CullMode, DepthTest, etc.)
@@ -1804,7 +1818,7 @@ public unsafe partial class VulkanRenderer
             if (!preparedForIndirect)
                 return false;
 
-            XRFrameBuffer? effectiveTarget = target ?? Renderer.GetCurrentDrawFrameBuffer();
+            XRFrameBuffer? effectiveTarget = target ?? Renderer.ResolveCurrentFrameOpDrawTarget();
             SampleCountFlags rasterizationSamples = ResolveRasterizationSamples(effectiveTarget);
             bool alphaToCoverageEnabled = Renderer.GetAlphaToCoverageEnabled() && rasterizationSamples != SampleCountFlags.Count1Bit;
 

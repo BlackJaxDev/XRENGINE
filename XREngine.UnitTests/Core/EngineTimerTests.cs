@@ -71,6 +71,23 @@ public sealed class EngineTimerTests
     }
 
     [Test]
+    public void CollectVisibleLatePolicy_DefaultsToReusePreviousVisibility()
+    {
+        string? previous = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy);
+        try
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy, null);
+            var timer = new EngineTimer();
+
+            timer.CollectVisibleLatePolicy.ShouldBe(ECollectVisibleLatePolicy.ReusePreviousVisibility);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy, previous);
+        }
+    }
+
+    [Test]
     public void EngineTimeAccessors_ExposeTimerTicksAndFrequency()
     {
         Engine.ElapsedTicks.ShouldBe(Engine.Time.ElapsedTicks);

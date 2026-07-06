@@ -7,8 +7,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            FrameBuffer.Bind();
+            FrameBuffer.BindForWriting();
             PopCommand.FrameBuffer = FrameBuffer;
+            PopCommand.Write = true;
             PopCommand.RenderTargetScope = ActivePipelineInstance.RenderState.PushRenderTargetBinding(
                 FrameBuffer.Name ?? $"FBO[{FrameBuffer.GetHashCode()}]",
                 FrameBuffer,

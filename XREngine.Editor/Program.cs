@@ -3,6 +3,7 @@ using Newtonsoft.Json.Converters;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using EngineDebug = XREngine.Debug;
 using System.Linq;
@@ -181,6 +182,7 @@ internal partial class Program
             else
                 WriteBootstrapTrace("No unit-test RenderAPI/PhysicsAPI overrides were specified; keeping loaded user settings.");
             TraceBootstrapStep("BeforeCreateWindows.ApplyOpenXrRenderPacingOverride", () => ApplyOpenXrRenderPacingOverride(RuntimeBootstrapState.Settings));
+            TraceBootstrapStep("BeforeCreateWindows.ApplyOpenXrPoseTimeOffsetOverride", ApplyOpenXrPoseTimeOffsetOverride);
             TraceBootstrapStep("BeforeCreateWindows.StartStartupFontPrewarm", StartStartupFontPrewarm);
             TraceBootstrapStep("BeforeCreateWindows.StartStartupTextShaderPrewarm", StartStartupTextShaderPrewarm);
             
@@ -268,6 +270,32 @@ internal partial class Program
         EngineDebug.LogWarning(
             $"Invalid {XREngineEnvironmentVariables.OpenXrRenderPacingMode} value '{raw}'. Expected one of: " +
             string.Join(", ", Enum.GetNames<OpenXRAPI.OpenXrRenderPacingMode>()) + ".");
+        return false;
+    }
+
+    private static void ApplyOpenXrPoseTimeOffsetOverride()
+    {
+        if (!TryGetOpenXrPoseTimeOffsetMsEnv(out float offsetMs))
+            return;
+
+        XREngine.Engine.Rendering.Settings.OpenXrPoseTimeOffsetMs = offsetMs;
+        WriteBootstrapTrace(
+            $"OpenXR pose time offset overridden to {XREngine.Engine.Rendering.Settings.OpenXrPoseTimeOffsetMs:F2} ms via {XREngineEnvironmentVariables.OpenXrPoseTimeOffsetMs}.");
+    }
+
+    private static bool TryGetOpenXrPoseTimeOffsetMsEnv(out float offsetMs)
+    {
+        offsetMs = default;
+        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrPoseTimeOffsetMs);
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        if (float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out offsetMs))
+            return true;
+
+        EngineDebug.LogWarning(
+            $"Invalid {XREngineEnvironmentVariables.OpenXrPoseTimeOffsetMs} value '{raw}'. Expected a signed millisecond value, " +
+            $"clamped to {OpenXRAPI.OpenXrMinPoseTimeOffsetMs:F0}..{OpenXRAPI.OpenXrMaxPoseTimeOffsetMs:F0}.");
         return false;
     }
 

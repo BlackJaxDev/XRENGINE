@@ -67,7 +67,7 @@ public unsafe partial class VulkanRenderer
                 {
                     Debug.VulkanWarningEvery(
                         "Vulkan.AutoExposure.SkipPlannerMipmaps2D",
-                        TimeSpan.FromSeconds(2),
+                        TimeSpan.FromSeconds(30),
                         "[Vulkan] Skipping out-of-band mipmap generation for planner-backed source texture '{0}' to avoid layout races with render-graph barriers.",
                         source2D.Name ?? "<unnamed>");
                 }
@@ -81,7 +81,7 @@ public unsafe partial class VulkanRenderer
                 useMiplessMeteringFallback = true;
                 Debug.VulkanWarningEvery(
                     "Vulkan.AutoExposure.PlannerMip0Fallback2D",
-                    TimeSpan.FromSeconds(2),
+                    TimeSpan.FromSeconds(30),
                     "[Vulkan] Auto exposure is using filtered mipless metering for planner-backed source texture '{0}' because render-graph mip generation is not available yet.",
                     source2D.Name ?? "<unnamed>");
             }
@@ -103,7 +103,7 @@ public unsafe partial class VulkanRenderer
                 {
                     Debug.VulkanWarningEvery(
                         "Vulkan.AutoExposure.SkipPlannerMipmaps2DArray",
-                        TimeSpan.FromSeconds(2),
+                        TimeSpan.FromSeconds(30),
                         "[Vulkan] Skipping out-of-band mipmap generation for planner-backed array source texture '{0}' to avoid layout races with render-graph barriers.",
                         source2DArray.Name ?? "<unnamed>");
                 }
@@ -117,7 +117,7 @@ public unsafe partial class VulkanRenderer
                 useMiplessMeteringFallback = true;
                 Debug.VulkanWarningEvery(
                     "Vulkan.AutoExposure.PlannerMip0Fallback2DArray",
-                    TimeSpan.FromSeconds(2),
+                    TimeSpan.FromSeconds(30),
                     "[Vulkan] Auto exposure is using filtered mipless metering for planner-backed array source texture '{0}' because render-graph mip generation is not available yet.",
                     source2DArray.Name ?? "<unnamed>");
             }
@@ -125,7 +125,7 @@ public unsafe partial class VulkanRenderer
             program = _autoExposureComputeProgram2DArray;
             Debug.VulkanEvery(
                 $"Vulkan.AutoExposure.HeadsetSharedArray.{source2DArray.Name ?? source2DArray.SamplerName ?? "<unnamed>"}",
-                TimeSpan.FromSeconds(5),
+                TimeSpan.FromSeconds(30),
                 "[Vulkan] Auto exposure policy=HeadsetShared source='{0}' layers={1}; luminance is averaged across stereo array layers.",
                 source2DArray.Name ?? source2DArray.SamplerName ?? "<unnamed>",
                 layerCount);
@@ -161,7 +161,7 @@ public unsafe partial class VulkanRenderer
             {
                 Debug.VulkanEvery(
                     "Vulkan.AutoExposure.PlannerExposureGraphBarriers",
-                    TimeSpan.FromSeconds(5),
+                    TimeSpan.FromSeconds(30),
                     "[Vulkan] Auto exposure is relying on render-graph barriers for planner-backed exposure texture '{0}'.",
                     exposureTex.Name ?? "<unnamed>");
             }
