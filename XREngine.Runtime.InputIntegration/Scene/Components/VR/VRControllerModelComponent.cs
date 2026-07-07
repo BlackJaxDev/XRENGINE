@@ -1,5 +1,4 @@
-using OpenVR.NET.Devices;
-using Valve.VR;
+using XREngine.Rendering;
 
 namespace XREngine.Components.VR
 {
@@ -23,20 +22,7 @@ namespace XREngine.Components.VR
             }
         }
 
-        protected override DeviceModel? GetRenderModel(VrDevice? device)
-        {
-            if (LeftHand)
-            {
-                if (device is Controller controller && controller.Role == ETrackedControllerRole.LeftHand)
-                    return device.Model;
-            }
-            else
-            {
-                if (device is Controller controller && controller.Role == ETrackedControllerRole.RightHand)
-                    return device.Model;
-            }
-
-            return null;
-        }
+        protected override bool TryGetRenderModel(out RuntimeVrRenderModelDescriptor? model)
+            => RuntimeVrRenderingServices.RenderModelProvider.TryGetControllerRenderModel(LeftHand, out model);
     }
 }

@@ -116,6 +116,7 @@ namespace XREngine.Rendering
         public abstract void CleanUp();
         public virtual bool ShouldSkipNativeWindowDisposeForShutdown => false;
         public virtual bool IsDeviceLost => false;
+        public virtual string? DeviceLostReason => null;
 
         protected abstract void WindowRenderCallback(double delta);
 

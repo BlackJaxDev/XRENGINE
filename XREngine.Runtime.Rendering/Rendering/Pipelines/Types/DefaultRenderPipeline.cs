@@ -128,8 +128,14 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     protected static EMeshSubmissionStrategy MeshSubmissionStrategy
         => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
 
+    internal static bool UseOpenXrVulkanDesktopStartupSafePath
+        => RuntimeEngine.Rendering.State.IsVulkan &&
+           RuntimeRenderingHostServices.Current.IsOpenXrRuntimeRequested &&
+           !RuntimeEngine.Rendering.State.IsStereoPass;
+
     private static bool EnableComputeDependentPasses
-        => VulkanFeatureProfile.EnableComputeDependentPasses;
+        => VulkanFeatureProfile.EnableComputeDependentPasses &&
+           !UseOpenXrVulkanDesktopStartupSafePath;
 
     /// <summary>
     /// Resolves the effective HDR output mode for the current rendering camera.
@@ -3301,6 +3307,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private int EvaluateAmbientOcclusionMode()
     {
+        if (UseOpenXrVulkanDesktopStartupSafePath)
+            return AmbientOcclusionDisabledMode;
+
         AmbientOcclusionSettings? aoSettings = ResolveAmbientOcclusionSettings();
         if (aoSettings is null || !aoSettings.Enabled)
             return AmbientOcclusionDisabledMode;
@@ -3673,6 +3682,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
 
     private bool ShouldUseAmbientOcclusion()
     {
+        if (UseOpenXrVulkanDesktopStartupSafePath)
+            return false;
+
         AmbientOcclusionSettings? settings = ResolveAmbientOcclusionSettings();
         return settings?.Enabled == true;
     }

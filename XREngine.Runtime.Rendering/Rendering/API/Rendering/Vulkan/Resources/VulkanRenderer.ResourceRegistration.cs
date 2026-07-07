@@ -99,8 +99,14 @@ public unsafe partial class VulkanRenderer
         {
             Result result = Api!.CreateImage(device, ref imageInfo, null, imagePtr);
             if (result != Result.Success)
-                throw new Exception($"Failed to create Vulkan image for resource group '{group.Key}'. Result={result}.");
+            {
+                image = default;
+                failureReason = $"Failed to create Vulkan image for resource group '{group.Key}'. Result={result}.";
+                return false;
+            }
         }
+
+        ClearTrackedImageLayouts(image);
 
         Debug.VulkanEvery(
             $"Vulkan.PhysicalImage.Alloc.{group.Key}",
@@ -152,8 +158,15 @@ public unsafe partial class VulkanRenderer
             {
                 _imageAllocations.TryRemove(image.Handle, out _);
                 FreeMemoryAllocation(allocation);
+                if (image.Handle != 0)
+                {
+                    Api!.DestroyImage(device, image, null);
+                    image = default;
+                }
+
                 memory = default;
-                throw new Exception($"Failed to bind device memory for Vulkan image group '{group.Key}'. Result={bindResult}.");
+                failureReason = $"Failed to bind device memory for Vulkan image group '{group.Key}'. Result={bindResult}.";
+                return false;
             }
         }
         catch

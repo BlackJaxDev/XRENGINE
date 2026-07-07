@@ -76,6 +76,7 @@ namespace XREngine.Editor.Mcp
                         status = GpuPipelineStats.GpuRenderPipelineStatusMessage,
                         frame_ms = GpuPipelineStats.GpuRenderPipelineFrameMs,
                     },
+                    frame_outputs = BuildFrameOutputManifest(Engine.Rendering.Stats.FrameOutputs.LastManifest),
                     occlusion = new
                     {
                         effective_mode = OcclusionTelemetry.LastEffectiveMode.ToString(),
@@ -249,6 +250,67 @@ namespace XREngine.Editor.Mcp
                         },
                     },
                 }));
+        }
+
+        private static object BuildFrameOutputManifest(Engine.Rendering.Stats.FrameOutputManifestSnapshot snapshot)
+        {
+            Engine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs = snapshot.Outputs ?? [];
+            object[] outputData = new object[outputs.Length];
+            for (int i = 0; i < outputs.Length; i++)
+            {
+                Engine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
+                outputData[i] = new
+                {
+                    frame_id = output.FrameId,
+                    output_kind = output.OutputKindName,
+                    view_kind = output.ViewKindName,
+                    name = output.Name,
+                    pipeline = output.PipelineName,
+                    active = output.Active,
+                    rendered = output.Rendered,
+                    scene_rendered = output.SceneRendered,
+                    render_phase_scene_rendered = output.RenderPhaseSceneRendered,
+                    mirror = output.Mirror,
+                    separate_scene_render = output.SeparateSceneRender,
+                    shared_visibility = output.SharedVisibility,
+                    due = output.Due,
+                    skipped = output.Skipped,
+                    cadence_skipped = output.CadenceSkipped,
+                    auto_skipped = output.AutoSkipped,
+                    skip_reason = output.SkipReasonName,
+                    configured_target_rate_hz = output.ConfiguredTargetRateHz,
+                    source_rate_hz = output.SourceRateHz,
+                    achieved_rate_hz = JsonFinite(output.AchievedRateHz),
+                    total_render_count = output.TotalRenderCount,
+                    total_skip_count = output.TotalSkipCount,
+                    command_count = output.CommandCount,
+                    collect_cpu_ms = JsonFinite(output.CollectCpuMs),
+                    swap_cpu_ms = JsonFinite(output.SwapCpuMs),
+                    render_cpu_ms = JsonFinite(output.RenderCpuMs),
+                    submit_cpu_ms = JsonFinite(output.SubmitCpuMs),
+                    overlay_cpu_ms = JsonFinite(output.OverlayCpuMs),
+                    present_cpu_ms = JsonFinite(output.PresentCpuMs),
+                    gpu_ms = JsonFinite(output.GpuMs),
+                    summary = output.Summary,
+                };
+            }
+
+            return new
+            {
+                frame_id = snapshot.FrameId,
+                vr_active = snapshot.VrActive,
+                mirror_mode = snapshot.MirrorMode.ToString(),
+                visibility_policy = snapshot.VisibilityPolicy.ToString(),
+                budget_band = snapshot.BudgetBand,
+                budget_ms = JsonFinite(snapshot.BudgetMs),
+                whole_frame_ms = JsonFinite(snapshot.WholeFrameMs),
+                whole_frame_p50_ms = JsonFinite(snapshot.WholeFrameP50Ms),
+                whole_frame_p90_ms = JsonFinite(snapshot.WholeFrameP90Ms),
+                whole_frame_p95_ms = JsonFinite(snapshot.WholeFrameP95Ms),
+                whole_frame_p99_ms = JsonFinite(snapshot.WholeFrameP99Ms),
+                whole_frame_worst_ms = JsonFinite(snapshot.WholeFrameWorstMs),
+                outputs = outputData,
+            };
         }
 
         private static double? JsonFinite(double value)

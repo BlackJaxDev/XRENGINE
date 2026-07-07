@@ -199,6 +199,8 @@ namespace XREngine.Rendering.Vulkan
             public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;
             public int RecordedSwapchainWriteCount { get; set; }
             public bool RecordedSwapchainRefreshFromLastPresentSource { get; set; }
+            public ulong RecordedImageLayoutStartSignature { get; set; } = ulong.MaxValue;
+            public ulong RecordedImageLayoutEndSignature { get; set; } = ulong.MaxValue;
             public ulong CommandChainScheduleSignature { get; set; } = ulong.MaxValue;
             public ulong CommandChainPrimaryGroupSignature { get; set; } = ulong.MaxValue;
             public int CommandChainPrimaryGroupCount { get; set; } = -1;
@@ -667,6 +669,7 @@ namespace XREngine.Rendering.Vulkan
                 _dynamicUiBatchTextOverlayCommandBuffers is null &&
                 _imguiOverlayCommandBuffers is null &&
                 _commandChainCaches is null &&
+                _externalCommandChainCaches is null &&
                 !HasTrackedCommandChainSecondaryPools() &&
                 _computeTransientResources is null &&
                 _computeDescriptorCaches is null &&
@@ -706,6 +709,7 @@ namespace XREngine.Rendering.Vulkan
                 _commandBufferFrameOpSignatureDebugParts = null;
                 _commandBufferPlannerRevisions = null;
                 _commandChainCaches = null;
+                _externalCommandChainCaches = null;
                 _commandChainScheduleCache = null;
                 _commandChainScheduleFastSignatures = null;
                 ClearTrackedCommandChainSecondaryPools();
@@ -733,6 +737,7 @@ namespace XREngine.Rendering.Vulkan
             _commandBufferFrameOpSignatureDebugParts = null;
             _commandBufferPlannerRevisions = null;
             _commandChainCaches = null;
+            _externalCommandChainCaches = null;
             _commandChainScheduleCache = null;
             _commandChainScheduleFastSignatures = null;
             ClearTrackedCommandChainSecondaryPools();
@@ -787,21 +792,38 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyCommandChainCaches()
         {
-            if (_commandChainCaches is null)
+            if (_commandChainCaches is null && _externalCommandChainCaches is null)
                 return;
 
-            foreach (Dictionary<CommandChainKey, CommandChain>? cache in _commandChainCaches)
+            if (_commandChainCaches is not null)
             {
-                if (cache is null)
-                    continue;
+                foreach (Dictionary<CommandChainKey, CommandChain>? cache in _commandChainCaches)
+                {
+                    if (cache is null)
+                        continue;
 
-                foreach (CommandChain chain in cache.Values)
-                    DestroyCommandChainSecondaryCommandBuffer(chain);
+                    foreach (CommandChain chain in cache.Values)
+                        DestroyCommandChainSecondaryCommandBuffer(chain);
 
-                cache.Clear();
+                    cache.Clear();
+                }
+            }
+
+            if (_externalCommandChainCaches is not null)
+            {
+                foreach (Dictionary<CommandChainKey, CommandChain> cache in _externalCommandChainCaches.Values)
+                {
+                    foreach (CommandChain chain in cache.Values)
+                        DestroyCommandChainSecondaryCommandBuffer(chain);
+
+                    cache.Clear();
+                }
+
+                _externalCommandChainCaches.Clear();
             }
 
             _commandChainCaches = null;
+            _externalCommandChainCaches = null;
             _commandChainScheduleCache = null;
             _commandChainScheduleFastSignatures = null;
         }

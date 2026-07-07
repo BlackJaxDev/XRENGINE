@@ -1508,13 +1508,26 @@ public unsafe partial class OpenXRAPI
             }
 
             int updatingCount = stereoMeshCommands.GetUpdatingCommandCount();
-            stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
-            Debug.RenderingEvery(
-                $"OpenXR.SwapBuffers.TrueStereoCommands.{GetHashCode()}",
-                TimeSpan.FromSeconds(1),
-                "[OpenXR] SwapBuffers published true single-pass stereo commands. updating={0} rendering={1}",
-                updatingCount,
-                stereoMeshCommands.GetRenderingCommandCount());
+            int renderingCountBeforeSwap = stereoMeshCommands.GetRenderingCommandCount();
+            bool skippedEmptyPublish = updatingCount == 0 && renderingCountBeforeSwap > 0;
+            if (skippedEmptyPublish)
+            {
+                Debug.RenderingWarningEvery(
+                    $"OpenXR.SwapBuffers.TrueStereoEmptyCollect.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] SwapBuffers skipped empty true single-pass stereo command publish. Keeping previous rendering commands={0}.",
+                    renderingCountBeforeSwap);
+            }
+            else
+            {
+                stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
+                Debug.RenderingEvery(
+                    $"OpenXR.SwapBuffers.TrueStereoCommands.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] SwapBuffers published true single-pass stereo commands. updating={0} rendering={1}",
+                    updatingCount,
+                    stereoMeshCommands.GetRenderingCommandCount());
+            }
         }
         else if (_openXrSharedMeshRenderCommands is null)
         {

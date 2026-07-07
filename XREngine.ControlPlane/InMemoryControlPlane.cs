@@ -4,7 +4,7 @@ using XREngine.Networking;
 
 namespace XREngine.ControlPlane;
 
-public sealed class InMemoryControlPlane(ControlPlaneOptions? options = null)
+public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = null)
 {
     private readonly object _sync = new();
     private readonly ControlPlaneOptions _options = options ?? new ControlPlaneOptions();
@@ -46,7 +46,7 @@ public sealed class InMemoryControlPlane(ControlPlaneOptions? options = null)
     public IReadOnlyList<ControlPlaneHostSnapshot> ListHosts()
     {
         lock (_sync)
-            return _hosts.Values.Select(CreateHostSnapshot).ToArray();
+            return [.. _hosts.Values.Select(CreateHostSnapshot)];
     }
 
     public ControlPlaneResult<MultiplayerInstanceInfo> CreateInstance(CreateMultiplayerInstanceRequest request)
@@ -125,10 +125,9 @@ public sealed class InMemoryControlPlane(ControlPlaneOptions? options = null)
     {
         lock (_sync)
         {
-            return _instances.Values
+            return [.. _instances.Values
                 .Where(instance => includeStopped || instance.Info.State != MultiplayerInstanceState.Stopped)
-                .Select(instance => CloneInstanceInfo(instance.Info, includeToken: false))
-                .ToArray();
+                .Select(instance => CloneInstanceInfo(instance.Info, includeToken: false))];
         }
     }
 
@@ -465,12 +464,12 @@ public sealed class InMemoryControlPlane(ControlPlaneOptions? options = null)
             RootPath = manifest.RootPath,
             TotalBytes = manifest.TotalBytes,
             ManifestHash = manifest.ManifestHash,
-            Files = manifest.Files.Select(static file => new WorldPackageFile
+            Files = [.. manifest.Files.Select(static file => new WorldPackageFile
             {
                 RelativePath = file.RelativePath,
                 Length = file.Length,
                 Sha256 = file.Sha256,
-            }).ToList(),
+            })],
             Metadata = CloneDictionary(manifest.Metadata),
         };
 
@@ -505,15 +504,4 @@ public sealed class InMemoryControlPlane(ControlPlaneOptions? options = null)
         => source is null
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             : new Dictionary<string, string>(source, StringComparer.OrdinalIgnoreCase);
-
-    private sealed class HostState
-    {
-        public ControlPlaneHostRegistration Registration { get; init; } = new();
-    }
-
-    private sealed class InstanceState
-    {
-        public MultiplayerInstanceInfo Info { get; init; } = new();
-        public Dictionary<string, MultiplayerPlayerInfo> Players { get; } = new(StringComparer.OrdinalIgnoreCase);
-    }
 }

@@ -36,6 +36,7 @@ public unsafe partial class VulkanRenderer
         if (_openXrVulkanEnable2Context is null)
             return false;
 
+        bool rendererHandlesCreatedThroughOpenXr = UsesOpenXrVulkanEnable2Creation;
         _openXrVulkanEnable2Context.AbandonXrInstanceOnDispose(reason);
         _openXrVulkanEnable2Context.Dispose();
         _openXrVulkanEnable2Context = null;
@@ -44,13 +45,9 @@ public unsafe partial class VulkanRenderer
             "[OpenXR] Invalidated renderer-owned XR_KHR_vulkan_enable2 bootstrap instance. Reason={0}",
             string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
 
-        if (UsesOpenXrVulkanEnable2Creation)
-        {
-            MarkDeviceLost(
-                string.IsNullOrWhiteSpace(reason)
-                    ? "OpenXR runtime loss invalidated XR_KHR_vulkan_enable2-created Vulkan handles"
-                    : $"OpenXR runtime loss invalidated XR_KHR_vulkan_enable2-created Vulkan handles: {reason}");
-        }
+        if (rendererHandlesCreatedThroughOpenXr)
+            Debug.VulkanWarning(
+                "[OpenXR] Vulkan handles were created through XR_KHR_vulkan_enable2; keeping the logical device live after XR instance teardown. Vulkan device loss will be reported separately if the driver/runtime invalidates the handles.");
 
         return true;
     }

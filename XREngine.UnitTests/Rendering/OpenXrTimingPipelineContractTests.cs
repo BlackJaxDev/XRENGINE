@@ -336,6 +336,7 @@ public sealed class OpenXrTimingPipelineContractTests
     {
         string dirtyReasons = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferDirtyReasons.cs");
         string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+        string meshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
 
         dirtyReasons.ShouldContain("if (CommandChainsEnabledForCurrentRecording)\n            return;");
 
@@ -346,6 +347,14 @@ public sealed class OpenXrTimingPipelineContractTests
 
         onRenderRequested.ShouldContain("Renderer.MarkCommandBuffersDirtyForLegacyMeshState();");
         onRenderRequested.ShouldNotContain("Renderer.MarkCommandBuffersDirty();");
+
+        string ensureUniformSlots = SliceMethod(
+            meshUniforms,
+            "internal void EnsureUniformDrawSlotCapacity",
+            "private int ResolveUniformBufferIndex");
+
+        ensureUniformSlots.ShouldContain("Renderer.MarkCommandBuffersDirtyForLegacyMeshState();");
+        ensureUniformSlots.ShouldNotContain("Renderer.MarkCommandBuffersDirty();");
     }
 
     [Test]
@@ -805,7 +814,7 @@ public sealed class OpenXrTimingPipelineContractTests
         program.ShouldContain("UnitTestingWorldSettingsStore.TryEnsureMonadoServiceForCurrentProcess");
 
         settingsStore.ShouldContain("TryEnsureMonadoServiceForCurrentProcess");
-        settingsStore.ShouldContain("TryEnsureMonadoService(settings, reason)");
+        settingsStore.ShouldContain("TryEnsureMonadoService(settings, reason, eyeResolution)");
         settingsStore.ShouldContain("Reason={reason}");
 
         hostServices.ShouldContain("OpenXrRuntimeServiceEnsurer");
@@ -822,9 +831,9 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanInstance.ShouldContain("internal bool InvalidateOpenXrVulkanEnable2BootstrapInstance(string reason)");
         vulkanInstance.ShouldContain("AbandonXrInstanceOnDispose(reason)");
         vulkanInstance.ShouldContain("UsesOpenXrVulkanEnable2Creation");
-        vulkanInstance.ShouldContain("MarkDeviceLost(");
 
         vulkanSyncObjects.ShouldContain("TimelineWaitPollTimeoutNanoseconds");
+        vulkanSyncObjects.ShouldContain("MarkDeviceLost(");
         vulkanSyncObjects.ShouldContain("value == ulong.MaxValue");
         vulkanSyncObjects.ShouldNotContain("TryWaitForTimelineValue(semaphore, value, ulong.MaxValue)");
     }

@@ -46,6 +46,17 @@ public enum RuntimeVrPoseTiming
 }
 
 /// <summary>
+/// Runtime-neutral identity and pose status for an OpenXR tracker user path.
+/// </summary>
+public readonly record struct RuntimeVrTrackerInfo(
+    string UserPath,
+    string? PersistentPath,
+    string? RolePath,
+    string? RoleName,
+    bool PoseAvailable,
+    bool RuntimeReported);
+
+/// <summary>
 /// Runtime-facing service contract for VR state, calibration, devices, and pose lookup.
 /// </summary>
 public interface IRuntimeVrStateServices
@@ -145,6 +156,11 @@ public interface IRuntimeVrStateServices
     /// Includes SteamVR role paths and persistent paths when the active runtime exposes them.
     /// </summary>
     string[] GetKnownOpenXrTrackerUserPaths();
+
+    /// <summary>
+    /// OpenXR tracker identities currently known to the runtime.
+    /// </summary>
+    RuntimeVrTrackerInfo[] GetKnownOpenXrTrackers();
 
     /// <summary>
     /// Returns true when the OpenVR tracked device index represents a generic tracker.
@@ -264,6 +280,10 @@ public static class RuntimeVrStateServices
     /// <inheritdoc cref="IRuntimeVrStateServices.GetKnownOpenXrTrackerUserPaths"/>
     public static string[] GetKnownOpenXrTrackerUserPaths()
         => Current.GetKnownOpenXrTrackerUserPaths();
+
+    /// <inheritdoc cref="IRuntimeVrStateServices.GetKnownOpenXrTrackers"/>
+    public static RuntimeVrTrackerInfo[] GetKnownOpenXrTrackers()
+        => Current.GetKnownOpenXrTrackers();
 
     #endregion
 
@@ -451,6 +471,9 @@ public static class RuntimeVrStateServices
         public IEnumerable<VrDevice> TrackedDevices => Array.Empty<VrDevice>();
 
         public string[] GetKnownOpenXrTrackerUserPaths()
+            => [];
+
+        public RuntimeVrTrackerInfo[] GetKnownOpenXrTrackers()
             => [];
 
         public bool IsGenericTracker(uint deviceIndex)

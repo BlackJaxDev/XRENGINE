@@ -146,6 +146,7 @@ public static class RuntimeRenderingHostServiceDefaults
 
     public const bool RenderWindowsWhileInVR = false;
     public const bool EnableOpenXrVulkanParallelRendering = true;
+    public const bool IsOpenXrRuntimeRequested = false;
     public const EVrViewRenderMode VrViewRenderMode = EVrViewRenderMode.SequentialViews;
     public const EVrMirrorMode VrMirrorMode = EVrMirrorMode.BlitSubmittedEye;
     public const float VrOutputTargetRateHz = 0.0f;

@@ -256,6 +256,7 @@ public unsafe partial class VulkanRenderer
         if (Api!.CreateImage(device, ref imageInfo, null, out _swapchainDepthImage) != Result.Success)
             throw new Exception("Failed to create swapchain depth image.");
 
+        ClearTrackedImageLayouts(_swapchainDepthImage);
         VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(_swapchainDepthImage, MemoryPropertyFlags.DeviceLocalBit);
         _imageAllocations[_swapchainDepthImage.Handle] = allocation;
         _swapchainDepthMemory = allocation.Memory;

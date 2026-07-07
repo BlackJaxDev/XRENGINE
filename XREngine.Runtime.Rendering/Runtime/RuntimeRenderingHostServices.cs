@@ -1039,6 +1039,7 @@ public static class RuntimeRenderingHostServices
 
         public bool RenderWindowsWhileInVR => RuntimeRenderingHostServiceDefaults.RenderWindowsWhileInVR;
         public bool EnableOpenXrVulkanParallelRendering => RuntimeRenderingHostServiceDefaults.EnableOpenXrVulkanParallelRendering;
+        public bool IsOpenXrRuntimeRequested => RuntimeRenderingHostServiceDefaults.IsOpenXrRuntimeRequested;
         public EVrViewRenderMode VrViewRenderMode => RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
         public bool EnableVrFoveatedViewSet => RuntimeRenderingHostServiceDefaults.EnableVrFoveatedViewSet;
         public EVrFoveationMode VrFoveationMode => RuntimeRenderingHostServiceDefaults.VrFoveationMode;

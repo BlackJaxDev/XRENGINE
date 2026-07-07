@@ -171,6 +171,12 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
+        if (_memoryAllocator is null)
+        {
+            reason = "Vulkan memory allocator is not initialized yet.";
+            return false;
+        }
+
         try
         {
             ulong samplerDescriptorSize = ResolveDescriptorHeapDescriptorSize(DescriptorType.Sampler, _descriptorHeapProperties.SamplerDescriptorSize);

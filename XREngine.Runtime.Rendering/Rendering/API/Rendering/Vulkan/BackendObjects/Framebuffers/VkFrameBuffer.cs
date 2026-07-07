@@ -576,6 +576,39 @@ public unsafe partial class VulkanRenderer
             PostDeleted();
         }
 
+        internal bool InvalidateCachedAttachmentState()
+        {
+            bool hadState = IsActive ||
+                _frameBuffer.Handle != 0 ||
+                _renderPass.Handle != 0 ||
+                _attachmentSignature is not null ||
+                _attachmentViews is not null ||
+                _attachmentTargets is not null ||
+                _attachmentExtents is not null ||
+                _cachedFrameBufferStates.Count != 0;
+            if (!hadState)
+                return false;
+
+            if (IsActive)
+            {
+                Destroy();
+                return true;
+            }
+
+            RetireCachedFrameBufferStates();
+            _frameBuffer = default;
+            _renderPass = default;
+            _attachmentSignature = null;
+            _attachmentViews = null;
+            _attachmentTargets = null;
+            _attachmentExtents = null;
+            FramebufferWidth = 0;
+            FramebufferHeight = 0;
+            FramebufferLayers = 1u;
+            MultiviewViewMask = 0u;
+            return true;
+        }
+
         protected override uint CreateObjectInternal()
         {
             AttachmentBuildInfo[] attachments = BuildAttachmentInfos();

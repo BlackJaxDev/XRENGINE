@@ -198,6 +198,11 @@ namespace XREngine.Rendering.Vulkan
             if (Api is null || device.Handle == 0)
                 return;
 
+            // Descriptor sets allocated from these pools can be referenced by cached
+            // primary variants for any frame slot.  A current-slot wait is not enough
+            // when resource-plan replacement invalidates descriptor state globally.
+            WaitForAllInFlightWork();
+
             int destroyedPools = 0;
             foreach (DescriptorPool pool in retired)
             {
@@ -222,8 +227,10 @@ namespace XREngine.Rendering.Vulkan
         {
             int meshRendererCount = 0;
             int materialCount = 0;
+            int frameBufferCount = 0;
             int computeCachedPoolCount = ReleaseComputeDescriptorReferencesForPhysicalResourceDestruction();
             int computeTransientPoolCount = ReleaseComputeTransientDescriptorReferencesForPhysicalResourceDestruction();
+            int trackedImageLayoutCount = ClearAllTrackedImageLayouts();
 
             foreach (var apiObject in RenderObjectCache.Values.ToArray())
             {
@@ -237,6 +244,10 @@ namespace XREngine.Rendering.Vulkan
                         material.ReleaseDescriptorReferencesForPhysicalResourceDestruction();
                         materialCount++;
                         break;
+                    case VkFrameBuffer frameBuffer:
+                        if (frameBuffer.InvalidateCachedAttachmentState())
+                            frameBufferCount++;
+                        break;
                 }
             }
 
@@ -246,13 +257,15 @@ namespace XREngine.Rendering.Vulkan
             Debug.VulkanEvery(
                 $"Vulkan.ResourceDestroy.ReleaseDescriptorReferences.{reason}",
                 TimeSpan.FromSeconds(1),
-                "[Vulkan] Released descriptor references before physical resource destruction: reason={0} meshRenderers={1} materials={2} computeCachedPools={3} computeTransientPools={4} commandChainSecondaries={5}.",
+                "[Vulkan] Released descriptor references before physical resource destruction: reason={0} meshRenderers={1} materials={2} frameBuffers={3} computeCachedPools={4} computeTransientPools={5} commandChainSecondaries={6} trackedImageLayouts={7}.",
                 reason,
                 meshRendererCount,
                 materialCount,
+                frameBufferCount,
                 computeCachedPoolCount,
                 computeTransientPoolCount,
-                commandChainSecondaryCount);
+                commandChainSecondaryCount,
+                trackedImageLayoutCount);
         }
 
         /// <summary>
@@ -499,6 +512,12 @@ namespace XREngine.Rendering.Vulkan
                 ImageView primaryView = resources.PrimaryView;
                 Sampler sampler = resources.Sampler;
 
+                if (image.Handle != 0)
+                {
+                    ClearTrackedImageLayouts(image);
+                    _retiringImageHandles[image.Handle] = 0;
+                }
+
                 if (image.Handle != 0 && !_retiredImageHandles[frameSlot].Add(image.Handle))
                     image = default;
 
@@ -660,6 +679,8 @@ namespace XREngine.Rendering.Vulkan
                     if (r.AllocatedVRAMBytes > 0)
                         destroyedImageBytes += r.AllocatedVRAMBytes;
                 }
+                if (r.Image.Handle != 0)
+                    _retiringImageHandles.TryRemove(r.Image.Handle, out _);
 
                 // Free through allocator if tracked, otherwise direct FreeMemory.
                 DeviceMemory memory = hasTrackedImageAllocation ? trackedImageAllocation.Memory : r.Memory;

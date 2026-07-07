@@ -56,6 +56,7 @@ public unsafe partial class VulkanRenderer
 
 				_buffersDirty = true;
 				_descriptorDirty = true;
+				_vertexInputStateDirty = true;
 				Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
 			}
 		}
@@ -289,6 +290,7 @@ public unsafe partial class VulkanRenderer
 				}
 
 				_buffersDirty = false;
+				_vertexInputStateDirty = true;
 			}
 		}
 
@@ -334,6 +336,7 @@ public unsafe partial class VulkanRenderer
 				_buffersDirty = true;
 				_pipelineDirty = true;
 				_descriptorDirty = true;
+				_vertexInputStateDirty = true;
 				_geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
 				Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
 			}
@@ -352,6 +355,8 @@ public unsafe partial class VulkanRenderer
 				_triangleIndexSize = elementType;
 				_triangleIndexBufferExternallyProvided = buffer is not null;
 				_indexBuffersSkippedForShaderGeneratedVertices = false;
+				if (changed)
+					_vertexInputStateDirty = true;
 				_triangleIndexBuffer?.TryEnsureReadyForRendering(Renderer.AllowSynchronousResourceUploads);
 				return changed;
 			}

@@ -441,7 +441,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (!IsLiveImageView(descriptorView))
+        if (!IsLiveImageViewBackedByLiveImage(descriptorView))
         {
             reason = $"Texture '{texture.Name ?? "<unnamed>"}' references a retired Vulkan image view for material semantic '{semantic}'.";
             return false;

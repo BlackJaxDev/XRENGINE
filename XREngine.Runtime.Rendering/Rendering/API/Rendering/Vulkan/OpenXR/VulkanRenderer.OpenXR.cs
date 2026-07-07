@@ -16,6 +16,8 @@ public unsafe partial class VulkanRenderer
 {
     private const int OpenXrEyeResourcePlannerStateCount = 2;
     private const uint OpenXrExternalSwapchainTargetImageIndex = 0;
+    private const ulong MinDesktopFramesBeforeOpenXrRuntimeSessionStart = 4;
+    private static readonly TimeSpan OpenXrRuntimeSessionStartDirtyQuietPeriod = TimeSpan.FromMilliseconds(250);
     private static bool TraceOpenXrStereoBlits =>
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
@@ -205,10 +207,10 @@ public unsafe partial class VulkanRenderer
     private readonly Dictionary<OpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState> _openXrResourcePlannerStates = new();
     private readonly object _openXrResourcePlannerStatesLock = new();
 
-    public override bool IsRenderingExternalSwapchainTarget =>
-        IsThreadOpenXrExternalSwapchainTarget ||
-        Volatile.Read(ref _openXrExternalSwapchainRenderDepth) > 0;
-    internal bool IsPrewarmingOpenXrExternalSwapchainTarget => _openXrExternalSwapchainPrewarmDepth > 0;
+    public override bool IsRenderingExternalSwapchainTarget => IsThreadOpenXrExternalSwapchainTarget;
+    internal bool IsPrewarmingOpenXrExternalSwapchainTarget =>
+        IsThreadOpenXrExternalSwapchainTarget &&
+        Volatile.Read(ref _openXrExternalSwapchainPrewarmDepth) > 0;
     public override bool AllowSynchronousResourceUploads
         => !IsThreadSynchronousResourceUploadBlocked &&
            Volatile.Read(ref _synchronousResourceUploadBlockDepth) == 0;
@@ -297,14 +299,6 @@ public unsafe partial class VulkanRenderer
             _threadOpenXrExternalSwapchainTargetRegion.Height > 0)
         {
             region = _threadOpenXrExternalSwapchainTargetRegion;
-            return true;
-        }
-
-        if (Volatile.Read(ref _openXrExternalSwapchainRenderDepth) > 0 &&
-            _openXrExternalSwapchainTargetRegion.Width > 0 &&
-            _openXrExternalSwapchainTargetRegion.Height > 0)
-        {
-            region = _openXrExternalSwapchainTargetRegion;
             return true;
         }
 
@@ -704,6 +698,7 @@ public unsafe partial class VulkanRenderer
                 bool reusedPrimary;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.ReuseOrRecordPrimary"))
                 {
+                    ulong imageLayoutStartSignature = ComputeImageLayoutStateSignature();
                     reusedPrimary = TryReuseOpenXrPrimaryCommandBuffer(
                         targetContext.FrameDataSlotIndex,
                         targetContext.CommandChainImageKey,
@@ -712,6 +707,7 @@ public unsafe partial class VulkanRenderer
                         prepared.Ops,
                         prepared.FrameOpsSignature,
                         prepared.PlannerRevision,
+                        imageLayoutStartSignature,
                         prepared.CommandChainSchedule,
                         out commandBuffer);
 
@@ -725,6 +721,7 @@ public unsafe partial class VulkanRenderer
                             prepared.Ops,
                             prepared.FrameOpsSignature,
                             prepared.PlannerRevision,
+                            imageLayoutStartSignature,
                             prepared.CommandChainSchedule);
                     }
                 }
@@ -897,6 +894,7 @@ public unsafe partial class VulkanRenderer
         FrameOp[] ops,
         ulong frameOpsSignature,
         ulong plannerRevision,
+        ulong imageLayoutStartSignature,
         CommandChainSchedule? commandChainSchedule,
         out CommandBuffer commandBuffer)
     {
@@ -936,6 +934,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
+            bool swapchainImageEverPresented = IsSwapchainImageEverPresented(OpenXrExternalSwapchainTargetImageIndex);
             for (int i = 0; i < variants.Count; i++)
             {
                 CommandBufferCacheVariant variant = variants[i];
@@ -943,6 +942,8 @@ public unsafe partial class VulkanRenderer
                     variant.PrimaryCommandBuffer.Handle == 0 ||
                     (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature) ||
                     (!usingCommandChains && variant.PlannerRevision != plannerRevision) ||
+                    IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
+                    variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented ||
                     variant.CommandChainScheduleSignature != (commandChainSchedule?.StructuralSignature ?? ulong.MaxValue) ||
                     variant.CommandChainPrimaryGroupSignature != (commandChainSchedule is null ? ulong.MaxValue : commandChainPrimaryGroupSignature) ||
                     variant.CommandChainPrimaryGroupCount != (commandChainSchedule is null ? -1 : commandChainPrimaryGroupCount) ||
@@ -1020,6 +1021,7 @@ public unsafe partial class VulkanRenderer
         FrameOp[] ops,
         ulong frameOpsSignature,
         ulong plannerRevision,
+        ulong imageLayoutStartSignature,
         CommandChainSchedule? commandChainSchedule)
     {
         ulong cacheKey = BuildOpenXrPrimaryCommandBufferCacheKey(commandChainImageIndex, targetContext);
@@ -1097,6 +1099,8 @@ public unsafe partial class VulkanRenderer
         variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
         variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
         variant.RecordedSwapchainRefreshFromLastPresentSource = false;
+        variant.RecordedImageLayoutStartSignature = imageLayoutStartSignature;
+        variant.RecordedImageLayoutEndSignature = ComputeImageLayoutStateSignature();
         variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
         if (!TryComputeOpenXrPrimaryCommandBufferGroupSignature(
                 commandChainImageIndex,
@@ -1845,6 +1849,7 @@ public unsafe partial class VulkanRenderer
                     frameOpsSignature,
                     plannerRevision);
 
+                ulong imageLayoutStartSignature = ComputeImageLayoutStateSignature();
                 bool reusedPrimary = TryReuseOpenXrMirrorPrimaryCommandBuffer(
                     recordImageIndex,
                     mirrorCommandChainImageIndex,
@@ -1852,6 +1857,7 @@ public unsafe partial class VulkanRenderer
                     ops,
                     frameOpsSignature,
                     plannerRevision,
+                    imageLayoutStartSignature,
                     commandChainSchedule,
                     out commandBuffer);
 
@@ -1864,6 +1870,7 @@ public unsafe partial class VulkanRenderer
                         ops,
                         frameOpsSignature,
                         plannerRevision,
+                        imageLayoutStartSignature,
                         commandChainSchedule);
                 }
 
@@ -1899,6 +1906,7 @@ public unsafe partial class VulkanRenderer
         FrameOp[] ops,
         ulong frameOpsSignature,
         ulong plannerRevision,
+        ulong imageLayoutStartSignature,
         CommandChainSchedule? commandChainSchedule,
         out CommandBuffer commandBuffer)
     {
@@ -1945,6 +1953,7 @@ public unsafe partial class VulkanRenderer
                     variant.PrimaryCommandBuffer.Handle == 0 ||
                     (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature) ||
                     (!usingCommandChains && variant.PlannerRevision != plannerRevision) ||
+                    IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
                     variant.CommandChainScheduleSignature != (commandChainSchedule?.StructuralSignature ?? ulong.MaxValue) ||
                     variant.CommandChainPrimaryGroupSignature != (commandChainSchedule is null ? ulong.MaxValue : commandChainPrimaryGroupSignature) ||
                     variant.CommandChainPrimaryGroupCount != (commandChainSchedule is null ? -1 : commandChainPrimaryGroupCount) ||
@@ -2022,6 +2031,7 @@ public unsafe partial class VulkanRenderer
         FrameOp[] ops,
         ulong frameOpsSignature,
         ulong plannerRevision,
+        ulong imageLayoutStartSignature,
         CommandChainSchedule? commandChainSchedule)
     {
         ulong cacheKey = BuildOpenXrMirrorPrimaryCommandBufferCacheKey(commandChainImageIndex, request);
@@ -2063,7 +2073,8 @@ public unsafe partial class VulkanRenderer
                     ops.Length);
             }
 
-            _ = RecordCommandBuffer(
+            bool swapchainImageEverPresented = IsSwapchainImageEverPresented(OpenXrExternalSwapchainTargetImageIndex);
+            ImageLayout swapchainLayoutAfterCommandBuffer = RecordCommandBuffer(
                 OpenXrExternalSwapchainTargetImageIndex,
                 variant.PrimaryCommandBuffer,
                 dynamicUiBatchTextSecondaryCommandBuffer: default,
@@ -2072,7 +2083,7 @@ public unsafe partial class VulkanRenderer
                 commandChainSchedule,
                 preserveSwapchainForOverlay: false,
                 recordedSwapchainWriteCount: out int recordedSwapchainWriteCount,
-                transitionSwapchainToPresent: false,
+                transitionSwapchainToPresent: true,
                 frameDataImageIndexOverride: recordImageIndex);
 
             bool wasDirty = variant.Dirty;
@@ -2082,10 +2093,12 @@ public unsafe partial class VulkanRenderer
             variant.DynamicUiOpCount = 0;
             variant.DynamicUiSecondaryRecorded = false;
             variant.PreserveSwapchainForOverlay = false;
-            variant.RecordedSwapchainImageEverPresented = false;
-            variant.RecordedSwapchainFinalLayout = ImageLayout.ShaderReadOnlyOptimal;
+            variant.RecordedSwapchainImageEverPresented = swapchainImageEverPresented;
+            variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
             variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
             variant.RecordedSwapchainRefreshFromLastPresentSource = false;
+            variant.RecordedImageLayoutStartSignature = imageLayoutStartSignature;
+            variant.RecordedImageLayoutEndSignature = ComputeImageLayoutStateSignature();
             variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
             if (!TryComputeOpenXrPrimaryCommandBufferGroupSignature(
                     commandChainImageIndex,
@@ -4469,6 +4482,7 @@ public unsafe partial class VulkanRenderer
         if (Api!.CreateImage(device, ref imageInfo, null, out Image depthImage) != Result.Success)
             throw new InvalidOperationException("Failed to create OpenXR Vulkan depth image.");
 
+        ClearTrackedImageLayouts(depthImage);
         VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(depthImage, MemoryPropertyFlags.DeviceLocalBit);
         _imageAllocations[depthImage.Handle] = allocation;
 
@@ -4566,6 +4580,134 @@ public unsafe partial class VulkanRenderer
 
         DestroyOpenXrRenderingResources();
         MarkCommandBuffersDirty(nameof(ResetOpenXrRenderingResourcesForRuntimeRecreate));
+    }
+
+    internal void ExecuteOpenXrRuntimeGraphicsTransition(string reason, Action transition)
+    {
+        ArgumentNullException.ThrowIfNull(transition);
+
+        if (_deviceLost || Api is null || device.Handle == 0)
+            throw new InvalidOperationException("Cannot initialize OpenXR Vulkan session resources after the Vulkan device was lost.");
+
+        long lockWaitStart = Stopwatch.GetTimestamp();
+        bool queueLockTaken = false;
+        try
+        {
+            Monitor.Enter(_oneTimeSubmitLock, ref queueLockTaken);
+            LogOpenXrSerializedCriticalSectionWait("RuntimeGraphicsTransition", lockWaitStart, Stopwatch.GetTimestamp());
+
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RuntimeGraphicsTransition"))
+            {
+                Debug.Vulkan(
+                    "[OpenXR] Beginning Vulkan runtime graphics transition. Reason={0}",
+                    string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
+
+                WaitForAllInFlightWork();
+                if (!_deviceLost)
+                    DeviceWaitIdle();
+                if (_deviceLost)
+                    throw new InvalidOperationException("Vulkan device lost while waiting for idle before OpenXR session initialization.");
+
+                transition();
+
+                if (!_deviceLost)
+                    DeviceWaitIdle();
+                if (_deviceLost)
+                    throw new InvalidOperationException("Vulkan device lost while waiting for idle after OpenXR session initialization.");
+
+                Debug.Vulkan(
+                    "[OpenXR] Completed Vulkan runtime graphics transition. Reason={0}",
+                    string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
+            }
+        }
+        finally
+        {
+            if (queueLockTaken)
+                Monitor.Exit(_oneTimeSubmitLock);
+        }
+    }
+
+    internal bool ShouldDeferOpenXrRuntimeSessionStart(out string reason)
+    {
+        reason = string.Empty;
+
+        if (_deviceLost || Api is null || device.Handle == 0)
+        {
+            reason = "Vulkan device is not available";
+            return true;
+        }
+
+        if (RuntimeEngine.StartupPresentationEnabled)
+        {
+            reason = "editor startup presentation is still active";
+            return true;
+        }
+
+        if (ImportedTextureStreamingManager.Instance.HasActiveImportedModelImports)
+        {
+            reason = "startup imported-model texture work is still active";
+            return true;
+        }
+
+        if (_vkDebugFrameCounter < MinDesktopFramesBeforeOpenXrRuntimeSessionStart)
+        {
+            reason = $"desktop renderer has completed too few startup frames ({_vkDebugFrameCounter}/{MinDesktopFramesBeforeOpenXrRuntimeSessionStart})";
+            return true;
+        }
+
+        if (Volatile.Read(ref _lastFrameCompletedTimestamp) == 0)
+        {
+            reason = "desktop renderer has not completed a frame yet";
+            return true;
+        }
+
+        if (Volatile.Read(ref _windowRenderCallbackInProgress) != 0)
+        {
+            reason = "desktop renderer is currently recording/submitting a frame";
+            return true;
+        }
+
+        long lastDirtyTimestamp = Volatile.Read(ref _lastCommandBufferDirtyTimestamp);
+        if (lastDirtyTimestamp != 0)
+        {
+            TimeSpan dirtyAge = Stopwatch.GetElapsedTime(lastDirtyTimestamp);
+            if (dirtyAge < OpenXrRuntimeSessionStartDirtyQuietPeriod)
+            {
+                reason = $"desktop command buffers were dirtied {dirtyAge.TotalMilliseconds:F0} ms ago";
+                return true;
+            }
+        }
+
+        if (TryGetPendingSubmittedFrameSlot(out int pendingSlot, out ulong pendingTimelineValue))
+        {
+            reason = $"desktop frame slot {pendingSlot} is still pending at timeline value {pendingTimelineValue}";
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryGetPendingSubmittedFrameSlot(out int pendingSlot, out ulong pendingTimelineValue)
+    {
+        pendingSlot = -1;
+        pendingTimelineValue = 0;
+
+        if (_frameSlotTimelineValues is null || _graphicsTimelineSemaphore.Handle == 0)
+            return false;
+
+        int frameSlotCount = Math.Min(_frameSlotTimelineValues.Length, MAX_FRAMES_IN_FLIGHT);
+        for (int i = 0; i < frameSlotCount; i++)
+        {
+            ulong value = _frameSlotTimelineValues[i];
+            if (value == 0 || HasTimelineValueCompleted(_graphicsTimelineSemaphore, value))
+                continue;
+
+            pendingSlot = i;
+            pendingTimelineValue = value;
+            return true;
+        }
+
+        return false;
     }
 
     private void DestroyOpenXrPrimaryCommandBufferCache()

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -14,11 +15,62 @@ public interface IRuntimeVrRenderModelHandle : IDisposable
 {
     bool IsLoaded { get; }
     void Clear();
-    void LoadModelAsync(object? renderModel);
+    void LoadModelAsync(RuntimeVrRenderModelDescriptor? renderModel);
+}
+
+public enum RuntimeVrRenderModelSourceKind
+{
+    Unknown,
+    OpenVrDeviceModel,
+    OpenXrControllerModel,
+    OpenXrInteractionRenderModel,
+    Fallback,
+}
+
+public sealed class RuntimeVrRenderModelDescriptor
+{
+    private RuntimeVrRenderModelDescriptor(
+        string key,
+        string displayName,
+        RuntimeVrRenderModelSourceKind sourceKind,
+        object? nativeModel,
+        byte[]? binaryModelData,
+        string? binaryModelFileExtension)
+    {
+        Key = key;
+        DisplayName = displayName;
+        SourceKind = sourceKind;
+        NativeModel = nativeModel;
+        BinaryModelData = binaryModelData;
+        BinaryModelFileExtension = binaryModelFileExtension;
+    }
+
+    public string Key { get; }
+    public string DisplayName { get; }
+    public RuntimeVrRenderModelSourceKind SourceKind { get; }
+    public object? NativeModel { get; }
+    public byte[]? BinaryModelData { get; }
+    public string? BinaryModelFileExtension { get; }
+
+    public static RuntimeVrRenderModelDescriptor FromOpenVrDeviceModel(object deviceModel, string key, string displayName)
+        => new(key, displayName, RuntimeVrRenderModelSourceKind.OpenVrDeviceModel, deviceModel, null, null);
+
+    public static RuntimeVrRenderModelDescriptor FromOpenXrControllerModel(byte[] glbData, string key, string displayName)
+        => new(key, displayName, RuntimeVrRenderModelSourceKind.OpenXrControllerModel, null, glbData, ".glb");
+}
+
+public interface IRuntimeVrRenderModelProvider
+{
+    event Action? ModelsChanged;
+
+    bool TryGetControllerRenderModel(bool leftHand, [NotNullWhen(true)] out RuntimeVrRenderModelDescriptor? renderModel);
+    bool TryGetTrackerRenderModel(string? openXrTrackerUserPath, uint? openVrDeviceIndex, [NotNullWhen(true)] out RuntimeVrRenderModelDescriptor? renderModel);
+    string DescribeAvailability();
 }
 
 public interface IRuntimeVrRenderingServices
 {
+    IRuntimeVrRenderModelProvider RenderModelProvider { get; }
     IRuntimeVrEyeCamera CreateEyeCamera(TransformBase transform, bool leftEye, float nearPlane, float farPlane);
     void SetHeadsetViewInformation(IRuntimeVrEyeCamera? leftEyeCamera, IRuntimeVrEyeCamera? rightEyeCamera, IRuntimeWorldContext? world, SceneNode? hmdNode);
     bool TryEnsureHeadsetViewInformation(IRuntimeWorldContext? world, SceneNode? hmdNode, float nearPlane, float farPlane);
@@ -39,6 +91,9 @@ public static class RuntimeVrRenderingServices
     public static IRuntimeVrEyeCamera CreateEyeCamera(TransformBase transform, bool leftEye, float nearPlane, float farPlane)
         => Current.CreateEyeCamera(transform, leftEye, nearPlane, farPlane);
 
+    public static IRuntimeVrRenderModelProvider RenderModelProvider
+        => Current.RenderModelProvider;
+
     public static void SetHeadsetViewInformation(IRuntimeVrEyeCamera? leftEyeCamera, IRuntimeVrEyeCamera? rightEyeCamera, IRuntimeWorldContext? world, SceneNode? hmdNode)
         => Current.SetHeadsetViewInformation(leftEyeCamera, rightEyeCamera, world, hmdNode);
 
@@ -50,6 +105,8 @@ public static class RuntimeVrRenderingServices
 
     private sealed class DefaultRuntimeVrRenderingServices : IRuntimeVrRenderingServices
     {
+        public IRuntimeVrRenderModelProvider RenderModelProvider { get; } = new DefaultRuntimeVrRenderModelProvider();
+
         public IRuntimeVrEyeCamera CreateEyeCamera(TransformBase transform, bool leftEye, float nearPlane, float farPlane)
             => new DefaultRuntimeVrEyeCamera(nearPlane, farPlane);
 
@@ -77,13 +134,37 @@ public static class RuntimeVrRenderingServices
             {
             }
 
-            public void LoadModelAsync(object? renderModel)
+            public void LoadModelAsync(RuntimeVrRenderModelDescriptor? renderModel)
             {
             }
 
             public void Dispose()
             {
             }
+        }
+
+        private sealed class DefaultRuntimeVrRenderModelProvider : IRuntimeVrRenderModelProvider
+        {
+            public event Action? ModelsChanged
+            {
+                add { }
+                remove { }
+            }
+
+            public bool TryGetControllerRenderModel(bool leftHand, [NotNullWhen(true)] out RuntimeVrRenderModelDescriptor? renderModel)
+            {
+                renderModel = null;
+                return false;
+            }
+
+            public bool TryGetTrackerRenderModel(string? openXrTrackerUserPath, uint? openVrDeviceIndex, [NotNullWhen(true)] out RuntimeVrRenderModelDescriptor? renderModel)
+            {
+                renderModel = null;
+                return false;
+            }
+
+            public string DescribeAvailability()
+                => "No runtime VR render-model provider is installed.";
         }
     }
 }

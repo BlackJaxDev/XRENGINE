@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
@@ -13,6 +14,9 @@ internal sealed class TextureStreamingRegistry
 {
     private readonly ConditionalWeakTable<XRTexture2D, ImportedTextureStreamingRecord> _recordsByTexture = new();
     private readonly ConcurrentQueue<WeakReference<ImportedTextureStreamingRecord>> _recordRefs = new();
+    private readonly object _recordRefsSnapshotSync = new();
+    private WeakReference<ImportedTextureStreamingRecord>[] _recordRefsSnapshot = [];
+    private int _recordRefsSnapshotDirty = 1;
 
     public bool IsEmpty => _recordRefs.IsEmpty;
     public int RecordReferenceCount => _recordRefs.Count;
@@ -26,6 +30,7 @@ internal sealed class TextureStreamingRegistry
         {
             ImportedTextureStreamingRecord created = new(target);
             _recordRefs.Enqueue(new WeakReference<ImportedTextureStreamingRecord>(created));
+            MarkRecordRefsSnapshotDirty();
             return created;
         });
 
@@ -138,7 +143,21 @@ internal sealed class TextureStreamingRegistry
     }
 
     public WeakReference<ImportedTextureStreamingRecord>[] GetRecordReferencesSnapshot()
-        => _recordRefs.ToArray();
+    {
+        if (Volatile.Read(ref _recordRefsSnapshotDirty) == 0)
+            return _recordRefsSnapshot;
+
+        lock (_recordRefsSnapshotSync)
+        {
+            if (_recordRefsSnapshotDirty != 0)
+            {
+                _recordRefsSnapshot = _recordRefs.ToArray();
+                Volatile.Write(ref _recordRefsSnapshotDirty, 0);
+            }
+
+            return _recordRefsSnapshot;
+        }
+    }
 
     public void CompactRecordRefs()
     {
@@ -155,13 +174,24 @@ internal sealed class TextureStreamingRegistry
 
         foreach (WeakReference<ImportedTextureStreamingRecord> refEntry in live)
             _recordRefs.Enqueue(refEntry);
+
+        MarkRecordRefsSnapshotDirty();
     }
 
     public List<ImportedTextureStreamingSnapshot> CollectSnapshots(
         Func<uint, uint, ESizedInternalFormat, ITextureResidencyBackend> resolveBackend)
     {
         List<ImportedTextureStreamingSnapshot> snapshots = [];
-        WeakReference<ImportedTextureStreamingRecord>[] refs = _recordRefs.ToArray();
+        CollectSnapshots(resolveBackend, snapshots);
+        return snapshots;
+    }
+
+    public void CollectSnapshots(
+        Func<uint, uint, ESizedInternalFormat, ITextureResidencyBackend> resolveBackend,
+        List<ImportedTextureStreamingSnapshot> snapshots)
+    {
+        snapshots.Clear();
+        WeakReference<ImportedTextureStreamingRecord>[] refs = GetRecordReferencesSnapshot();
         for (int i = 0; i < refs.Length; i++)
         {
             if (!refs[i].TryGetTarget(out ImportedTextureStreamingRecord? record)
@@ -242,14 +272,18 @@ internal sealed class TextureStreamingRegistry
                     record.LastPressureDemotionFrameId,
                     texture.TextureUploadValidationFailureCount,
                     texture.LastTextureQueueWaitMilliseconds,
-                    texture.LastTextureUploadDurationMilliseconds));
+                    texture.LastTextureUploadDurationMilliseconds,
+                    record.FailedTransitionCooldownUntilFrameId,
+                    record.FailedTransitionTargetMaxDimension,
+                    record.ConsecutiveTransitionFailureCount));
             }
             finally
             {
                 Monitor.Exit(record.Sync);
             }
         }
-
-        return snapshots;
     }
+
+    private void MarkRecordRefsSnapshotDirty()
+        => Volatile.Write(ref _recordRefsSnapshotDirty, 1);
 }

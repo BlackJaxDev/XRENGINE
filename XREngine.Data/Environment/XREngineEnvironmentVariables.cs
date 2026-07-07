@@ -228,6 +228,7 @@ public static class XREngineEnvironmentVariables
     public const string VulkanMaterialBindingDiag = "XRE_VULKAN_MATERIAL_BINDING_DIAG";
     public const string VulkanRecordingDiag = "XRE_VULKAN_RECORDING_DIAG";
     public const string VulkanRecordingProfileDetail = "XRE_VULKAN_RECORDING_PROFILE_DETAIL";
+    public const string VulkanCommandBufferLabels = "XRE_VULKAN_COMMAND_BUFFER_LABELS";
     public const string VulkanCommandChains = "XRE_VULKAN_COMMAND_CHAINS";
     public const string VulkanCommandChainsSingleThread = "XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD";
     public const string VulkanCommandChainValidate = "XRE_VULKAN_COMMAND_CHAIN_VALIDATE";

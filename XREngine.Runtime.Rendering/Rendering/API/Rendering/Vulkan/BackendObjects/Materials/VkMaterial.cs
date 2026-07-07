@@ -1201,7 +1201,7 @@ namespace XREngine.Rendering.Vulkan
                     string aspectLabel = stencilOnly ? "stencil-only" : "depth-only";
                     if (aspectView.Handle != 0)
                     {
-                        if (!Renderer.IsLiveImageView(aspectView))
+                        if (!Renderer.IsLiveImageViewBackedByLiveImage(aspectView))
                         {
                             imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
                             if (imageInfo.ImageView.Handle != 0)
@@ -1246,7 +1246,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                if (!Renderer.IsLiveImageView(descriptorView))
+                if (!Renderer.IsLiveImageViewBackedByLiveImage(descriptorView))
                 {
                     imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType, binding.ExpectedImageViewType);
                     if (imageInfo.ImageView.Handle != 0)

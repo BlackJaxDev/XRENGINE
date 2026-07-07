@@ -33,6 +33,43 @@ namespace XREngine.Data.Components.Scene
             set => SetField(ref _openXrTrackerUserPath, value);
         }
 
+        private string? _openXrTrackerPersistentPath;
+        public string? OpenXrTrackerPersistentPath
+        {
+            get => _openXrTrackerPersistentPath;
+            set => SetField(ref _openXrTrackerPersistentPath, value);
+        }
+
+        private string? _openXrTrackerRolePath;
+        public string? OpenXrTrackerRolePath
+        {
+            get => _openXrTrackerRolePath;
+            set => SetField(ref _openXrTrackerRolePath, value);
+        }
+
+        private string? _openXrTrackerRoleName;
+        public string? OpenXrTrackerRoleName
+        {
+            get => _openXrTrackerRoleName;
+            set => SetField(ref _openXrTrackerRoleName, value);
+        }
+
+        private bool _openXrTrackerPoseAvailable;
+        public bool OpenXrTrackerPoseAvailable
+        {
+            get => _openXrTrackerPoseAvailable;
+            set => SetField(ref _openXrTrackerPoseAvailable, value);
+        }
+
+        public void ApplyOpenXrTrackerInfo(RuntimeVrTrackerInfo tracker)
+        {
+            OpenXrTrackerUserPath = tracker.UserPath;
+            OpenXrTrackerPersistentPath = tracker.PersistentPath;
+            OpenXrTrackerRolePath = tracker.RolePath;
+            OpenXrTrackerRoleName = tracker.RoleName;
+            OpenXrTrackerPoseAvailable = tracker.PoseAvailable;
+        }
+
         public void SetTrackerByDeviceIndex(uint deviceIndex)
         {
             VrDevice? device = RuntimeVrStateServices.TrackedDevices.FirstOrDefault(x => x.DeviceIndex == deviceIndex);

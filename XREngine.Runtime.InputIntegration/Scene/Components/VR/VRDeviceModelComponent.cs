@@ -8,6 +8,8 @@ namespace XREngine.Components.VR
     public abstract class VRDeviceModelComponent : XRComponent
     {
         private IRuntimeVrRenderModelHandle? _renderModelHandle;
+        private IRuntimeVrRenderModelProvider? _subscribedRenderModelProvider;
+        private DateTime _nextModelReverifyUtc = DateTime.MinValue;
 
         protected IRuntimeVrRenderModelHandle RenderModelHandle
             => _renderModelHandle ??= RuntimeVrRenderingServices.CreateRenderModelHandle(SceneNode, $"{GetType().Name} Render Model");
@@ -22,11 +24,21 @@ namespace XREngine.Components.VR
                 return;
 
             RuntimeVrStateServices.DeviceDetected += DeviceDetected;
+            RuntimeVrStateServices.FrameAdvanced += ReverifyDevicesThrottled;
+            _subscribedRenderModelProvider = RuntimeVrRenderingServices.RenderModelProvider;
+            _subscribedRenderModelProvider.ModelsChanged += RenderModelsChanged;
             VerifyDevices();
         }
 
         protected override void OnComponentDeactivated()
         {
+            if (_subscribedRenderModelProvider is not null)
+            {
+                _subscribedRenderModelProvider.ModelsChanged -= RenderModelsChanged;
+                _subscribedRenderModelProvider = null;
+            }
+
+            RuntimeVrStateServices.FrameAdvanced -= ReverifyDevicesThrottled;
             RuntimeVrStateServices.DeviceDetected -= DeviceDetected;
             _renderModelHandle?.Clear();
             base.OnComponentDeactivated();
@@ -40,9 +52,22 @@ namespace XREngine.Components.VR
         }
 
         private void DeviceDetected(VrDevice device)
+            => VerifyDevices();
+
+        private void RenderModelsChanged()
+            => VerifyDevices();
+
+        private void ReverifyDevicesThrottled()
         {
-            if (!IsLoaded && GetRenderModel(device) is DeviceModel model)
-                LoadModelAsync(model);
+            if (IsLoaded)
+                return;
+
+            DateTime now = DateTime.UtcNow;
+            if (now < _nextModelReverifyUtc)
+                return;
+
+            _nextModelReverifyUtc = now + TimeSpan.FromSeconds(1);
+            VerifyDevices();
         }
 
         protected void VerifyDevices()
@@ -50,17 +75,11 @@ namespace XREngine.Components.VR
             if (IsLoaded)
                 return;
 
-            foreach (VrDevice device in RuntimeVrStateServices.TrackedDevices)
-            {
-                if (GetRenderModel(device) is not DeviceModel model)
-                    continue;
-
+            if (TryGetRenderModel(out RuntimeVrRenderModelDescriptor? model))
                 LoadModelAsync(model);
-                break;
-            }
         }
 
-        protected void LoadModelAsync(DeviceModel? model)
+        protected void LoadModelAsync(RuntimeVrRenderModelDescriptor? model)
         {
             if (model is null)
                 return;
@@ -71,6 +90,6 @@ namespace XREngine.Components.VR
         protected void ClearLoadedModel()
             => _renderModelHandle?.Clear();
 
-        protected abstract DeviceModel? GetRenderModel(VrDevice? device);
+        protected abstract bool TryGetRenderModel(out RuntimeVrRenderModelDescriptor? model);
     }
 }

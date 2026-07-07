@@ -252,6 +252,8 @@ namespace XREngine.Rendering.Vulkan
             evicted.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
             evicted.RecordedSwapchainWriteCount = 0;
             evicted.RecordedSwapchainRefreshFromLastPresentSource = false;
+            evicted.RecordedImageLayoutStartSignature = ulong.MaxValue;
+            evicted.RecordedImageLayoutEndSignature = ulong.MaxValue;
             evicted.CommandChainScheduleSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupCount = -1;
@@ -308,13 +310,19 @@ namespace XREngine.Rendering.Vulkan
             return profilingActive && variant.GpuProfilerFrameSlot != frameSlot;
         }
 
+        private static bool IsCommandBufferVariantImageLayoutStateDirty(
+            CommandBufferCacheVariant variant,
+            ulong imageLayoutStartSignature)
+            => variant.RecordedImageLayoutStartSignature != imageLayoutStartSignature ||
+               variant.RecordedImageLayoutEndSignature != imageLayoutStartSignature;
+
         private void LogCommandChainSecondaryInheritanceMismatch(
             string chainName,
             XRFrameBuffer? target,
             int passIndex,
             string reason)
         {
-            if (!CommandChainsEnabled && !CommandChainValidationEnabled)
+            if (!CommandChainsEnabledForCurrentRecording && !CommandChainValidationEnabled)
                 return;
 
             string targetName = target?.Name ?? "<swapchain>";

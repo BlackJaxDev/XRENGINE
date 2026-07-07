@@ -1257,6 +1257,7 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<string, GeneratedProgramCacheEntry> _programCache = new(StringComparer.Ordinal);
         private VertexInputBindingDescription[] _vertexBindings = [];
         private VertexInputAttributeDescription[] _vertexAttributes = [];
+        private bool _vertexInputStateDirty = true;
         private MeshGeometryLayoutSignature _geometryLayoutSignature = MeshGeometryLayoutSignature.Empty;
         private readonly Dictionary<uint, VkDataBuffer> _vertexBuffersByBinding = new();
         private readonly Silk.NET.Vulkan.Buffer[] _singleVertexBindingBuffer = new Silk.NET.Vulkan.Buffer[1];
@@ -1435,6 +1436,7 @@ public unsafe partial class VulkanRenderer
                 _pipelineDirty = true;
                 _buffersDirty = true;
                 _descriptorDirty = true;
+                _vertexInputStateDirty = true;
                 _lastPreparedMaterial = null;
                 _triangleIndexBuffer = null;
                 _lineIndexBuffer = null;
@@ -1697,7 +1699,6 @@ public unsafe partial class VulkanRenderer
             uint viewportScissorCount = indexedViewportScissors.Count > 1 ? indexedViewportScissors.Count : 1u;
             Viewport viewportSnapshot = Renderer.GetCurrentViewport();
             Rect2D scissorSnapshot = Renderer.GetCurrentScissor();
-
             var draw = new PendingMeshDraw(
                 this,
                 viewportSnapshot,

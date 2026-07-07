@@ -1354,6 +1354,11 @@ public interface IRuntimeRenderingHostServices
     bool EnableOpenXrVulkanParallelRendering { get; }
 
     /// <summary>
+    /// Gets whether startup or the active runtime is using the OpenXR path.
+    /// </summary>
+    bool IsOpenXrRuntimeRequested { get; }
+
+    /// <summary>
     /// Gets the requested VR view rendering strategy.
     /// </summary>
     EVrViewRenderMode VrViewRenderMode { get; }

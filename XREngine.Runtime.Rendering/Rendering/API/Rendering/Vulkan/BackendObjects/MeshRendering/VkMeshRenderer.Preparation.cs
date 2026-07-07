@@ -71,8 +71,7 @@ public unsafe partial class VulkanRenderer
 			if (!EnsureDescriptorSets(material, 0))
 				return SetPrepareResult(false, "DescriptorsPending", "Descriptor sets are not allocated or populated for the active program/material layout.", out reason);
 
-			string layoutSummary = _geometryLayoutSignature.DebugSummary;
-			return SetPrepareResult(true, "Ready", $"buffers=Ready; program={_program?.Data?.Name ?? "<unnamed>"}; descriptors=Ready; pipeline=DeferredUntilPass; layout={layoutSummary}", out reason);
+			return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Ready"), out reason);
 		}
 
 		private bool TryPrepareCapturedProgramForRecording(
@@ -109,6 +108,9 @@ public unsafe partial class VulkanRenderer
 
 			ActivateCapturedProgram(material, preparedProgram, preparedProgramIdentity);
 			EnsureRuntimeDeformationBuffersCurrent();
+			if (CanReuseCapturedPreparedRenderState(material, preparedProgram, preparedProgramIdentity))
+				return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Deferred"), out reason);
+
 			bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
 			EnsureBuffers(usesShaderGeneratedVertices);
 
@@ -123,8 +125,7 @@ public unsafe partial class VulkanRenderer
 			if (!EnsureDescriptorSets(material, drawUniformSlot))
 				return SetPrepareResult(false, "DescriptorsPending", "Descriptor sets are not allocated or populated for the captured program/material layout.", out reason);
 
-			string layoutSummary = _geometryLayoutSignature.DebugSummary;
-			return SetPrepareResult(true, "Ready", $"buffers=Ready; program={_program?.Data?.Name ?? "<unnamed>"}; descriptors=Ready; pipeline=DeferredUntilPass; layout={layoutSummary}", out reason);
+			return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Ready"), out reason);
 		}
 
 		private bool TryReuseCapturedProgramForIndirectDrawSnapshot(
@@ -181,8 +182,7 @@ public unsafe partial class VulkanRenderer
 					out reason);
 			}
 
-			string layoutSummary = _geometryLayoutSignature.DebugSummary;
-			return SetPrepareResult(true, "Ready", $"buffers=Ready; program={_program?.Data?.Name ?? "<unnamed>"}; descriptors=Reused; pipeline=DeferredUntilPass; layout={layoutSummary}", out reason);
+			return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Reused"), out reason);
 		}
 
 		private void ActivateCapturedProgram(XRMaterial material, VkRenderProgram preparedProgram, string? preparedProgramIdentity)
@@ -193,6 +193,7 @@ public unsafe partial class VulkanRenderer
 			{
 				_pipelineDirty = true;
 				_descriptorDirty = true;
+				_vertexInputStateDirty = true;
 				_activeProgramIdentity = identity;
 			}
 
@@ -227,6 +228,18 @@ public unsafe partial class VulkanRenderer
 			}
 
 			return AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices());
+		}
+
+		private bool CanReuseCapturedPreparedRenderState(XRMaterial material, VkRenderProgram preparedProgram, string? preparedProgramIdentity)
+		{
+			string identity = preparedProgramIdentity ?? preparedProgram.Data?.Name ?? preparedProgram.GetHashCode().ToString();
+			return ReferenceEquals(_lastPreparedMaterial, material) &&
+				ReferenceEquals(_program, preparedProgram) &&
+				string.Equals(_activeProgramIdentity, identity, StringComparison.Ordinal) &&
+				!_buffersDirty &&
+				!_vertexInputStateDirty &&
+				string.Equals(_lastPrepareResult, "Ready", StringComparison.Ordinal) &&
+				AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices());
 		}
 
 		private void ApplyScopedProgramBindingsForPreparation(XRMaterial material)
@@ -340,6 +353,14 @@ public unsafe partial class VulkanRenderer
 			}
 
 			return ready;
+		}
+
+		private string BuildPrepareSuccessDetail(string descriptorState)
+		{
+			if (!CommandRecordingDiagnosticsEnabled)
+				return string.Empty;
+
+			return $"buffers=Ready; program={_program?.Data?.Name ?? "<unnamed>"}; descriptors={descriptorState}; pipeline=DeferredUntilPass; layout={_geometryLayoutSignature.DebugSummary}";
 		}
 	}
 }

@@ -142,8 +142,14 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     protected static EMeshSubmissionStrategy MeshSubmissionStrategy
         => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
 
+    internal static bool UseOpenXrVulkanDesktopStartupSafePath
+        => RuntimeEngine.Rendering.State.IsVulkan &&
+           RuntimeRenderingHostServices.Current.IsOpenXrRuntimeRequested &&
+           !RuntimeEngine.Rendering.State.IsStereoPass;
+
     private static bool EnableComputeDependentPasses
-        => VulkanFeatureProfile.EnableComputeDependentPasses;
+        => VulkanFeatureProfile.EnableComputeDependentPasses &&
+           !UseOpenXrVulkanDesktopStartupSafePath;
 
     /// <summary>
     /// Resolves the effective HDR output mode for the current rendering camera.

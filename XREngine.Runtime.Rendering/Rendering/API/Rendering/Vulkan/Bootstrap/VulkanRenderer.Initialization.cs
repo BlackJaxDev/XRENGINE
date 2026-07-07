@@ -629,7 +629,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             return snapshot.View.Handle != 0 &&
-                IsLiveImageView(snapshot.View) &&
+                IsLiveImageViewBackedByLiveImage(snapshot.View) &&
                 (snapshot.Usage & ImageUsageFlags.SampledBit) != 0;
         }
 

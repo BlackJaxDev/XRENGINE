@@ -476,6 +476,9 @@ namespace XREngine.Editor.Mcp
                         commandCount = passCommands.Count;
                         foreach (RenderCommand command in passCommands)
                         {
+                            if (command is null)
+                                continue;
+
                             firstCommandType ??= command.GetType().Name;
 
                             if (command.RenderEnabled)
@@ -538,6 +541,7 @@ namespace XREngine.Editor.Mcp
         [Description("Get engine/editor play mode and high-level state flags.")]
         public static Task<McpToolResponse> GetEngineStateAsync(McpToolContext context)
         {
+            var openXrSummary = Engine.VRState.OpenXRApi?.CreateSmokeSummary();
             var data = new
             {
                 isEditor = Engine.IsEditor,
@@ -547,7 +551,18 @@ namespace XREngine.Editor.Mcp
                 inPlayMode = EditorState.InPlayMode,
                 isPaused = EditorState.IsPaused,
                 isTransitioning = EditorState.IsTransitioning,
-                timePaused = Engine.Time.Timer.Paused
+                timePaused = Engine.Time.Timer.Paused,
+                vr = new
+                {
+                    isInVR = Engine.VRState.IsInVR,
+                    activeRuntime = Engine.VRState.ActiveRuntime.ToString(),
+                    isOpenVRActive = Engine.VRState.IsOpenVRActive,
+                    isOpenXRActive = Engine.VRState.IsOpenXRActive,
+                    openXrSessionRunning = Engine.VRState.OpenXRApi?.IsSessionRunning ?? false,
+                    openXrRuntimeState = openXrSummary?.RuntimeState,
+                    openXrSessionState = openXrSummary?.SessionState,
+                    openXr = openXrSummary
+                }
             };
 
             return Task.FromResult(new McpToolResponse("Retrieved engine state.", data));

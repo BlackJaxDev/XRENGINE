@@ -80,6 +80,7 @@ namespace XREngine
                 using (SuppressSettingsCascades())
                 {
                     GameSettings = startupSettings;
+                    StartupOpenXrRuntimeRequested = startupSettings is IVRGameStartupSettings { VRRuntime: EVRRuntime.OpenXR };
                     UserSettings = GameSettings.DefaultUserSettings?.DeepClone() ?? new UserSettings();
 
                     if (CurrentProject is null)

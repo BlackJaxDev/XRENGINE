@@ -53,11 +53,14 @@ public static partial class EditorUnitTests
         private static bool _vrStereoPreviewWasActive;
         private static bool _vrStereoPreviewForceLayoutRefresh;
         private static int _vrStereoPreviewTextureMissFrames;
+        private static long _vrStereoPreviewLastBindingRefreshTicks;
         private const float VRStereoPreviewEyeWidth = 300.0f;
         private const float VRStereoPreviewEyeHeight = 170.0f;
         private const float VRStereoPreviewGap = 8.0f;
         private const float VRStereoPreviewTopMargin = 12.0f;
         private const int VRStereoPreviewZIndex = -100_000;
+        private static readonly long VRStereoPreviewBindingRefreshPeriodTicks =
+            XREngine.Timers.EngineTimer.SecondsToStopwatchTicks(0.1);
 
         private static int _tickFpsDiagCount = 0;
         private static void TickFPS(UITextComponent t)
@@ -714,6 +717,7 @@ public static partial class EditorUnitTests
             _vrStereoPreviewLastRight = null;
             _vrStereoPreviewWasActive = false;
             _vrStereoPreviewForceLayoutRefresh = true;
+            _vrStereoPreviewLastBindingRefreshTicks = 0L;
 
             // Hard gate: do not show unless VR pawn is enabled.
             if (!Toggles.VRPawn || !Toggles.PreviewVRStereoViews)
@@ -744,6 +748,7 @@ public static partial class EditorUnitTests
             {
                 _vrStereoPreviewRoot.IsActiveSelf = false;
                 _vrStereoPreviewWasActive = false;
+                _vrStereoPreviewLastBindingRefreshTicks = 0L;
                 return;
             }
 
@@ -752,7 +757,11 @@ public static partial class EditorUnitTests
             {
                 _vrStereoPreviewWasActive = true;
                 _vrStereoPreviewForceLayoutRefresh = true;
+                _vrStereoPreviewLastBindingRefreshTicks = 0L;
             }
+
+            if (ShouldSkipVRStereoPreviewBindingRefresh())
+                return;
 
             if (!TryResolveVRStereoPreviewTextures(out XRTexture? leftTex, out XRTexture? rightTex, out bool isArray))
             {
@@ -774,10 +783,64 @@ public static partial class EditorUnitTests
             }
 
             _vrStereoPreviewTextureMissFrames = 0;
-            UpdateVRStereoPreviewAspect(leftTex, rightTex);
             bool flipVerticalUv = ShouldFlipOpenXrVulkanStereoPreviewUv();
+            if (IsVRStereoPreviewBindingCurrent(leftTex, rightTex, isArray, flipVerticalUv))
+                return;
+
+            UpdateVRStereoPreviewAspect(leftTex, rightTex);
             ApplyPreviewTexture(_vrStereoPreviewLeft, leftTex, isArray, flipVerticalUv, ref _vrStereoPreviewLeftWasArray, ref _vrStereoPreviewLastLeft);
             ApplyPreviewTexture(_vrStereoPreviewRight, rightTex, isArray, flipVerticalUv, ref _vrStereoPreviewRightWasArray, ref _vrStereoPreviewLastRight);
+        }
+
+        private static bool ShouldSkipVRStereoPreviewBindingRefresh()
+        {
+            if (_vrStereoPreviewForceLayoutRefresh ||
+                _vrStereoPreviewLastLeft is null ||
+                _vrStereoPreviewLastRight is null ||
+                _vrStereoPreviewTextureMissFrames != 0)
+            {
+                return false;
+            }
+
+            long renderTicks = Engine.Time.Timer.Render.LastTimestampTicks;
+            if (renderTicks <= 0L || _vrStereoPreviewLastBindingRefreshTicks <= 0L)
+            {
+                _vrStereoPreviewLastBindingRefreshTicks = renderTicks;
+                return false;
+            }
+
+            if (renderTicks - _vrStereoPreviewLastBindingRefreshTicks < VRStereoPreviewBindingRefreshPeriodTicks)
+                return true;
+
+            _vrStereoPreviewLastBindingRefreshTicks = renderTicks;
+            return false;
+        }
+
+        private static bool IsVRStereoPreviewBindingCurrent(
+            XRTexture leftTex,
+            XRTexture rightTex,
+            bool isArray,
+            bool flipVerticalUVCoord)
+        {
+            if (_vrStereoPreviewForceLayoutRefresh ||
+                _vrStereoPreviewLeft is null ||
+                _vrStereoPreviewRight is null ||
+                _vrStereoPreviewLeft.FlipVerticalUVCoord != flipVerticalUVCoord ||
+                _vrStereoPreviewRight.FlipVerticalUVCoord != flipVerticalUVCoord ||
+                _vrStereoPreviewLeftWasArray != isArray ||
+                _vrStereoPreviewRightWasArray != isArray ||
+                !ReferenceEquals(_vrStereoPreviewLastLeft, leftTex) ||
+                !ReferenceEquals(_vrStereoPreviewLastRight, rightTex))
+            {
+                return false;
+            }
+
+            XRMaterial? leftMaterial = _vrStereoPreviewLeft.Material;
+            XRMaterial? rightMaterial = _vrStereoPreviewRight.Material;
+            return leftMaterial is { Textures.Count: > 0 } &&
+                   rightMaterial is { Textures.Count: > 0 } &&
+                   ReferenceEquals(leftMaterial.Textures[0], leftTex) &&
+                   ReferenceEquals(rightMaterial.Textures[0], rightTex);
         }
 
         private static void HideVRStereoPreviewOverlay()
@@ -787,6 +850,7 @@ public static partial class EditorUnitTests
 
             _vrStereoPreviewWasActive = false;
             _vrStereoPreviewTextureMissFrames = 0;
+            _vrStereoPreviewLastBindingRefreshTicks = 0L;
         }
 
         private static bool ShouldFlipOpenXrVulkanStereoPreviewUv()

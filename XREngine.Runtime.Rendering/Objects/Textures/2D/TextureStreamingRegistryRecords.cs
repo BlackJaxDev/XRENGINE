@@ -58,6 +58,9 @@ internal sealed class ImportedTextureStreamingRecord(XRTexture2D texture)
     public double LastTransitionExecutionMilliseconds;
     public long PromotionCooldownUntilFrameId = long.MinValue;
     public long DemotionCooldownUntilFrameId = long.MinValue;
+    public long FailedTransitionCooldownUntilFrameId = long.MinValue;
+    public uint FailedTransitionTargetMaxDimension;
+    public int ConsecutiveTransitionFailureCount;
     public long PinUntilFrameId = long.MinValue;
     public long LastPressureDemotionFrameId = long.MinValue;
     public bool PendingTransitionWasPressureDemotion;
@@ -110,6 +113,9 @@ internal readonly record struct ImportedTextureStreamingSnapshot(
     long LastPressureDemotionFrameId,
     int ValidationFailureCount,
     double LastTextureQueueWaitMilliseconds,
-    double LastTextureUploadMilliseconds);
+    double LastTextureUploadMilliseconds,
+    long FailedTransitionCooldownUntilFrameId,
+    uint FailedTransitionTargetMaxDimension,
+    int ConsecutiveTransitionFailureCount);
 
 

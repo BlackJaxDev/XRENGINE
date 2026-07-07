@@ -18,8 +18,20 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    private long _commandBufferDirtyGeneration;
+    private long _lastCommandBufferDirtyTimestamp;
+
+    private long SnapshotCommandBufferDirtyGeneration()
+        => Volatile.Read(ref _commandBufferDirtyGeneration);
+
+    private bool HaveCommandBuffersDirtiedSince(long generation)
+        => Volatile.Read(ref _commandBufferDirtyGeneration) != generation;
+
     private void MarkCommandBuffersDirty([CallerMemberName] string? reason = null)
     {
+        Volatile.Write(ref _lastCommandBufferDirtyTimestamp, Stopwatch.GetTimestamp());
+        Interlocked.Increment(ref _commandBufferDirtyGeneration);
+
         if (_commandBufferDirtyFlags is null)
             return;
 

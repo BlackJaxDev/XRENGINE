@@ -156,6 +156,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
+            if (DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath)
+            {
+                Debug.RenderingEvery(
+                    "ExposureUpdate.Skip.OpenXrVulkanDesktopStartup",
+                    TimeSpan.FromSeconds(2),
+                    "[ExposureUpdate] Holding auto exposure on OpenXR Vulkan desktop startup/mirror frame.");
+                return;
+            }
+
             var sourceTexture = ActivePipelineInstance.GetTexture<XRTexture>(HDRSceneTextureName);
             if (sourceTexture is null)
             {

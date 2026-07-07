@@ -867,7 +867,7 @@ namespace XREngine.Rendering
         /// </summary>
         public void EnsureShaderPipelineProgram(bool allowWhenShaderPipelinesDisabled = false)
         {
-            if (!allowWhenShaderPipelinesDisabled && !RuntimeRenderingHostServices.Current.AllowShaderPipelines)
+            if (!ShouldCreateShaderPipelineProgram(allowWhenShaderPipelinesDisabled))
             {
                 DestroyShaderPipelineProgram();
                 return;
@@ -896,7 +896,7 @@ namespace XREngine.Rendering
 
         public void SyncShaderPipelineProgramForCurrentSettings()
         {
-            if (RuntimeRenderingHostServices.Current.AllowShaderPipelines)
+            if (ShouldCreateShaderPipelineProgram())
                 EnsureShaderPipelineProgram();
             else
                 DestroyShaderPipelineProgram();
@@ -904,7 +904,7 @@ namespace XREngine.Rendering
 
         public static void DisposeShaderPipelineProgramsWhenDisabled()
         {
-            if (RuntimeRenderingHostServices.Current.AllowShaderPipelines)
+            if (ShouldCreateShaderPipelineProgram())
                 return;
 
             List<GenericRenderObject> materials;
@@ -925,13 +925,22 @@ namespace XREngine.Rendering
         {
             DestroyShaderPipelineProgram();
 
-            if (!RuntimeRenderingHostServices.Current.AllowShaderPipelines)
+            if (!ShouldCreateShaderPipelineProgram())
                 return;
 
             if (!HasShaderPipelineRenderableUberSource())
                 return;
 
             CreateShaderPipelineProgramFromCurrentShaders();
+        }
+
+        private static bool ShouldCreateShaderPipelineProgram(bool allowWhenShaderPipelinesDisabled = false)
+        {
+            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+            if (host.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+                return allowWhenShaderPipelinesDisabled;
+
+            return allowWhenShaderPipelinesDisabled || host.AllowShaderPipelines;
         }
 
         private bool EnsureShaderPipelineUberSourceReady()

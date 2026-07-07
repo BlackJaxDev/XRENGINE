@@ -152,6 +152,11 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
             ? openXrApi.GetKnownTrackerUserPaths()
             : [];
 
+    public RuntimeVrTrackerInfo[] GetKnownOpenXrTrackers()
+        => TryGetOpenXr(out OpenXRAPI? openXrApi)
+            ? openXrApi.GetKnownTrackers()
+            : [];
+
     public bool IsGenericTracker(uint deviceIndex)
         => Engine.VRState.OpenVRApi.CVR is { } cvr &&
             cvr.GetTrackedDeviceClass(deviceIndex) == ETrackedDeviceClass.GenericTracker;

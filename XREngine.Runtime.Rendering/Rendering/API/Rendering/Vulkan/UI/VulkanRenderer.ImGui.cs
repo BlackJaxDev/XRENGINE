@@ -844,6 +844,7 @@ public unsafe partial class VulkanRenderer
         if (Api!.CreateImage(device, ref imageInfo, null, out _imguiFontImage) != Result.Success)
             throw new InvalidOperationException("Failed to create ImGui font image.");
 
+        ClearTrackedImageLayouts(_imguiFontImage);
         VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(_imguiFontImage, MemoryPropertyFlags.DeviceLocalBit);
         _imageAllocations[_imguiFontImage.Handle] = allocation;
         _imguiFontImageMemory = allocation.Memory;
@@ -2053,7 +2054,7 @@ public unsafe partial class VulkanRenderer
 
         descriptorLayout = ResolveDescriptorImageLayout(source, DescriptorType.CombinedImageSampler);
         return descriptorView.Handle != 0 &&
-            IsLiveImageView(descriptorView) &&
+            IsLiveImageViewBackedByLiveImage(descriptorView) &&
             descriptorSampler.Handle != 0 &&
             IsLiveSampler(descriptorSampler);
     }

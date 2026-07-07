@@ -227,6 +227,8 @@ namespace XREngine.Rendering.Commands
                 _updatingPassSortOrderCounters = passIndicesAndSorters.Keys.ToDictionary(static key => key, static _ => 0L);
 
                 _renderingPasses = [];
+                _renderingPassCommandCounts = [];
+                _renderingCommandCount = 0;
                 _gpuPasses = [];
 
                 _passMetadata = incomingPassMetadata;
@@ -361,6 +363,8 @@ namespace XREngine.Rendering.Commands
 
         private Dictionary<int, ICollection<RenderCommand>> _updatingPasses = [];
         private Dictionary<int, ICollection<RenderCommand>> _renderingPasses = [];
+        private Dictionary<int, int> _renderingPassCommandCounts = [];
+        private int _renderingCommandCount = 0;
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
         private Dictionary<int, RenderPassMetadata> _passMetadata = [];
         private IRuntimeRenderPipelineDebugContext? _ownerPipeline;
@@ -444,16 +448,13 @@ namespace XREngine.Rendering.Commands
         }
 
         public int GetRenderingCommandCount()
-        {
-            using var renderingBufferScope = EnterRenderingBufferReadScope();
-            return _renderingPasses.Values.Sum(static pass => pass.Count);
-        }
+            => Volatile.Read(ref _renderingCommandCount);
 
         public int GetRenderingPassCommandCount(int renderPass)
         {
-            using var renderingBufferScope = EnterRenderingBufferReadScope();
-            return _renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list)
-                ? list.Count
+            Dictionary<int, int> counts = Volatile.Read(ref _renderingPassCommandCounts);
+            return counts.TryGetValue(renderPass, out int count)
+                ? count
                 : 0;
         }
 
@@ -584,6 +585,21 @@ namespace XREngine.Rendering.Commands
             return isShadowPass || isDepthNormalPrePass;
         }
 
+        private static bool ShouldSuppressCpuQueryOcclusionForCurrentView(int renderPass, XRCamera? camera)
+        {
+            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+            if (!RuntimeEngine.Rendering.State.IsVulkan ||
+                !host.IsOpenXrRuntimeRequested ||
+                !host.IsInVR ||
+                !host.RenderWindowsWhileInVR)
+            {
+                return false;
+            }
+
+            OcclusionViewKey viewKey = CpuRenderOcclusionCoordinator.CreatePassKey(renderPass, camera);
+            return viewKey.Scope == EOcclusionViewScope.EditorDesktopWhileVr;
+        }
+
         internal bool PrepareCpuSoftwareOcclusion(int renderPass, XRCamera? camera, bool suppressCpuOcclusionForPass = false)
         {
             bool suppressOcclusion = ShouldSuppressOcclusionForCurrentPass(suppressCpuOcclusionForPass, out _, out _);
@@ -642,8 +658,10 @@ namespace XREngine.Rendering.Commands
 
             EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;
             bool suppressOcclusion = ShouldSuppressOcclusionForCurrentPass(suppressCpuOcclusionForPass, out bool isShadowPass, out bool isDepthNormalPrePass);
+            bool suppressCpuQueryForView = ShouldSuppressCpuQueryOcclusionForCurrentView(renderPass, camera);
             bool useCpuQueryOcclusion =
                 !suppressOcclusion &&
+                !suppressCpuQueryForView &&
                 camera is not null &&
                 occlusionMode == EOcclusionCullingMode.CpuQueryAsync &&
                 RenderPassIsOcclusionTestable(renderPass);
@@ -670,7 +688,7 @@ namespace XREngine.Rendering.Commands
                     noCamera: camera is null,
                     shadowPass: isShadowPass,
                     depthNormalPrePass: isDepthNormalPrePass,
-                    modeOff: occlusionMode != EOcclusionCullingMode.CpuQueryAsync);
+                    modeOff: suppressCpuQueryForView || occlusionMode != EOcclusionCullingMode.CpuQueryAsync);
             }
 
             // Phase 2 deferred-probe queues (reused per-thread).
@@ -1038,8 +1056,11 @@ namespace XREngine.Rendering.Commands
                 RenderPassIsOcclusionTestable(renderPass);
             XRCamera? camera = occlusionTestable ? GetActiveCpuOcclusionCamera() : null;
             EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;
+            bool suppressCpuQueryForView = camera is not null &&
+                ShouldSuppressCpuQueryOcclusionForCurrentView(renderPass, camera);
             bool useCpuQueryOcclusion =
                 occlusionTestable &&
+                !suppressCpuQueryForView &&
                 camera is not null &&
                 occlusionMode == EOcclusionCullingMode.CpuQueryAsync;
             bool useCpuSocOcclusion =
@@ -1265,9 +1286,8 @@ namespace XREngine.Rendering.Commands
 
         public bool HasRenderingCommands(int renderPass)
         {
-            using var renderingBufferScope = EnterRenderingBufferReadScope();
-            return _renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) &&
-                list.Count > 0;
+            Dictionary<int, int> counts = Volatile.Read(ref _renderingPassCommandCounts);
+            return counts.TryGetValue(renderPass, out int count) && count > 0;
         }
 
         public bool HasGpuEligibleMeshCommands(int renderPass)
@@ -1569,6 +1589,7 @@ namespace XREngine.Rendering.Commands
                 (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
                 (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
                 (_updatingSwapQueueMembership, _renderingSwapQueueMembership) = (_renderingSwapQueueMembership, _updatingSwapQueueMembership);
+                PublishRenderingCommandCountsNoLock();
 
                 using (RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers.RenderPasses"))
                 {
@@ -1623,6 +1644,21 @@ namespace XREngine.Rendering.Commands
 
                 _numCommandsRecentlyAddedToUpdate = 0;
             }
+        }
+
+        private void PublishRenderingCommandCountsNoLock()
+        {
+            Dictionary<int, int> counts = new(_renderingPasses.Count);
+            int total = 0;
+            foreach ((int passIndex, ICollection<RenderCommand> pass) in _renderingPasses)
+            {
+                int count = pass.Count;
+                counts[passIndex] = count;
+                total += count;
+            }
+
+            Volatile.Write(ref _renderingPassCommandCounts, counts);
+            Volatile.Write(ref _renderingCommandCount, total);
         }
 
         public IEnumerable<IRenderCommandMesh> EnumerateRenderingMeshCommands()

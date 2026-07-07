@@ -252,6 +252,25 @@ void main()
                 instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>");
         }
 
+        string passName = BuildRenderGraphPassName();
+        int passIndex = ResolvePassIndex(passName, out bool hasRenderGraphMetadata);
+        if (passIndex == int.MinValue && hasRenderGraphMetadata)
+        {
+            Debug.RenderingWarningEvery(
+                $"RenderToWindow.MissingRenderGraphPass.{passName}",
+                TimeSpan.FromSeconds(2),
+                "[RenderDiag] RenderToWindow skipped: no matching render-graph pass metadata was generated. Pass='{0}' SourceTex='{1}' SourceFBO='{2}' Pipeline={3}",
+                passName,
+                SourceTextureName ?? "<null>",
+                SourceFBOName ?? "<null>",
+                instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>");
+            return;
+        }
+
+        using var passScope = passIndex != int.MinValue
+            ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+            : default;
+
         if (!useBoundOutputFbo)
             RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
         if (!isExternalSwapchainTarget && !useBoundOutputFbo)
@@ -285,7 +304,7 @@ void main()
         if (source is null)
             return;
 
-        context.GetOrCreateSyntheticPass($"RenderToWindow_{GetSourceDisplayName()}")
+        context.GetOrCreateSyntheticPass(BuildRenderGraphPassName())
             .WithStage(ERenderGraphPassStage.Graphics)
             .SampleTexture(source)
             .UseColorAttachment(RenderGraphResourceNames.OutputRenderTarget, ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
@@ -348,6 +367,29 @@ void main()
 
     private string GetSourceDisplayName()
         => SourceTextureName ?? SourceFBOName ?? "Output";
+
+    private string BuildRenderGraphPassName()
+        => $"RenderToWindow_{GetSourceDisplayName()}";
+
+    private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
+    {
+        var metadata = ParentPipeline?.PassMetadata;
+        if (metadata is not { Count: > 0 } renderPasses)
+        {
+            hasRenderGraphMetadata = false;
+            return int.MinValue;
+        }
+
+        hasRenderGraphMetadata = true;
+
+        foreach (var match in renderPasses)
+        {
+            if (string.Equals(match.Name, passName, StringComparison.OrdinalIgnoreCase))
+                return match.PassIndex;
+        }
+
+        return int.MinValue;
+    }
 
     private XRFrameBuffer? ResolveSourceFrameBuffer(XRRenderPipelineInstance instance, XRTexture sourceTexture)
     {

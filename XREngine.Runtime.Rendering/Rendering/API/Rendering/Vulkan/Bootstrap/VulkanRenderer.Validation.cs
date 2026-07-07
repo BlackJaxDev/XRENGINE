@@ -12,7 +12,11 @@ public unsafe partial class VulkanRenderer
 
     private bool EnableValidationLayers = ResolveValidationLayerDefault();
 
-    private bool SupportsDebugUtilsLabels => debugUtils is not null;
+    private static readonly bool CommandBufferDebugLabelsEnabled = ResolveCommandBufferDebugLabelsDefault();
+
+    private bool SupportsDebugUtils => debugUtils is not null;
+    private bool SupportsDebugUtilsLabels => SupportsDebugUtils && CommandBufferDebugLabelsEnabled;
+    private bool CanRecordCommandBufferDebugLabels => SupportsDebugUtilsLabels;
 
     private static bool ResolveValidationLayerDefault()
     {
@@ -33,10 +37,25 @@ public unsafe partial class VulkanRenderer
                !string.Equals(raw, "no", StringComparison.OrdinalIgnoreCase);
     }
 
-    private void CmdBeginLabel(CommandBuffer commandBuffer, string name)
+    private static bool ResolveCommandBufferDebugLabelsDefault()
+    {
+        // Command-buffer labels are useful for RenderDoc/validation captures, but
+        // recording them marshals label strings on the render hot path. Keep them
+        // opt-in so normal editor runs do not pay that cost.
+        string? raw = Environment.GetEnvironmentVariable(global::XREngine.XREngineEnvironmentVariables.VulkanCommandBufferLabels);
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        return !string.Equals(raw, "0", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(raw, "off", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(raw, "no", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool CmdBeginLabel(CommandBuffer commandBuffer, string name)
     {
         if (!SupportsDebugUtilsLabels)
-            return;
+            return false;
 
         nint namePtr = SilkMarshal.StringToPtr(name);
         try
@@ -48,6 +67,7 @@ public unsafe partial class VulkanRenderer
             };
 
             debugUtils!.CmdBeginDebugUtilsLabel(commandBuffer, in label);
+            return true;
         }
         finally
         {
@@ -65,7 +85,7 @@ public unsafe partial class VulkanRenderer
 
     private void SetDebugObjectName(ObjectType objectType, ulong objectHandle, string name)
     {
-        if (!SupportsDebugUtilsLabels || device.Handle == 0 || objectHandle == 0 || string.IsNullOrWhiteSpace(name))
+        if (!SupportsDebugUtils || device.Handle == 0 || objectHandle == 0 || string.IsNullOrWhiteSpace(name))
             return;
 
         nint namePtr = SilkMarshal.StringToPtr(name);
@@ -94,7 +114,7 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyValidationLayers()
     {
-        if (EnableValidationLayers)
+        if (EnableValidationLayers && debugUtils is not null)
             debugUtils!.DestroyDebugUtilsMessenger(instance, debugMessenger, null);
     }
 
@@ -111,11 +131,14 @@ public unsafe partial class VulkanRenderer
     }
     private void SetupDebugMessenger()
     {
-        if (!EnableValidationLayers)
+        if (!EnableValidationLayers && !CommandBufferDebugLabelsEnabled)
             return;
 
         //TryGetInstanceExtension equivilant to method CreateDebugUtilsMessengerEXT from original tutorial.
         if (!Api!.TryGetInstanceExtension(instance, out debugUtils))
+            return;
+
+        if (!EnableValidationLayers)
             return;
 
         DebugUtilsMessengerCreateInfoEXT createInfo = new();

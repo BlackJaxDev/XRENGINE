@@ -296,6 +296,12 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
+        if (!OpenXrVulkanTrueStereoOverride)
+        {
+            reason = $"OpenXR Vulkan true single-pass stereo is disabled by default while the multiview staging path is stabilized; set {XREngineEnvironmentVariables.OpenXrVulkanTrueStereo}=1 to opt in for diagnostics";
+            return false;
+        }
+
         if (!OpenXrVulkanTrueStereoOverride && IsSteamVrOpenXrRuntime())
         {
             reason = $"SteamVR OpenXR Vulkan uses the per-eye compatibility path by default; the true-stereo publish path can be enabled for diagnostics with {XREngineEnvironmentVariables.OpenXrVulkanTrueStereo}=1";

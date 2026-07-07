@@ -406,6 +406,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public ERenderClipDepthRange ClipDepthRange { get; set; } = RuntimeRenderingHostServiceDefaults.ClipDepthRange;
         public bool IsRenderThread => true;
         public bool IsRendererActive => false;
+        public bool IsOpenXrRuntimeRequested => RuntimeRenderingHostServiceDefaults.IsOpenXrRuntimeRequested;
         public bool IsShadowPass => false;
         public bool IsStereoPass => false;
         public bool IsSceneCapturePass => false;

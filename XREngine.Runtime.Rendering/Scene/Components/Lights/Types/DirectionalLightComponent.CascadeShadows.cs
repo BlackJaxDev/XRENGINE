@@ -101,6 +101,7 @@ namespace XREngine.Components.Lights
             UnsupportedGeometryStageViewportIndexWrites = 12,
             VulkanLayeredRenderingDisabled = 13,
             VulkanCascadeAtlasGroupedRenderingDisabled = 14,
+            VulkanCascadeRenderingDisabled = 15,
         }
 
         private enum DirectionalCascadeShadowBackend
@@ -420,6 +421,9 @@ namespace XREngine.Components.Lights
 
         internal XRTexture2DArray? GetCascadedShadowReceiverTexture(ShadowRequestSource source)
         {
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+                return null;
+
             DirectionalCascadeSourceState state = GetCascadeSourceState(source);
             bool needsRasterDepth = ShouldUseVulkanRasterDepthReceiverTexture();
             if (CastsShadows &&
@@ -441,9 +445,45 @@ namespace XREngine.Components.Lights
         internal bool UsesCascadeRasterDepthReceiver => ShouldUseVulkanRasterDepthReceiverTexture();
 
         private XRTexture2DArray? SelectCascadeReceiverTexture(DirectionalCascadeSourceState state)
-            => ShouldUseVulkanRasterDepthReceiverTexture()
+            => !CanRenderDirectionalCascadesForCurrentBackend()
+                ? null
+                : ShouldUseVulkanRasterDepthReceiverTexture()
                 ? state.RasterDepthTexture
                 : state.ShadowMapTexture;
+
+        private static bool CanRenderDirectionalCascadesForCurrentBackend()
+        {
+            if (!IsVulkanDirectionalShadowBackend())
+                return true;
+
+            // Vulkan cascade rendering currently builds one sequential frame-op
+            // context per texture-array layer. Under OpenXR + Monado those contexts
+            // can resolve the shared receiver array to unrelated physical images and
+            // hang the graphics queue. Keep primary directional shadows enabled, but
+            // suppress cascades until the planner can model this shared array safely.
+            return false;
+        }
+
+        private void PublishVulkanCascadeRenderingDisabledPlan(ShadowRequestSource source)
+        {
+            DirectionalCascadeSourceState state = GetCascadeSourceState(source);
+            PublishCascadeShadowRenderPlan(CreateSequentialCascadeShadowRenderPlan(
+                state,
+                _cascadeShadowRenderMode,
+                DirectionalCascadeShadowBackend.LegacyTextureArray,
+                0,
+                DirectionalCascadeShadowFallbackReason.VulkanCascadeRenderingDisabled));
+        }
+
+        private void LogVulkanCascadeRenderingDisabledIfNeeded(ShadowRequestSource source)
+        {
+            Debug.LightingWarningEvery(
+                $"DirectionalCascade.VulkanDisabled.{GetHashCode()}.{source}",
+                TimeSpan.FromSeconds(2.0),
+                "[DirectionalShadowAudit] Directional cascades disabled for '{0}' source={1} on Vulkan. Primary directional shadows remain enabled while cascade texture-array ownership is fixed.",
+                SceneNode?.Name ?? Name ?? GetType().Name,
+                source);
+        }
 
         /// <summary>
         /// Number of cascades with currently published bounds and cameras.
@@ -892,6 +932,13 @@ namespace XREngine.Components.Lights
             Span<Matrix4x4> matrices,
             out int cascadeCount)
         {
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+            {
+                cascadeCount = 0;
+                FillCascadeUniformDefaults(splits, blendWidths, biasMins, biasMaxes, receiverOffsets, matrices);
+                return;
+            }
+
             int copyCount = Math.Min(MaxCascadeRenderCount, Math.Min(splits.Length, matrices.Length));
 
             lock (_cascadeDataLock)
@@ -921,6 +968,36 @@ namespace XREngine.Components.Lights
                         matrices[i] = Matrix4x4.Identity;
                     }
                 }
+            }
+        }
+
+        private void FillCascadeUniformDefaults(
+            Span<float> splits,
+            Span<float> blendWidths,
+            Span<float> biasMins,
+            Span<float> biasMaxes,
+            Span<float> receiverOffsets,
+            Span<Matrix4x4> matrices)
+        {
+            int copyCount = Math.Min(
+                MaxCascadeRenderCount,
+                Math.Min(
+                    splits.Length,
+                    Math.Min(
+                        blendWidths.Length,
+                        Math.Min(
+                            biasMins.Length,
+                            Math.Min(
+                                biasMaxes.Length,
+                                Math.Min(receiverOffsets.Length, matrices.Length))))));
+            for (int i = 0; i < copyCount; i++)
+            {
+                splits[i] = float.MaxValue;
+                blendWidths[i] = 0.0f;
+                biasMins[i] = 0.0f;
+                biasMaxes[i] = ShadowSlopeBiasTexels;
+                receiverOffsets[i] = 0.0f;
+                matrices[i] = Matrix4x4.Identity;
             }
         }
 
@@ -965,6 +1042,15 @@ namespace XREngine.Components.Lights
                                 Math.Min(
                                     receiverOffsets.Length,
                                     Math.Min(matrices.Length, staleAges.Length)))))));
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+            {
+                cascadeCount = 0;
+                FillCascadeUniformDefaults(splits, blendWidths, biasMins, biasMaxes, receiverOffsets, matrices);
+                for (int i = 0; i < copyCount; i++)
+                    staleAges[i] = -1.0f;
+                return;
+            }
+
             ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
 
             lock (_cascadeDataLock)
@@ -2052,7 +2138,7 @@ namespace XREngine.Components.Lights
 
         private void EnsureCascadeShadowResources(ShadowRequestSource source)
         {
-            if (!CastsShadows)
+            if (!CastsShadows || !CanRenderDirectionalCascadesForCurrentBackend())
                 return;
 
             DirectionalCascadeSourceState state = GetCascadeSourceState(source);
@@ -2511,6 +2597,14 @@ namespace XREngine.Components.Lights
 
         internal void UpdateCascadeShadows(ShadowRequestSource source, XRCamera playerCamera)
         {
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+            {
+                LogVulkanCascadeRenderingDisabledIfNeeded(source);
+                ClearCascadeShadows(source);
+                PublishVulkanCascadeRenderingDisabledPlan(source);
+                return;
+            }
+
             if (!CastsShadows || !EnableCascadedShadows || ShadowCamera is null)
             {
                 LogCascadeClearReason("disabled-or-missing-shadow-camera");
@@ -2746,6 +2840,9 @@ namespace XREngine.Components.Lights
         {
             DirectionalCascadeSourceState state = GetCascadeSourceState(source);
             EDirectionalCascadeShadowRenderMode requestedMode = _cascadeShadowRenderMode;
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+                return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, 0, DirectionalCascadeShadowFallbackReason.VulkanCascadeRenderingDisabled);
+
             if (cascadeCount <= 0)
                 return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.NoActiveCascades);
 
@@ -2757,6 +2854,9 @@ namespace XREngine.Components.Lights
 
             if (requestedMode == EDirectionalCascadeShadowRenderMode.Sequential)
                 return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.SequentialRequested);
+
+            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+                return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.VulkanLayeredRenderingDisabled);
 
             if (state.LayeredFrameBuffer is null)
                 return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingLayeredFramebuffer);
@@ -2942,6 +3042,12 @@ namespace XREngine.Components.Lights
 
         private void CollectCascadeSourceVisibleItems(ShadowRequestSource source)
         {
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+            {
+                PublishVulkanCascadeRenderingDisabledPlan(source);
+                return;
+            }
+
             DirectionalCascadeSourceState state = GetCascadeSourceState(source);
             XRViewport[] cascadeShadowViewports = state.Viewports;
             int cascadeCount = GetPublishedCascadeViewportCount(source, cascadeShadowViewports);
@@ -3014,6 +3120,12 @@ namespace XREngine.Components.Lights
 
         private void SwapCascadeSourceBuffers(ShadowRequestSource source)
         {
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+            {
+                PublishVulkanCascadeRenderingDisabledPlan(source);
+                return;
+            }
+
             DirectionalCascadeSourceState state = GetCascadeSourceState(source);
             XRViewport[] cascadeShadowViewports = state.Viewports;
             int cascadeCount = GetPublishedCascadeViewportCount(source, cascadeShadowViewports);
@@ -3066,11 +3178,21 @@ namespace XREngine.Components.Lights
 
         internal bool CanUseDirectionalCascadeShadowAtlasForCurrentBackend(int cascadeCount)
         {
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+                return false;
+
             if (!UsesDirectionalShadowAtlasForCurrentEncoding)
                 return false;
 
-            // Grouped viewport/scissor rendering is an optimization. Atlas cascade
-            // submission itself is valid on Vulkan through sequential per-tile renders.
+            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            {
+                // Vulkan directional cascade atlas page rendering currently hangs
+                // the graphics queue on the OpenXR + Monado path. Route Vulkan
+                // through the legacy cascade texture-array renderer until the atlas
+                // page command sequence is validated.
+                return false;
+            }
+
             return cascadeCount > 0;
         }
 
@@ -3079,6 +3201,9 @@ namespace XREngine.Components.Lights
 
         internal bool CanUseLegacyLayeredDirectionalCascadeShadowRendering(ShadowRequestSource source, int cascadeCount)
         {
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+                return false;
+
             if (cascadeCount <= 1)
                 return false;
 
@@ -3090,6 +3215,7 @@ namespace XREngine.Components.Lights
         {
             if (!CastsShadows ||
                 !EnableCascadedShadows ||
+                !CanRenderDirectionalCascadesForCurrentBackend() ||
                 World is null ||
                 group.CascadeCount <= 1 ||
                 group.Members is null ||
@@ -3105,6 +3231,9 @@ namespace XREngine.Components.Lights
             XRViewport[] cascadeShadowViewports = sourceState.Viewports;
             int cascadeCount = GetPublishedCascadeViewportCount(source, cascadeShadowViewports);
             if (cascadeCount <= 1)
+                return false;
+
+            if (!SupportsDirectionalCascadeAtlasGroupedRendering(cascadeCount))
                 return false;
 
             DirectionalCascadeShadowRenderPlan plan = CreateAtlasCascadeShadowRenderPlan(source, cascadeCount, hasGroupedAtlasAllocation: true);
@@ -3134,6 +3263,15 @@ namespace XREngine.Components.Lights
 
         private bool SupportsDirectionalCascadeAtlasGroupedRendering(int cascadeCount)
         {
+            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            {
+                // The grouped atlas path relies on indexed viewport/scissor state plus
+                // shader viewport/layer writes. On Vulkan it can hang the graphics
+                // queue during OpenXR startup; keep the atlas path on its sequential
+                // renderer until the grouped command sequence is validated.
+                return false;
+            }
+
             if (cascadeCount <= 1 ||
                 _cascadeShadowRenderMode == EDirectionalCascadeShadowRenderMode.Sequential ||
                 !RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
@@ -3229,6 +3367,7 @@ namespace XREngine.Components.Lights
         {
             if (!CastsShadows ||
                 !EnableCascadedShadows ||
+                !CanRenderDirectionalCascadesForCurrentBackend() ||
                 World is null ||
                 renderRect.Width <= 0 ||
                 renderRect.Height <= 0)
@@ -3280,6 +3419,7 @@ namespace XREngine.Components.Lights
         {
             if (!CastsShadows ||
                 !EnableCascadedShadows ||
+                !CanRenderDirectionalCascadesForCurrentBackend() ||
                 World is null ||
                 group.CascadeCount <= 1 ||
                 group.Members is null ||
@@ -3297,6 +3437,9 @@ namespace XREngine.Components.Lights
             XRViewport[] cascadeShadowViewports = sourceState.Viewports;
             int cascadeCount = GetPublishedCascadeViewportCount(source, cascadeShadowViewports);
             if (cascadeCount <= 0)
+                return false;
+
+            if (!SupportsDirectionalCascadeAtlasGroupedRendering(cascadeCount))
                 return false;
 
             DirectionalCascadeShadowRenderPlan plan = CreateAtlasCascadeShadowRenderPlan(source, cascadeCount, hasGroupedAtlasAllocation: true);
@@ -3500,6 +3643,12 @@ namespace XREngine.Components.Lights
 
         private void RenderCascadeShadowMaps(ShadowRequestSource source, XRMaterial sequentialShadowMaterial)
         {
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+            {
+                PublishVulkanCascadeRenderingDisabledPlan(source);
+                return;
+            }
+
             DirectionalCascadeSourceState state = GetCascadeSourceState(source);
             XRViewport[] cascadeShadowViewports = state.Viewports;
             XRFrameBuffer[] cascadeShadowFrameBuffers = state.FrameBuffers;

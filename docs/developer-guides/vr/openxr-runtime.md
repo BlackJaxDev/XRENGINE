@@ -75,6 +75,23 @@ VR gameplay input now routes through `RuntimeVrInputServices` instead of treatin
 
 OpenVR remains behind the same abstraction for parity checks. The OpenXR adapter creates runtime-neutral gameplay actions, suggests bindings for common controller profiles, syncs actions every frame, dispatches action state, applies/stops haptics, exposes grip/aim pose availability, tracks SteamVR VIVE tracker user paths through `XR_HTCX_vive_tracker_interaction`, and uses `XR_EXT_hand_tracking` when available. When hand joints are unavailable, controller grab state is exposed as a synthesized finger summary with diagnostics.
 
+## Runtime-Neutral Render Models
+
+Controller and tracker visuals route through `RuntimeVrRenderingServices.RenderModelProvider` instead of querying OpenVR devices directly from scene components.
+
+- OpenXR controller poses and inputs remain authoritative through runtime-neutral actions.
+- When the active OpenXR runtime exposes `XR_MSFT_controller_model`, the engine loads the runtime-supplied controller GLB and imports it as normal scene content.
+- When `XR_MSFT_controller_model` is unavailable, or when tracker meshes are needed, the provider can query SteamVR's OpenVR render-model service for the matching controller role or generic tracker render model.
+- OpenXR VIVE tracker poses still come from `XR_HTCX_vive_tracker_interaction` user paths. OpenXR does not currently provide tracker meshes through the Silk.NET bindings in this repo, so tracker visuals use SteamVR render models when SteamVR/OpenVR is reachable.
+
+The scene components only ask for a left/right controller model or a tracker model by OpenXR user path/OpenVR device index. This keeps poses, input, and visual assets decoupled enough for future `XR_EXT_render_model` or `XR_EXT_interaction_render_model` support when bindings are available.
+
+## SteamVR VIVE Trackers
+
+`XR_HTCX_vive_tracker_interaction` is integrated as the OpenXR source of truth for SteamVR tracker identity and role paths. The engine suggests bindings for the standard VIVE tracker role paths, calls `xrEnumerateViveTrackerPathsHTCX` when the extension is enabled, and handles `XR_TYPE_EVENT_DATA_VIVE_TRACKER_CONNECTED_HTCX` when trackers connect or roles change.
+
+The default role paths are only binding candidates. They are not exposed as scene trackers until SteamVR reports a tracker through HTCX enumeration/events or a tracker action pose becomes valid. Each scene tracker keeps the canonical user path plus any persistent path, assigned role path, role name, and pose-availability flag supplied by the runtime.
+
 ## Frame Lifecycle
 
 OpenXR follows the standard runtime-owned swapchain lifecycle:
@@ -124,6 +141,8 @@ The repo-local Monado test runtime lives at `Build/Submodules/monado` and is sou
 
 Use `Tools/OpenXR/Build-Monado.ps1` to initialize/update that submodule and build Monado in place. Use `Tools/OpenXR/Install-Monado.ps1` when you also want the runtime staged under `Build/Deps/Monado`, an environment helper written, and `openxr_loader.dll` copied into the editor output when available.
 
+The visible simulated-HMD preview is the `monado-service.exe` windowed compositor target, not `monado-gui.exe`. When an OpenXR session is active, the staged Windows build titles that window with the requested headset preset, internal per-eye resolution, current window size, and preview-eye scale. Leave `XRT_WINDOW_PEEK` unset for the default editor path; it enables Monado's separate experimental peek target.
+
 ## Implementation References
 
 - `XREngine.Input/RuntimeVrInputServices.cs`
@@ -131,14 +150,18 @@ Use `Tools/OpenXR/Build-Monado.ps1` to initialize/update that submodule and buil
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs`
+- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RenderModels.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Input.RuntimeNeutral.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.OpenGL.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Pacing.cs`
 - `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.RuntimeStateMachine.cs`
+- `XREngine.Runtime.Rendering/Runtime/RuntimeVrRenderingServices.cs`
 - `XREngine/Engine/Engine.VRState.cs`
 - `XREngine/Engine/Engine.RuntimeVrStateServices.cs`
+- `XREngine/Engine/Engine.RuntimeVrRenderingServices.cs`
 - `XREngine.Runtime.Rendering/Rendering/Camera/XROpenXRFovCameraParameters.cs`
 - `XREngine.Runtime.InputIntegration/Scene/Transforms/VR/VRDeviceTransformBase.cs`
+- `XREngine.Runtime.InputIntegration/Scene/Components/VR/VRDeviceModelComponent.cs`
 - `XREngine.UnitTests/Rendering/OpenXrTimingPipelineContractTests.cs`
 
 ## Troubleshooting
