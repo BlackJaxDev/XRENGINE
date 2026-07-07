@@ -15,7 +15,6 @@ public unsafe partial class VulkanRenderer
             ulong ProgramPipelineHash,
             ulong VertexLayoutHash,
             ulong DescriptorLayoutHash,
-            ulong MaterialLayoutHash,
             ulong PassMetadataHash,
             ulong FeatureProfileHash,
             SampleCountFlags RasterizationSamples,

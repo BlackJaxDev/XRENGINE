@@ -7,9 +7,18 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline
 {
+    private const uint DefaultBrdfLutSize = 2048u;
+    private const uint OpenXrVulkanSafePathBrdfLutSize = 256u;
+
+    private static uint ResolveBrdfLutSize()
+        => UseOpenXrVulkanDesktopStartupSafePath
+            ? OpenXrVulkanSafePathBrdfLutSize
+            : DefaultBrdfLutSize;
+
     private XRTexture CreateBRDFTexture()
     {
-        var tex = PrecomputeBRDF();
+        uint size = ResolveBrdfLutSize();
+        var tex = PrecomputeBRDF(size, size);
         tex.Name ??= BRDFTextureName;
         tex.SamplerName ??= BRDFTextureName;
         return tex;

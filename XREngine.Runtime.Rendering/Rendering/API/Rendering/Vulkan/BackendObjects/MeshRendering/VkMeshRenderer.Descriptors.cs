@@ -1399,15 +1399,20 @@ public unsafe partial class VulkanRenderer
 				return;
 			}
 
-			bool allowSynchronousTextureUpload = Renderer.AllowSynchronousResourceUploads;
-			object? apiObject = Renderer.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload);
+			if (!Renderer.TryGetAPIRenderObject(texture, out AbstractRenderAPIObject? apiObject))
+			{
+				hash.Add(false);
+				hash.Add(0UL);
+				return;
+			}
+
 			if (apiObject is IVkImageDescriptorSource imageSource)
 			{
 				if (imageSource.TryGetDescriptorSnapshot(
 					requestedViewType: null,
 					requestedAspectMask: null,
 					reason: "DescriptorResourceFingerprint",
-					allowSynchronousTextureUpload,
+					allowSynchronousUpload: false,
 					out VkImageDescriptorSnapshot snapshot))
 				{
 					hash.Add(snapshot.IsReady);
@@ -2259,8 +2264,40 @@ public unsafe partial class VulkanRenderer
 			}
 
 			bool allowSynchronousTextureUpload = Renderer.AllowSynchronousResourceUploads;
-			if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
+			bool suppressSynchronousTextureUploadForPressure =
+				allowSynchronousTextureUpload &&
+				Renderer.ShouldAvoidSynchronousImageAllocationForOpenXr(out _);
+			if (suppressSynchronousTextureUploadForPressure)
+				allowSynchronousTextureUpload = false;
+
+			AbstractRenderAPIObject? apiTextureObject;
+			if (allowSynchronousTextureUpload)
 			{
+				try
+				{
+					apiTextureObject = Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true);
+				}
+				catch (VulkanOutOfMemoryException ex)
+				{
+					if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-allocation-failed", out imageInfo))
+						return true;
+
+					WarnOnce($"Texture for descriptor binding '{binding.Name}' could not allocate a Vulkan image: {ex.Message}");
+					RecordDescriptorFailure(binding, "texture allocation failed");
+					return false;
+				}
+			}
+			else
+			{
+				Renderer.TryGetAPIRenderObject(texture, out apiTextureObject);
+			}
+
+			if (apiTextureObject is not IVkImageDescriptorSource source)
+			{
+				if (suppressSynchronousTextureUploadForPressure &&
+					TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-allocation-pressure", out imageInfo))
+					return true;
+
 				if (!allowSynchronousTextureUpload &&
 					TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-texture-wrapper-not-ready", out imageInfo))
 					return true;

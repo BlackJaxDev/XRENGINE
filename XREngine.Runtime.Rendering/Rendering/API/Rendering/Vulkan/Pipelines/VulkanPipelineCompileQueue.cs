@@ -156,11 +156,22 @@ public unsafe partial class VulkanRenderer
                 pipelineCache: default,
                 backgroundCompile: true);
             double elapsedMs = global::System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            uint keyHash = unchecked((uint)request.Key.GetHashCode());
             Debug.Vulkan(
-                "[Vulkan] Async graphics pipeline compiled in {0:F2} ms: pipeline='{1}' program='{2}' handle=0x{3:X}.",
+                "[Vulkan] Async graphics pipeline compiled in {0:F2} ms: pipeline='{1}' program='{2}' key=0x{3:X8} programHash=0x{4:X16} vertexLayout=0x{5:X16} descriptorLayout=0x{6:X16} depthTest={7} depthWrite={8} depthCompare={9} blend={10} atc={11} cull={12} handle=0x{13:X}.",
                 elapsedMs,
                 request.PipelineName,
                 request.Program.Data.Name ?? "<unnamed program>",
+                keyHash,
+                request.Key.ProgramPipelineHash,
+                request.Key.VertexLayoutHash,
+                request.Key.DescriptorLayoutHash,
+                request.Key.DepthTestEnabled,
+                request.Key.DepthWriteEnabled,
+                request.Key.DepthCompareOp,
+                request.Key.BlendEnabled,
+                request.Key.AlphaToCoverageEnabled,
+                request.Key.CullMode,
                 pipeline.Handle);
             return new VulkanGraphicsPipelineCompileResult(true, pipeline, null, elapsedMs);
         }
@@ -229,7 +240,7 @@ public unsafe partial class VulkanRenderer
                 if (_vulkanGraphicsPipelineCompileJobs.TryRemove(job.Request.CompileKey, out _) &&
                     job.Task.GetAwaiter().GetResult() is { Success: true, Pipeline.Handle: not 0 } result)
                 {
-                    RetirePipeline(result.Pipeline);
+                    StoreOrRetireSharedGraphicsPipeline(job.Request.Key, result.Pipeline);
                 }
             }
             catch (Exception ex)
@@ -264,7 +275,7 @@ public unsafe partial class VulkanRenderer
 
             VulkanGraphicsPipelineCompileResult result = job.Task.GetAwaiter().GetResult();
             if (result.Success && result.Pipeline.Handle != 0)
-                RetirePipeline(result.Pipeline);
+                StoreOrRetireSharedGraphicsPipeline(job.Request.Key, result.Pipeline);
         }
 
         _vulkanPipelineCompileGate?.Dispose();

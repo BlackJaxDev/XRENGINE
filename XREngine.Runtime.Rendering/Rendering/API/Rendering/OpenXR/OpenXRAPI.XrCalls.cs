@@ -527,7 +527,7 @@ public unsafe partial class OpenXRAPI
             if (CheckResult(result, "xrPollEvent") != Result.Success)
             {
                 Debug.LogWarning($"xrPollEvent failed: {result}");
-                break;
+                return;
             }
 
             EventDataBuffer* eventDataPtr = &eventData;
@@ -562,12 +562,14 @@ public unsafe partial class OpenXRAPI
                             var endResult = CheckResult(Api.EndSession(_session), "xrEndSession");
                             Debug.Out($"xrEndSession: {endResult}");
                             _sessionBegun = false;
+                            ResetOpenXrFrameStateForRuntimeLoss();
                             StopOpenXrPacingThread();
                             ClearOpenXrCollectVisiblePrepThread();
                         }
                         else if (_sessionState == SessionState.Exiting || _sessionState == SessionState.LossPending)
                         {
                             _sessionBegun = false;
+                            ResetOpenXrFrameStateForRuntimeLoss();
                             StopOpenXrPacingThread();
                             ClearOpenXrCollectVisiblePrepThread();
                             MarkRuntimeLoss(_sessionState == SessionState.LossPending

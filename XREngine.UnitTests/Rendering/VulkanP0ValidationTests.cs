@@ -973,11 +973,13 @@ public sealed class VulkanP0ValidationTests
     }
 
     [Test]
-    public void MeshCacheTeardown_RetiresPipelinesAndUniformBuffers()
+    public void MeshCacheTeardown_RetiresSharedPipelinesAndUniformBuffers()
     {
         string retirementSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
         string drawingCoreSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
         string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
+        string sharedPipelineCacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Pipelines/VulkanGraphicsPipelineCache.cs");
+        string initializationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
         string uniformsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
 
         retirementSource.ShouldContain("private readonly List<Pipeline>[] _retiredPipelines");
@@ -986,8 +988,13 @@ public sealed class VulkanP0ValidationTests
         drawingCoreSource.ShouldContain("DrainRetiredPipelines();");
 
         string destroyPipelines = SliceMethod(pipelineSource, "private void DestroyPipelines()");
-        destroyPipelines.ShouldContain("Renderer.RetirePipeline(pipe);");
+        destroyPipelines.ShouldContain("DestroyDescriptors();");
+        destroyPipelines.ShouldContain("_pipelines.Clear();");
+        destroyPipelines.ShouldNotContain("Renderer.RetirePipeline(pipe);");
         destroyPipelines.ShouldNotContain("DestroyPipeline(Device, pipe");
+        sharedPipelineCacheSource.ShouldContain("private void DestroySharedGraphicsPipelines()");
+        sharedPipelineCacheSource.ShouldContain("Api.DestroyPipeline(device, pipeline, null)");
+        initializationSource.ShouldContain("DestroySharedGraphicsPipelines();");
 
         string destroyUniformBuffer = SliceMethod(uniformsSource, "internal void DestroyTrackedMeshUniformBuffer");
         destroyUniformBuffer.ShouldContain("RetireBuffer(buffer, memory);");

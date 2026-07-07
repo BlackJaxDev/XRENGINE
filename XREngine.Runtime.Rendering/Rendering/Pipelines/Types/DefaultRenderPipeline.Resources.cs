@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Resources;
 
@@ -17,16 +19,30 @@ public partial class DefaultRenderPipeline
         VendorUpscalePreferred = 1UL << 5,
         GtaoFullResolution = 1UL << 6,
         GtaoQuarterResolution = 1UL << 7,
+        WeightedBlendedOitEnabled = 1UL << 8,
+        ExactTransparencyEnabled = 1UL << 9,
+        MotionBlurEnabled = 1UL << 10,
+        DepthOfFieldEnabled = 1UL << 11,
+        OpenXrVulkanDesktopSafePath = 1UL << 12,
+        AmbientOcclusionResourcesEnabled = 1UL << 13,
+        BloomResourcesEnabled = 1UL << 14,
+        TemporalResourcesEnabled = 1UL << 15,
     }
 
     private const RenderPipelineResourceUsage SampledColorAttachment =
-        RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment;
+        RenderPipelineResourceUsage.SampledTexture |
+        RenderPipelineResourceUsage.ColorAttachment |
+        RenderPipelineResourceUsage.TransferSource;
 
     private const RenderPipelineResourceUsage SampledDepthStencilAttachment =
-        RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.DepthStencilAttachment;
+        RenderPipelineResourceUsage.SampledTexture |
+        RenderPipelineResourceUsage.DepthStencilAttachment |
+        RenderPipelineResourceUsage.TransferSource;
 
     private const RenderPipelineResourceUsage SampledStorageTexture =
-        RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.StorageImage;
+        RenderPipelineResourceUsage.SampledTexture |
+        RenderPipelineResourceUsage.StorageImage |
+        RenderPipelineResourceUsage.TransferSource;
 
     private const RenderPipelineResourceUsage PrecomputedColorTexture =
         RenderPipelineResourceUsage.SampledTexture |
@@ -44,12 +60,35 @@ public partial class DefaultRenderPipeline
 
         if (EnableDeferredMsaa)
             mask |= DefaultPipelineResourceFeature.DeferredMsaaEnabled;
-        if (ForwardDepthPrePassEnabled)
+        bool useForwardPrePassResources = ForwardDepthPrePassEnabled && !UseOpenXrVulkanDesktopStartupSafePath;
+        if (useForwardPrePassResources)
             mask |= DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled;
-        if (ForwardPrePassSharesGBufferTargets)
+        if (useForwardPrePassResources && ForwardPrePassSharesGBufferTargets)
             mask |= DefaultPipelineResourceFeature.ForwardPrePassSharesGBufferTargets;
         if (RuntimeEnableVendorUpscale)
             mask |= DefaultPipelineResourceFeature.VendorUpscalePreferred;
+        if (EnableWeightedBlendedOitPasses)
+            mask |= DefaultPipelineResourceFeature.WeightedBlendedOitEnabled;
+        if (ExactTransparencyEnabled)
+            mask |= DefaultPipelineResourceFeature.ExactTransparencyEnabled;
+        if (ShouldUseMotionBlur())
+            mask |= DefaultPipelineResourceFeature.MotionBlurEnabled;
+        if (ShouldUseDepthOfField())
+            mask |= DefaultPipelineResourceFeature.DepthOfFieldEnabled;
+
+        if (UseOpenXrVulkanDesktopStartupSafePath)
+        {
+            mask |= DefaultPipelineResourceFeature.OpenXrVulkanDesktopSafePath;
+        }
+        else
+        {
+            // Keep non-safe-path runtime toggles behaving as before: these
+            // resources remain available when users flip AO/bloom/temporal
+            // settings without rebuilding the command chain.
+            mask |= DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled;
+            mask |= DefaultPipelineResourceFeature.BloomResourcesEnabled;
+            mask |= DefaultPipelineResourceFeature.TemporalResourcesEnabled;
+        }
 
         mask |= ForwardDepthNormalPrePassResolution switch
         {
@@ -158,7 +197,8 @@ public partial class DefaultRenderPipeline
             .RequiresStorageUsage()
             .Add();
 
-        Texture(builder, BRDFTextureName, RenderResourceSizePolicy.Absolute(2048u, 2048u), PrecomputedColorTexture,
+        uint brdfLutSize = ResolveBrdfLutSize();
+        Texture(builder, BRDFTextureName, RenderResourceSizePolicy.Absolute(brdfLutSize, brdfLutSize), PrecomputedColorTexture,
             EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f,
             CreateBRDFTexture)
             .Mips(new RenderResourceMipPolicy(AutoGenerateMipmaps: false, RequireImmutableStorage: false))
@@ -176,6 +216,7 @@ public partial class DefaultRenderPipeline
             CreateAmbientOcclusionRawTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesAmbientOcclusionResources)
             .Add();
 
         Texture(builder, HBAOPlusRawTextureName, internalSize, PrecomputedColorTexture,
@@ -183,6 +224,7 @@ public partial class DefaultRenderPipeline
             CreateHBAOPlusRawTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesAmbientOcclusionResources)
             .Add();
 
         Texture(builder, HBAOPlusBlurIntermediateTextureName, internalSize, PrecomputedColorTexture,
@@ -190,6 +232,7 @@ public partial class DefaultRenderPipeline
             CreateHBAOPlusBlurIntermediateTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesAmbientOcclusionResources)
             .Add();
 
         Texture(builder, GTAORawTextureName, gtaoScratchSize, PrecomputedColorTexture,
@@ -197,6 +240,7 @@ public partial class DefaultRenderPipeline
             CreateGTAORawTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesAmbientOcclusionResources)
             .Add();
 
         Texture(builder, GTAOBlurIntermediateTextureName, gtaoScratchSize, PrecomputedColorTexture,
@@ -204,6 +248,7 @@ public partial class DefaultRenderPipeline
             CreateGTAOBlurIntermediateTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesAmbientOcclusionResources)
             .Add();
 
         builder.Texture(AmbientOcclusionNoiseTextureName)
@@ -212,6 +257,7 @@ public partial class DefaultRenderPipeline
             .Format(EPixelInternalFormat.RG, EPixelFormat.Rg, EPixelType.Float)
             .SizedFormat(ESizedInternalFormat.Rg16f)
             .Optional()
+            .When(UsesAmbientOcclusionResources)
             .Add();
     }
 
@@ -222,7 +268,16 @@ public partial class DefaultRenderPipeline
 
         DepthStencilView(builder, DepthViewTextureName, DepthStencilTextureName, EDepthStencilFmt.Depth, internalSize, layerCount, CreateDepthViewTexture);
         DepthStencilView(builder, StencilViewTextureName, DepthStencilTextureName, EDepthStencilFmt.Stencil, internalSize, layerCount, CreateStencilViewTexture);
-        DepthStencilView(builder, HistoryDepthViewTextureName, HistoryDepthStencilTextureName, EDepthStencilFmt.Depth, internalSize, layerCount, CreateHistoryDepthViewTexture);
+        builder.TextureView(HistoryDepthViewTextureName, HistoryDepthStencilTextureName)
+            .Size(internalSize)
+            .Usage(RenderPipelineResourceUsage.SampledTexture)
+            .SizedFormat(ESizedInternalFormat.Depth24Stencil8)
+            .DepthStencilAspect(EDepthStencilFmt.Depth)
+            .LayerRange(0u, layerCount)
+            .Target(builder.Profile.Stereo, multisample: false)
+            .Factory(CreateHistoryDepthViewTexture)
+            .When(UsesTemporalResources)
+            .Add();
     }
 
     private void DeclareMsaaDeferredResources(RenderPipelineResourceLayoutBuilder builder)
@@ -433,6 +488,7 @@ public partial class DefaultRenderPipeline
             .Color(0, VelocityTextureName)
             .DepthStencil(DepthStencilTextureName)
             .Factory(CreateVelocityFBO)
+            .When(UsesTemporalResources)
             .Add();
 
         builder.FrameBuffer(MsaaGBufferFBOName)
@@ -487,6 +543,25 @@ public partial class DefaultRenderPipeline
                 MipLevelCount: BloomMaxMipmapLevel + 1u,
                 AutoGenerateMipmaps: false,
                 RequireImmutableStorage: true))
+            .When(UsesBloomResources)
+            .Add();
+
+        Texture(builder, BloomBlurTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
+            ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
+            CreateBloomBlurFallbackTexture)
+            .When(UsesOpenXrVulkanPostProcessFallbackResources)
+            .Add();
+
+        Texture(builder, AtmosphereColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
+            CreateAtmosphereColorFallbackTexture)
+            .When(UsesOpenXrVulkanPostProcessFallbackResources)
+            .Add();
+
+        Texture(builder, VolumetricFogColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
+            CreateVolumetricFogColorFallbackTexture)
+            .When(UsesOpenXrVulkanPostProcessFallbackResources)
             .Add();
 
         builder.FrameBuffer(PostProcessOutputFBOName)
@@ -516,6 +591,7 @@ public partial class DefaultRenderPipeline
             CreateTransparentSceneCopyTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesTransparencySceneCopyResources)
             .Add();
 
         Texture(builder, TransparentAccumTextureName, internalSize, SampledColorAttachment,
@@ -523,6 +599,7 @@ public partial class DefaultRenderPipeline
             CreateTransparentAccumTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesWeightedBlendedOitResources)
             .Add();
 
         Texture(builder, TransparentRevealageTextureName, internalSize, SampledColorAttachment,
@@ -530,6 +607,7 @@ public partial class DefaultRenderPipeline
             CreateTransparentRevealageTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesWeightedBlendedOitResources)
             .Add();
 
         builder.FrameBuffer(TransparentSceneCopyFBOName)
@@ -538,6 +616,7 @@ public partial class DefaultRenderPipeline
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
             .Color(0, TransparentSceneCopyTextureName)
             .Factory(CreateTransparentSceneCopyFBO)
+            .When(UsesTransparencySceneCopyResources)
             .Add();
 
         builder.FrameBuffer(DeferredTransparencyBlurFBOName)
@@ -547,6 +626,7 @@ public partial class DefaultRenderPipeline
             .DependsOn(TransparentSceneCopyTextureName, AlbedoOpacityTextureName, DepthViewTextureName)
             .Color(0, HDRSceneTextureName)
             .Factory(CreateDeferredTransparencyBlurFBO)
+            .When(UsesWeightedBlendedOitResources)
             .Add();
 
         builder.FrameBuffer(TransparentAccumulationFBOName)
@@ -557,6 +637,7 @@ public partial class DefaultRenderPipeline
             .Color(1, TransparentRevealageTextureName)
             .DepthStencil(DepthStencilTextureName)
             .Factory(CreateTransparentAccumulationFBO)
+            .When(UsesWeightedBlendedOitResources)
             .Add();
 
         builder.FrameBuffer(TransparentResolveFBOName)
@@ -566,6 +647,7 @@ public partial class DefaultRenderPipeline
             .DependsOn(TransparentSceneCopyTextureName, TransparentAccumTextureName, TransparentRevealageTextureName)
             .Color(0, HDRSceneTextureName)
             .Factory(CreateTransparentResolveFBO)
+            .When(UsesWeightedBlendedOitResources)
             .Add();
     }
 
@@ -579,6 +661,7 @@ public partial class DefaultRenderPipeline
             CreateVelocityTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesTemporalResources)
             .Add();
 
         Texture(builder, HistoryColorTextureName, internalSize, SampledColorAttachment,
@@ -587,6 +670,7 @@ public partial class DefaultRenderPipeline
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
             .History(RenderResourceHistoryPolicy.SeedFromCurrentFrame)
+            .When(UsesTemporalResources)
             .Add();
 
         Texture(builder, HistoryDepthStencilTextureName, internalSize, SampledDepthStencilAttachment,
@@ -595,6 +679,7 @@ public partial class DefaultRenderPipeline
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
             .History(RenderResourceHistoryPolicy.SeedFromCurrentFrame)
+            .When(UsesTemporalResources)
             .Add();
 
         Texture(builder, TemporalColorInputTextureName, internalSize, SampledColorAttachment,
@@ -602,6 +687,7 @@ public partial class DefaultRenderPipeline
             CreateTemporalColorInputTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesTemporalResources)
             .Add();
 
         Texture(builder, TemporalExposureVarianceTextureName, internalSize, SampledColorAttachment,
@@ -609,6 +695,7 @@ public partial class DefaultRenderPipeline
             CreateTemporalExposureVarianceTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesTemporalResources)
             .Add();
 
         Texture(builder, HistoryExposureVarianceTextureName, internalSize, SampledColorAttachment,
@@ -617,6 +704,7 @@ public partial class DefaultRenderPipeline
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
             .History(RenderResourceHistoryPolicy.SeedFromCurrentFrame)
+            .When(UsesTemporalResources)
             .Add();
 
         Texture(builder, MotionBlurTextureName, internalSize, SampledColorAttachment,
@@ -624,6 +712,7 @@ public partial class DefaultRenderPipeline
             CreateMotionBlurTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesMotionBlurResources)
             .Add();
 
         Texture(builder, DepthOfFieldTextureName, internalSize, SampledColorAttachment,
@@ -631,6 +720,7 @@ public partial class DefaultRenderPipeline
             CreateDepthOfFieldTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
+            .When(UsesDepthOfFieldResources)
             .Add();
 
         builder.FrameBuffer(HistoryCaptureFBOName)
@@ -640,6 +730,7 @@ public partial class DefaultRenderPipeline
             .Color(0, HistoryColorTextureName)
             .DepthStencil(HistoryDepthStencilTextureName)
             .Factory(CreateHistoryCaptureFBO)
+            .When(UsesTemporalResources)
             .Add();
 
         builder.FrameBuffer(TemporalInputFBOName)
@@ -648,6 +739,7 @@ public partial class DefaultRenderPipeline
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
             .Color(0, TemporalColorInputTextureName)
             .Factory(CreateTemporalInputFBO)
+            .When(UsesTemporalResources)
             .Add();
 
         builder.FrameBuffer(TemporalAccumulationFBOName)
@@ -658,6 +750,7 @@ public partial class DefaultRenderPipeline
             .Color(0, HDRSceneTextureName)
             .Color(1, TemporalExposureVarianceTextureName)
             .Factory(CreateTemporalAccumulationFBO)
+            .When(UsesTemporalResources)
             .Add();
 
         builder.FrameBuffer(HistoryExposureFBOName)
@@ -666,6 +759,7 @@ public partial class DefaultRenderPipeline
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
             .Color(0, HistoryExposureVarianceTextureName)
             .Factory(CreateHistoryExposureFBO)
+            .When(UsesTemporalResources)
             .Add();
 
         builder.FrameBuffer(MotionBlurCopyFBOName)
@@ -674,6 +768,7 @@ public partial class DefaultRenderPipeline
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
             .Color(0, MotionBlurTextureName)
             .Factory(CreateMotionBlurCopyFBO)
+            .When(UsesMotionBlurResources)
             .Add();
 
         builder.FrameBuffer(DepthOfFieldCopyFBOName)
@@ -682,14 +777,17 @@ public partial class DefaultRenderPipeline
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
             .Color(0, DepthOfFieldTextureName)
             .Factory(CreateDepthOfFieldCopyFBO)
+            .When(UsesDepthOfFieldResources)
             .Add();
     }
 
     private void DeclareAntiAliasingResources(RenderPipelineResourceLayoutBuilder builder)
     {
         RenderResourceSizePolicy windowSize = RenderResourceSizePolicy.Window();
-        RenderPipelineResourcePredicate fxaa = static profile => profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;
-        RenderPipelineResourcePredicate tsr = static profile => profile.AntiAliasingMode == EAntiAliasingMode.Tsr;
+        RenderPipelineResourcePredicate fxaa = static profile =>
+            !UsesOpenXrVulkanDesktopSafePath(profile) && profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;
+        RenderPipelineResourcePredicate tsr = static profile =>
+            UsesTemporalResources(profile) && profile.AntiAliasingMode == EAntiAliasingMode.Tsr;
 
         Texture(builder, FxaaOutputTextureName, windowSize, SampledColorAttachment,
             ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
@@ -997,6 +1095,94 @@ public partial class DefaultRenderPipeline
         texture.Name = BloomBlurTextureName;
     }
 
+    private static XRTexture CreateBloomBlurFallbackTexture()
+        => CreatePostProcessFallbackTexture(BloomBlurTextureName, 0.0f, 0.0f, 0.0f, 1.0f);
+
+    private static XRTexture CreateAtmosphereColorFallbackTexture()
+        => CreatePostProcessFallbackTexture(AtmosphereColorTextureName, 0.0f, 0.0f, 0.0f, 1.0f);
+
+    private static XRTexture CreateVolumetricFogColorFallbackTexture()
+        => CreatePostProcessFallbackTexture(VolumetricFogColorTextureName, 0.0f, 0.0f, 0.0f, 1.0f);
+
+    private static XRTexture CreatePostProcessFallbackTexture(string textureName, float r, float g, float b, float a)
+    {
+        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
+        var texture = new XRTexture2D(
+            1u,
+            1u,
+            ResolvePostProcessIntermediateInternalFormat(),
+            EPixelFormat.Rgba,
+            pixelType);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ResolvePostProcessIntermediateSizedInternalFormat();
+        texture.AutoGenerateMipmaps = false;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.Name = textureName;
+        texture.SamplerName = textureName;
+        texture.Mipmaps[0].Data = new DataSource(CreateRgbaPixelData(pixelType, r, g, b, a));
+        return texture;
+    }
+
+    private static byte[] CreateRgbaPixelData(EPixelType pixelType, float r, float g, float b, float a)
+        => pixelType switch
+        {
+            EPixelType.HalfFloat => CreateHalfFloatRgbaPixelData(r, g, b, a),
+            EPixelType.Float => CreateFloatRgbaPixelData(r, g, b, a),
+            EPixelType.UnsignedByte => CreateUnsignedByteRgbaPixelData(r, g, b, a),
+            EPixelType.Byte => CreateByteRgbaPixelData(r, g, b, a),
+            _ => CreateHalfFloatRgbaPixelData(r, g, b, a),
+        };
+
+    private static byte[] CreateHalfFloatRgbaPixelData(float r, float g, float b, float a)
+    {
+        byte[] data = new byte[sizeof(ushort) * 4];
+        WriteHalf(data.AsSpan(0, sizeof(ushort)), r);
+        WriteHalf(data.AsSpan(sizeof(ushort), sizeof(ushort)), g);
+        WriteHalf(data.AsSpan(sizeof(ushort) * 2, sizeof(ushort)), b);
+        WriteHalf(data.AsSpan(sizeof(ushort) * 3, sizeof(ushort)), a);
+        return data;
+    }
+
+    private static void WriteHalf(Span<byte> destination, float value)
+        => BinaryPrimitives.WriteUInt16LittleEndian(destination, BitConverter.HalfToUInt16Bits((Half)value));
+
+    private static byte[] CreateFloatRgbaPixelData(float r, float g, float b, float a)
+    {
+        byte[] data = new byte[sizeof(float) * 4];
+        WriteFloat(data.AsSpan(0, sizeof(float)), r);
+        WriteFloat(data.AsSpan(sizeof(float), sizeof(float)), g);
+        WriteFloat(data.AsSpan(sizeof(float) * 2, sizeof(float)), b);
+        WriteFloat(data.AsSpan(sizeof(float) * 3, sizeof(float)), a);
+        return data;
+    }
+
+    private static void WriteFloat(Span<byte> destination, float value)
+        => BinaryPrimitives.WriteUInt32LittleEndian(destination, BitConverter.SingleToUInt32Bits(value));
+
+    private static byte[] CreateUnsignedByteRgbaPixelData(float r, float g, float b, float a)
+        =>
+        [
+            ToByte(r),
+            ToByte(g),
+            ToByte(b),
+            ToByte(a),
+        ];
+
+    private static byte[] CreateByteRgbaPixelData(float r, float g, float b, float a)
+        =>
+        [
+            unchecked((byte)(sbyte)Math.Clamp((int)MathF.Round(r * sbyte.MaxValue), sbyte.MinValue, sbyte.MaxValue)),
+            unchecked((byte)(sbyte)Math.Clamp((int)MathF.Round(g * sbyte.MaxValue), sbyte.MinValue, sbyte.MaxValue)),
+            unchecked((byte)(sbyte)Math.Clamp((int)MathF.Round(b * sbyte.MaxValue), sbyte.MinValue, sbyte.MaxValue)),
+            unchecked((byte)(sbyte)Math.Clamp((int)MathF.Round(a * sbyte.MaxValue), sbyte.MinValue, sbyte.MaxValue)),
+        ];
+
+    private static byte ToByte(float value)
+        => (byte)Math.Clamp((int)MathF.Round(value * byte.MaxValue), byte.MinValue, byte.MaxValue);
+
     private RenderPipelineResourceLayoutBuilder.TextureSpecBuilder Texture(
         RenderPipelineResourceLayoutBuilder builder,
         string name,
@@ -1043,7 +1229,38 @@ public partial class DefaultRenderPipeline
         && profile.MsaaSampleCount > 1u;
 
     private bool UsesForwardPrePass(RenderPipelineResourceProfile profile)
-        => ForwardDepthPrePassEnabled;
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled) != 0
+        && !UsesOpenXrVulkanDesktopSafePath(profile);
+
+    private static bool UsesWeightedBlendedOitResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.WeightedBlendedOitEnabled) != 0;
+
+    private static bool UsesExactTransparencyResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.ExactTransparencyEnabled) != 0;
+
+    private static bool UsesTransparencySceneCopyResources(RenderPipelineResourceProfile profile)
+        => UsesWeightedBlendedOitResources(profile) || UsesExactTransparencyResources(profile);
+
+    private static bool UsesOpenXrVulkanDesktopSafePath(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.OpenXrVulkanDesktopSafePath) != 0;
+
+    private static bool UsesAmbientOcclusionResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled) != 0;
+
+    private static bool UsesBloomResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.BloomResourcesEnabled) != 0;
+
+    private static bool UsesOpenXrVulkanPostProcessFallbackResources(RenderPipelineResourceProfile profile)
+        => UsesOpenXrVulkanDesktopSafePath(profile);
+
+    private static bool UsesTemporalResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.TemporalResourcesEnabled) != 0;
+
+    private static bool UsesMotionBlurResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.MotionBlurEnabled) != 0;
+
+    private static bool UsesDepthOfFieldResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.DepthOfFieldEnabled) != 0;
 
     private RenderResourceSizePolicy ForwardDepthNormalPrePassSizePolicy()
         => RenderResourceSizePolicy.Internal(ForwardDepthNormalPrePassResolution switch

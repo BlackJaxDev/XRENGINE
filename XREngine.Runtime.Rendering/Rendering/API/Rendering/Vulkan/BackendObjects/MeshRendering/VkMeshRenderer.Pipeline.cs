@@ -496,20 +496,6 @@ public unsafe partial class VulkanRenderer
 			return IndexSize.FourBytes;
 		}
 
-		private static ulong ComputeMaterialLayoutHash(XRMaterial material)
-		{
-			HashCode hash = new();
-			hash.Add(material.BindingLayoutVersion);
-			hash.Add(material.Textures.Count);
-			hash.Add(material.Parameters.Length);
-			hash.Add(material.ShaderPipelineProgram?.GetHashCode() ?? 0);
-			hash.Add((int)material.DirectionalCascadeShadowMaterialKind);
-			hash.Add((int)material.PointShadowMaterialKind);
-			hash.Add(material.ShadowUniformSourceMaterial?.BindingLayoutVersion ?? 0UL);
-			hash.Add(material.RenderOptions?.GetHashCode() ?? 0);
-			return unchecked((ulong)hash.ToHashCode());
-		}
-
 		private static ulong ComputePassMetadataHash(IReadOnlyCollection<RenderPassMetadata>? passMetadata, int passIndex)
 		{
 			HashCode hash = new();
@@ -650,7 +636,6 @@ public unsafe partial class VulkanRenderer
 			ulong descriptorLayoutHash = ComputeDescriptorSchemaFingerprint(
 				_program.DescriptorBindings,
 				_program.DescriptorSetLayouts.Count);
-			ulong materialLayoutHash = ComputeMaterialLayoutHash(material);
 			ulong passMetadataHash = ComputePassMetadataHash(passMetadata, passIndex);
 			ulong featureProfileHash = ComputeFeatureProfileHash();
 			bool useNativeNegativeOneToOneDepth = RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl;
@@ -663,7 +648,6 @@ public unsafe partial class VulkanRenderer
 				programPipelineHash,
 				vertexLayoutHash,
 				descriptorLayoutHash,
-				materialLayoutHash,
 				passMetadataHash,
 				featureProfileHash,
 				effectiveDraw.RasterizationSamples,
@@ -699,24 +683,13 @@ public unsafe partial class VulkanRenderer
 				return true;
 			}
 
-			Renderer.RecordVulkanGraphicsPipelineCacheMiss(
-				passIndex,
-				passMetadata,
-				pipelineName,
-				Mesh?.Name,
-				material,
-				_program!.Data?.Name,
-				topology,
-				useDynamicRendering,
-				renderPass,
-				dynamicRenderingFormats,
-				programPipelineHash,
-				vertexLayoutHash,
-				effectiveDraw.RasterizationSamples,
-				effectiveDraw.DepthTestEnabled,
-				effectiveDraw.BlendEnabled,
-				effectiveDraw.AlphaToCoverageEnabled,
-				effectiveDraw.ColorWriteMask);
+			if (Renderer.TryGetSharedGraphicsPipeline(key, out pipeline))
+			{
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheLookup(cacheHit: true);
+				_pipelines[key] = pipeline;
+				_pipelineDirty = false;
+				return true;
+			}
 
 			PipelineInputAssemblyStateCreateInfo inputAssembly = new()
 			{
@@ -768,15 +741,6 @@ public unsafe partial class VulkanRenderer
 				SrcAlphaBlendFactor = effectiveDraw.SrcAlphaBlendFactor,
 				DstAlphaBlendFactor = effectiveDraw.DstAlphaBlendFactor,
 			};
-
-			Debug.VulkanEvery(
-				$"Vulkan.Pipeline.CacheMiss.{_program!.Data?.Name ?? "Unknown"}.{renderPass.Handle:X}.{colorAttachmentCount}",
-				TimeSpan.FromSeconds(2),
-				"[Vulkan] Pipeline cache miss: program='{0}' dynRendering={1} renderPass=0x{2:X} colorCount={3}",
-				_program!.Data?.Name ?? "Unknown",
-				useDynamicRendering,
-				renderPass.Handle,
-				colorAttachmentCount);
 
 			PipelineColorBlendAttachmentState[] blendAttachments = colorAttachmentCount == 0
 				? Array.Empty<PipelineColorBlendAttachmentState>()
@@ -845,14 +809,19 @@ public unsafe partial class VulkanRenderer
 						return false;
 					}
 
-					pipeline = asyncResult.Pipeline;
+					pipeline = Renderer.StoreOrRetireSharedGraphicsPipeline(key, asyncResult.Pipeline);
 					_pipelines[key] = pipeline;
 					_pipelineDirty = false;
 					return true;
 				}
 
-				if (!Renderer.IsVulkanGraphicsPipelineCompileInFlight(request.CompileKey) &&
-					!Renderer.TryEnqueueVulkanGraphicsPipelineCompile(request, out string rejectReason))
+				if (Renderer.IsVulkanGraphicsPipelineCompileInFlight(request.CompileKey))
+				{
+					_pipelineDirty = true;
+					return false;
+				}
+
+				if (!Renderer.TryEnqueueVulkanGraphicsPipelineCompile(request, out string rejectReason))
 				{
 					Debug.VulkanEvery(
 						$"Vulkan.Pipeline.AsyncEnqueueRejected.{program.Data.Name ?? "UnknownProgram"}",
@@ -861,11 +830,49 @@ public unsafe partial class VulkanRenderer
 						program.Data.Name ?? "<unnamed program>",
 						pipelineName,
 						rejectReason);
+					_pipelineDirty = true;
+					return false;
 				}
+
+				RecordGraphicsPipelineCacheMiss(
+					passIndex,
+					passMetadata,
+					pipelineName,
+					Mesh?.Name,
+					material,
+					program.Data?.Name,
+					topology,
+					useDynamicRendering,
+					renderPass,
+					dynamicRenderingFormats,
+					programPipelineHash,
+					vertexLayoutHash,
+					descriptorLayoutHash,
+					colorAttachmentCount,
+					key,
+					effectiveDraw);
 
 				_pipelineDirty = true;
 				return false;
 			}
+
+			RecordGraphicsPipelineCacheMiss(
+				passIndex,
+				passMetadata,
+				pipelineName,
+				Mesh?.Name,
+				material,
+				program.Data?.Name,
+				topology,
+				useDynamicRendering,
+				renderPass,
+				dynamicRenderingFormats,
+				programPipelineHash,
+				vertexLayoutHash,
+				descriptorLayoutHash,
+				colorAttachmentCount,
+				key,
+				effectiveDraw);
 
 			try
 			{
@@ -878,9 +885,68 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
+			pipeline = Renderer.StoreOrRetireSharedGraphicsPipeline(key, pipeline);
 			_pipelines[key] = pipeline;
 			_pipelineDirty = false;
 			return pipeline.Handle != 0;
+		}
+
+		private void RecordGraphicsPipelineCacheMiss(
+			int passIndex,
+			IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+			string pipelineName,
+			string? meshName,
+			XRMaterial material,
+			string? programName,
+			PrimitiveTopology topology,
+			bool useDynamicRendering,
+			RenderPass renderPass,
+			DynamicRenderingFormatSignature dynamicRenderingFormats,
+			ulong programPipelineHash,
+			ulong vertexLayoutHash,
+			ulong descriptorLayoutHash,
+			uint colorAttachmentCount,
+			in PipelineKey key,
+			in PendingMeshDraw effectiveDraw)
+		{
+			Renderer.RecordVulkanGraphicsPipelineCacheMiss(
+				passIndex,
+				passMetadata,
+				pipelineName,
+				meshName,
+				material,
+				programName,
+				topology,
+				useDynamicRendering,
+				renderPass,
+				dynamicRenderingFormats,
+				programPipelineHash,
+				vertexLayoutHash,
+				effectiveDraw.RasterizationSamples,
+				effectiveDraw.DepthTestEnabled,
+				effectiveDraw.BlendEnabled,
+				effectiveDraw.AlphaToCoverageEnabled,
+				effectiveDraw.ColorWriteMask);
+
+			uint keyHash = unchecked((uint)key.GetHashCode());
+			Debug.VulkanEvery(
+				$"Vulkan.Pipeline.CacheMiss.{programName ?? "Unknown"}.{keyHash:X8}",
+				TimeSpan.FromSeconds(2),
+				"[Vulkan] Pipeline cache miss: key=0x{0:X8} program='{1}' dynRendering={2} renderPass=0x{3:X} colorCount={4} programHash=0x{5:X16} vertexLayout=0x{6:X16} descriptorLayout=0x{7:X16} depthTest={8} depthWrite={9} depthCompare={10} blend={11} atc={12} cull={13}",
+				keyHash,
+				programName ?? "Unknown",
+				useDynamicRendering,
+				renderPass.Handle,
+				colorAttachmentCount,
+				programPipelineHash,
+				vertexLayoutHash,
+				descriptorLayoutHash,
+				effectiveDraw.DepthTestEnabled,
+				effectiveDraw.DepthWriteEnabled,
+				effectiveDraw.DepthCompareOp,
+				effectiveDraw.BlendEnabled,
+				effectiveDraw.AlphaToCoverageEnabled,
+				effectiveDraw.CullMode);
 		}
 
 		private bool ShouldUseGraphicsPipelineLibraries()
@@ -1565,16 +1631,13 @@ public unsafe partial class VulkanRenderer
 			};
 
 		/// <summary>
-		/// Destroys all cached pipelines and associated descriptor resources.
+		/// Clears local pipeline references and destroys associated descriptor resources.
+		/// Final graphics pipeline handles are owned by the renderer-level shared cache.
 		/// Called when the program/material/mesh changes require a full rebuild.
 		/// </summary>
 		private void DestroyPipelines()
 		{
 			DestroyDescriptors();
-
-			foreach (var pipe in _pipelines.Values)
-				if (pipe.Handle != 0)
-					Renderer.RetirePipeline(pipe);
 
 			_pipelines.Clear();
 		}

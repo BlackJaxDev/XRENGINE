@@ -327,7 +327,7 @@ public partial class DefaultRenderPipeline2
     {
         BeginGpuScope(c, "Forward Pre-Pass");
         var prePassChoice = c.Add<VPRC_IfElse>();
-        prePassChoice.ConditionEvaluator = () => ForwardDepthPrePassEnabled;
+        prePassChoice.ConditionEvaluator = () => !UseOpenXrVulkanDesktopStartupSafePath && ForwardDepthPrePassEnabled;
         {
             // When sharing GBuffer targets, skip the dedicated forward-only FBO
             // and render only into the merged GBuffer attachments.
@@ -378,7 +378,7 @@ public partial class DefaultRenderPipeline2
     {
         BeginGpuScope(c, "Forward Pre-Pass GBuffer Restore");
         var restoreChoice = c.Add<VPRC_IfElse>();
-        restoreChoice.ConditionEvaluator = () => ForwardDepthPrePassEnabled;
+        restoreChoice.ConditionEvaluator = () => !UseOpenXrVulkanDesktopStartupSafePath && ForwardDepthPrePassEnabled;
         {
             var restoreCommands = new ViewportRenderCommandContainer(this);
             restoreCommands.Add<VPRC_CacheOrCreateFBO>().SetOptions(
@@ -408,10 +408,30 @@ public partial class DefaultRenderPipeline2
     private void AppendAmbientOcclusionResolve(ViewportRenderCommandContainer c)
     {
         BeginGpuScope(c, "AO Resolve");
+        if (UseOpenXrVulkanDesktopStartupSafePath)
+        {
+            c.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName)
+                .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantDisabled)
+                .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionGenerate(
+                    AmbientOcclusionIntensityTextureName,
+                    disabled: true));
+            c.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(AmbientOcclusionBlurFBOName, GBufferFBOName)
+                .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantDisabled)
+                .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionFinal(
+                    AmbientOcclusionIntensityTextureName,
+                    DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantDisabled,
+                    disabled: true));
+            EndGpuScope(c, "AO Resolve");
+            return;
+        }
+
         var aoResolveSwitch = c.Add<VPRC_Switch>();
         aoResolveSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
         aoResolveSwitch.Cases = new()
         {
+            [AmbientOcclusionDisabledMode] = CreateAmbientOcclusionDisabledResolveCommands(),
             [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusResolveCommands(),
             [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOResolveCommands(),
             [(int)AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion] = CreateSpatialHashAOResolveCommands(),
@@ -598,35 +618,12 @@ public partial class DefaultRenderPipeline2
             NeedsRecreateForwardPassFbo)
             .UseLifetime(RenderResourceLifetime.Transient);
 
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            SceneCopyFBOName,
-            CreateSceneCopyFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
+        AddConditionalTransientFboCache(c, "TransparencySceneCopyFBO", () => EnableTransparencySceneCopyResources, SceneCopyFBOName, CreateSceneCopyFBO);
+        AddConditionalTransientFboCache(c, "TransparencySceneCopyTextureFBO", () => EnableTransparencySceneCopyResources, TransparentSceneCopyFBOName, CreateTransparentSceneCopyFBO);
 
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            TransparentSceneCopyFBOName,
-            CreateTransparentSceneCopyFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            DeferredTransparencyBlurFBOName,
-            CreateDeferredTransparencyBlurFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            TransparentAccumulationFBOName,
-            CreateTransparentAccumulationFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
-
-        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-            TransparentResolveFBOName,
-            CreateTransparentResolveFBO,
-            GetDesiredFBOSizeInternal)
-            .UseLifetime(RenderResourceLifetime.Transient);
+        AddConditionalTransientFboCache(c, "WeightedBlendedOitBlurFBO", () => EnableWeightedBlendedOitPasses, DeferredTransparencyBlurFBOName, CreateDeferredTransparencyBlurFBO);
+        AddConditionalTransientFboCache(c, "WeightedBlendedOitAccumulationFBO", () => EnableWeightedBlendedOitPasses, TransparentAccumulationFBOName, CreateTransparentAccumulationFBO);
+        AddConditionalTransientFboCache(c, "WeightedBlendedOitResolveFBO", () => EnableWeightedBlendedOitPasses, TransparentResolveFBOName, CreateTransparentResolveFBO);
 
         AddConditionalTransientFboCache(c, "RestirCompositeFBO", () => enableComputePasses && UsesRestirGI, RestirCompositeFBOName, CreateRestirCompositeFBO);
         AddConditionalTransientFboCache(c, "LightVolumeCompositeFBO", () => enableComputePasses && UsesLightVolumes, LightVolumeCompositeFBOName, CreateLightVolumeCompositeFBO);
@@ -739,7 +736,9 @@ public partial class DefaultRenderPipeline2
                 x.BindingLocation = LightProbeGridIndexBufferBinding;
             }))
             using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
-                c.Add<VPRC_RenderQuadToFBO>().SetTargets(LightCombineFBOName, ForwardPassFBOName);
+                c.Add<VPRC_RenderQuadToFBO>()
+                    .SetTargets(LightCombineFBOName, ForwardPassFBOName)
+                    .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.DeferredLightCombine());
             AppendDiagnosticTextureCapture(c, "05b_LightCombine", DiffuseTextureName);
 
             //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
@@ -843,35 +842,44 @@ public partial class DefaultRenderPipeline2
     private void AppendTransparencyPasses(ViewportRenderCommandContainer c)
     {
         BeginGpuScope(c, "Transparency");
-        c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
-        c.Add<VPRC_RenderQuadToFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);
-        c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
-        c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentAccumTextureName, ColorF4.Transparent);
-        c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentRevealageTextureName, ColorF4.White);
-        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(TransparentAccumulationFBOName, true, false, false, false)))
+
+        var weightedOit = c.Add<VPRC_IfElse>();
+        weightedOit.Label = "Weighted Blended OIT";
+        weightedOit.ConditionEvaluator = () => EnableWeightedBlendedOitPasses;
         {
-            c.Add<VPRC_DepthTest>().Enable = true;
-            c.Add<VPRC_DepthWrite>().Allow = false;
-            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
-        }
-        using (c.AddUsing<VPRC_BindTexture>(x =>
-        {
-            x.TextureName = TransparentSceneCopyTextureName;
-            x.TextureUnit = 0;
-        }))
-        using (c.AddUsing<VPRC_BindTexture>(x =>
-        {
-            x.TextureName = TransparentAccumTextureName;
-            x.TextureUnit = 1;
-        }))
-        using (c.AddUsing<VPRC_BindTexture>(x =>
-        {
-            x.TextureName = TransparentRevealageTextureName;
-            x.TextureUnit = 2;
-        }))
-        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyTransparentResolveProgramBindings))
-        {
-            c.Add<VPRC_RenderQuadToFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);
+            ViewportRenderCommandContainer weightedCommands = new(this);
+            weightedCommands.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
+            weightedCommands.Add<VPRC_RenderQuadToFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);
+            weightedCommands.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
+            weightedCommands.Add<VPRC_ClearTextureByName>().SetOptions(TransparentAccumTextureName, ColorF4.Transparent);
+            weightedCommands.Add<VPRC_ClearTextureByName>().SetOptions(TransparentRevealageTextureName, ColorF4.White);
+            using (weightedCommands.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(TransparentAccumulationFBOName, true, false, false, false)))
+            {
+                weightedCommands.Add<VPRC_DepthTest>().Enable = true;
+                weightedCommands.Add<VPRC_DepthWrite>().Allow = false;
+                weightedCommands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
+            }
+            using (weightedCommands.AddUsing<VPRC_BindTexture>(x =>
+            {
+                x.TextureName = TransparentSceneCopyTextureName;
+                x.TextureUnit = 0;
+            }))
+            using (weightedCommands.AddUsing<VPRC_BindTexture>(x =>
+            {
+                x.TextureName = TransparentAccumTextureName;
+                x.TextureUnit = 1;
+            }))
+            using (weightedCommands.AddUsing<VPRC_BindTexture>(x =>
+            {
+                x.TextureName = TransparentRevealageTextureName;
+                x.TextureUnit = 2;
+            }))
+            using (weightedCommands.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyTransparentResolveProgramBindings))
+            {
+                weightedCommands.Add<VPRC_RenderQuadToFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);
+            }
+
+            weightedOit.TrueCommands = weightedCommands;
         }
 
         AppendExactTransparencyCommands(c);
@@ -964,6 +972,9 @@ public partial class DefaultRenderPipeline2
     /// <summary>Appends conditional motion blur and depth-of-field sub-chains.</summary>
     private void AppendMotionBlurAndDoF(ViewportRenderCommandContainer c)
     {
+        if (UseOpenXrVulkanDesktopStartupSafePath)
+            return;
+
         BeginGpuScope(c, "Motion Blur / DoF");
         var motionBlurChoice = c.Add<VPRC_IfElse>();
         motionBlurChoice.ConditionEvaluator = ShouldUseMotionBlur;
@@ -1242,7 +1253,9 @@ public partial class DefaultRenderPipeline2
                 {
                     var tsrUpscale = new ViewportRenderCommandContainer(this);
                     using (tsrUpscale.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyTsrUpscaleProgramBindings))
-                        tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true);
+                        tsrUpscale.Add<VPRC_RenderQuadToFBO>()
+                            .SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true)
+                            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.TsrUpscale());
                     tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
                         TsrUpscaleFBOName,
                         TsrHistoryColorFBOName,
@@ -1297,7 +1310,9 @@ public partial class DefaultRenderPipeline2
         using (c.AddUsing<VPRC_PushProgramBindings>(t => t.ApplyUniforms = ApplyPostProcessProgramBindings))
         {
             BeginGpuScope(c, "Post-Processing");
-            c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
+            c.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(PostProcessFBOName, PostProcessOutputFBOName)
+                .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.PostProcess());
             EndGpuScope(c, "Post-Processing");
         }
     }
@@ -1335,7 +1350,9 @@ public partial class DefaultRenderPipeline2
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyFinalPostProcessProgramBindings))
         {
-            c.Add<VPRC_RenderQuadToFBO>().SetTargets(FinalPostProcessFBOName, FinalPostProcessOutputFBOName);
+            c.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(FinalPostProcessFBOName, FinalPostProcessOutputFBOName)
+                .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.FinalPostProcess());
         }
         EndGpuScope(c, "Final PostProcess");
     }
@@ -2021,13 +2038,19 @@ public partial class DefaultRenderPipeline2
     /// <summary>Caches post-process output, FXAA, HDR scene, motion blur, DoF, and auto-exposure textures.</summary>
     private void CachePostProcessTextures(ViewportRenderCommandContainer c)
     {
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        AddConditionalTextureCache(
+            c,
+            "MotionBlurTexture",
+            ShouldUseMotionBlur,
             MotionBlurTextureName,
             CreateMotionBlurTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        AddConditionalTextureCache(
+            c,
+            "DepthOfFieldTexture",
+            ShouldUseDepthOfField,
             DepthOfFieldTextureName,
             CreateDepthOfFieldTexture,
             NeedsRecreateTextureInternalSize,
@@ -2076,19 +2099,28 @@ public partial class DefaultRenderPipeline2
     /// <summary>Caches transparency textures (scene copy, WB-OIT accumulation/revealage, exact transparency).</summary>
     private void CacheTransparencyTextures(ViewportRenderCommandContainer c)
     {
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        AddConditionalTextureCache(
+            c,
+            "TransparencySceneCopyTexture",
+            () => EnableTransparencySceneCopyResources,
             TransparentSceneCopyTextureName,
             CreateTransparentSceneCopyTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        AddConditionalTextureCache(
+            c,
+            "WeightedBlendedOitAccumTexture",
+            () => EnableWeightedBlendedOitPasses,
             TransparentAccumTextureName,
             CreateTransparentAccumTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        AddConditionalTextureCache(
+            c,
+            "WeightedBlendedOitRevealageTexture",
+            () => EnableWeightedBlendedOitPasses,
             TransparentRevealageTextureName,
             CreateTransparentRevealageTexture,
             NeedsRecreateTextureInternalSize,
@@ -2100,31 +2132,46 @@ public partial class DefaultRenderPipeline2
     /// <summary>Caches GI textures: ReSTIR, light volumes, radiance cascades, surfel GI, and VCT volume.</summary>
     private void CacheGITextures(ViewportRenderCommandContainer c)
     {
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        AddConditionalTextureCache(
+            c,
+            "RestirGITexture",
+            () => UsesRestirGI,
             RestirGITextureName,
             CreateRestirGITexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        AddConditionalTextureCache(
+            c,
+            "LightVolumeGITexture",
+            () => UsesLightVolumes,
             LightVolumeGITextureName,
             CreateLightVolumeGITexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        AddConditionalTextureCache(
+            c,
+            "RadianceCascadeGITexture",
+            () => UsesRadianceCascades,
             RadianceCascadeGITextureName,
             CreateRadianceCascadeGITexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        AddConditionalTextureCache(
+            c,
+            "SurfelGITexture",
+            () => UsesSurfelGI,
             SurfelGITextureName,
             CreateSurfelGITexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        AddConditionalTextureCache(
+            c,
+            "VoxelConeTracingVolumeTexture",
+            () => UsesVoxelConeTracing,
             VoxelConeTracingVolumeTextureName,
             CreateVoxelConeTracingVolumeTexture,
             NeedsRecreateVoxelVolumeTexture,
@@ -2143,6 +2190,28 @@ public partial class DefaultRenderPipeline2
         //    CreateHUDTexture,
         //    NeedsRecreateTextureFullSize,
         //    ResizeTextureFullSize);
+    }
+
+    private void AddConditionalTextureCache(
+        ViewportRenderCommandContainer c,
+        string label,
+        Func<bool> condition,
+        string name,
+        Func<XRTexture> factory,
+        Func<XRTexture, bool>? needsRecreate,
+        Action<XRTexture>? resize)
+    {
+        var conditional = c.Add<VPRC_IfElse>();
+        conditional.Label = label;
+        conditional.ConditionEvaluator = condition;
+
+        var commands = new ViewportRenderCommandContainer(this);
+        commands.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            name,
+            factory,
+            needsRecreate,
+            resize);
+        conditional.TrueCommands = commands;
     }
 
 
@@ -2172,8 +2241,34 @@ public partial class DefaultRenderPipeline2
         {
             BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
         };
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName);
-        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, GBufferFBOName);
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionGenerate(AmbientOcclusionRawTextureName));
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionBlurFBOName, GBufferFBOName)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionFinal(AmbientOcclusionRawTextureName, variant: null));
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateAmbientOcclusionDisabledResolveCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName)
+            .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantDisabled)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionGenerate(
+                AmbientOcclusionIntensityTextureName,
+                disabled: true));
+        container.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionBlurFBOName, GBufferFBOName)
+            .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantDisabled)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionFinal(
+                AmbientOcclusionIntensityTextureName,
+                DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantDisabled,
+                disabled: true));
         return container;
     }
 
@@ -2185,13 +2280,22 @@ public partial class DefaultRenderPipeline2
         };
         container.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName)
-            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantHBAOPlus);
+            .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantHBAOPlus)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionGenerate(HBAOPlusRawTextureName));
         container.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(AmbientOcclusionBlurFBOName, HBAOPlusBlurIntermediateFBOName)
-            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantHBAOPlus);
+            .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantHBAOPlus)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionIntermediateBlur(
+                HBAOPlusRawTextureName,
+                HBAOPlusBlurIntermediateTextureName,
+                DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantHBAOPlus));
         container.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(HBAOPlusBlurIntermediateFBOName, GBufferFBOName)
-            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantHBAOPlus);
+            .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantHBAOPlus)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionFinalBlur(
+                HBAOPlusBlurIntermediateTextureName,
+                HBAOPlusBlurIntermediateFBOName,
+                DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantHBAOPlus));
         return container;
     }
 
@@ -2233,13 +2337,22 @@ public partial class DefaultRenderPipeline2
         };
         container.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName, matchDestinationRenderArea: true)
-            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantGTAO);
+            .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantGTAO)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionGenerate(GTAORawTextureName));
         container.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(AmbientOcclusionBlurFBOName, GTAOBlurIntermediateFBOName, matchDestinationRenderArea: true)
-            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantGTAO);
+            .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantGTAO)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionIntermediateBlur(
+                GTAORawTextureName,
+                GTAOBlurIntermediateTextureName,
+                DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantGTAO));
         container.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(GTAOBlurIntermediateFBOName, GBufferFBOName, matchDestinationRenderArea: true)
-            .SetRenderGraphPassVariant(VPRC_RenderQuadToFBO.AmbientOcclusionResolveVariantGTAO);
+            .SetRenderGraphPassVariant(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantGTAO)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.AmbientOcclusionFinalBlur(
+                GTAOBlurIntermediateTextureName,
+                GTAOBlurIntermediateFBOName,
+                DefaultRenderPipelineQuadDescriptors.AmbientOcclusionResolveVariantGTAO));
         return container;
     }
 
@@ -2315,7 +2428,9 @@ public partial class DefaultRenderPipeline2
         // Render the motion blur result back into the forward pass FBO
         using (container.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyMotionBlurProgramBindings))
         {
-            container.Add<VPRC_RenderQuadToFBO>().SetTargets(MotionBlurFBOName, ForwardPassFBOName);
+            container.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(MotionBlurFBOName, ForwardPassFBOName)
+                .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.MotionBlur());
         }
 
         return container;
@@ -2414,7 +2529,9 @@ public partial class DefaultRenderPipeline2
         // Render the DoF result back into the forward pass FBO
         using (container.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyDepthOfFieldProgramBindings))
         {
-            container.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthOfFieldFBOName, ForwardPassFBOName);
+            container.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(DepthOfFieldFBOName, ForwardPassFBOName)
+                .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.DepthOfField());
         }
 
         return container;
@@ -2602,6 +2719,9 @@ public partial class DefaultRenderPipeline2
 
     private int EvaluateAmbientOcclusionMode()
     {
+        if (UseOpenXrVulkanDesktopStartupSafePath)
+            return AmbientOcclusionDisabledMode;
+
         AmbientOcclusionSettings? aoSettings = ResolveAmbientOcclusionSettings();
         if (aoSettings is null || !aoSettings.Enabled)
             return AmbientOcclusionDisabledMode;

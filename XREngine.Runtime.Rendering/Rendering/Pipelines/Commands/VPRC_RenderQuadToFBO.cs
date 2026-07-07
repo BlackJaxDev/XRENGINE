@@ -17,79 +17,215 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_RenderQuadToFBO : ViewportRenderCommand
     {
-        public const string AmbientOcclusionResolveVariantHBAOPlus = "HBAOPlus";
-        public const string AmbientOcclusionResolveVariantGTAO = "GTAO";
-
-        private const string LightProbeIrradianceArrayTextureName = "LightProbeIrradianceArray";
-        private const string LightProbePrefilterArrayTextureName = "LightProbePrefilterArray";
-        private const string LightProbePositionBufferName = "LightProbePositions";
-        private const string LightProbeTetraBufferName = "LightProbeTetrahedra";
-        private const string LightProbeParamBufferName = "LightProbeParameters";
-        private const string LightProbeGridCellBufferName = "LightProbeGridCells";
-        private const string LightProbeGridIndexBufferName = "LightProbeGridIndices";
-
-        private static readonly string[] DeferredLightCombineTextureInputs =
-        [
-            DefaultRenderPipeline.AlbedoOpacityTextureName,
-            DefaultRenderPipeline.NormalTextureName,
-            DefaultRenderPipeline.RMSETextureName,
-            DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
-            DefaultRenderPipeline.DepthViewTextureName,
-            DefaultRenderPipeline.LightingAccumTextureName,
-            DefaultRenderPipeline.BRDFTextureName,
-            LightProbeIrradianceArrayTextureName,
-            LightProbePrefilterArrayTextureName,
-        ];
-
-        private static readonly string[] DeferredLightCombineBufferInputs =
-        [
-            LightProbePositionBufferName,
-            LightProbeTetraBufferName,
-            LightProbeParamBufferName,
-            LightProbeGridCellBufferName,
-            LightProbeGridIndexBufferName,
-        ];
-
-        private static readonly string[] PostProcessTextureInputs =
-        [
-            DefaultRenderPipeline.HDRSceneTextureName,
-            DefaultRenderPipeline.BloomBlurTextureName,
-            DefaultRenderPipeline.DepthViewTextureName,
-            DefaultRenderPipeline.StencilViewTextureName,
-            DefaultRenderPipeline.AutoExposureTextureName,
-            DefaultRenderPipeline.AtmosphereColorTextureName,
-            DefaultRenderPipeline.VolumetricFogColorTextureName,
-        ];
-
-        private static readonly string[] FinalPostProcessTextureInputs =
-        [
-            DefaultRenderPipeline.PostProcessOutputTextureName,
-        ];
-
-        private static readonly string[] TsrUpscaleTextureInputs =
-        [
-            DefaultRenderPipeline.FinalPostProcessOutputTextureName,
-            DefaultRenderPipeline.VelocityTextureName,
-            DefaultRenderPipeline.DepthViewTextureName,
-            DefaultRenderPipeline.HistoryDepthViewTextureName,
-            DefaultRenderPipeline.TsrHistoryColorTextureName,
-            DefaultRenderPipeline.StencilViewTextureName,
-        ];
-
-        private static readonly string[] MotionBlurTextureInputs =
-        [
-            DefaultRenderPipeline.MotionBlurTextureName,
-            DefaultRenderPipeline.VelocityTextureName,
-            DefaultRenderPipeline.DepthViewTextureName,
-        ];
-
-        private static readonly string[] DepthOfFieldTextureInputs =
-        [
-            DefaultRenderPipeline.DepthOfFieldTextureName,
-            DefaultRenderPipeline.DepthViewTextureName,
-        ];
-
         private static bool _diagEnabled => RenderDiagnosticsFlags.DiagQuadBlit;
+
+        private enum EDescriptorResourceKind
+        {
+            Texture,
+            FboColor,
+            ColorTarget,
+        }
+
+        public sealed class RenderGraphResourceDescriptor
+        {
+            private readonly List<SampledTextureUsage> _sampledTextures = [];
+            private readonly List<BufferUsage> _readBuffers = [];
+            private readonly List<ColorAttachmentUsage> _colorAttachments = [];
+            private readonly List<int> _dependencies = [];
+            private readonly List<QuadBlitDependency> _quadBlitDependencies = [];
+            private readonly List<DependentPass> _dependentPasses = [];
+
+            public ERenderGraphPassStage Stage { get; set; } = ERenderGraphPassStage.Graphics;
+            public bool UseDestinationDepthStencil { get; set; }
+
+            internal bool HasExplicitColorAttachments => _colorAttachments.Count > 0;
+
+            public RenderGraphResourceDescriptor SampleTexture(string textureName)
+            {
+                _sampledTextures.Add(new(textureName, EDescriptorResourceKind.Texture, null, 0u));
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor SampleTextureMip(string textureName, uint mipLevel)
+            {
+                _sampledTextures.Add(new(textureName, EDescriptorResourceKind.Texture, mipLevel, 1u));
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor SampleTextureMips(string textureName, uint baseMipLevel, uint mipLevelCount)
+            {
+                _sampledTextures.Add(new(textureName, EDescriptorResourceKind.Texture, baseMipLevel, mipLevelCount));
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor SampleFboColor(string fboName)
+            {
+                _sampledTextures.Add(new(fboName, EDescriptorResourceKind.FboColor, null, 0u));
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor ReadBuffer(string bufferName, ERenderPassResourceType bufferType = ERenderPassResourceType.StorageBuffer)
+            {
+                _readBuffers.Add(new(bufferName, bufferType));
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor UseColorTexture(
+                string textureName,
+                ERenderGraphAccess? access = null,
+                ERenderPassLoadOp? load = null,
+                ERenderPassStoreOp? store = null)
+            {
+                _colorAttachments.Add(new(textureName, EDescriptorResourceKind.Texture, null, access, load, store));
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor UseColorTextureMip(
+                string textureName,
+                uint mipLevel,
+                ERenderGraphAccess? access = null,
+                ERenderPassLoadOp? load = null,
+                ERenderPassStoreOp? store = null)
+            {
+                _colorAttachments.Add(new(textureName, EDescriptorResourceKind.Texture, mipLevel, access, load, store));
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor UseColorFbo(
+                string fboName,
+                ERenderGraphAccess? access = null,
+                ERenderPassLoadOp? load = null,
+                ERenderPassStoreOp? store = null)
+            {
+                _colorAttachments.Add(new(fboName, EDescriptorResourceKind.FboColor, null, access, load, store));
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor UseColorTarget(
+                string targetName,
+                ERenderGraphAccess? access = null,
+                ERenderPassLoadOp? load = null,
+                ERenderPassStoreOp? store = null)
+            {
+                _colorAttachments.Add(new(targetName, EDescriptorResourceKind.ColorTarget, null, access, load, store));
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor DependsOn(int passIndex)
+            {
+                _dependencies.Add(passIndex);
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor DependsOnQuadBlit(string sourceFboName, string destinationFboName, string? variant = null)
+            {
+                _quadBlitDependencies.Add(new(sourceFboName, destinationFboName, variant));
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor MakePassDependOnThis(
+                int passIndex,
+                string passName,
+                ERenderGraphPassStage stage = ERenderGraphPassStage.Graphics)
+            {
+                _dependentPasses.Add(new(passIndex, passName, stage));
+                return this;
+            }
+
+            public RenderGraphResourceDescriptor UseDestinationDepthStencilAttachments(bool enabled = true)
+            {
+                UseDestinationDepthStencil = enabled;
+                return this;
+            }
+
+            internal void DescribeDependencies(RenderGraphDescribeContext context, RenderPassBuilder builder)
+            {
+                for (int i = 0; i < _dependencies.Count; i++)
+                    builder.DependsOn(_dependencies[i]);
+
+                for (int i = 0; i < _quadBlitDependencies.Count; i++)
+                {
+                    QuadBlitDependency dependency = _quadBlitDependencies[i];
+                    builder.DependsOn(context.GetOrCreateSyntheticPass(
+                        BuildQuadBlitPassName(dependency.SourceFboName, dependency.DestinationFboName, dependency.Variant)).PassIndex);
+                }
+
+                for (int i = 0; i < _dependentPasses.Count; i++)
+                {
+                    DependentPass dependent = _dependentPasses[i];
+                    context.Metadata
+                        .ForPass(dependent.PassIndex, dependent.PassName, dependent.Stage)
+                        .DependsOn(builder.PassIndex);
+                }
+            }
+
+            internal void DescribeInputs(RenderPassBuilder builder)
+            {
+                for (int i = 0; i < _sampledTextures.Count; i++)
+                {
+                    SampledTextureUsage usage = _sampledTextures[i];
+                    string resourceName = ResolveDescriptorResourceName(usage.Kind, usage.Name);
+                    if (usage.BaseMipLevel.HasValue)
+                    {
+                        if (usage.MipLevelCount == 1u)
+                            builder.SampleTextureMip(resourceName, usage.BaseMipLevel.Value);
+                        else
+                            builder.SampleTextureMips(resourceName, usage.BaseMipLevel.Value, usage.MipLevelCount);
+                    }
+                    else
+                    {
+                        builder.SampleTexture(resourceName);
+                    }
+                }
+
+                for (int i = 0; i < _readBuffers.Count; i++)
+                {
+                    BufferUsage usage = _readBuffers[i];
+                    builder.ReadBuffer(usage.Name, usage.Type);
+                }
+            }
+
+            internal void DescribeColorAttachments(
+                RenderPassBuilder builder,
+                ERenderGraphAccess defaultAccess,
+                ERenderPassLoadOp defaultLoad,
+                ERenderPassStoreOp defaultStore)
+            {
+                for (int i = 0; i < _colorAttachments.Count; i++)
+                {
+                    ColorAttachmentUsage usage = _colorAttachments[i];
+                    string resourceName = ResolveDescriptorResourceName(usage.Kind, usage.Name);
+                    ERenderGraphAccess access = usage.Access ?? defaultAccess;
+                    ERenderPassLoadOp load = usage.Load ?? defaultLoad;
+                    ERenderPassStoreOp store = usage.Store ?? defaultStore;
+
+                    if (usage.MipLevel.HasValue)
+                        builder.UseColorAttachmentMip(resourceName, usage.MipLevel.Value, access, load, store);
+                    else
+                        builder.UseColorAttachment(resourceName, access, load, store);
+                }
+            }
+
+            private readonly record struct SampledTextureUsage(
+                string Name,
+                EDescriptorResourceKind Kind,
+                uint? BaseMipLevel,
+                uint MipLevelCount);
+
+            private readonly record struct BufferUsage(string Name, ERenderPassResourceType Type);
+
+            private readonly record struct ColorAttachmentUsage(
+                string Name,
+                EDescriptorResourceKind Kind,
+                uint? MipLevel,
+                ERenderGraphAccess? Access,
+                ERenderPassLoadOp? Load,
+                ERenderPassStoreOp? Store);
+
+            private readonly record struct QuadBlitDependency(string SourceFboName, string DestinationFboName, string? Variant);
+
+            private readonly record struct DependentPass(int PassIndex, string PassName, ERenderGraphPassStage Stage);
+        }
 
         public string? SourceQuadFBOName { get; set; }
         public string? DestinationFBOName { get; set; } = null;
@@ -106,6 +242,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool RenderToSourceFrameBuffer { get; set; }
         public bool MatchDestinationRenderArea { get; set; }
         public string? RenderGraphPassVariant { get; set; }
+        public RenderGraphResourceDescriptor? RenderGraphResources { get; set; }
 
         public override string GpuProfilingName
         {
@@ -136,6 +273,19 @@ namespace XREngine.Rendering.Pipelines.Commands
         public VPRC_RenderQuadToFBO SetRenderGraphPassVariant(string? variant)
         {
             RenderGraphPassVariant = variant;
+            return this;
+        }
+
+        public VPRC_RenderQuadToFBO SetRenderGraphResources(RenderGraphResourceDescriptor? resources)
+        {
+            RenderGraphResources = resources;
+            return this;
+        }
+
+        public VPRC_RenderQuadToFBO ConfigureRenderGraphResources(Action<RenderGraphResourceDescriptor> configure)
+        {
+            RenderGraphResourceDescriptor resources = RenderGraphResources ??= new();
+            configure(resources);
             return this;
         }
 
@@ -180,6 +330,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             => string.IsNullOrWhiteSpace(variant)
                 ? $"QuadBlit_{sourceFboName}_to_{destination}"
                 : $"QuadBlit_{variant}_{sourceFboName}_to_{destination}";
+
+        private static string ResolveDescriptorResourceName(EDescriptorResourceKind kind, string name)
+            => kind switch
+            {
+                EDescriptorResourceKind.Texture => MakeTextureResource(name),
+                EDescriptorResourceKind.FboColor => MakeFboColorResource(name),
+                EDescriptorResourceKind.ColorTarget => MakeColorTargetResource(name),
+                _ => name,
+            };
 
         private string ResolveShaderLabel(XRRenderPipelineInstance? activeInstance)
         {
@@ -263,46 +422,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRFrameBuffer? destFBO = ResolveDestinationFbo(activeInstance, sourceFBO);
             if (_diagEnabled && DestinationFBOName is not null && destFBO is null)
                 Debug.RenderingWarning($"[QuadBlitDiag] Dest FBO '{DestinationFBOName}' not found.");
-
-            if (DeferredLightingDiagnostics.Enabled &&
-                (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal) ||
-                 string.Equals(SourceQuadFBOName, DefaultRenderPipeline.MsaaLightCombineFBOName, StringComparison.Ordinal)))
-            {
-                Debug.VulkanEvery(
-                    $"DeferredLighting.RenderQuadToFBO.{SourceQuadFBOName}.{destination}",
-                    TimeSpan.FromSeconds(1),
-                    "[DeferredLightingDiag][RenderQuadToFBO] passName='{0}' pass={1} hasMetadata={2} source='{3}' destination='{4}' destFbo='{5}' sourceTargets={6} destTargets={7}",
-                    passName,
-                    passIndex,
-                    hasRenderGraphMetadata,
-                    SourceQuadFBOName,
-                    destination,
-                    destFBO?.Name ?? "<current/null>",
-                    sourceFBO.Targets?.Length ?? 0,
-                    destFBO?.Targets?.Length ?? 0);
-            }
-
-            if ((string.Equals(SourceQuadFBOName, DefaultRenderPipeline.PostProcessFBOName, StringComparison.Ordinal)
-                    && string.Equals(DestinationFBOName, "PostProcessOutputFBO", StringComparison.Ordinal))
-                || (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.FxaaFBOName, StringComparison.Ordinal)
-                    && string.Equals(DestinationFBOName, DefaultRenderPipeline.FxaaFBOName, StringComparison.Ordinal))
-                || (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.TsrUpscaleFBOName, StringComparison.Ordinal)
-                    && string.Equals(DestinationFBOName, DefaultRenderPipeline.TsrUpscaleFBOName, StringComparison.Ordinal))
-                || string.Equals(SourceQuadFBOName, DefaultRenderPipeline.MsaaLightCombineFBOName, StringComparison.Ordinal))
-            {
-                /*
-                Debug.RenderingEvery(
-                    $"QuadBlit.{ActivePipelineInstance.GetHashCode()}.{SourceQuadFBOName}.{DestinationFBOName}",
-                    TimeSpan.FromSeconds(1),
-                    "[RenderDiag] QuadBlit Source={0} Dest={1} SourceTargets={2} DestTargets={3} DestType={4} CurrentOutput={5}",
-                    SourceQuadFBOName,
-                    DestinationFBOName ?? "<current>",
-                    sourceFBO.Targets?.Length ?? 0,
-                    destFBO?.Targets?.Length ?? 0,
-                    destFBO?.GetType().Name ?? "<null>",
-                    ActivePipelineInstance.RenderState.OutputFBO?.Name ?? "<backbuffer>");
-                */
-            }
 
             if (_diagEnabled)
             {
@@ -398,17 +517,16 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
             var builder = context.GetOrCreateSyntheticPass(BuildQuadBlitPassName(SourceQuadFBOName, destination, RenderGraphPassVariant));
-            builder.WithStage(ERenderGraphPassStage.Graphics);
-            DescribeQuadMaterialInputs(builder, SourceQuadFBOName, destination);
-            DescribeAmbientOcclusionDependencies(context, builder, SourceQuadFBOName, destination, RenderGraphPassVariant);
-
-            if (string.Equals(SourceQuadFBOName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.ForwardPassFBOName, StringComparison.Ordinal))
+            RenderGraphResourceDescriptor? resources = RenderGraphResources;
+            builder.WithStage(resources?.Stage ?? ERenderGraphPassStage.Graphics);
+            if (resources is not null)
             {
-                builder.DependsOn((int)EDefaultRenderPass.DeferredDecals);
-                context.Metadata
-                    .ForPass((int)EDefaultRenderPass.Background, EDefaultRenderPass.Background.ToString(), ERenderGraphPassStage.Graphics)
-                    .DependsOn(builder.PassIndex);
+                resources.DescribeDependencies(context, builder);
+                resources.DescribeInputs(builder);
+            }
+            else
+            {
+                DescribeInferredQuadMaterialInputs(builder, SourceQuadFBOName, destination);
             }
 
             ERenderPassLoadOp colorLoad = ERenderPassLoadOp.Load;
@@ -423,9 +541,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 access = bound.ColorAccess;
             }
 
-            DescribeColorOutput(builder, SourceQuadFBOName, destination, access, colorLoad, colorStore, RenderGraphPassVariant);
+            if (resources?.HasExplicitColorAttachments == true)
+                resources.DescribeColorAttachments(builder, access, colorLoad, colorStore);
+            else
+                DescribeInferredColorOutput(builder, destination, access, colorLoad, colorStore);
 
-            if (SamplesSharedDepthView(SourceQuadFBOName, destination))
+            if (resources?.UseDestinationDepthStencil == true)
             {
                 builder.UseDepthAttachment(
                     MakeFboDepthResource(destination),
@@ -440,93 +561,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
         }
 
-        private static void DescribeAmbientOcclusionDependencies(
-            RenderGraphDescribeContext context,
+        private static void DescribeInferredQuadMaterialInputs(
             RenderPassBuilder builder,
             string sourceFboName,
-            string destination,
-            string? variant)
+            string destination)
         {
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal) &&
-                (string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal) ||
-                 string.Equals(destination, DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName, StringComparison.Ordinal) ||
-                 string.Equals(destination, DefaultRenderPipeline.GTAOBlurIntermediateFBOName, StringComparison.Ordinal)))
-            {
-                builder.DependsOn(GetQuadBlitPassIndex(
-                    context,
-                    DefaultRenderPipeline.AmbientOcclusionFBOName,
-                    DefaultRenderPipeline.AmbientOcclusionBlurFBOName,
-                    variant));
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal))
-            {
-                builder.DependsOn(GetQuadBlitPassIndex(
-                    context,
-                    DefaultRenderPipeline.AmbientOcclusionBlurFBOName,
-                    DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName,
-                    variant));
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.GTAOBlurIntermediateFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal))
-            {
-                builder.DependsOn(GetQuadBlitPassIndex(
-                    context,
-                    DefaultRenderPipeline.AmbientOcclusionBlurFBOName,
-                    DefaultRenderPipeline.GTAOBlurIntermediateFBOName,
-                    variant));
-            }
-        }
-
-        private static int GetQuadBlitPassIndex(RenderGraphDescribeContext context, string sourceFboName, string destination, string? variant)
-            => context.GetOrCreateSyntheticPass(BuildQuadBlitPassName(sourceFboName, destination, variant)).PassIndex;
-
-        private static void DescribeQuadMaterialInputs(RenderPassBuilder builder, string sourceFboName, string destination)
-        {
-            if (DescribeAmbientOcclusionInputs(builder, sourceFboName, destination))
-                return;
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.ForwardPassFBOName, StringComparison.Ordinal))
-            {
-                DescribeDeferredLightCombineInputs(builder);
-                return;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.PostProcessFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.PostProcessOutputFBOName, StringComparison.Ordinal))
-            {
-                DescribePostProcessInputs(builder);
-                return;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.FinalPostProcessFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.FinalPostProcessOutputFBOName, StringComparison.Ordinal))
-            {
-                DescribeTextureInputs(builder, FinalPostProcessTextureInputs);
-                return;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.TsrUpscaleFBOName, StringComparison.Ordinal))
-            {
-                DescribeTextureInputs(builder, TsrUpscaleTextureInputs);
-                return;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.MotionBlurFBOName, StringComparison.Ordinal))
-            {
-                DescribeTextureInputs(builder, MotionBlurTextureInputs);
-                return;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.DepthOfFieldFBOName, StringComparison.Ordinal))
-            {
-                DescribeTextureInputs(builder, DepthOfFieldTextureInputs);
-                return;
-            }
-
             if (!string.Equals(sourceFboName, destination, StringComparison.Ordinal))
             {
                 if (TryDescribeActualMaterialTextures(builder, sourceFboName))
@@ -539,75 +578,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
         }
 
-        private static void DescribeColorOutput(
+        private static void DescribeInferredColorOutput(
             RenderPassBuilder builder,
-            string sourceFboName,
             string destination,
             ERenderGraphAccess access,
             ERenderPassLoadOp colorLoad,
-            ERenderPassStoreOp colorStore,
-            string? variant)
+            ERenderPassStoreOp colorStore)
         {
             if (TryDescribeActualColorOutputs(builder, destination, access, colorLoad, colorStore))
                 return;
 
-            if (TryDescribeAmbientOcclusionColorOutput(builder, sourceFboName, destination, access, colorLoad, colorStore, variant))
-                return;
-
             builder.UseColorAttachment(MakeColorTargetResource(destination), access, colorLoad, colorStore);
-        }
-
-        private static bool TryDescribeAmbientOcclusionColorOutput(
-            RenderPassBuilder builder,
-            string sourceFboName,
-            string destination,
-            ERenderGraphAccess access,
-            ERenderPassLoadOp colorLoad,
-            ERenderPassStoreOp colorStore,
-            string? variant)
-        {
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal))
-            {
-                builder.UseColorAttachment(MakeTextureResource(ResolveAmbientOcclusionRawOutputTexture(variant)), access, colorLoad, colorStore);
-                return true;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName, StringComparison.Ordinal))
-            {
-                builder.UseColorAttachment(MakeTextureResource(DefaultRenderPipeline.HBAOPlusBlurIntermediateTextureName), access, colorLoad, colorStore);
-                return true;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.GTAOBlurIntermediateFBOName, StringComparison.Ordinal))
-            {
-                builder.UseColorAttachment(MakeTextureResource(DefaultRenderPipeline.GTAOBlurIntermediateTextureName), access, colorLoad, colorStore);
-                return true;
-            }
-
-            if ((string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal) ||
-                 string.Equals(sourceFboName, DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName, StringComparison.Ordinal) ||
-                 string.Equals(sourceFboName, DefaultRenderPipeline.GTAOBlurIntermediateFBOName, StringComparison.Ordinal)) &&
-                string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal))
-            {
-                builder.UseColorAttachment(MakeTextureResource(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName), access, colorLoad, colorStore);
-                return true;
-            }
-
-            return false;
-        }
-
-        private static string ResolveAmbientOcclusionRawOutputTexture(string? variant)
-        {
-            if (string.Equals(variant, AmbientOcclusionResolveVariantHBAOPlus, StringComparison.Ordinal))
-                return DefaultRenderPipeline.HBAOPlusRawTextureName;
-
-            if (string.Equals(variant, AmbientOcclusionResolveVariantGTAO, StringComparison.Ordinal))
-                return DefaultRenderPipeline.GTAORawTextureName;
-
-            return DefaultRenderPipeline.AmbientOcclusionRawTextureName;
         }
 
         private static bool TryDescribeActualColorOutputs(
@@ -638,64 +619,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             return described;
-        }
-
-        private static bool DescribeAmbientOcclusionInputs(RenderPassBuilder builder, string sourceFboName, string destination)
-        {
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal))
-            {
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.NormalTextureName));
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.DepthViewTextureName));
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.AmbientOcclusionNoiseTextureName));
-                return true;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName, StringComparison.Ordinal))
-            {
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.HBAOPlusRawTextureName));
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.DepthViewTextureName));
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.NormalTextureName));
-                return true;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.GTAOBlurIntermediateFBOName, StringComparison.Ordinal))
-            {
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.GTAORawTextureName));
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.DepthViewTextureName));
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.NormalTextureName));
-                return true;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal))
-            {
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.HBAOPlusBlurIntermediateTextureName));
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.DepthViewTextureName));
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.NormalTextureName));
-                return true;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.GTAOBlurIntermediateFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal))
-            {
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.GTAOBlurIntermediateTextureName));
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.DepthViewTextureName));
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.NormalTextureName));
-                return true;
-            }
-
-            if (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal))
-            {
-                builder.SampleTexture(MakeTextureResource(DefaultRenderPipeline.AmbientOcclusionRawTextureName));
-                return true;
-            }
-
-            return IsAmbientOcclusionQuad(sourceFboName, destination) &&
-                TryDescribeActualMaterialTextures(builder, sourceFboName);
         }
 
         private static bool TryDescribeActualMaterialTextures(RenderPassBuilder builder, string sourceFboName)
@@ -751,52 +674,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             return described;
         }
 
-        private static bool IsAmbientOcclusionQuad(string sourceFboName, string destination)
-            => (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal))
-            || (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName, StringComparison.Ordinal))
-            || (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.GTAOBlurIntermediateFBOName, StringComparison.Ordinal))
-            || (string.Equals(sourceFboName, DefaultRenderPipeline.HBAOPlusBlurIntermediateFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal))
-            || (string.Equals(sourceFboName, DefaultRenderPipeline.GTAOBlurIntermediateFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal))
-            || (string.Equals(sourceFboName, DefaultRenderPipeline.AmbientOcclusionBlurFBOName, StringComparison.Ordinal) &&
-                string.Equals(destination, DefaultRenderPipeline.GBufferFBOName, StringComparison.Ordinal));
-
         private static bool IsColorAttachment(EFrameBufferAttachment attachment)
             => attachment >= EFrameBufferAttachment.ColorAttachment0 &&
                attachment <= EFrameBufferAttachment.ColorAttachment31;
-
-        private static void DescribeTextureInputs(RenderPassBuilder builder, IReadOnlyList<string> textureNames)
-        {
-            foreach (string textureName in textureNames)
-                builder.SampleTexture(MakeTextureResource(textureName));
-        }
-
-        private static void DescribePostProcessInputs(RenderPassBuilder builder)
-        {
-            foreach (string textureName in PostProcessTextureInputs)
-            {
-                if (string.Equals(textureName, DefaultRenderPipeline.BloomBlurTextureName, StringComparison.Ordinal))
-                    builder.SampleTextureMips(MakeTextureResource(textureName), 0u, 5u);
-                else
-                    builder.SampleTexture(MakeTextureResource(textureName));
-            }
-        }
-
-        private static void DescribeDeferredLightCombineInputs(RenderPassBuilder builder)
-        {
-            foreach (string textureName in DeferredLightCombineTextureInputs)
-                builder.SampleTexture(MakeTextureResource(textureName));
-
-            foreach (string bufferName in DeferredLightCombineBufferInputs)
-                builder.ReadBuffer(bufferName);
-        }
-
-        private static bool SamplesSharedDepthView(string sourceFboName, string destinationFboName)
-            => (string.Equals(sourceFboName, DefaultRenderPipeline.LightCombineFBOName, StringComparison.Ordinal) &&
-                string.Equals(destinationFboName, DefaultRenderPipeline.ForwardPassFBOName, StringComparison.Ordinal));
     }
 }

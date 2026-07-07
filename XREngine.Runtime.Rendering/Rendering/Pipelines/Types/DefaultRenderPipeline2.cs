@@ -143,13 +143,58 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
 
     internal static bool UseOpenXrVulkanDesktopStartupSafePath
-        => RuntimeEngine.Rendering.State.IsVulkan &&
-           RuntimeRenderingHostServices.Current.IsOpenXrRuntimeRequested &&
+        => IsVulkanRuntimeActiveOrExpected() &&
+           IsOpenXrRuntimeRequestedOrExpected() &&
            !RuntimeEngine.Rendering.State.IsStereoPass;
+
+    private static bool IsVulkanRuntimeActiveOrExpected()
+    {
+        if (RuntimeEngine.Rendering.State.IsVulkan ||
+            RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+        {
+            return true;
+        }
+
+        string? unitTestRenderApi = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderApi);
+        return string.Equals(unitTestRenderApi, "Vulkan", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsOpenXrRuntimeRequestedOrExpected()
+    {
+        if (RuntimeRenderingHostServices.Current.IsOpenXrRuntimeRequested ||
+            RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
+            RuntimeEngine.VRState.IsOpenXRActive ||
+            RuntimeEngine.VRState.OpenXRApi is not null)
+        {
+            return true;
+        }
+
+        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        if (string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return IsTruthyEnvironmentValue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
+    }
+
+    private static bool IsTruthyEnvironmentValue(string? value)
+        => !string.IsNullOrWhiteSpace(value) &&
+           (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
 
     private static bool EnableComputeDependentPasses
         => VulkanFeatureProfile.EnableComputeDependentPasses &&
            !UseOpenXrVulkanDesktopStartupSafePath;
+
+    private static bool EnableWeightedBlendedOitPasses
+        => !UseOpenXrVulkanDesktopStartupSafePath;
+
+    private bool EnableTransparencySceneCopyResources
+        => EnableWeightedBlendedOitPasses || ExactTransparencyEnabled;
 
     /// <summary>
     /// Resolves the effective HDR output mode for the current rendering camera.
@@ -1661,6 +1706,15 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
 
             ApplyAntiAliasingResolutionHint();
             RebuildCommandChain();
+
+            foreach (var instance in Instances)
+                instance.InvalidatePhysicalResources();
+
+            foreach (var window in RuntimeEngine.Windows)
+            {
+                window.InvalidateScenePanelResources();
+                window.RequestRenderStateRecheck(resetCircuitBreaker: true);
+            }
         }, "DefaultRenderPipeline2: Rendering settings changed", true);
     }
 

@@ -67,6 +67,15 @@ public sealed class McpServerAutomationTests
         overrides.ShouldContain("public OverrideableSetting<McpDispatchMode> McpDispatchModeOverride");
     }
 
+    [Test]
+    public void McpLiveInspection_ResolvesLoadedAssetsForObjectTools()
+    {
+        string liveInspection = ReadWorkspaceFile("XREngine.Editor/Mcp/Actions/EditorMcpActions.LiveInspection.cs");
+
+        liveInspection.ShouldContain("Engine.Assets.GetAssetByID(guid)");
+        liveInspection.ShouldContain("runtime cache or loaded asset table");
+    }
+
     private static string ReadWorkspaceFile(string relativePath)
     {
         string repoRoot = ResolveRepoRoot();

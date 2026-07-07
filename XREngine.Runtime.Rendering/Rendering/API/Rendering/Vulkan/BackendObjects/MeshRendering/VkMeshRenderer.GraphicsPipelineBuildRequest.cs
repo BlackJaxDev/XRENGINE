@@ -34,7 +34,6 @@ public unsafe partial class VulkanRenderer
             public VkRenderProgram Program { get; } = program;
             public PipelineKey Key { get; } = key;
             public GraphicsPipelineCompileKey CompileKey { get; } = new GraphicsPipelineCompileKey(
-                    global::System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(owner),
                     key);
             public string PipelineName { get; } = pipelineName;
             public uint ColorAttachmentCount { get; } = colorAttachmentCount;
