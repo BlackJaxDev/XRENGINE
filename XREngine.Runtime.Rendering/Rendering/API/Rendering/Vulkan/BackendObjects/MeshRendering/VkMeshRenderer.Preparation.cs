@@ -68,8 +68,8 @@ public unsafe partial class VulkanRenderer
 			ApplyScopedProgramBindingsForPreparation(material);
 			BuildVertexInputState();
 
-			if (!EnsureDescriptorSets(material, 0))
-				return SetPrepareResult(false, "DescriptorsPending", "Descriptor sets are not allocated or populated for the active program/material layout.", out reason);
+			if (!TryEnsureDescriptorSetsForPreparation(material, 0, out string descriptorDetail))
+				return SetPrepareResult(false, "DescriptorsPending", descriptorDetail, out reason);
 
 			return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Ready"), out reason);
 		}
@@ -122,8 +122,8 @@ public unsafe partial class VulkanRenderer
 				_program?.ApplyBindingSnapshot(programBindingSnapshot);
 			BuildVertexInputState();
 
-			if (!EnsureDescriptorSets(material, drawUniformSlot))
-				return SetPrepareResult(false, "DescriptorsPending", "Descriptor sets are not allocated or populated for the captured program/material layout.", out reason);
+			if (!TryEnsureDescriptorSetsForPreparation(material, drawUniformSlot, out string descriptorDetail))
+				return SetPrepareResult(false, "DescriptorsPending", descriptorDetail, out reason);
 
 			return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Ready"), out reason);
 		}
@@ -272,6 +272,26 @@ public unsafe partial class VulkanRenderer
 			=> _program is not null &&
 			   _program.TryGetVertexStageInputCount(out int vertexInputCount) &&
 			   vertexInputCount == 0;
+
+		private bool TryEnsureDescriptorSetsForPreparation(XRMaterial material, int drawUniformSlot, out string detail)
+		{
+			try
+			{
+				if (EnsureDescriptorSets(material, drawUniformSlot))
+				{
+					detail = string.Empty;
+					return true;
+				}
+
+				detail = "Descriptor sets are not allocated or populated for the active program/material layout.";
+				return false;
+			}
+			catch (VulkanOutOfMemoryException ex) when (VulkanRenderer.IsExpectedVulkanImageAllocationDeferral(ex))
+			{
+				detail = $"Descriptor resources deferred under Vulkan allocator pressure: {ex.Message}";
+				return false;
+			}
+		}
 
 		private bool AreCachedBuffersReadyForRendering(out string detail, bool skipVertexAttributeBuffers = false)
 		{

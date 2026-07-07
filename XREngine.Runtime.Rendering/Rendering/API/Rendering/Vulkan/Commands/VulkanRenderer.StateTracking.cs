@@ -384,6 +384,7 @@ public unsafe partial class VulkanRenderer
     private int _lastActiveFilterPassSetSignature = int.MinValue;
     private int _lastActiveFilterResourceSetSignature = int.MinValue;
     private static readonly TimeSpan ResourceAllocationFailureRetryDelay = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan OpenXrResourceAllocationFailureRetryDelay = TimeSpan.FromSeconds(10);
 
     private static readonly HashSet<string> VulkanPlannerOptionalResourceNames = new(StringComparer.OrdinalIgnoreCase)
     {

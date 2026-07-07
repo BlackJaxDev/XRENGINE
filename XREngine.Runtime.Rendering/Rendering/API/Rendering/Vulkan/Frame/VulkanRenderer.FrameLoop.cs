@@ -1354,7 +1354,7 @@ namespace XREngine.Rendering.Vulkan
                 _commandBufferDirtyFlags[imageIndex];
             bool commandBuffersDirtiedAfterSceneRecord =
                 HaveCommandBuffersDirtiedSince(sceneCommandBufferDirtyGeneration);
-            if (scenePrimaryRecordedThisFrame && (commandBufferDirtyFlagSet || commandBuffersDirtiedAfterSceneRecord))
+            if (scenePrimaryRecordedThisFrame && commandBufferDirtyFlagSet && !commandBuffersDirtiedAfterSceneRecord)
             {
                 if (_commandBufferDirtyFlags is not null && imageIndex < (uint)_commandBufferDirtyFlags.Length)
                     _commandBufferDirtyFlags[imageIndex] = false;
@@ -1362,7 +1362,7 @@ namespace XREngine.Rendering.Vulkan
                 Debug.VulkanEvery(
                     $"Vulkan.Frame.{GetHashCode()}.FreshPrimaryDirtiedBeforeSubmit",
                     TimeSpan.FromSeconds(1),
-                    "[Vulkan] Continuing with freshly recorded command buffer for image {0} after pre-submit invalidation. Cached reuse remains disabled for the affected variant. flag={1} generationChanged={2}",
+                    "[Vulkan] Continuing with freshly recorded command buffer for image {0} after clearing its pre-existing dirty flag. Cached reuse remains disabled for the affected variant. flag={1} generationChanged={2}",
                     imageIndex,
                     commandBufferDirtyFlagSet,
                     commandBuffersDirtiedAfterSceneRecord);

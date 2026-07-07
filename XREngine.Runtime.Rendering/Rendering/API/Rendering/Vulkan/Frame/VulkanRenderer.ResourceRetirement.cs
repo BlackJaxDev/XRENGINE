@@ -454,6 +454,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (pooledBuffers > 0)
             {
+                _stagingManager.Trim(this);
                 Debug.VulkanEvery(
                     $"Vulkan.TextureUpload.StagingReturnedToPool.{GetHashCode()}",
                     TimeSpan.FromSeconds(2),

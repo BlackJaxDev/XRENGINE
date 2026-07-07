@@ -276,10 +276,22 @@ internal sealed class VulkanResourceAllocator
         }
     }
 
+    public void DestroyPhysicalImagesImmediate(VulkanRenderer renderer)
+    {
+        foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
+            group.DestroyImmediate(renderer);
+    }
+
     public void DestroyPhysicalBuffers(VulkanRenderer renderer)
     {
         foreach (VulkanPhysicalBufferGroup group in _physicalBufferGroups.Values)
             group.Destroy(renderer);
+    }
+
+    public void DestroyPhysicalBuffersImmediate(VulkanRenderer renderer)
+    {
+        foreach (VulkanPhysicalBufferGroup group in _physicalBufferGroups.Values)
+            group.DestroyImmediate(renderer);
     }
 
     internal static int ComputePhysicalPlanUsageSignature(
@@ -1121,6 +1133,16 @@ internal sealed class VulkanPhysicalImageGroup
         LastKnownLayout = ImageLayout.Undefined;
     }
 
+    public void DestroyImmediate(VulkanRenderer renderer)
+    {
+        if (!_allocated)
+            return;
+
+        renderer.DestroyPhysicalImageImmediate(ref _image, ref _memory);
+        _allocated = false;
+        LastKnownLayout = ImageLayout.Undefined;
+    }
+
     private void BeginPartialLayoutTracking()
     {
         if (_subresourceLayouts.Count > 0 || _lastKnownLayout == ImageLayout.Undefined)
@@ -1253,6 +1275,15 @@ internal sealed class VulkanPhysicalBufferGroup
             return;
 
         renderer.DestroyPhysicalBuffer(ref _buffer, ref _memory);
+        _allocated = false;
+    }
+
+    public void DestroyImmediate(VulkanRenderer renderer)
+    {
+        if (!_allocated)
+            return;
+
+        renderer.DestroyPhysicalBufferImmediate(ref _buffer, ref _memory);
         _allocated = false;
     }
 }

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Resources;
 
@@ -54,6 +55,20 @@ public sealed class RenderPipelineResourceManager
 
             generation.MarkReady();
             completed = true;
+            return true;
+        }
+        catch (Exception ex) when (VulkanRenderer.IsExpectedVulkanImageAllocationDeferral(ex))
+        {
+            generation.AddDiagnostic(ex.Message);
+            Debug.RenderingEvery(
+                $"RenderResources.PendingGenerationDeferred.{instance.ProfilerKey}",
+                TimeSpan.FromSeconds(1),
+                "[RenderResources] Pending generation deferred. Pipeline={0} Target={1} Progress={2}/{3} Reason={4}",
+                instance.ProfilerKey,
+                generation.Key,
+                generation.MaterializedSpecCount,
+                generation.Layout.OrderedSpecs.Count,
+                ex.Message);
             return true;
         }
         catch (Exception ex)

@@ -328,8 +328,15 @@ public unsafe partial class VulkanRenderer
     internal bool TryEnsurePhysicalImageForTextureResource(
         string? resourceName,
         out VulkanPhysicalImageGroup? group)
+        => TryEnsurePhysicalImageForTextureResource(resourceName, out group, out _);
+
+    internal bool TryEnsurePhysicalImageForTextureResource(
+        string? resourceName,
+        out VulkanPhysicalImageGroup? group,
+        out string? failureReason)
     {
         group = null;
+        failureReason = null;
         if (string.IsNullOrWhiteSpace(resourceName))
             return false;
 
@@ -354,6 +361,7 @@ public unsafe partial class VulkanRenderer
                 TimeSpan.FromSeconds(2),
                 "[VulkanResourcePlanner] Deferring lazy physical-image plan rebuild for '{0}' during command-buffer recording.",
                 resourceName);
+            failureReason = "resource planner rebuild is deferred during command-buffer recording";
             group = null;
             return false;
         }
@@ -366,6 +374,7 @@ public unsafe partial class VulkanRenderer
                 "[VulkanResourcePlanner] Refusing lazy physical-image plan rebuild for '{0}' while command-chain readers are using frozen plan revision {1}.",
                 resourceName,
                 _commandChainFrozenResourcePlanRevision);
+            failureReason = $"resource planner rebuild is deferred while command-chain readers are using frozen plan revision {_commandChainFrozenResourcePlanRevision}";
             group = null;
             return false;
         }
@@ -375,14 +384,15 @@ public unsafe partial class VulkanRenderer
         if (ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) &&
             group is not null)
         {
-            if (!group.TryEnsureAllocated(this, out string failureReason))
+            if (!group.TryEnsureAllocated(this, out string allocationFailureReason))
             {
                 Debug.VulkanWarningEvery(
                     $"Vulkan.ResourcePlanner.LazyPhysicalImageAllocationFailed.{resourceName}",
                     TimeSpan.FromSeconds(2),
                     "[VulkanResourcePlanner] Lazy physical-image allocation failed for '{0}': {1}",
                     resourceName,
-                    failureReason);
+                    allocationFailureReason);
+                failureReason = allocationFailureReason;
                 group = null;
                 return false;
             }
@@ -1510,14 +1520,15 @@ public unsafe partial class VulkanRenderer
         int retiredBufferCount = 0;
         if (allocationPlan.Changed)
         {
-            if (ShouldDeferFailedResourceAllocationRetry(plannerSignature, allocationPlan.Signature))
+            if (TryDescribeRecentResourceAllocationFailure(out string recentAllocationFailureReason))
             {
                 Debug.VulkanEvery(
-                    $"Vulkan.ResourcePlanner.DeferFailedAllocationRetry.{context.PipelineIdentity}.{context.ViewportIdentity}",
+                    $"Vulkan.ResourcePlanner.DeferRecentAllocationRetry.{context.PipelineIdentity}.{context.ViewportIdentity}",
                     TimeSpan.FromSeconds(1),
-                    "[VulkanResourcePlanner] Deferring retry for previously failed physical resource plan. Planner=0x{0:X16} Allocation=0x{1:X16}.",
+                    "[VulkanResourcePlanner] Deferring physical resource plan after recent allocation failure. Planner=0x{0:X16} Allocation=0x{1:X16}. Reason={2}",
                     plannerSignature,
-                    allocationPlan.Signature);
+                    allocationPlan.Signature,
+                    recentAllocationFailureReason);
                 return;
             }
 
@@ -1667,7 +1678,33 @@ public unsafe partial class VulkanRenderer
         }
 
         return Stopwatch.GetElapsedTime(ActiveFailedResourceAllocationTimestamp) <
-            ResourceAllocationFailureRetryDelay;
+            ResolveResourceAllocationFailureRetryDelay();
+    }
+
+    internal bool TryDescribeRecentResourceAllocationFailure(out string reason)
+    {
+        reason = string.Empty;
+
+        long failureTimestamp = ActiveFailedResourceAllocationTimestamp;
+        if (failureTimestamp == 0)
+            return false;
+
+        TimeSpan elapsed = Stopwatch.GetElapsedTime(failureTimestamp);
+        TimeSpan retryDelay = ResolveResourceAllocationFailureRetryDelay();
+        if (elapsed >= retryDelay)
+            return false;
+
+        reason =
+            $"Vulkan resource planner is backing off after a failed physical allocation ({elapsed.TotalMilliseconds:F0}/{retryDelay.TotalMilliseconds:F0} ms, planner=0x{ActiveFailedResourcePlannerSignature:X16}, allocation=0x{ActiveFailedResourceAllocationSignature:X16})";
+        return true;
+    }
+
+    private static TimeSpan ResolveResourceAllocationFailureRetryDelay()
+    {
+        IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+        return host.IsOpenXRActive || host.IsInVR
+            ? OpenXrResourceAllocationFailureRetryDelay
+            : ResourceAllocationFailureRetryDelay;
     }
 
     private void RecordResourceAllocationPlanFailure(
@@ -1717,12 +1754,25 @@ public unsafe partial class VulkanRenderer
                 extentContext);
             if (!pendingAllocator.TryAllocatePhysicalImages(this, out string imageAllocationFailureReason))
             {
-                Debug.VulkanWarning(
-                    "[VulkanResourcePlanner] Pending physical image allocation failed. Keeping active plan revision={0}. Reason={1}",
-                    ActiveResourcePlannerRevision,
-                    imageAllocationFailureReason);
-                pendingAllocator.DestroyPhysicalImages(this);
-                pendingAllocator.DestroyPhysicalBuffers(this);
+                if (IsExpectedVulkanImageAllocationDeferral(imageAllocationFailureReason))
+                {
+                    Debug.VulkanEvery(
+                        "Vulkan.ResourcePlanner.PhysicalImageAllocationDeferred",
+                        TimeSpan.FromSeconds(1),
+                        "[VulkanResourcePlanner] Deferred pending physical image allocation. Keeping active plan revision={0}. Reason={1}",
+                        ActiveResourcePlannerRevision,
+                        imageAllocationFailureReason);
+                }
+                else
+                {
+                    Debug.VulkanWarning(
+                        "[VulkanResourcePlanner] Pending physical image allocation failed. Keeping active plan revision={0}. Reason={1}",
+                        ActiveResourcePlannerRevision,
+                        imageAllocationFailureReason);
+                }
+
+                pendingAllocator.DestroyPhysicalImagesImmediate(this);
+                pendingAllocator.DestroyPhysicalBuffersImmediate(this);
                 pendingAllocator = null;
                 return false;
             }
@@ -1731,8 +1781,8 @@ public unsafe partial class VulkanRenderer
         }
         catch (Exception ex)
         {
-            pendingAllocator?.DestroyPhysicalImages(this);
-            pendingAllocator?.DestroyPhysicalBuffers(this);
+            pendingAllocator?.DestroyPhysicalImagesImmediate(this);
+            pendingAllocator?.DestroyPhysicalBuffersImmediate(this);
             pendingAllocator = null;
             Debug.VulkanWarning(
                 "[VulkanResourcePlanner] Pending physical resource plan failed. Keeping active plan revision={0}. Reason={1}",
@@ -1745,6 +1795,12 @@ public unsafe partial class VulkanRenderer
         retiredBufferCount = ResourceAllocator.EnumeratePhysicalBufferGroups().Count(static g => g.IsAllocated);
         return true;
     }
+
+    internal static bool IsExpectedVulkanImageAllocationDeferral(Exception exception)
+        => IsExpectedVulkanImageAllocationDeferral(exception.Message);
+
+    internal static bool IsExpectedVulkanImageAllocationDeferral(string failureReason)
+        => failureReason.Contains("allocation deferred under allocator pressure", StringComparison.OrdinalIgnoreCase);
 
     private void CommitPhysicalAllocatorPlan(
         bool physicalPlanChanged,

@@ -17,6 +17,10 @@ public unsafe partial class VulkanRenderer
     private const int OpenXrEyeResourcePlannerStateCount = 2;
     private const uint OpenXrExternalSwapchainTargetImageIndex = 0;
     private const ulong MinDesktopFramesBeforeOpenXrRuntimeSessionStart = 4;
+    private const double OpenXrVulkanAllocatorPressureDeferRatio = 0.9;
+    private const long OpenXrVulkanAllocatorPressureReserveBytes = 512L * 1024L * 1024L;
+    private const double OpenXrVulkanImageAllocationPressurePreflightRatio = 0.84;
+    private const long OpenXrVulkanImageAllocationPressureReserveBytes = 768L * 1024L * 1024L;
     private static readonly TimeSpan OpenXrRuntimeSessionStartDirtyQuietPeriod = TimeSpan.FromMilliseconds(250);
     private static bool TraceOpenXrStereoBlits =>
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
@@ -570,6 +574,16 @@ public unsafe partial class VulkanRenderer
                 DrainCompletedRecordedTextureUploadPublications();
             }
 
+            if (ShouldDeferOpenXrEyeRenderingWork(out string resourceWorkReason))
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.DeferEyeResourceWork.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Deferring Vulkan eye command buffer preparation: {0}",
+                    resourceWorkReason);
+                return false;
+            }
+
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareTargets"))
             {
                 ImageView openXrImageView = GetOrCreateOpenXrSwapchainImageView(request.Image, request.Format);
@@ -587,6 +601,16 @@ public unsafe partial class VulkanRenderer
                 CreateOpenXrEyeRenderStateTracker(in targetContext));
             using (EnterOpenXrResourcePlannerThreadScope(OpenXrViewResourcePlannerContextKey.FromTarget(in targetContext)))
             {
+                if (ShouldDeferOpenXrEyeRenderingWork(out string scopedResourceWorkReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.DeferEyeScopedResourceWork.{GetHashCode()}.{targetContext.OpenXrViewIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye command buffer preparation: {0}",
+                        scopedResourceWorkReason);
+                    return false;
+                }
+
                 ResetDynamicUniformRingBuffer(recordImageIndex);
                 FrameOp[] ops;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.EmitFrameOps"))
@@ -2256,6 +2280,17 @@ public unsafe partial class VulkanRenderer
     {
         try
         {
+            if (ShouldDeferOpenXrVulkanResourceWork(out string resourceWorkReason))
+            {
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.Mirror.DeferCopy.{GetHashCode()}.{destinationLabel}",
+                    TimeSpan.FromSeconds(1),
+                    "[OpenXR] Deferring Vulkan eye mirror copy to '{0}': {1}",
+                    destinationLabel,
+                    resourceWorkReason);
+                return false;
+            }
+
             var request = new OpenXrEyePreviewCopyRequest(
                 sourceImage,
                 sourceFormat,
@@ -3654,6 +3689,16 @@ public unsafe partial class VulkanRenderer
         if (extent.Width == 0 || extent.Height == 0)
             return;
 
+        if (ShouldDeferOpenXrVulkanResourceWork(out string resourceWorkReason))
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.PrewarmEyeDeferred.{GetHashCode()}.{resourcePlannerStateIndex}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Deferring Vulkan eye resource prewarm: {0}",
+                resourceWorkReason);
+            return;
+        }
+
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(swapChainImages?.Length ?? 0);
 
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
@@ -3671,6 +3716,16 @@ public unsafe partial class VulkanRenderer
 
             using (EnterOpenXrResourcePlannerThreadScope(resourcePlannerStateIndex))
             {
+                if (ShouldDeferOpenXrVulkanResourceWork(out string scopedResourceWorkReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.PrewarmEyeScopedDeferred.{GetHashCode()}.{resourcePlannerStateIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye resource prewarm: {0}",
+                        scopedResourceWorkReason);
+                    return;
+                }
+
                 FrameOp[] ops = CaptureFrameOpsExcludingTextureUploads(emitFrameOps, out _);
                 ops = FilterDiagnosticSkippedFrameOps(ops);
                 if (ops.Length == 0)
@@ -3713,6 +3768,16 @@ public unsafe partial class VulkanRenderer
         if (targetFrameBuffer is null || extent.Width == 0 || extent.Height == 0)
             return;
 
+        if (ShouldDeferOpenXrVulkanResourceWork(out string resourceWorkReason))
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.PrewarmEyeMirrorDeferred.{GetHashCode()}.{resourcePlannerStateIndex}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Deferring Vulkan eye mirror resource prewarm: {0}",
+                resourceWorkReason);
+            return;
+        }
+
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(extent.Width, extent.Height);
         _openXrExternalSwapchainPrewarmDepth++;
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(swapChainImages?.Length ?? 0);
@@ -3725,6 +3790,16 @@ public unsafe partial class VulkanRenderer
 
             using (EnterOpenXrResourcePlannerThreadScope(resourcePlannerStateIndex))
             {
+                if (ShouldDeferOpenXrVulkanResourceWork(out string scopedResourceWorkReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.PrewarmEyeMirrorScopedDeferred.{GetHashCode()}.{resourcePlannerStateIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye mirror resource prewarm: {0}",
+                        scopedResourceWorkReason);
+                    return;
+                }
+
                 FrameOp[] ops = CaptureFrameOpsExcludingTextureUploads(emitFrameOps, out _);
                 ops = FilterDiagnosticSkippedFrameOps(ops);
                 if (ops.Length == 0)
@@ -4643,9 +4718,9 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
-        if (ImportedTextureStreamingManager.Instance.HasActiveImportedModelImports)
+        if (ShouldDeferOpenXrVulkanResourceWork(out string resourceWorkReason))
         {
-            reason = "startup imported-model texture work is still active";
+            reason = resourceWorkReason;
             return true;
         }
 
@@ -4685,6 +4760,159 @@ public unsafe partial class VulkanRenderer
         }
 
         return false;
+    }
+
+    internal bool ShouldDeferOpenXrVulkanResourceWork(out string reason)
+    {
+        reason = string.Empty;
+
+        if (_deviceLost || Api is null || device.Handle == 0)
+        {
+            reason = "Vulkan device is not available";
+            return true;
+        }
+
+        if (ImportedTextureStreamingManager.Instance.TryDescribeActiveStartupTextureWork(out string textureWorkReason))
+        {
+            reason = textureWorkReason;
+            return true;
+        }
+
+        if (TryDescribeRecentResourceAllocationFailure(out string allocationFailureReason))
+        {
+            reason = allocationFailureReason;
+            return true;
+        }
+
+        if (TryDescribeOpenXrVulkanAllocatorPressure(out string allocatorPressureReason))
+        {
+            reason = allocatorPressureReason;
+            return true;
+        }
+
+        return false;
+    }
+
+    internal bool ShouldDeferOpenXrEyeRenderingWork(out string reason)
+    {
+        reason = string.Empty;
+
+        if (_deviceLost || Api is null || device.Handle == 0)
+        {
+            reason = "Vulkan device is not available";
+            return true;
+        }
+
+        if (ImportedTextureStreamingManager.Instance.TryDescribeBlockingOpenXrEyeTextureWork(out string textureWorkReason))
+        {
+            reason = textureWorkReason;
+            return true;
+        }
+
+        return false;
+    }
+
+    internal bool ShouldDeferTextureUploadPreparationForOpenXrPriority(out string reason)
+    {
+        reason = string.Empty;
+
+        if (_deviceLost || Api is null || device.Handle == 0)
+        {
+            reason = "Vulkan device is not available";
+            return true;
+        }
+
+        IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+        if (!host.IsOpenXRActive && !host.IsInVR)
+            return false;
+
+        if (TryDescribeRecentResourceAllocationFailure(out string allocationFailureReason))
+        {
+            reason = allocationFailureReason;
+            return true;
+        }
+
+        if (TryDescribeOpenXrVulkanAllocatorPressure(out string allocatorPressureReason))
+        {
+            reason = allocatorPressureReason;
+            return true;
+        }
+
+        return false;
+    }
+
+    internal bool TryGetVulkanAllocatorBudgetSnapshot(
+        double budgetRatio,
+        long reserveBytes,
+        out long allocatedBytes,
+        out long budgetBytes,
+        out long largestHeapBytes,
+        out int activeAllocationCount)
+    {
+        allocatedBytes = 0L;
+        budgetBytes = 0L;
+        largestHeapBytes = 0L;
+        activeAllocationCount = 0;
+
+        try
+        {
+            allocatedBytes = MemoryAllocator.TotalAllocatedBytes;
+            activeAllocationCount = MemoryAllocator.ActiveVkAllocationCount;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+
+        largestHeapBytes = ResolveLargestVulkanMemoryHeapBytes();
+        if (largestHeapBytes <= 0)
+            return false;
+
+        double clampedRatio = Math.Clamp(budgetRatio, 0.1, 1.0);
+        long ratioLimitBytes = (long)Math.Floor(largestHeapBytes * clampedRatio);
+        long reserveLimitBytes = largestHeapBytes > reserveBytes
+            ? largestHeapBytes - Math.Max(0L, reserveBytes)
+            : largestHeapBytes;
+        budgetBytes = Math.Max(0L, Math.Min(ratioLimitBytes, reserveLimitBytes));
+        return budgetBytes > 0L;
+    }
+
+    private bool TryDescribeOpenXrVulkanAllocatorPressure(out string reason)
+    {
+        reason = string.Empty;
+
+        if (!TryGetVulkanAllocatorBudgetSnapshot(
+                OpenXrVulkanAllocatorPressureDeferRatio,
+                OpenXrVulkanAllocatorPressureReserveBytes,
+                out long allocatedBytes,
+                out long deferLimitBytes,
+                out long largestHeapBytes,
+                out int activeAllocationCount))
+        {
+            return false;
+        }
+
+        if (allocatedBytes < deferLimitBytes)
+            return false;
+
+        reason =
+            $"Vulkan allocator pressure is high (allocated={allocatedBytes}, largestHeap={largestHeapBytes}, deferLimit={deferLimitBytes}, activeVkAllocations={activeAllocationCount})";
+        return true;
+    }
+
+    private long ResolveLargestVulkanMemoryHeapBytes()
+    {
+        if (Api is null || _physicalDevice.Handle == 0)
+            return 0;
+
+        Api.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
+        ulong largestHeapBytes = 0;
+        for (int i = 0; i < memoryProperties.MemoryHeapCount; i++)
+            largestHeapBytes = Math.Max(largestHeapBytes, memoryProperties.MemoryHeaps[i].Size);
+
+        return largestHeapBytes > long.MaxValue
+            ? long.MaxValue
+            : (long)largestHeapBytes;
     }
 
     private bool TryGetPendingSubmittedFrameSlot(out int pendingSlot, out ulong pendingTimelineValue)
