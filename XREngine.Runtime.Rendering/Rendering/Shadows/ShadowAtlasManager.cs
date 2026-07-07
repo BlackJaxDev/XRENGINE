@@ -2621,6 +2621,112 @@ public sealed partial class ShadowAtlasManager
         ResetResources();
     }
 
+    public void ResetAtlasKind(EShadowAtlasKind atlasKind)
+    {
+        _residentRemovalScratch.Clear();
+        foreach (var pair in _residentAllocations)
+        {
+            if (pair.Value.Allocation.AtlasKind == atlasKind ||
+                GetAtlasKind(pair.Key.ProjectionType) == atlasKind)
+            {
+                _residentRemovalScratch.Add(pair.Key);
+            }
+        }
+
+        for (int i = 0; i < _residentRemovalScratch.Count; i++)
+            ReleaseResidentAllocation(_residentRemovalScratch[i]);
+        _residentRemovalScratch.Clear();
+
+        for (int encoding = 0; encoding < ShadowEncodingCount; encoding++)
+            GetEncodingState(atlasKind, (EShadowMapEncoding)encoding).ResetResources();
+
+        RemoveAllocationsForAtlasKind(_previousAllocations, atlasKind);
+        RemoveAllocationsForAtlasKind(_currentAllocations, atlasKind);
+        RemoveKeysForAtlasKind(_currentAllocationIndices, atlasKind);
+        RemoveKeysForAtlasKind(_requestIndexByKey, atlasKind);
+        RemoveKeysForAtlasKind(_lodStates, atlasKind);
+        RemoveKeysForAtlasKind(_demotionStates, atlasKind);
+
+        _requests.RemoveAll(request => GetAtlasKind(request.ProjectionType) == atlasKind);
+        _frameAllocations.RemoveAll(allocation =>
+            allocation.AtlasKind == atlasKind ||
+            GetAtlasKind(allocation.Key.ProjectionType) == atlasKind);
+        _pageDescriptors.RemoveAll(page => page.AtlasKind == atlasKind);
+        _pendingSkippedAllocations.RemoveAll(entry => GetAtlasKind(entry.Request.ProjectionType) == atlasKind);
+
+        if (atlasKind == EShadowAtlasKind.Directional)
+        {
+            _directionalCascadeGroups.Clear();
+            _directionalCascadeGroupIndexByRequest.Clear();
+            _directionalCascadeGroupLastRequestIndex.Clear();
+            ClearDirectionalCascadeGroupBuildMap();
+            _directionalAtlasLightDiagnostics.Clear();
+            _directionalGroupReservationFailures.Clear();
+        }
+        else if (atlasKind == EShadowAtlasKind.Point)
+        {
+            _pointFaceGroups.Clear();
+            _pointFaceGroupIndexByFirstRequest.Clear();
+            ClearPointFaceGroupBuildMap();
+        }
+
+        _renderPlanEntries.RemoveAll(entry =>
+            entry.Allocation.AtlasKind == atlasKind ||
+            GetAtlasKind(entry.Request.ProjectionType) == atlasKind ||
+            (atlasKind == EShadowAtlasKind.Directional && entry.Kind == ShadowAtlasRenderPlanEntryKind.DirectionalCascadeGroup) ||
+            (atlasKind == EShadowAtlasKind.Point && entry.Kind == ShadowAtlasRenderPlanEntryKind.PointFaceGroup));
+        _renderPlanMembers.RemoveAll(member =>
+            member.Allocation.AtlasKind == atlasKind ||
+            GetAtlasKind(member.Request.ProjectionType) == atlasKind);
+        lock (_renderPlanSync)
+        {
+            for (int i = 0; i < _renderPlans.Length; i++)
+                _renderPlans[i].Clear();
+        }
+
+        for (int i = 0; i < _requestBuckets.Length; i++)
+            _requestBuckets[i].RemoveAll(request => GetAtlasKind(request.ProjectionType) == atlasKind);
+
+        unchecked { _generation++; }
+        _repackRequested = false;
+        _lastSolveDiagnostics = default;
+    }
+
+    private void RemoveAllocationsForAtlasKind(
+        Dictionary<ShadowRequestKey, ShadowAtlasAllocation> allocations,
+        EShadowAtlasKind atlasKind)
+    {
+        _residentRemovalScratch.Clear();
+        foreach (var pair in allocations)
+        {
+            if (pair.Value.AtlasKind == atlasKind ||
+                GetAtlasKind(pair.Key.ProjectionType) == atlasKind)
+            {
+                _residentRemovalScratch.Add(pair.Key);
+            }
+        }
+
+        for (int i = 0; i < _residentRemovalScratch.Count; i++)
+            allocations.Remove(_residentRemovalScratch[i]);
+        _residentRemovalScratch.Clear();
+    }
+
+    private void RemoveKeysForAtlasKind<TValue>(
+        Dictionary<ShadowRequestKey, TValue> dictionary,
+        EShadowAtlasKind atlasKind)
+    {
+        _residentRemovalScratch.Clear();
+        foreach (var pair in dictionary)
+        {
+            if (GetAtlasKind(pair.Key.ProjectionType) == atlasKind)
+                _residentRemovalScratch.Add(pair.Key);
+        }
+
+        for (int i = 0; i < _residentRemovalScratch.Count; i++)
+            dictionary.Remove(_residentRemovalScratch[i]);
+        _residentRemovalScratch.Clear();
+    }
+
     public void RequestRepack()
         => _repackRequested = true;
 

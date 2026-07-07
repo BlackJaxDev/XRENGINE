@@ -21,6 +21,7 @@ namespace XREngine.Scene
             DynamicDirectionalLights.Clear();
             LightProbes.Clear();
             ShadowAtlas.Reset();
+            _lastUseDirectionalShadowAtlas = null;
 
             // cached data derived from probe list
             _cells = null;

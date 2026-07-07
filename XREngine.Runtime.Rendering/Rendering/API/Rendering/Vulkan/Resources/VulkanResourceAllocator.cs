@@ -167,6 +167,53 @@ internal sealed class VulkanResourceAllocator
         VulkanResourcePlanner planner)
         => RebuildPhysicalPlan(renderer, passMetadata, planner, new VulkanResourceExtentContext(1u, 1u, 1u, 1u));
 
+    public int ReuseCompatiblePhysicalImagesFrom(
+        VulkanResourceAllocator previousAllocator,
+        out HashSet<VulkanPhysicalImageGroup>? reusedGroups)
+    {
+        reusedGroups = null;
+        if (ReferenceEquals(previousAllocator, this))
+            return 0;
+
+        int reusedCount = 0;
+        foreach (KeyValuePair<VulkanAliasGroupKey, VulkanPhysicalImageGroup> pair in _physicalGroups.ToArray())
+        {
+            VulkanPhysicalImageGroup pendingGroup = pair.Value;
+            if (!previousAllocator._physicalGroups.TryGetValue(pair.Key, out VulkanPhysicalImageGroup? previousGroup) ||
+                !pendingGroup.CanReusePhysicalAllocationFrom(previousGroup))
+            {
+                continue;
+            }
+
+            VulkanImageAllocation[] logicalResources = pendingGroup.LogicalResources.ToArray();
+            previousGroup.ReplaceLogicalResources(logicalResources);
+            _physicalGroups[pair.Key] = previousGroup;
+            ReplacePhysicalGroupReferences(pendingGroup, previousGroup);
+
+            reusedGroups ??= new HashSet<VulkanPhysicalImageGroup>();
+            reusedGroups.Add(previousGroup);
+            reusedCount++;
+        }
+
+        return reusedCount;
+    }
+
+    private void ReplacePhysicalGroupReferences(
+        VulkanPhysicalImageGroup pendingGroup,
+        VulkanPhysicalImageGroup reusedGroup)
+    {
+        if (ReferenceEquals(pendingGroup, reusedGroup))
+            return;
+
+        string[] resourceNames = _resourceToPhysicalGroup
+            .Where(pair => ReferenceEquals(pair.Value, pendingGroup))
+            .Select(static pair => pair.Key)
+            .ToArray();
+
+        foreach (string resourceName in resourceNames)
+            _resourceToPhysicalGroup[resourceName] = reusedGroup;
+    }
+
     public bool TryGetPhysicalGroup(VulkanAliasGroupKey key, out VulkanPhysicalImageGroup? group)
         => _physicalGroups.TryGetValue(key, out group);
 
@@ -253,6 +300,7 @@ internal sealed class VulkanResourceAllocator
             if (group.TryEnsureAllocated(renderer, out failureReason))
                 continue;
 
+            failureReason = $"{failureReason}; failedGroup={DescribePhysicalGroupShort(group)} extent={group.ResolvedExtent.Width}x{group.ResolvedExtent.Height}x{group.ResolvedExtent.Depth} format={group.Format} usage={group.Usage} mips={group.MipLevels} samples={group.Samples}";
             return false;
         }
 
@@ -265,21 +313,34 @@ internal sealed class VulkanResourceAllocator
             group.EnsureAllocated(renderer);
     }
 
-    public void DestroyPhysicalImages(VulkanRenderer renderer, VulkanPhysicalImageGroup? exceptGroup = null)
+    public void DestroyPhysicalImages(
+        VulkanRenderer renderer,
+        VulkanPhysicalImageGroup? exceptGroup = null,
+        IReadOnlySet<VulkanPhysicalImageGroup>? exceptGroups = null)
     {
         foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
         {
-            if (ReferenceEquals(group, exceptGroup))
+            if (ReferenceEquals(group, exceptGroup) ||
+                exceptGroups?.Contains(group) == true)
+            {
                 continue;
+            }
 
             group.Destroy(renderer);
         }
     }
 
-    public void DestroyPhysicalImagesImmediate(VulkanRenderer renderer)
+    public void DestroyPhysicalImagesImmediate(
+        VulkanRenderer renderer,
+        IReadOnlySet<VulkanPhysicalImageGroup>? exceptGroups = null)
     {
         foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
+        {
+            if (exceptGroups?.Contains(group) == true)
+                continue;
+
             group.DestroyImmediate(renderer);
+        }
     }
 
     public void DestroyPhysicalBuffers(VulkanRenderer renderer)
@@ -1098,6 +1159,29 @@ internal sealed class VulkanPhysicalImageGroup
 
     internal void AddLogical(VulkanImageAllocation allocation)
         => _logicalResources.Add(allocation);
+
+    internal void ReplaceLogicalResources(IReadOnlyList<VulkanImageAllocation> allocations)
+    {
+        _logicalResources.Clear();
+        for (int i = 0; i < allocations.Count; i++)
+            _logicalResources.Add(allocations[i]);
+    }
+
+    internal bool CanReusePhysicalAllocationFrom(VulkanPhysicalImageGroup previousGroup)
+        => previousGroup.IsAllocated &&
+           !_allocated &&
+           Key.Equals(previousGroup.Key) &&
+           AllowsAliasing == previousGroup.AllowsAliasing &&
+           ResolvedExtent.Width == previousGroup.ResolvedExtent.Width &&
+           ResolvedExtent.Height == previousGroup.ResolvedExtent.Height &&
+           ResolvedExtent.Depth == previousGroup.ResolvedExtent.Depth &&
+           Format == previousGroup.Format &&
+           Usage == previousGroup.Usage &&
+           MipLevels == previousGroup.MipLevels &&
+           Samples == previousGroup.Samples &&
+           MemoryProperties == previousGroup.MemoryProperties &&
+           TransientAttachmentPolicy == previousGroup.TransientAttachmentPolicy &&
+           Template.Layers == previousGroup.Template.Layers;
 
     public void EnsureAllocated(VulkanRenderer renderer)
     {

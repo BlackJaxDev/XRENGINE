@@ -9,12 +9,23 @@ using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    /// <summary>
+    /// A container for a list of viewport render commands that can be executed in sequence.
+    /// This class manages the lifecycle of its commands, 
+    /// including resource allocation and disposal, 
+    /// and provides methods for adding, removing, and executing commands.
+    /// </summary>
     public class ViewportRenderCommandContainer : XRBase, IReadOnlyList<ViewportRenderCommand>
     {
         private static readonly object FactorySync = new();
         private static readonly Dictionary<Type, Func<ViewportRenderCommand>> CommandFactories = [];
         private static int _structureNotificationSuppressionDepth;
 
+        /// <summary>
+        /// Gets the list of registered command types that can be created by this container.
+        /// This list is read-only and reflects the types that have been registered with the container's factory system.
+        /// New command types can be registered using the RegisterCommandFactory method.
+        /// </summary>
         public static Type[] RegisteredCommandTypes
         {
             get
@@ -24,12 +35,27 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
         }
 
+        /// <summary>
+        /// Registers a factory method for creating instances of a specific viewport render command type.
+        /// This allows the container to create instances of the command type when adding commands by type.
+        /// </summary>
+        /// <typeparam name="TCommand">The type of the viewport render command.</typeparam>
+        /// <param name="factory">The factory method for creating instances of the command type.</param>
         public static void RegisterCommandFactory<TCommand>(Func<TCommand>? factory = null)
-            where TCommand : ViewportRenderCommand, new()
-        {
-            RegisterCommandFactory(typeof(TCommand), factory is null ? static () => new TCommand() : () => factory());
-        }
+            where TCommand : ViewportRenderCommand, new() 
+            => RegisterCommandFactory(
+                typeof(TCommand),
+                factory is null
+                    ? static () => new TCommand()
+                    : () => factory());
 
+        /// <summary>
+        /// Registers a factory method for creating instances of a specific viewport render command type.
+        /// This allows the container to create instances of the command type when adding commands by type.
+        /// </summary>
+        /// <param name="commandType">The type of the viewport render command.</param>
+        /// <param name="factory">The factory method for creating instances of the command type.</param>
+        /// <exception cref="ArgumentException">Thrown if the commandType does not derive from ViewportRenderCommand.</exception>
         public static void RegisterCommandFactory(Type commandType, Func<ViewportRenderCommand> factory)
         {
             ArgumentNullException.ThrowIfNull(commandType);
@@ -42,6 +68,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 CommandFactories[commandType] = factory;
         }
 
+        /// <summary>
+        /// Attempts to create an instance of a registered viewport render command type using the registered factory method.
+        /// </summary>
+        /// <param name="commandType">The type of the viewport render command.</param>
+        /// <param name="command">The created instance of the viewport render command, or null if creation failed.</param>
+        /// <returns>True if the command was successfully created; otherwise, false.</returns>
         public static bool TryCreateRegisteredCommand(Type commandType, out ViewportRenderCommand? command)
         {
             ArgumentNullException.ThrowIfNull(commandType);
@@ -71,29 +103,66 @@ namespace XREngine.Rendering.Pipelines.Commands
                 => Interlocked.Decrement(ref _structureNotificationSuppressionDepth);
         }
 
+        /// <summary>
+        /// Defines the behavior of resources allocated for this command container when the pipeline branch is deselected.
+        /// </summary>
         public enum BranchResourceBehavior
         {
+            /// <summary>
+            /// Preserve resources allocated for this command container when the pipeline branch is deselected. 
+            /// Resources will be reused if the branch is reselected.
+            /// </summary>
             PreserveResources,
+            /// <summary>
+            /// Dispose resources allocated for this command container when the pipeline branch is deselected.
+            /// </summary>
             DisposeResourcesOnBranchExit
         }
 
         private readonly List<ViewportRenderCommand> _commands = [];
+        /// <summary>
+        /// Gets the list of commands in this container. 
+        /// This list is read-only and reflects the current state of the container.
+        /// Commands can be added or removed using the Add, Remove, and Insert methods.
+        /// </summary>
         public IReadOnlyList<ViewportRenderCommand> Commands => _commands;
 
-        private readonly List<ViewportRenderCommand> _collecVisibleCommands = [];
-        public IReadOnlyList<ViewportRenderCommand> CollecVisibleCommands => _collecVisibleCommands;
+        private readonly List<ViewportRenderCommand> _collectVisibleCommands = [];
+        /// <summary>
+        /// Gets the list of commands in this container that require visibility collection.
+        /// This list is read-only and reflects the current state of the container.
+        /// </summary>
+        public IReadOnlyList<ViewportRenderCommand> CollectVisibleCommands => _collectVisibleCommands;
 
+        /// <summary>
+        /// Represents the state of resources allocated for a specific pipeline instance.
+        /// </summary>
         private sealed class InstanceResourceState
         {
+            /// <summary>
+            /// Indicates whether resources for this command container have been allocated for the associated pipeline instance.
+            /// If true, resources have been allocated and are valid for use. If false, resources need to be allocated.
+            /// </summary>
             public bool ResourcesAllocated;
+            /// <summary>
+            /// Indicates the resource generation of the associated pipeline instance at the time resources were allocated for this command container.
+            /// This is used to determine if resources need to be reallocated due to changes in the pipeline instance.
+            /// </summary>
             public int AllocatedAtGeneration;
         }
 
         private readonly Dictionary<XRRenderPipelineInstance, InstanceResourceState> _instanceStates = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
+        /// <summary>
+        /// Gets or sets the behavior for branching resources in this command container.
+        /// </summary>
         public BranchResourceBehavior BranchResources { get; set; } = BranchResourceBehavior.PreserveResources;
 
         private RenderPipeline? _parentPipeline;
+        /// <summary>
+        /// Gets or sets the parent render pipeline that owns this command container.
+        /// When set, all commands in this container will be notified of the parent pipeline assignment.
+        /// </summary>
         [YamlIgnore]
         public RenderPipeline? ParentPipeline
         {
@@ -356,15 +425,15 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
         public void CollectVisible()
         {
-            for (int i = 0; i < _collecVisibleCommands.Count; i++)
-                _collecVisibleCommands[i].CollectVisible();
+            for (int i = 0; i < _collectVisibleCommands.Count; i++)
+                _collectVisibleCommands[i].CollectVisible();
         }
         public void SwapBuffers()
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("ViewportRenderCommandContainer.SwapBuffers");
-            for (int i = 0; i < _collecVisibleCommands.Count; i++)
+            for (int i = 0; i < _collectVisibleCommands.Count; i++)
             {
-                var command = _collecVisibleCommands[i];
+                var command = _collectVisibleCommands[i];
                 using var commandSample = RuntimeRenderingHostServices.Current.StartProfileScope($"ViewportRenderCommandContainer.Swap.{command.GetType().Name}");
                 command.SwapBuffers();
             }
@@ -457,11 +526,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void RebuildCollectVisibleCommands()
         {
-            _collecVisibleCommands.Clear();
+            _collectVisibleCommands.Clear();
             for (int i = 0; i < _commands.Count; i++)
             {
                 if (_commands[i].NeedsCollecVisible)
-                    _collecVisibleCommands.Add(_commands[i]);
+                    _collectVisibleCommands.Add(_commands[i]);
             }
         }
 

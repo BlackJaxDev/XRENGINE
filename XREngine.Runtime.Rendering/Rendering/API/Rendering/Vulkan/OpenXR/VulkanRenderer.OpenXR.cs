@@ -21,6 +21,8 @@ public unsafe partial class VulkanRenderer
     private const long OpenXrVulkanAllocatorPressureReserveBytes = 512L * 1024L * 1024L;
     private const double OpenXrVulkanImageAllocationPressurePreflightRatio = 0.84;
     private const long OpenXrVulkanImageAllocationPressureReserveBytes = 768L * 1024L * 1024L;
+    private const double OpenXrVulkanImageAllocationCountPreflightRatio = 0.80;
+    private const int OpenXrVulkanImageAllocationCountReserve = 768;
     private static readonly TimeSpan OpenXrRuntimeSessionStartDirtyQuietPeriod = TimeSpan.FromMilliseconds(250);
     private static bool TraceOpenXrStereoBlits =>
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
@@ -639,12 +641,41 @@ public unsafe partial class VulkanRenderer
                 {
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Sort"))
                         ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+                    if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
+                    {
+                        Debug.VulkanWarningEvery(
+                            $"OpenXR.Vulkan.EyeFrameOpPlanDeferred.{GetHashCode()}.{targetContext.OpenXrViewIndex}",
+                            TimeSpan.FromSeconds(1),
+                            "[OpenXR] Deferring Vulkan eye command buffer preparation: {0}",
+                            prePlanFailureReason);
+                        return false;
+                    }
+
                     plannerContext = PrepareResourcePlannerForFrameOps(ops);
-                    RefreshFrameOpResourceWrappers(
+                    if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
+                    {
+                        Debug.VulkanWarningEvery(
+                            $"OpenXR.Vulkan.EyeFrameOpPlanFailed.{GetHashCode()}.{targetContext.OpenXrViewIndex}",
+                            TimeSpan.FromSeconds(1),
+                            "[OpenXR] Deferring Vulkan eye command buffer preparation: {0}",
+                            postPlanFailureReason);
+                        return false;
+                    }
+
+                    if (!TryRefreshFrameOpResourceWrappers(
                         ops,
                         plannerContext,
                         "OpenXR eye prepared frame-op resource refresh",
-                        AllowSynchronousResourceUploads);
+                        AllowSynchronousResourceUploads,
+                        out string refreshFailureReason))
+                    {
+                        Debug.VulkanWarningEvery(
+                            $"OpenXR.Vulkan.EyeFrameOpRefreshDeferred.{GetHashCode()}.{targetContext.OpenXrViewIndex}",
+                            TimeSpan.FromSeconds(1),
+                            "[OpenXR] Deferring Vulkan eye command buffer preparation: {0}",
+                            refreshFailureReason);
+                        return false;
+                    }
                     PrewarmOpenXrFrameOpResources(ops);
                     plannerRevision = ResourcePlannerRevision;
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule.Signature"))
@@ -1857,7 +1888,41 @@ public unsafe partial class VulkanRenderer
 
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Sort"))
                     ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
-                _ = PrepareResourcePlannerForFrameOps(ops);
+                if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.EyeMirrorFrameOpPlanDeferred.{GetHashCode()}.{request.OpenXrViewIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye mirror command buffer preparation: {0}",
+                        prePlanFailureReason);
+                    return false;
+                }
+
+                FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops);
+                if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.EyeMirrorFrameOpPlanFailed.{GetHashCode()}.{request.OpenXrViewIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye mirror command buffer preparation: {0}",
+                        postPlanFailureReason);
+                    return false;
+                }
+
+                if (!TryRefreshFrameOpResourceWrappers(
+                    ops,
+                    plannerContext,
+                    "OpenXR eye mirror prepared frame-op resource refresh",
+                    AllowSynchronousResourceUploads,
+                    out string refreshFailureReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.EyeMirrorFrameOpRefreshDeferred.{GetHashCode()}.{request.OpenXrViewIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye mirror command buffer preparation: {0}",
+                        refreshFailureReason);
+                    return false;
+                }
                 ulong plannerRevision = ResourcePlannerRevision;
                 ulong frameOpsSignature;
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordMirror.PlanAndSchedule.Signature"))
@@ -2280,7 +2345,7 @@ public unsafe partial class VulkanRenderer
     {
         try
         {
-            if (ShouldDeferOpenXrVulkanResourceWork(out string resourceWorkReason))
+            if (ShouldDeferOpenXrEyePreviewCopyWork(out string resourceWorkReason))
             {
                 Debug.VulkanWarningEvery(
                     $"OpenXR.Vulkan.Mirror.DeferCopy.{GetHashCode()}.{destinationLabel}",
@@ -3738,7 +3803,41 @@ public unsafe partial class VulkanRenderer
 
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.PrewarmEye.Sort"))
                     ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
-                _ = PrepareResourcePlannerForFrameOps(ops);
+                if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.PrewarmEyePlanDeferred.{GetHashCode()}.{resourcePlannerStateIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye resource prewarm: {0}",
+                        prePlanFailureReason);
+                    return;
+                }
+
+                FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops);
+                if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.PrewarmEyePlanFailed.{GetHashCode()}.{resourcePlannerStateIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye resource prewarm: {0}",
+                        postPlanFailureReason);
+                    return;
+                }
+
+                if (!TryRefreshFrameOpResourceWrappers(
+                    ops,
+                    plannerContext,
+                    "OpenXR eye resource prewarm refresh",
+                    AllowSynchronousResourceUploads,
+                    out string refreshFailureReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.PrewarmEyeRefreshDeferred.{GetHashCode()}.{resourcePlannerStateIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye resource prewarm: {0}",
+                        refreshFailureReason);
+                    return;
+                }
                 PrewarmOpenXrFrameOpResources(ops);
             }
         }
@@ -3812,7 +3911,41 @@ public unsafe partial class VulkanRenderer
 
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.PrewarmEyeMirror.Sort"))
                     ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
-                _ = PrepareResourcePlannerForFrameOps(ops);
+                if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.PrewarmEyeMirrorPlanDeferred.{GetHashCode()}.{resourcePlannerStateIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye mirror resource prewarm: {0}",
+                        prePlanFailureReason);
+                    return;
+                }
+
+                FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops);
+                if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.PrewarmEyeMirrorPlanFailed.{GetHashCode()}.{resourcePlannerStateIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye mirror resource prewarm: {0}",
+                        postPlanFailureReason);
+                    return;
+                }
+
+                if (!TryRefreshFrameOpResourceWrappers(
+                    ops,
+                    plannerContext,
+                    "OpenXR eye mirror resource prewarm refresh",
+                    AllowSynchronousResourceUploads,
+                    out string refreshFailureReason))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.PrewarmEyeMirrorRefreshDeferred.{GetHashCode()}.{resourcePlannerStateIndex}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Deferring Vulkan eye mirror resource prewarm: {0}",
+                        refreshFailureReason);
+                    return;
+                }
                 PrewarmOpenXrFrameOpResources(ops);
             }
         }
@@ -3963,26 +4096,43 @@ public unsafe partial class VulkanRenderer
         FrameOpContext plannerContext,
         string reason,
         bool allowSynchronousUpload)
+        => _ = TryRefreshFrameOpResourceWrappers(ops, plannerContext, reason, allowSynchronousUpload, out _);
+
+    private bool TryRefreshFrameOpResourceWrappers(
+        FrameOp[] ops,
+        FrameOpContext plannerContext,
+        string reason,
+        bool allowSynchronousUpload,
+        out string failureReason)
     {
+        failureReason = string.Empty;
         HashSet<object>? visitedRegistries = null;
-        RefreshResourceRegistryWrappers(plannerContext.ResourceRegistry, ref visitedRegistries, reason, allowSynchronousUpload);
+        if (!TryRefreshResourceRegistryWrappers(plannerContext.ResourceRegistry, ref visitedRegistries, reason, allowSynchronousUpload, out failureReason))
+            return false;
 
         foreach (FrameOp op in ops)
-            RefreshResourceRegistryWrappers(op.Context.ResourceRegistry, ref visitedRegistries, reason, allowSynchronousUpload);
+        {
+            if (!TryRefreshResourceRegistryWrappers(op.Context.ResourceRegistry, ref visitedRegistries, reason, allowSynchronousUpload, out failureReason))
+                return false;
+        }
+
+        return true;
     }
 
-    private void RefreshResourceRegistryWrappers(
+    private bool TryRefreshResourceRegistryWrappers(
         RenderResourceRegistry? registry,
         ref HashSet<object>? visitedRegistries,
         string reason,
-        bool allowSynchronousUpload)
+        bool allowSynchronousUpload,
+        out string failureReason)
     {
+        failureReason = string.Empty;
         if (registry is null)
-            return;
+            return true;
 
         visitedRegistries ??= new HashSet<object>(ReferenceEqualityComparer.Instance);
         if (!visitedRegistries.Add(registry))
-            return;
+            return true;
 
         foreach (XRTexture texture in registry.EnumerateTextureInstances())
         {
@@ -3991,8 +4141,12 @@ public unsafe partial class VulkanRenderer
             if (texture is XRTexture3D)
                 continue;
 
-            if (GetOrCreateAPIRenderObject(texture, generateNow: true) is IVkImageDescriptorSource imageSource)
-                _ = imageSource.TryEnsureDescriptorReadyForUse(reason, allowSynchronousUpload);
+            if (GetOrCreateAPIRenderObject(texture, generateNow: true) is IVkImageDescriptorSource imageSource &&
+                !imageSource.TryEnsureDescriptorReadyForUse(reason, allowSynchronousUpload))
+            {
+                failureReason = $"texture '{texture.Name ?? texture.GetDescribingName()}' descriptor is not ready during {reason}";
+                return false;
+            }
         }
 
         foreach (XRRenderBuffer renderBuffer in registry.EnumerateRenderBufferInstances())
@@ -4000,6 +4154,8 @@ public unsafe partial class VulkanRenderer
             if (GetOrCreateAPIRenderObject(renderBuffer, generateNow: true) is VkRenderBuffer vkRenderBuffer)
                 vkRenderBuffer.RefreshIfStale();
         }
+
+        return true;
     }
 
     private void PrewarmOpenXrFrameOpResources(FrameOp[] ops)
@@ -4554,47 +4710,60 @@ public unsafe partial class VulkanRenderer
             SharingMode = SharingMode.Exclusive,
         };
 
-        if (Api!.CreateImage(device, ref imageInfo, null, out Image depthImage) != Result.Success)
-            throw new InvalidOperationException("Failed to create OpenXR Vulkan depth image.");
-
-        ClearTrackedImageLayouts(depthImage);
-        VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(depthImage, MemoryPropertyFlags.DeviceLocalBit);
-        _imageAllocations[depthImage.Handle] = allocation;
-
-        if (Api!.BindImageMemory(device, depthImage, allocation.Memory, allocation.Offset) != Result.Success)
+        Image depthImage = default;
+        ImageView depthView = default;
+        VulkanMemoryAllocation allocation = VulkanMemoryAllocation.Null;
+        try
         {
-            _imageAllocations.TryRemove(depthImage.Handle, out _);
-            FreeMemoryAllocation(allocation);
-            Api!.DestroyImage(device, depthImage, null);
-            throw new InvalidOperationException("Failed to bind OpenXR Vulkan depth image memory.");
-        }
+            if (Api!.CreateImage(device, ref imageInfo, null, out depthImage) != Result.Success)
+                throw new InvalidOperationException("Failed to create OpenXR Vulkan depth image.");
 
-        ImageViewCreateInfo viewInfo = new()
-        {
-            SType = StructureType.ImageViewCreateInfo,
-            Image = depthImage,
-            ViewType = ImageViewType.Type2D,
-            Format = depthFormat,
-            SubresourceRange = new ImageSubresourceRange
+            ClearTrackedImageLayouts(depthImage);
+            allocation = AllocateImageMemoryWithFallback(depthImage, MemoryPropertyFlags.DeviceLocalBit);
+            _imageAllocations[depthImage.Handle] = allocation;
+
+            if (Api!.BindImageMemory(device, depthImage, allocation.Memory, allocation.Offset) != Result.Success)
+                throw new InvalidOperationException("Failed to bind OpenXR Vulkan depth image memory.");
+
+            ImageViewCreateInfo viewInfo = new()
             {
-                AspectMask = depthAspect,
-                BaseMipLevel = 0,
-                LevelCount = 1,
-                BaseArrayLayer = 0,
-                LayerCount = 1,
-            }
-        };
+                SType = StructureType.ImageViewCreateInfo,
+                Image = depthImage,
+                ViewType = ImageViewType.Type2D,
+                Format = depthFormat,
+                SubresourceRange = new ImageSubresourceRange
+                {
+                    AspectMask = depthAspect,
+                    BaseMipLevel = 0,
+                    LevelCount = 1,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1,
+                }
+            };
 
-        if (Api!.CreateImageView(device, ref viewInfo, null, out ImageView depthView) != Result.Success)
-        {
-            _imageAllocations.TryRemove(depthImage.Handle, out VulkanMemoryAllocation removed);
-            FreeMemoryAllocation(removed);
-            Api!.DestroyImage(device, depthImage, null);
-            throw new InvalidOperationException("Failed to create OpenXR Vulkan depth image view.");
+            if (Api!.CreateImageView(device, ref viewInfo, null, out depthView) != Result.Success)
+                throw new InvalidOperationException("Failed to create OpenXR Vulkan depth image view.");
+
+            TrackLiveImageView(depthView, in viewInfo, "OpenXR.DepthTarget");
+            return new OpenXrDepthTarget(depthImage, allocation.Memory, depthView, depthFormat, depthAspect);
         }
+        catch
+        {
+            if (depthView.Handle != 0 && TryBeginDestroyImageView(depthView, "CreateOpenXrDepthTargetFailed"))
+                Api!.DestroyImageView(device, depthView, null);
 
-        TrackLiveImageView(depthView, in viewInfo, "OpenXR.DepthTarget");
-        return new OpenXrDepthTarget(depthImage, allocation.Memory, depthView, depthFormat, depthAspect);
+            if (depthImage.Handle != 0)
+            {
+                if (_imageAllocations.TryRemove(depthImage.Handle, out VulkanMemoryAllocation trackedAllocation))
+                    FreeMemoryAllocation(trackedAllocation);
+                else
+                    FreeMemoryAllocation(allocation);
+
+                Api!.DestroyImage(device, depthImage, null);
+            }
+
+            throw;
+        }
     }
 
     private void DestroyOpenXrDepthTarget(OpenXrDepthTarget target)
@@ -4762,6 +4931,37 @@ public unsafe partial class VulkanRenderer
         return false;
     }
 
+    internal bool ShouldDeferOpenXrEyePreviewCopyWork(out string reason)
+    {
+        reason = string.Empty;
+
+        if (_deviceLost || Api is null || device.Handle == 0)
+        {
+            reason = "Vulkan device is not available";
+            return true;
+        }
+
+        if (ImportedTextureStreamingManager.Instance.TryDescribeBlockingOpenXrEyeTextureWork(out string textureWorkReason))
+        {
+            reason = textureWorkReason;
+            return true;
+        }
+
+        if (TryDescribeRecentResourceAllocationFailure(out string allocationFailureReason))
+        {
+            reason = allocationFailureReason;
+            return true;
+        }
+
+        if (TryDescribeOpenXrVulkanAllocatorPressure(out string allocatorPressureReason))
+        {
+            reason = allocatorPressureReason;
+            return true;
+        }
+
+        return false;
+    }
+
     internal bool ShouldDeferOpenXrVulkanResourceWork(out string reason)
     {
         reason = string.Empty;
@@ -4806,6 +5006,12 @@ public unsafe partial class VulkanRenderer
         if (ImportedTextureStreamingManager.Instance.TryDescribeBlockingOpenXrEyeTextureWork(out string textureWorkReason))
         {
             reason = textureWorkReason;
+            return true;
+        }
+
+        if (TryDescribeRecentResourceAllocationFailure(out string allocationFailureReason))
+        {
+            reason = allocationFailureReason;
             return true;
         }
 

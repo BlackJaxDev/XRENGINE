@@ -82,6 +82,10 @@ namespace XREngine.Rendering
         private float _saturation = 1.0f;
         private float _brightness = 1.0f;
 
+        private const float DefaultExposure = 1.0f;
+        private const float DefaultMinExposure = 0.0001f;
+        private const float DefaultMaxExposure = 100.0f;
+
         public ExposureControlMode ExposureMode
         {
             get => _exposureMode;
@@ -167,23 +171,30 @@ namespace XREngine.Rendering
         public float MinExposure
         {
             get => _minExposure;
-            set => SetField(ref _minExposure, value);
+            set => SetField(ref _minExposure, float.IsFinite(value) ? value : DefaultMinExposure);
         }
         public float MaxExposure
         {
             get => _maxExposure;
-            set => SetField(ref _maxExposure, value);
+            set => SetField(ref _maxExposure, float.IsFinite(value) ? value : DefaultMaxExposure);
         }
 
         internal void GetResolvedExposureBounds(out float minExposure, out float maxExposure)
         {
-            minExposure = MathF.Min(MinExposure, MaxExposure);
-            maxExposure = MathF.Max(MinExposure, MaxExposure);
+            float min = float.IsFinite(MinExposure) ? MinExposure : DefaultMinExposure;
+            float max = float.IsFinite(MaxExposure) ? MaxExposure : DefaultMaxExposure;
+            min = MathF.Max(min, 0.0f);
+            max = MathF.Max(max, min > 0.0f ? min : DefaultMaxExposure);
+
+            minExposure = MathF.Min(min, max);
+            maxExposure = MathF.Max(min, max);
         }
 
         internal float ClampExposureToResolvedBounds(float exposure)
         {
             GetResolvedExposureBounds(out float minExposure, out float maxExposure);
+            if (!float.IsFinite(exposure) || exposure <= 0.0f)
+                exposure = DefaultExposure;
             return Math.Clamp(exposure, minExposure, maxExposure);
         }
 
@@ -248,7 +259,7 @@ namespace XREngine.Rendering
         public float Exposure
         {
             get => _exposure;
-            set => SetField(ref _exposure, value);
+            set => SetField(ref _exposure, ClampExposureToResolvedBounds(value));
         }
         public float Contrast
         {
@@ -292,11 +303,11 @@ namespace XREngine.Rendering
         {
             program.Uniform($"{ColorGradeUniformName}.{nameof(Tint)}", Tint);
 
-            float exposure = Exposure;
+            float exposure = ClampExposureToResolvedBounds(Exposure);
             bool useGpuExposure = UseGpuAutoExposureThisFrame;
             if (ExposureMode == ExposureControlMode.Physical)
             {
-                float physicalBase = ComputePhysicalExposureMultiplier();
+                float physicalBase = ClampExposureToResolvedBounds(ComputePhysicalExposureMultiplier());
                 if (!AutoExposure)
                 {
                     exposure = physicalBase;
@@ -310,9 +321,11 @@ namespace XREngine.Rendering
                 else
                 {
                     // CPU path stores the current absolute exposure in Exposure.
-                    exposure = _lastUpdateTime == float.MinValue ? physicalBase : Exposure;
+                    exposure = _lastUpdateTime == float.MinValue ? physicalBase : ClampExposureToResolvedBounds(Exposure);
                 }
             }
+
+            exposure = ClampExposureToResolvedBounds(exposure);
 
             program.Uniform($"{ColorGradeUniformName}.{nameof(Exposure)}", exposure);
             program.Uniform($"{ColorGradeUniformName}.{nameof(Contrast)}", _contrastUniformValue);
@@ -361,7 +374,8 @@ uniform ColorGradeStruct ColorGrade;";
             // Convert EV to a linear exposure multiplier used by the tonemapper.
             // Higher EV => darker image.
             float multiplier = MathF.Pow(2.0f, -ev);
-            return PhysicalExposureScale * multiplier;
+            float exposure = PhysicalExposureScale * multiplier;
+            return float.IsFinite(exposure) && exposure > 0.0f ? exposure : DefaultExposure;
         }
 
         private float _secBetweenExposureUpdates = 1.0f;
@@ -484,7 +498,7 @@ uniform ColorGradeStruct ColorGrade;";
             //If the dot factor is zero, this means the screen is perfectly black.
             //Usually that means nothing is being rendered, so don't update the exposure now.
             //If we were to update the exposure now, the scene would look very bright once it finally starts rendering.
-            if (lumDot <= 0.0f)
+            if (!float.IsFinite(lumDot) || lumDot <= 0.0f)
             {
                 if (Exposure < minExposure)
                     Exposure = minExposure;
@@ -497,13 +511,14 @@ uniform ColorGradeStruct ColorGrade;";
             exposure = AutoExposureBias + AutoExposureScale * exposure;
             if (ExposureMode == ExposureControlMode.Physical)
                 exposure *= ComputePhysicalExposureMultiplier();
-            exposure = exposure.Clamp(minExposure, maxExposure);
+            exposure = ClampExposureToResolvedBounds(exposure);
 
             //If the current exposure is an invalid value, that means we want the exposure to be set immediately.
-            if (Exposure < minExposure || Exposure > maxExposure)
+            float currentExposure = Exposure;
+            if (!float.IsFinite(currentExposure) || currentExposure < minExposure || currentExposure > maxExposure)
                 Exposure = exposure;
             else
-                Exposure = Interp.Lerp(Exposure, exposure, ExposureTransitionSpeed);
+                Exposure = Interp.Lerp(currentExposure, exposure, ExposureTransitionSpeed);
         }
 
         public void Lerp(ColorGradingSettings source, ColorGradingSettings dest, float time)

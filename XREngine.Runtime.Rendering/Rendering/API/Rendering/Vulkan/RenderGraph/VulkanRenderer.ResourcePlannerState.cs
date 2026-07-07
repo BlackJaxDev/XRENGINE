@@ -607,6 +607,22 @@ public unsafe partial class VulkanRenderer
             if (compare != 0)
                 return compare;
 
+            compare = left.DisplayWidth.CompareTo(right.DisplayWidth);
+            if (compare != 0)
+                return compare;
+
+            compare = left.DisplayHeight.CompareTo(right.DisplayHeight);
+            if (compare != 0)
+                return compare;
+
+            compare = left.InternalWidth.CompareTo(right.InternalWidth);
+            if (compare != 0)
+                return compare;
+
+            compare = left.InternalHeight.CompareTo(right.InternalHeight);
+            if (compare != 0)
+                return compare;
+
             compare = left.ActivePassSetSignature.CompareTo(right.ActivePassSetSignature);
             if (compare != 0)
                 return compare;
@@ -641,6 +657,22 @@ public unsafe partial class VulkanRenderer
             if (compare != 0)
                 return compare;
 
+            compare = left.DisplayWidth.CompareTo(right.DisplayWidth);
+            if (compare != 0)
+                return compare;
+
+            compare = left.DisplayHeight.CompareTo(right.DisplayHeight);
+            if (compare != 0)
+                return compare;
+
+            compare = left.InternalWidth.CompareTo(right.InternalWidth);
+            if (compare != 0)
+                return compare;
+
+            compare = left.InternalHeight.CompareTo(right.InternalHeight);
+            if (compare != 0)
+                return compare;
+
             compare = left.ActivePassSetSignature.CompareTo(right.ActivePassSetSignature);
             if (compare != 0)
                 return compare;
@@ -657,6 +689,10 @@ public unsafe partial class VulkanRenderer
             hash.Add(key.ViewportIdentity);
             hash.Add(key.ResourceRegistryIdentity);
             hash.Add(key.PassMetadataIdentity);
+            hash.Add(key.DisplayWidth);
+            hash.Add(key.DisplayHeight);
+            hash.Add(key.InternalWidth);
+            hash.Add(key.InternalHeight);
             hash.Add(key.ActivePassSetSignature);
             hash.Add(key.ActiveResourceSetSignature);
 
@@ -850,6 +886,10 @@ public unsafe partial class VulkanRenderer
             context.ViewportIdentity,
             context.ResourceRegistry is null ? 0 : RuntimeHelpers.GetHashCode(context.ResourceRegistry),
             context.PassMetadata is null ? 0 : RuntimeHelpers.GetHashCode(context.PassMetadata),
+            context.DisplayWidth,
+            context.DisplayHeight,
+            context.InternalWidth,
+            context.InternalHeight,
             activePassSetSignature,
             activeResourceSetSignature);
 
@@ -861,7 +901,11 @@ public unsafe partial class VulkanRenderer
         => context.PipelineIdentity == key.PipelineIdentity &&
             context.ViewportIdentity == key.ViewportIdentity &&
             (context.ResourceRegistry is null ? 0 : RuntimeHelpers.GetHashCode(context.ResourceRegistry)) == key.ResourceRegistryIdentity &&
-            (context.PassMetadata is null ? 0 : RuntimeHelpers.GetHashCode(context.PassMetadata)) == key.PassMetadataIdentity;
+            (context.PassMetadata is null ? 0 : RuntimeHelpers.GetHashCode(context.PassMetadata)) == key.PassMetadataIdentity &&
+            context.DisplayWidth == key.DisplayWidth &&
+            context.DisplayHeight == key.DisplayHeight &&
+            context.InternalWidth == key.InternalWidth &&
+            context.InternalHeight == key.InternalHeight;
 
     private FrameOpContext RefreshPlannerExtentsFromLiveContext(FrameOpContext context, FrameOp[] ops)
     {
@@ -1516,6 +1560,7 @@ public unsafe partial class VulkanRenderer
 
         VulkanResourceAllocator oldAllocator = ResourceAllocator;
         VulkanResourceAllocator? pendingAllocator = null;
+        HashSet<VulkanPhysicalImageGroup>? reusedImageGroups = null;
         int retiredImageCount = 0;
         int retiredBufferCount = 0;
         if (allocationPlan.Changed)
@@ -1538,6 +1583,7 @@ public unsafe partial class VulkanRenderer
                 allocationPlan.ExtentContext,
                 planningInputs.ActivePassMetadata,
                 out pendingAllocator,
+                out reusedImageGroups,
                 out retiredImageCount,
                 out retiredBufferCount))
             {
@@ -1552,7 +1598,12 @@ public unsafe partial class VulkanRenderer
         if (pendingAllocator is not null)
             ActiveResourceAllocator = pendingAllocator;
 
-        CommitPhysicalAllocatorPlan(allocationPlan.Changed, oldAllocator, retiredImageCount, retiredBufferCount);
+        CommitPhysicalAllocatorPlan(
+            allocationPlan.Changed,
+            oldAllocator,
+            reusedImageGroups,
+            retiredImageCount,
+            retiredBufferCount);
         RebuildRenderGraphAndBarriers(planningInputs, allocationPlan.Signature);
 
         ActiveResourcePlannerSignature = plannerSignature;
@@ -1737,10 +1788,12 @@ public unsafe partial class VulkanRenderer
         VulkanResourceExtentContext extentContext,
         IReadOnlyCollection<RenderPassMetadata>? activePassMetadata,
         out VulkanResourceAllocator? pendingAllocator,
+        out HashSet<VulkanPhysicalImageGroup>? reusedImageGroups,
         out int retiredImageCount,
         out int retiredBufferCount)
     {
         pendingAllocator = new();
+        reusedImageGroups = null;
         retiredImageCount = 0;
         retiredBufferCount = 0;
 
@@ -1752,6 +1805,21 @@ public unsafe partial class VulkanRenderer
                 activePassMetadata,
                 pendingPlanner,
                 extentContext);
+            int reusedImageCount = pendingAllocator.ReuseCompatiblePhysicalImagesFrom(
+                ResourceAllocator,
+                out reusedImageGroups);
+            if (reusedImageCount > 0)
+            {
+                Debug.VulkanEvery(
+                    "Vulkan.ResourcePlanner.PhysicalImageReuse",
+                    TimeSpan.FromSeconds(1),
+                    "[VulkanResourcePlanner] Reused {0} compatible physical image groups from active plan before allocating pending plan.",
+                    reusedImageCount);
+            }
+
+            if (TryPreReleaseActiveImagesForOpenXrMirrorTransition(context, reusedImageGroups))
+                ActiveResourceAllocationSignature = ulong.MaxValue;
+
             if (!pendingAllocator.TryAllocatePhysicalImages(this, out string imageAllocationFailureReason))
             {
                 if (IsExpectedVulkanImageAllocationDeferral(imageAllocationFailureReason))
@@ -1771,7 +1839,7 @@ public unsafe partial class VulkanRenderer
                         imageAllocationFailureReason);
                 }
 
-                pendingAllocator.DestroyPhysicalImagesImmediate(this);
+                pendingAllocator.DestroyPhysicalImagesImmediate(this, reusedImageGroups);
                 pendingAllocator.DestroyPhysicalBuffersImmediate(this);
                 pendingAllocator = null;
                 return false;
@@ -1781,7 +1849,7 @@ public unsafe partial class VulkanRenderer
         }
         catch (Exception ex)
         {
-            pendingAllocator?.DestroyPhysicalImagesImmediate(this);
+            pendingAllocator?.DestroyPhysicalImagesImmediate(this, reusedImageGroups);
             pendingAllocator?.DestroyPhysicalBuffersImmediate(this);
             pendingAllocator = null;
             Debug.VulkanWarning(
@@ -1791,9 +1859,63 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        retiredImageCount = ResourceAllocator.EnumeratePhysicalGroups().Count(static g => g.IsAllocated);
+        HashSet<VulkanPhysicalImageGroup>? reusedGroups = reusedImageGroups;
+        retiredImageCount = ResourceAllocator
+            .EnumeratePhysicalGroups()
+            .Count(g => g.IsAllocated && (reusedGroups is null || !reusedGroups.Contains(g)));
         retiredBufferCount = ResourceAllocator.EnumeratePhysicalBufferGroups().Count(static g => g.IsAllocated);
         return true;
+    }
+
+    private bool TryPreReleaseActiveImagesForOpenXrMirrorTransition(
+        in FrameOpContext context,
+        IReadOnlySet<VulkanPhysicalImageGroup>? reusedImageGroups)
+    {
+        if (!ShouldPreReleaseActiveImagesForOpenXrMirrorTransition(context))
+            return false;
+
+        int releasedImageCount = ResourceAllocator
+            .EnumeratePhysicalGroups()
+            .Count(g => g.IsAllocated && (reusedImageGroups is null || !reusedImageGroups.Contains(g)));
+        if (releasedImageCount == 0)
+            return false;
+
+        Debug.VulkanEvery(
+            "Vulkan.ResourcePlanner.OpenXrMirrorPreRelease",
+            TimeSpan.FromSeconds(1),
+            "[VulkanResourcePlanner] Pre-releasing {0} stale active physical image groups before OpenXR submitted-eye mirror allocation. Old=[{1}] NewDims={2}x{3}/{4}x{5}.",
+            releasedImageCount,
+            ActiveResourcePlannerSignatureBreakdown,
+            context.DisplayWidth,
+            context.DisplayHeight,
+            context.InternalWidth,
+            context.InternalHeight);
+
+        ReleaseDescriptorReferencesForPhysicalResourceDestruction("OpenXrMirrorPlannerTransition");
+        if (!IsDeviceLost)
+            DeviceWaitIdle();
+        if (IsDeviceLost)
+            return false;
+
+        DrainAllRetiredDescriptorPools();
+        ResourceAllocator.DestroyPhysicalImagesImmediate(this, reusedImageGroups);
+        ActiveHasResourcePlannerFastPathKey = false;
+        return true;
+    }
+
+    private bool ShouldPreReleaseActiveImagesForOpenXrMirrorTransition(in FrameOpContext context)
+    {
+        if (ActiveResourceAllocationSignature == ulong.MaxValue)
+            return false;
+
+        IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+        if (!host.IsOpenXRActive || !host.VrMirrorComposeFromEyeTextures)
+            return false;
+
+        return ActiveResourcePlannerSignatureBreakdown.DisplayWidth != context.DisplayWidth ||
+            ActiveResourcePlannerSignatureBreakdown.DisplayHeight != context.DisplayHeight ||
+            ActiveResourcePlannerSignatureBreakdown.InternalWidth != context.InternalWidth ||
+            ActiveResourcePlannerSignatureBreakdown.InternalHeight != context.InternalHeight;
     }
 
     internal static bool IsExpectedVulkanImageAllocationDeferral(Exception exception)
@@ -1805,6 +1927,7 @@ public unsafe partial class VulkanRenderer
     private void CommitPhysicalAllocatorPlan(
         bool physicalPlanChanged,
         VulkanResourceAllocator oldAllocator,
+        HashSet<VulkanPhysicalImageGroup>? reusedImageGroups,
         int retiredImageCount,
         int retiredBufferCount)
     {
@@ -1823,7 +1946,7 @@ public unsafe partial class VulkanRenderer
 
         VulkanPhysicalImageGroup? retainedAutoExposureGroup = PreserveAutoExposureHistory(oldAllocator);
 
-        oldAllocator.DestroyPhysicalImages(this, retainedAutoExposureGroup);
+        oldAllocator.DestroyPhysicalImages(this, retainedAutoExposureGroup, reusedImageGroups);
         oldAllocator.DestroyPhysicalBuffers(this);
     }
 
@@ -1834,6 +1957,8 @@ public unsafe partial class VulkanRenderer
 
         bool hasOldGroup = TryGetAutoExposurePhysicalGroup(oldAllocator, out VulkanPhysicalImageGroup? oldGroup);
         bool hasNewGroup = TryGetAutoExposurePhysicalGroup(ResourceAllocator, out VulkanPhysicalImageGroup? newGroup);
+        if (hasOldGroup && hasNewGroup && ReferenceEquals(oldGroup, newGroup))
+            return null;
 
         if (hasNewGroup && newGroup is not null)
         {

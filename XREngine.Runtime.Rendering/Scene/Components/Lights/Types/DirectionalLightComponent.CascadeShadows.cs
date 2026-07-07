@@ -1374,6 +1374,14 @@ namespace XREngine.Components.Lights
             }
         }
 
+        internal void ApplyDirectionalShadowAtlasMode(bool useDirectionalShadowAtlas)
+        {
+            ClearDirectionalAtlasSlots();
+
+            if (!useDirectionalShadowAtlas)
+                EnsureShadowMapForActiveDynamicLight();
+        }
+
         internal void ClearCascadeAtlasSlots()
         {
             lock (_cascadeDataLock)

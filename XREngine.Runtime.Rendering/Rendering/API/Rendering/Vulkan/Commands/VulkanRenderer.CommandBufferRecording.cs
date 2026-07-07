@@ -30,6 +30,7 @@ namespace XREngine.Rendering.Vulkan
         private CommandBuffer EnsureCommandBufferRecorded(
             uint imageIndex,
             bool preserveSwapchainForOverlay,
+            out string recordingDeferredReason,
             out CommandBuffer dynamicUiBatchTextSecondaryCommandBuffer,
             out int dynamicUiBatchTextOverlayOpCount,
             out FrameOp[] dynamicUiBatchTextOverlayOps,
@@ -39,6 +40,7 @@ namespace XREngine.Rendering.Vulkan
             out long commandBufferDirtyGenerationAfterRecord)
         {
             _lastEnsureCommandBufferRecordedPrimary = false;
+            recordingDeferredReason = string.Empty;
             dynamicUiBatchTextSecondaryCommandBuffer = default;
             dynamicUiBatchTextOverlayOpCount = 0;
             dynamicUiBatchTextOverlayOps = Array.Empty<FrameOp>();
@@ -152,21 +154,55 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (hasStaticFrameOps)
                 {
+                    if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
+                    {
+                        recordingDeferredReason = prePlanFailureReason;
+                        return default;
+                    }
+
                     FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops);
-                    RefreshFrameOpResourceWrappers(
+                    if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
+                    {
+                        recordingDeferredReason = postPlanFailureReason;
+                        return default;
+                    }
+
+                    if (!TryRefreshFrameOpResourceWrappers(
                         ops,
                         plannerContext,
                         "Vulkan command-chain resource planner refresh",
-                        AllowSynchronousResourceUploads);
+                        AllowSynchronousResourceUploads,
+                        out string refreshFailureReason))
+                    {
+                        recordingDeferredReason = refreshFailureReason;
+                        return default;
+                    }
                 }
                 else if (dynamicUiBatchTextOps.Length > 0)
                 {
+                    if (TryDescribeRecentResourceAllocationFailure(out string preDynamicPlanFailureReason))
+                    {
+                        recordingDeferredReason = preDynamicPlanFailureReason;
+                        return default;
+                    }
+
                     FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(dynamicUiBatchTextOps);
-                    RefreshFrameOpResourceWrappers(
+                    if (TryDescribeRecentResourceAllocationFailure(out string postDynamicPlanFailureReason))
+                    {
+                        recordingDeferredReason = postDynamicPlanFailureReason;
+                        return default;
+                    }
+
+                    if (!TryRefreshFrameOpResourceWrappers(
                         dynamicUiBatchTextOps,
                         plannerContext,
                         "Vulkan command-chain dynamic UI resource planner refresh",
-                        AllowSynchronousResourceUploads);
+                        AllowSynchronousResourceUploads,
+                        out string refreshFailureReason))
+                    {
+                        recordingDeferredReason = refreshFailureReason;
+                        return default;
+                    }
                 }
 
                 plannerRevision = hasStaticFrameOps
@@ -174,6 +210,11 @@ namespace XREngine.Rendering.Vulkan
                     : dynamicUiBatchTextOps.Length > 0
                         ? PrepareFrameOpResourcePlannerStatesForFrameOps(dynamicUiBatchTextOps)
                         : ResourcePlannerRevision;
+                if (TryDescribeRecentResourceAllocationFailure(out string frameOpPlannerFailureReason))
+                {
+                    recordingDeferredReason = frameOpPlannerFailureReason;
+                    return default;
+                }
             }
 
             if (!imageForcedDirty && HaveCommandBuffersDirtiedSince(ensureStartDirtyGeneration))

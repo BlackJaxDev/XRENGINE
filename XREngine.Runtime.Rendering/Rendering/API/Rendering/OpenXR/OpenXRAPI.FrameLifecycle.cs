@@ -529,6 +529,9 @@ public unsafe partial class OpenXRAPI
                 PollEvents();
             }
 
+            if (IsOpenXrRuntimeLossPending())
+                return;
+
             // Late-update: refresh tracked poses as close to rendering as possible.
             // This updates the view poses used for projection submission and device transforms.
             if (_sessionBegun && Volatile.Read(ref _pendingXrFrame) != 0)
@@ -539,7 +542,11 @@ public unsafe partial class OpenXRAPI
                 lock (_openXrPoseLock)
                     predHead = _openXrPredHeadLocalPose;
 
-                _ = LocateViews(OpenXrPoseTiming.Late);
+                if (!LocateViews(OpenXrPoseTiming.Late))
+                {
+                    if (IsOpenXrRuntimeLossPending())
+                        return;
+                }
                 UpdateActionPoseCaches(OpenXrPoseTiming.Late);
 
                 System.Numerics.Matrix4x4 lateHead;
@@ -565,7 +572,7 @@ public unsafe partial class OpenXRAPI
             // collect/render observe different camera state. Eye rendering consumes the late
             // pose directly in ApplyOpenXrEyePoseForRenderThread instead.
 
-            if (!_sessionBegun)
+            if (!_sessionBegun || IsOpenXrRuntimeLossPending())
                 return;
 
             // Lazily start the dedicated pacing thread when the session is ready and the mode is enabled.
@@ -788,7 +795,7 @@ public unsafe partial class OpenXRAPI
     {
         // Runs on the engine's CollectVisible thread.
         // Consumes the located views and builds per-eye visibility buffers.
-        if (!_sessionBegun)
+        if (!_sessionBegun || IsOpenXrRuntimeLossPending())
             return;
 
         if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.CollectVisibleThread)
@@ -1467,7 +1474,7 @@ public unsafe partial class OpenXRAPI
     {
         // Runs on the engine's CollectVisible thread, after the previous render completes.
         // Acts as the sync point between CollectVisible (buffer generation) and the render thread.
-        if (!_sessionBegun)
+        if (!_sessionBegun || IsOpenXrRuntimeLossPending())
             return;
 
         if (Volatile.Read(ref _pendingXrFrame) == 0)

@@ -27,6 +27,8 @@ namespace XREngine.Scene
 
             //CollectingVisibleShadowMaps = true;
 
+            SynchronizeDirectionalShadowAtlasMode();
+
             // Cascaded shadow slices must be finalized before directional-light shadow
             // viewports collect and swap their render-command buffers for this frame.
             // If we build the cascades later during RenderShadowMaps(), lighting can
@@ -255,6 +257,8 @@ namespace XREngine.Scene
         {
             ShadowScratch scratch = CurrentShadowScratch;
 
+            SynchronizeDirectionalShadowAtlasMode();
+
             if (collectVisibleNow)
                 PrepareDirectionalShadowMaps();
 
@@ -351,6 +355,7 @@ namespace XREngine.Scene
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.UpdateShadowAtlasRequests");
 
+            SynchronizeDirectionalShadowAtlasMode();
             PopulateShadowAtlasActiveCameras(scratch);
             PrepareLocalShadowRelevanceFrusta(scratch);
             ShadowAtlas.BeginFrame(World, CollectionsMarshal.AsSpan(scratch.ShadowAtlasCameras));
@@ -360,6 +365,35 @@ namespace XREngine.Scene
             SubmitPointShadowAtlasRequests(scratch);
 
             ShadowAtlas.SolveAllocations();
+        }
+
+        private void SynchronizeDirectionalShadowAtlasMode()
+        {
+            bool useDirectionalShadowAtlas = RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas;
+            bool? previous = _lastUseDirectionalShadowAtlas;
+            if (previous.HasValue && previous.Value == useDirectionalShadowAtlas)
+                return;
+
+            _lastUseDirectionalShadowAtlas = useDirectionalShadowAtlas;
+            if (!previous.HasValue)
+                return;
+
+            ShadowAtlas.ResetAtlasKind(EShadowAtlasKind.Directional);
+
+            int count = DynamicDirectionalLights.Count;
+            for (int i = 0; i < count; i++)
+                DynamicDirectionalLights[i].ApplyDirectionalShadowAtlasMode(useDirectionalShadowAtlas);
+
+            if (RenderDiagnosticsFlags.DirectionalShadowAudit)
+            {
+                Debug.Lighting(
+                    EOutputVerbosity.Normal,
+                    false,
+                    "[DirectionalShadowAudit][ModeTransition] frame={0} UseDirectionalShadowAtlas={1} dynamicDirectionalLights={2}",
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    useDirectionalShadowAtlas,
+                    count);
+            }
         }
 
         private void PublishShadowAtlasFrame(bool collectVisibleNow, ShadowScratch scratch)

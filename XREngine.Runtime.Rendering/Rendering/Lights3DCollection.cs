@@ -107,6 +107,7 @@ namespace XREngine.Scene
         // visibility buffer (depending on viewport implementation), causing shadows to flicker on/off.
         // Track which lights actually collected this tick so SwapBuffers can preserve the last good buffers.
         private readonly HashSet<LightComponent> _shadowLightsCollectedThisTick = new();
+        private bool? _lastUseDirectionalShadowAtlas;
 
         #endregion
 

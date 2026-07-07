@@ -568,7 +568,7 @@ namespace XREngine.Editor.Mcp
         // ───────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Resolves any XRObjectBase from the global ObjectsCache by GUID string.
+        /// Resolves any XRObjectBase from the global object cache or loaded asset table by GUID string.
         /// </summary>
         private static bool TryResolveXRObject(string objectId, out XRObjectBase? obj, out string? error)
         {
@@ -588,8 +588,11 @@ namespace XREngine.Editor.Mcp
             }
 
             if (!XRObjectBase.ObjectsCache.TryGetValue(guid, out var resolved))
+                resolved = Engine.Assets.GetAssetByID(guid);
+
+            if (resolved is null)
             {
-                error = $"Object '{objectId}' not found in the runtime cache.";
+                error = $"Object '{objectId}' not found in the runtime cache or loaded asset table.";
                 return false;
             }
 

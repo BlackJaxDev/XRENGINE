@@ -63,7 +63,12 @@ float GetExposure()
     if (!(isnan(e) || isinf(e)) && e > 0.0)
       return e;
   }
-  return ColorGrade.Exposure;
+
+  float exposure = ColorGrade.Exposure;
+  if (isnan(exposure) || isinf(exposure) || exposure <= 0.0)
+    return 1.0;
+
+  return exposure;
 }
 
 uniform float ChromaticAberrationIntensity;
@@ -162,6 +167,22 @@ float interleavedGradientNoise(vec2 pixelCoord)
 float saturate(float value)
 {
   return clamp(value, 0.0f, 1.0f);
+}
+bool IsFiniteVec3(vec3 value)
+{
+  return !any(isnan(value)) && !any(isinf(value));
+}
+bool IsFiniteVec4(vec4 value)
+{
+  return !any(isnan(value)) && !any(isinf(value));
+}
+vec3 SafeColor(vec3 value)
+{
+  return IsFiniteVec3(value) ? max(value, vec3(0.0f)) : vec3(0.0f);
+}
+vec4 SafeCompositeSample(vec4 value, vec4 fallback)
+{
+  return IsFiniteVec4(value) ? value : fallback;
 }
 vec3 ApplyVignette(vec3 sceneColor, vec2 uv)
 {
@@ -338,12 +359,12 @@ vec2 ApplyLensDistortionByMode(vec2 uv)
 vec3 SampleHDR(vec2 uv)
 {
   vec2 duv = SceneSourceUv(uv);
-  return texture(HDRSceneTex, duv).rgb;
+  return SafeColor(texture(HDRSceneTex, duv).rgb);
 }
 vec3 SampleBloom(vec2 uv, float lod)
 {
   vec2 duv = SceneSourceUv(uv);
-  return textureLod(BloomBlurTexture, duv, lod).rgb;
+  return SafeColor(textureLod(BloomBlurTexture, duv, lod).rgb);
 }
 
 void main()
@@ -362,7 +383,7 @@ void main()
   // emitted as raw HDR scene color so editor gizmos look unprocessed.
   if ((SampleSceneStencilSource(sceneUv) & 0x80u) != 0u)
   {
-      OutColor = vec4(texture(HDRSceneTex, sceneUv).rgb, 1.0f);
+      OutColor = vec4(SafeColor(texture(HDRSceneTex, sceneUv).rgb), 1.0f);
       return;
   }
   
@@ -426,7 +447,7 @@ void main()
     else
     {
         // Sample the bloom texture at the quadrant's mip level using the cell UV.
-        vec3 mipColor = textureLod(BloomBlurTexture, cellUV, float(mip)).rgb;
+        vec3 mipColor = SafeColor(textureLod(BloomBlurTexture, cellUV, float(mip)).rgb);
         OutColor = vec4(mipColor, 1.0);
     }
     return;
@@ -458,20 +479,22 @@ void main()
   // the entire HDR scene by zero, producing a black screen, and a (0,0,0,1)
   // sample is a no-op we can skip outright. Any genuinely non-neutral
   // atmosphere output still composites normally.
-  vec4 atmosphere = texture(AtmosphereColor, sceneUv);
+  vec4 atmosphere = SafeCompositeSample(texture(AtmosphereColor, sceneUv), vec4(0.0f, 0.0f, 0.0f, 1.0f));
   bool atmosphereNeutral = atmosphere.a >= 0.9999f && all(lessThanEqual(abs(atmosphere.rgb), vec3(1e-5f)));
   bool atmosphereUnwritten = atmosphere.a <= 1e-5f && all(lessThanEqual(abs(atmosphere.rgb), vec3(1e-5f)));
   if (!atmosphereNeutral && !atmosphereUnwritten)
-    hdrSceneColor = hdrSceneColor * atmosphere.a + atmosphere.rgb;
+    hdrSceneColor = SafeColor(hdrSceneColor * atmosphere.a + atmosphere.rgb);
 
   // Safe composite: when the fog scatter pass is disabled, skipped, or has not yet written
   // a frame, the texture clears to (0,0,0,0). A literal `hdrSceneColor * 0 + 0` would zero out
   // the entire scene. Only apply the composite when the fog pass has written meaningful
   // transmittance/scatter data (alpha > 0 OR rgb > 0). A fully opaque fog volume that wants
   // to occlude the scene must still write a non-zero alpha (transmittance) or non-zero rgb.
-  vec4 volumetricFog = texture(VolumetricFogColor, sceneUv);
+  vec4 volumetricFog = SafeCompositeSample(texture(VolumetricFogColor, sceneUv), vec4(0.0f, 0.0f, 0.0f, 1.0f));
   if (volumetricFog.a > 0.0f || any(greaterThan(volumetricFog.rgb, vec3(0.0f))))
-    hdrSceneColor = hdrSceneColor * volumetricFog.a + volumetricFog.rgb;
+    hdrSceneColor = SafeColor(hdrSceneColor * volumetricFog.a + volumetricFog.rgb);
+
+  hdrSceneColor = SafeColor(hdrSceneColor);
 
   //Tone mapping / HDR selection
   vec3 sceneColor;
@@ -510,6 +533,7 @@ void main()
   // if ((rawStencil & 1) != 0) sceneColor = vec3(1.0, 0.0, 0.0); // Red where stencil bit 0 is set
 
 	sceneColor = ApplyVignette(sceneColor, uv);
+  sceneColor = SafeColor(sceneColor);
 
   if (!OutputHDR)
   {
@@ -524,5 +548,6 @@ void main()
     sceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, interleavedGradientNoise(noiseCoord));
   }
 
+  sceneColor = SafeColor(sceneColor);
 	OutColor = vec4(sceneColor, 1.0f);
 }

@@ -1199,11 +1199,13 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordCommandBuffer"))
             {
                 long recordAllocationStart = GC.GetAllocatedBytesForCurrentThread();
+                string recordingDeferredReason = string.Empty;
                 try
                 {
                     submitCommandBuffer = EnsureCommandBufferRecorded(
                         imageIndex,
                         preserveSwapchainForImGuiOverlay,
+                        out recordingDeferredReason,
                         out dynamicUiBatchTextSecondaryCommandBuffer,
                         out dynamicUiBatchTextOverlayOpCount,
                         out dynamicUiBatchTextOverlayOps,
@@ -1211,6 +1213,26 @@ namespace XREngine.Rendering.Vulkan
                         out dynamicUiBatchTextOverlayVariant,
                         out swapchainLayoutAfterScene,
                         out sceneCommandBufferDirtyGeneration);
+
+                    if (!string.IsNullOrEmpty(recordingDeferredReason))
+                    {
+                        recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+
+                        if (TryPresentAbortedDirtyFrame(commandBufferDirtyFlagSet: false, commandBuffersDirtiedAfterSceneRecord: true))
+                            return;
+
+                        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+                        ConsumeAcquireSemaphoreForAbortedFrame("RecordDeferred");
+
+                        Debug.VulkanWarningEvery(
+                            $"Vulkan.Frame.{GetHashCode()}.RecordDeferred",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Command buffer recording deferred under resource pressure; skipped draw submit. {0}",
+                            recordingDeferredReason);
+
+                        RecreateSwapchainImmediately("Command buffer recording deferred under resource pressure - recovering timeline/present state");
+                        return;
+                    }
                 }
                 catch (Exception recordEx)
                 {

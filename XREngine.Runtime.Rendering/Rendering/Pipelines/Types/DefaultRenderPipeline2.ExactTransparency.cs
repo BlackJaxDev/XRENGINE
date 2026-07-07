@@ -35,7 +35,9 @@ public partial class DefaultRenderPipeline2
     internal uint PpllMaxNodeCount => ComputePpllNodeCapacity();
 
     private bool ExactTransparencyEnabled
-        => !Stereo && RuntimeEngine.EditorPreferences.Debug.EnableExactTransparencyTechniques;
+        => !Stereo &&
+           !UseOpenXrVulkanDesktopStartupSafePath &&
+           RuntimeEngine.EditorPreferences.Debug.EnableExactTransparencyTechniques;
 
     private int ActiveDepthPeelLayerCount
         => Math.Clamp(RuntimeEngine.EditorPreferences.Debug.DepthPeelingMaxLayers, 1, MaxDepthPeelingLayersSupported);
@@ -70,7 +72,7 @@ public partial class DefaultRenderPipeline2
 
     private void CacheExactTransparencyTextures(ViewportRenderCommandContainer c)
     {
-        if (Stereo)
+        if (!ExactTransparencyEnabled)
             return;
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(

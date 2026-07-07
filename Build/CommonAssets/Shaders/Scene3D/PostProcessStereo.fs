@@ -99,6 +99,16 @@ vec3 ApplyHsvColorGrade(vec3 sceneColor)
     return HSVtoRGB(hsv);
 }
 
+bool IsFiniteVec3(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+vec3 SafeColor(vec3 value)
+{
+    return IsFiniteVec3(value) ? max(value, vec3(0.0f)) : vec3(0.0f);
+}
+
 float GetExposure()
 {
     if (UseGpuAutoExposure)
@@ -107,7 +117,12 @@ float GetExposure()
         if (!(isnan(e) || isinf(e)) && e > 0.0)
             return e;
     }
-    return ColorGrade.Exposure;
+
+    float exposure = ColorGrade.Exposure;
+    if (isnan(exposure) || isinf(exposure) || exposure <= 0.0)
+        return 1.0;
+
+    return exposure;
 }
 
 vec2 ApplyLensDistortion(vec2 uv, float intensity, vec2 center)
@@ -277,7 +292,7 @@ void main()
     // emitted as raw HDR scene color so editor gizmos look unprocessed.
     if ((texture(StencilView, uvi).r & 0x80u) != 0u)
     {
-        OutColor = vec4(texture(HDRSceneTex, uvi).rgb, 1.0);
+        OutColor = vec4(SafeColor(texture(HDRSceneTex, uvi).rgb), 1.0);
         return;
     }
 
@@ -301,6 +316,7 @@ void main()
     {
         hdrSceneColor = texture(HDRSceneTex, uvi).rgb;
     }
+    hdrSceneColor = SafeColor(hdrSceneColor);
 
     // Add bloom with configurable range/weights, scaled by overall strength
     if (DebugBloomOnly)
@@ -324,7 +340,7 @@ void main()
       }
       else
       {
-          vec3 mipColor = textureLod(BloomBlurTexture, vec3(cellUV, gl_ViewID_OVR), float(mip)).rgb;
+          vec3 mipColor = SafeColor(textureLod(BloomBlurTexture, vec3(cellUV, gl_ViewID_OVR), float(mip)).rgb);
           OutColor = vec4(mipColor, 1.0);
       }
       return;
@@ -337,12 +353,14 @@ void main()
       {
         float w = BloomLodWeights[lod];
         if (w > 0.0)
-          hdrSceneColor += textureLod(BloomBlurTexture, vec3(duv, gl_ViewID_OVR), float(lod)).rgb * w * BloomStrength;
+          hdrSceneColor += SafeColor(textureLod(BloomBlurTexture, vec3(duv, gl_ViewID_OVR), float(lod)).rgb) * w * BloomStrength;
       }
     }
+    hdrSceneColor = SafeColor(hdrSceneColor);
 
     // Tone mapping
     vec3 ldrSceneColor = XRENGINE_ApplyToneMap(hdrSceneColor, TonemapType, GetExposure(), ColorGrade.Gamma, MobiusTransition);
+    ldrSceneColor = SafeColor(ldrSceneColor);
 
     // Color grading (LDR)
     ldrSceneColor *= ColorGrade.Tint;
@@ -359,6 +377,7 @@ void main()
     ldrSceneColor = mix(ldrSceneColor, outlineColor, outlineWeight);
 
     ldrSceneColor = ApplyVignette(ldrSceneColor, uv);
+    ldrSceneColor = SafeColor(ldrSceneColor);
 
     // Linear pipeline: do NOT manually gamma-encode here. With
     // GL_FRAMEBUFFER_SRGB enabled, the hardware applies the linear->sRGB
@@ -367,6 +386,7 @@ void main()
     //
     // Fix subtle banding by applying fine noise in linear space.
     ldrSceneColor += mix(-0.5 / 255.0, 0.5 / 255.0, rand(uv));
+    ldrSceneColor = SafeColor(ldrSceneColor);
 
     OutColor = vec4(ldrSceneColor, 1.0);
 }

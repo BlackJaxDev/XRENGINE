@@ -154,6 +154,7 @@ namespace XREngine.Rendering.Vulkan
             // handles retired by sync/command-pool teardown.
             ForceFlushAllRetiredResources();
             DestroyRemainingTrackedImageViews();
+            DestroySharedGraphicsPipelines();
             DestroyRemainingTrackedPipelineLayouts();
             DestroySharedGraphicsPipelineLibraries();
 
@@ -469,14 +470,89 @@ namespace XREngine.Rendering.Vulkan
             long requestedBytes = requirements.Size > long.MaxValue
                 ? long.MaxValue
                 : (long)requirements.Size;
+            if (!TryDescribeOpenXrVulkanImageAllocationPressure(
+                    requestedBytes,
+                    requiredProperties,
+                    allocatedBytes,
+                    deferLimitBytes,
+                    largestHeapBytes,
+                    activeAllocationCount,
+                    out reason))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        internal bool ShouldAvoidSynchronousImageAllocationForOpenXr(out string reason)
+        {
+            reason = string.Empty;
+
+            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+            if (!host.IsOpenXRActive && !host.IsInVR)
+                return false;
+
+            if (!TryGetVulkanAllocatorBudgetSnapshot(
+                    OpenXrVulkanImageAllocationPressurePreflightRatio,
+                    OpenXrVulkanImageAllocationPressureReserveBytes,
+                    out long allocatedBytes,
+                    out long deferLimitBytes,
+                    out long largestHeapBytes,
+                    out int activeAllocationCount))
+            {
+                return false;
+            }
+
+            return TryDescribeOpenXrVulkanImageAllocationPressure(
+                requestedBytes: 0L,
+                MemoryPropertyFlags.DeviceLocalBit,
+                allocatedBytes,
+                deferLimitBytes,
+                largestHeapBytes,
+                activeAllocationCount,
+                out reason);
+        }
+
+        private bool TryDescribeOpenXrVulkanImageAllocationPressure(
+            long requestedBytes,
+            MemoryPropertyFlags requiredProperties,
+            long allocatedBytes,
+            long deferLimitBytes,
+            long largestHeapBytes,
+            int activeAllocationCount,
+            out string reason)
+        {
+            reason = string.Empty;
+
             long projectedBytes = allocatedBytes > long.MaxValue - requestedBytes
                 ? long.MaxValue
                 : allocatedBytes + requestedBytes;
-            if (projectedBytes < deferLimitBytes)
+            if (projectedBytes >= deferLimitBytes)
+            {
+                reason =
+                    $"Vulkan image allocation deferred under byte pressure. requested={requestedBytes}, allocated={allocatedBytes}, projected={projectedBytes}, largestHeap={largestHeapBytes}, deferLimit={deferLimitBytes}, activeVkAllocations={activeAllocationCount}, requestedProperties={requiredProperties}";
+                return true;
+            }
+
+            if (Api is null || _physicalDevice.Handle == 0)
+                return false;
+
+            Api.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+            uint maxAllocationCount = properties.Limits.MaxMemoryAllocationCount;
+            if (maxAllocationCount == 0)
+                return false;
+
+            int ratioLimit = (int)Math.Floor(maxAllocationCount * OpenXrVulkanImageAllocationCountPreflightRatio);
+            int reserveLimit = maxAllocationCount > OpenXrVulkanImageAllocationCountReserve
+                ? (int)Math.Min(int.MaxValue, maxAllocationCount - OpenXrVulkanImageAllocationCountReserve)
+                : (int)Math.Min(int.MaxValue, maxAllocationCount);
+            int allocationCountLimit = Math.Max(1, Math.Min(ratioLimit, reserveLimit));
+            if (activeAllocationCount < allocationCountLimit)
                 return false;
 
             reason =
-                $"Vulkan image allocation deferred under allocator pressure. requested={requestedBytes}, allocated={allocatedBytes}, projected={projectedBytes}, largestHeap={largestHeapBytes}, deferLimit={deferLimitBytes}, activeVkAllocations={activeAllocationCount}, requestedProperties={requiredProperties}";
+                $"Vulkan image allocation deferred under allocation-count pressure. activeVkAllocations={activeAllocationCount}, maxMemoryAllocationCount={maxAllocationCount}, limit={allocationCountLimit}, requested={requestedBytes}, requestedProperties={requiredProperties}";
             return true;
         }
 

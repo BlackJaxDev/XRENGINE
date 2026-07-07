@@ -415,6 +415,24 @@ public unsafe partial class OpenXRAPI
 
             Volatile.Write(ref _runtimeLossPending, 1);
         }
+
+        ResetOpenXrFrameStateForRuntimeLoss();
+    }
+
+    private bool IsOpenXrRuntimeLossPending()
+        => Volatile.Read(ref _runtimeLossPending) != 0
+        || _runtimeState == OpenXrRuntimeState.SessionLost;
+
+    private void ResetOpenXrFrameStateForRuntimeLoss()
+    {
+        _sessionBegun = false;
+        Volatile.Write(ref _pendingXrFrame, 0);
+        Volatile.Write(ref _pendingXrFrameCollected, 0);
+        Volatile.Write(ref _pendingXrFrameUsesTrueSinglePassStereo, 0);
+        Volatile.Write(ref _framePrepared, 0);
+        Volatile.Write(ref _frameSkipRender, 0);
+
+        _openXrPacingWakeEvent.Set();
     }
 
     private bool ConsumeRuntimeLoss(out OpenXrRuntimeLossReason reason)

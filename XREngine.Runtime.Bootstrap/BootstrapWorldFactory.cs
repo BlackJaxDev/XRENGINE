@@ -11,6 +11,7 @@ using XREngine.Components.Scene.Volumes;
 using XREngine.Data.Core;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
+using XREngine.Rendering.Shadows;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -153,13 +154,48 @@ public static class BootstrapWorldFactory
             };
         }
 
+        XRWorld world = CreateBootstrapWorld("Default World", scene);
+
         BootstrapModelBuilder.ImportModels(
             desktopDir,
             rootNode,
             characterPawnModelParentNode ?? rootNode,
-            restoreRuntimeShadowSettings ?? (() => BootstrapRenderSettings.ReapplyEditorRenderStateAfterBootstrap("startup model import phase completed")));
+            () =>
+            {
+                if (restoreRuntimeShadowSettings is not null)
+                    restoreRuntimeShadowSettings();
+                else
+                    BootstrapRenderSettings.ReapplyEditorRenderStateAfterBootstrap("startup model import phase completed");
 
-        return CreateBootstrapWorld("Default World", scene);
+                QueueStartupShadowAtlasReset(world);
+            });
+
+        return world;
+    }
+
+    private static void QueueStartupShadowAtlasReset(XRWorld world)
+    {
+        Engine.EnqueueMainThreadTask(
+            () => ResetStartupShadowAtlasState(world),
+            "BootstrapWorldFactory: reset startup shadow atlas state",
+            RenderThreadJobKind.RenderPipelineResource);
+    }
+
+    private static void ResetStartupShadowAtlasState(XRWorld world)
+    {
+        if (!XRWorldInstance.WorldInstances.TryGetValue(world, out XRWorldInstance? worldInstance))
+        {
+            Debug.RenderingWarning("[BootstrapWorldFactory] Startup shadow atlas reset skipped because the render world instance is not available yet.");
+            return;
+        }
+
+        ShadowAtlasManager shadowAtlas = worldInstance.Lights.ShadowAtlas;
+        shadowAtlas.ResetAtlasKind(EShadowAtlasKind.Directional);
+        shadowAtlas.ResetAtlasKind(EShadowAtlasKind.Spot);
+        shadowAtlas.ResetAtlasKind(EShadowAtlasKind.Point);
+        shadowAtlas.RequestRepack();
+
+        Debug.Out("[BootstrapWorldFactory] Reset shadow atlas state after startup model imports completed.");
     }
 
     public static XRWorld CreateDefaultEmptyWorld(bool setUI, bool isServer)

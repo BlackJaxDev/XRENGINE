@@ -1750,7 +1750,8 @@ public partial class DefaultRenderPipeline2
         => !VPRC_TemporalAccumulationPass.TryUseHistoryBasedVrEffects(out _, out _);
 
     private static bool ShouldUseMotionBlur()
-        => !IsLightProbePass
+        => !DefaultRenderPipeline2.UseOpenXrVulkanDesktopStartupSafePath
+        && !IsLightProbePass
         && !RuntimeEngine.Rendering.State.IsSceneCapturePass
         && GetMotionBlurSettings() is { Enabled: true };
 
@@ -1769,7 +1770,8 @@ public partial class DefaultRenderPipeline2
     }
 
     private static bool ShouldUseDepthOfField()
-        => !IsLightProbePass
+        => !DefaultRenderPipeline2.UseOpenXrVulkanDesktopStartupSafePath
+        && !IsLightProbePass
         && !RuntimeEngine.Rendering.State.IsSceneCapturePass
         && GetDepthOfFieldSettings() is { Enabled: true };
 

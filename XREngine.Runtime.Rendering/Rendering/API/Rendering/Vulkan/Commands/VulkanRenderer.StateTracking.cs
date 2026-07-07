@@ -595,6 +595,10 @@ public unsafe partial class VulkanRenderer
         int ViewportIdentity,
         int ResourceRegistryIdentity,
         int PassMetadataIdentity,
+        uint DisplayWidth,
+        uint DisplayHeight,
+        uint InternalWidth,
+        uint InternalHeight,
         int ActivePassSetSignature,
         int ActiveResourceSetSignature);
 
