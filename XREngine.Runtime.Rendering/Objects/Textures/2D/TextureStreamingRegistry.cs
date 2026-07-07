@@ -284,6 +284,38 @@ internal sealed class TextureStreamingRegistry
         }
     }
 
+    public int CountPendingTransitions()
+    {
+        int count = 0;
+        WeakReference<ImportedTextureStreamingRecord>[] refs = GetRecordReferencesSnapshot();
+        for (int i = 0; i < refs.Length; i++)
+        {
+            if (!refs[i].TryGetTarget(out ImportedTextureStreamingRecord? record)
+                || !record.Texture.TryGetTarget(out _))
+            {
+                continue;
+            }
+
+            if (!Monitor.TryEnter(record.Sync))
+            {
+                count++;
+                continue;
+            }
+
+            try
+            {
+                if (record.PendingMaxDimension != 0)
+                    count++;
+            }
+            finally
+            {
+                Monitor.Exit(record.Sync);
+            }
+        }
+
+        return count;
+    }
+
     private void MarkRecordRefsSnapshotDirty()
         => Volatile.Write(ref _recordRefsSnapshotDirty, 1);
 }

@@ -400,6 +400,14 @@ namespace XREngine.Rendering.Vulkan
             if (requiredProperties.HasFlag(MemoryPropertyFlags.LazilyAllocatedBit) && !SupportsLazyAllocation)
                 requiredProperties &= ~MemoryPropertyFlags.LazilyAllocatedBit;
 
+            if (ShouldDeferVulkanImageMemoryAllocationForPressure(
+                    image,
+                    requiredProperties,
+                    out failureReason))
+            {
+                return false;
+            }
+
             if (alloc.TryAllocateForImage(Api!, device, image, requiredProperties, out allocation))
             {
                 failureReason = string.Empty;
@@ -426,6 +434,50 @@ namespace XREngine.Rendering.Vulkan
             allocation = VulkanMemoryAllocation.Null;
             failureReason = $"Vulkan image allocation failed with no viable fallback. Requested={originalProperties}";
             return false;
+        }
+
+        private bool ShouldDeferVulkanImageMemoryAllocationForPressure(
+            Image image,
+            MemoryPropertyFlags requiredProperties,
+            out string reason)
+        {
+            reason = string.Empty;
+            if (!requiredProperties.HasFlag(MemoryPropertyFlags.DeviceLocalBit) ||
+                Api is null ||
+                device.Handle == 0 ||
+                image.Handle == 0)
+            {
+                return false;
+            }
+
+            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+            if (!host.IsOpenXRActive && !host.IsInVR)
+                return false;
+
+            if (!TryGetVulkanAllocatorBudgetSnapshot(
+                    OpenXrVulkanImageAllocationPressurePreflightRatio,
+                    OpenXrVulkanImageAllocationPressureReserveBytes,
+                    out long allocatedBytes,
+                    out long deferLimitBytes,
+                    out long largestHeapBytes,
+                    out int activeAllocationCount))
+            {
+                return false;
+            }
+
+            Api.GetImageMemoryRequirements(device, image, out MemoryRequirements requirements);
+            long requestedBytes = requirements.Size > long.MaxValue
+                ? long.MaxValue
+                : (long)requirements.Size;
+            long projectedBytes = allocatedBytes > long.MaxValue - requestedBytes
+                ? long.MaxValue
+                : allocatedBytes + requestedBytes;
+            if (projectedBytes < deferLimitBytes)
+                return false;
+
+            reason =
+                $"Vulkan image allocation deferred under allocator pressure. requested={requestedBytes}, allocated={allocatedBytes}, projected={projectedBytes}, largestHeap={largestHeapBytes}, deferLimit={deferLimitBytes}, activeVkAllocations={activeAllocationCount}, requestedProperties={requiredProperties}";
+            return true;
         }
 
         /// <summary>Frees a memory allocation through the active allocator.</summary>

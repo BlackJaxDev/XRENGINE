@@ -625,6 +625,22 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (ActiveGeneration?.Key == key)
             return true;
 
+        if (PendingGeneration is not null)
+        {
+            Debug.RenderingEvery(
+                $"RenderResources.ExternalSwapchainPending.{ProfilerKey}",
+                TimeSpan.FromMilliseconds(250),
+                "[RenderResources] Skipping external swapchain command chain until resources are ready. Pipeline={0} Active={1} Pending={2} Viewport={3}x{4}/{5}x{6}",
+                ProfilerKey,
+                ActiveGeneration?.Key.ToString() ?? "<none>",
+                PendingGeneration,
+                viewport.Width,
+                viewport.Height,
+                viewport.InternalWidth,
+                viewport.InternalHeight);
+            return false;
+        }
+
         string active = ActiveGeneration?.Key.ToString() ?? "<none>";
         string pending = PendingGeneration?.Key.ToString() ?? "<none>";
         throw new InvalidOperationException(

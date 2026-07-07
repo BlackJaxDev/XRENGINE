@@ -209,6 +209,46 @@ public unsafe partial class VulkanRenderer
         memory = default;
     }
 
+    internal void DestroyPhysicalImageImmediate(ref Image image, ref DeviceMemory memory)
+    {
+        Image imageToDestroy = image;
+        DeviceMemory memoryToFree = memory;
+        image = default;
+        memory = default;
+
+        if (imageToDestroy.Handle != 0)
+            ClearTrackedImageLayouts(imageToDestroy);
+
+        VulkanMemoryAllocation trackedAllocation = default;
+        bool hasTrackedAllocation = imageToDestroy.Handle != 0 &&
+            _imageAllocations.TryRemove(imageToDestroy.Handle, out trackedAllocation);
+
+        if (imageToDestroy.Handle != 0)
+            Api!.DestroyImage(device, imageToDestroy, null);
+
+        if (hasTrackedAllocation)
+        {
+            FreeMemoryAllocation(trackedAllocation);
+            return;
+        }
+
+        if (memoryToFree.Handle == 0)
+            return;
+
+        if (MemoryAllocator is VulkanLegacyAllocator)
+        {
+            Api!.FreeMemory(device, memoryToFree, null);
+            return;
+        }
+
+        Debug.VulkanWarningEvery(
+            $"Vulkan.ImageMemory.SkipUnknownRawFree.{GetHashCode()}.{memoryToFree.Handle}",
+            TimeSpan.FromSeconds(5),
+            "[Vulkan] Skipping raw vkFreeMemory for untracked image memory 0x{0:X}; current allocator is {1}, so the handle may be allocator-owned shared memory.",
+            memoryToFree.Handle,
+            MemoryAllocator.GetType().Name);
+    }
+
     internal void AllocatePhysicalBuffer(VulkanPhysicalBufferGroup group, ref Buffer buffer, ref DeviceMemory memory)
     {
         if (buffer.Handle != 0)
@@ -266,6 +306,13 @@ public unsafe partial class VulkanRenderer
     internal void DestroyPhysicalBuffer(ref Buffer buffer, ref DeviceMemory memory)
     {
         RetireBuffer(buffer, memory);
+        buffer = default;
+        memory = default;
+    }
+
+    internal void DestroyPhysicalBufferImmediate(ref Buffer buffer, ref DeviceMemory memory)
+    {
+        DestroyBufferRaw(buffer, memory);
         buffer = default;
         memory = default;
     }

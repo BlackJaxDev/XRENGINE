@@ -410,6 +410,7 @@ internal sealed class VulkanTextureUploadService
 {
     public const string EnableSynchronizedImportedTextureUploadsEnvVar = XREngineEnvironmentVariables.VulkanTextureUploadService;
     private const int MaxPreparedUploadsPerDrain = 1;
+    private const double AllocationPressureRetryDelayMilliseconds = 500.0;
 
     private static int s_synchronizedImportedTextureStreamingAvailable = 1;
     private long _nextDescriptorPublicationToken;
@@ -438,6 +439,52 @@ internal sealed class VulkanTextureUploadService
 
     public static bool IsSynchronizedImportedTextureStreamingAvailable
         => Volatile.Read(ref s_synchronizedImportedTextureStreamingAvailable) != 0;
+
+    internal static bool TryDescribeActiveUploadWork(out string reason)
+    {
+        int pendingResidentData = Volatile.Read(ref s_pendingResidentDataPackages);
+        int pendingPrep = Volatile.Read(ref s_pendingVulkanPrepPackages);
+        int activePrep = Volatile.Read(ref s_activePrepPackages);
+        int pendingTransfers = Volatile.Read(ref s_pendingTransferSubmissions);
+        int pendingPublications = Volatile.Read(ref s_pendingDescriptorPublications);
+        long transferBytesInFlight = Volatile.Read(ref s_transferQueueBytesInFlight);
+
+        if (pendingResidentData <= 0 &&
+            pendingPrep <= 0 &&
+            activePrep <= 0 &&
+            pendingTransfers <= 0 &&
+            pendingPublications <= 0 &&
+            transferBytesInFlight <= 0)
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        reason =
+            $"Vulkan texture uploads are still active (residentData={pendingResidentData}, prepQueued={pendingPrep}, prepActive={activePrep}, transfers={pendingTransfers}, transferBytes={transferBytesInFlight}, descriptorPublications={pendingPublications})";
+        return true;
+    }
+
+    internal static bool TryDescribeBlockingOpenXrEyeUploadWork(out string reason)
+    {
+        int activePrep = Volatile.Read(ref s_activePrepPackages);
+        int pendingTransfers = Volatile.Read(ref s_pendingTransferSubmissions);
+        int pendingPublications = Volatile.Read(ref s_pendingDescriptorPublications);
+        long transferBytesInFlight = Volatile.Read(ref s_transferQueueBytesInFlight);
+
+        if (activePrep <= 0 &&
+            pendingTransfers <= 0 &&
+            pendingPublications <= 0 &&
+            transferBytesInFlight <= 0)
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        reason =
+            $"Vulkan texture uploads have render-blocking work (prepActive={activePrep}, transfers={pendingTransfers}, transferBytes={transferBytesInFlight}, descriptorPublications={pendingPublications})";
+        return true;
+    }
 
     internal static void SetSynchronizedImportedTextureStreamingAvailable(bool available)
         => Volatile.Write(ref s_synchronizedImportedTextureStreamingAvailable, available ? 1 : 0);
@@ -506,6 +553,7 @@ internal sealed class VulkanTextureUploadService
         public Action<XRTexture2D>? OnFinished { get; }
         public Action? OnCanceled { get; }
         public Action<Exception>? OnError { get; }
+        public long NotBeforeTimestamp { get; private set; }
         public VulkanRenderer.VkTexture2D? TextureWrapper { get; set; }
         public VulkanImportedTextureUploadPreparation? Preparation { get; set; }
         public Task<VulkanImportedTextureUploadWorkerResult>? WorkerPrepTask { get; set; }
@@ -517,6 +565,13 @@ internal sealed class VulkanTextureUploadService
 
         public double QueueWaitMilliseconds
             => TextureRuntimeDiagnostics.ElapsedMilliseconds(QueueTimestamp);
+
+        public void DeferPreparationRetry(double delayMilliseconds)
+        {
+            double clampedDelay = Math.Clamp(delayMilliseconds, 1.0, 5000.0);
+            long delayTicks = (long)Math.Ceiling(clampedDelay * Stopwatch.Frequency / 1000.0);
+            NotBeforeTimestamp = Stopwatch.GetTimestamp() + Math.Max(1L, delayTicks);
+        }
     }
 
     public bool ShouldAcceptResult(
@@ -652,7 +707,10 @@ internal sealed class VulkanTextureUploadService
                     TextureRuntimeDiagnostics.StartTiming(),
                     0.0);
                 if (immediateResult == VulkanImportedTextureUploadPrepResult.Deferred)
-                    continue;
+                {
+                    QueueUploadPreparation(renderer, job);
+                    return true;
+                }
 
                 return immediateResult == VulkanImportedTextureUploadPrepResult.Completed;
             }
@@ -705,6 +763,16 @@ internal sealed class VulkanTextureUploadService
         double prepBudgetMilliseconds = ResolvePrepBudgetMilliseconds();
         long drainStart = TextureRuntimeDiagnostics.StartTiming();
         int preparedThisDrain = 0;
+
+        if (renderer.ShouldDeferTextureUploadPreparationForOpenXrPriority(out string openXrResourceReason))
+        {
+            XREngine.Debug.VulkanWarningEvery(
+                $"VulkanTextureUploadService.OpenXrPriorityDeferred.{renderer.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[VulkanTextureUploadService] Deferring imported texture upload preparation: {0}",
+                openXrResourceReason);
+            return HasQueuedPrepWorkOrCompleteDrain();
+        }
 
         while (TryDequeueBestPrepJob(out VulkanImportedTextureUploadJob job))
         {
@@ -778,6 +846,16 @@ internal sealed class VulkanTextureUploadService
             if (!EnsureJobPreparation(renderer, job, out VulkanImportedTextureUploadPreparation? preparation, out string? failureReason)
                 || preparation is null)
             {
+                if (IsRetryableVulkanAllocationPressure(failureReason))
+                {
+                    job.DeferPreparationRetry(AllocationPressureRetryDelayMilliseconds);
+                    RecordState(
+                        request,
+                        VulkanTextureUploadGenerationState.PrepDeferred,
+                        $"allocation pressure deferred initial prep retryMs={AllocationPressureRetryDelayMilliseconds:F0}: {failureReason}");
+                    return VulkanImportedTextureUploadPrepResult.Deferred;
+                }
+
                 bool canceled = failureReason is not null
                     && (failureReason.Contains("canceled", StringComparison.OrdinalIgnoreCase)
                         || failureReason.Contains("collected", StringComparison.OrdinalIgnoreCase));
@@ -843,6 +921,16 @@ internal sealed class VulkanTextureUploadService
                 {
                     preparation.Texture.ReleaseSynchronizedImportedUploadPreparation(preparation);
                     job.Preparation = null;
+                    if (IsRetryableVulkanAllocationPressure(stepFailure))
+                    {
+                        job.DeferPreparationRetry(AllocationPressureRetryDelayMilliseconds);
+                        RecordState(
+                            request,
+                            VulkanTextureUploadGenerationState.PrepDeferred,
+                            $"allocation pressure deferred prep retryMs={AllocationPressureRetryDelayMilliseconds:F0}: {stepFailure}");
+                        return VulkanImportedTextureUploadPrepResult.Deferred;
+                    }
+
                     bool canceled = stepFailure is not null
                         && stepFailure.Contains("canceled", StringComparison.OrdinalIgnoreCase);
                     RecordState(
@@ -879,13 +967,24 @@ internal sealed class VulkanTextureUploadService
         }
         catch (Exception ex)
         {
-            RecordState(request, VulkanTextureUploadGenerationState.Failed, ex.Message);
-            Interlocked.Increment(ref s_failedUploads);
             if (job.Preparation is not null)
             {
                 job.Preparation.Texture.ReleaseSynchronizedImportedUploadPreparation(job.Preparation);
                 job.Preparation = null;
             }
+
+            if (IsRetryableVulkanAllocationPressure(ex.Message))
+            {
+                job.DeferPreparationRetry(AllocationPressureRetryDelayMilliseconds);
+                RecordState(
+                    request,
+                    VulkanTextureUploadGenerationState.PrepDeferred,
+                    $"allocation pressure deferred prep exception retryMs={AllocationPressureRetryDelayMilliseconds:F0}: {ex.Message}");
+                return VulkanImportedTextureUploadPrepResult.Deferred;
+            }
+
+            RecordState(request, VulkanTextureUploadGenerationState.Failed, ex.Message);
+            Interlocked.Increment(ref s_failedUploads);
             job.OnError?.Invoke(ex);
             return VulkanImportedTextureUploadPrepResult.Failed;
         }
@@ -997,6 +1096,16 @@ internal sealed class VulkanTextureUploadService
         if (workerResult.Exception is not null || workerResult.PendingUpload is null)
         {
             string reason = workerResult.Exception?.Message ?? workerResult.FailureReason ?? "worker upload preparation failed";
+            if (IsRetryableVulkanAllocationPressure(reason))
+            {
+                job.DeferPreparationRetry(AllocationPressureRetryDelayMilliseconds);
+                RecordState(
+                    job.Request,
+                    VulkanTextureUploadGenerationState.PrepDeferred,
+                    $"worker allocation pressure deferred prep retryMs={AllocationPressureRetryDelayMilliseconds:F0}: {reason}");
+                return VulkanImportedTextureUploadPrepResult.Deferred;
+            }
+
             RecordState(job.Request, VulkanTextureUploadGenerationState.Failed, reason);
             Interlocked.Increment(ref s_failedUploads);
             job.OnError?.Invoke(workerResult.Exception ?? new InvalidOperationException(reason));
@@ -1083,6 +1192,18 @@ internal sealed class VulkanTextureUploadService
     private static bool ShouldDeferPrepStep(long drainStart, double prepBudgetMilliseconds)
         => prepBudgetMilliseconds > 0.0
             && TextureRuntimeDiagnostics.ElapsedMilliseconds(drainStart) >= prepBudgetMilliseconds;
+
+    private static bool IsRetryableVulkanAllocationPressure(string? failureReason)
+    {
+        if (string.IsNullOrWhiteSpace(failureReason))
+            return false;
+
+        return failureReason.Contains("Vulkan image allocation failed", StringComparison.OrdinalIgnoreCase)
+            || VulkanRenderer.IsExpectedVulkanImageAllocationDeferral(failureReason)
+            || failureReason.Contains("out of device memory", StringComparison.OrdinalIgnoreCase)
+            || failureReason.Contains("out-of-device", StringComparison.OrdinalIgnoreCase)
+            || failureReason.Contains("ErrorOutOfDeviceMemory", StringComparison.OrdinalIgnoreCase);
+    }
 
     private void QueuePreparedImportedTextureUpload(
         VulkanRenderer renderer,
@@ -1353,20 +1474,35 @@ internal sealed class VulkanTextureUploadService
                 return false;
             }
 
-            int bestIndex = 0;
-            VulkanImportedTextureUploadJob best = _pendingPrepJobs[0];
-            int bestRank = GetPriorityRank(best.Request.PriorityClass);
-            for (int i = 1; i < _pendingPrepJobs.Count; i++)
+            long now = Stopwatch.GetTimestamp();
+            int bestIndex = -1;
+            VulkanImportedTextureUploadJob? best = null;
+            int bestRank = int.MinValue;
+            for (int i = 0; i < _pendingPrepJobs.Count; i++)
             {
                 VulkanImportedTextureUploadJob candidate = _pendingPrepJobs[i];
+                if (candidate.NotBeforeTimestamp > now)
+                    continue;
+
                 int candidateRank = GetPriorityRank(candidate.Request.PriorityClass);
-                if (candidateRank > bestRank
+                if (best is null
+                    || candidateRank > bestRank
                     || (candidateRank == bestRank && candidate.Sequence < best.Sequence))
                 {
                     bestIndex = i;
                     best = candidate;
                     bestRank = candidateRank;
                 }
+            }
+
+            if (best is null || bestIndex < 0)
+            {
+                job = null!;
+                RenderWorkBudgetCoordinator.RecordTextureQueue(
+                    _pendingPrepJobs.Count,
+                    GetOldestQueueWaitMillisecondsNoLock());
+                Volatile.Write(ref s_pendingVulkanPrepPackages, _pendingPrepJobs.Count);
+                return false;
             }
 
             _pendingPrepJobs.RemoveAt(bestIndex);

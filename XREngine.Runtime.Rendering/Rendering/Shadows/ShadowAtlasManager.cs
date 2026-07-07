@@ -2925,8 +2925,21 @@ public sealed partial class ShadowAtlasManager
 
     private static void CommitRenderedTileToLightSlot(in ShadowTileCompletion completion)
     {
-        if (completion.Light is not DirectionalLightComponent directionalLight ||
-            completion.Key.ProjectionType != EShadowProjectionType.DirectionalCascade ||
+        if (completion.Light is not DirectionalLightComponent directionalLight)
+            return;
+
+        if (completion.Key.ProjectionType == EShadowProjectionType.DirectionalPrimary)
+        {
+            directionalLight.SetPrimaryAtlasSlot(
+                completion.Allocation,
+                completion.RecordIndex,
+                completion.NearPlane,
+                completion.FarPlane,
+                completion.DesiredResolution);
+            return;
+        }
+
+        if (completion.Key.ProjectionType != EShadowProjectionType.DirectionalCascade ||
             !completion.DirectionalCascadeSample.IsValid)
         {
             return;

@@ -34,6 +34,8 @@ internal sealed class ImportedTextureStreamingManager
     private const int TextureSummaryIntervalFrames = 60;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
     private const double VulkanDenseNonPressureDemotionPreserveBudgetFillRatio = 0.75;
+    private const double VulkanAllocatorStreamingBudgetRatio = 0.84;
+    private const long VulkanAllocatorStreamingReserveBytes = 768L * 1024L * 1024L;
     private const string VulkanImportedTextureStreamingTodoPath = "docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md";
     private const string VulkanImportedTexturePreviewFreezeEnvVar = XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze;
     private const string VulkanPreviewFreezeReason = "explicit Vulkan imported-texture preview freeze requested";
@@ -83,6 +85,52 @@ internal sealed class ImportedTextureStreamingManager
 
     internal bool HasActiveImportedModelImports
         => Volatile.Read(ref _activeImportedModelImports) > 0;
+
+    internal bool TryDescribeActiveStartupTextureWork(out string reason)
+    {
+        int activeImportScopes = Volatile.Read(ref _activeImportedModelImports);
+        int pendingTransitions = _registry.CountPendingTransitions();
+        int activeDecodes = _tieredBackend.ActiveDecodeCount + _sparseBackend.ActiveDecodeCount + _vulkanDenseBackend.ActiveDecodeCount;
+        int queuedDecodes = _tieredBackend.QueuedDecodeCount + _sparseBackend.QueuedDecodeCount + _vulkanDenseBackend.QueuedDecodeCount;
+        int activeGpuUploads = _tieredBackend.ActiveGpuUploadCount + _sparseBackend.ActiveGpuUploadCount + _vulkanDenseBackend.ActiveGpuUploadCount;
+        bool hasVulkanUploadWork = VulkanTextureUploadService.TryDescribeActiveUploadWork(out string vulkanUploadReason);
+
+        if (activeImportScopes <= 0 &&
+            pendingTransitions <= 0 &&
+            activeDecodes <= 0 &&
+            queuedDecodes <= 0 &&
+            activeGpuUploads <= 0 &&
+            !hasVulkanUploadWork)
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        reason =
+            $"imported texture streaming is still active (imports={activeImportScopes}, pendingTransitions={pendingTransitions}, activeGpuUploads={activeGpuUploads}, activeDecodes={activeDecodes}, queuedDecodes={queuedDecodes}";
+        if (hasVulkanUploadWork)
+            reason += $"; {vulkanUploadReason}";
+        reason += ")";
+        return true;
+    }
+
+    internal bool TryDescribeBlockingOpenXrEyeTextureWork(out string reason)
+    {
+        int activeGpuUploads = _tieredBackend.ActiveGpuUploadCount + _sparseBackend.ActiveGpuUploadCount;
+        bool hasVulkanBlockingWork = VulkanTextureUploadService.TryDescribeBlockingOpenXrEyeUploadWork(out string vulkanUploadReason);
+
+        if (activeGpuUploads <= 0 && !hasVulkanBlockingWork)
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        reason = $"imported texture streaming has render-blocking work (activeGpuUploads={activeGpuUploads}";
+        if (hasVulkanBlockingWork)
+            reason += $"; {vulkanUploadReason}";
+        reason += ")";
+        return true;
+    }
 
     private sealed class ImportedTextureStreamingScope(ImportedTextureStreamingManager owner) : IDisposable
     {
@@ -749,9 +797,19 @@ internal sealed class ImportedTextureStreamingManager
         long trackedBudgetBytes = RuntimeRenderingHostServices.Current.TrackedVramBudgetBytes;
         long trackedVramBytes = RuntimeRenderingHostServices.Current.TrackedVramBytes;
         long nonManagedBytes = Math.Max(0L, trackedVramBytes - currentManagedBytes);
+        bool usingVulkanAllocatorBudget = TryApplyVulkanAllocatorStreamingBudget(
+            currentManagedBytes,
+            ref trackedBudgetBytes,
+            ref nonManagedBytes,
+            out string vulkanAllocatorBudgetReason);
         long availableManagedBytes = trackedBudgetBytes == long.MaxValue
             ? long.MaxValue
             : Math.Max(0L, trackedBudgetBytes - nonManagedBytes);
+        if (usingVulkanAllocatorBudget
+            && availableManagedBytes < currentManagedBytes)
+        {
+            allowPromotions = false;
+        }
 
         snapshots.Sort((left, right) => ComparePriority(left, right, frameId));
         int visibleWithoutPreviewCount = 0;
@@ -1116,7 +1174,8 @@ internal sealed class ImportedTextureStreamingManager
                 $"vulkanFrozen={vulkanFrozenCount} freezeReason='{(vulkanFrozenCount > 0 ? VulkanPreviewFreezeReason : string.Empty)}' " +
                 $"allowPromotions={allowPromotions} importsActive={importsActive} activeImports={Volatile.Read(ref _activeImportedModelImports)} " +
                 $"queuedTransitions={queuedTransitions} queuedPromotions={queuedPromotions} queuedDemotions={queuedDemotions} " +
-                $"budget={(availableManagedBytes == long.MaxValue ? "unlimited" : $"{availableManagedBytes / (1024 * 1024)}MB")}");
+                $"budget={(availableManagedBytes == long.MaxValue ? "unlimited" : $"{availableManagedBytes / (1024 * 1024)}MB")} " +
+                $"vulkanAllocatorBudget='{(usingVulkanAllocatorBudget ? vulkanAllocatorBudgetReason : string.Empty)}'");
         }
 
         deferredPromotions.Clear();
@@ -1179,6 +1238,43 @@ internal sealed class ImportedTextureStreamingManager
 
         uint failedTarget = snapshot.FailedTransitionTargetMaxDimension;
         return failedTarget == 0 || targetResidentSize >= failedTarget;
+    }
+
+    private static bool TryApplyVulkanAllocatorStreamingBudget(
+        long currentManagedBytes,
+        ref long trackedBudgetBytes,
+        ref long nonManagedBytes,
+        out string reason)
+    {
+        reason = string.Empty;
+        IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+        if (host.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
+            return false;
+
+        VulkanRenderer? renderer = host.CurrentRenderer as VulkanRenderer
+            ?? AbstractRenderer.Current as VulkanRenderer;
+        if (renderer is null)
+            return false;
+
+        if (!renderer.TryGetVulkanAllocatorBudgetSnapshot(
+                VulkanAllocatorStreamingBudgetRatio,
+                VulkanAllocatorStreamingReserveBytes,
+                out long allocatorBytes,
+                out long allocatorBudgetBytes,
+                out long largestHeapBytes,
+                out int activeAllocationCount))
+        {
+            return false;
+        }
+
+        if (trackedBudgetBytes == long.MaxValue || allocatorBudgetBytes < trackedBudgetBytes)
+            trackedBudgetBytes = allocatorBudgetBytes;
+
+        long allocatorNonManagedBytes = Math.Max(0L, allocatorBytes - Math.Max(0L, currentManagedBytes));
+        nonManagedBytes = Math.Max(nonManagedBytes, allocatorNonManagedBytes);
+        reason =
+            $"allocated={allocatorBytes}, budget={allocatorBudgetBytes}, largestHeap={largestHeapBytes}, activeVkAllocations={activeAllocationCount}";
+        return true;
     }
 
     private static void CancelPendingLoad(CancellationTokenSource? cts)
@@ -1384,6 +1480,18 @@ internal sealed class ImportedTextureStreamingManager
             tex => ClearPendingTransition(record, cts, tex, normalizedTarget, frameId),
             ex =>
             {
+                if (VulkanRenderer.IsExpectedVulkanImageAllocationDeferral(ex))
+                {
+                    ClearPendingTransition(
+                        record,
+                        cts,
+                        null,
+                        completedResidentSize: 0,
+                        frameId,
+                        cancelReason: $"Vulkan allocator pressure deferred retry: {ex.Message}");
+                    return;
+                }
+
                 ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId, failed: true);
                 RuntimeRenderingHostServices.Current.LogException(ex, $"Failed to stream imported texture '{filePath}' to resident size {normalizedTarget}.");
             },
@@ -1551,7 +1659,8 @@ internal sealed class ImportedTextureStreamingManager
         XRTexture2D? texture,
         uint completedResidentSize,
         long frameId,
-        bool failed = false)
+        bool failed = false,
+        string? cancelReason = null)
     {
         float targetLodBias = 0.0f;
         bool shouldApplyLodBias = false;
@@ -1720,7 +1829,7 @@ internal sealed class ImportedTextureStreamingManager
                 filePath,
                 pendingResidentSize,
                 backendName,
-                failed ? "transition failed before completion" : "transition canceled before completion");
+                cancelReason ?? (failed ? "transition failed before completion" : "transition canceled before completion"));
         }
 
         cts.Dispose();

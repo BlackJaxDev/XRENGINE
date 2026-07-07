@@ -110,6 +110,17 @@ VR through OpenXR + Monado is not holding the expected frame pacing. VR framerat
   - The requested Monado window is the patched simulated-HMD VR eye preview window, not `monado-gui.exe`. The temporary `monado-gui.exe` launcher attempt was rejected and removed; the remaining investigation is why the service/compositor preview window is not appearing with the custom title edits.
   - The desired preview is the `monado-service.exe` windowed compositor target. It appears once the OpenXR session creates the Monado compositor and uses the custom title metadata (`Monado | preset ... internal eye ... preview eye ...`). A service process with no active OpenXR session can have no main window, so process existence alone is not evidence that the preview is missing.
   - `XRT_WINDOW_PEEK=both` was tested as a possible fix and rejected. It enables Monado's separate peek target, not the normal Windows compositor preview, and in the local Vulkan run it caused Monado `VK_ERROR_DEVICE_LOST`/descriptor-pool errors followed by service restart.
+- 2026-07-07 latest-pull regression follow-up:
+  - Directional lights were not republishing the light's primary cascade-atlas slot after grouped tile completion. The new tile existed in atlas state, but shader sampling could keep reading the previous primary slot until toggling atlasing forced a full light-state rebuild. Tile completion now commits the rendered tile back to the light slot immediately.
+  - The Monado preview window failure in the user's latest run was not caused by the unsupported OpenXR extension list. The first hard failure was a Vulkan physical image allocation inside `PrewarmOpenXrEyeSwapchainResources`, while the renderer was still under startup texture/import/resource-planner pressure.
+  - The later `VK_ERROR_DEVICE_LOST` happened after repeated failed OpenXR prewarm retries and a mirror-copy path attempted one-shot command-buffer work while Vulkan allocations were already failing. The subsequent `InvalidOperationException` was expected fallout from trying to allocate a one-shot command buffer after the logical device had been marked lost.
+  - OpenXR Vulkan resource work now shares one deferral check covering active texture streaming/upload work, recent resource-planner allocation-failure cooldown, known device loss, and high Vulkan allocator pressure. Session start, eye command-buffer prep, swapchain prewarm, mirror-FBO prewarm, and eye-preview copy all use that guard.
+  - A follow-up black-window run had no device loss but submitted only 3 layered frames and 237 no-layer frames. The deadlock was self-inflicted: texture upload preparation paused to reserve memory for OpenXR, while eye command-buffer preparation waited for queued-but-not-started Vulkan upload jobs. Eye rendering now waits only for render-blocking upload work, not parked queue entries.
+  - A later device-loss run dirtied command buffers after recording but before submit, then submitted the freshly recorded primary anyway. The frame loop now treats a post-record dirty-generation change as an aborted frame and retries instead of submitting a command buffer whose resources may have changed.
+  - Final pressure handling uses a stricter OpenXR image-allocation preflight plus a VR-aware global resource-planner allocation cooldown. After the first failed/deferred plan, alternating desktop/eye planner signatures stop repeatedly poking `vkAllocateMemory` while the last valid physical plan continues to render.
+  - Expected allocator-pressure deferrals no longer use the "Pending physical image allocation failed" warning/stack path. They log as bounded Vulkan deferrals; unexpected planner allocation failures still warn.
+  - The VS Code F5 "Editor (Unit Testing World)" profile is not equivalent to the Monado smoke harness. F5 uses `XREngine.Editor.exe --unit-testing`, `XRE_WORLD_MODE=UnitTesting`, and the local JSONC settings/persisted preferences; it does not force `XRE_UNIT_TEST_RENDER_API`, `XRE_UNIT_TEST_VR_MODE`, `XR_RUNTIME_JSON`, smoke frame limits, or the staged OpenXR loader path. With the current JSONC it also uses `VR.ViewRenderMode=SinglePassStereo`, screen-space stereo preview, and the full 1920x1080 desktop editor path.
+  - The F5-specific exception storm came from expected allocator-pressure deferrals escaping three recovery boundaries: external OpenXR render-resource generation threw when no active generation existed yet, UI mesh descriptor fingerprinting threw while allocating texture descriptors, and desktop swapchain recreation threw when depth allocation was deferred. These now report pending/deferred state and retry instead of throwing first-chance exceptions.
 
 ## Attempts
 
@@ -188,6 +199,16 @@ VR through OpenXR + Monado is not holding the expected frame pacing. VR framerat
    - Rejected the `monado-gui.exe` launcher approach after clarifying the desired window is the custom simulated-HMD eye preview from the patched Monado service/compositor path.
    - Rejected `XRT_WINDOW_PEEK=both` after it created Monado's separate peek target and triggered local Vulkan device-loss/descriptor-pool errors.
    - Result: culling fix is kept; the correct Monado preview is the `monado-service.exe` windowed compositor target and it is visible in the latest editor validation run with the custom title metadata.
+
+13. Latest-pull OpenXR allocator-pressure and directional-light fix.
+   - Published completed directional atlas tiles back to the owning light slot so shader sampling no longer depends on toggling atlasing to rebuild the primary cascade slot.
+   - Added non-throwing texture-streaming/upload counters and used them to defer OpenXR session/resource work during startup imports.
+   - Added recent resource-planner allocation-failure reporting so OpenXR startup/resource work can stand down while the planner cooldown is active.
+   - Added Vulkan allocator-pressure deferral based on the largest memory heap, with a 90 percent cap and 512 MB reserve for session/prewarm work.
+   - Split OpenXR eye rendering from startup/prewarm resource gating so active eyes keep submitting layers while queued texture uploads are parked for memory pressure.
+   - Added a stricter device-local image allocation preflight for active OpenXR/VR, plus a 10-second global planner allocation cooldown while in VR.
+   - Treated command buffers dirtied after scene primary recording as aborted frames instead of submitting them.
+   - Result: the failing run's repeated `VulkanOutOfMemoryException`, `VK_ERROR_DEVICE_LOST`, post-loss one-shot command-buffer exception signatures, and no-layer black-window loop are gone in the final Monado smoke run.
 
 ## Validation
 
@@ -317,6 +338,55 @@ VR through OpenXR + Monado is not holding the expected frame pacing. VR framerat
     - Screenshot: `Build/_AgentValidation/20260707-0925-culling-monado-gui/mcp-captures/MonadoPreviewWindow_20260707_0930.png`.
     - Logs copied to `Build/_AgentValidation/20260707-0925-culling-monado-gui/logs/`.
     - No hits in the latest session logs for `Exception thrown`, `InvalidOperationException`, `ArgumentOutOfRangeException`, `VulkanOutOfMemoryException`, Vulkan device loss, `VK_ERROR_OUT_OF_POOL_MEMORY`, validation VUIDs, queue-submit failure, dirty-before-submit, `HttpListener`, or unobserved task signatures.
+- 2026-07-07 allocator-pressure/OpenXR validation:
+  - User failing session reviewed:
+    - Source: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-07_10-44-05_pid22044`.
+    - Copied evidence: `Build/_AgentValidation/20260707-101740-openxr-vulkan-oom-dir-light/logs/user-device-lost-latest-session`.
+    - First failing allocation was `PrewarmOpenXrEyeSwapchainResources`; allocator bytes were near the largest heap limit while tracked device-local image memory was comparatively low, so the relevant pressure was total Vulkan allocator residency, not only tracked texture VRAM.
+    - The device-lost stack passed through OpenXR eye preview/mirror-copy publication after repeated physical-image allocation failures.
+  - Build:
+    - `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`
+    - Passed. Existing Magick.NET advisory warnings and existing nullable warning in `VulkanRenderer.CommandChainLowering.cs` only.
+  - Monado/OpenXR smoke:
+    - Session: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-07_10-50-05_pid37608`.
+    - Summary: `Build/_AgentValidation/20260707-101740-openxr-vulkan-oom-dir-light/reports/postfix5-openxr-smoke-summary.json`.
+    - Logs copied to `Build/_AgentValidation/20260707-101740-openxr-vulkan-oom-dir-light/logs/postfix5-latest-session`.
+    - Smoke target completed 40/40 frames, runtime `Monado`, backend `Vulkan`, session and swapchains created, desktop mirror composed, failures empty, warnings empty.
+    - The latest logs have no matches for `VulkanOutOfMemoryException`, `VK_ERROR_OUT_OF_DEVICE_MEMORY`, `VK_ERROR_DEVICE_LOST`, `OpenXrGraphicsSessionException`, `InvalidOperationException`, `Pending physical image allocation failed`, or `Image allocation failed`.
+    - Expected deferrals are visible for texture streaming, dirty command buffers, and eye-prewarm/command-buffer prep while startup resource work is active.
+  - Final Monado/OpenXR smoke after no-layer loop and allocator-cooldown fixes:
+    - Command: `powershell -ExecutionPolicy Bypass -File Tools\OpenXR\Run-OpenXrMonadoSmoke.ps1 -Renderer Vulkan -SmokeFrames 240 -TimeoutSeconds 75 -RunRoot Build\_AgentValidation\20260707-101740-openxr-vulkan-oom-dir-light -NoBuild -SkipAllocationAudit`.
+    - Session: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-07_11-23-45_pid50316`.
+    - Summary: `Build/_AgentValidation/20260707-101740-openxr-vulkan-oom-dir-light/reports/openxr-smoke-summary.json`.
+    - Result: runtime `Monado`, backend `Vulkan`, session/swapchains created, desktop mirror composed, `submittedFrameCount=238`, `noLayerFrameCount=2`, per-eye acquire/wait/release counts `238/238`, `endFrameFailureCount=0`, failures empty, warnings empty.
+    - Raw log scan had zero hits for `VulkanOutOfMemoryException`, `VK_ERROR_OUT_OF_DEVICE_MEMORY`, `ErrorOutOfDeviceMemory`, `VK_ERROR_DEVICE_LOST`, `ErrorDeviceLost`, `Image allocation failed for`, `Pending physical image allocation failed`, OpenXR eye deferral, and OpenXR failure patterns.
+  - Live MCP eye-preview visual check after allocator-deferral log cleanup:
+    - Session: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-07_11-30-53_pid6304`.
+    - Result file: `Build/_AgentValidation/20260707-101740-openxr-vulkan-oom-dir-light/reports/postfix-eye-visual-check2.json`.
+    - Captures: `Build/_AgentValidation/20260707-101740-openxr-vulkan-oom-dir-light/mcp-captures/postfix-eye-visual-check2/OpenXRPreview_LeftEye_20260707_113118.png` and `OpenXRPreview_RightEye_20260707_113118.png`.
+    - Left eye stats: 896x1007, average RGB `0.70620847`, min RGB `0`, max RGB `1`.
+    - Right eye stats: 896x1007, average RGB `0.7063238`, min RGB `0`, max RGB `1`.
+    - Raw log scan had zero hits for `VulkanOutOfMemoryException`, `VK_ERROR_OUT_OF_DEVICE_MEMORY`, `ErrorOutOfDeviceMemory`, `VK_ERROR_DEVICE_LOST`, `ErrorDeviceLost`, `Image allocation failed for`, `Pending physical image allocation failed`, `OpenXrGraphicsSessionException`, and `Exception thrown`.
+    - One expected resource-planner pressure event logged as `Deferred pending physical image allocation` and the eye captures were still non-black.
+  - F5-equivalent Unit Testing World validation:
+    - Launch shape: `Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.exe --unit-testing`, `XRE_WORLD_MODE=UnitTesting`, `XRE_ENABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1`, with `Assets/UnitTestingWorldSettings.jsonc` driving Vulkan + Monado OpenXR + `SinglePassStereo`.
+    - Session: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-07_11-41-04_pid37836`.
+    - Raw log scan had zero hits for `VulkanOutOfMemoryException`, `VK_ERROR_OUT_OF_DEVICE_MEMORY`, `ErrorOutOfDeviceMemory`, `VK_ERROR_DEVICE_LOST`, `ErrorDeviceLost`, `Image allocation failed for`, `Pending physical image allocation failed`, `OpenXrGraphicsSessionException`, `InvalidOperationException`, `Exception thrown`, `Command buffers are unavailable`, `OpenXR external swapchain resources did not match`, `Render exception`, and `VPRC_RenderUIBatched threw`.
+    - Monado created the compositor preview window during the active session (`BEGIN_SESSION`, `Creating window`, `Setting window properties and showing window`).
+    - Remaining startup messages are expected allocator-pressure deferrals/backoff while the resource planner and texture uploads warm up; they no longer surface as exceptions.
+  - F5 follow-up device-lost root cause:
+    - User failing session reviewed: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-07_11-43-51_pid39308`.
+    - The next failure was not the earlier render-resource generation exception. It was an expected synchronized imported-texture image allocation deferral being wrapped/logged as `InvalidOperationException` (`Failed to stream imported texture ... to resident size 1024`) while the optional OpenXR eye preview/mirror copy still attempted a one-shot `vkQueueSubmit`, which then reported `ErrorDeviceLost`.
+    - Fixes: initial Vulkan texture-upload preparation now classifies allocator-pressure failures as `PrepDeferred` and retries; expected allocation-deferral detection now also catches wrapper exceptions with the allocator-deferral message; imported texture streaming clears these deferrals as retryable instead of logging `LogException`; optional OpenXR eye mirror/preview copies now use the stricter resource-pressure gate and skip their standalone submit while allocator/resource work is backed off.
+  - F5-equivalent validation after texture-deferral and mirror-copy fix:
+    - Session: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-07_11-48-29_pid6812`.
+    - 70-second run. Raw log scan had zero hits for `VulkanOutOfMemoryException`, `InvalidOperationException`, `Exception thrown`, `VK_ERROR_DEVICE_LOST`, `ErrorDeviceLost`, `QueueSubmit returned`, `One-shot QueueSubmit failed`, `Failed to stream imported texture`, `RuntimeUnavailable`, `OpenXrGraphicsSessionException`, and `OpenXR session init skipped`.
+    - Expected pressure handling remained visible: `Deferring Vulkan eye mirror copy` appeared while startup texture work/allocator pressure was active, and `Deferred pending physical image allocation` replaced the previous warning/exception path.
+  - Live Monado preview visual validation after the same fix:
+    - Session: `Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-07_11-52-28_pid27504`.
+    - Screenshot: `Build/_AgentValidation/20260707-101740-openxr-vulkan-oom-dir-light/mcp-captures/monado-front-f5-equivalent.png`.
+    - Result: Monado preview window was visible and non-black, showing the Sponza curtains/scene color.
+    - Raw log scan again had zero hits for the allocator exception, invalid-operation, device-lost, queue-submit, texture-stream failure, runtime-unavailable, and OpenXR graphics-session failure patterns.
 
 ## Remaining Work
 

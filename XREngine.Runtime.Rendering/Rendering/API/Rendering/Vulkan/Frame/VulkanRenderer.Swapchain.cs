@@ -127,11 +127,24 @@ public unsafe partial class VulkanRenderer
 
             DisableStreamlineFrameGenerationBeforeSwapchainMutation("swapchain recreation");
             DeviceWaitIdle();
-            DestroyAllSwapChainObjects();
-            CreateAllSwapChainObjects();
-            ReserveOpenXrFrameDataSlotsIfRequired("swapchain recreation");
-            EnsureSwapchainTimelineState();
-            return true;
+            try
+            {
+                DestroyAllSwapChainObjects();
+                CreateAllSwapChainObjects();
+                ReserveOpenXrFrameDataSlotsIfRequired("swapchain recreation");
+                EnsureSwapchainTimelineState();
+                return true;
+            }
+            catch (Exception ex) when (IsExpectedVulkanImageAllocationDeferral(ex))
+            {
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.RecreateDeferredForAllocatorPressure",
+                    TimeSpan.FromMilliseconds(500),
+                    "[Vulkan] Deferring swapchain recreation under allocator pressure. Reason={0}",
+                    ex.Message);
+                DestroyAllSwapChainObjects();
+                return false;
+            }
         }
         finally
         {

@@ -989,14 +989,28 @@ public unsafe partial class VulkanRenderer
             if (!_layoutInitialized)
                 RefreshLayout();
 
-            if (TryResolvePhysicalGroup(out VulkanPhysicalImageGroup? group) ||
-                Renderer.TryEnsurePhysicalImageForTextureResource(ResolveLogicalResourceName(), out group))
+            string? logicalResourceName = ResolveLogicalResourceName();
+            if (!TryResolvePhysicalGroup(ensureAllocated: true, out VulkanPhysicalImageGroup? group, out string? physicalGroupFailureReason))
+            {
+                LogPhysicalGroupRefreshFailure(physicalGroupFailureReason);
+                return;
+            }
+
+            if (group is null &&
+                !Renderer.TryEnsurePhysicalImageForTextureResource(logicalResourceName, out group, out string? lazyPhysicalGroupFailureReason) &&
+                !string.IsNullOrWhiteSpace(lazyPhysicalGroupFailureReason))
+            {
+                LogPhysicalGroupRefreshFailure(lazyPhysicalGroupFailureReason);
+                return;
+            }
+
+            if (group is not null)
             {
                 RetireDedicatedImageBeforeBorrowingPhysicalGroup();
 
                 // Borrow the image from the resource-planner physical group.
                 _physicalGroup = group;
-                _image = group!.Image;
+                _image = group.Image;
                 _memory = group.Memory;
                 _extentOverride = group.ResolvedExtent;
                 _formatOverride = group.Format;
@@ -1751,7 +1765,18 @@ public unsafe partial class VulkanRenderer
 
             Renderer.ClearTrackedImageLayouts(image);
             Api!.GetImageMemoryRequirements(Device, image, out MemoryRequirements memRequirements);
-            VulkanMemoryAllocation allocation = Renderer.AllocateImageMemoryWithFallback(image, MemoryProperties);
+            if (!Renderer.TryAllocateImageMemoryWithFallback(
+                    image,
+                    MemoryProperties,
+                    out VulkanMemoryAllocation allocation,
+                    out string allocationFailure))
+            {
+                Api!.DestroyImage(Device, image, null);
+                image = default;
+                failureReason = allocationFailure;
+                return false;
+            }
+
             Renderer._imageAllocations[image.Handle] = allocation;
             memory = allocation.Memory;
 
@@ -1760,6 +1785,8 @@ public unsafe partial class VulkanRenderer
             {
                 Renderer._imageAllocations.TryRemove(image.Handle, out _);
                 Renderer.FreeMemoryAllocation(allocation);
+                Api!.DestroyImage(Device, image, null);
+                image = default;
                 memory = default;
                 failureReason = $"failed to bind synchronized imported texture image memory ({bindResult})";
                 return false;

@@ -1671,7 +1671,10 @@ namespace XREngine.Rendering.Vulkan
         public void DestroyBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory)
         {
             if (vkBuffer.HasValue && vkMemory.HasValue && _stagingManager.TryRelease(vkBuffer.Value, vkMemory.Value))
+            {
+                _stagingManager.Trim(this);
                 return;
+            }
 
             DestroyBufferRaw(vkBuffer, vkMemory);
         }
