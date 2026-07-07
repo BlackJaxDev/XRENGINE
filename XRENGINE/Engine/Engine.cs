@@ -203,6 +203,7 @@ namespace XREngine
 
         internal static EngineRenderThreadHost RenderThreadHost => s_renderThreadHost;
         internal static EngineWindowPumpHost WindowPumpHost => s_windowPumpHost;
+        internal static bool StartupOpenXrRuntimeRequested { get; private set; }
         public static global::XREngine.Rendering.WindowMailboxDiagnostics WindowThreadMailboxDiagnostics
             => s_windowPumpHost.Diagnostics;
 

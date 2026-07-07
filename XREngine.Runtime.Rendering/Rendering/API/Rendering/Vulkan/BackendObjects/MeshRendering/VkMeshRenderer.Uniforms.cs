@@ -97,7 +97,7 @@ public unsafe partial class VulkanRenderer
 			_uniformDrawSlotCapacity = newCapacity;
 			DestroyDescriptors();
 			_descriptorDirty = true;
-			Renderer.MarkCommandBuffersDirty();
+			Renderer.MarkCommandBuffersDirtyForLegacyMeshState();
 		}
 
 		private int ResolveUniformBufferIndex(int frameIndex, int drawUniformSlot, int bufferCount)
@@ -132,26 +132,24 @@ public unsafe partial class VulkanRenderer
 			BufferUsageFlags usage = string.Equals(name, FallbackDescriptorUniformName, StringComparison.Ordinal)
 				? BufferUsageFlags.UniformBufferBit | BufferUsageFlags.StorageBufferBit
 				: BufferUsageFlags.UniformBufferBit;
+			ulong stride = ResolveUniformBufferStride(size);
+			if (!TryComputeUniformBufferByteSize(stride, bufferCount, out ulong totalSize) ||
+				!CreateHostVisibleBuffer(totalSize, usage, out var buffer, out var memory))
+			{
+				return false;
+			}
+
+			if (!Renderer.TryMapBufferMemory(buffer, memory, 0, totalSize, out void* mappedPtr))
+			{
+				Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
+				return false;
+			}
+
 			for (int i = 0; i < bufferCount; i++)
 			{
-				if (!CreateHostVisibleBuffer(size, usage, out var buffer, out var memory))
-				{
-					for (int j = 0; j < i; j++)
-						DestroyMappedUniformBuffer(buffers[j].Buffer, buffers[j].Memory, buffers[j].MappedPtr);
-
-					return false;
-				}
-
-				if (!Renderer.TryMapBufferMemory(buffer, memory, 0, size, out void* mappedPtr))
-				{
-					Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
-					for (int j = 0; j < i; j++)
-						DestroyMappedUniformBuffer(buffers[j].Buffer, buffers[j].Memory, buffers[j].MappedPtr);
-
-					return false;
-				}
-
-				buffers[i] = new EngineUniformBuffer(buffer, memory, size, mappedPtr);
+				ulong offset = stride * (ulong)i;
+				void* slotPtr = (byte*)mappedPtr + checked((nint)offset);
+				buffers[i] = new EngineUniformBuffer(buffer, memory, size, slotPtr, offset, ownsBuffer: i == 0);
 			}
 
 			_engineUniformBuffers[name] = buffers;
@@ -176,29 +174,49 @@ public unsafe partial class VulkanRenderer
 			}
 
 			AutoUniformBuffer[] buffers = new AutoUniformBuffer[bufferCount];
+			ulong stride = ResolveUniformBufferStride(size);
+			if (!TryComputeUniformBufferByteSize(stride, bufferCount, out ulong totalSize) ||
+				!CreateHostVisibleBuffer(totalSize, BufferUsageFlags.UniformBufferBit, out var buffer, out var memory))
+			{
+				return false;
+			}
+
+			if (!Renderer.TryMapBufferMemory(buffer, memory, 0, totalSize, out void* mappedPtr))
+			{
+				Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
+				return false;
+			}
+
 			for (int i = 0; i < bufferCount; i++)
 			{
-				if (!CreateHostVisibleBuffer(size, BufferUsageFlags.UniformBufferBit, out var buffer, out var memory))
-				{
-					for (int j = 0; j < i; j++)
-						DestroyMappedUniformBuffer(buffers[j].Buffer, buffers[j].Memory, buffers[j].MappedPtr);
-
-					return false;
-				}
-
-				if (!Renderer.TryMapBufferMemory(buffer, memory, 0, size, out void* mappedPtr))
-				{
-					Renderer.DestroyTrackedMeshUniformBuffer(buffer, memory);
-					for (int j = 0; j < i; j++)
-						DestroyMappedUniformBuffer(buffers[j].Buffer, buffers[j].Memory, buffers[j].MappedPtr);
-
-					return false;
-				}
-
-				buffers[i] = new AutoUniformBuffer(buffer, memory, size, mappedPtr);
+				ulong offset = stride * (ulong)i;
+				void* slotPtr = (byte*)mappedPtr + checked((nint)offset);
+				buffers[i] = new AutoUniformBuffer(buffer, memory, size, slotPtr, offset, ownsBuffer: i == 0);
 			}
 
 			_autoUniformBuffers[name] = buffers;
+			return true;
+		}
+
+		private ulong ResolveUniformBufferStride(uint size)
+		{
+			ulong alignment = Math.Max(Renderer._uniformBufferOffsetAlignment, 1UL);
+			ulong value = Math.Max(size, 1u);
+			ulong remainder = value % alignment;
+			return remainder == 0 ? value : value + alignment - remainder;
+		}
+
+		private static bool TryComputeUniformBufferByteSize(ulong stride, int bufferCount, out ulong totalSize)
+		{
+			totalSize = 0;
+			if (bufferCount <= 0 || stride == 0)
+				return false;
+
+			ulong count = (ulong)bufferCount;
+			if (stride > ulong.MaxValue / count)
+				return false;
+
+			totalSize = stride * count;
 			return true;
 		}
 
@@ -234,11 +252,11 @@ public unsafe partial class VulkanRenderer
 		/// Allocates a host-visible, host-coherent Vulkan buffer with the given usage flags.
 		/// Used for engine and auto uniform buffers that are updated every frame via map/unmap.
 		/// </summary>
-		private bool CreateHostVisibleBuffer(uint size, BufferUsageFlags usage, out Silk.NET.Vulkan.Buffer buffer, out DeviceMemory memory)
+		private bool CreateHostVisibleBuffer(ulong size, BufferUsageFlags usage, out Silk.NET.Vulkan.Buffer buffer, out DeviceMemory memory)
 		{
 			buffer = default;
 			memory = default;
-			size = Math.Max(size, 1u);
+			size = Math.Max(size, 1UL);
 			bool enableDeviceAddress = Renderer.IsDescriptorHeapDrawBindingActive;
 			if (enableDeviceAddress)
 				usage |= BufferUsageFlags.ShaderDeviceAddressBit;

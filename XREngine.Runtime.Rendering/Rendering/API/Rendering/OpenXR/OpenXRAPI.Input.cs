@@ -86,12 +86,6 @@ public unsafe partial class OpenXRAPI
             }
         }
 
-        lock (_openXrPoseLock)
-        {
-            foreach (var p in _trackerSubactionPaths.Keys)
-                _openXrKnownTrackerPaths.Add(p);
-        }
-
         InitializeViveTrackerExtension();
     }
 
@@ -492,7 +486,13 @@ public unsafe partial class OpenXRAPI
                 foreach (var (userPath, space) in _trackerSpaces)
                 {
                     if (TryLocateSpace(space, displayTime, out var mtx))
+                    {
                         dict[userPath] = mtx;
+                        string canonicalPath = ResolveCanonicalTrackerUserPath(userPath);
+                        if (!string.Equals(canonicalPath, userPath, StringComparison.Ordinal))
+                            dict[canonicalPath] = mtx;
+                        MarkTrackerPoseAvailableLocked(userPath, canonicalPath);
+                    }
                 }
             }
         }
@@ -536,6 +536,14 @@ public unsafe partial class OpenXRAPI
             _handGripPoseAction = default;
             _trackerPoseAction = default;
             _inputActionSet = default;
+            _viveTrackerPersistentToRolePaths.Clear();
+            lock (_openXrPoseLock)
+            {
+                _openXrKnownTrackerPaths.Clear();
+                _openXrKnownTrackers.Clear();
+                _openXrPredTrackerLocalPose.Clear();
+                _openXrLateTrackerLocalPose.Clear();
+            }
             _inputAttached = false;
             _inputCreated = false;
         }

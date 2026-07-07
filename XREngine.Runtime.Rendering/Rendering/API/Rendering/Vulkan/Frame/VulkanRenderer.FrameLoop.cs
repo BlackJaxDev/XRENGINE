@@ -160,6 +160,48 @@ namespace XREngine.Rendering.Vulkan
             throw new InvalidOperationException(message);
         }
 
+        private Result SubmitAcquireSemaphoreBridge(Semaphore acquireSemaphore, ulong signalTimelineValue)
+            => SubmitAcquireSemaphoreBridge(acquireSemaphore, signalTimelineValue, default, null, 0);
+
+        private Result SubmitAcquireSemaphoreBridge(
+            Semaphore acquireSemaphore,
+            ulong signalTimelineValue,
+            Semaphore signalPresentSemaphore,
+            CommandBuffer* commandBuffers,
+            uint commandBufferCount)
+        {
+            uint signalSemaphoreCount = signalPresentSemaphore.Handle != 0 ? 2u : 1u;
+            ulong* signalValues = stackalloc ulong[2] { signalTimelineValue, 0UL };
+            ulong* waitValues = stackalloc ulong[1] { 0UL };
+            Semaphore* waitSemaphores = stackalloc Semaphore[1] { acquireSemaphore };
+            Semaphore* signalSemaphores = stackalloc Semaphore[2] { _graphicsTimelineSemaphore, signalPresentSemaphore };
+            PipelineStageFlags* waitStages = stackalloc PipelineStageFlags[1] { PipelineStageFlags.TopOfPipeBit };
+
+            TimelineSemaphoreSubmitInfo timelineInfo = new()
+            {
+                SType = StructureType.TimelineSemaphoreSubmitInfo,
+                WaitSemaphoreValueCount = 1,
+                PWaitSemaphoreValues = waitValues,
+                SignalSemaphoreValueCount = signalSemaphoreCount,
+                PSignalSemaphoreValues = signalValues,
+            };
+
+            SubmitInfo submit = new()
+            {
+                SType = StructureType.SubmitInfo,
+                PNext = &timelineInfo,
+                WaitSemaphoreCount = 1,
+                PWaitSemaphores = waitSemaphores,
+                PWaitDstStageMask = waitStages,
+                CommandBufferCount = commandBufferCount,
+                PCommandBuffers = commandBufferCount == 0 ? null : commandBuffers,
+                SignalSemaphoreCount = signalSemaphoreCount,
+                PSignalSemaphores = signalSemaphores,
+            };
+
+            return SubmitToQueueTracked(graphicsQueue, ref submit, default);
+        }
+
         private void DrainSkippedResizeFrameOps(string reason)
         {
             FrameOp[] droppedOps = DrainFrameOps(out _);
@@ -865,50 +907,243 @@ namespace XREngine.Rendering.Vulkan
             // Successful acquire — reset the NotReady counter.
             _consecutiveNotReadyCount = 0;
 
-            // 3. Bridge the binary acquire semaphore into the timeline and serialize image reuse by timeline value.
-            _acquireTimelineValue = Math.Max(_acquireTimelineValue + 1, _graphicsTimelineValue + 1);
+            // 3. Serialize image reuse by the last graphics timeline value for this image.
+            // The acquired binary semaphore is consumed directly by the draw submit below,
+            // which avoids a zero-command-buffer QueueSubmit on every desktop frame.
+            _acquireTimelineValue = _graphicsTimelineValue;
+            bool acquireSemaphoreConsumed = false;
+            Semaphore presentSemaphore = presentBridgeSemaphores![imageIndex];
 
-            ulong* acquireSignalValues = stackalloc ulong[1] { _acquireTimelineValue };
-            ulong* acquireWaitValues = stackalloc ulong[1] { 0UL };
-            Semaphore* acquireWaitSemaphores = stackalloc Semaphore[1] { acquireSemaphore };
-            Semaphore* acquireSignalSemaphores = stackalloc Semaphore[1] { _graphicsTimelineSemaphore };
-            PipelineStageFlags* acquireWaitStages = stackalloc PipelineStageFlags[1] { PipelineStageFlags.TopOfPipeBit };
-
-            TimelineSemaphoreSubmitInfo acquireBridgeTimelineInfo = new()
+            void ConsumeAcquireSemaphoreForAbortedFrame(string reason)
             {
-                SType = StructureType.TimelineSemaphoreSubmitInfo,
-                WaitSemaphoreValueCount = 1,
-                PWaitSemaphoreValues = acquireWaitValues,
-                SignalSemaphoreValueCount = 1,
-                PSignalSemaphoreValues = acquireSignalValues,
-            };
+                if (acquireSemaphoreConsumed || acquireSemaphore.Handle == 0 || _deviceLost)
+                    return;
 
-            SubmitInfo acquireBridgeSubmit = new()
-            {
-                SType = StructureType.SubmitInfo,
-                PNext = &acquireBridgeTimelineInfo,
-                WaitSemaphoreCount = 1,
-                PWaitSemaphores = acquireWaitSemaphores,
-                PWaitDstStageMask = acquireWaitStages,
-                CommandBufferCount = 0,
-                PCommandBuffers = null,
-                SignalSemaphoreCount = 1,
-                PSignalSemaphores = acquireSignalSemaphores,
-            };
+                ulong abortBridgeSignalValue = Math.Max(_graphicsTimelineValue + 1, _acquireTimelineValue + 1);
+                long abortBridgeStartTimestamp = Stopwatch.GetTimestamp();
+                Result abortBridgeResult;
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.AcquireAbortBridgeSubmit"))
+                {
+                    abortBridgeResult = SubmitAcquireSemaphoreBridge(acquireSemaphore, abortBridgeSignalValue);
+                }
+                acquireBridgeSubmitTime += Stopwatch.GetElapsedTime(abortBridgeStartTimestamp);
 
-            Result bridgeResult;
-            stageStartTimestamp = Stopwatch.GetTimestamp();
-            using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.AcquireBridgeSubmit"))
-            {
-                bridgeResult = SubmitToQueueTracked(graphicsQueue, ref acquireBridgeSubmit, default);
+                if (abortBridgeResult == Result.Success)
+                {
+                    _graphicsTimelineValue = Math.Max(_graphicsTimelineValue, abortBridgeSignalValue);
+                    acquireSemaphoreConsumed = true;
+                    return;
+                }
+
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.AcquireAbortBridgeFailed.{reason}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Failed to consume acquired swapchain semaphore after aborted frame ({0}): {1}. Swapchain recreate will continue.",
+                    reason,
+                    abortBridgeResult);
             }
-            acquireBridgeSubmitTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
-            if (bridgeResult != Result.Success)
-            {
-                if (bridgeResult == Result.ErrorDeviceLost)
-                    throw CreateDeviceLostException("Acquire bridge QueueSubmit", bridgeResult);
 
-                throw new Exception($"Failed to bridge swapchain acquire semaphore to timeline ({bridgeResult}).");
+            bool TryPresentAbortedDirtyFrame(bool commandBufferDirtyFlagSet, bool commandBuffersDirtiedAfterSceneRecord)
+            {
+                if (acquireSemaphoreConsumed || acquireSemaphore.Handle == 0 || _deviceLost)
+                    return false;
+
+                CancelRecordedTextureUploadSubmitBatch("command buffer dirtied before submit");
+
+                bool imageWasEverPresented = IsSwapchainImageEverPresented(imageIndex);
+                int clearedLayoutCount = ClearAllTrackedImageLayouts();
+                CommandPool abortCommandPool = default;
+                CommandBuffer abortCommandBuffer = default;
+                uint abortCommandBufferCount = 0;
+
+                try
+                {
+                    abortCommandPool = GetThreadCommandPool();
+                    abortCommandBuffer = AllocateCommandBuffer(
+                        CommandBufferLevel.Primary,
+                        "swapchain abort present transition command buffer",
+                        abortCommandPool);
+                    RegisterCommandBufferImageIndex(abortCommandBuffer, imageIndex);
+
+                    CommandBufferBeginInfo beginInfo = new()
+                    {
+                        SType = StructureType.CommandBufferBeginInfo,
+                        Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+                    };
+
+                    if (Api!.BeginCommandBuffer(abortCommandBuffer, ref beginInfo) != Result.Success)
+                        throw new Exception("Failed to begin swapchain abort-present transition command buffer.");
+
+                    ResetCommandBufferBindState(abortCommandBuffer);
+
+                    if (!imageWasEverPresented)
+                    {
+                        ImageMemoryBarrier presentBarrier = new()
+                        {
+                            SType = StructureType.ImageMemoryBarrier,
+                            SrcAccessMask = 0,
+                            DstAccessMask = 0,
+                            OldLayout = ImageLayout.Undefined,
+                            NewLayout = ImageLayout.PresentSrcKhr,
+                            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            Image = swapChainImages![imageIndex],
+                            SubresourceRange = new ImageSubresourceRange
+                            {
+                                AspectMask = ImageAspectFlags.ColorBit,
+                                BaseMipLevel = 0,
+                                LevelCount = 1,
+                                BaseArrayLayer = 0,
+                                LayerCount = 1
+                            }
+                        };
+
+                        CmdPipelineBarrierTracked(
+                            abortCommandBuffer,
+                            PipelineStageFlags.TopOfPipeBit,
+                            PipelineStageFlags.BottomOfPipeBit,
+                            0,
+                            0,
+                            null,
+                            0,
+                            null,
+                            1,
+                            &presentBarrier);
+                    }
+
+                    if (Api!.EndCommandBuffer(abortCommandBuffer) != Result.Success)
+                        throw new Exception("Failed to end swapchain abort-present transition command buffer.");
+
+                    abortCommandBufferCount = 1;
+
+                    CommandBuffer submittedAbortCommandBuffer = abortCommandBuffer;
+                    CommandBuffer* abortCommandBuffers = null;
+                    if (abortCommandBufferCount != 0)
+                        abortCommandBuffers = &submittedAbortCommandBuffer;
+
+                    ulong abortSignalValue = Math.Max(_graphicsTimelineValue + 1, _acquireTimelineValue + 1);
+                    long abortBridgeStartTimestamp = Stopwatch.GetTimestamp();
+                    Result abortBridgeResult;
+                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DirtyAbortPresentSubmit"))
+                    {
+                        abortBridgeResult = SubmitAcquireSemaphoreBridge(
+                            acquireSemaphore,
+                            abortSignalValue,
+                            presentSemaphore,
+                            abortCommandBuffers,
+                            abortCommandBufferCount);
+                    }
+                    acquireBridgeSubmitTime += Stopwatch.GetElapsedTime(abortBridgeStartTimestamp);
+
+                    if (abortBridgeResult != Result.Success)
+                    {
+                        if (abortBridgeResult == Result.ErrorDeviceLost)
+                            throw CreateDeviceLostException("Dirty abort QueueSubmit", abortBridgeResult);
+
+                        if (abortCommandBuffer.Handle != 0)
+                        {
+                            Api!.FreeCommandBuffers(device, abortCommandPool, 1, ref abortCommandBuffer);
+                            RemoveCommandBufferBindState(abortCommandBuffer);
+                        }
+
+                        Debug.VulkanWarningEvery(
+                            $"Vulkan.Frame.{GetHashCode()}.DirtyAbortPresentSubmitFailed",
+                            TimeSpan.FromSeconds(1),
+                            "[Vulkan] Failed to submit skipped-frame present for dirtied command buffer on image {0}: {1}.",
+                            imageIndex,
+                            abortBridgeResult);
+                        return false;
+                    }
+
+                    acquireSemaphoreConsumed = true;
+                    _graphicsTimelineValue = Math.Max(_graphicsTimelineValue, abortSignalValue);
+                    _frameSlotTimelineValues![currentFrame] = abortSignalValue;
+                    if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
+                        _swapchainImageTimelineValues[imageIndex] = abortSignalValue;
+
+                    if (abortCommandBuffer.Handle != 0)
+                        DeferSecondaryCommandBufferFree(imageIndex, abortCommandPool, abortCommandBuffer);
+
+                    RuntimeRenderingHostServices.Current.MarkRenderFrameReadyForCollect(XRWindow);
+
+                    Semaphore skippedFramePresentSemaphore = presentSemaphore;
+                    uint skippedFrameImageIndex = imageIndex;
+                    var swapChains = stackalloc[] { swapChain };
+                    PresentInfoKHR presentInfo = new()
+                    {
+                        SType = StructureType.PresentInfoKhr,
+                        WaitSemaphoreCount = 1,
+                        PWaitSemaphores = &skippedFramePresentSemaphore,
+                        SwapchainCount = 1,
+                        PSwapchains = swapChains,
+                        PImageIndices = &skippedFrameImageIndex
+                    };
+
+                    long presentStartTimestamp = Stopwatch.GetTimestamp();
+                    using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DirtyAbortQueuePresent"))
+                    {
+                        MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.PresentStart);
+                        lock (_oneTimeSubmitLock)
+                        {
+                            if (_streamlineFrameGenerationSwapchainActive)
+                            {
+                                if (!NvidiaDlssManager.Native.TryQueueProxyPresent(this, presentQueue, ref presentInfo, out result, out string failureReason))
+                                {
+                                    if (result == Result.ErrorDeviceLost)
+                                        throw CreateDeviceLostException("Streamline dirty abort QueuePresent", result);
+
+                                    string message = $"NVIDIA DLSS frame generation failed to present skipped frame through Streamline: {failureReason}";
+                                    Debug.RenderingError(message);
+                                    throw new InvalidOperationException(message);
+                                }
+                            }
+                            else
+                            {
+                                result = khrSwapChain!.QueuePresent(presentQueue, ref presentInfo);
+                            }
+                        }
+                        MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.PresentEnd);
+                    }
+                    presentQueueTime += Stopwatch.GetElapsedTime(presentStartTimestamp);
+
+                    _lastPresentedImageIndex = imageIndex;
+                    if (_swapchainImageEverPresented is not null && imageIndex < _swapchainImageEverPresented.Length)
+                        _swapchainImageEverPresented[imageIndex] = true;
+
+                    if (result == Result.ErrorDeviceLost)
+                        throw CreateDeviceLostException("Dirty abort QueuePresent", result);
+                    if (result == Result.ErrorOutOfDateKhr)
+                        ScheduleSwapchainRecreate("Dirty abort QueuePresent returned ErrorOutOfDateKhr");
+                    else if (result == Result.SuboptimalKhr)
+                        ScheduleSwapchainRecreate("Dirty abort QueuePresent returned SuboptimalKhr");
+                    else if (result == Result.ErrorSurfaceLostKhr)
+                        RecreateSwapchainImmediately("Dirty abort QueuePresent returned ErrorSurfaceLostKhr");
+                    else if (result != Result.Success)
+                        throw new Exception($"Failed to present skipped swap chain image ({result}).");
+
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Frame.{GetHashCode()}.DirtyBeforeSubmit",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Command buffer for image {0} was dirtied after recording and before submit. Presented skipped frame to release the acquired image. flag={1} generationChanged={2} clearedLayouts={3}",
+                        imageIndex,
+                        commandBufferDirtyFlagSet,
+                        commandBuffersDirtiedAfterSceneRecord,
+                        clearedLayoutCount);
+
+                    currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+                    _lastFrameCompletedTimestamp = Stopwatch.GetTimestamp();
+                    return true;
+                }
+                catch
+                {
+                    if (abortCommandBuffer.Handle != 0 && abortCommandBufferCount == 0 && abortCommandPool.Handle != 0 && !_deviceLost)
+                    {
+                        Api!.FreeCommandBuffers(device, abortCommandPool, 1, ref abortCommandBuffer);
+                        RemoveCommandBufferBindState(abortCommandBuffer);
+                    }
+
+                    throw;
+                }
             }
 
             stageStartTimestamp = Stopwatch.GetTimestamp();
@@ -959,6 +1194,7 @@ namespace XREngine.Rendering.Vulkan
             ulong dynamicUiBatchTextOverlaySignature;
             CommandBufferCacheVariant? dynamicUiBatchTextOverlayVariant;
             ImageLayout swapchainLayoutAfterScene;
+            long sceneCommandBufferDirtyGeneration;
             stageStartTimestamp = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.RecordCommandBuffer"))
             {
@@ -973,7 +1209,8 @@ namespace XREngine.Rendering.Vulkan
                         out dynamicUiBatchTextOverlayOps,
                         out dynamicUiBatchTextOverlaySignature,
                         out dynamicUiBatchTextOverlayVariant,
-                        out swapchainLayoutAfterScene);
+                        out swapchainLayoutAfterScene,
+                        out sceneCommandBufferDirtyGeneration);
                 }
                 catch (Exception recordEx)
                 {
@@ -986,6 +1223,8 @@ namespace XREngine.Rendering.Vulkan
                 // DeviceWaitIdle + destroys/recreates all swapchain objects — this returns the
                 // acquired image to the presentation engine and resets semaphore state.
                     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+                    ConsumeAcquireSemaphoreForAbortedFrame("RecordFailed");
 
                     Debug.VulkanWarningEvery(
                         $"Vulkan.Frame.{GetHashCode()}.RecordFailed",
@@ -1003,6 +1242,7 @@ namespace XREngine.Rendering.Vulkan
                         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRecordCommandBufferAllocation(allocatedBytes);
                 }
             }
+            bool scenePrimaryRecordedThisFrame = _lastEnsureCommandBufferRecordedPrimary;
             CommandBuffer imguiOverlayCommandBuffer = default;
             bool hasImGuiOverlayCommandBuffer = false;
             CommandBuffer dynamicUiBatchTextOverlayCommandBuffer = default;
@@ -1025,6 +1265,8 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
                     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+                    ConsumeAcquireSemaphoreForAbortedFrame("RecordImGuiOverlayFailed");
 
                     Debug.VulkanWarningEvery(
                         $"Vulkan.Frame.{GetHashCode()}.RecordImGuiOverlayFailed",
@@ -1084,6 +1326,8 @@ namespace XREngine.Rendering.Vulkan
                         recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
                         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
+                        ConsumeAcquireSemaphoreForAbortedFrame("RecordDynamicUiTextOverlayFailed");
+
                         Debug.VulkanWarningEvery(
                             $"Vulkan.Frame.{GetHashCode()}.RecordDynamicUiTextOverlayFailed",
                             TimeSpan.FromSeconds(1),
@@ -1104,17 +1348,37 @@ namespace XREngine.Rendering.Vulkan
                     dynamicTextOverlayElapsedTicks);
             }
 
-            if (_commandBufferDirtyFlags is not null &&
+            bool commandBufferDirtyFlagSet =
+                _commandBufferDirtyFlags is not null &&
                 imageIndex < (uint)_commandBufferDirtyFlags.Length &&
-                _commandBufferDirtyFlags[imageIndex])
+                _commandBufferDirtyFlags[imageIndex];
+            bool commandBuffersDirtiedAfterSceneRecord =
+                HaveCommandBuffersDirtiedSince(sceneCommandBufferDirtyGeneration);
+            if (scenePrimaryRecordedThisFrame && (commandBufferDirtyFlagSet || commandBuffersDirtiedAfterSceneRecord))
             {
-                currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+                if (_commandBufferDirtyFlags is not null && imageIndex < (uint)_commandBufferDirtyFlags.Length)
+                    _commandBufferDirtyFlags[imageIndex] = false;
+
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.FreshPrimaryDirtiedBeforeSubmit",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Continuing with freshly recorded command buffer for image {0} after pre-submit invalidation. Cached reuse remains disabled for the affected variant. flag={1} generationChanged={2}",
+                    imageIndex,
+                    commandBufferDirtyFlagSet,
+                    commandBuffersDirtiedAfterSceneRecord);
+            }
+            else if (commandBufferDirtyFlagSet || commandBuffersDirtiedAfterSceneRecord)
+            {
+                if (TryPresentAbortedDirtyFrame(commandBufferDirtyFlagSet, commandBuffersDirtiedAfterSceneRecord))
+                    return;
 
                 Debug.VulkanWarningEvery(
-                    $"Vulkan.Frame.{GetHashCode()}.DirtyBeforeSubmit",
+                    $"Vulkan.Frame.{GetHashCode()}.DirtyBeforeSubmitFallback",
                     TimeSpan.FromSeconds(1),
-                    "[Vulkan] Command buffer for image {0} was dirtied after recording and before submit. Recreating swapchain to avoid submitting stale GPU resources.",
-                    imageIndex);
+                    "[Vulkan] Command buffer for image {0} was dirtied after recording and before submit, and skipped-frame present failed. Recreating swapchain to recover. flag={1} generationChanged={2}",
+                    imageIndex,
+                    commandBufferDirtyFlagSet,
+                    commandBuffersDirtiedAfterSceneRecord);
 
                 RecreateSwapchainImmediately("Command buffer dirtied before submit - recovering timeline/present state");
                 return;
@@ -1124,9 +1388,9 @@ namespace XREngine.Rendering.Vulkan
             _graphicsTimelineValue = Math.Max(_graphicsTimelineValue + 1, _acquireTimelineValue + 1);
             ulong graphicsSignalValue = _graphicsTimelineValue;
 
-            ulong* waitTimelineValues = stackalloc ulong[1] { _acquireTimelineValue };
+            ulong* waitTimelineValues = stackalloc ulong[1] { 0UL };
             ulong* signalTimelineValues = stackalloc ulong[2] { graphicsSignalValue, 0UL };
-            Semaphore* waitSemaphores = stackalloc Semaphore[1] { _graphicsTimelineSemaphore };
+            Semaphore* waitSemaphores = stackalloc Semaphore[1] { acquireSemaphore };
             var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
             CommandBuffer* submitCommandBuffers = stackalloc CommandBuffer[3];
             submitCommandBuffers[0] = submitCommandBuffer;
@@ -1135,7 +1399,6 @@ namespace XREngine.Rendering.Vulkan
                 submitCommandBuffers[submitCommandBufferCount++] = imguiOverlayCommandBuffer;
             if (hasDynamicUiBatchTextOverlayCommandBuffer && dynamicUiBatchTextOverlayCommandBuffer.Handle != 0)
                 submitCommandBuffers[submitCommandBufferCount++] = dynamicUiBatchTextOverlayCommandBuffer;
-            Semaphore presentSemaphore = presentBridgeSemaphores![imageIndex];
             Semaphore* signalSemaphores = stackalloc Semaphore[2] { _graphicsTimelineSemaphore, presentSemaphore };
 
             TimelineSemaphoreSubmitInfo timelineSubmitInfo = new()
@@ -1190,6 +1453,7 @@ namespace XREngine.Rendering.Vulkan
 
                 throw new Exception($"Failed to submit draw command buffer ({submitResult}).");
             }
+            acquireSemaphoreConsumed = true;
             submitQueueTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
             MarkFrameTimingSubmitted(unchecked((int)Math.Min(imageIndex, int.MaxValue)));
 
@@ -1221,15 +1485,17 @@ namespace XREngine.Rendering.Vulkan
             }
 
             // 6. Present the image
+            Semaphore queuedPresentSemaphore = presentSemaphore;
+            uint queuedImageIndex = imageIndex;
             var swapChains = stackalloc[] { swapChain };
             PresentInfoKHR presentInfo = new()
             {
                 SType = StructureType.PresentInfoKhr,
                 WaitSemaphoreCount = 1,
-                PWaitSemaphores = &presentSemaphore,
+                PWaitSemaphores = &queuedPresentSemaphore,
                 SwapchainCount = 1,
                 PSwapchains = swapChains,
-                PImageIndices = &imageIndex
+                PImageIndices = &queuedImageIndex
             };
 
             stageStartTimestamp = Stopwatch.GetTimestamp();

@@ -229,7 +229,7 @@ namespace XREngine.Rendering.Vulkan
                         DescriptorGeneration,
                         ResolveTrackedImageLayoutNoLock(),
                         ResolveUsesAllocatorImageNoLock(),
-                        IsDescriptorReadyNoLock() && view.Handle != 0 && Renderer.IsLiveImageView(view));
+                        IsDescriptorReadyNoLock() && view.Handle != 0 && IsViewBackedByCurrentImage(view));
                     return snapshot.IsReady;
                 }
             }
@@ -256,7 +256,7 @@ namespace XREngine.Rendering.Vulkan
                     (_aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))
                     return default;
 
-                if (cached.Handle != 0)
+                if (cached.Handle != 0 && IsViewBackedByCurrentImage(cached))
                     return cached;
 
                 if (_image.Handle == 0)
@@ -267,8 +267,10 @@ namespace XREngine.Rendering.Vulkan
                     if (Renderer.IsDeviceLost)
                         return default;
 
-                    if (cached.Handle != 0)
+                    if (cached.Handle != 0 && IsViewBackedByCurrentImage(cached))
                         return cached;
+                    if (cached.Handle != 0)
+                        cached = default;
 
                     if (_image.Handle == 0)
                         return default;
@@ -294,7 +296,17 @@ namespace XREngine.Rendering.Vulkan
 
             private bool IsDescriptorReadyNoLock()
                 => !IsDescriptorDirty &&
-                    ((_view.Handle != 0 && Renderer.IsLiveImageView(_view)) || _texelBufferView.Handle != 0);
+                    ((_view.Handle != 0 && IsViewBackedByCurrentImage(_view)) || _texelBufferView.Handle != 0);
+
+            private bool IsViewBackedByCurrentImage(ImageView view)
+            {
+                if (view.Handle == 0 || _image.Handle == 0)
+                    return false;
+
+                return Renderer.TryGetImageViewBackingImage(view, out Image backingImage) &&
+                    backingImage.Handle == _image.Handle &&
+                    Renderer.IsLiveImageViewBackedByLiveImage(view);
+            }
 
             private DeviceMemory TryResolveViewedDescriptorMemoryNoLock()
             {
@@ -400,7 +412,7 @@ namespace XREngine.Rendering.Vulkan
             ImageView IVkFrameBufferAttachmentSource.GetAttachmentView(int mipLevel, int layerIndex)
             {
                 RefreshFromViewedTextureIfStale();
-                return _view;
+                return IsViewBackedByCurrentImage(_view) ? _view : default;
             }
 
             bool IVkFrameBufferAttachmentSource.TryGetAttachmentExtent(int mipLevel, int layerIndex, out Extent2D extent)
@@ -836,7 +848,10 @@ namespace XREngine.Rendering.Vulkan
                 if (liveImage.Handle == 0)
                     return;
 
-                if (liveImage.Handle == _image.Handle && _view.Handle != 0 && _sampler.Handle != 0)
+                if (liveImage.Handle == _image.Handle &&
+                    _view.Handle != 0 &&
+                    _sampler.Handle != 0 &&
+                    IsViewBackedByCurrentImage(_view))
                 {
                     HasUploadedData = true;
                     IsInvalidated = false;
@@ -853,7 +868,9 @@ namespace XREngine.Rendering.Vulkan
                     if (liveImage.Handle == 0)
                         return;
 
-                    if (liveImage.Handle == _image.Handle && _view.Handle != 0)
+                    if (liveImage.Handle == _image.Handle &&
+                        _view.Handle != 0 &&
+                        IsViewBackedByCurrentImage(_view))
                     {
                         if (_sampler.Handle == 0)
                             CreateSampler();
@@ -863,7 +880,10 @@ namespace XREngine.Rendering.Vulkan
                         return;
                     }
 
-                    RetireOwnedImageViews();
+                    if (liveImage.Handle == _image.Handle)
+                        ForgetOwnedImageViews();
+                    else
+                        RetireOwnedImageViews();
 
                     _image = liveImage;
                     _format = source.DescriptorFormat;
@@ -1016,6 +1036,28 @@ namespace XREngine.Rendering.Vulkan
                 _view = default;
                 _depthOnlyView = default;
                 _stencilOnlyView = default;
+            }
+
+            private void ForgetOwnedImageViews()
+            {
+                _view = default;
+                _depthOnlyView = default;
+                _stencilOnlyView = default;
+            }
+
+            private void RetireSingleImageView(ref ImageView view)
+            {
+                if (view.Handle == 0)
+                    return;
+
+                Renderer.RetireImageResources(new RetiredImageResources(
+                    default,
+                    default,
+                    view,
+                    [],
+                    default,
+                    0));
+                view = default;
             }
 
             private void CreateSampler()

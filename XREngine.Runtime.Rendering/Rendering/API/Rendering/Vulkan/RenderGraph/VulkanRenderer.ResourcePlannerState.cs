@@ -242,21 +242,23 @@ public unsafe partial class VulkanRenderer
         {
             _renderer = renderer;
             _previousState = renderer.CaptureResourcePlannerRuntimeState();
-            _key = FrameOpContextHasPlannerResources(context)
-                ? BuildFrameOpPlannerStateKey(context)
-                : default;
             _active = FrameOpContextHasPlannerResources(context);
 
             if (!_active)
+            {
+                _key = default;
                 return;
+            }
 
             FrameOpResourcePlannerSwitchingState switchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
-            if (switchingState.States.TryGetValue(_key, out ResourcePlannerRuntimeState state))
+            FrameOpPlannerStateKey requestedKey = BuildFrameOpPlannerStateKey(context);
+            if (TryFindBestCompatibleFrameOpPlannerState(context, switchingState, out _key, out ResourcePlannerRuntimeState state))
             {
                 renderer.RestoreResourcePlannerRuntimeState(state);
                 return;
             }
 
+            _key = requestedKey;
             renderer.UpdateResourcePlannerFromContext(context);
             switchingState.States[_key] = renderer.CaptureResourcePlannerRuntimeState();
         }
@@ -269,6 +271,58 @@ public unsafe partial class VulkanRenderer
 
             _renderer.RestoreResourcePlannerRuntimeState(_previousState);
         }
+    }
+
+    private static bool TryFindBestCompatibleFrameOpPlannerState(
+        in FrameOpContext context,
+        FrameOpResourcePlannerSwitchingState switchingState,
+        out FrameOpPlannerStateKey key,
+        out ResourcePlannerRuntimeState state)
+    {
+        key = default;
+        state = default;
+        bool found = false;
+        int bestScore = int.MinValue;
+
+        foreach (KeyValuePair<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> pair in switchingState.States)
+        {
+            if (!FrameOpContextMatchesPlannerStateKey(context, pair.Key))
+                continue;
+
+            int score = ScoreCompatibleFrameOpPlannerState(pair.Key, pair.Value);
+            if (!found || score > bestScore)
+            {
+                found = true;
+                bestScore = score;
+                key = pair.Key;
+                state = pair.Value;
+            }
+        }
+
+        return found;
+    }
+
+    private static int ScoreCompatibleFrameOpPlannerState(
+        in FrameOpPlannerStateKey key,
+        in ResourcePlannerRuntimeState state)
+    {
+        int score = 0;
+        if (key.ActivePassSetSignature != 0)
+            score += 1_000_000;
+        if (key.ActiveResourceSetSignature != 0)
+            score += 1_000_000;
+
+        if (state.ResourcePlannerRevision != 0)
+            score += 10_000;
+        if (state.ResourcePlannerSignature != ulong.MaxValue)
+            score += 1_000;
+        if (state.ResourceAllocationSignature != ulong.MaxValue)
+            score += 1_000;
+
+        score += Math.Min(state.ResourceAllocator.LogicalTextureAllocations.Count, 4096) * 4;
+        score += Math.Min(state.ResourceAllocator.LogicalBufferAllocations.Count, 4096);
+
+        return score;
     }
 
     internal bool TryEnsurePhysicalImageForTextureResource(
@@ -321,7 +375,18 @@ public unsafe partial class VulkanRenderer
         if (ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) &&
             group is not null)
         {
-            group.EnsureAllocated(this);
+            if (!group.TryEnsureAllocated(this, out string failureReason))
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.ResourcePlanner.LazyPhysicalImageAllocationFailed.{resourceName}",
+                    TimeSpan.FromSeconds(2),
+                    "[VulkanResourcePlanner] Lazy physical-image allocation failed for '{0}': {1}",
+                    resourceName,
+                    failureReason);
+                group = null;
+                return false;
+            }
+
             return group.IsAllocated;
         }
 
@@ -391,6 +456,7 @@ public unsafe partial class VulkanRenderer
         ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
         try
         {
+            ResetActiveFrameOpResourcePlannerState(switchingState);
             for (int i = 0; i < keys.Count; i++)
             {
                 FrameOpPlannerStateKey key = keys[i];
@@ -398,6 +464,7 @@ public unsafe partial class VulkanRenderer
                     ? existingState
                     : ResourcePlannerRuntimeState.CreateEmpty();
 
+                ResetActiveFrameOpResourcePlannerState(switchingState);
                 RestoreResourcePlannerRuntimeState(state);
                 _ = PrepareResourcePlannerForFrameOps(ops, key);
                 switchingState.States[key] = CaptureResourcePlannerRuntimeState();
@@ -406,6 +473,7 @@ public unsafe partial class VulkanRenderer
         }
         finally
         {
+            ResetActiveFrameOpResourcePlannerState(switchingState);
             RestoreResourcePlannerRuntimeState(previousState);
         }
 
@@ -460,7 +528,7 @@ public unsafe partial class VulkanRenderer
         if (switchingState.HasActiveKey && key.Equals(switchingState.ActiveKey))
             return;
 
-        if (switchingState.HasActiveKey)
+        if (switchingState.HasActiveKey && switchingState.RecordingScopeActive)
             switchingState.States[switchingState.ActiveKey] = CaptureResourcePlannerRuntimeState();
 
         ResourcePlannerRuntimeState state = switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState existingState)
@@ -470,6 +538,12 @@ public unsafe partial class VulkanRenderer
         RestoreResourcePlannerRuntimeState(state);
         switchingState.ActiveKey = key;
         switchingState.HasActiveKey = true;
+    }
+
+    private static void ResetActiveFrameOpResourcePlannerState(FrameOpResourcePlannerSwitchingState switchingState)
+    {
+        switchingState.HasActiveKey = false;
+        switchingState.ActiveKey = default;
     }
 
     private void StoreCachedFrameOpResourcePlannerState(in FrameOpPlannerStateKey key)

@@ -29,6 +29,11 @@ public unsafe partial class VulkanRenderer
 	{
 		#region Draw Command Recording
 
+		private static IDisposable? StartMeshDrawDetailScope(string name)
+			=> CommandRecordingDetailProfilingEnabled
+				? RuntimeRenderingHostServices.Current.StartProfileScope(name)
+				: null;
+
 		/// <summary>
 		/// Records draw commands into the given Vulkan command buffer for all
 		/// primitive types available on the mesh (triangles, lines, points).
@@ -47,13 +52,18 @@ public unsafe partial class VulkanRenderer
 			bool depthStencilReadOnly,
 			string pipelineName,
 			string targetName,
-			int drawUniformSlot)
+			int drawUniformSlot,
+			int frameDataImageIndex)
 		{
 			var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 			string prepareReason;
-			bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
-				? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.ProgramBindingSnapshot, drawUniformSlot, out prepareReason)
-				: TryPrepareForRendering(material, out prepareReason);
+			bool preparedForRecord;
+			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.Prepare"))
+			{
+				preparedForRecord = draw.PreparedProgram is { } preparedProgram
+					? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.ProgramBindingSnapshot, drawUniformSlot, out prepareReason)
+					: TryPrepareForRendering(material, out prepareReason);
+			}
 			if (!preparedForRecord)
 			{
 				if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw)
@@ -73,10 +83,18 @@ public unsafe partial class VulkanRenderer
 			bool verboseAllDrawTrace = XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw;
 			bool verboseTrace = verboseSwapchainTrace || verboseAllDrawTrace;
 
-			// Skinning and blendshape weights must be pushed to GPU before any draw
-			// commands reference them (mirrors the OpenGL code path).
-			MeshRenderer.PushBoneMatricesToGPU();
-			MeshRenderer.PushBlendshapeWeightsToGPU();
+			// Skinning and blendshape weights must be pushed before draw commands
+			// reference them; static meshes avoid the shared invalidation checks.
+			if (Mesh?.HasSkinning == true)
+			{
+				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushSkinning"))
+					MeshRenderer.PushBoneMatricesToGPU();
+			}
+			if (Mesh?.HasBlendshapes == true)
+			{
+				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushBlendshapes"))
+					MeshRenderer.PushBlendshapeWeightsToGPU();
+			}
 
 			bool uniformsNotified = false;
 
@@ -103,7 +121,13 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				if (!EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
+				Pipeline pipeline = default;
+				bool pipelineReady;
+				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.EnsurePipeline"))
+				{
+					pipelineReady = EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out pipeline);
+				}
+				if (!pipelineReady)
 				{
 					if (verboseTrace)
 						Debug.MeshesWarning("[DrawTrace] {0}: EnsurePipeline FAILED for {1} dynRender={2} colors={3} depthFmt={4}",
@@ -111,9 +135,13 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
+				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindPipeline"))
+					Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
-				if (!BindVertexBuffersForCurrentPipeline(commandBuffer))
+				bool vertexBuffersBound;
+				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindVertexBuffers"))
+					vertexBuffersBound = BindVertexBuffersForCurrentPipeline(commandBuffer);
+				if (!vertexBuffersBound)
 				{
 					if (verboseTrace)
 						Debug.MeshesWarning("[DrawTrace] {0}: BindVertexBuffers FAILED", Mesh?.Name ?? "?");
@@ -122,13 +150,18 @@ public unsafe partial class VulkanRenderer
 
 				if (!uniformsNotified && _program?.Data is { } programData)
 				{
-					NotifyDrawUniforms(material, programData, drawCopy);
+					using (StartMeshDrawDetailScope("Vulkan.MeshDraw.NotifyUniforms"))
+						NotifyDrawUniforms(material, programData, drawCopy);
 					uniformsNotified = true;
 				}
 
-				PushPerDrawConstants(commandBuffer, material, drawCopy);
+				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushConstants"))
+					PushPerDrawConstants(commandBuffer, material, drawCopy);
 
-				if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot))
+				bool descriptorsBound;
+				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
+					descriptorsBound = BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot, frameDataImageIndex);
+				if (!descriptorsBound)
 				{
 					if (verboseTrace)
 						Debug.MeshesWarning("[DrawTrace] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
@@ -149,8 +182,11 @@ public unsafe partial class VulkanRenderer
 						drawCopy.Scissor.Offset.X, drawCopy.Scissor.Offset.Y, drawCopy.Scissor.Extent.Width, drawCopy.Scissor.Extent.Height,
 						_program?.Data?.Name ?? "?prog");
 
-				Renderer.BindIndexBufferTracked(commandBuffer, indexHandle, 0, ToVkIndexType(size));
-				Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
+				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.CmdDrawIndexed"))
+				{
+					Renderer.BindIndexBufferTracked(commandBuffer, indexHandle, 0, ToVkIndexType(size));
+					Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
+				}
 
 				return true;
 			}
@@ -203,22 +239,38 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				if (vertexCount > 0 && EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out var pipeline))
+				Pipeline pipeline = default;
+				bool pipelineReady;
+				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.EnsurePipeline"))
 				{
-					Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
+					pipelineReady = vertexCount > 0 &&
+						EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, out pipeline);
+				}
+				if (pipelineReady)
+				{
+					using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindPipeline"))
+						Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
-					if (!BindVertexBuffersForCurrentPipeline(commandBuffer))
+					bool vertexBuffersBound;
+					using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindVertexBuffers"))
+						vertexBuffersBound = BindVertexBuffersForCurrentPipeline(commandBuffer);
+					if (!vertexBuffersBound)
 						return false;
 
 					if (!uniformsNotified && _program?.Data is { } programData)
 					{
-						NotifyDrawUniforms(material, programData, drawCopy);
+						using (StartMeshDrawDetailScope("Vulkan.MeshDraw.NotifyUniforms"))
+							NotifyDrawUniforms(material, programData, drawCopy);
 						uniformsNotified = true;
 					}
 
-					PushPerDrawConstants(commandBuffer, material, drawCopy);
+					using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushConstants"))
+						PushPerDrawConstants(commandBuffer, material, drawCopy);
 
-					if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot))
+					bool descriptorsBound;
+					using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
+						descriptorsBound = BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot, frameDataImageIndex);
+					if (!descriptorsBound)
 						return false;
 
 					if (verboseTrace)
@@ -263,7 +315,8 @@ public unsafe partial class VulkanRenderer
 							material.Name ?? "<material>");
 					}
 
-					Api!.CmdDraw(commandBuffer, vertexCount, drawInstances, 0, 0);
+					using (StartMeshDrawDetailScope("Vulkan.MeshDraw.CmdDraw"))
+						Api!.CmdDraw(commandBuffer, vertexCount, drawInstances, 0, 0);
 					drew = true;
 				}
 			}
@@ -322,7 +375,11 @@ public unsafe partial class VulkanRenderer
 			if (_program?.Data is { } programData)
 				NotifyDrawUniforms(material, programData, draw);
 
-			if (!BindDescriptorsIfAvailable(commandBuffer, material, draw, drawUniformSlot))
+			int frameIndex = ResolveCommandBufferIndex(commandBuffer);
+			if (frameIndex < 0)
+				frameIndex = 0;
+
+			if (!BindDescriptorsIfAvailable(commandBuffer, material, draw, drawUniformSlot, frameIndex))
 				return false;
 
 			PushPerDrawConstants(commandBuffer, material, draw);
@@ -636,7 +693,7 @@ public unsafe partial class VulkanRenderer
 		/// renderer-owned descriptor path because it carries per-draw engine and auto
 		/// uniform buffers in addition to material resources.
 		/// </summary>
-		private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw, int drawUniformSlot)
+		private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw, int drawUniformSlot, int frameDataImageIndex)
 		{
 			if (_program is null)
 				return true;
@@ -649,9 +706,7 @@ public unsafe partial class VulkanRenderer
 			if (!requiresDescriptors)
 				return true;
 
-			int imageIndex = ResolveCommandBufferIndex(commandBuffer);
-			if (imageIndex < 0)
-				imageIndex = 0;
+			int imageIndex = Math.Max(frameDataImageIndex, 0);
 
 			if (!EnsureDescriptorSets(material, drawUniformSlot))
 			{

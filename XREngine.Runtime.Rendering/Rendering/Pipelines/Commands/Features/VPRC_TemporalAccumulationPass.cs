@@ -254,6 +254,14 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         EAntiAliasingMode antiAliasingMode = ResolveAntiAliasingMode();
         bool shouldAccumulate = ShouldRunInternalAccumulation(antiAliasingMode);
+        EVrTemporalHistoryPolicy historyPolicy = ResolveHistoryIsolationPolicy(out _);
+        if (IsHistoryIsolationPolicyDisabled(historyPolicy))
+        {
+            SetHistoryExposureReady(false);
+            FlagTemporalHistoryCaptured();
+            return;
+        }
+
         if (shouldAccumulate)
         {
             var temporalInputFBO = ActivePipelineInstance.GetFBO<XRFrameBuffer>(TemporalInputFBOName);
@@ -420,6 +428,18 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         }
 
         bool externalSwapchainTarget = IsRenderingExternalSwapchainTarget();
+
+        bool openXrVulkanRuntimeSelected =
+            RuntimeEngine.Rendering.State.IsVulkan &&
+            (RuntimeRenderingHostServices.Current.IsOpenXrRuntimeRequested ||
+             RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
+             RuntimeEngine.VRState.OpenXRApi is not null ||
+             RuntimeEngine.VRState.IsOpenXRActive);
+        if (openXrVulkanRuntimeSelected && !RuntimeEngine.Rendering.State.IsStereoPass)
+        {
+            reason = "pending/running OpenXR Vulkan runtime";
+            return EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain;
+        }
 
         if (!RuntimeEngine.VRState.IsInVR && !RuntimeEngine.Rendering.State.IsStereoPass)
         {

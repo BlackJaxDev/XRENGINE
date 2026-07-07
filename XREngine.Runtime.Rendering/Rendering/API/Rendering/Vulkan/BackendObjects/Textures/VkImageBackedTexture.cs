@@ -101,7 +101,9 @@ public unsafe partial class VulkanRenderer
             {
                 lock (_imageStateLock)
                 {
-                    RefreshPhysicalGroupImageIfStale();
+                    if (!RefreshPhysicalGroupImageIfStaleNoLock())
+                        return false;
+
                     return _image.Handle != 0 || _view.Handle != 0 || _sampler.Handle != 0;
                 }
             }
@@ -113,7 +115,9 @@ public unsafe partial class VulkanRenderer
             {
                 lock (_imageStateLock)
                 {
-                    RefreshPhysicalGroupImageIfStale();
+                    if (!RefreshPhysicalGroupImageIfStaleNoLock())
+                        return false;
+
                     return IsDescriptorReadyNoLock();
                 }
             }
@@ -125,7 +129,7 @@ public unsafe partial class VulkanRenderer
                 (_image.Handle != 0 || _view.Handle != 0 || _sampler.Handle != 0)
                 && !IsDescriptorDirty
                 && _view.Handle != 0
-                && Renderer.IsLiveImageView(_view)
+                && IsImageViewBackedByCurrentImage(_view)
                 && (!CreateSampler || _sampler.Handle != 0);
             if (!descriptorHandlesReady)
                 return false;
@@ -140,8 +144,12 @@ public unsafe partial class VulkanRenderer
         {
             lock (_imageStateLock)
             {
-                EnsureDescriptorReadyForVulkanUse(reason);
-                RefreshPhysicalGroupImageIfStale();
+                if (!TryEnsureDescriptorReadyForVulkanUseNoThrow(reason) ||
+                    !RefreshPhysicalGroupImageIfStaleNoLock())
+                {
+                    return false;
+                }
+
                 return IsDescriptorReadyNoLock();
             }
         }
@@ -151,11 +159,35 @@ public unsafe partial class VulkanRenderer
             lock (_imageStateLock)
             {
                 if (allowSynchronousUpload)
-                    EnsureDescriptorReadyForVulkanUse(reason);
-                else
-                    RefreshPhysicalGroupImageIfStale();
+                {
+                    if (!TryEnsureDescriptorReadyForVulkanUseNoThrow(reason))
+                        return false;
+                }
+
+                if (!RefreshPhysicalGroupImageIfStaleNoLock())
+                    return false;
 
                 return IsDescriptorReadyNoLock();
+            }
+        }
+
+        private bool TryEnsureDescriptorReadyForVulkanUseNoThrow(string reason)
+        {
+            try
+            {
+                EnsureDescriptorReadyForVulkanUse(reason);
+                return true;
+            }
+            catch (VulkanOutOfMemoryException ex)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.DescriptorAllocationFailed.{Data.GetHashCode()}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Texture descriptor allocation failed for '{0}' ({1}): {2}",
+                    ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
+                    reason,
+                    ex.Message);
+                return false;
             }
         }
 
@@ -324,10 +356,18 @@ public unsafe partial class VulkanRenderer
         {
             lock (_imageStateLock)
             {
-                if (allowSynchronousUpload)
-                    EnsureDescriptorReadyForVulkanUse(reason);
-                else
-                    RefreshPhysicalGroupImageIfStale();
+                if (allowSynchronousUpload &&
+                    !TryEnsureDescriptorReadyForVulkanUseNoThrow(reason))
+                {
+                    snapshot = default;
+                    return false;
+                }
+
+                if (!RefreshPhysicalGroupImageIfStaleNoLock())
+                {
+                    snapshot = default;
+                    return false;
+                }
 
                 return TryBuildDescriptorSnapshotNoLock(requestedViewType, requestedAspectMask, out snapshot);
             }
@@ -374,8 +414,29 @@ public unsafe partial class VulkanRenderer
                     ? GetDescriptorViewNoLock(viewType)
                     : _view
             };
+            if (view.Handle != 0 && !IsImageViewBackedByCurrentImage(view))
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Texture.StaleDescriptorView.{Data.GetHashCode()}.{view.Handle}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Refreshing stale descriptor image view 0x{0:X} for texture '{1}' because it is not backed by the current image 0x{2:X}.",
+                    view.Handle,
+                    ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
+                    _image.Handle);
+                ForgetCurrentViews(removeActiveCacheEntry: true);
+                CreateImageView(default);
+                view = requestedAspectMask switch
+                {
+                    ImageAspectFlags.DepthBit => GetDepthOnlyDescriptorViewNoLock(),
+                    ImageAspectFlags.StencilBit => GetStencilOnlyDescriptorViewNoLock(),
+                    _ => requestedViewType is { } viewType
+                        ? GetDescriptorViewNoLock(viewType)
+                        : _view
+                };
+            }
+
             ImageLayout trackedLayout = ResolveTrackedImageLayoutNoLock();
-            bool ready = IsDescriptorReadyNoLock() && view.Handle != 0 && Renderer.IsLiveImageView(view);
+            bool ready = IsDescriptorReadyNoLock() && view.Handle != 0 && IsImageViewBackedByCurrentImage(view);
             snapshot = new(
                 _image,
                 _memory,
@@ -1032,20 +1093,25 @@ public unsafe partial class VulkanRenderer
         /// Also recreates the primary ImageView for the new image.
         /// This prevents stale-handle segfaults in CmdBlitImage and other Vulkan commands.
         /// </summary>
-        private void RefreshPhysicalGroupImageIfStale()
+        private bool RefreshPhysicalGroupImageIfStale()
         {
             lock (_imageStateLock)
-                RefreshPhysicalGroupImageIfStaleNoLock();
+                return RefreshPhysicalGroupImageIfStaleNoLock();
         }
 
-        private void RefreshPhysicalGroupImageIfStaleNoLock()
+        private bool RefreshPhysicalGroupImageIfStaleNoLock()
         {
             if (_physicalGroup is null)
-                return;
+                return true;
 
             bool physicalGroupChanged = false;
             bool switchedPhysicalGroup = false;
-            VulkanPhysicalImageGroup? activeGroup = TryResolvePhysicalGroup(ensureAllocated: true);
+            if (!TryResolvePhysicalGroup(ensureAllocated: true, out VulkanPhysicalImageGroup? activeGroup, out string? activeFailureReason))
+            {
+                LogPhysicalGroupRefreshFailure(activeFailureReason);
+                return false;
+            }
+
             if (activeGroup is not null && !ReferenceEquals(activeGroup, _physicalGroup))
             {
                 SaveCurrentPhysicalImageViewCache();
@@ -1059,7 +1125,12 @@ public unsafe partial class VulkanRenderer
                 // The physical group was destroyed — the resource planner may have rebuilt
                 // between frames and replaced it with a brand-new group object.
                 // Try to re-resolve from the allocator.
-                VulkanPhysicalImageGroup? replacement = TryResolvePhysicalGroup(ensureAllocated: true);
+                if (!TryResolvePhysicalGroup(ensureAllocated: true, out VulkanPhysicalImageGroup? replacement, out string? replacementFailureReason))
+                {
+                    LogPhysicalGroupRefreshFailure(replacementFailureReason);
+                    return false;
+                }
+
                 if (replacement is not null && replacement.IsAllocated)
                 {
                     physicalGroupChanged |= !ReferenceEquals(replacement, _physicalGroup);
@@ -1087,7 +1158,7 @@ public unsafe partial class VulkanRenderer
                     {
                         _memory = default;
                     }
-                    return;
+                    return false;
                 }
             }
 
@@ -1110,7 +1181,7 @@ public unsafe partial class VulkanRenderer
                 }
                 _image = default;
                 _memory = default;
-                return;
+                return false;
             }
 
             if (current.Handle == _image.Handle)
@@ -1131,7 +1202,7 @@ public unsafe partial class VulkanRenderer
                     IsInvalidated = false;
                     MarkDescriptorPublished();
                 }
-                return;
+                return true;
             }
 
             if (switchedPhysicalGroup)
@@ -1159,7 +1230,7 @@ public unsafe partial class VulkanRenderer
                 HasUploadedData = true;
                 IsInvalidated = false;
                 MarkDescriptorPublished();
-                return;
+                return true;
             }
 
             Debug.VulkanWarningEvery(
@@ -1171,6 +1242,12 @@ public unsafe partial class VulkanRenderer
                 current.Handle);
 
             // Same physical-group handle changes mean the underlying image was reallocated.
+            // A fresh VkImage starts in UNDEFINED even if the group object still has stale
+            // layout state from the previous handle.
+            Renderer.ClearTrackedImageLayouts(_image);
+            Renderer.ClearTrackedImageLayouts(current);
+            _physicalGroup.LastKnownLayout = ImageLayout.Undefined;
+
             // Retire the old views before changing _image so cache removal targets the old handle.
             DestroyCurrentViews(removeActiveCacheEntry: true);
             _image = current;
@@ -1188,13 +1265,24 @@ public unsafe partial class VulkanRenderer
             // referenced by retired framebuffers or in-flight command buffers.
             ResetAttachmentLayoutTracking();
             CreateImageView(default);
-            _currentImageLayout = _physicalGroup.LastKnownLayout;
+            _currentImageLayout = ImageLayout.Undefined;
             HasUploadedData = true;
             IsInvalidated = false;
             MarkDescriptorPublished();
 
-            // Adopt the physical group's live layout. If it is still UNDEFINED, the
-            // barrier planner will transition it inside the command buffer at first use.
+            // The barrier planner will transition the new image inside the command
+            // buffer at first use.
+            return true;
+        }
+
+        private void LogPhysicalGroupRefreshFailure(string? failureReason)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.Texture.PhysicalGroupRefreshFailed.{ResolveLogicalResourceName() ?? Data.GetHashCode().ToString()}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Physical image refresh failed for texture '{0}': {1}",
+                ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
+                string.IsNullOrWhiteSpace(failureReason) ? "resource group unavailable" : failureReason);
         }
 
         private void CreateDedicatedImage()
@@ -1228,6 +1316,7 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
+            Renderer.ClearTrackedImageLayouts(_image);
             _currentImageLayout = ImageLayout.Undefined;
             ResetAttachmentLayoutTracking();
 
@@ -1660,6 +1749,7 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
+            Renderer.ClearTrackedImageLayouts(image);
             Api!.GetImageMemoryRequirements(Device, image, out MemoryRequirements memRequirements);
             VulkanMemoryAllocation allocation = Renderer.AllocateImageMemoryWithFallback(image, MemoryProperties);
             Renderer._imageAllocations[image.Handle] = allocation;
@@ -2054,6 +2144,15 @@ public unsafe partial class VulkanRenderer
                 RemovePhysicalImageViewCacheEntry(_physicalGroup, _image.Handle);
         }
 
+        private void ForgetCurrentViews(bool removeActiveCacheEntry)
+        {
+            _view = default;
+            _attachmentViews.Clear();
+
+            if (removeActiveCacheEntry && _image.Handle != 0)
+                RemovePhysicalImageViewCacheEntry(_physicalGroup, _image.Handle);
+        }
+
         /// <summary>
         /// Returns a cached (or newly created) image view for a specific mip level and array
         /// layer, suitable for use as a framebuffer attachment. The default key falls back to
@@ -2082,6 +2181,9 @@ public unsafe partial class VulkanRenderer
                     return default;
                 }
 
+                if (_view.Handle != 0 && !IsImageViewBackedByCurrentImage(_view))
+                    _view = default;
+
                 if (_view.Handle == 0)
                     CreateImageView(default);
 
@@ -2105,7 +2207,14 @@ public unsafe partial class VulkanRenderer
                     return _view;
                 }
 
-                if (!_attachmentViews.TryGetValue(key, out ImageView cached))
+                if (_attachmentViews.TryGetValue(key, out ImageView cached) &&
+                    !IsImageViewBackedByCurrentImage(cached))
+                {
+                    _attachmentViews.Remove(key);
+                    cached = default;
+                }
+
+                if (cached.Handle == 0)
                 {
                     cached = CreateView(key);
                     if (cached.Handle != 0)
@@ -2133,6 +2242,16 @@ public unsafe partial class VulkanRenderer
 
                 return cached;
             }
+        }
+
+        private bool IsImageViewBackedByCurrentImage(ImageView view)
+        {
+            if (view.Handle == 0 || _image.Handle == 0)
+                return false;
+
+            return Renderer.TryGetImageViewBackingImage(view, out Image backingImage) &&
+                backingImage.Handle == _image.Handle &&
+                Renderer.IsLiveImageViewBackedByLiveImage(view);
         }
 
         bool IVkFrameBufferAttachmentSource.TryGetAttachmentExtent(int mipLevel, int layerIndex, out Extent2D extent)
@@ -3259,11 +3378,27 @@ public unsafe partial class VulkanRenderer
                 return false;
 
             PhysicalImageViewCacheEntry entry = _physicalImageViewCache[cacheIndex];
+            if (!IsCachedImageViewBackedByImage(entry.PrimaryView, image))
+                return false;
+
             _view = entry.PrimaryView;
             _attachmentViews.Clear();
             foreach (KeyValuePair<AttachmentViewKey, ImageView> pair in entry.AttachmentViews)
-                _attachmentViews[pair.Key] = pair.Value;
+            {
+                if (IsCachedImageViewBackedByImage(pair.Value, image))
+                    _attachmentViews[pair.Key] = pair.Value;
+            }
             return _view.Handle != 0;
+        }
+
+        private bool IsCachedImageViewBackedByImage(ImageView view, Image image)
+        {
+            if (view.Handle == 0 || image.Handle == 0)
+                return false;
+
+            return Renderer.TryGetImageViewBackingImage(view, out Image backingImage) &&
+                backingImage.Handle == image.Handle &&
+                Renderer.IsLiveImageViewBackedByLiveImage(view);
         }
 
         private int FindPhysicalImageViewCacheIndex(VulkanPhysicalImageGroup? group, ulong imageHandle)

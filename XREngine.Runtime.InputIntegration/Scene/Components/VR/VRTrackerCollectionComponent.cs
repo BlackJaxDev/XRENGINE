@@ -66,12 +66,17 @@ namespace XREngine.Data.Components.Scene
 
         private void ReverifyOpenXrTrackers()
         {
-            string[] trackerPaths = RuntimeVrStateServices.GetKnownOpenXrTrackerUserPaths();
-            for (int i = 0; i < trackerPaths.Length; i++)
+            RuntimeVrTrackerInfo[] trackers = RuntimeVrStateServices.GetKnownOpenXrTrackers();
+            for (int i = 0; i < trackers.Length; i++)
             {
-                string path = trackerPaths[i];
-                if (!OpenXrTrackers.ContainsKey(path))
-                    AddOpenXrTracker(path);
+                RuntimeVrTrackerInfo tracker = trackers[i];
+                if (string.IsNullOrWhiteSpace(tracker.UserPath))
+                    continue;
+
+                if (OpenXrTrackers.TryGetValue(tracker.UserPath, out VRTrackerTransform? existing))
+                    existing.ApplyOpenXrTrackerInfo(tracker);
+                else
+                    AddOpenXrTracker(tracker);
             }
         }
 
@@ -93,20 +98,23 @@ namespace XREngine.Data.Components.Scene
             Trackers.Add(device.DeviceIndex, (device, tfm));
         }
 
-        private void AddOpenXrTracker(string userPath)
+        private void AddOpenXrTracker(RuntimeVrTrackerInfo tracker)
         {
             SceneNode trackerNode = SceneNode.NewChild();
-            trackerNode.Name = $"OpenXR Tracker {GetOpenXrTrackerDisplayName(userPath)}";
+            trackerNode.Name = $"OpenXR Tracker {GetOpenXrTrackerDisplayName(tracker)}";
 
             VRTrackerTransform tfm = trackerNode.SetTransform<VRTrackerTransform>();
-            tfm.OpenXrTrackerUserPath = userPath;
+            tfm.ApplyOpenXrTrackerInfo(tracker);
+
+            VRTrackerModelComponent modelComponent = trackerNode.AddComponent<VRTrackerModelComponent>()!;
+            modelComponent.OpenXrTrackerUserPath = tracker.UserPath;
 
             uint syntheticDeviceIndex = uint.MaxValue - (uint)Trackers.Count;
             while (Trackers.ContainsKey(syntheticDeviceIndex))
                 syntheticDeviceIndex--;
 
             Trackers.Add(syntheticDeviceIndex, (null, tfm));
-            OpenXrTrackers.Add(userPath, tfm);
+            OpenXrTrackers.Add(tracker.UserPath, tfm);
         }
 
         /// <summary>
@@ -139,8 +147,12 @@ namespace XREngine.Data.Components.Scene
             return null;
         }
 
-        private static string GetOpenXrTrackerDisplayName(string userPath)
+        private static string GetOpenXrTrackerDisplayName(RuntimeVrTrackerInfo tracker)
         {
+            if (!string.IsNullOrWhiteSpace(tracker.RoleName))
+                return tracker.RoleName;
+
+            string userPath = tracker.UserPath;
             int slash = userPath.LastIndexOf('/');
             return slash >= 0 && slash + 1 < userPath.Length
                 ? userPath[(slash + 1)..]

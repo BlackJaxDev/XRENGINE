@@ -861,10 +861,12 @@ public unsafe partial class OpenXRAPI
 
         lock (_openXrPoseLock)
         {
-            if (!string.IsNullOrWhiteSpace(rolePath))
-                _openXrKnownTrackerPaths.Add(rolePath);
-            if (!string.IsNullOrWhiteSpace(persistentPath))
-                _openXrKnownTrackerPaths.Add(persistentPath);
+            RegisterViveTrackerLocked(
+                ResolveCanonicalTrackerUserPath(rolePath, persistentPath),
+                persistentPath,
+                rolePath,
+                poseAvailable: false,
+                runtimeReported: true);
         }
 
         if (!string.IsNullOrWhiteSpace(persistentPath) && !string.IsNullOrWhiteSpace(rolePath))
@@ -872,6 +874,74 @@ public unsafe partial class OpenXRAPI
 
         AddTrackerSubactionPath(rolePath);
         AddTrackerSubactionPath(persistentPath);
+    }
+
+    private string ResolveCanonicalTrackerUserPath(string userPath)
+        => _viveTrackerPersistentToRolePaths.TryGetValue(userPath, out string? rolePath) &&
+           !string.IsNullOrWhiteSpace(rolePath)
+            ? rolePath
+            : userPath;
+
+    private static string? ResolveCanonicalTrackerUserPath(string? rolePath, string? persistentPath)
+        => !string.IsNullOrWhiteSpace(rolePath)
+            ? rolePath
+            : persistentPath;
+
+    private void MarkTrackerPoseAvailableLocked(string userPath, string canonicalPath)
+    {
+        if (!string.IsNullOrWhiteSpace(canonicalPath))
+        {
+            string? persistentPath = string.Equals(canonicalPath, userPath, StringComparison.Ordinal)
+                ? null
+                : userPath;
+            string? rolePath = GetViveTrackerRoleName(canonicalPath) is not null
+                ? canonicalPath
+                : null;
+            RegisterViveTrackerLocked(canonicalPath, persistentPath, rolePath, poseAvailable: true, runtimeReported: false);
+            return;
+        }
+
+        RegisterViveTrackerLocked(userPath, null, null, poseAvailable: true, runtimeReported: false);
+    }
+
+    private void RegisterViveTrackerLocked(
+        string? userPath,
+        string? persistentPath,
+        string? rolePath,
+        bool poseAvailable,
+        bool runtimeReported)
+    {
+        if (string.IsNullOrWhiteSpace(userPath))
+            return;
+
+        _openXrKnownTrackerPaths.Add(userPath);
+
+        _openXrKnownTrackers.TryGetValue(userPath, out RuntimeVrTrackerInfo previous);
+        string? effectivePersistentPath = !string.IsNullOrWhiteSpace(persistentPath)
+            ? persistentPath
+            : previous.PersistentPath;
+        string? effectiveRolePath = !string.IsNullOrWhiteSpace(rolePath)
+            ? rolePath
+            : previous.RolePath;
+
+        _openXrKnownTrackers[userPath] = new RuntimeVrTrackerInfo(
+            userPath,
+            effectivePersistentPath,
+            effectiveRolePath,
+            GetViveTrackerRoleName(effectiveRolePath ?? userPath),
+            previous.PoseAvailable || poseAvailable,
+            previous.RuntimeReported || runtimeReported);
+    }
+
+    private static string? GetViveTrackerRoleName(string? userPath)
+    {
+        if (string.IsNullOrWhiteSpace(userPath))
+            return null;
+
+        const string rolePrefix = "/user/vive_tracker_htcx/role/";
+        return userPath.StartsWith(rolePrefix, StringComparison.Ordinal)
+            ? userPath[rolePrefix.Length..]
+            : null;
     }
 
     private void AddTrackerSubactionPath(string? userPath)

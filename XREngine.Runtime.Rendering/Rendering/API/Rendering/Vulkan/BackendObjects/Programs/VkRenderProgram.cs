@@ -2699,7 +2699,7 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
-            if (!Renderer.IsLiveImageView(descriptorView))
+            if (!Renderer.IsLiveImageViewBackedByLiveImage(descriptorView))
             {
                 Debug.VulkanWarningEvery(
                     $"Vulkan.Descriptor.RetiredImageView.{GetHashCode()}",

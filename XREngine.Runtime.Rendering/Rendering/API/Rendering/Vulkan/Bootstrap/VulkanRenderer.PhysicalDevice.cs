@@ -9,6 +9,7 @@ public unsafe partial class VulkanRenderer
     private PhysicalDevice _physicalDevice;
     public PhysicalDevice PhysicalDevice => _physicalDevice;
     private ulong _nonCoherentAtomSize = 1;
+    private ulong _uniformBufferOffsetAlignment = 1;
 
     private void PickPhysicalDevice()
     {
@@ -78,6 +79,7 @@ public unsafe partial class VulkanRenderer
         }
 
         _nonCoherentAtomSize = System.Math.Max(properties.Limits.NonCoherentAtomSize, 1UL);
+        _uniformBufferOffsetAlignment = System.Math.Max(properties.Limits.MinUniformBufferOffsetAlignment, 1UL);
         // NVIDIA PCI vendor ID.
         RuntimeEngine.Rendering.State.IsNVIDIA = properties.VendorID == 0x10DE;
         // Intel PCI vendor ID.

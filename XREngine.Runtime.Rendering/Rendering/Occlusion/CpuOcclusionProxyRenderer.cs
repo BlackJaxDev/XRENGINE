@@ -43,7 +43,7 @@ namespace XREngine.Rendering.Occlusion
                 // simple scale-by-size + translate-by-min, no centering correction needed.
                 XRMesh cube = XRMesh.Shapes.SolidBox(Vector3.Zero, Vector3.One);
 
-                XRMaterial probeMat = XRMaterial.CreateUnlitColorMaterialForward(Color.Magenta);
+                XRMaterial probeMat = XRMaterial.CreateUnlitColorMaterialForward(Color.Transparent);
 
                 var rp = new RenderingParameters
                 {

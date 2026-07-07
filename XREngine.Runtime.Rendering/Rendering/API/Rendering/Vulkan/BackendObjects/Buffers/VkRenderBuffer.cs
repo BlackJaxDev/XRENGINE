@@ -215,6 +215,7 @@ public unsafe partial class VulkanRenderer
                     throw new Exception("Failed to create Vulkan render buffer image.");
             }
 
+            Renderer.ClearTrackedImageLayouts(_image);
             VulkanMemoryAllocation allocation = Renderer.AllocateImageMemoryWithFallback(_image, MemoryPropertyFlags.DeviceLocalBit);
             Renderer._imageAllocations[_image.Handle] = allocation;
             _memory = allocation.Memory;

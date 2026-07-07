@@ -28,16 +28,14 @@ public unsafe partial class VulkanRenderer
 			if (singleName is not null)
 			{
 				if (_engineUniformBuffers.TryGetValue(singleName, out EngineUniformBuffer[]? toDestroy))
-					foreach (EngineUniformBuffer buf in toDestroy)
-						DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
+					DestroyEngineUniformBufferArray(toDestroy);
 
 				_engineUniformBuffers.Remove(singleName);
 				return;
 			}
 
 			foreach (EngineUniformBuffer[] buffers in _engineUniformBuffers.Values)
-				foreach (EngineUniformBuffer buf in buffers)
-					DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
+				DestroyEngineUniformBufferArray(buffers);
 
 			_engineUniformBuffers.Clear();
 		}
@@ -51,18 +49,34 @@ public unsafe partial class VulkanRenderer
 			if (singleName is not null)
 			{
 				if (_autoUniformBuffers.TryGetValue(singleName, out AutoUniformBuffer[]? toDestroy))
-					foreach (AutoUniformBuffer buf in toDestroy)
-						DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
+					DestroyAutoUniformBufferArray(toDestroy);
 
 				_autoUniformBuffers.Remove(singleName);
 				return;
 			}
 
 			foreach (AutoUniformBuffer[] buffers in _autoUniformBuffers.Values)
-				foreach (AutoUniformBuffer buf in buffers)
-					DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
+				DestroyAutoUniformBufferArray(buffers);
 
 			_autoUniformBuffers.Clear();
+		}
+
+		private void DestroyEngineUniformBufferArray(EngineUniformBuffer[] buffers)
+		{
+			foreach (EngineUniformBuffer buf in buffers)
+			{
+				if (buf.OwnsBuffer)
+					DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
+			}
+		}
+
+		private void DestroyAutoUniformBufferArray(AutoUniformBuffer[] buffers)
+		{
+			foreach (AutoUniformBuffer buf in buffers)
+			{
+				if (buf.OwnsBuffer)
+					DestroyMappedUniformBuffer(buf.Buffer, buf.Memory, buf.MappedPtr);
+			}
 		}
 
 		private void DestroyMappedUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, void* mappedPtr)

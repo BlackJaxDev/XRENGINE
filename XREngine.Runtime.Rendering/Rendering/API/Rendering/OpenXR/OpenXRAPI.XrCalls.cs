@@ -19,6 +19,11 @@ public unsafe partial class OpenXRAPI
         _win32PerformanceCounterTimeExtension = null;
         Volatile.Write(ref _win32PerformanceCounterTimeExtensionChecked, 0);
         Volatile.Write(ref _win32PerformanceCounterTimeExtensionUnavailableLogged, 0);
+        _msftControllerModel = null;
+        lock (_openXrControllerModelCache)
+            _openXrControllerModelCache.Clear();
+        Volatile.Write(ref _msftControllerModelExtensionChecked, 0);
+        Volatile.Write(ref _msftControllerModelUnavailableLogged, 0);
         Volatile.Write(ref _debugUtilsUnavailableLogged, 0);
     }
 

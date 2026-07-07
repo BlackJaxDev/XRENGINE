@@ -311,7 +311,7 @@ namespace XREngine.Rendering.Vulkan
             if (openXrRequirements.InstanceExtensions.Length > 0)
                 extensions = [.. extensions, .. openXrRequirements.InstanceExtensions];
 
-            if (EnableValidationLayers)
+            if (EnableValidationLayers || CommandBufferDebugLabelsEnabled)
                 extensions = [.. extensions, ExtDebugUtils.ExtensionName];
 
             return [.. extensions

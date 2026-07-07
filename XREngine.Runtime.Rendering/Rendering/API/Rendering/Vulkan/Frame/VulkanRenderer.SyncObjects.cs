@@ -30,6 +30,7 @@ public unsafe partial class VulkanRenderer
     private volatile bool _deviceLost;
     private string? _deviceLostReason;
     public override bool IsDeviceLost => _deviceLost;
+    public override string? DeviceLostReason => _deviceLostReason;
 
     private void MarkDeviceLost(string? reason = null)
     {

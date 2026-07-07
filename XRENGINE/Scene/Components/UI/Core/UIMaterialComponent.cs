@@ -32,6 +32,12 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _flipVerticalUVCoord, value);
         }
 
+        private static readonly Lazy<XRMesh> SharedQuadMesh = new(static () =>
+            XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)));
+
+        private static readonly Lazy<XRMesh> SharedFlippedQuadMesh = new(static () =>
+            XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, true)));
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -80,7 +86,7 @@ namespace XREngine.Rendering.UI
         private void RemakeMesh(XRMaterial material)
         {
             Mesh?.Destroy();
-            Mesh = new XRMeshRenderer(XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, FlipVerticalUVCoord)), material);
+            Mesh = new XRMeshRenderer(FlipVerticalUVCoord ? SharedFlippedQuadMesh.Value : SharedQuadMesh.Value, material);
         }
 
         private readonly RenderingParameters _renderParameters = new()

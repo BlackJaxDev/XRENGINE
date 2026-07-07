@@ -31,6 +31,18 @@ public sealed class ShadowAtlasRenderPlan
         return _members[index];
     }
 
+    public bool TryGetMember(int index, out ShadowAtlasRenderPlanMember member)
+    {
+        if ((uint)index < (uint)_memberCount)
+        {
+            member = _members[index];
+            return true;
+        }
+
+        member = default;
+        return false;
+    }
+
     internal void Clear()
     {
         for (int i = 0; i < _entryCount; i++)

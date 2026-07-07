@@ -190,6 +190,7 @@ namespace XREngine.Scene
         public IReadOnlyList<RenderInfo3D> Renderables => _renderables;
         private readonly List<RenderInfo3D> _renderables = [];
         private readonly HashSet<RenderInfo3D> _renderableSet = [];
+        private readonly object _renderablesSync = new();
         private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until PreCollectVisible runs on the collect visible thread
         private bool IsGpuCulling => _isGpuDispatchActive;
         private readonly HashSet<RenderableMesh> _skinnedMeshes = new();
@@ -303,24 +304,27 @@ namespace XREngine.Scene
             if (shouldMirror == _isCpuGpuCommandMirrorActive)
                 return;
 
-            _isCpuGpuCommandMirrorActive = shouldMirror;
-
-            if (shouldMirror && _hasSceneBounds)
-                GPUCommands.Bounds = _sceneBounds;
-
-            foreach (var renderable in _renderables)
+            lock (_renderablesSync)
             {
-                if (renderable.RenderCommands.Count == 0 || renderable.RenderCommands[0] is not IRenderCommandMesh meshCmd)
-                    continue;
+                _isCpuGpuCommandMirrorActive = shouldMirror;
 
-                if (shouldMirror)
+                if (shouldMirror && _hasSceneBounds)
+                    GPUCommands.Bounds = _sceneBounds;
+
+                foreach (var renderable in _renderables)
                 {
-                    if (meshCmd.GPUCommandIndex == uint.MaxValue)
-                        GPUCommands.Add(renderable);
-                }
-                else if (meshCmd.GPUCommandIndex != uint.MaxValue)
-                {
-                    GPUCommands.Remove(renderable);
+                    if (renderable.RenderCommands.Count == 0 || renderable.RenderCommands[0] is not IRenderCommandMesh meshCmd)
+                        continue;
+
+                    if (shouldMirror)
+                    {
+                        if (meshCmd.GPUCommandIndex == uint.MaxValue)
+                            GPUCommands.Add(renderable);
+                    }
+                    else if (meshCmd.GPUCommandIndex != uint.MaxValue)
+                    {
+                        GPUCommands.Remove(renderable);
+                    }
                 }
             }
         }
@@ -337,43 +341,47 @@ namespace XREngine.Scene
             if (useGpu == _isGpuDispatchActive)
                 return;
 
-            if (useGpu)
+            lock (_renderablesSync)
             {
-                // GPU dispatch: remove from RenderTree, keep in GPUCommands.
-                ActiveCpuRenderTree.RemoveRange(_renderables);
-                ActiveCpuRenderTree.Swap();
-
-                if (_hasSceneBounds)
-                    GPUCommands.Bounds = _sceneBounds;
-
-                // GPUCommands is always populated (see below), so renderables should
-                // already be present. Re-add defensively for cases where they were
-                // removed during an earlier CPU->GPU transition that was interrupted.
-                foreach (var renderable in _renderables)
+                if (useGpu)
                 {
-                    if (renderable.RenderCommands.Count > 0 &&
-                        renderable.RenderCommands[0] is IRenderCommandMesh meshCmd &&
-                        meshCmd.GPUCommandIndex == uint.MaxValue)
+                    // GPU dispatch: remove from RenderTree, keep in GPUCommands.
+                    ActiveCpuRenderTree.RemoveRange(_renderables);
+                    ActiveCpuRenderTree.Swap();
+
+                    if (_hasSceneBounds)
+                        GPUCommands.Bounds = _sceneBounds;
+
+                    // GPUCommands is always populated (see below), so renderables should
+                    // already be present. Re-add defensively for cases where they were
+                    // removed during an earlier CPU->GPU transition that was interrupted.
+                    foreach (var renderable in _renderables)
                     {
-                        GPUCommands.Add(renderable);
+                        if (renderable.RenderCommands.Count > 0 &&
+                            renderable.RenderCommands[0] is IRenderCommandMesh meshCmd &&
+                            meshCmd.GPUCommandIndex == uint.MaxValue)
+                        {
+                            GPUCommands.Add(renderable);
+                        }
                     }
                 }
-            }
-            else
-            {
-                // CPU dispatch: repopulate the RenderTree for CPU draw dispatch.
-                // GPUCommands mirroring is handled separately and only enabled when
-                // an active surfel consumer actually needs it.
-                if (_hasSceneBounds)
-                    ActiveCpuRenderTree.Remake(_sceneBounds);
                 else
-                    ActiveCpuRenderTree.Remake();
+                {
+                    // CPU dispatch: repopulate the RenderTree for CPU draw dispatch.
+                    // GPUCommands mirroring is handled separately and only enabled when
+                    // an active surfel consumer actually needs it.
+                    if (_hasSceneBounds)
+                        ActiveCpuRenderTree.Remake(_sceneBounds);
+                    else
+                        ActiveCpuRenderTree.Remake();
 
-                ActiveCpuRenderTree.AddRange(_renderables);
-                ActiveCpuRenderTree.Swap();
+                    ActiveCpuRenderTree.AddRange(_renderables);
+                    ActiveCpuRenderTree.Swap();
+                }
+
+                _isGpuDispatchActive = useGpu;
             }
 
-            _isGpuDispatchActive = useGpu;
             SyncCpuGpuCommandMirrorState();
         }
 
@@ -403,25 +411,28 @@ namespace XREngine.Scene
             if (_cpuSceneCullingStructureActive == structure)
                 return;
 
-            I3DRenderTree<RenderInfo3D> oldTree = ActiveCpuRenderTree;
-            if (!_isGpuDispatchActive)
+            lock (_renderablesSync)
             {
-                oldTree.RemoveRange(_renderables);
-                oldTree.Swap();
-            }
+                I3DRenderTree<RenderInfo3D> oldTree = ActiveCpuRenderTree;
+                if (!_isGpuDispatchActive)
+                {
+                    oldTree.RemoveRange(_renderables);
+                    oldTree.Swap();
+                }
 
-            _cpuSceneCullingStructureActive = structure;
-            I3DRenderTree<RenderInfo3D> newTree = ActiveCpuRenderTree;
+                _cpuSceneCullingStructureActive = structure;
+                I3DRenderTree<RenderInfo3D> newTree = ActiveCpuRenderTree;
 
-            if (_hasSceneBounds)
-                newTree.Remake(_sceneBounds);
-            else
-                newTree.Remake();
+                if (_hasSceneBounds)
+                    newTree.Remake(_sceneBounds);
+                else
+                    newTree.Remake();
 
-            if (!_isGpuDispatchActive)
-            {
-                newTree.AddRange(_renderables);
-                newTree.Swap();
+                if (!_isGpuDispatchActive)
+                {
+                    newTree.AddRange(_renderables);
+                    newTree.Swap();
+                }
             }
 
             Debug.Out($"[VisualScene3D] CPU scene culling structure set to {structure}.");
@@ -429,55 +440,65 @@ namespace XREngine.Scene
 
         public override IEnumerator<RenderInfo> GetEnumerator()
         {
-            foreach (var renderable in _renderables)
+            RenderInfo3D[] renderables;
+            lock (_renderablesSync)
+                renderables = _renderables.Count == 0 ? [] : _renderables.ToArray();
+
+            foreach (var renderable in renderables)
                 yield return renderable;
         }
 
         private void ProcessPendingRenderableOperations()
         {
-            while (_pendingRenderableOperations.TryDequeue(out var operation))
-            {
-                if (operation.add)
-                {
-                    if (_renderableSet.Add(operation.renderable))
-                    {
-                        _renderables.Add(operation.renderable);
-                        operation.renderable.SwapBuffersCallback += OnRenderableSwapBuffers;
-                        TrackRenderable(operation.renderable);
+            if (_pendingRenderableOperations.IsEmpty)
+                return;
 
-                        if (_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
-                            GPUCommands.Add(operation.renderable);
+            lock (_renderablesSync)
+            {
+                while (_pendingRenderableOperations.TryDequeue(out var operation))
+                {
+                    if (operation.add)
+                    {
+                        if (_renderableSet.Add(operation.renderable))
+                        {
+                            _renderables.Add(operation.renderable);
+                            operation.renderable.SwapBuffersCallback += OnRenderableSwapBuffers;
+                            TrackRenderable(operation.renderable);
+
+                            if (_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
+                                GPUCommands.Add(operation.renderable);
+
+                            if (!_isGpuDispatchActive)
+                                ActiveCpuRenderTree.Add(operation.renderable);
+
+                            ModelRenderDiagnostics.LogSceneRegistration(
+                                this,
+                                operation.renderable,
+                                added: true,
+                                _isGpuDispatchActive,
+                                _isCpuGpuCommandMirrorActive,
+                                _renderables.Count);
+                        }
+                    }
+                    else if (_renderableSet.Remove(operation.renderable))
+                    {
+                        UntrackRenderable(operation.renderable);
+                        operation.renderable.SwapBuffersCallback -= OnRenderableSwapBuffers;
+
+                        GPUCommands.Remove(operation.renderable);
 
                         if (!_isGpuDispatchActive)
-                            ActiveCpuRenderTree.Add(operation.renderable);
+                            ActiveCpuRenderTree.Remove(operation.renderable);
 
+                        _renderables.Remove(operation.renderable);
                         ModelRenderDiagnostics.LogSceneRegistration(
                             this,
                             operation.renderable,
-                            added: true,
+                            added: false,
                             _isGpuDispatchActive,
                             _isCpuGpuCommandMirrorActive,
                             _renderables.Count);
                     }
-                }
-                else if (_renderableSet.Remove(operation.renderable))
-                {
-                    UntrackRenderable(operation.renderable);
-                    operation.renderable.SwapBuffersCallback -= OnRenderableSwapBuffers;
-
-                    GPUCommands.Remove(operation.renderable);
-
-                    if (!_isGpuDispatchActive)
-                        ActiveCpuRenderTree.Remove(operation.renderable);
-
-                    _renderables.Remove(operation.renderable);
-                    ModelRenderDiagnostics.LogSceneRegistration(
-                        this,
-                        operation.renderable,
-                        added: false,
-                        _isGpuDispatchActive,
-                        _isCpuGpuCommandMirrorActive,
-                        _renderables.Count);
                 }
             }
         }

@@ -222,6 +222,8 @@ namespace XREngine.Components.Lights
         public override void SetUniforms(XRRenderProgram program, string? targetStructName = null)
         {
             base.SetUniforms(program, targetStructName);
+            bool enableCascadesForBackend = EnableCascadedShadows && CanRenderDirectionalCascadesForCurrentBackend();
+            program.Uniform(RuntimeEngine.Rendering.Constants.EnableCascadedShadows, enableCascadesForBackend);
 
             string prefix = targetStructName ?? RuntimeEngine.Rendering.Constants.LightsStructName;
             string flatPrefix = $"{prefix}.";
@@ -337,6 +339,12 @@ namespace XREngine.Components.Lights
             program.Uniform("ShadowMomentMipBias", ShadowMomentMipBias);
             program.Uniform("CameraNearZ", ShadowCamera?.NearZ ?? NearZ);
             program.Uniform("CameraFarZ", ShadowCamera?.FarZ ?? MathF.Max(Scale.Z, NearZ + 0.001f));
+
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+            {
+                program.Uniform("CascadeLayerCount", 0);
+                return;
+            }
 
             int cascadeCount;
             lock (_cascadeDataLock)

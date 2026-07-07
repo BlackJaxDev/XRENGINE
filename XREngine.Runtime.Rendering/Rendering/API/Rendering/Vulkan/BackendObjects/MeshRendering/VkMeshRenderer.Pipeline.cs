@@ -134,6 +134,7 @@ public unsafe partial class VulkanRenderer
 				_activeProgramIdentity = programIdentity;
 				_pipelineDirty = true;
 				_descriptorDirty = true;
+				_vertexInputStateDirty = true;
 			}
 
 			_generatedProgram = entry.Data;
@@ -323,6 +324,9 @@ public unsafe partial class VulkanRenderer
 		{
 			lock (_bufferStateSync)
 			{
+				if (!_vertexInputStateDirty)
+					return;
+
 				List<VertexInputBindingDescription> bindings = [];
 				List<VertexInputAttributeDescription> attributes = [];
 				List<KeyValuePair<string, VkDataBuffer>> vertexBuffers = [];
@@ -361,6 +365,7 @@ public unsafe partial class VulkanRenderer
 						ResolvePrimaryIndexSizeForLayout(out bool hasIndexBuffersNoInputs),
 						hasIndexBuffersNoInputs,
 						hasIndexBuffersNoInputs ? "IndexBuffer" : "VertexCount");
+					_vertexInputStateDirty = false;
 					return;
 				}
 
@@ -454,6 +459,8 @@ public unsafe partial class VulkanRenderer
 						Mesh?.Name ?? "<unnamed mesh>",
 						_geometryLayoutSignature.DebugSummary);
 				}
+
+				_vertexInputStateDirty = false;
 			}
 		}
 

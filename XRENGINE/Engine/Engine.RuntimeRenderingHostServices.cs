@@ -27,8 +27,11 @@ namespace XREngine;
 
 internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHostServices
 {
+    private const int MaxConsecutiveVrDesktopBudgetSkips = 2;
+
     private readonly object _vrDesktopPressureLock = new();
     private int _vrDesktopPressureHoldFramesRemaining;
+    private int _vrDesktopPressureConsecutiveSkips;
     private ulong _vrDesktopPressureFrameId;
     private bool _vrDesktopPressureHoldCurrentFrame;
 
@@ -1233,6 +1236,11 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public bool RenderWindowsWhileInVR => Engine.Rendering.Settings.RenderWindowsWhileInVR;
     public bool EnableOpenXrVulkanParallelRendering
         => Engine.GameSettings is not IVRGameStartupSettings vrSettings || vrSettings.EnableOpenXrVulkanParallelRendering;
+    public bool IsOpenXrRuntimeRequested
+        => Engine.StartupOpenXrRuntimeRequested ||
+           Engine.GameSettings is IVRGameStartupSettings { VRRuntime: EVRRuntime.OpenXR } ||
+           Engine.VRState.IsOpenXRActive ||
+           Engine.VRState.OpenXRApi is not null;
     public EVrViewRenderMode VrViewRenderMode => Engine.Rendering.Settings.VrViewRenderMode;
     public EVrMirrorMode VrMirrorMode => Engine.Rendering.Settings.VrMirrorMode;
     public float GetVrOutputTargetRateHz(EVrOutputViewKind viewKind)
@@ -1260,6 +1268,9 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
         {
             Engine.Rendering.Stats.FrameOutputManifestSnapshot manifest = Engine.Rendering.Stats.FrameOutputs.LastManifest;
             EVrMirrorMode mode = Engine.Rendering.Settings.VrMirrorMode;
+            if (ShouldKeepIndependentDesktopLive(mode))
+                autoSkipWhenOverBudget = false;
+
             if (autoSkipWhenOverBudget && !HasRecentRenderedDesktopOutput(manifest, viewKind))
                 autoSkipWhenOverBudget = false;
 
@@ -1292,6 +1303,11 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
                     EFrameOutputSkipReason.Budget,
                     targetRateHz);
             }
+
+            // The host owns VR desktop pressure gating. Passing this through to the
+            // generic cadence evaluator lets it immediately re-skip a frame the host
+            // intentionally released to prevent black/frozen desktop output.
+            autoSkipWhenOverBudget = false;
         }
 
         return Engine.Rendering.Stats.FrameOutputs.EvaluatePacing(
@@ -1302,6 +1318,10 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             targetRateHz,
             autoSkipWhenOverBudget);
     }
+
+    private bool ShouldKeepIndependentDesktopLive(EVrMirrorMode mode)
+        => mode == EVrMirrorMode.FullIndependentRender &&
+           Engine.Rendering.Settings.RenderWindowsWhileInVR;
 
     private static bool HasRecentRenderedDesktopOutput(
         Engine.Rendering.Stats.FrameOutputManifestSnapshot manifest,
@@ -1348,9 +1368,25 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
             }
 
             if (_vrDesktopPressureHoldFramesRemaining <= 0)
+            {
+                _vrDesktopPressureConsecutiveSkips = 0;
                 return false;
+            }
+
+            if (_vrDesktopPressureConsecutiveSkips >= MaxConsecutiveVrDesktopBudgetSkips)
+            {
+                _vrDesktopPressureHoldFramesRemaining = 0;
+                _vrDesktopPressureConsecutiveSkips = 0;
+                Debug.RenderingEvery(
+                    "VR.DesktopPressure.ForceRefreshAfterBudgetSkips",
+                    TimeSpan.FromSeconds(1),
+                    "[FrameOutput] Forcing VR desktop refresh after {0} consecutive budget skips.",
+                    MaxConsecutiveVrDesktopBudgetSkips);
+                return false;
+            }
 
             _vrDesktopPressureHoldFramesRemaining--;
+            _vrDesktopPressureConsecutiveSkips++;
             _vrDesktopPressureHoldCurrentFrame = true;
             return true;
         }

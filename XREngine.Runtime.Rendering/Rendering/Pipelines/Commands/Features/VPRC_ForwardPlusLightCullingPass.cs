@@ -71,7 +71,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (RuntimeEngine.Rendering.State.IsShadowPass)
+            if (RuntimeEngine.Rendering.State.IsShadowPass ||
+                DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath)
             {
                 RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount = 0;
                 RuntimeEngine.Rendering.State.ForwardPlusLocalLightsBuffer = null;

@@ -749,8 +749,8 @@ public unsafe partial class VulkanRenderer
 			AppendComponent(builder, "resourceAllocator", unchecked((ulong)Renderer.ResourceAllocatorIdentity));
 			if (_program is not null)
 			{
-				AppendReferencedProgramSamplerResourceFingerprintDetails(builder, bindings);
-				AppendComponent(builder, "programSamplers", ComputeReferencedProgramSamplerResourceFingerprint(bindings));
+				AppendReferencedProgramSamplerResourceFingerprintDetails(builder, material, bindings);
+				AppendComponent(builder, "programSamplers", ComputeReferencedProgramSamplerResourceFingerprint(material, bindings));
 				AppendComponent(builder, "programBuffers", ComputeReferencedProgramBufferResourceFingerprint(bindings));
 			}
 			else
@@ -810,13 +810,13 @@ public unsafe partial class VulkanRenderer
 			hash.Add(ComputeEngineUniformResourceFingerprintCore());
 			hash.Add(ComputeAutoUniformResourceFingerprintCore());
 
-			hash.Add(ComputeReferencedProgramSamplerResourceFingerprint(bindings));
+			hash.Add(ComputeReferencedProgramSamplerResourceFingerprint(material, bindings));
 			hash.Add(ComputeReferencedProgramBufferResourceFingerprint(bindings));
 
 			return unchecked((ulong)hash.ToHashCode());
 		}
 
-		private ulong ComputeReferencedProgramSamplerResourceFingerprint(IReadOnlyList<DescriptorBindingInfo> bindings)
+		private ulong ComputeReferencedProgramSamplerResourceFingerprint(XRMaterial material, IReadOnlyList<DescriptorBindingInfo> bindings)
 		{
 			HashCode hash = new();
 			ulong xor = 0;
@@ -826,10 +826,10 @@ public unsafe partial class VulkanRenderer
 			for (int i = 0; i < bindings.Count; i++)
 			{
 				DescriptorBindingInfo binding = bindings[i];
-				if (!ShouldFingerprintProgramSamplerBinding(binding))
+				if (!ShouldFingerprintProgramSamplerBinding(material, binding))
 					continue;
 
-				AddUnorderedFingerprintItem(ref xor, ref sum, ComputeReferencedProgramSamplerFingerprintItem(binding));
+				AddUnorderedFingerprintItem(ref xor, ref sum, ComputeReferencedProgramSamplerFingerprintItem(material, binding));
 				count++;
 			}
 
@@ -839,44 +839,104 @@ public unsafe partial class VulkanRenderer
 			return unchecked((ulong)hash.ToHashCode());
 		}
 
-		private void AppendReferencedProgramSamplerResourceFingerprintDetails(StringBuilder builder, IReadOnlyList<DescriptorBindingInfo> bindings)
+		private void AppendReferencedProgramSamplerResourceFingerprintDetails(StringBuilder builder, XRMaterial material, IReadOnlyList<DescriptorBindingInfo> bindings)
 		{
 			const int maxDetailedSamplers = 10;
 			int detailedCount = 0;
 			for (int i = 0; i < bindings.Count; i++)
 			{
 				DescriptorBindingInfo binding = bindings[i];
-				if (!ShouldFingerprintProgramSamplerBinding(binding))
+				if (!ShouldFingerprintProgramSamplerBinding(material, binding))
 					continue;
 
 				AppendComponent(
 					builder,
 					$"programSampler[{binding.Name}@{binding.Set}.{binding.Binding}]",
-					ComputeReferencedProgramSamplerFingerprintItem(binding));
+					ComputeReferencedProgramSamplerFingerprintItem(material, binding));
 				detailedCount++;
 				if (detailedCount >= maxDetailedSamplers)
 					break;
 			}
 		}
 
-		private bool ShouldFingerprintProgramSamplerBinding(DescriptorBindingInfo binding)
+		private bool ShouldFingerprintProgramSamplerBinding(XRMaterial material, DescriptorBindingInfo binding)
 			=> IsImageDescriptorBinding(binding.DescriptorType) &&
 				!VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding) &&
-				!BindingResolvesPipelineResourceTexture(binding) &&
+				!MaterialResolvesDescriptorBinding(material, binding) &&
+				!IsFrameSourceSamplerBinding(material, binding) &&
 				!string.IsNullOrWhiteSpace(binding.Name);
 
-		private static bool IsFrameSourceSamplerBinding(DescriptorBindingInfo binding)
-			=> IsFrameSourceSamplerName(binding.Name) ||
-				BindingResolvesPipelineResourceTexture(binding);
+		private bool IsFrameSourceSamplerBinding(XRMaterial material, DescriptorBindingInfo binding)
+		{
+			if (IsFrameSourceSamplerName(binding.Name))
+				return true;
 
-		private ulong ComputeReferencedProgramSamplerFingerprintItem(DescriptorBindingInfo binding)
+			if (string.IsNullOrWhiteSpace(binding.Name) ||
+				MaterialResolvesDescriptorBinding(material, binding) ||
+				!BindingResolvesPipelineResourceTexture(binding))
+			{
+				return false;
+			}
+
+			XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+			return pipeline is not null &&
+				_program is not null &&
+				_program.TryGetSamplerTexture(binding.Name, out XRTexture? programTexture) &&
+				pipeline.TryGetTexture(binding.Name, out XRTexture? pipelineTexture) &&
+				ReferenceEquals(programTexture, pipelineTexture);
+		}
+
+		private bool MaterialResolvesDescriptorBinding(XRMaterial material, DescriptorBindingInfo binding)
+		{
+			if (VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding))
+				return material.Textures.Count > 0;
+
+			if (!string.IsNullOrWhiteSpace(binding.Name) &&
+				_program is not null &&
+				_program.TryGetSamplerTexture(binding.Name, out _))
+			{
+				return false;
+			}
+
+			MaterialTextureBindingResolution resolution = MaterialTextureBindingResolver.Resolve(
+				material,
+				binding.Name,
+				(int)binding.Binding,
+				arrayIndex: 0,
+				bindlessMaterialArray: false);
+
+			return resolution.HasTexture;
+		}
+
+		private static bool MaterialOwnsNamedSamplerBinding(XRMaterial material, string? bindingName)
+		{
+			if (string.IsNullOrWhiteSpace(bindingName))
+				return false;
+
+			for (int i = 0; i < material.Textures.Count; i++)
+			{
+				XRTexture? texture = material.Textures[i];
+				if (texture is null)
+					continue;
+
+				if (string.Equals(texture.ResolveSamplerName(i, null), bindingName, StringComparison.Ordinal) ||
+					string.Equals(XRTexture.GetIndexedSamplerName(i), bindingName, StringComparison.Ordinal))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private ulong ComputeReferencedProgramSamplerFingerprintItem(XRMaterial material, DescriptorBindingInfo binding)
 		{
 			HashCode item = new();
 			item.Add(binding.Set);
 			item.Add(binding.Binding);
 			item.Add((int)binding.DescriptorType);
 			item.Add(binding.Name, StringComparer.Ordinal);
-			if (IsFrameSourceSamplerBinding(binding))
+			if (IsFrameSourceSamplerBinding(material, binding))
 			{
 				AddFrameSourceSamplerDescriptorResourceFingerprint(ref item, null);
 			}
@@ -916,7 +976,7 @@ public unsafe partial class VulkanRenderer
 
 			XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
 			if (!SnapshotHasFrameSourceSampler(snapshot, pipeline) &&
-				!DescriptorBindingsHaveFrameSourceSampler(_program.DescriptorBindings))
+				!DescriptorBindingsHaveFrameSourceSampler(material, _program.DescriptorBindings))
 			{
 				return true;
 			}
@@ -956,10 +1016,10 @@ public unsafe partial class VulkanRenderer
 			return false;
 		}
 
-		private static bool DescriptorBindingsHaveFrameSourceSampler(IReadOnlyList<DescriptorBindingInfo> bindings)
+		private bool DescriptorBindingsHaveFrameSourceSampler(XRMaterial material, IReadOnlyList<DescriptorBindingInfo> bindings)
 		{
 			for (int i = 0; i < bindings.Count; i++)
-				if (IsFrameSourceSamplerBinding(bindings[i]))
+				if (IsFrameSourceSamplerBinding(material, bindings[i]))
 					return true;
 
 			return false;
@@ -980,7 +1040,7 @@ public unsafe partial class VulkanRenderer
 			for (int i = 0; i < bindings.Count; i++)
 			{
 				DescriptorBindingInfo binding = bindings[i];
-				if (!IsFrameSourceSamplerBinding(binding))
+				if (!IsFrameSourceSamplerBinding(material, binding))
 					continue;
 
 				if (!IsImageDescriptorBinding(binding.DescriptorType))
@@ -1343,18 +1403,31 @@ public unsafe partial class VulkanRenderer
 			object? apiObject = Renderer.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload);
 			if (apiObject is IVkImageDescriptorSource imageSource)
 			{
-				hash.Add(imageSource.IsDescriptorReady);
-				hash.Add(imageSource.DescriptorGeneration);
-				hash.Add(imageSource.DescriptorImage.Handle);
-				hash.Add(imageSource.DescriptorView.Handle);
-				hash.Add(imageSource.DescriptorSampler.Handle);
-				hash.Add(imageSource.DescriptorViewType);
-				hash.Add(imageSource.DescriptorFormat);
-				hash.Add(imageSource.DescriptorAspect);
-				hash.Add(imageSource.DescriptorUsage);
-				hash.Add(imageSource.DescriptorSamples);
-				hash.Add(imageSource.DescriptorMipLevels);
-				hash.Add(imageSource.DescriptorArrayLayers);
+				if (imageSource.TryGetDescriptorSnapshot(
+					requestedViewType: null,
+					requestedAspectMask: null,
+					reason: "DescriptorResourceFingerprint",
+					allowSynchronousTextureUpload,
+					out VkImageDescriptorSnapshot snapshot))
+				{
+					hash.Add(snapshot.IsReady);
+					hash.Add(snapshot.Generation);
+					hash.Add(snapshot.Image.Handle);
+					hash.Add(snapshot.View.Handle);
+					hash.Add(snapshot.Sampler.Handle);
+					hash.Add(snapshot.ViewType);
+					hash.Add(snapshot.Format);
+					hash.Add(snapshot.Aspect);
+					hash.Add(snapshot.Usage);
+					hash.Add(snapshot.Samples);
+					hash.Add(snapshot.MipLevels);
+					hash.Add(snapshot.ArrayLayers);
+				}
+				else
+				{
+					hash.Add(false);
+					hash.Add(imageSource.DescriptorGeneration);
+				}
 			}
 			else
 			{
@@ -1664,7 +1737,7 @@ public unsafe partial class VulkanRenderer
 
 					foreach (var (_, imageIndex, binding, descriptorCount) in imageMap)
 					{
-						if (!IsFrameSourceSamplerBinding(binding))
+						if (!IsFrameSourceSamplerBinding(material, binding))
 							continue;
 
 						RecordFrameSourceDescriptorWriteSignature(
@@ -1740,9 +1813,12 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				if (requireImageView && !Renderer.IsLiveImageView(info.ImageView))
+				if (requireImageView && !Renderer.IsLiveImageViewBackedByLiveImage(info.ImageView))
 				{
-					WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] references a retired image view.");
+					string backing = Renderer.TryGetImageViewBackingImage(info.ImageView, out Image backingImage)
+						? $" backed by image 0x{backingImage.Handle:X}"
+						: string.Empty;
+					WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] references a retired image view{backing}.");
 					return false;
 				}
 
@@ -2132,7 +2208,7 @@ public unsafe partial class VulkanRenderer
 			bufferInfo = new DescriptorBufferInfo
 			{
 				Buffer = target.Buffer,
-				Offset = 0,
+				Offset = target.Offset,
 				Range = target.Size,
 			};
 
@@ -2239,7 +2315,7 @@ public unsafe partial class VulkanRenderer
 						out descriptorSnapshot) &&
 					descriptorSnapshot.View.Handle != 0)
 				{
-					if (!Renderer.IsLiveImageView(descriptorSnapshot.View))
+					if (!Renderer.IsLiveImageViewBackedByLiveImage(descriptorSnapshot.View))
 					{
 						if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-retired-image-view", out imageInfo, source))
 							return true;
@@ -2288,7 +2364,7 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			if (!Renderer.IsLiveImageView(descriptorSnapshot.View))
+			if (!Renderer.IsLiveImageViewBackedByLiveImage(descriptorSnapshot.View))
 			{
 				if (TryUsePlaceholderDescriptor(binding, descriptorType, arrayIndex, material, textureBinding, texture, "placeholder-retired-image-view", out imageInfo, source))
 					return true;
@@ -2607,7 +2683,7 @@ public unsafe partial class VulkanRenderer
 				bufferInfo = new DescriptorBufferInfo
 				{
 					Buffer = target.Buffer,
-					Offset = 0,
+					Offset = target.Offset,
 					Range = size,
 				};
 
@@ -2642,7 +2718,7 @@ public unsafe partial class VulkanRenderer
 				bufferInfo = new DescriptorBufferInfo
 				{
 					Buffer = target.Buffer,
-					Offset = 0,
+					Offset = target.Offset,
 					Range = size,
 				};
 

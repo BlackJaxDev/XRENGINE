@@ -630,6 +630,14 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private bool ShouldPrepareAtlasGroupedFaceCollection()
         {
+            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
+            {
+                // Share the directional-cascade safety gate: grouped atlas rendering
+                // depends on indexed viewport/scissor state and shader viewport/layer
+                // writes, and the Vulkan path needs validation before using it.
+                return false;
+            }
+
             if (!UsesPointShadowAtlasForCurrentEncoding ||
                 _shadowRenderMode == EPointShadowRenderMode.Sequential ||
                 !RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
@@ -924,6 +932,9 @@ namespace XREngine.Components.Capture.Lights.Types
             SyncShadowCaptureTransforms();
 
             int groupedCount = Math.Min(group.FaceCount, ShadowFaceCount);
+            if (!ShouldPrepareAtlasGroupedFaceCollection())
+                return false;
+
             PointShadowRenderPlan plan = CreatePointAtlasShadowRenderPlan(groupedCount, hasGroupedAtlasAllocation: true);
             PublishShadowRenderPlan(plan);
             if (!plan.IsLayered)

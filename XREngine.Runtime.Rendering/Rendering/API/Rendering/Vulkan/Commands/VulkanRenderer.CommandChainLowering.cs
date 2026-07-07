@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Numerics;
 using System.Text;
 using System.Threading;
 using Silk.NET.Vulkan;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Shadows;
@@ -24,6 +26,7 @@ public unsafe partial class VulkanRenderer
     internal const int CommandChainStereoMultiviewViewIndex = -1;
 
     private Dictionary<CommandChainKey, CommandChain>[]? _commandChainCaches;
+    private Dictionary<uint, Dictionary<CommandChainKey, CommandChain>>? _externalCommandChainCaches;
     private CommandChainSchedule?[]? _commandChainScheduleCache;
     private ulong[]? _commandChainScheduleFastSignatures;
     private readonly List<RenderPacket> _commandChainPacketScratch = [];
@@ -39,7 +42,37 @@ public unsafe partial class VulkanRenderer
     private static bool ParallelCommandChainRecordingDisabled => IsCommandChainFlagEnabled(DisableParallelChainRecordingEnvVar);
     private static bool ParallelPacketBuildEnabled => IsCommandChainFlagEnabled(ParallelPacketBuildEnvVar);
     private static bool CommandChainMultiQueueEnabled => IsCommandChainFlagEnabled(CommandChainMultiQueueEnvVar);
-    private bool CommandChainsEnabledForCurrentRecording => CommandChainsEnabled || IsRenderingExternalSwapchainTarget;
+    private bool CommandChainsEnabledForCurrentRecording =>
+        IsRenderingExternalSwapchainTarget ||
+        (CommandChainsEnabled && !ShouldBypassCommandChainsForOpenXrIndependentDesktop) ||
+        ShouldUseCommandChainsForOpenXrIndependentDesktop;
+
+    private static bool ShouldBypassCommandChainsForOpenXrIndependentDesktop =>
+        ShouldUseOpenXrIndependentDesktopCommandChainPolicy &&
+        !IsCommandChainFlagEnabled("XRE_VULKAN_COMMAND_CHAINS_ALLOW_INDEPENDENT_DESKTOP");
+
+    private static bool ShouldUseCommandChainsForOpenXrIndependentDesktop
+    {
+        get
+        {
+            return ShouldUseOpenXrIndependentDesktopCommandChainPolicy &&
+                   IsCommandChainFlagEnabled("XRE_VULKAN_COMMAND_CHAINS_ALLOW_INDEPENDENT_DESKTOP");
+        }
+    }
+
+    private static bool ShouldUseOpenXrIndependentDesktopCommandChainPolicy
+    {
+        get
+        {
+            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+            return host.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
+                   host.IsInVR &&
+                   host.IsOpenXRActive &&
+                   host.RenderWindowsWhileInVR &&
+                   host.VrMirrorMode == EVrMirrorMode.FullIndependentRender &&
+                   !host.VrMirrorComposeFromEyeTextures;
+        }
+    }
 
     private readonly record struct CommandChainLoweringStats(
         int VisibilityPackets,
@@ -336,7 +369,9 @@ public unsafe partial class VulkanRenderer
         if (CommandChainValidationEnabled || CommandChainTraceEnabled || IsRenderingExternalSwapchainTarget)
             return false;
 
-        int slot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+        if (!TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
+            return false;
+
         if (_commandChainScheduleCache is null ||
             _commandChainScheduleFastSignatures is null ||
             slot >= _commandChainScheduleCache.Length ||
@@ -375,8 +410,10 @@ public unsafe partial class VulkanRenderer
         if (CommandChainValidationEnabled || CommandChainTraceEnabled)
             return;
 
+        if (!TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))
+            return;
+
         EnsureCommandChainScheduleCache();
-        int slot = unchecked((int)Math.Min(imageIndex, (uint)(_commandChainScheduleCache!.Length - 1)));
         _commandChainScheduleCache[slot] = schedule;
         _commandChainScheduleFastSignatures![slot] = fastScheduleSignature;
     }
@@ -585,22 +622,56 @@ public unsafe partial class VulkanRenderer
 
     private Dictionary<CommandChainKey, CommandChain> GetCommandChainCache(uint imageIndex)
     {
-        if (_commandChainCaches is null || _commandBuffers is null || _commandChainCaches.Length != _commandBuffers.Length)
-        {
-            if (_commandChainCaches is not null)
-            {
-                DestroyCommandChainCaches();
-                MarkOpenXrPrimaryCommandBufferVariantsDirty();
-            }
+        if (!TryGetIndexedCommandChainCacheSlot(imageIndex, out int index))
+            return GetExternalCommandChainCache(imageIndex);
 
-            int count = Math.Max(_commandBuffers?.Length ?? 0, 1);
-            _commandChainCaches = new Dictionary<CommandChainKey, CommandChain>[count];
-            for (int i = 0; i < count; i++)
-                _commandChainCaches[i] = new Dictionary<CommandChainKey, CommandChain>();
+        EnsureIndexedCommandChainCaches();
+        return _commandChainCaches![index];
+    }
+
+    private int ResolveIndexedCommandChainCacheCount()
+        => Math.Max(_commandBuffers?.Length ?? 0, 1);
+
+    private bool TryGetIndexedCommandChainCacheSlot(uint imageIndex, out int index)
+    {
+        int count = ResolveIndexedCommandChainCacheCount();
+        if (imageIndex < (uint)count)
+        {
+            index = unchecked((int)imageIndex);
+            return true;
         }
 
-        int index = unchecked((int)Math.Min(imageIndex, (uint)(_commandChainCaches.Length - 1)));
-        return _commandChainCaches[index];
+        index = -1;
+        return false;
+    }
+
+    private void EnsureIndexedCommandChainCaches()
+    {
+        int count = ResolveIndexedCommandChainCacheCount();
+        if (_commandChainCaches is not null && _commandChainCaches.Length == count)
+            return;
+
+        if (_commandChainCaches is not null)
+        {
+            DestroyCommandChainCaches();
+            MarkOpenXrPrimaryCommandBufferVariantsDirty();
+        }
+
+        _commandChainCaches = new Dictionary<CommandChainKey, CommandChain>[count];
+        for (int i = 0; i < count; i++)
+            _commandChainCaches[i] = new Dictionary<CommandChainKey, CommandChain>();
+    }
+
+    private Dictionary<CommandChainKey, CommandChain> GetExternalCommandChainCache(uint imageIndex)
+    {
+        Dictionary<uint, Dictionary<CommandChainKey, CommandChain>> caches = _externalCommandChainCaches ??= [];
+        if (!caches.TryGetValue(imageIndex, out Dictionary<CommandChainKey, CommandChain>? cache))
+        {
+            cache = [];
+            caches.Add(imageIndex, cache);
+        }
+
+        return cache;
     }
 
     private int InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease()
@@ -614,6 +685,23 @@ public unsafe partial class VulkanRenderer
                 if (cache is null)
                     continue;
 
+                foreach (CommandChain chain in cache.Values)
+                {
+                    if (chain.SecondaryCommandBuffer.Handle == 0 || !chain.SecondaryCommandBufferExecutable)
+                        continue;
+
+                    MarkCommandChainSecondaryCommandBufferInvalid(chain);
+                    MarkCommandChainSecondaryCommandBufferChanged(chain);
+                    chain.DirtyReason |= CommandChainDirtyReason.DescriptorGeneration;
+                    invalidated++;
+                }
+            }
+        }
+
+        if (_externalCommandChainCaches is not null)
+        {
+            foreach (Dictionary<CommandChainKey, CommandChain> cache in _externalCommandChainCaches.Values)
+            {
                 foreach (CommandChain chain in cache.Values)
                 {
                     if (chain.SecondaryCommandBuffer.Handle == 0 || !chain.SecondaryCommandBufferExecutable)
@@ -1504,12 +1592,23 @@ public unsafe partial class VulkanRenderer
                 hash.Add(draw.Draw.MaterialOverride?.GetHashCode() ?? 0);
                 hash.Add(draw.Draw.Instances);
                 hash.Add(draw.Draw.BlendEnabled);
+                hash.Add(draw.Draw.AlphaToCoverageEnabled);
+                hash.Add((int)draw.Draw.ColorBlendOp);
+                hash.Add((int)draw.Draw.AlphaBlendOp);
+                hash.Add((int)draw.Draw.SrcColorBlendFactor);
+                hash.Add((int)draw.Draw.DstColorBlendFactor);
+                hash.Add((int)draw.Draw.SrcAlphaBlendFactor);
+                hash.Add((int)draw.Draw.DstAlphaBlendFactor);
+                hash.Add((int)draw.Draw.ColorWriteMask);
                 hash.Add((int)draw.Draw.CullMode);
                 hash.Add((int)draw.Draw.FrontFace);
+                hash.Add((int)draw.Draw.RasterizationSamples);
                 hash.Add(draw.Draw.DepthTestEnabled);
                 hash.Add(draw.Draw.DepthWriteEnabled);
                 hash.Add((int)draw.Draw.DepthCompareOp);
-                hash.Add(draw.Draw.ViewportScissorCount);
+                hash.Add(draw.Draw.StencilTestEnabled);
+                hash.Add(draw.Draw.StencilWriteMask);
+                AddViewportScissorSignature(ref hash, draw.Draw);
                 hash.Add(draw.Draw.PreparedProgramIdentity);
                 hash.Add(ComputeShadowCommandChainStructuralSignature(draw.Draw.ShadowUniformState));
                 break;
@@ -1612,15 +1711,22 @@ public unsafe partial class VulkanRenderer
         switch (op)
         {
             case MeshDrawOp draw:
-                hash.Add(draw.Draw.ModelMatrix.M11);
-                hash.Add(draw.Draw.ModelMatrix.M22);
-                hash.Add(draw.Draw.ModelMatrix.M33);
-                hash.Add(draw.Draw.ModelMatrix.M41);
-                hash.Add(draw.Draw.ModelMatrix.M42);
-                hash.Add(draw.Draw.ModelMatrix.M43);
-                hash.Add(draw.Draw.CameraPosition.X);
-                hash.Add(draw.Draw.CameraPosition.Y);
-                hash.Add(draw.Draw.CameraPosition.Z);
+                AddMatrixSignature(ref hash, draw.Draw.ModelMatrix);
+                AddMatrixSignature(ref hash, draw.Draw.PreviousModelMatrix);
+                AddMatrixSignature(ref hash, draw.Draw.ViewProjectionMatrix);
+                AddMatrixSignature(ref hash, draw.Draw.PreviousViewProjectionMatrix);
+                if (draw.Draw.IsStereoPass)
+                {
+                    AddMatrixSignature(ref hash, draw.Draw.RightEyeViewProjectionMatrix);
+                    AddMatrixSignature(ref hash, draw.Draw.PreviousRightEyeViewProjectionMatrix);
+                }
+                AddVector3Signature(ref hash, draw.Draw.CameraPosition);
+                AddVector3Signature(ref hash, draw.Draw.CameraForward);
+                AddVector3Signature(ref hash, draw.Draw.CameraUp);
+                AddVector3Signature(ref hash, draw.Draw.CameraRight);
+                hash.Add(draw.Draw.TransformId);
+                hash.Add(draw.Draw.RenderAreaWidth);
+                hash.Add(draw.Draw.RenderAreaHeight);
                 break;
             case ComputeDispatchOp compute:
                 hash.Add(HashUniformBindings(compute.Snapshot.Uniforms));
@@ -1636,6 +1742,74 @@ public unsafe partial class VulkanRenderer
         }
 
         return hash.ToHash();
+    }
+
+    private static void AddViewportScissorSignature(ref FrameOpSignatureHasher hash, in PendingMeshDraw draw)
+    {
+        AddViewportSignature(ref hash, draw.Viewport);
+        AddRectSignature(ref hash, draw.Scissor);
+        hash.Add(draw.ViewportScissorCount);
+        if (draw.ViewportScissorCount <= 1 ||
+            draw.IndexedViewports is not { } indexedViewports ||
+            draw.IndexedScissors is not { } indexedScissors)
+        {
+            return;
+        }
+
+        int indexedCount = (int)Math.Min(
+            draw.ViewportScissorCount,
+            (uint)Math.Min(indexedViewports.Length, indexedScissors.Length));
+        hash.Add(indexedCount);
+        for (int i = 0; i < indexedCount; i++)
+        {
+            AddViewportSignature(ref hash, indexedViewports[i]);
+            AddRectSignature(ref hash, indexedScissors[i]);
+        }
+    }
+
+    private static void AddViewportSignature(ref FrameOpSignatureHasher hash, in Viewport viewport)
+    {
+        hash.Add(viewport.X);
+        hash.Add(viewport.Y);
+        hash.Add(viewport.Width);
+        hash.Add(viewport.Height);
+        hash.Add(viewport.MinDepth);
+        hash.Add(viewport.MaxDepth);
+    }
+
+    private static void AddRectSignature(ref FrameOpSignatureHasher hash, in Rect2D rect)
+    {
+        hash.Add(rect.Offset.X);
+        hash.Add(rect.Offset.Y);
+        hash.Add(rect.Extent.Width);
+        hash.Add(rect.Extent.Height);
+    }
+
+    private static void AddMatrixSignature(ref FrameOpSignatureHasher hash, in Matrix4x4 matrix)
+    {
+        hash.Add(matrix.M11);
+        hash.Add(matrix.M12);
+        hash.Add(matrix.M13);
+        hash.Add(matrix.M14);
+        hash.Add(matrix.M21);
+        hash.Add(matrix.M22);
+        hash.Add(matrix.M23);
+        hash.Add(matrix.M24);
+        hash.Add(matrix.M31);
+        hash.Add(matrix.M32);
+        hash.Add(matrix.M33);
+        hash.Add(matrix.M34);
+        hash.Add(matrix.M41);
+        hash.Add(matrix.M42);
+        hash.Add(matrix.M43);
+        hash.Add(matrix.M44);
+    }
+
+    private static void AddVector3Signature(ref FrameOpSignatureHasher hash, in Vector3 vector)
+    {
+        hash.Add(vector.X);
+        hash.Add(vector.Y);
+        hash.Add(vector.Z);
     }
 
     private static ulong ComputeDispatchSnapshotSignature(ComputeDispatchSnapshot snapshot)

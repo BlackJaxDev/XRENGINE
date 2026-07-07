@@ -178,6 +178,7 @@ public unsafe partial class OpenXRAPI
         catch (Exception ex)
         {
             Debug.LogWarning($"OpenXR probe: system creation failed. {ex.Message}");
+            RecordSmokeFailureOnce($"OpenXR system creation failed: {ex.GetType().Name}: {ex.Message}");
             ScheduleProbeRetry();
             TearDownSessionResourcesOnOwningThread(true);
             SetRuntimeState(OpenXrRuntimeState.RecreatePending);
@@ -186,11 +187,16 @@ public unsafe partial class OpenXRAPI
 
     private void TryCreateSessionAndSwapchains(AbstractRenderer renderer)
     {
+        if (DateTime.UtcNow < _nextProbeUtc)
+            return;
+
         TryEnsureOpenXrRuntimeService("OpenXR session creation");
 
         if (renderer.IsDeviceLost)
         {
             Debug.LogWarning("OpenXR session init skipped because the active renderer device is lost.");
+            RecordSmokeFailureOnce(
+                $"OpenXR session init skipped because the active renderer device is lost. Renderer={renderer.GetType().FullName}; Reason={renderer.DeviceLostReason ?? "<unknown>"}");
             ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
             TearDownSessionResourcesOnOwningThread(true);
             SetRuntimeState(OpenXrRuntimeState.RecreatePending);
@@ -207,6 +213,7 @@ public unsafe partial class OpenXRAPI
         if (selectedBinding is null)
         {
             Debug.LogWarning("OpenXR: no compatible graphics binding for the active renderer.");
+            RecordSmokeFailureOnce($"OpenXR session init skipped because renderer '{renderer.GetType().FullName}' has no compatible graphics binding.");
             ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
             TearDownSessionResourcesOnOwningThread(true);
             SetRuntimeState(OpenXrRuntimeState.RecreatePending);
@@ -223,9 +230,22 @@ public unsafe partial class OpenXRAPI
         if (_graphicsBinding is null || !_graphicsBinding.IsCompatible(renderer))
         {
             Debug.LogWarning("OpenXR: no compatible graphics binding for the active renderer.");
+            RecordSmokeFailureOnce($"OpenXR session init skipped because graphics binding '{_graphicsBinding?.GetType().FullName ?? "<null>"}' is not compatible with renderer '{renderer.GetType().FullName}'.");
             ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
             TearDownSessionResourcesOnOwningThread(true);
             SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            return;
+        }
+
+        if (renderer is VulkanRenderer sessionStartVulkanRenderer &&
+            sessionStartVulkanRenderer.ShouldDeferOpenXrRuntimeSessionStart(out string deferReason))
+        {
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.SessionStartDeferred.{sessionStartVulkanRenderer.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Deferring Vulkan session creation: {0}",
+                deferReason);
+            ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
             return;
         }
 
@@ -265,6 +285,7 @@ public unsafe partial class OpenXRAPI
                 catch (Exception ex)
                 {
                     Debug.LogWarning($"OpenXR OpenGL session init failed: {ex.Message}");
+                    RecordSmokeFailureOnce($"OpenXR OpenGL session init failed: {ex.GetType().Name}: {ex.Message}");
                     ScheduleProbeRetry(GetSessionFailureRetryDelay(ex));
                     TearDownSessionResourcesOnOwningThread(true);
                     SetRuntimeState(OpenXrRuntimeState.RecreatePending);
@@ -281,16 +302,34 @@ public unsafe partial class OpenXRAPI
 
         try
         {
-            graphicsBinding.TryCreateSession(this, renderer);
-            RecordSmokeSessionCreated(graphicsBinding.BackendName);
-            CreateReferenceSpace();
-            graphicsBinding.CreateSwapchains(this, renderer);
-            EnsureInputCreated();
+            if (renderer is VulkanRenderer vulkanRenderer)
+            {
+                vulkanRenderer.ExecuteOpenXrRuntimeGraphicsTransition(
+                    "OpenXR session and swapchain initialization",
+                    () =>
+                    {
+                        graphicsBinding.TryCreateSession(this, renderer);
+                        RecordSmokeSessionCreated(graphicsBinding.BackendName);
+                        CreateReferenceSpace();
+                        graphicsBinding.CreateSwapchains(this, renderer);
+                        EnsureInputCreated();
+                    });
+            }
+            else
+            {
+                graphicsBinding.TryCreateSession(this, renderer);
+                RecordSmokeSessionCreated(graphicsBinding.BackendName);
+                CreateReferenceSpace();
+                graphicsBinding.CreateSwapchains(this, renderer);
+                EnsureInputCreated();
+            }
+
             SetRuntimeState(OpenXrRuntimeState.SessionCreated);
         }
         catch (Exception ex)
         {
             Debug.LogWarning($"OpenXR session init failed: {ex.Message}");
+            RecordSmokeFailureOnce($"OpenXR session init failed: {ex.GetType().Name}: {ex.Message}");
             ScheduleProbeRetry(GetSessionFailureRetryDelay(ex));
             TearDownSessionResourcesOnOwningThread(true);
             SetRuntimeState(OpenXrRuntimeState.RecreatePending);

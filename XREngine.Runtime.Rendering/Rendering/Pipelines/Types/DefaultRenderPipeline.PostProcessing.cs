@@ -1772,7 +1772,8 @@ public partial class DefaultRenderPipeline
         && GetDepthOfFieldSettings() is { Enabled: true };
 
     private static bool ShouldUseBloom()
-        => !IsLightProbePass
+        => !DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath
+        && !IsLightProbePass
         && !RuntimeEngine.Rendering.State.IsSceneCapturePass
         && GetBloomSettings() is not { Enabled: false };
 

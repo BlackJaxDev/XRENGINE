@@ -337,8 +337,46 @@ namespace XREngine.Editor.Mcp
                     break;
                 }
 
-                _ = HandleContextAsync(context, token);
+                _ = ObserveContextTaskAsync(HandleContextAsync(context, token));
             }
+        }
+
+        private static async Task ObserveContextTaskAsync(Task task)
+        {
+            try
+            {
+                await task.ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsExpectedClientDisconnect(ex))
+            {
+                // Clients used for readiness probes may time out or close the socket while
+                // HttpListener is still reading/writing. Treat those as normal disconnects.
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, "Unhandled MCP request failure.");
+            }
+        }
+
+        private static bool IsExpectedClientDisconnect(Exception ex)
+        {
+            if (ex is OperationCanceledException or ObjectDisposedException)
+                return true;
+
+            if (ex is IOException)
+                return true;
+
+            if (ex is HttpListenerException httpEx)
+                return httpEx.ErrorCode is 1 or 64 or 995 or 1229;
+
+            if (ex is AggregateException aggregate)
+            {
+                AggregateException flattened = aggregate.Flatten();
+                return flattened.InnerExceptions.Count > 0 &&
+                       flattened.InnerExceptions.All(IsExpectedClientDisconnect);
+            }
+
+            return false;
         }
 
         private static void TryWakeListener(string prefix)

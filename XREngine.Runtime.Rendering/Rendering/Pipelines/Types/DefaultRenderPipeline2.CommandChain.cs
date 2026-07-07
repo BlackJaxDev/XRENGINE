@@ -1594,8 +1594,11 @@ public partial class DefaultRenderPipeline2
             }
             upscaleOutputChoice.TrueCommands = upscaleOutput;
         }
-        upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(FinalPostProcessOutputFBOName, bypassVendorUpscale);
+        upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(ResolveStandardFinalOutputFboName(), bypassVendorUpscale);
     }
+
+    private static string ResolveStandardFinalOutputFboName()
+        => FinalPostProcessOutputFBOName;
 
     private ViewportRenderCommandContainer CreateOutputSourceOverrideCommands(string sourceFboName, bool bypassVendorUpscale)
         => CreateFinalBlitCommands(sourceFboName, bypassVendorUpscale);

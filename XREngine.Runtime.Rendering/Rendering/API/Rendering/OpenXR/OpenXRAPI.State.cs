@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Threading;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.PostProcessing;
@@ -184,6 +185,7 @@ public unsafe partial class OpenXRAPI
     private readonly System.Collections.Generic.Dictionary<string, Matrix4x4> _openXrPredTrackerLocalPose = new(StringComparer.Ordinal);
     private readonly System.Collections.Generic.Dictionary<string, Matrix4x4> _openXrLateTrackerLocalPose = new(StringComparer.Ordinal);
     private readonly System.Collections.Generic.HashSet<string> _openXrKnownTrackerPaths = new(StringComparer.Ordinal);
+    private readonly System.Collections.Generic.Dictionary<string, RuntimeVrTrackerInfo> _openXrKnownTrackers = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Returns the latest predicted HMD pose in the app reference space (center-eye), as a local matrix.
@@ -286,6 +288,12 @@ public unsafe partial class OpenXRAPI
     {
         lock (_openXrPoseLock)
             return [.. _openXrKnownTrackerPaths];
+    }
+
+    public RuntimeVrTrackerInfo[] GetKnownTrackers()
+    {
+        lock (_openXrPoseLock)
+            return [.. _openXrKnownTrackers.Values];
     }
     private TransformBase? _openXrLocomotionRoot;
 

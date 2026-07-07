@@ -1,5 +1,4 @@
-using OpenVR.NET.Devices;
-using XREngine.Input;
+using XREngine.Rendering;
 
 namespace XREngine.Components.VR
 {
@@ -12,10 +11,18 @@ namespace XREngine.Components.VR
             set => SetField(ref _deviceIndex, value);
         }
 
+        private string? _openXrTrackerUserPath;
+        public string? OpenXrTrackerUserPath
+        {
+            get => _openXrTrackerUserPath;
+            set => SetField(ref _openXrTrackerUserPath, value);
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
-            if (propName == nameof(DeviceIndex))
+            if (propName == nameof(DeviceIndex) ||
+                propName == nameof(OpenXrTrackerUserPath))
             {
                 ClearLoadedModel();
                 if (IsActive)
@@ -23,14 +30,7 @@ namespace XREngine.Components.VR
             }
         }
 
-        protected override DeviceModel? GetRenderModel(VrDevice? device)
-        {
-            if (DeviceIndex is null || device is null || device.DeviceIndex != DeviceIndex.Value)
-                return null;
-
-            return RuntimeVrStateServices.IsGenericTracker(device.DeviceIndex)
-                ? device.Model
-                : null;
-        }
+        protected override bool TryGetRenderModel(out RuntimeVrRenderModelDescriptor? model)
+            => RuntimeVrRenderingServices.RenderModelProvider.TryGetTrackerRenderModel(OpenXrTrackerUserPath, DeviceIndex, out model);
     }
 }

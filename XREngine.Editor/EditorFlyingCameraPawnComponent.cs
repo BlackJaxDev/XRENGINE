@@ -1149,7 +1149,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     protected override void Tick()
     {
+        bool continuousCameraMotion = HasContinuousMovementInput();
         base.Tick();
+        if (continuousCameraMotion)
+            PublishEditorCameraRenderMatrixForOpenXrMotion();
+
         SyncOutlinePreferences();
 
         var vp = Viewport;
@@ -1167,6 +1171,29 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             vp.Suppress3DSceneRendering = false;
 
         vp.SuppressAutoExposureUpdates = _renderOnDemand && vp.Suppress3DSceneRendering;
+    }
+
+    private void PublishEditorCameraRenderMatrixForOpenXrMotion()
+    {
+        if (!ShouldPublishEditorCameraRenderMatrixImmediately)
+            return;
+
+        if (TransformAs<Transform>() is not { } tfm)
+            return;
+
+        RecalculateCameraWorldMatrix(tfm, forceRenderMatrixNow: true);
+    }
+
+    private static bool ShouldPublishEditorCameraRenderMatrixImmediately
+    {
+        get
+        {
+            var host = RuntimeRenderingHostServices.Current;
+            return host.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
+                   host.IsInVR &&
+                   host.IsOpenXRActive &&
+                   host.RenderWindowsWhileInVR;
+        }
     }
 
     private void SyncOutlinePreferences()

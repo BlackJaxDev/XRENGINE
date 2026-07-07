@@ -205,7 +205,8 @@ namespace XREngine.Rendering.Vulkan
                     depthStencilReadOnly: false,
                     drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
                     drawOp.Target?.Name ?? "<swapchain>",
-                    drawUniformSlot);
+                    drawUniformSlot,
+                    unchecked((int)Math.Min(imageIndex, int.MaxValue)));
                 if (recordedDraw)
                 {
                     recordedDrawCount++;
@@ -262,7 +263,7 @@ namespace XREngine.Rendering.Vulkan
             variant.DynamicUiOpCount = dynamicUiBatchTextOps.Length;
             variant.DynamicUiSignature = dynamicUiBatchTextSignature;
             variant.DynamicUiSecondaryRecorded = true;
-            if (CommandChainsEnabled)
+            if (CommandChainsEnabledForCurrentRecording)
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(secondaryCommandBuffers: 1);
 
             _dynamicUiMeshDrawSlotCapacityHint = Math.Max(1, meshDrawSlotsByRenderer.Count);
@@ -466,9 +467,13 @@ namespace XREngine.Rendering.Vulkan
             if (count <= 0)
                 return;
 
-            CmdBeginLabel(primaryCommandBuffer, useParallelSecondary && count > 1
-                ? $"{label}PrimaryOwnedBatch"
-                : $"{label}PrimaryOwned");
+            bool primaryLabelActive = false;
+            if (CanRecordCommandBufferDebugLabels)
+            {
+                primaryLabelActive = CmdBeginLabel(primaryCommandBuffer, useParallelSecondary && count > 1
+                    ? $"{label}PrimaryOwnedBatch"
+                    : $"{label}PrimaryOwned");
+            }
 
             CommandBuffer[] secondaryBuffers = ArrayPool<CommandBuffer>.Shared.Rent(count);
             CommandChain[] secondaryChains = ArrayPool<CommandChain>.Shared.Rent(count);
@@ -591,7 +596,8 @@ namespace XREngine.Rendering.Vulkan
                 Array.Clear(secondaryChains, 0, count);
                 ArrayPool<CommandBuffer>.Shared.Return(secondaryBuffers);
                 ArrayPool<CommandChain>.Shared.Return(secondaryChains);
-                CmdEndLabel(primaryCommandBuffer);
+                if (primaryLabelActive)
+                    CmdEndLabel(primaryCommandBuffer);
             }
         }
 
@@ -643,7 +649,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void ExecuteSecondaryCommandBuffer(CommandBuffer primaryCommandBuffer, string label, uint imageIndex, Action<CommandBuffer> recorder)
         {
-            CmdBeginLabel(primaryCommandBuffer, label);
+            bool primaryLabelActive = CmdBeginLabel(primaryCommandBuffer, label);
             CommandBuffer secondary = default;
             bool allocated = false;
             CommandPool pool = default;
@@ -666,7 +672,8 @@ namespace XREngine.Rendering.Vulkan
                 if (allocated)
                 {
                     RegisterCommandBufferImageIndex(secondary, imageIndex);
-                    SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)secondary.Handle), $"{label}.Secondary[{imageIndex}]");
+                    if (SupportsDebugUtils)
+                        SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)secondary.Handle), $"{label}.Secondary[{imageIndex}]");
                 }
 
                 CommandBufferBeginInfo beginInfo = new()
@@ -723,7 +730,8 @@ namespace XREngine.Rendering.Vulkan
                     }
                 }
 
-                CmdEndLabel(primaryCommandBuffer);
+                if (primaryLabelActive)
+                    CmdEndLabel(primaryCommandBuffer);
             }
         }
 
@@ -743,7 +751,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            CmdBeginLabel(primaryCommandBuffer, label);
+            bool primaryLabelActive = CmdBeginLabel(primaryCommandBuffer, label);
             CommandBuffer[] secondaryBuffers = new CommandBuffer[count];
             CommandPool[] ownerPools = new CommandPool[count];
             bool[] allocated = new bool[count];
@@ -782,7 +790,8 @@ namespace XREngine.Rendering.Vulkan
                             if (localAllocated)
                             {
                                 RegisterCommandBufferImageIndex(secondary, imageIndex);
-                                SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)secondary.Handle), $"{label}.Secondary[{imageIndex}:{index}]");
+                                if (SupportsDebugUtils)
+                                    SetDebugObjectName(ObjectType.CommandBuffer, unchecked((ulong)secondary.Handle), $"{label}.Secondary[{imageIndex}:{index}]");
                             }
 
                             CommandBufferBeginInfo beginInfo = new()
@@ -866,7 +875,8 @@ namespace XREngine.Rendering.Vulkan
                     }
                 }
 
-                CmdEndLabel(primaryCommandBuffer);
+                if (primaryLabelActive)
+                    CmdEndLabel(primaryCommandBuffer);
             }
         }
     }

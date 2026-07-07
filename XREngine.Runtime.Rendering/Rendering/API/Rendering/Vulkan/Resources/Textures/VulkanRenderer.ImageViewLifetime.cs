@@ -9,6 +9,7 @@ public unsafe partial class VulkanRenderer
 {
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, string> _liveImageViewHandles = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, ImageViewCreateInfo> _descriptorHeapImageViewCreateInfos = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, byte> _retiringImageHandles = new();
 
     internal void TrackLiveImageView(ImageView imageView, string owner = "unknown")
     {
@@ -39,6 +40,44 @@ public unsafe partial class VulkanRenderer
 
     internal bool IsLiveImageView(ImageView imageView)
         => imageView.Handle != 0 && _liveImageViewHandles.ContainsKey(imageView.Handle);
+
+    internal bool IsLiveImageViewBackedByLiveImage(ImageView imageView)
+    {
+        if (imageView.Handle == 0 ||
+            !_liveImageViewHandles.TryGetValue(imageView.Handle, out string? owner))
+        {
+            return false;
+        }
+
+        if (!_descriptorHeapImageViewCreateInfos.TryGetValue(imageView.Handle, out ImageViewCreateInfo createInfo))
+            return true;
+
+        Image image = createInfo.Image;
+        if (image.Handle == 0)
+            return false;
+
+        if (IsExternalImageViewOwner(owner))
+            return true;
+
+        return _imageAllocations.ContainsKey(image.Handle) && !_retiringImageHandles.ContainsKey(image.Handle);
+    }
+
+    internal bool TryGetImageViewBackingImage(ImageView imageView, out Image image)
+    {
+        if (imageView.Handle != 0 &&
+            _descriptorHeapImageViewCreateInfos.TryGetValue(imageView.Handle, out ImageViewCreateInfo createInfo))
+        {
+            image = createInfo.Image;
+            return image.Handle != 0;
+        }
+
+        image = default;
+        return false;
+    }
+
+    private static bool IsExternalImageViewOwner(string owner)
+        => owner.StartsWith("OpenXR.Swapchain", StringComparison.Ordinal)
+        || owner.StartsWith("Swapchain.Color", StringComparison.Ordinal);
 
     internal bool TryBeginDestroyImageView(ImageView imageView, string owner)
     {

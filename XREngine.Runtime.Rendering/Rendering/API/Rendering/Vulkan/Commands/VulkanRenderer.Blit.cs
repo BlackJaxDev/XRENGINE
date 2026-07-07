@@ -406,7 +406,7 @@ namespace XREngine.Rendering.Vulkan
             return info.IsValid;
         }
 
-        private static bool TryResolveLiveBlitImage(in BlitImageInfo info, out BlitImageInfo resolved)
+        private bool TryResolveLiveBlitImage(in BlitImageInfo info, out BlitImageInfo resolved)
         {
             resolved = info;
 
@@ -419,9 +419,15 @@ namespace XREngine.Rendering.Vulkan
                 if (liveImage.Handle == 0)
                     return false;
 
-                ImageLayout liveLayout = ResolveTrackedBlitLayout(source, info);
-                if (liveLayout == ImageLayout.Undefined)
-                    liveLayout = info.PreferredLayout;
+                ImageLayout liveLayout;
+                if (!TryGetExactTrackedBlitLayout(info, liveImage, out liveLayout))
+                {
+                    liveLayout = source.UsesAllocatorImage
+                        ? ImageLayout.Undefined
+                        : ResolveTrackedBlitLayout(source, info);
+                    if (liveLayout == ImageLayout.Undefined && !source.UsesAllocatorImage)
+                        liveLayout = info.PreferredLayout;
+                }
 
                 Extent2D liveExtent = info.Extent;
                 if (source is IVkFrameBufferAttachmentSource attachmentSource &&
@@ -444,15 +450,34 @@ namespace XREngine.Rendering.Vulkan
                 if (liveImage.Handle == 0)
                     return false;
 
-                ImageLayout liveLayout = info.PreferredLayout;
-                if (renderBuffer.PhysicalGroup is { } group)
-                    liveLayout = group.LastKnownLayout;
+                ImageLayout liveLayout;
+                if (!TryGetExactTrackedBlitLayout(info, liveImage, out liveLayout))
+                    liveLayout = renderBuffer.PhysicalGroup is not null ? ImageLayout.Undefined : info.PreferredLayout;
 
                 resolved = info.WithResolvedState(liveImage, liveLayout, renderBuffer.ResolveAttachmentExtent());
                 return true;
             }
 
             return info.Image.Handle != 0;
+        }
+
+        private bool TryGetExactTrackedBlitLayout(in BlitImageInfo info, Image image, out ImageLayout layout)
+        {
+            layout = ImageLayout.Undefined;
+            if (image.Handle == 0)
+                return false;
+
+            ImageAspectFlags aspectMask = NormalizeBarrierAspectMask(info.Format, info.AspectMask);
+            ImageSubresourceRange range = new()
+            {
+                AspectMask = aspectMask,
+                BaseMipLevel = info.MipLevel,
+                LevelCount = 1,
+                BaseArrayLayer = info.BaseArrayLayer,
+                LayerCount = Math.Max(info.LayerCount, 1u)
+            };
+
+            return TryGetTrackedImageLayout(image, range, out layout);
         }
 
         // =========== Format / Attachment Helpers ===========
@@ -751,17 +776,23 @@ namespace XREngine.Rendering.Vulkan
             UpdateTrackedBlitLayout(resolvedInfo, newLayout);
         }
 
-        private static ImageLayout ResolveLiveBlitOldLayout(in BlitImageInfo info, ImageLayout requestedOldLayout)
+        private ImageLayout ResolveLiveBlitOldLayout(in BlitImageInfo info, ImageLayout requestedOldLayout)
         {
+            if (TryGetExactTrackedBlitLayout(info, info.Image, out ImageLayout exactLayout))
+                return exactLayout;
+
             if (info.DescriptorSource is { } source)
             {
+                if (source.UsesAllocatorImage)
+                    return ImageLayout.Undefined;
+
                 ImageLayout trackedLayout = ResolveTrackedBlitLayout(source, info);
                 if (trackedLayout != ImageLayout.Undefined)
                     return trackedLayout;
             }
 
-            if (info.RenderBufferSource?.PhysicalGroup is { } group)
-                return group.LastKnownLayout;
+            if (info.RenderBufferSource?.PhysicalGroup is not null)
+                return ImageLayout.Undefined;
 
             return requestedOldLayout;
         }

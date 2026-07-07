@@ -122,6 +122,7 @@ namespace XREngine.Rendering.Vulkan
         public class VkDataBuffer(VulkanRenderer renderer, XRDataBuffer buffer) : VkObject<XRDataBuffer>(renderer, buffer), IApiDataBuffer
         {
             private const ulong IndirectCopyDeviceAddressThresholdBytes = 256UL * 1024UL;
+            private const ulong DeviceLocalStaticUploadMinimumBytes = 64UL * 1024UL;
 
             // --- Resource handles ---
             private Buffer? _vkBuffer; // Device-local or host-visible buffer
@@ -342,7 +343,7 @@ namespace XREngine.Rendering.Vulkan
 
                 // Determine usage and memory flags
                 BufferUsageFlags usage = ResolveVkUsageFlags(Data.Target, Data.Usage);
-                MemoryPropertyFlags memProps = ResolveMemoryProperties(Data);
+                MemoryPropertyFlags memProps = ResolveMemoryProperties(Data, Data.Length);
                 bool enableDeviceAddress =
                     Renderer.ShouldEnableDeviceAddressForSceneDatabaseBuffer(Data) ||
                     Renderer.IsDescriptorHeapDrawBindingActive;
@@ -405,7 +406,7 @@ namespace XREngine.Rendering.Vulkan
                     _lastUploadUsedCompressedGpuPath = false;
 
                     // --- Staging buffer pattern for device-local ---
-                    if (ShouldUseDeviceLocal(Data))
+                    if (ShouldUseDeviceLocal(Data, _bufferSize))
                     {
                         bool canUseGpuDecompression = CanUseGpuDecompressionUpload();
                         bool preferIndirectCopy = ShouldUseDeviceAddressForIndirectCopy(_bufferSize);
@@ -451,14 +452,12 @@ namespace XREngine.Rendering.Vulkan
                                 preferIndirectCopy);
                             try
                             {
-                                Renderer.CopyBuffer(stagingBuffer, deviceBuffer, _bufferSize);
+                                uploadedContent = Renderer.CopyBuffer(stagingBuffer, deviceBuffer, _bufferSize);
                             }
                             finally
                             {
                                 Renderer.DestroyBuffer(stagingBuffer, stagingMemory);
                             }
-
-                            uploadedContent = true;
                         }
                         else if (Data.HasGpuCompressedPayload)
                         {
@@ -607,7 +606,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 // For device-local, use staging buffer for subdata
-                if (ShouldUseDeviceLocal(Data))
+                if (IsUsingDeviceLocalBacking())
                 {
                     if (Data.HasGpuCompressedPayload)
                     {
@@ -638,7 +637,8 @@ namespace XREngine.Rendering.Vulkan
                         preferIndirectCopy);
                     try
                     {
-                        Renderer.CopyBuffer(stagingBuffer, _vkBuffer, clampedLength, (ulong)offset);
+                        if (!Renderer.CopyBuffer(stagingBuffer, _vkBuffer, clampedLength, (ulong)offset))
+                            return;
                     }
                     finally
                     {
@@ -1131,9 +1131,13 @@ namespace XREngine.Rendering.Vulkan
                 return true;
             }
 
-            private static bool ShouldUseDeviceLocal(XRDataBuffer data)
+            private bool IsUsingDeviceLocalBacking()
+                => _lastMemProps.HasFlag(MemoryPropertyFlags.DeviceLocalBit);
+
+            private static bool ShouldUseDeviceLocal(XRDataBuffer data, ulong byteCount)
                 => !data.ShouldMap &&
                    !HasHostVisibleIntent(data) &&
+                   byteCount >= DeviceLocalStaticUploadMinimumBytes &&
                    (data.Usage == EBufferUsage.StaticDraw || data.Usage == EBufferUsage.StaticCopy);
 
             private static bool HasHostVisibleIntent(XRDataBuffer data)
@@ -1149,9 +1153,9 @@ namespace XREngine.Rendering.Vulkan
                    data.RangeFlags.HasFlag(EBufferMapRangeFlags.Coherent) ||
                    data.RangeFlags.HasFlag(EBufferMapRangeFlags.FlushExplicit);
 
-            private static MemoryPropertyFlags ResolveMemoryProperties(XRDataBuffer data)
+            private static MemoryPropertyFlags ResolveMemoryProperties(XRDataBuffer data, ulong byteCount)
             {
-                if (ShouldUseDeviceLocal(data))
+                if (ShouldUseDeviceLocal(data, byteCount))
                     return MemoryPropertyFlags.DeviceLocalBit;
 
                 MemoryPropertyFlags flags = MemoryPropertyFlags.HostVisibleBit;
@@ -1484,18 +1488,18 @@ namespace XREngine.Rendering.Vulkan
             return MapBufferMemoryOrThrow(vkBuffer.Value, vkMemory.Value, offset, length, "Failed to map Vulkan buffer memory.");
         }
 
-        private void CopyBuffer(Buffer? stagingBuffer, Buffer? vkBuffer, uint length, ulong offset)
+        private bool CopyBuffer(Buffer? stagingBuffer, Buffer? vkBuffer, uint length, ulong offset)
         {
             if (_deviceLost)
-                return;
+                return false;
 
             if (stagingBuffer is null || vkBuffer is null)
                 throw new ArgumentNullException("Buffers cannot be null for copy operation.");
 
             if (TryCopyBufferViaIndirectNv(stagingBuffer.Value, vkBuffer.Value, length, 0, offset))
-                return;
+                return true;
 
-            ExecuteTransferBufferUpload(stagingBuffer.Value, vkBuffer.Value, length, 0, offset);
+            return ExecuteTransferBufferUpload(stagingBuffer.Value, vkBuffer.Value, length, 0, offset);
         }
 
         private void UpdateBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory, ulong offset, ulong length, void* addr)
@@ -1525,24 +1529,24 @@ namespace XREngine.Rendering.Vulkan
             UnmapBufferMemory(vkBuffer.Value, vkMemory.Value);
         }
 
-        public void CopyBuffer(
+        public bool CopyBuffer(
             Buffer? stagingBuffer,
             Buffer? deviceBuffer,
             ulong bufferSize)
         {
             if (_deviceLost)
-                return;
+                return false;
 
             if (stagingBuffer is null || deviceBuffer is null)
                 throw new ArgumentNullException("Buffers cannot be null for copy operation.");
 
             if (TryCopyBufferViaIndirectNv(stagingBuffer.Value, deviceBuffer.Value, bufferSize, 0, 0))
-                return;
+                return true;
 
-            ExecuteTransferBufferUpload(stagingBuffer.Value, deviceBuffer.Value, bufferSize, 0, 0);
+            return ExecuteTransferBufferUpload(stagingBuffer.Value, deviceBuffer.Value, bufferSize, 0, 0);
         }
 
-        private void ExecuteTransferBufferUpload(
+        private bool ExecuteTransferBufferUpload(
             Buffer stagingBuffer,
             Buffer deviceBuffer,
             ulong copySize,
@@ -1550,7 +1554,7 @@ namespace XREngine.Rendering.Vulkan
             ulong destinationOffset)
         {
             if (_deviceLost)
-                return;
+                return false;
 
             QueueFamilyIndices queueFamilies = FamilyQueueIndices;
             uint graphicsFamily = queueFamilies.GraphicsFamilyIndex ?? 0u;
@@ -1660,6 +1664,8 @@ namespace XREngine.Rendering.Vulkan
                     0,
                     null);
             }
+
+            return !_deviceLost;
         }
 
         public void DestroyBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory)

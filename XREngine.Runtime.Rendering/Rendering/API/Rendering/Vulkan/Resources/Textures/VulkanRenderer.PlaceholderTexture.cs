@@ -97,6 +97,7 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
+        ClearTrackedImageLayouts(_placeholderImage);
         VulkanMemoryAllocation allocation = AllocateImageMemoryWithFallback(_placeholderImage, MemoryPropertyFlags.DeviceLocalBit);
         _imageAllocations[_placeholderImage.Handle] = allocation;
         _placeholderImageMemory = allocation.Memory;

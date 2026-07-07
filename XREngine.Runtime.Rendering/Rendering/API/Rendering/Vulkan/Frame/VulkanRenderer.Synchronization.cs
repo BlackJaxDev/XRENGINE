@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
@@ -9,9 +10,16 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private EVulkanSynchronizationBackend _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
+    private readonly Dictionary<VulkanTrackedImageSubresource, ImageLayout> _trackedImageSubresourceLayouts = new();
 
     private bool UsesSynchronization2
         => _activeSynchronizationBackend == EVulkanSynchronizationBackend.Sync2;
+
+    private readonly record struct VulkanTrackedImageSubresource(
+        ulong ImageHandle,
+        uint MipLevel,
+        uint ArrayLayer,
+        ImageAspectFlags Aspect);
 
     /// <summary>
     /// Debug-only assertion that fires when <c>AllCommandsBit</c> is used in a barrier.
@@ -83,7 +91,11 @@ public unsafe partial class VulkanRenderer
         return null;
     }
 
-    private Result SubmitToQueueTracked(Queue queue, ref SubmitInfo submitInfo, Fence fence)
+    private Result SubmitToQueueTracked(
+        Queue queue,
+        ref SubmitInfo submitInfo,
+        Fence fence,
+        [CallerMemberName] string? caller = null)
     {
         Result result = UsesSynchronization2
             ? SubmitToQueueSync2(queue, ref submitInfo, fence)
@@ -92,7 +104,9 @@ public unsafe partial class VulkanRenderer
         if (result == Result.Success)
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
         else if (result == Result.ErrorDeviceLost)
-            MarkDeviceLost("QueueSubmit returned ErrorDeviceLost");
+            MarkDeviceLost(
+                $"QueueSubmit returned ErrorDeviceLost in {caller ?? "<unknown>"} " +
+                $"(waits={submitInfo.WaitSemaphoreCount}, signals={submitInfo.SignalSemaphoreCount}, commandBuffers={submitInfo.CommandBufferCount}, fence=0x{fence.Handle:X})");
 
         return result;
     }
@@ -212,6 +226,7 @@ public unsafe partial class VulkanRenderer
                 bufferBarriers,
                 imageBarrierCount,
                 imageBarriers);
+            TrackImageBarrierLayouts(imageBarrierCount, imageBarriers);
             return;
         }
 
@@ -305,5 +320,194 @@ public unsafe partial class VulkanRenderer
             if (imageBarrierCount > 0)
                 ArrayPool<ImageMemoryBarrier2>.Shared.Return(imageBarrierArray, clearArray: true);
         }
+
+        TrackImageBarrierLayouts(imageBarrierCount, imageBarriers);
+    }
+
+    private void TrackImageBarrierLayouts(uint imageBarrierCount, ImageMemoryBarrier* imageBarriers)
+    {
+        if (imageBarrierCount == 0 || imageBarriers is null)
+            return;
+
+        for (uint i = 0; i < imageBarrierCount; i++)
+        {
+            ref ImageMemoryBarrier barrier = ref imageBarriers[i];
+            TrackImageLayout(barrier.Image, barrier.SubresourceRange, barrier.NewLayout);
+        }
+    }
+
+    private void TrackImageLayout(Image image, ImageSubresourceRange range, ImageLayout layout)
+    {
+        if (image.Handle == 0)
+            return;
+
+        uint levelCount = Math.Max(range.LevelCount, 1u);
+        uint layerCount = Math.Max(range.LayerCount, 1u);
+        for (uint mipOffset = 0; mipOffset < levelCount; mipOffset++)
+        {
+            uint mip = range.BaseMipLevel + mipOffset;
+            for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
+            {
+                uint layer = range.BaseArrayLayer + layerOffset;
+                TrackImageAspectLayout(image.Handle, mip, layer, range.AspectMask, ImageAspectFlags.ColorBit, layout);
+                TrackImageAspectLayout(image.Handle, mip, layer, range.AspectMask, ImageAspectFlags.DepthBit, layout);
+                TrackImageAspectLayout(image.Handle, mip, layer, range.AspectMask, ImageAspectFlags.StencilBit, layout);
+            }
+        }
+    }
+
+    private void ClearTrackedImageLayouts(Image image)
+    {
+        ulong imageHandle = image.Handle;
+        if (imageHandle == 0 || _trackedImageSubresourceLayouts.Count == 0)
+            return;
+
+        VulkanTrackedImageSubresource[]? keysToRemove = null;
+        int keyCount = 0;
+        try
+        {
+            foreach (VulkanTrackedImageSubresource key in _trackedImageSubresourceLayouts.Keys)
+            {
+                if (key.ImageHandle != imageHandle)
+                    continue;
+
+                keysToRemove ??= ArrayPool<VulkanTrackedImageSubresource>.Shared.Rent(8);
+                if (keyCount == keysToRemove.Length)
+                {
+                    VulkanTrackedImageSubresource[] expanded =
+                        ArrayPool<VulkanTrackedImageSubresource>.Shared.Rent(keysToRemove.Length * 2);
+                    Array.Copy(keysToRemove, expanded, keysToRemove.Length);
+                    ArrayPool<VulkanTrackedImageSubresource>.Shared.Return(keysToRemove, clearArray: true);
+                    keysToRemove = expanded;
+                }
+
+                keysToRemove[keyCount++] = key;
+            }
+
+            for (int i = 0; i < keyCount; i++)
+                _trackedImageSubresourceLayouts.Remove(keysToRemove![i]);
+        }
+        finally
+        {
+            if (keysToRemove is not null)
+                ArrayPool<VulkanTrackedImageSubresource>.Shared.Return(keysToRemove, clearArray: true);
+        }
+    }
+
+    private int ClearAllTrackedImageLayouts()
+    {
+        int count = _trackedImageSubresourceLayouts.Count;
+        if (count != 0)
+            _trackedImageSubresourceLayouts.Clear();
+
+        return count;
+    }
+
+    private void TrackImageAspectLayout(
+        ulong imageHandle,
+        uint mip,
+        uint layer,
+        ImageAspectFlags rangeAspect,
+        ImageAspectFlags trackedAspect,
+        ImageLayout layout)
+    {
+        if ((rangeAspect & trackedAspect) == 0)
+            return;
+
+        VulkanTrackedImageSubresource key = new(imageHandle, mip, layer, trackedAspect);
+        if (layout == ImageLayout.Undefined)
+            _trackedImageSubresourceLayouts.Remove(key);
+        else
+            _trackedImageSubresourceLayouts[key] = layout;
+    }
+
+    private bool TryGetTrackedImageLayout(Image image, ImageSubresourceRange range, out ImageLayout layout)
+    {
+        layout = ImageLayout.Undefined;
+        if (image.Handle == 0)
+            return false;
+
+        ImageLayout? common = null;
+        uint levelCount = Math.Max(range.LevelCount, 1u);
+        uint layerCount = Math.Max(range.LayerCount, 1u);
+        for (uint mipOffset = 0; mipOffset < levelCount; mipOffset++)
+        {
+            uint mip = range.BaseMipLevel + mipOffset;
+            for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
+            {
+                uint layer = range.BaseArrayLayer + layerOffset;
+                if (!TryMergeTrackedImageAspectLayout(image.Handle, mip, layer, range.AspectMask, ImageAspectFlags.ColorBit, ref common) ||
+                    !TryMergeTrackedImageAspectLayout(image.Handle, mip, layer, range.AspectMask, ImageAspectFlags.DepthBit, ref common) ||
+                    !TryMergeTrackedImageAspectLayout(image.Handle, mip, layer, range.AspectMask, ImageAspectFlags.StencilBit, ref common))
+                {
+                    layout = ImageLayout.Undefined;
+                    return false;
+                }
+            }
+        }
+
+        layout = common ?? ImageLayout.Undefined;
+        return common.HasValue;
+    }
+
+    private bool TryMergeTrackedImageAspectLayout(
+        ulong imageHandle,
+        uint mip,
+        uint layer,
+        ImageAspectFlags rangeAspect,
+        ImageAspectFlags trackedAspect,
+        ref ImageLayout? common)
+    {
+        if ((rangeAspect & trackedAspect) == 0)
+            return true;
+
+        VulkanTrackedImageSubresource key = new(imageHandle, mip, layer, trackedAspect);
+        if (!_trackedImageSubresourceLayouts.TryGetValue(key, out ImageLayout tracked) ||
+            tracked == ImageLayout.Undefined)
+        {
+            return false;
+        }
+
+        if (common.HasValue && common.Value != tracked)
+            return false;
+
+        common = tracked;
+        return true;
+    }
+
+    private ulong ComputeImageLayoutStateSignature()
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(ResourceAllocatorIdentity);
+        hash.Add(ResourcePlannerRevision);
+
+        int physicalGroupCount = 0;
+        foreach (VulkanPhysicalImageGroup group in ResourceAllocator.EnumeratePhysicalGroups())
+        {
+            if (!group.IsAllocated)
+                continue;
+
+            physicalGroupCount++;
+            hash.Add(group.Image.Handle);
+            hash.Add((int)group.Format);
+            hash.Add((ulong)group.Usage);
+            hash.Add(group.MipLevels);
+            hash.Add(group.Template.Layers);
+            hash.Add((int)group.LastKnownLayout);
+        }
+
+        hash.Add(physicalGroupCount);
+        hash.Add(_trackedImageSubresourceLayouts.Count);
+        foreach (KeyValuePair<VulkanTrackedImageSubresource, ImageLayout> pair in _trackedImageSubresourceLayouts)
+        {
+            VulkanTrackedImageSubresource key = pair.Key;
+            hash.Add(key.ImageHandle);
+            hash.Add(key.MipLevel);
+            hash.Add(key.ArrayLayer);
+            hash.Add((ulong)key.Aspect);
+            hash.Add((int)pair.Value);
+        }
+
+        return hash.ToHash();
     }
 }

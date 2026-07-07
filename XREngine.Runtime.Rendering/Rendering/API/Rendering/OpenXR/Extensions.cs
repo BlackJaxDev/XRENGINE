@@ -24,6 +24,7 @@ public unsafe partial class OpenXRAPI
     private const string VarjoQuadViewsExtensionName = "XR_VARJO_quad_views";
     private const string KhrVisibilityMaskExtensionName = "XR_KHR_visibility_mask";
     private const string ExtHandTrackingExtensionName = "XR_EXT_hand_tracking";
+    private const string MsftControllerModelExtensionName = "XR_MSFT_controller_model";
 
     private readonly string[] Foveation_Extensions =
     [
@@ -68,6 +69,6 @@ public unsafe partial class OpenXRAPI
 
         extensions = [.. extensions, KhrWin32ConvertPerformanceCounterTime.ExtensionName];
 
-        return [.. extensions, KhrVisibilityMaskExtensionName, ExtHandTrackingExtensionName, .. HTC_Extensions, .. Foveation_Extensions];
+        return [.. extensions, KhrVisibilityMaskExtensionName, ExtHandTrackingExtensionName, MsftControllerModelExtensionName, .. HTC_Extensions, .. Foveation_Extensions];
     }
 }

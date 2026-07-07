@@ -316,17 +316,40 @@ public unsafe partial class VulkanRenderer
 
         internal VulkanPhysicalImageGroup? TryResolvePhysicalGroup(bool ensureAllocated = true)
         {
-            string? resourceName = ResolveLogicalResourceName();
-            if (string.IsNullOrWhiteSpace(resourceName))
-                return null;
+            if (!TryResolvePhysicalGroup(ensureAllocated, out VulkanPhysicalImageGroup? group, out string? failureReason))
+            {
+                if (!string.IsNullOrWhiteSpace(failureReason))
+                    throw new VulkanOutOfMemoryException(failureReason, MemoryPropertyFlags.DeviceLocalBit);
 
-            if (!Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup? group) || group is null)
                 return null;
-
-            if (ensureAllocated)
-                group.EnsureAllocated(Renderer);
+            }
 
             return group;
+        }
+
+        internal bool TryResolvePhysicalGroup(
+            bool ensureAllocated,
+            out VulkanPhysicalImageGroup? group,
+            out string? failureReason)
+        {
+            group = null;
+            failureReason = null;
+            string? resourceName = ResolveLogicalResourceName();
+            if (string.IsNullOrWhiteSpace(resourceName))
+                return true;
+
+            if (!Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out group) || group is null)
+                return true;
+
+            if (ensureAllocated &&
+                !group.TryEnsureAllocated(Renderer, out string allocationFailureReason))
+            {
+                failureReason = allocationFailureReason;
+                group = null;
+                return false;
+            }
+
+            return true;
         }
 
         protected bool TryResolvePhysicalImage(out Image image)
@@ -343,8 +366,11 @@ public unsafe partial class VulkanRenderer
 
         internal bool TryResolvePhysicalGroup(out VulkanPhysicalImageGroup? group)
         {
-            group = TryResolvePhysicalGroup(true);
-            return group is not null;
+            if (TryResolvePhysicalGroup(true, out group, out _))
+                return group is not null;
+
+            group = null;
+            return false;
         }
     }
 }
