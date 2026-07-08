@@ -11,6 +11,7 @@ using XREngine.Core;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
@@ -64,7 +65,24 @@ namespace XREngine.Editor.Mcp
 
             static void BeginCapture(AbstractRenderer renderer, XRViewport viewport, string path, TaskCompletionSource<string> tcs)
             {
-                renderer.GetScreenshotAsync(viewport.Region, false, (img, _) =>
+                using IDisposable? readbackScope = renderer is VulkanRenderer
+                    ? viewport.EnterRenderPipelineReadbackScope()
+                    : null;
+                using IDisposable? targetReadScope = viewport.LastRenderedTargetFBO?.BindForReadingState();
+
+                BoundingRectangle captureRegion = viewport.LastRenderedTargetFBO is { } targetFbo
+                    ? new BoundingRectangle(0, 0, (int)targetFbo.Width, (int)targetFbo.Height)
+                    : viewport.Region;
+                if (targetReadScope is not null)
+                {
+                    renderer.SetReadBuffer(EReadBufferMode.ColorAttachment0);
+                }
+                else
+                {
+                    renderer.BindFrameBuffer(EFramebufferTarget.ReadFramebuffer, null);
+                }
+
+                renderer.GetScreenshotAsync(captureRegion, false, (img, _) =>
                 {
                     if (img is null)
                     {
@@ -89,18 +107,14 @@ namespace XREngine.Editor.Mcp
             var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
             Action? deferredHandler = null;
 
-            var window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+            var window = viewport.Window
+                ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
+                ?? Engine.Windows.FirstOrDefault();
             if (window is null)
                 return new McpToolResponse("No window found to capture from.", isError: true);
 
             void ScheduleCaptureOnRenderThread()
             {
-                if (AbstractRenderer.Current is not null)
-                {
-                    BeginCapture(AbstractRenderer.Current, viewport, path, tcs);
-                    return;
-                }
-
                 int captureStarted = 0;
                 deferredHandler = () =>
                 {
@@ -111,11 +125,11 @@ namespace XREngine.Editor.Mcp
                     if (Interlocked.CompareExchange(ref captureStarted, 1, 0) != 0)
                         return;
 
-                    window.RenderViewportsCallback -= deferredHandler;
+                    window.PostRenderViewportsCallback -= deferredHandler;
                     BeginCapture(renderer, viewport, path, tcs);
                 };
 
-                window.RenderViewportsCallback += deferredHandler;
+                window.PostRenderViewportsCallback += deferredHandler;
             }
 
             if (Engine.IsRenderThread)
@@ -131,8 +145,10 @@ namespace XREngine.Editor.Mcp
             {
                 if (deferredHandler is not null)
                 {
-                    var window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
-                    window?.RenderViewportsCallback -= deferredHandler;
+                    var window = viewport.Window
+                        ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
+                        ?? Engine.Windows.FirstOrDefault();
+                    window?.PostRenderViewportsCallback -= deferredHandler;
                 }
 
                 tcs.TrySetCanceled(token);
@@ -237,7 +253,9 @@ namespace XREngine.Editor.Mcp
             if (viewport is null)
                 return new McpToolResponse("No viewport found.", isError: true);
 
-            XRWindow? window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+            XRWindow? window = viewport.Window
+                ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
+                ?? Engine.Windows.FirstOrDefault();
             if (window is null)
                 return new McpToolResponse("No window found for the target viewport.", isError: true);
 
@@ -277,7 +295,9 @@ namespace XREngine.Editor.Mcp
             if (viewport is null)
                 return new McpToolResponse("No viewport found.", isError: true);
 
-            XRWindow? window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+            XRWindow? window = viewport.Window
+                ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
+                ?? Engine.Windows.FirstOrDefault();
             if (window is null)
                 return new McpToolResponse("No window found for the target viewport.", isError: true);
 
@@ -383,6 +403,7 @@ namespace XREngine.Editor.Mcp
             bool policyFlipsY = ShouldFlipDepthReadbackY();
             IVector2 currentCoordinate = policyFlipsY ? flippedCoordinate : unflippedCoordinate;
 
+            using IDisposable? readbackScope = viewport.EnterRenderPipelineReadbackScope();
             object unflipped = ReadDepthProbeSample(viewport, clamped, fbo, unflippedCoordinate, includeRaw);
             object flipped = CoordinatesEqual(unflippedCoordinate, flippedCoordinate)
                 ? unflipped
@@ -593,6 +614,9 @@ namespace XREngine.Editor.Mcp
                         if (ReferenceEquals(viewport.CameraComponent, camera))
                             return viewport;
                     }
+
+                    if (camera.Camera.Viewports.Count > 0)
+                        return camera.Camera.Viewports[0];
                 }
             }
 

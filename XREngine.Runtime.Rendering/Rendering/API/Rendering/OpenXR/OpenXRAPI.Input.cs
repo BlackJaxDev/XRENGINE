@@ -274,23 +274,11 @@ public unsafe partial class OpenXRAPI
     private void SuggestDefaultBindings()
     {
         // Best-effort: missing suggested bindings may still work on some runtimes, but is not guaranteed.
-        // We provide common bindings for grip pose across widely-used interaction profiles.
+        // Submit one complete binding table per controller profile. Some runtimes treat a later
+        // suggestion for the same profile as replacing the previous table, so grip/aim/buttons
+        // must be suggested together.
         try
         {
-            XrPath leftGrip = StringToPathOrThrow("/user/hand/left/input/grip/pose");
-            XrPath rightGrip = StringToPathOrThrow("/user/hand/right/input/grip/pose");
-
-            var bindings = new ActionSuggestedBinding[2]
-            {
-                new ActionSuggestedBinding { Action = _handGripPoseAction, Binding = leftGrip },
-                new ActionSuggestedBinding { Action = _handGripPoseAction, Binding = rightGrip },
-            };
-
-            SuggestForProfile("/interaction_profiles/khr/simple_controller", bindings);
-            SuggestForProfile("/interaction_profiles/oculus/touch_controller", bindings);
-            SuggestForProfile("/interaction_profiles/valve/index_controller", bindings);
-            SuggestForProfile("/interaction_profiles/htc/vive_controller", bindings);
-            SuggestForProfile("/interaction_profiles/microsoft/motion_controller", bindings);
             SuggestRuntimeNeutralBindings();
 
             if (_trackerPoseAction.Handle != 0 && _trackerSubactionPaths.Count > 0)
@@ -344,11 +332,11 @@ public unsafe partial class OpenXRAPI
         }
     }
 
-    private void SyncActionsForFrame()
+    private bool SyncActionsForFrame()
     {
         AssertOpenXrRenderThread(nameof(SyncActionsForFrame));
         if (!_inputCreated || !_inputAttached)
-            return;
+            return false;
 
         var active = new ActiveActionSet
         {
@@ -368,7 +356,10 @@ public unsafe partial class OpenXRAPI
         {
             // Not fatal; poses will just be invalid this frame.
             Debug.Out($"OpenXR: SyncActions => {res}");
+            return false;
         }
+
+        return true;
     }
 
     private bool TryGetActivePoseState(XrAction poseAction, XrPath subactionPath, out bool isActive)
@@ -440,8 +431,8 @@ public unsafe partial class OpenXRAPI
             || Volatile.Read(ref _openXrActionsSyncedFrameNumber) != frameNo;
         if (shouldSyncActions)
         {
-            SyncActionsForFrame();
-            Volatile.Write(ref _openXrActionsSyncedFrameNumber, frameNo);
+            if (SyncActionsForFrame())
+                Volatile.Write(ref _openXrActionsSyncedFrameNumber, frameNo);
         }
 
         bool leftActive = false;

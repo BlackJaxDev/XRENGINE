@@ -82,6 +82,24 @@ public sealed class WindowOwnershipContractTests
     }
 
     [Test]
+    public void XRWindow_InteractiveResizeGuardClearsActiveFlagWhenNormalRenderIsActive()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs").Replace("\r\n", "\n");
+        int renderStart = source.IndexOf("internal void RenderInteractiveResizeFrame(string reason, bool allowCurrentThread, bool deferWhenOnRenderThread)", StringComparison.Ordinal);
+        renderStart.ShouldBeGreaterThanOrEqualTo(0);
+        int nextMethod = source.IndexOf("private void ProcessPendingInteractivePresentationResize()", renderStart, StringComparison.Ordinal);
+        nextMethod.ShouldBeGreaterThan(renderStart);
+
+        string renderBody = source[renderStart..nextMethod];
+
+        renderBody.ShouldContain("bool isRenderOwnerThread = currentThreadId == RenderOwnerThreadId;");
+        renderBody.ShouldContain("Window.API.API == ContextAPI.OpenGL || isRenderOwnerThread");
+        renderBody.ShouldNotContain("Interlocked.CompareExchange(ref _interactiveResizeRenderActive, 1, 0) != 0 ||");
+        renderBody.ShouldContain("InteractiveResizeDiagnostics.RecordSuppressedRender(reason + \":interactive-active\");");
+        renderBody.ShouldContain("Volatile.Write(ref _interactiveResizeRenderActive, 0);\n                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + \":normal-render-active\");");
+    }
+
+    [Test]
     public void XRWindow_CommitsFullInternalResizeOnlyAfterRenderResourcesAreReady()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");

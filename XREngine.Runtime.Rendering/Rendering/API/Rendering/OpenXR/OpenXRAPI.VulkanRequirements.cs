@@ -15,9 +15,18 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 internal sealed record OpenXrVulkanRuntimeRequirements(
     string[] InstanceExtensions,
     string[] DeviceExtensions,
+    ulong MinApiVersionSupported,
+    ulong MaxApiVersionSupported,
     string? FailureReason)
 {
-    public static OpenXrVulkanRuntimeRequirements Empty { get; } = new([], [], null);
+    public static OpenXrVulkanRuntimeRequirements Empty { get; } = new([], [], 0, 0, null);
+}
+
+internal enum OpenXrVulkanEnable2BootstrapPolicy
+{
+    Auto,
+    Force,
+    Disable
 }
 
 internal sealed unsafe class OpenXrVulkanEnable2BootstrapContext(
@@ -658,6 +667,14 @@ public unsafe partial class OpenXRAPI
         if (!ShouldQueryVulkanRuntimeRequirements())
             return false;
 
+        if (!ShouldUseVulkanEnable2Bootstrap(out string? bootstrapPolicyReason))
+        {
+            if (!string.IsNullOrWhiteSpace(bootstrapPolicyReason))
+                Debug.Vulkan("[OpenXR] Skipping XR_KHR_vulkan_enable2 Vulkan bootstrap. {0}", bootstrapPolicyReason);
+
+            return false;
+        }
+
         try
         {
             api = XR.GetApi();
@@ -723,6 +740,81 @@ public unsafe partial class OpenXRAPI
             Debug.VulkanWarning($"[OpenXR] Vulkan enable2 creation context failed: {failureReason}");
             return false;
         }
+    }
+
+    private static bool ShouldUseVulkanEnable2Bootstrap(out string? reason)
+    {
+        reason = null;
+        OpenXrVulkanEnable2BootstrapPolicy policy = ResolveVulkanEnable2BootstrapPolicy(out string? policyDiagnostic);
+        if (!string.IsNullOrWhiteSpace(policyDiagnostic))
+            Debug.VulkanWarning("[OpenXR] {0}", policyDiagnostic);
+
+        if (policy == OpenXrVulkanEnable2BootstrapPolicy.Disable)
+        {
+            reason = $"{XREngineEnvironmentVariables.OpenXrVulkanEnable2Bootstrap}=Disable requested app-created Vulkan handles.";
+            return false;
+        }
+
+        string? runtimePath = ResolveCurrentOpenXrRuntimePath();
+        bool steamVrRuntime = !string.IsNullOrWhiteSpace(runtimePath) && IsSteamVrRuntimePath(runtimePath);
+        if (steamVrRuntime && policy != OpenXrVulkanEnable2BootstrapPolicy.Force)
+        {
+            reason =
+                $"Active runtime is SteamVR ('{runtimePath}'); using app-created Vulkan handles with XR_KHR_vulkan_enable because SteamVR can raise a native breakpoint inside xrCreateVulkanInstanceKHR. Set {XREngineEnvironmentVariables.OpenXrVulkanEnable2Bootstrap}=Force for diagnostics.";
+            return false;
+        }
+
+        if (policy == OpenXrVulkanEnable2BootstrapPolicy.Force)
+            Debug.Vulkan("[OpenXR] {0}=Force requested XR_KHR_vulkan_enable2 Vulkan bootstrap.", XREngineEnvironmentVariables.OpenXrVulkanEnable2Bootstrap);
+
+        return true;
+    }
+
+    private static OpenXrVulkanEnable2BootstrapPolicy ResolveVulkanEnable2BootstrapPolicy(out string? diagnostic)
+    {
+        diagnostic = null;
+        string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanEnable2Bootstrap);
+        if (string.IsNullOrWhiteSpace(value) ||
+            value.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return OpenXrVulkanEnable2BootstrapPolicy.Auto;
+        }
+
+        if (value.Equals("force", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("on", StringComparison.OrdinalIgnoreCase))
+        {
+            return OpenXrVulkanEnable2BootstrapPolicy.Force;
+        }
+
+        if (value.Equals("disable", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("legacy", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("0", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("no", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("off", StringComparison.OrdinalIgnoreCase))
+        {
+            return OpenXrVulkanEnable2BootstrapPolicy.Disable;
+        }
+
+        diagnostic =
+            $"Ignoring invalid {XREngineEnvironmentVariables.OpenXrVulkanEnable2Bootstrap}='{value}'. Expected Auto, Force, or Disable.";
+        return OpenXrVulkanEnable2BootstrapPolicy.Auto;
+    }
+
+    private static string? ResolveCurrentOpenXrRuntimePath()
+    {
+        string? runtimePath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        if (!string.IsNullOrWhiteSpace(runtimePath))
+            return runtimePath;
+
+        runtimePath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson);
+        if (!string.IsNullOrWhiteSpace(runtimePath))
+            return runtimePath;
+
+        return TryGetOpenXRActiveRuntime();
     }
 
     private static string[] BuildVulkanEnable2BootstrapExtensions(HashSet<string> availableExtensions)
@@ -811,7 +903,7 @@ public unsafe partial class OpenXRAPI
                     : "OpenXR runtime does not expose XR_KHR_vulkan_enable.";
 
                 Debug.VulkanWarning($"[OpenXR] Vulkan runtime extension preflight skipped: {reason}");
-                return new OpenXrVulkanRuntimeRequirements([], [], reason);
+                return new OpenXrVulkanRuntimeRequirements([], [], 0, 0, reason);
             }
 
             var appInfo = MakeAppInfo();
@@ -820,7 +912,7 @@ public unsafe partial class OpenXRAPI
             Free(createInfo);
 
             if (createResult != Result.Success)
-                return new OpenXrVulkanRuntimeRequirements([], [], $"xrCreateInstance for Vulkan requirement query failed: {createResult}");
+                return new OpenXrVulkanRuntimeRequirements([], [], 0, 0, $"xrCreateInstance for Vulkan requirement query failed: {createResult}");
 
             SystemGetInfo systemGetInfo = new()
             {
@@ -830,7 +922,32 @@ public unsafe partial class OpenXRAPI
             ulong systemId = 0;
             Result systemResult = api.GetSystem(instance, in systemGetInfo, ref systemId);
             if (systemResult != Result.Success)
-                return new OpenXrVulkanRuntimeRequirements([], [], $"xrGetSystem for Vulkan requirement query failed: {systemResult}");
+                return new OpenXrVulkanRuntimeRequirements([], [], 0, 0, $"xrGetSystem for Vulkan requirement query failed: {systemResult}");
+
+            ulong minApiVersionSupported = 0;
+            ulong maxApiVersionSupported = 0;
+            if (api.TryGetInstanceExtension<KhrVulkanEnable>(null, instance, out var vulkanExtension))
+            {
+                GraphicsRequirementsVulkanKHR graphicsRequirements = new()
+                {
+                    Type = StructureType.GraphicsRequirementsVulkanKhr
+                };
+                Result graphicsRequirementsResult = vulkanExtension.GetVulkanGraphicsRequirements(
+                    instance,
+                    systemId,
+                    ref graphicsRequirements);
+                if (graphicsRequirementsResult == Result.Success)
+                {
+                    minApiVersionSupported = graphicsRequirements.MinApiVersionSupported;
+                    maxApiVersionSupported = graphicsRequirements.MaxApiVersionSupported;
+                }
+                else
+                {
+                    Debug.VulkanWarning(
+                        "[OpenXR] xrGetVulkanGraphicsRequirementsKHR failed during Vulkan runtime preflight: {0}",
+                        graphicsRequirementsResult);
+                }
+            }
 
             string[] instanceExtensions = QueryVulkanExtensionList(api, instance, systemId, "xrGetVulkanInstanceExtensionsKHR");
             string[] deviceExtensions = QueryVulkanExtensionList(api, instance, systemId, "xrGetVulkanDeviceExtensionsKHR");
@@ -838,18 +955,25 @@ public unsafe partial class OpenXRAPI
             if (instanceExtensions.Length > 0 || deviceExtensions.Length > 0)
             {
                 Debug.Vulkan(
-                    "[OpenXR] Vulkan runtime requirements: instance=[{0}] device=[{1}]",
+                    "[OpenXR] Vulkan runtime requirements: minApi={0} maxApi={1} instance=[{2}] device=[{3}]",
+                    minApiVersionSupported,
+                    maxApiVersionSupported,
                     string.Join(", ", instanceExtensions),
                     string.Join(", ", deviceExtensions));
             }
 
-            return new OpenXrVulkanRuntimeRequirements(instanceExtensions, deviceExtensions, null);
+            return new OpenXrVulkanRuntimeRequirements(
+                instanceExtensions,
+                deviceExtensions,
+                minApiVersionSupported,
+                maxApiVersionSupported,
+                null);
         }
         catch (Exception ex)
         {
             string reason = ex.Message;
             Debug.VulkanWarning($"[OpenXR] Vulkan runtime extension preflight failed: {reason}");
-            return new OpenXrVulkanRuntimeRequirements([], [], reason);
+            return new OpenXrVulkanRuntimeRequirements([], [], 0, 0, reason);
         }
         finally
         {

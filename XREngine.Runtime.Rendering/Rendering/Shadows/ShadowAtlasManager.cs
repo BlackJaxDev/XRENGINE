@@ -299,6 +299,7 @@ public sealed partial class ShadowAtlasManager
     private readonly List<PointFaceGroupKey> _pointFaceGroupKeyScratch = new(16);
     private readonly Dictionary<ShadowRequestKey, int> _pointFaceGroupIndexByFirstRequest = new();
     private readonly List<ShadowDirectionalAtlasLightDiagnostic> _directionalAtlasLightDiagnostics = new();
+    private readonly Dictionary<Guid, int> _directionalAtlasLightDiagnosticIndexByLightId = new();
     private readonly List<DirectionalAtlasRenderEvent> _directionalAtlasRenderEvents = new();
     private readonly List<DirectionalGroupReservationFailure> _directionalGroupReservationFailures = new();
     private readonly List<ShadowAtlasPageDescriptor> _pageDescriptors;
@@ -406,6 +407,7 @@ public sealed partial class ShadowAtlasManager
         _completionDrainScratch.Capacity = Math.Max(_completionDrainScratch.Capacity, _settings.MaxRequestsPerFrame);
         EnsureCompletionCapacity(_settings.MaxRequestsPerFrame + 1);
         _directionalAtlasLightDiagnostics.Capacity = Math.Max(_directionalAtlasLightDiagnostics.Capacity, Math.Min(8, _settings.MaxRequestsPerFrame));
+        _directionalAtlasLightDiagnosticIndexByLightId.EnsureCapacity(Math.Min(8, _settings.MaxRequestsPerFrame));
         _directionalAtlasRenderEvents.Capacity = Math.Max(_directionalAtlasRenderEvents.Capacity, Math.Min(16, _settings.MaxRequestsPerFrame));
         _directionalGroupReservationFailures.Capacity = Math.Max(_directionalGroupReservationFailures.Capacity, Math.Min(16, _settings.MaxRequestsPerFrame));
 
@@ -464,6 +466,7 @@ public sealed partial class ShadowAtlasManager
         _pointFaceGroupIndexByFirstRequest.Clear();
         _pointFaceGroups.Clear();
         _directionalAtlasLightDiagnostics.Clear();
+        _directionalAtlasLightDiagnosticIndexByLightId.Clear();
         _directionalAtlasRenderEvents.Clear();
         _currentAllocations.Clear();
         _currentAllocationIndices.Clear();
@@ -1166,11 +1169,10 @@ public sealed partial class ShadowAtlasManager
     {
         if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
         {
-            // Keep Vulkan atlas rendering on sequential tile entries until the
-            // grouped multi-viewport/layered shader path is validated. The current
-            // OpenXR + Monado + Vulkan path can hang the graphics queue on grouped
-            // directional cascade command buffers.
-            return false;
+            // Keep the known Monado OpenXR Vulkan path on sequential tile entries.
+            // SteamVR and ordinary Vulkan sessions can use the grouped
+            // multi-viewport/layered shader path when the renderer reports support.
+            return !DirectionalLightComponent.IsKnownMonadoOpenXrRuntime();
         }
 
         return true;
@@ -2600,6 +2602,9 @@ public sealed partial class ShadowAtlasManager
         _demotionStates.Clear();
         _demotionRemovalScratch.Clear();
         _pendingSkippedAllocations.Clear();
+        _directionalAtlasLightDiagnostics.Clear();
+        _directionalAtlasLightDiagnosticIndexByLightId.Clear();
+        _directionalAtlasRenderEvents.Clear();
         _directionalGroupReservationFailures.Clear();
         _renderPlanEntries.Clear();
         _renderPlanMembers.Clear();
@@ -2661,6 +2666,7 @@ public sealed partial class ShadowAtlasManager
             _directionalCascadeGroupLastRequestIndex.Clear();
             ClearDirectionalCascadeGroupBuildMap();
             _directionalAtlasLightDiagnostics.Clear();
+            _directionalAtlasLightDiagnosticIndexByLightId.Clear();
             _directionalGroupReservationFailures.Clear();
         }
         else if (atlasKind == EShadowAtlasKind.Point)
@@ -4138,6 +4144,7 @@ public sealed partial class ShadowAtlasManager
     {
         AssertPlanningThread();
         _directionalAtlasLightDiagnostics.Clear();
+        _directionalAtlasLightDiagnosticIndexByLightId.Clear();
         if (!RenderDiagnosticsFlags.DirectionalShadowAudit)
             return;
 
@@ -4213,9 +4220,10 @@ public sealed partial class ShadowAtlasManager
 
     private int GetOrAddDirectionalAtlasLightDiagnostic(Guid lightId, string selectedBackend, string fallbackReason)
     {
-        for (int i = 0; i < _directionalAtlasLightDiagnostics.Count; i++)
-            if (_directionalAtlasLightDiagnostics[i].LightId == lightId)
-                return i;
+        if (_directionalAtlasLightDiagnosticIndexByLightId.TryGetValue(lightId, out int existingIndex) &&
+            (uint)existingIndex < (uint)_directionalAtlasLightDiagnostics.Count &&
+            _directionalAtlasLightDiagnostics[existingIndex].LightId == lightId)
+            return existingIndex;
 
         _directionalAtlasLightDiagnostics.Add(new ShadowDirectionalAtlasLightDiagnostic(
             LightId: lightId,
@@ -4232,7 +4240,9 @@ public sealed partial class ShadowAtlasManager
             GroupReservationFailureReason: string.Empty,
             ElapsedShadowMilliseconds: 0.0));
 
-        return _directionalAtlasLightDiagnostics.Count - 1;
+        int index = _directionalAtlasLightDiagnostics.Count - 1;
+        _directionalAtlasLightDiagnosticIndexByLightId[lightId] = index;
+        return index;
     }
 
     private bool TryGetFrameAllocation(ShadowRequestKey key, out ShadowAtlasAllocation allocation)
@@ -4375,6 +4385,10 @@ public sealed partial class ShadowAtlasManager
         _directionalCascadeGroupLastRequestIndex.Clear();
         _pointFaceGroupIndexByFirstRequest.Clear();
         _pointFaceGroups.Clear();
+        _directionalAtlasLightDiagnostics.Clear();
+        _directionalAtlasLightDiagnosticIndexByLightId.Clear();
+        _directionalAtlasRenderEvents.Clear();
+        _directionalGroupReservationFailures.Clear();
     }
 
     private uint ApplyLodHysteresis(ShadowMapRequest request, uint desiredResolution, uint minimumResolution)

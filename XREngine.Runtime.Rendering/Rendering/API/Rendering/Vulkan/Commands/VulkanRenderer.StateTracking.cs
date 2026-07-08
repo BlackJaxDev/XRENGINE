@@ -599,11 +599,13 @@ public unsafe partial class VulkanRenderer
         uint DisplayHeight,
         uint InternalWidth,
         uint InternalHeight,
+        int OutputFrameBufferIdentity,
         int ActivePassSetSignature,
         int ActiveResourceSetSignature);
 
     private readonly record struct ResourcePlannerSignatureBreakdown(
         int Registry,
+        int OutputFrameBuffer,
         uint DisplayWidth,
         uint DisplayHeight,
         uint InternalWidth,
@@ -616,7 +618,7 @@ public unsafe partial class VulkanRenderer
         uint TransferQueueFamily)
     {
         public override string ToString()
-            => $"registry=0x{Registry:X8} dims={DisplayWidth}x{DisplayHeight}/{InternalWidth}x{InternalHeight} " +
+            => $"registry=0x{Registry:X8} outputFbo=0x{OutputFrameBuffer:X8} dims={DisplayWidth}x{DisplayHeight}/{InternalWidth}x{InternalHeight} " +
                $"passes=0x{PassMetadata:X8} batches=0x{GraphBatches:X8} edges=0x{GraphEdges:X8} " +
                $"queues=g{GraphicsQueueFamily}/c{ComputeQueueFamily}/t{TransferQueueFamily}";
 
@@ -624,6 +626,7 @@ public unsafe partial class VulkanRenderer
         {
             StringBuilder builder = new();
             AppendDelta(builder, "resource-registry", previous.Registry, Registry, hexadecimal: true);
+            AppendDelta(builder, "output-fbo", previous.OutputFrameBuffer, OutputFrameBuffer, hexadecimal: true);
             AppendDelta(builder, "display-width", previous.DisplayWidth, DisplayWidth);
             AppendDelta(builder, "display-height", previous.DisplayHeight, DisplayHeight);
             AppendDelta(builder, "internal-width", previous.InternalWidth, InternalWidth);
@@ -686,6 +689,7 @@ public unsafe partial class VulkanRenderer
         int ActivePassMetadataRevision,
         int ActivePassSetSignature,
         int ActiveResourceSetSignature,
+        int OutputFrameBufferIdentity,
         uint DisplayWidth,
         uint DisplayHeight,
         uint InternalWidth,
@@ -700,6 +704,7 @@ public unsafe partial class VulkanRenderer
                 && ActivePassMetadataRevision == other.ActivePassMetadataRevision
                 && ActivePassSetSignature == other.ActivePassSetSignature
                 && ActiveResourceSetSignature == other.ActiveResourceSetSignature
+                && OutputFrameBufferIdentity == other.OutputFrameBufferIdentity
                 && DisplayWidth == other.DisplayWidth
                 && DisplayHeight == other.DisplayHeight
                 && InternalWidth == other.InternalWidth
@@ -833,11 +838,13 @@ public unsafe partial class VulkanRenderer
 
     private readonly record struct BarrierPlanFastPathKey(
         VulkanCompiledRenderGraph CompiledGraph,
+        ulong ResourcePlannerSignature,
         ulong ResourceAllocationSignature,
         VulkanBarrierPlanner.QueueOwnershipConfig QueueOwnership)
     {
         public bool Matches(in BarrierPlanFastPathKey other)
             => ReferenceEquals(CompiledGraph, other.CompiledGraph)
+                && ResourcePlannerSignature == other.ResourcePlannerSignature
                 && ResourceAllocationSignature == other.ResourceAllocationSignature
                 && QueueOwnership.Equals(other.QueueOwnership);
     }

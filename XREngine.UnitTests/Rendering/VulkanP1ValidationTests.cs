@@ -463,6 +463,21 @@ public sealed class VulkanP1ValidationTests
     }
 
     [Test]
+    public void SwapchainCommandChainSecondaryRuns_CountAsActualWrites()
+    {
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs")
+            .Replace("\r\n", "\n");
+
+        string meshSecondaryBlock = SliceBetween(
+            commandBufferSource,
+            "if (TryExecuteScheduledMeshCommandChainSecondaryRun(opIndex, meshCommandChainRunCount, opPassIndex, drawOp) ||",
+            "case IndirectDrawOp indirectOp:");
+
+        meshSecondaryBlock.ShouldContain("if (drawOp.Target is null)\n                                actualSwapchainWriteCount += meshCommandChainRunCount;");
+        meshSecondaryBlock.ShouldContain("opIndex = opIndex + meshCommandChainRunCount - 1;");
+    }
+
+    [Test]
     public void DescriptorPoolRetirement_IsFrameSlotAndTimelineBased()
     {
         string retirementSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");

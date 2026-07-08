@@ -166,6 +166,20 @@ public sealed class ImportedTextureStreamingContractTests
     }
 
     [Test]
+    public void ImportedTextureStreaming_VulkanHeapPressureSuppressesPromotionsWithoutZeroingManagedBudget()
+    {
+        string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
+
+        managerSource.ShouldContain("TryGetVulkanAllocatorStreamingPressure(");
+        managerSource.ShouldContain("bool suppressPromotionsForVulkanPressure = usingVulkanAllocatorBudget && vulkanAllocatorPressure;");
+        managerSource.ShouldContain("if (suppressPromotionsForVulkanPressure && desiredResidentSize > snapshot.ResidentMaxDimension)");
+        managerSource.ShouldContain("if (suppressPromotionsForVulkanPressure)\n                    return false;");
+        managerSource.ShouldNotContain("TryApplyVulkanAllocatorStreamingBudget(");
+        managerSource.ShouldNotContain("ref trackedBudgetBytes");
+        managerSource.ShouldNotContain("ref nonManagedBytes");
+    }
+
+    [Test]
     public void ImportedTextureStreaming_VulkanDensePromotionsUseSynchronizedUploadService()
     {
         string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");

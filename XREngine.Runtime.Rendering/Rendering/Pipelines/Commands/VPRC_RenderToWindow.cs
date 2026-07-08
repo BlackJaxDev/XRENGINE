@@ -184,12 +184,7 @@ void main()
         XRViewport? windowViewport = instance.RenderState.WindowViewport;
         bool isActiveWindowViewport = windowViewport?.Window?.Viewports.Contains(windowViewport) == true;
         bool isExternalSwapchainTarget = renderer.IsRenderingExternalSwapchainTarget;
-        bool useBoundOutputFbo =
-            instance.RenderState.OutputFBO is not null &&
-            (isExternalSwapchainTarget ||
-             windowViewport?.RendersToExternalSwapchainTarget == true ||
-             instance.RenderState.StereoPass ||
-             !isActiveWindowViewport);
+        bool useBoundOutputFbo = instance.RenderState.OutputFBO is not null;
         if (windowViewport is not null && !isActiveWindowViewport && !isExternalSwapchainTarget && !useBoundOutputFbo)
         {
             Debug.RenderingWarningEvery(

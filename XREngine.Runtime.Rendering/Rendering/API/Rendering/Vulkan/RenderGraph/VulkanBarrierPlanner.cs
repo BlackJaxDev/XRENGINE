@@ -142,7 +142,7 @@ internal sealed class VulkanBarrierPlanner
                         e.SubresourceRange.Equals(usage.SubresourceRange))
                     .LastOrDefault();
 
-                if (IsSwapchainTargetUsage(usage))
+                if (IsSwapchainTargetUsage(usage, resourcePlanner))
                 {
                     TrackSwapchainUsage(pass, usage, edge, ownership);
                     continue;
@@ -376,8 +376,9 @@ internal sealed class VulkanBarrierPlanner
         list.Add(barrier);
     }
 
-    private static bool IsSwapchainTargetUsage(RenderPassResourceUsage usage)
+    private static bool IsSwapchainTargetUsage(RenderPassResourceUsage usage, VulkanResourcePlanner planner)
         => usage.ResourceName.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase)
+            && !planner.TryGetOutputFrameBufferDescriptor(out _)
             && ShouldTrackImage(usage.ResourceType);
 
     private static bool ShouldTrackImage(ERenderPassResourceType type)
@@ -406,7 +407,12 @@ internal sealed class VulkanBarrierPlanner
             yield break;
 
         if (resourceBinding.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
-            yield break; // swapchain target handled separately
+        {
+            foreach (ImageResourceBinding binding in ExpandOutputFrameBufferResources(usage, planner))
+                yield return binding;
+
+            yield break; // swapchain target handled separately when no offscreen output FBO exists
+        }
 
         if (resourceBinding.StartsWith("buf::", StringComparison.OrdinalIgnoreCase))
             yield break;
@@ -447,6 +453,34 @@ internal sealed class VulkanBarrierPlanner
 
         yield return new ImageResourceBinding(planner.ResolveImageResourceName(resourceBinding), usage.SubresourceRange);
     }
+
+    private static IEnumerable<ImageResourceBinding> ExpandOutputFrameBufferResources(RenderPassResourceUsage usage, VulkanResourcePlanner planner)
+    {
+        if (!planner.TryGetOutputFrameBufferDescriptor(out FrameBufferResourceDescriptor? descriptor) ||
+            descriptor is null)
+        {
+            yield break;
+        }
+
+        string slot = ResolveOutputFrameBufferSlot(usage.ResourceType);
+        foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
+        {
+            if (MatchesSlot(attachment.Attachment, slot) && !string.IsNullOrWhiteSpace(attachment.ResourceName))
+            {
+                yield return new ImageResourceBinding(
+                    planner.ResolveImageResourceName(attachment.ResourceName),
+                    ResolveAttachmentRange(attachment, usage.SubresourceRange));
+            }
+        }
+    }
+
+    private static string ResolveOutputFrameBufferSlot(ERenderPassResourceType resourceType)
+        => resourceType switch
+        {
+            ERenderPassResourceType.DepthAttachment => "depth",
+            ERenderPassResourceType.StencilAttachment => "stencil",
+            _ => "color",
+        };
 
     private static IEnumerable<string> ExpandBufferLogicalResources(string resourceBinding, VulkanResourcePlanner planner)
     {

@@ -69,6 +69,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string vulkanSwapchain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
         string unitTestUi = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs");
         string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
+        string defaultPipelineMain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
         string defaultPipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
 
         frameLifecycle.ShouldContain("StartProfileScope(\"OpenXR.RenderFrame.TryRenderVulkanEyesBatch\")");
@@ -78,6 +79,9 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanOpenXrApi.ShouldContain("AcquireAndWaitOpenXrEyeImage(0");
         vulkanOpenXrApi.ShouldContain("AcquireAndWaitOpenXrEyeImage(1");
         vulkanOpenXrApi.ShouldContain("TryRenderVulkanEyeBatchToSwapchains");
+        vulkanOpenXrApi.ShouldContain("bool allowSequentialFallback = false;");
+        vulkanOpenXrApi.ShouldContain("falling back to sequential eye rendering for this frame");
+        vulkanOpenXrApi.ShouldContain("handled = false;");
         vulkanOpenXrApi.ShouldContain("EnsureVulkanEyeMirrorTargets(renderer, width, height)");
         vulkanOpenXrApi.ShouldContain("OpenXrEyeMirrorRenderRequest");
         vulkanOpenXrApi.ShouldContain("renderer.TryRenderAndPublishOpenXrEyeMirrorFrameBuffers(");
@@ -223,8 +227,45 @@ public sealed class OpenXrTimingPipelineContractTests
         renderPipelineGpuProfiler.ShouldContain("RemoveFramesOlderThanNoLock(best.FrameId, LiveSnapshotMergeWindowFrames);");
         renderPipelineGpuProfiler.ShouldContain("!IsWithinLiveSnapshotMergeWindow(best.FrameId, frameId)");
 
-        defaultPipeline.ShouldContain("State.WindowViewport is not null\n            && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null");
-        defaultPipeline2.ShouldContain("State.WindowViewport is not null\n            && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null");
+        const string viewportTargetCondition =
+            "State.WindowViewport is not null\n        && (RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null\n            || RuntimeEngine.Rendering.State.IsStereoPass)";
+        defaultPipeline.ShouldContain(viewportTargetCondition);
+        defaultPipeline2.ShouldContain(viewportTargetCondition);
+
+        string defaultPipelineFinalOutput = SliceMethod(
+            defaultPipeline,
+            "private void AppendStandardViewportFinalOutputCommands",
+            "private static string ResolveStandardFinalOutputFboName");
+        defaultPipelineFinalOutput.ShouldContain("RuntimeEnableFxaa || RuntimeEnableDeclaredSmaa || RuntimeNeedsTsrUpscale");
+        defaultPipelineFinalOutput.ShouldNotContain("RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale");
+        defaultPipelineFinalOutput.ShouldContain("CreateFinalBlitCommands(FxaaFBOName");
+        defaultPipelineFinalOutput.ShouldContain("CreateFinalBlitCommands(SmaaFBOName");
+        defaultPipelineFinalOutput.ShouldContain("CreateFinalBlitCommands(TsrUpscaleFBOName");
+        defaultPipelineFinalOutput.ShouldNotContain("OpenXrVulkanSafeFinalOutput");
+        defaultPipelineFinalOutput.ShouldNotContain("UseOpenXrVulkanDesktopStartupSafePath");
+
+        string defaultPipelineFxaaChain = SliceMethod(
+            defaultPipeline,
+            "private void AppendFxaaTsrUpscaleChain",
+            "private void AppendExposureUpdate");
+        defaultPipelineFxaaChain.ShouldContain("RuntimeEnableFxaa || RuntimeEnableDeclaredSmaa || RuntimeNeedsTsrUpscale");
+        defaultPipelineFxaaChain.ShouldNotContain("if (UseOpenXrVulkanDesktopStartupSafePath)\n            return;");
+
+        defaultPipelineMain.ShouldContain("private static bool RuntimeEnableDeclaredSmaa");
+        defaultPipelineMain.ShouldContain("=> RuntimeEnableSmaa;");
+        defaultPipelineMain.ShouldContain("internal static bool RuntimeEnableMsaaDeferred");
+        defaultPipelineMain.ShouldContain("&& !UseOpenXrVulkanDesktopStartupSafePath\n        && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;");
+
+        string defaultPipelineResources = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.Resources.cs").Replace("\r\n", "\n");
+        defaultPipelineResources.ShouldContain("profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;");
+        defaultPipelineResources.ShouldContain("profile.AntiAliasingMode == EAntiAliasingMode.Smaa;");
+        defaultPipelineResources.ShouldContain("Texture(builder, SmaaEdgeTextureName");
+        defaultPipelineResources.ShouldContain("Texture(builder, SmaaBlendTextureName");
+        defaultPipelineResources.ShouldContain("Texture(builder, SmaaOutputTextureName");
+        defaultPipelineResources.ShouldContain("builder.FrameBuffer(SmaaFBOName)");
+        defaultPipelineResources.ShouldNotContain("!UsesOpenXrVulkanDesktopSafePath(profile) && profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;");
+        defaultPipelineResources.ShouldContain("if (EnableDeferredMsaa && !UseOpenXrVulkanDesktopStartupSafePath)");
+        defaultPipelineResources.ShouldContain("&& !UsesOpenXrVulkanDesktopSafePath(profile)\n        && profile.AntiAliasingMode == EAntiAliasingMode.Msaa");
 
         unitTestUi.ShouldContain("ShouldFlipOpenXrVulkanStereoPreviewUv");
         unitTestUi.ShouldContain("Engine.VRState.IsOpenXRActive");
@@ -694,6 +735,26 @@ public sealed class OpenXrTimingPipelineContractTests
     }
 
     [Test]
+    public void OpenXrControllerPoseBindings_AreSuggestedWithRuntimeNeutralBindings()
+    {
+        string input = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Input.cs");
+        string runtimeNeutral = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Input.RuntimeNeutral.cs");
+
+        string defaultBindings = SliceMethod(input, "private void SuggestDefaultBindings", "private void SuggestForProfile");
+        defaultBindings.ShouldContain("SuggestRuntimeNeutralBindings();");
+        defaultBindings.ShouldNotContain("SuggestForProfile(\"/interaction_profiles/valve/index_controller\"");
+        defaultBindings.ShouldNotContain("new ActionSuggestedBinding[2]");
+
+        string neutralBindings = SliceMethod(runtimeNeutral, "private void SuggestRuntimeNeutralBindings", "private void SuggestRuntimeBindingsForProfile");
+        CountOccurrences(neutralBindings, "SuggestRuntimeBindingsForProfile(").ShouldBe(5);
+        CountOccurrences(neutralBindings, "(_handGripPoseAction, \"/user/hand/left/input/grip/pose\")").ShouldBe(5);
+        CountOccurrences(neutralBindings, "(_handGripPoseAction, \"/user/hand/right/input/grip/pose\")").ShouldBe(5);
+        neutralBindings.ShouldContain("(_handAimPoseAction, \"/user/hand/left/input/aim/pose\")");
+        neutralBindings.ShouldContain("(_handAimPoseAction, \"/user/hand/right/input/aim/pose\")");
+        input.ShouldContain("if (SyncActionsForFrame())\n                Volatile.Write(ref _openXrActionsSyncedFrameNumber, frameNo);");
+    }
+
+    [Test]
     public void AllocationAudit_FlagsOpenXrFormattedLoggingCandidates()
     {
         string script = ReadWorkspaceFile("Tools/Reports/Find-NewAllocations.ps1");
@@ -943,6 +1004,172 @@ public sealed class OpenXrTimingPipelineContractTests
         hostServices.ShouldNotContain("if (output.SceneRendered ||");
         frameOutputs.ShouldContain("public bool RenderPhaseSceneRendered");
         frameOutputs.ShouldContain("telemetry.Phase == EFrameOutputPhase.Render && telemetry.SceneRendered");
+    }
+
+    [Test]
+    public void UnitTestingWorld_DesktopEditingCameraRemainsFlyableWhenVrPickupIsEnabled()
+    {
+        string editorUnitTestingPawns = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Pawns.cs");
+        string bootstrapPawns = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapPawnFactory.cs");
+        string editorUnitTestingUi = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs");
+        string uiPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/UserInterfaceRenderPipeline.cs");
+        string bootstrapEditorBridge = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapEditorBridge.cs");
+        string bootstrapEditorHooks = ReadWorkspaceFile("XREngine.Editor/Bootstrap/BootstrapEditorHookRegistration.cs");
+
+        AssertDesktopEditingCameraContract(
+            editorUnitTestingPawns,
+            "Toggles.AllowEditingInVR",
+            "Toggles.AddCameraVRPickup",
+            "UserInterface.CreateCameraPreviewOverlay(camComp, CameraVRPickupName)");
+
+        AssertDesktopEditingCameraContract(
+            bootstrapPawns,
+            "settings.AllowEditingInVR",
+            "settings.AddCameraVRPickup",
+            "BootstrapEditorBridge.Current?.CreateCameraPreviewUi(camComp, CameraVRPickupName)");
+
+        bootstrapEditorBridge.ShouldContain("void CreateCameraPreviewUi(CameraComponent camera, string label);");
+        bootstrapEditorHooks.ShouldContain("EditorUnitTests.UserInterface.CreateCameraPreviewOverlay(camera, label);");
+
+        editorUnitTestingUi.ShouldContain("public static void CreateCameraPreviewOverlay(CameraComponent camera, string label)");
+        editorUnitTestingUi.ShouldContain("private const int PreviewOverlayRenderPass = (int)EDefaultRenderPass.OnTopForward;");
+        editorUnitTestingUi.ShouldContain("CreateVRStereoPreviewOverlay(rootCanvasNode);");
+        editorUnitTestingUi.ShouldContain("FlushPendingCameraPreviewOverlays(rootCanvasNode);");
+        editorUnitTestingUi.ShouldContain("var preview = previewNode.AddComponent<UIViewportComponent>()!");
+        editorUnitTestingUi.ShouldContain("preview.RenderPass = PreviewOverlayRenderPass;");
+        editorUnitTestingUi.ShouldContain("preview.Viewport.AutomaticallyCollectVisible = false;");
+        editorUnitTestingUi.ShouldContain("preview.Viewport.AutomaticallySwapBuffers = false;");
+        editorUnitTestingUi.ShouldContain("preview.Viewport.AllowUIRender = false;");
+        editorUnitTestingUi.ShouldContain("preview.Viewport.CameraComponent = camera;");
+        editorUnitTestingUi.ShouldContain("previewTfm.MinAnchor = new Vector2(0.5f, 0.0f);");
+        editorUnitTestingUi.ShouldContain("RenderPass = PreviewOverlayRenderPass");
+        uiPipeline.ShouldContain("{ (int)EDefaultRenderPass.OnTopForward, _nearToFarSorter }");
+
+        string createEditorUi = SliceMethod(
+            editorUnitTestingUi,
+            "public static UICanvasComponent CreateEditorUI",
+            "private static void CreateVRStereoPreviewOverlay");
+        int nativeBranchIndex = createEditorUi.IndexOf("if (Toggles.EditorType == UnitTestEditorType.Native)", StringComparison.Ordinal);
+        int previewFlushIndex = createEditorUi.IndexOf("FlushPendingCameraPreviewOverlays(rootCanvasNode);", StringComparison.Ordinal);
+        nativeBranchIndex.ShouldBeGreaterThanOrEqualTo(0);
+        previewFlushIndex.ShouldBeGreaterThan(nativeBranchIndex);
+    }
+
+    private static void AssertDesktopEditingCameraContract(
+        string source,
+        string allowEditingExpression,
+        string addPickupExpression,
+        string cameraPreviewRegistration)
+    {
+        string createPlayerPawn = SliceMethod(
+            source,
+            "public static SceneNode? CreatePlayerPawn",
+            "private static SceneNode CreateCharacterVRPawn");
+
+        CountOccurrences(createPlayerPawn, "CreateVrDesktopEditorCamera(rootNode, setUI, isServer);").ShouldBe(2);
+        CountOccurrences(createPlayerPawn, "CreateCameraVRPickup(rootNode, setUI);").ShouldBe(2);
+        createPlayerPawn.ShouldNotContain($"{allowEditingExpression} || {addPickupExpression}");
+        createPlayerPawn.ShouldNotContain($"{allowEditingExpression} && !{addPickupExpression}");
+        createPlayerPawn.ShouldNotContain($"CreateDesktopCamera(cameraNode, isServer, {allowEditingExpression}");
+
+        source.ShouldContain($"if (!{allowEditingExpression})");
+        source.ShouldContain($"if (!{addPickupExpression})");
+        source.ShouldContain("CreateDesktopCamera(cameraNode, isServer, flyable: true, addListener: false)");
+        source.ShouldContain("CreateCamera(rootNode, out var camComp, null, cameraName: CameraVRPickupName)");
+        source.ShouldContain("AddCameraPickupPhysicsBody(cameraNode);");
+        source.ShouldContain(cameraPreviewRegistration);
+        source.ShouldContain("private static void AddCameraPickupPhysicsBody(SceneNode cameraNode)");
+
+        string createDesktopCamera = SliceMethod(
+            source,
+            "private static PawnComponent? CreateDesktopCamera",
+            "private static SceneNode CreateDesktopCharacterPawn");
+
+        (createDesktopCamera.Contains("EditorFlyingCameraPawnComponent", StringComparison.Ordinal) ||
+            createDesktopCamera.Contains("CreateFlyableCameraPawn(cameraNode", StringComparison.Ordinal))
+            .ShouldBeTrue();
+        createDesktopCamera.ShouldContain("cameraNode.AddComponent<PawnComponent>()");
+        createDesktopCamera.ShouldNotContain("DynamicRigidBodyComponent");
+
+        int plainPawnIndex = createDesktopCamera.IndexOf("pawnComp = cameraNode.AddComponent<PawnComponent>()!", StringComparison.Ordinal);
+        int configureIndex = createDesktopCamera.IndexOf("ConfigureEditorViewCamera(parent, cameraNode);", StringComparison.Ordinal);
+        plainPawnIndex.ShouldBeGreaterThanOrEqualTo(0);
+        configureIndex.ShouldBeGreaterThan(plainPawnIndex);
+    }
+
+    [Test]
+    public void EditorDepthHitAndPreviewRenderTargets_DoNotDependOnOpenXrSwapchainAlpha()
+    {
+        string editorPawn = ReadWorkspaceFile("XREngine.Editor/EditorFlyingCameraPawnComponent.cs");
+        string uiMaterial = ReadWorkspaceFile("XREngine/Scene/Components/UI/Core/UIMaterialComponent.cs");
+        string uiViewport = ReadWorkspaceFile("XREngine/Scene/Components/UI/Core/UIViewportComponent.cs");
+        string editorUnitTestingUi = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs");
+
+        string postRender = SliceMethod(
+            editorPawn,
+            "private void PostRender()",
+            "private void ApplyInput");
+        postRender.ShouldContain("GetDepthHit(vp, GetCursorInternalCoordinatePosition(vp));");
+        postRender.ShouldNotContain("IsRenderingExternalSwapchainTarget");
+
+        uiMaterial.ShouldContain("public void SetBlendModeAllDrawBuffers(BlendMode? blendMode)");
+        uiMaterial.ShouldContain("_renderParameters.BlendModeAllDrawBuffers = blendMode;");
+        uiMaterial.ShouldContain("RenderCommand2D.MarkDirty();");
+        uiMaterial.ShouldContain("RenderCommand3D.MarkDirty();");
+
+        uiMaterial.ShouldContain("public bool DisableBatching");
+        uiMaterial.ShouldContain("return !DisableBatching &&");
+        uiViewport.ShouldContain("DisableBatching = true;");
+        uiViewport.ShouldContain("SetBlendModeAllDrawBuffers(BlendMode.Disabled());");
+        editorUnitTestingUi.ShouldContain("private const int PreviewOverlayZIndex = int.MaxValue;");
+        editorUnitTestingUi.ShouldContain("private const int FpsOverlayZIndex = int.MaxValue - 100;");
+        editorUnitTestingUi.ShouldContain("text.RenderCommand2D.ZIndex = FpsOverlayZIndex;");
+        editorUnitTestingUi.ShouldContain("left.DisableBatching = true;");
+        editorUnitTestingUi.ShouldContain("right.DisableBatching = true;");
+        editorUnitTestingUi.ShouldContain("left.SetBlendModeAllDrawBuffers(BlendMode.Disabled());");
+        editorUnitTestingUi.ShouldContain("right.SetBlendModeAllDrawBuffers(BlendMode.Disabled());");
+        editorUnitTestingUi.ShouldContain("target.DisableBatching = true;");
+        editorUnitTestingUi.ShouldContain("target.SetBlendModeAllDrawBuffers(BlendMode.Disabled());");
+        editorUnitTestingUi.ShouldContain("RegisterPreviewOverlayDiagnostics(\"Left Eye Preview\", left);");
+        editorUnitTestingUi.ShouldContain("RegisterPreviewOverlayDiagnostics(previewNode.Name, preview);");
+    }
+
+    [Test]
+    public void HeavyUploadStageLogging_IsExplicitOptIn()
+    {
+        string renderDiagnosticsFlags = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RenderDiagnosticsFlags.cs");
+
+        renderDiagnosticsFlags.ShouldContain(
+            "UploadStageLogging = ReadBool(XREngineEnvironmentVariables.UploadStageLogging);");
+        renderDiagnosticsFlags.ShouldNotContain("Debugger.IsAttached");
+    }
+
+    [Test]
+    public void UnsupportedGpuMeshBvhPicking_UsesCoarseBoundsInsteadOfExactCpuTriangleWalk()
+    {
+        string worldInstance = ReadWorkspaceFile("XREngine/Rendering/XRWorldInstance.cs");
+        string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/BvhRaycastDispatcher.cs");
+
+        worldInstance.ShouldContain("using coarse bounds picking");
+        dispatcher.ShouldContain("rejecting GPU raycast request");
+        dispatcher.ShouldNotContain("Falling back to CPU mesh picking");
+
+        string gpuBvhPickBranch = SliceMethod(
+            worldInstance,
+            "if (TryGetGpuMeshBvhPickSubMesh",
+            "if (!TryIntersectRenderableMesh");
+
+        gpuBvhPickBranch.ShouldContain("TryCreateUnsupportedGpuMeshBvhCoarsePick(");
+        gpuBvhPickBranch.ShouldNotContain("TryIntersectRenderableMesh(");
+
+        string coarsePick = SliceMethod(
+            worldInstance,
+            "private static bool TryCreateUnsupportedGpuMeshBvhCoarsePick",
+            "private static GpuMeshBvhPickCandidate QueueGpuMeshBvhPick");
+
+        coarsePick.ShouldContain("GpuMeshBvhPickRayIntersectsRequestBounds");
+        coarsePick.ShouldContain("candidate.CompleteHit(");
+        coarsePick.ShouldContain("result = candidate;");
     }
 
     [Test]

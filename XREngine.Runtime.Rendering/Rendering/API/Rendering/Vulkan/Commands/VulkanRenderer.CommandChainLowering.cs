@@ -1279,6 +1279,7 @@ public unsafe partial class VulkanRenderer
             MeshTaskDispatchIndirectCountOp => RenderPacketVolatility.FrameDataOnly,
             ComputeDispatchOp => RenderPacketVolatility.FrameDataOnly,
             MemoryBarrierOp => RenderPacketVolatility.StaticStructural,
+            PublishFramebufferForSamplingOp => RenderPacketVolatility.StaticStructural,
             TransformFeedbackOp => RenderPacketVolatility.DynamicCommand,
             DlssUpscaleOp => RenderPacketVolatility.DynamicCommand,
             DlssFrameGenerationOp => RenderPacketVolatility.DynamicCommand,
@@ -1628,6 +1629,9 @@ public unsafe partial class VulkanRenderer
                 hash.Add(blit.ColorBit);
                 hash.Add(blit.DepthBit);
                 hash.Add(blit.StencilBit);
+                break;
+            case PublishFramebufferForSamplingOp publish:
+                hash.Add(publish.FrameBuffer.GetHashCode());
                 break;
             case IndirectDrawOp indirect:
                 hash.Add(ComputeCommandBufferDataBufferSignature(indirect.IndirectBuffer));
@@ -2035,6 +2039,7 @@ public unsafe partial class VulkanRenderer
             BlitOp => "Blit",
             ClearOp => "Clear",
             MemoryBarrierOp barrier => $"MemoryBarrier[{barrier.Mask}]",
+            PublishFramebufferForSamplingOp publish => $"PublishFramebufferForSampling[{publish.FrameBuffer?.Name ?? "<unnamed>"}]",
             TransformFeedbackOp => "TransformFeedback",
             DlssUpscaleOp => "DlssUpscale",
             DlssFrameGenerationOp => "DlssFrameGeneration",

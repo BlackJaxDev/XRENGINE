@@ -46,6 +46,10 @@ namespace XREngine.Rendering.UI
                 case nameof(FlipVerticalUVCoord):
                     RemakeMesh();
                     break;
+                case nameof(DisableBatching):
+                    RenderCommand2D.MarkDirty();
+                    RenderCommand3D.MarkDirty();
+                    break;
             }
         }
 
@@ -58,18 +62,39 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
+        }
+
+        protected override void OnDestroying()
+        {
             Mesh?.Destroy();
             Mesh = null;
+            base.OnDestroying();
         }
 
         public void SetQuadMaterial(XRMaterial material)
         {
             RenderPass = material.RenderPass;
             material.RenderOptions = _renderParameters;
-            if (Mesh is null)
-                RemakeMesh(material);
-            else
-                Material = material;
+            RemakeMesh(material);
+            RenderCommand2D.MarkDirty();
+            RenderCommand3D.MarkDirty();
+        }
+
+        public void SetBlendModeAllDrawBuffers(BlendMode? blendMode)
+        {
+            _renderParameters.BlendModeAllDrawBuffers = blendMode;
+            if (Material is not null)
+                Material.RenderOptions = _renderParameters;
+
+            RenderCommand2D.MarkDirty();
+            RenderCommand3D.MarkDirty();
+        }
+
+        private bool _disableBatching;
+        public bool DisableBatching
+        {
+            get => _disableBatching;
+            set => SetField(ref _disableBatching, value);
         }
 
         private void RemakeMesh()
@@ -86,7 +111,11 @@ namespace XREngine.Rendering.UI
         private void RemakeMesh(XRMaterial material)
         {
             Mesh?.Destroy();
-            Mesh = new XRMeshRenderer(FlipVerticalUVCoord ? SharedFlippedQuadMesh.Value : SharedQuadMesh.Value, material);
+            Mesh = new XRMeshRenderer(FlipVerticalUVCoord ? SharedFlippedQuadMesh.Value : SharedQuadMesh.Value, material)
+            {
+                GenerationPriority = EMeshGenerationPriority.RenderPipeline,
+                CaptureUniformsOnRender = true
+            };
         }
 
         private readonly RenderingParameters _renderParameters = new()
@@ -146,7 +175,9 @@ namespace XREngine.Rendering.UI
             get
             {
                 XRMaterial? material = Material;
-                return !ClipToBounds && (material?.Textures is null || material.Textures.Count == 0);
+                return !DisableBatching &&
+                    !ClipToBounds &&
+                    (material?.Textures is null || material.Textures.Count == 0);
             }
         }
 

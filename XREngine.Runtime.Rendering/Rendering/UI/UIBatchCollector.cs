@@ -40,6 +40,7 @@ public sealed class UIBatchCollector : IDisposable
     private static int s_textRenderDiagCount;
     private static int s_textUploadDiagCount;
     private static int s_textPrepareDiagCount;
+    private static int s_materialRenderDiagCount;
     private static long s_textPrepareTotalCalls;
     private static long s_textPrepareFailureCount;
     private static long s_textPrepareSummaryLastTicks;
@@ -604,8 +605,12 @@ public sealed class UIBatchCollector : IDisposable
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
             material)
         {
-            GenerationPriority = EMeshGenerationPriority.RenderPipeline
+            Name = "UIBatchMaterialQuadRenderer",
+            GenerationPriority = EMeshGenerationPriority.RenderPipeline,
+            CaptureUniformsOnRender = true
         };
+        if (_matQuadMesh.Mesh is not null)
+            _matQuadMesh.Mesh.Name = "UIBatchMaterialQuadMesh";
 
         DisableShaderPipelines(_matQuadMesh);
         _matQuadMesh.EnsureRenderPipelineVersionsCreated();
@@ -941,6 +946,32 @@ public sealed class UIBatchCollector : IDisposable
             TimeSpan.FromSeconds(5),
             "[UIBatch] RenderMaterialQuadBatch: pass={0}, entries={1}, capacity={2}",
             renderPass, batch.Entries.Count, _matQuadCapacity);
+
+        if (s_materialRenderDiagCount++ < 40)
+        {
+            MaterialQuadEntry firstEntry = batch.Entries[0];
+            Vector4 unitQuad = new(0.0f, 0.0f, 1.0f, 1.0f);
+            string projectedQuad = GetProjectedGlyphSummary(in firstEntry.WorldMatrix, in unitQuad);
+            Debug.Log(
+                ELogCategory.UI,
+                "[UIBatch] RenderMaterialQuadGroup #{0}: pass={1} group={2} entries={3} color=({4:F2},{5:F2},{6:F2},{7:F2}) worldT=({8:F1},{9:F1},{10:F1}) bounds=({11:F1},{12:F1},{13:F1},{14:F1}) projected={15}",
+                s_materialRenderDiagCount,
+                renderPass,
+                groupIndex,
+                batch.Entries.Count,
+                firstEntry.Color.X,
+                firstEntry.Color.Y,
+                firstEntry.Color.Z,
+                firstEntry.Color.W,
+                firstEntry.WorldMatrix.M41,
+                firstEntry.WorldMatrix.M42,
+                firstEntry.WorldMatrix.M43,
+                firstEntry.UIXYWH.X,
+                firstEntry.UIXYWH.Y,
+                firstEntry.UIXYWH.Z,
+                firstEntry.UIXYWH.W,
+                projectedQuad);
+        }
 
         if (_matQuadMesh!.Material is { } material && material.RenderPass != renderPass)
             material.RenderPass = renderPass;

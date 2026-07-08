@@ -61,7 +61,7 @@ namespace XREngine.Rendering
             => Debug.RenderingWarningEvery(
                 "GpuMeshBvhPick.UnsupportedBackend",
                 TimeSpan.FromSeconds(5),
-                "[GpuMeshBvhPick] GPU mesh BVH picking is currently OpenGL-only; using CPU mesh picking for this backend.");
+                "[GpuMeshBvhPick] GPU mesh BVH picking is currently OpenGL-only; using coarse bounds picking for this backend.");
 
         public static Dictionary<XRWorld, XRWorldInstance> WorldInstances { get; } = [];
 
@@ -1436,6 +1436,14 @@ namespace XREngine.Rendering
                 }
 
                 WarnGpuMeshBvhPickUnsupportedBackend();
+                return TryCreateUnsupportedGpuMeshBvhCoarsePick(
+                    component,
+                    info,
+                    mesh,
+                    worldSegment,
+                    hitMode,
+                    out distance,
+                    out result);
             }
 
             if (!TryIntersectRenderableMesh(mesh, worldSegment, out distance, out Triangle worldTriangle, out Vector3 hitPoint, out IndexTriangle triangleIndices, out int triangleIndex))
@@ -1611,6 +1619,44 @@ namespace XREngine.Rendering
 
             distance = (enterPoint - worldSegment.Start).Length();
             return true;
+        }
+
+        private static bool TryCreateUnsupportedGpuMeshBvhCoarsePick(
+            RenderableComponent component,
+            RenderInfo3D info,
+            RenderableMesh mesh,
+            Segment worldSegment,
+            ERaycastHitMode hitMode,
+            out float distance,
+            out object? result)
+        {
+            result = null;
+            if (!GpuMeshBvhPickRayIntersectsRequestBounds(mesh, worldSegment, out distance))
+                return false;
+
+            Vector3 hitPoint = PointAtSegmentDistance(worldSegment, distance);
+            GpuMeshBvhPickCandidate candidate = new(component, mesh, info, worldSegment, distance, hitMode);
+            candidate.CompleteHit(
+                distance,
+                hitPoint,
+                Vector3.Zero,
+                objectId: 0u,
+                sortedTriangleIndex: uint.MaxValue,
+                faceHit: null,
+                pickResult: null);
+            result = candidate;
+            return true;
+        }
+
+        private static Vector3 PointAtSegmentDistance(Segment segment, float distance)
+        {
+            Vector3 delta = segment.End - segment.Start;
+            float length = delta.Length();
+            if (length <= 1e-5f)
+                return segment.Start;
+
+            float clampedDistance = Math.Clamp(distance, 0.0f, length);
+            return segment.Start + delta / length * clampedDistance;
         }
 
         private static GpuMeshBvhPickCandidate QueueGpuMeshBvhPick(

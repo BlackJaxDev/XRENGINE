@@ -46,6 +46,7 @@ namespace XREngine.Rendering.Commands
         private bool _loggedPassthroughCullMode;
         private bool _loggedFrustumCullMode;
         private bool _loggedBvhCullMode;
+        private bool _loggedExternalVrSharedVisibilityCullMode;
         private bool _skipGpuSubmissionThisPass;
         private string? _skipGpuSubmissionReason;
         private long _lastMaterialSnapshotTick = -1;
@@ -532,8 +533,15 @@ namespace XREngine.Rendering.Commands
             if (ShouldExtractSoAForCurrentPolicy(numCommands))
                 ExtractSoA(gpuCommands);
 
+            bool externalVrSharedVisibility = ShouldUseExternalVrSharedVisibilityPassFilter(camera);
+
+            if (externalVrSharedVisibility)
+            {
+                LogExternalVrSharedVisibilityCullMode();
+                PassthroughCull(gpuCommands, numCommands);
+            }
             // Passthrough path is diagnostics-only on Vulkan runtime profiles.
-            if (ShouldUsePassthroughCulling())
+            else if (ShouldUsePassthroughCulling())
             {
                 LogCullModeActivation(CullFrameMode.Passthrough);
                 PassthroughCull(gpuCommands, numCommands);
@@ -892,6 +900,33 @@ namespace XREngine.Rendering.Commands
                 };
                 WriteUints(_statsBuffer, statSeed);
             }
+        }
+
+        private static bool ShouldUseExternalVrSharedVisibilityPassFilter(XRCamera? camera)
+        {
+            if (camera?.StereoEyeLeft.HasValue != true)
+                return false;
+
+            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
+            IRuntimeRenderCommandExecutionState? renderState = host.ActiveRenderCommandExecutionState;
+            if (renderState?.StereoPass == true || RuntimeEngine.Rendering.State.IsStereoPass)
+                return false;
+
+            return renderState?.WindowViewport is XRViewport { RendersToExternalSwapchainTarget: true } &&
+                   host.IsOpenXrRuntimeRequested;
+        }
+
+        private void LogExternalVrSharedVisibilityCullMode()
+        {
+            if (_loggedExternalVrSharedVisibilityCullMode)
+                return;
+
+            _loggedExternalVrSharedVisibilityCullMode = true;
+            Log(
+                LogCategory.Culling,
+                LogLevel.Info,
+                "Culling mode active: external OpenXR stereo shared-visibility pass filter (pass={0})",
+                RenderPass);
         }
 
         /// <summary>

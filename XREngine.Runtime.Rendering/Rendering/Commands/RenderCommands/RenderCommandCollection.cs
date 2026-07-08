@@ -1363,10 +1363,13 @@ namespace XREngine.Rendering.Commands
                 : uint.MaxValue;
 
             uint cursor = 0u;
+            GPUViewFlags primaryEyeFlag = leftCamera.StereoEyeLeft == false
+                ? GPUViewFlags.StereoEyeRight
+                : GPUViewFlags.StereoEyeLeft;
             descriptors[(int)cursor] = CreateViewDescriptor(
                 cursor,
                 GPUViewSetLayout.InvalidViewId,
-                GPUViewFlags.StereoEyeLeft | GPUViewFlags.FullRes | GPUViewFlags.UsesSharedVisibility,
+                primaryEyeFlag | GPUViewFlags.FullRes | GPUViewFlags.UsesSharedVisibility,
                 passBit,
                 0u,
                 0,

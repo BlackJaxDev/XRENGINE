@@ -18,6 +18,7 @@ using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
 using XREngine.Editor.UI.Tools;
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Components.UI;
@@ -39,6 +40,9 @@ public static partial class EditorUnitTests
         private static long _lastSampledRenderTimestampTicks = -1L;
 
         private static UIEditorComponent? _editorComponent = null;
+        private static SceneNode? _editorRootCanvasNode;
+        private static readonly List<CameraPreviewRequest> _pendingCameraPreviewRequests = [];
+        private static readonly List<CameraComponent> _cameraPreviewCameras = [];
         private static SceneNode? _vrStereoPreviewRoot;
         private static UIMaterialComponent? _vrStereoPreviewLeft;
         private static UIMaterialComponent? _vrStereoPreviewRight;
@@ -58,9 +62,16 @@ public static partial class EditorUnitTests
         private const float VRStereoPreviewEyeHeight = 170.0f;
         private const float VRStereoPreviewGap = 8.0f;
         private const float VRStereoPreviewTopMargin = 12.0f;
-        private const int VRStereoPreviewZIndex = -100_000;
+        private const int PreviewOverlayRenderPass = (int)EDefaultRenderPass.OnTopForward;
+        private const int PreviewOverlayZIndex = 20_000;
+        private const int FpsOverlayZIndex = 19_000;
+        private const float CameraPreviewWidth = 300.0f;
+        private const float CameraPreviewHeight = 170.0f;
+        private const float CameraPreviewBottomMargin = 12.0f;
         private static readonly long VRStereoPreviewBindingRefreshPeriodTicks =
             XREngine.Timers.EngineTimer.SecondsToStopwatchTicks(0.1);
+
+        private readonly record struct CameraPreviewRequest(CameraComponent Camera, string Label);
 
         private static int _tickFpsDiagCount = 0;
         private static void TickFPS(UITextComponent t)
@@ -407,7 +418,7 @@ public static partial class EditorUnitTests
             text.DisableBatching = false;
             text.RenderPass = (int)EDefaultRenderPass.OnTopForward;
             text.BatchedDebugMode = ResolveFpsTextDebugMode();
-            text.RenderCommand2D.ZIndex = int.MaxValue;
+            text.RenderCommand2D.ZIndex = FpsOverlayZIndex;
             text.Font = font;
             text.FontSize = 26;
             text.HorizontalAlignment = EHorizontalAlignment.Center;
@@ -488,6 +499,8 @@ public static partial class EditorUnitTests
             // Create as a root/editor node (not parented under gameplay nodes).
             // Editor-only migration in the world instance only applies to root nodes.
             var rootCanvasNode = new SceneNode(parent.World, "TestUINode") { IsEditorOnly = true };
+            _editorRootCanvasNode = rootCanvasNode;
+            _cameraPreviewCameras.Clear();
             var canvas = rootCanvasNode.AddComponent<UICanvasComponent>()!;
             var canvasTfm = canvas.CanvasTransform;
             bool addDearImGui = EditorUnitTests.Toggles.EditorType == UnitTestEditorType.IMGUI;
@@ -541,6 +554,12 @@ public static partial class EditorUnitTests
             if (parent.World is not null)
             {
                 (parent.World as XRWorldInstance)?.AddToEditorScene(rootCanvasNode);
+
+                // Keep the immediate-world path consistent with the delayed attach path below.
+                // The hidden editor UI owns viewport components whose render callbacks are
+                // registered from activation, so missing activation leaves previews black.
+                if (rootCanvasNode.IsActiveSelf)
+                    rootCanvasNode.OnActivated();
             }
             else
             {
@@ -578,9 +597,6 @@ public static partial class EditorUnitTests
             }
 
             screenSpaceCamera?.UserInterface = Toggles.CameraUIDrawSpaceOnInit == CameraUIDrawMode.Screen ? canvas : null;
-
-            if (Toggles.VRPawn && Toggles.PreviewVRStereoViews)
-                CreateVRStereoPreviewOverlay(rootCanvasNode);
 
             if (EditorUnitTests.Toggles.RiveUI)
             {
@@ -660,6 +676,11 @@ public static partial class EditorUnitTests
                 Debug.Rendering("[StartupUI] Native editor UI ready in {0:F1} ms.", nativeUiStopwatch.Elapsed.TotalMilliseconds);
             }
 
+            if (Toggles.VRPawn && Toggles.PreviewVRStereoViews)
+                CreateVRStereoPreviewOverlay(rootCanvasNode);
+
+            FlushPendingCameraPreviewOverlays(rootCanvasNode);
+
             AddFPSText(null, rootCanvasNode);
 
             createUiStopwatch.Stop();
@@ -705,10 +726,16 @@ public static partial class EditorUnitTests
 
             var left = leftNode.AddComponent<UIMaterialComponent>()!;
             var right = rightNode.AddComponent<UIMaterialComponent>()!;
-            left.RenderPass = (int)EDefaultRenderPass.Background;
-            right.RenderPass = (int)EDefaultRenderPass.Background;
-            left.RenderCommand2D.ZIndex = VRStereoPreviewZIndex;
-            right.RenderCommand2D.ZIndex = VRStereoPreviewZIndex;
+            left.DisableBatching = true;
+            right.DisableBatching = true;
+            left.SetBlendModeAllDrawBuffers(BlendMode.Disabled());
+            right.SetBlendModeAllDrawBuffers(BlendMode.Disabled());
+            left.RenderPass = PreviewOverlayRenderPass;
+            right.RenderPass = PreviewOverlayRenderPass;
+            left.RenderCommand2D.ZIndex = PreviewOverlayZIndex;
+            right.RenderCommand2D.ZIndex = PreviewOverlayZIndex;
+            RegisterPreviewOverlayDiagnostics("Left Eye Preview", left);
+            RegisterPreviewOverlayDiagnostics("Right Eye Preview", right);
             _vrStereoPreviewLeft = left;
             _vrStereoPreviewRight = right;
             _vrStereoPreviewLeftWasArray = false;
@@ -728,6 +755,117 @@ public static partial class EditorUnitTests
 
             EnsureVRStereoPreviewRefreshHooked();
             RefreshVRStereoPreviewOverlay();
+        }
+
+        public static void CreateCameraPreviewOverlay(CameraComponent camera, string label)
+        {
+            string previewLabel = string.IsNullOrWhiteSpace(label)
+                ? camera.SceneNode?.Name ?? "Camera Preview"
+                : label;
+
+            if (_editorRootCanvasNode is null ||
+                !ReferenceEquals(_editorRootCanvasNode.World, camera.SceneNode?.World))
+            {
+                QueueCameraPreviewOverlay(camera, previewLabel);
+                return;
+            }
+
+            CreateCameraPreviewOverlay(_editorRootCanvasNode, camera, previewLabel);
+        }
+
+        private static void QueueCameraPreviewOverlay(CameraComponent camera, string label)
+        {
+            if (HasCameraPreviewOverlay(camera))
+                return;
+
+            _pendingCameraPreviewRequests.Add(new(camera, label));
+        }
+
+        private static void FlushPendingCameraPreviewOverlays(SceneNode rootCanvasNode)
+        {
+            if (_pendingCameraPreviewRequests.Count == 0)
+                return;
+
+            foreach (var request in _pendingCameraPreviewRequests)
+                CreateCameraPreviewOverlay(rootCanvasNode, request.Camera, request.Label);
+
+            _pendingCameraPreviewRequests.Clear();
+        }
+
+        private static bool HasCameraPreviewOverlay(CameraComponent camera)
+        {
+            if (HasCreatedCameraPreviewOverlay(camera))
+                return true;
+
+            foreach (var pending in _pendingCameraPreviewRequests)
+                if (ReferenceEquals(pending.Camera, camera))
+                    return true;
+
+            return false;
+        }
+
+        private static bool HasCreatedCameraPreviewOverlay(CameraComponent camera)
+        {
+            foreach (var existing in _cameraPreviewCameras)
+                if (ReferenceEquals(existing, camera))
+                    return true;
+
+            return false;
+        }
+
+        private static void CreateCameraPreviewOverlay(SceneNode rootCanvasNode, CameraComponent camera, string label)
+        {
+            if (HasCreatedCameraPreviewOverlay(camera))
+                return;
+
+            ConfigureCameraPreviewRenderSettings(camera, label);
+            _cameraPreviewCameras.Add(camera);
+
+            SceneNode previewNode = new(rootCanvasNode) { Name = $"{label} Preview" };
+            var previewTfm = previewNode.SetTransform<UIBoundableTransform>();
+            previewTfm.MinAnchor = new Vector2(0.5f, 0.0f);
+            previewTfm.MaxAnchor = new Vector2(0.5f, 0.0f);
+            previewTfm.NormalizedPivot = new Vector2(0.5f, 0.0f);
+            previewTfm.Width = CameraPreviewWidth;
+            previewTfm.Height = CameraPreviewHeight;
+            previewTfm.Margins = new Vector4(0.0f, CameraPreviewBottomMargin, 0.0f, 0.0f);
+
+            var preview = previewNode.AddComponent<UIViewportComponent>()!;
+            preview.RenderPass = PreviewOverlayRenderPass;
+            preview.RenderCommand2D.ZIndex = PreviewOverlayZIndex;
+            preview.Viewport.AutomaticallyCollectVisible = false;
+            preview.Viewport.AutomaticallySwapBuffers = false;
+            preview.Viewport.AllowUIRender = false;
+            preview.Viewport.MeshSubmissionStrategyOverride = EMeshSubmissionStrategy.CpuDirect;
+            preview.Viewport.CullWithFrustum = camera.CullWithFrustum;
+            preview.Viewport.CameraComponent = camera;
+            preview.Viewport.Resize((uint)CameraPreviewWidth, (uint)CameraPreviewHeight);
+            preview.Viewport.SetInternalResolution((int)CameraPreviewWidth, (int)CameraPreviewHeight, correctAspect: false);
+            RegisterPreviewOverlayDiagnostics(previewNode.Name, preview);
+
+            InvalidateVRStereoPreviewTransform(previewTfm);
+        }
+
+        private static void ConfigureCameraPreviewRenderSettings(CameraComponent camera, string label)
+        {
+            camera.AntiAliasingModeOverride = EAntiAliasingMode.None;
+            camera.Camera.MsaaSampleCountOverride = 1u;
+            camera.Camera.OutputHDROverride = false;
+            camera.Camera.TsrRenderScaleOverride = 1.0f;
+
+            Debug.Rendering(
+                "[PreviewOverlayDiag] Configured preview camera '{0}' node='{1}' aa={2} msaa={3} hdr={4} tsrScale={5}",
+                label,
+                camera.SceneNode?.Name ?? "<null>",
+                camera.AntiAliasingModeOverride?.ToString() ?? "<null>",
+                camera.Camera.MsaaSampleCountOverride?.ToString() ?? "<null>",
+                camera.Camera.OutputHDROverride?.ToString() ?? "<null>",
+                camera.Camera.TsrRenderScaleOverride?.ToString("F2", CultureInfo.InvariantCulture) ?? "<null>");
+        }
+
+        private static void RegisterPreviewOverlayDiagnostics(string label, UIMaterialComponent component)
+        {
+            component.RenderCommand2D.GpuProfilingLabel = label;
         }
 
         private static void EnsureVRStereoPreviewRefreshHooked()
@@ -773,12 +911,12 @@ public static partial class EditorUnitTests
                     return;
                 }
 
-                HideVRStereoPreviewOverlay();
+                SetVRStereoPreviewChildrenActive(false);
                 return;
             }
             if (leftTex is null || rightTex is null)
             {
-                HideVRStereoPreviewOverlay();
+                SetVRStereoPreviewChildrenActive(false);
                 return;
             }
 
@@ -851,6 +989,14 @@ public static partial class EditorUnitTests
             _vrStereoPreviewWasActive = false;
             _vrStereoPreviewTextureMissFrames = 0;
             _vrStereoPreviewLastBindingRefreshTicks = 0L;
+        }
+
+        private static void SetVRStereoPreviewChildrenActive(bool active)
+        {
+            if (_vrStereoPreviewLeft?.SceneNode is not null)
+                _vrStereoPreviewLeft.SceneNode.IsActiveSelf = active;
+            if (_vrStereoPreviewRight?.SceneNode is not null)
+                _vrStereoPreviewRight.SceneNode.IsActiveSelf = active;
         }
 
         private static bool ShouldFlipOpenXrVulkanStereoPreviewUv()
@@ -943,6 +1089,9 @@ public static partial class EditorUnitTests
             if (texture is null)
                 return;
 
+            _vrStereoPreviewRoot!.IsActiveSelf = true;
+            target.SceneNode!.IsActiveSelf = true;
+
             if (target.FlipVerticalUVCoord != flipVerticalUVCoord)
             {
                 target.FlipVerticalUVCoord = flipVerticalUVCoord;
@@ -959,10 +1108,13 @@ public static partial class EditorUnitTests
 
                 var mat = new XRMaterial([texture], frag)
                 {
-                    RenderPass = (int)EDefaultRenderPass.Background
+                    RenderPass = PreviewOverlayRenderPass
                 };
                 target.SetQuadMaterial(mat);
-                target.RenderCommand2D.ZIndex = VRStereoPreviewZIndex;
+                target.DisableBatching = true;
+                target.SetBlendModeAllDrawBuffers(BlendMode.Disabled());
+                target.RenderPass = PreviewOverlayRenderPass;
+                target.RenderCommand2D.ZIndex = PreviewOverlayZIndex;
                 InvalidateVRStereoPreviewTransform(target.BoundableTransform);
                 wasArray = isArray;
                 lastTexture = texture;

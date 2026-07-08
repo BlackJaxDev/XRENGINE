@@ -672,9 +672,7 @@ public sealed class RenderResourceRegistry
             left.Lifetime != right.Lifetime ||
             left.SizePolicy != right.SizePolicy ||
             left.Attachments.Count != right.Attachments.Count)
-        {
             return false;
-        }
 
         for (int i = 0; i < left.Attachments.Count; i++)
         {
@@ -684,9 +682,7 @@ public sealed class RenderResourceRegistry
                 leftAttachment.Attachment != rightAttachment.Attachment ||
                 leftAttachment.MipLevel != rightAttachment.MipLevel ||
                 leftAttachment.LayerIndex != rightAttachment.LayerIndex)
-            {
                 return false;
-            }
         }
 
         return true;

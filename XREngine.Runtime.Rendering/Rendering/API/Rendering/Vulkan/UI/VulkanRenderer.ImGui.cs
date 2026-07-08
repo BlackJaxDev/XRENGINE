@@ -1615,9 +1615,9 @@ public unsafe partial class VulkanRenderer
                 PDepthAttachment = _swapchainDepthView.Handle != 0 ? &depthAttachment : null,
             };
 
-            Api.CmdBeginRendering(commandBuffer, &renderingInfo);
+            CmdBeginDynamicRendering(commandBuffer, &renderingInfo);
             RenderImGuiSnapshot(commandBuffer, imageIndex, drawData);
-            Api.CmdEndRendering(commandBuffer);
+            CmdEndDynamicRendering(commandBuffer);
 
             TransitionSwapchainImageForImGuiOverlay(
                 commandBuffer,

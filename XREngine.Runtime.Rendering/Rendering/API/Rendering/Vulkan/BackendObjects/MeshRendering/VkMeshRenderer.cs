@@ -42,6 +42,7 @@ public unsafe partial class VulkanRenderer
     private const int FrameOpKindComputeDispatch = 10;
     private const int FrameOpKindTextureUpload = 11;
     private const int FrameOpKindQuery = 12;
+    private const int FrameOpKindPublishFramebufferForSampling = 13;
 
     internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpContext Context);
 
@@ -139,6 +140,11 @@ public unsafe partial class VulkanRenderer
         int PassIndex,
         EMemoryBarrierMask Mask,
         FrameOpContext Context) : FrameOp(PassIndex, null, Context);
+
+    internal sealed record PublishFramebufferForSamplingOp(
+        int PassIndex,
+        XRFrameBuffer FrameBuffer,
+        FrameOpContext Context) : FrameOp(PassIndex, FrameBuffer, Context);
 
     internal sealed record DlssUpscaleOp(
         int PassIndex,
@@ -247,6 +253,43 @@ public unsafe partial class VulkanRenderer
         using (_frameOpsLock.EnterScope())
             _frameOps.Add(validatedOp);
     }
+
+    private bool TryGetLastFrameOpForTarget(XRFrameBuffer target, out FrameOp op)
+    {
+        FrameOpCapture? capture = t_frameOpCapture;
+        if (capture is not null)
+        {
+            for (int i = capture.Count - 1; i >= 0; i--)
+            {
+                FrameOp candidate = capture.Buffer[i];
+                if (FrameOpTargets(candidate, target))
+                {
+                    op = candidate;
+                    return true;
+                }
+            }
+        }
+
+        using (_frameOpsLock.EnterScope())
+        {
+            for (int i = _frameOps.Count - 1; i >= 0; i--)
+            {
+                FrameOp candidate = _frameOps[i];
+                if (FrameOpTargets(candidate, target))
+                {
+                    op = candidate;
+                    return true;
+                }
+            }
+        }
+
+        op = null!;
+        return false;
+    }
+
+    private static bool FrameOpTargets(FrameOp op, XRFrameBuffer target)
+        => op is not PublishFramebufferForSamplingOp &&
+           ReferenceEquals(op.Target, target);
 
     internal bool EnqueueOcclusionQueryBegin(XRRenderQuery query, EQueryTarget target)
         => EnqueueOcclusionQueryOp(query, target, EVulkanQueryFrameOpKind.Begin);
@@ -449,6 +492,7 @@ public unsafe partial class VulkanRenderer
             IndirectDrawOp indirectDraw => indirectDraw with { PassIndex = validatedPassIndex },
             MeshTaskDispatchIndirectCountOp meshTaskDispatch => meshTaskDispatch with { PassIndex = validatedPassIndex },
             MemoryBarrierOp memoryBarrier => memoryBarrier with { PassIndex = validatedPassIndex },
+            PublishFramebufferForSamplingOp publish => publish with { PassIndex = validatedPassIndex },
             DlssUpscaleOp dlssUpscale => dlssUpscale with { PassIndex = validatedPassIndex },
             DlssFrameGenerationOp dlssFrameGeneration => dlssFrameGeneration with { PassIndex = validatedPassIndex },
             TransformFeedbackOp transformFeedback => transformFeedback with { PassIndex = validatedPassIndex },
@@ -675,6 +719,9 @@ public unsafe partial class VulkanRenderer
                 case MemoryBarrierOp barrier:
                     hash.Add((int)barrier.Mask);
                     break;
+                case PublishFramebufferForSamplingOp publish:
+                    hash.Add(publish.FrameBuffer.GetHashCode());
+                    break;
                 case DlssUpscaleOp dlss:
                     hash.Add(dlss.Session.GetHashCode());
                     hash.Add(dlss.SourceColor.Image.Handle);
@@ -751,6 +798,7 @@ public unsafe partial class VulkanRenderer
             IndirectDrawOp => FrameOpKindIndirectDraw,
             MeshTaskDispatchIndirectCountOp => FrameOpKindMeshTaskDispatchIndirectCount,
             MemoryBarrierOp => FrameOpKindMemoryBarrier,
+            PublishFramebufferForSamplingOp => FrameOpKindPublishFramebufferForSampling,
             DlssUpscaleOp => FrameOpKindDlssUpscale,
             DlssFrameGenerationOp => FrameOpKindDlssFrameGeneration,
             TransformFeedbackOp => FrameOpKindTransformFeedback,
@@ -1167,6 +1215,8 @@ public unsafe partial class VulkanRenderer
 
     public partial class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.BaseVersion data) : VkObject<XRMeshRenderer.BaseVersion>(api, data), IRenderPreparationState
     {
+        private static int s_screenSpaceUiDrawDiagCount;
+
         private readonly object _bufferStateSync = new();
         private readonly Dictionary<string, VkDataBuffer> _bufferCache = new(StringComparer.Ordinal);
         private XRMesh.BufferCollection? _subscribedRendererBuffers;
@@ -1453,7 +1503,7 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode)
+        private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo)
         {
             if (!IsActive)
                 Generate();
@@ -1671,6 +1721,7 @@ public unsafe partial class VulkanRenderer
             Vector3 cameraUpSnapshot = snapshotCamera?.Transform.RenderUp ?? Vector3.UnitY;
             Vector3 cameraRightSnapshot = snapshotCamera?.Transform.RenderRight ?? Vector3.UnitX;
             uint transformIdSnapshot = RuntimeEngine.Rendering.State.CurrentTransformId;
+            bool stereoPassSnapshot = !forceNoStereo && RuntimeEngine.Rendering.State.IsStereoPass;
             // Snapshot the render-area dimensions now (the live RenderArea is reset to Empty by
             // deferred record time). For debug-primitive draws the pipeline render-region can
             // already be Empty even at enqueue time, so fall back to the bound draw framebuffer's
@@ -1732,7 +1783,7 @@ public unsafe partial class VulkanRenderer
                 billboardMode,
                 snapshotCamera,
                 snapshotRightEyeCamera,
-                RuntimeEngine.Rendering.State.IsStereoPass,
+                stereoPassSnapshot,
                 useUnjitteredProjectionSnapshot,
                 transformIdSnapshot,
                 viewMatrixSnapshot,
@@ -1764,6 +1815,52 @@ public unsafe partial class VulkanRenderer
                 _activeProgramIdentity,
                 programBindingSnapshot);
 
+            if (s_screenSpaceUiDrawDiagCount < 32 &&
+                passIndex == (int)EDefaultRenderPass.OnTopForward &&
+                MathF.Abs(modelMatrix.M41) > 10.0f &&
+                MathF.Abs(modelMatrix.M42) > 10.0f)
+            {
+                s_screenSpaceUiDrawDiagCount++;
+                Matrix4x4 worldViewProjection = modelMatrix * viewProjectionMatrixSnapshot;
+                Vector4 p0 = ProjectUiDiagCorner(0.0f, 0.0f, in worldViewProjection);
+                Vector4 p1 = ProjectUiDiagCorner(1.0f, 0.0f, in worldViewProjection);
+                Vector4 p2 = ProjectUiDiagCorner(0.0f, 1.0f, in worldViewProjection);
+                Vector4 p3 = ProjectUiDiagCorner(1.0f, 1.0f, in worldViewProjection);
+                Debug.Vulkan(
+                    "[Vulkan][ScreenUIDraw] #{0} mesh='{1}' material='{2}' forceNoStereo={3} globalStereo={4} drawStereo={5} pass={6} target='{7}' camera='{8}' modelT=({9:F1},{10:F1},{11:F1}) modelScale=({12:F1},{13:F1},{14:F1}) vp=({15:F1},{16:F1},{17:F1},{18:F1}) scissor=({19},{20},{21},{22}) ndc=({23:F3},{24:F3})-({25:F3},{26:F3}) w=({27:F3},{28:F3},{29:F3},{30:F3})",
+                    s_screenSpaceUiDrawDiagCount,
+                    Mesh?.Name ?? MeshRenderer.Name ?? "<unnamed mesh>",
+                    effectiveMaterial.Name ?? "<unnamed material>",
+                    forceNoStereo,
+                    RuntimeEngine.Rendering.State.IsStereoPass,
+                    stereoPassSnapshot,
+                    passIndex,
+                    target?.Name ?? "<swapchain>",
+                    snapshotCamera?.Transform.SceneNode?.Name ?? snapshotCamera?.GetType().Name ?? "<null>",
+                    modelMatrix.M41,
+                    modelMatrix.M42,
+                    modelMatrix.M43,
+                    modelMatrix.M11,
+                    modelMatrix.M22,
+                    modelMatrix.M33,
+                    viewportSnapshot.X,
+                    viewportSnapshot.Y,
+                    viewportSnapshot.Width,
+                    viewportSnapshot.Height,
+                    scissorSnapshot.Offset.X,
+                    scissorSnapshot.Offset.Y,
+                    scissorSnapshot.Extent.Width,
+                    scissorSnapshot.Extent.Height,
+                    MathF.Min(MathF.Min(p0.X, p1.X), MathF.Min(p2.X, p3.X)),
+                    MathF.Min(MathF.Min(p0.Y, p1.Y), MathF.Min(p2.Y, p3.Y)),
+                    MathF.Max(MathF.Max(p0.X, p1.X), MathF.Max(p2.X, p3.X)),
+                    MathF.Max(MathF.Max(p0.Y, p1.Y), MathF.Max(p2.Y, p3.Y)),
+                    p0.W,
+                    p1.W,
+                    p2.W,
+                    p3.W);
+            }
+
             FrameOpContext context = Renderer.CaptureFrameOpContext();
             Renderer.EnqueueFrameOp(new MeshDrawOp(
                 Renderer.EnsureValidPassIndex(passIndex, "MeshDraw", context.PassMetadata),
@@ -1773,6 +1870,16 @@ public unsafe partial class VulkanRenderer
             {
                 PreserveSubmissionOrder = VulkanRenderer.IsInOcclusionQueryBracket,
             });
+        }
+
+        private static Vector4 ProjectUiDiagCorner(float x, float y, in Matrix4x4 worldViewProjection)
+        {
+            Vector4 clip = Vector4.Transform(new Vector4(x, y, 0.0f, 1.0f), worldViewProjection);
+            if (MathF.Abs(clip.W) <= 1e-6f)
+                return clip;
+
+            float invW = 1.0f / clip.W;
+            return new Vector4(clip.X * invW, clip.Y * invW, clip.Z * invW, clip.W);
         }
 
         internal bool TryCreatePreparedIndirectDrawSnapshot(

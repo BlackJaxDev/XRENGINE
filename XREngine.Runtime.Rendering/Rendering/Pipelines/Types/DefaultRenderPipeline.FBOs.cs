@@ -557,6 +557,33 @@ public partial class DefaultRenderPipeline
         };
     }
 
+    private XRFrameBuffer CreateSmaaEdgeFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(SmaaEdgeTextureName, CreateSmaaEdgeTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = SmaaEdgeFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateSmaaBlendFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(SmaaBlendTextureName, CreateSmaaBlendTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = SmaaBlendFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateSmaaFBO()
+    {
+        IFrameBufferAttachement attach = EnsureTextureAttachment(SmaaOutputTextureName, CreateSmaaOutputTexture);
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = SmaaFBOName
+        };
+    }
+
     /// <summary>
     /// Creates the TSR resolve FBO.
     /// Reads the internal-resolution final post-process result plus temporal inputs and writes

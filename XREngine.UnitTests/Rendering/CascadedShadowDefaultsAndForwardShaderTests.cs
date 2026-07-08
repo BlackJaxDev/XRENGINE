@@ -826,6 +826,10 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         atlasManagerSource.ShouldContain("failedRender += tileCost");
         atlasManagerSource.ShouldContain("if (cascadeCount > MaxDirectionalCascadeGroupTileCount)");
         atlasManagerSource.ShouldNotContain("cascadeCount != 4");
+        atlasManagerSource.ShouldContain("Dictionary<Guid, int> _directionalAtlasLightDiagnosticIndexByLightId");
+        atlasManagerSource.ShouldContain("_directionalAtlasLightDiagnosticIndexByLightId.Clear();");
+        atlasManagerSource.ShouldContain("_directionalAtlasLightDiagnosticIndexByLightId.TryGetValue(lightId, out int existingIndex)");
+        atlasManagerSource.ShouldNotContain("for (int i = 0; i < _directionalAtlasLightDiagnostics.Count; i++)\n            if (_directionalAtlasLightDiagnostics[i].LightId == lightId)");
         atlasManagerSource.ShouldContain("CanUseLegacyLayeredDirectionalCascadeShadowRendering");
         atlasManagerSource.ShouldContain("RenderGroupedCascadeShadowAtlasTiles(group, entry.Page.FrameBuffer");
         atlasManagerSource.ShouldContain("allocation.LastRenderedFrame == _frameId");

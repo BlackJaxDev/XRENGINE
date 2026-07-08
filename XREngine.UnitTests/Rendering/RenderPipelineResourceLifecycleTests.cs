@@ -595,6 +595,40 @@ public sealed class RenderPipelineResourceLifecycleTests
     }
 
     [Test]
+    public void DefaultRenderPipeline_OpenXrVulkanSafeMsaaProfile_DoesNotDeclareDeferredMsaaResources()
+    {
+        DefaultRenderPipeline pipeline = new();
+        const ulong openXrVulkanSafePathFeature = 1UL << 12;
+
+        RenderPipelineResourceLayout msaa = pipeline.BuildResourceLayout(CreateProfile(
+            EAntiAliasingMode.Msaa,
+            msaaSamples: 4u,
+            featureMask: openXrVulkanSafePathFeature));
+
+        msaa.ResourcesByName.Keys.ShouldNotContain(DefaultRenderPipeline.MsaaGBufferFBOName);
+        msaa.ResourcesByName.Keys.ShouldNotContain(DefaultRenderPipeline.MsaaLightingFBOName);
+        msaa.ResourcesByName.Keys.ShouldNotContain(DefaultRenderPipeline.MsaaDepthViewTextureName);
+    }
+
+    [Test]
+    public void DefaultRenderPipeline_SmaaProfile_DeclaresSmaaResources()
+    {
+        DefaultRenderPipeline pipeline = new();
+
+        RenderPipelineResourceLayout smaa = pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Smaa, msaaSamples: 1u));
+
+        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.SmaaEdgeTextureName);
+        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.SmaaBlendTextureName);
+        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.SmaaOutputTextureName);
+        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.SmaaEdgeFBOName);
+        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.SmaaBlendFBOName);
+        smaa.ResourcesByName.Keys.ShouldContain(DefaultRenderPipeline.SmaaFBOName);
+
+        FrameBufferSpec output = smaa.ResourcesByName[DefaultRenderPipeline.SmaaFBOName].ShouldBeOfType<FrameBufferSpec>();
+        output.Attachments.Select(x => x.ResourceName).ShouldContain(DefaultRenderPipeline.SmaaOutputTextureName);
+    }
+
+    [Test]
     public void DefaultRenderPipeline_MsaaLightCombineFactory_EnsuresSampleTexturesDuringProfileChurn()
     {
         string source = File.ReadAllText(Path.Combine(

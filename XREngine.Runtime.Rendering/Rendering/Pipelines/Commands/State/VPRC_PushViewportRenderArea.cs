@@ -22,7 +22,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             BoundingRectangle res;
-            if (AbstractRenderer.Current?.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion) == true)
+            var renderer = AbstractRenderer.Current;
+            if (vp.RendersToExternalSwapchainTarget &&
+                renderer?.IsRenderingExternalSwapchainTarget == true &&
+                renderer.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion))
             {
                 res = externalRegion;
             }

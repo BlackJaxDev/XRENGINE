@@ -20,6 +20,9 @@ public static class BootstrapEditorHookRegistration
         public void CreateEditorUi(SceneNode parent, CameraComponent? camera, PawnComponent? pawn)
             => EditorUnitTests.UserInterface.CreateEditorUI(parent, camera, pawn);
 
+        public void CreateCameraPreviewUi(CameraComponent camera, string label)
+            => EditorUnitTests.UserInterface.CreateCameraPreviewOverlay(camera, label);
+
         public void EnableTransformToolForNode(SceneNode node)
             => EditorUnitTests.UserInterface.EnableTransformToolForNode(node);
 

@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Threading;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
@@ -89,6 +90,8 @@ namespace XREngine.Rendering.Commands
 
         public bool WorldMatrixIsModelMatrix { get; set; }
 
+        private static int s_prepareFailureLogBudget = 24;
+
         public RenderCommandMesh2D() : base() { }
         public RenderCommandMesh2D(int renderPass) : base(renderPass) { }
         public RenderCommandMesh2D(
@@ -109,11 +112,35 @@ namespace XREngine.Rendering.Commands
             if (Mesh is null)
                 return;
 
+            const bool forceNoStereo = true;
             OnPreRender();
-            BeginCrop(WorldCropRegion);
-            Mesh.Render(WorldMatrix, WorldMatrix, MaterialOverride, Instances, renderOptionsOverride: RenderOptionsOverride);
-            EndCrop();
-            OnPostRender();
+            try
+            {
+                BeginCrop(WorldCropRegion);
+                if (!Mesh.TryPrepareForRendering(forceNoStereo))
+                {
+                    if (Interlocked.Decrement(ref s_prepareFailureLogBudget) >= 0)
+                    {
+                        Mesh.TryPrepareForRendering(out string reason, forceNoStereo);
+                        Debug.UI(
+                            "[RenderCommandMesh2D] Skipping draw while mesh prepares. pass={0} z={1} label={2} mesh={3} material={4} reason={5}",
+                            RenderPass,
+                            ZIndex,
+                            GpuProfilingLabel ?? "<none>",
+                            Mesh.Mesh?.Name ?? Mesh.Name ?? "<unnamed>",
+                            (MaterialOverride ?? Mesh.Material)?.Name ?? "<unnamed>",
+                            reason);
+                    }
+                    return;
+                }
+
+                Mesh.Render(WorldMatrix, WorldMatrix, MaterialOverride, Instances, forceNoStereo, RenderOptionsOverride);
+            }
+            finally
+            {
+                EndCrop();
+                OnPostRender();
+            }
         }
 
         private static void BeginCrop(BoundingRectangle? cropRegion)

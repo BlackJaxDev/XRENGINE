@@ -24,6 +24,8 @@ public unsafe partial class VulkanRenderer
     private const double OpenXrVulkanImageAllocationCountPreflightRatio = 0.80;
     private const int OpenXrVulkanImageAllocationCountReserve = 768;
     private static readonly TimeSpan OpenXrRuntimeSessionStartDirtyQuietPeriod = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan OpenXrRuntimeSessionStartDirtyMaxWait = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan OpenXrRuntimeSessionStartPendingFrameMaxWait = TimeSpan.FromSeconds(2);
     private static bool TraceOpenXrStereoBlits =>
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
         XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
@@ -36,6 +38,8 @@ public unsafe partial class VulkanRenderer
         ImageAspectFlags Aspect);
 
     private readonly record struct OpenXrSwapchainImageViewCacheEntry(ImageView View, Format Format);
+    private long _openXrRuntimeSessionStartDirtyWaitStartTimestamp;
+    private long _openXrRuntimeSessionStartPendingFrameWaitStartTimestamp;
 
     internal readonly record struct OpenXrEyeRenderTargetContext(
         uint OpenXrViewIndex,
@@ -76,13 +80,20 @@ public unsafe partial class VulkanRenderer
         EVrFoveationAttachmentKind FoveationAttachmentKind,
         bool FoveationAttachmentOwnedByResourcePlanner)
     {
+        /// <summary>
+        /// Builds the identity for resources described by the render graph, not for the acquired
+        /// OpenXR swapchain image. The swapchain image/frame slot affects command recording, but the
+        /// intermediate G-buffer, post-process, and depth resources are stable per eye/foveation
+        /// configuration. Keeping image/frame indices out of this key prevents allocating a full
+        /// offscreen render pipeline for every swapchain-image/frame-slot combination.
+        /// </summary>
         public static OpenXrViewResourcePlannerContextKey FromTarget(in OpenXrEyeRenderTargetContext target)
             => new(
                 target.ResourcePlannerStateIndex,
                 target.OpenXrViewIndex,
-                target.OpenXrImageIndex,
-                target.CommandChainImageKey,
-                target.FrameDataSlotIndex,
+                OpenXrExternalSwapchainTargetImageIndex,
+                target.OpenXrViewIndex,
+                target.OpenXrViewIndex,
                 target.FoveationResourceKey,
                 target.FoveationAttachmentKind,
                 target.FoveationAttachmentOwnedByResourcePlanner);
@@ -4917,16 +4928,60 @@ public unsafe partial class VulkanRenderer
             TimeSpan dirtyAge = Stopwatch.GetElapsedTime(lastDirtyTimestamp);
             if (dirtyAge < OpenXrRuntimeSessionStartDirtyQuietPeriod)
             {
-                reason = $"desktop command buffers were dirtied {dirtyAge.TotalMilliseconds:F0} ms ago";
-                return true;
+                long now = Stopwatch.GetTimestamp();
+                long dirtyWaitStart = Volatile.Read(ref _openXrRuntimeSessionStartDirtyWaitStartTimestamp);
+                if (dirtyWaitStart == 0)
+                {
+                    Interlocked.CompareExchange(ref _openXrRuntimeSessionStartDirtyWaitStartTimestamp, now, 0);
+                    dirtyWaitStart = Volatile.Read(ref _openXrRuntimeSessionStartDirtyWaitStartTimestamp);
+                }
+
+                TimeSpan dirtyWait = Stopwatch.GetElapsedTime(dirtyWaitStart, now);
+                if (dirtyWait < OpenXrRuntimeSessionStartDirtyMaxWait)
+                {
+                    reason =
+                        $"desktop command buffers were dirtied {dirtyAge.TotalMilliseconds:F0} ms ago (waiting {dirtyWait.TotalMilliseconds:F0}/{OpenXrRuntimeSessionStartDirtyMaxWait.TotalMilliseconds:F0} ms for a quiet window)";
+                    return true;
+                }
+
+                Debug.VulkanWarningEvery(
+                    $"OpenXR.Vulkan.SessionStartDirtyQuietBypassed.{GetHashCode()}",
+                    TimeSpan.FromSeconds(5),
+                    "[OpenXR] Proceeding with Vulkan session creation despite desktop command buffers dirtied {0:F0} ms ago after waiting {1:F0} ms. The runtime graphics transition will wait for in-flight work and idle the device.",
+                    dirtyAge.TotalMilliseconds,
+                    dirtyWait.TotalMilliseconds);
             }
         }
 
         if (TryGetPendingSubmittedFrameSlot(out int pendingSlot, out ulong pendingTimelineValue))
         {
-            reason = $"desktop frame slot {pendingSlot} is still pending at timeline value {pendingTimelineValue}";
-            return true;
+            long now = Stopwatch.GetTimestamp();
+            long pendingFrameWaitStart = Volatile.Read(ref _openXrRuntimeSessionStartPendingFrameWaitStartTimestamp);
+            if (pendingFrameWaitStart == 0)
+            {
+                Interlocked.CompareExchange(ref _openXrRuntimeSessionStartPendingFrameWaitStartTimestamp, now, 0);
+                pendingFrameWaitStart = Volatile.Read(ref _openXrRuntimeSessionStartPendingFrameWaitStartTimestamp);
+            }
+
+            TimeSpan pendingFrameWait = Stopwatch.GetElapsedTime(pendingFrameWaitStart, now);
+            if (pendingFrameWait < OpenXrRuntimeSessionStartPendingFrameMaxWait)
+            {
+                reason =
+                    $"desktop frame slot {pendingSlot} is still pending at timeline value {pendingTimelineValue} (waiting {pendingFrameWait.TotalMilliseconds:F0}/{OpenXrRuntimeSessionStartPendingFrameMaxWait.TotalMilliseconds:F0} ms for submitted desktop work to retire)";
+                return true;
+            }
+
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.SessionStartPendingDesktopFrameBypassed.{GetHashCode()}",
+                TimeSpan.FromSeconds(5),
+                "[OpenXR] Proceeding with Vulkan session creation despite desktop frame slot {0} still pending at timeline value {1} after waiting {2:F0} ms. The runtime graphics transition will wait for in-flight work and idle the device.",
+                pendingSlot,
+                pendingTimelineValue,
+                pendingFrameWait.TotalMilliseconds);
         }
+
+        Volatile.Write(ref _openXrRuntimeSessionStartDirtyWaitStartTimestamp, 0);
+        Volatile.Write(ref _openXrRuntimeSessionStartPendingFrameWaitStartTimestamp, 0);
 
         return false;
     }
@@ -5062,8 +5117,33 @@ public unsafe partial class VulkanRenderer
 
         try
         {
-            allocatedBytes = MemoryAllocator.TotalAllocatedBytes;
             activeAllocationCount = MemoryAllocator.ActiveVkAllocationCount;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+
+        if (MemoryAllocator is VulkanVmaAllocator vmaAllocator
+            && Api is not null
+            && _physicalDevice.Handle != 0)
+        {
+            Api.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
+            if (vmaAllocator.TryGetDeviceLocalHeapBudgetSnapshot(
+                    in memoryProperties,
+                    budgetRatio,
+                    reserveBytes,
+                    out allocatedBytes,
+                    out budgetBytes,
+                    out largestHeapBytes))
+            {
+                return true;
+            }
+        }
+
+        try
+        {
+            allocatedBytes = MemoryAllocator.TotalAllocatedBytes;
         }
         catch (InvalidOperationException)
         {

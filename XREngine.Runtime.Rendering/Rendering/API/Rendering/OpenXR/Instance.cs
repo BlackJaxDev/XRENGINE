@@ -107,6 +107,8 @@ public unsafe partial class OpenXRAPI
         if (!filtered.Any(e => requiredForRenderer.Contains(e, StringComparer.OrdinalIgnoreCase)))
             throw new Exception($"OpenXR runtime does not support required renderer extension(s): {string.Join(", ", requiredForRenderer)}");
 
+        Debug.Vulkan("[OpenXR] Enabling OpenXR instance extensions: {0}", string.Join(", ", filtered));
+
         DebugUtilsMessengerCreateInfoEXT debugCreateInfo = default;
         void* next = null;
         if (EnableValidationLayers && filtered.Contains(OxrExtDebugUtils.ExtensionName, StringComparer.OrdinalIgnoreCase))

@@ -1564,6 +1564,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     /// </summary>
     internal static bool RuntimeEnableMsaaDeferred
         => RuntimeEnableMsaa
+        && !UseOpenXrVulkanDesktopStartupSafePath
         && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline2)?.EnableDeferredMsaa == true;
 
     private const string TonemappingStageKey = "tonemapping";

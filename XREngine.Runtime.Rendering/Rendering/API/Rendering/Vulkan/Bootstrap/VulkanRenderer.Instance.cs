@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private Instance instance;
+    private uint _vulkanInstanceApiVersion;
     private bool _vulkanInstanceCreatedThroughOpenXr;
     private OpenXrVulkanEnable2BootstrapContext? _openXrVulkanEnable2Context;
     public Instance Instance => instance;
@@ -84,6 +85,9 @@ public unsafe partial class VulkanRenderer
             EnableValidationLayers = false;
         }
 
+        uint requestedApiVersion = ResolveRequestedVulkanInstanceApiVersion();
+        _vulkanInstanceApiVersion = requestedApiVersion;
+
         ApplicationInfo appInfo = new()
         {
             SType = StructureType.ApplicationInfo,
@@ -91,7 +95,7 @@ public unsafe partial class VulkanRenderer
             ApplicationVersion = new Version32(1, 0, 0),
             PEngineName = (byte*)Marshal.StringToHGlobalAnsi("XRENGINE"),
             EngineVersion = new Version32(1, 0, 0),
-            ApiVersion = Vk.Version13
+            ApiVersion = requestedApiVersion
         };
 
         InstanceCreateInfo createInfo = new()
@@ -162,5 +166,62 @@ public unsafe partial class VulkanRenderer
             SilkMarshal.Free((nint)createInfo.PpEnabledLayerNames);
 
         RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled = EnableValidationLayers;
+    }
+
+    private static uint ResolveRequestedVulkanInstanceApiVersion()
+    {
+        uint defaultApiVersion = Vk.Version13;
+        OpenXrVulkanRuntimeRequirements openXrRequirements = OpenXRAPI.GetRequestedVulkanRuntimeRequirements();
+        if (openXrRequirements.MaxApiVersionSupported == 0)
+            return defaultApiVersion;
+
+        uint minApiVersion = ConvertOpenXrVulkanApiVersion(openXrRequirements.MinApiVersionSupported);
+        uint maxApiVersion = ConvertOpenXrVulkanApiVersion(openXrRequirements.MaxApiVersionSupported);
+        if (maxApiVersion == 0)
+            return defaultApiVersion;
+
+        if (minApiVersion != 0 && maxApiVersion < minApiVersion)
+        {
+            Debug.VulkanWarning(
+                "[OpenXR] Ignoring invalid Vulkan API version range from runtime: min={0} max={1}.",
+                openXrRequirements.MinApiVersionSupported,
+                openXrRequirements.MaxApiVersionSupported);
+            return defaultApiVersion;
+        }
+
+        uint resolvedApiVersion = defaultApiVersion;
+        if (minApiVersion != 0 && resolvedApiVersion < minApiVersion)
+            resolvedApiVersion = minApiVersion;
+        if (resolvedApiVersion > maxApiVersion)
+            resolvedApiVersion = maxApiVersion;
+
+        if (resolvedApiVersion != defaultApiVersion)
+        {
+            Debug.Vulkan(
+                "[OpenXR] Vulkan instance API version resolved to {0} for OpenXR runtime range {1}-{2} (default {3}).",
+                FormatVulkanApiVersion(resolvedApiVersion),
+                minApiVersion == 0 ? "<unknown>" : FormatVulkanApiVersion(minApiVersion),
+                FormatVulkanApiVersion(maxApiVersion),
+                FormatVulkanApiVersion(defaultApiVersion));
+        }
+
+        return resolvedApiVersion;
+    }
+
+    private static uint ConvertOpenXrVulkanApiVersion(ulong openXrApiVersion)
+    {
+        if (openXrApiVersion == 0)
+            return 0;
+
+        ulong major = openXrApiVersion >> 48;
+        ulong minor = (openXrApiVersion >> 32) & 0xFFFFUL;
+        ulong patch = openXrApiVersion & 0xFFFFFFFFUL;
+        if (major > 0x7FUL || minor > 0x3FFUL)
+            return 0;
+
+        if (patch > 0xFFFUL)
+            patch = 0xFFFUL;
+
+        return ((uint)major << 22) | ((uint)minor << 12) | (uint)patch;
     }
 }

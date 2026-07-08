@@ -456,12 +456,56 @@ namespace XREngine.Components.Lights
             if (!IsVulkanDirectionalShadowBackend())
                 return true;
 
-            // Vulkan cascade rendering currently builds one sequential frame-op
-            // context per texture-array layer. Under OpenXR + Monado those contexts
-            // can resolve the shared receiver array to unrelated physical images and
-            // hang the graphics queue. Keep primary directional shadows enabled, but
-            // suppress cascades until the planner can model this shared array safely.
+            if (TryResolveVulkanDirectionalCascadesOverride(out bool enabled))
+                return enabled;
+
+            // The original Vulkan safety stop was for OpenXR + Monado hangs while
+            // rendering shared cascade texture arrays. Keep that runtime guarded by
+            // default, but allow SteamVR and ordinary Vulkan sessions to exercise the
+            // cascade path.
+            return !IsKnownMonadoOpenXrRuntime();
+        }
+
+        private static bool TryResolveVulkanDirectionalCascadesOverride(out bool enabled)
+        {
+            enabled = false;
+            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDirectionalCascades);
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+
+            value = value.Trim();
+            if (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "on", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "force", StringComparison.OrdinalIgnoreCase))
+            {
+                enabled = true;
+                return true;
+            }
+
+            if (string.Equals(value, "0", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "no", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "off", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "disable", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "disabled", StringComparison.OrdinalIgnoreCase))
+            {
+                enabled = false;
+                return true;
+            }
+
             return false;
+        }
+
+        internal static bool IsKnownMonadoOpenXrRuntime()
+        {
+            string runtimePath =
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson) ??
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson) ??
+                string.Empty;
+
+            return runtimePath.Contains("monado", StringComparison.OrdinalIgnoreCase);
         }
 
         private void PublishVulkanCascadeRenderingDisabledPlan(ShadowRequestSource source)
@@ -2863,9 +2907,6 @@ namespace XREngine.Components.Lights
             if (requestedMode == EDirectionalCascadeShadowRenderMode.Sequential)
                 return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.SequentialRequested);
 
-            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
-                return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.VulkanLayeredRenderingDisabled);
-
             if (state.LayeredFrameBuffer is null)
                 return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.MissingLayeredFramebuffer);
 
@@ -3194,11 +3235,10 @@ namespace XREngine.Components.Lights
 
             if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
             {
-                // Vulkan directional cascade atlas page rendering currently hangs
-                // the graphics queue on the OpenXR + Monado path. Route Vulkan
-                // through the legacy cascade texture-array renderer until the atlas
-                // page command sequence is validated.
-                return false;
+                // Keep the known Monado OpenXR Vulkan path protected, but let
+                // SteamVR and ordinary Vulkan sessions exercise the atlas toggle.
+                // Grouped atlas rendering is still gated separately.
+                return !IsKnownMonadoOpenXrRuntime();
             }
 
             return cascadeCount > 0;
@@ -3273,11 +3313,11 @@ namespace XREngine.Components.Lights
         {
             if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
             {
-                // The grouped atlas path relies on indexed viewport/scissor state plus
-                // shader viewport/layer writes. On Vulkan it can hang the graphics
-                // queue during OpenXR startup; keep the atlas path on its sequential
-                // renderer until the grouped command sequence is validated.
-                return false;
+                // The grouped atlas path hang was observed with the Monado OpenXR
+                // Vulkan runtime. SteamVR and ordinary Vulkan sessions should use
+                // the same capability checks as OpenGL.
+                if (IsKnownMonadoOpenXrRuntime())
+                    return false;
             }
 
             if (cascadeCount <= 1 ||

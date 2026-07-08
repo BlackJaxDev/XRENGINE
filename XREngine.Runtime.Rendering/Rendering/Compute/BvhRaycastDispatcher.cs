@@ -352,7 +352,7 @@ public sealed class BvhRaycastDispatcher
         => Debug.RenderingWarningEvery(
             "BvhRaycastDispatcher.UnsupportedBackend",
             TimeSpan.FromSeconds(5),
-            "[BvhRaycastDispatcher] GPU BVH raycast is currently OpenGL-only because Vulkan fence/readback integration is not implemented. Falling back to CPU mesh picking.");
+            "[BvhRaycastDispatcher] GPU BVH raycast is currently OpenGL-only because Vulkan fence/readback integration is not implemented; rejecting GPU raycast request.");
 
     private readonly record struct InFlightRaycast(BvhRaycastRequest Request, IntPtr Fence, uint ExpectedBytes);
 }

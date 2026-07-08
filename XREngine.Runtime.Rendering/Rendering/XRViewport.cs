@@ -89,6 +89,20 @@ namespace XREngine.Rendering
         private bool _allowUIRender = true;
 
         /// <summary>
+        /// When true and a non-null output FBO is supplied, the default pipeline uses
+        /// its direct FBO command chain instead of the full viewport/window chain.
+        /// This is intended for small offscreen previews that are later sampled by UI.
+        /// </summary>
+        private bool _useDirectFboTargetCommandsWhenRenderingToFbo;
+
+        /// <summary>
+        /// Optional per-viewport mesh submission override. Small offscreen scene
+        /// captures can use this to avoid inheriting the main viewport's GPU-driven
+        /// submission policy while still using the normal render pipeline.
+        /// </summary>
+        private EMeshSubmissionStrategy? _meshSubmissionStrategyOverride;
+
+        /// <summary>
         /// When set, this external command collection is used for rendering instead of the pipeline instance's own commands.
         /// This allows multiple viewports to share a single culling pass (e.g., VR two-pass + desktop mirror).
         /// When non-null, <see cref="AutomaticallyCollectVisible"/> and <see cref="AutomaticallySwapBuffers"/>
@@ -357,6 +371,9 @@ namespace XREngine.Rendering
         [YamlIgnore]
         public XRRenderPipelineInstance RenderPipelineInstance => _renderPipeline;
 
+        [YamlIgnore]
+        public XRFrameBuffer? LastRenderedTargetFBO { get; private set; }
+
         /// <summary>
         /// The render pipeline definition that controls how rendering is performed.
         /// Defines the sequence of render passes (G-buffer, lighting, post-processing, etc.).
@@ -441,6 +458,23 @@ namespace XREngine.Rendering
         {
             get => _allowUIRender;
             set => SetField(ref _allowUIRender, value);
+        }
+
+        /// <summary>
+        /// Prefer direct FBO rendering whenever this viewport renders to a caller-owned
+        /// framebuffer. Offscreen UI previews use this to avoid window/swapchain-only
+        /// post-processing paths and their render-graph resource assumptions.
+        /// </summary>
+        public bool UseDirectFboTargetCommandsWhenRenderingToFbo
+        {
+            get => _useDirectFboTargetCommandsWhenRenderingToFbo;
+            set => SetField(ref _useDirectFboTargetCommandsWhenRenderingToFbo, value);
+        }
+
+        public EMeshSubmissionStrategy? MeshSubmissionStrategyOverride
+        {
+            get => _meshSubmissionStrategyOverride;
+            set => SetField(ref _meshSubmissionStrategyOverride, value);
         }
 
         /// <summary>
@@ -1177,7 +1211,7 @@ namespace XREngine.Rendering
                 ? _renderingFrameOutputPacing
                 : FrameOutputPacingDecision.Due(ResolveOutputViewKind(), ResolveFrameOutputKind(), State.RenderFrameId);
 
-            if (!_renderingFrameOutputSceneDue && IsDesktopFacingOutput())
+            if (targetFbo is null && !_renderingFrameOutputSceneDue && IsDesktopFacingOutput())
             {
                 long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 RenderScreenSpaceUIOverlay(targetFbo);
@@ -1282,6 +1316,7 @@ namespace XREngine.Rendering
                 if (!Suppress3DSceneRendering)
                     SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
 
+                LastRenderedTargetFBO = targetFbo;
                 _renderPipeline.Render(
                     world.VisualScene,
                     camera,
@@ -1305,6 +1340,25 @@ namespace XREngine.Rendering
                     commandCount: GetRenderingCommandCountForTelemetry(),
                     elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - renderStart);
             }
+        }
+
+        /// <summary>
+        /// Renders only this viewport's screen-space UI overlay to the current render target.
+        /// Used by cheap VR desktop mirror composition, where the scene comes from a submitted
+        /// eye texture and the normal viewport scene render is intentionally skipped.
+        /// </summary>
+        public void RenderScreenSpaceUIOnly(XRFrameBuffer? targetFbo = null)
+        {
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.RenderScreenSpaceUIOnly");
+
+            if (ShouldSuspendPipelineWork(nameof(RenderScreenSpaceUIOnly)))
+                return;
+
+            // Refresh the pawn/camera binding before resolving the overlay canvas. The UI
+            // path depends on CameraComponent even though no 3D scene render is performed.
+            _ = ResolveActiveCameraWithPawnRefresh();
+            LastRenderedTargetFBO = targetFbo;
+            RenderScreenSpaceUIOverlay(targetFbo);
         }
 
         /// <summary>
@@ -1340,6 +1394,7 @@ namespace XREngine.Rendering
 
             bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
 
+            LastRenderedTargetFBO = targetFbo;
             _renderPipeline.Render(
                 world.VisualScene,
                 leftCamera,
@@ -2009,6 +2064,14 @@ namespace XREngine.Rendering
             State.SetReadBuffer(EReadBufferMode.None);
             return State.GetDepth(viewportPoint.X, viewportPoint.Y);
         }
+
+        /// <summary>
+        /// Enters any renderer-specific readback state needed to resolve this viewport's live render-pipeline resources.
+        /// </summary>
+        public IDisposable? EnterRenderPipelineReadbackScope()
+            => AbstractRenderer.Current is VulkanRenderer vulkan
+                ? vulkan.EnterPipelineResourcePlannerReadbackScope(RenderPipelineInstance, this)
+                : null;
 
         /// <summary>
         /// Asynchronously reads the depth buffer value at the specified viewport position.

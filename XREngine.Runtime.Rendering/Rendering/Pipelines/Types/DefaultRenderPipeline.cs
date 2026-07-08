@@ -129,9 +129,28 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
 
     internal static bool UseOpenXrVulkanDesktopStartupSafePath
+        => UseOpenXrVulkanDesktopStartupSafePathForViewport(null);
+
+    internal static bool UseOpenXrVulkanDesktopStartupSafePathForViewport(XRViewport? viewport)
         => IsVulkanRuntimeActiveOrExpected() &&
            IsOpenXrRuntimeRequestedOrExpected() &&
-           !IsStereoPass;
+           !IsStereoPass &&
+           IsOpenXrExternalSwapchainTargetPass(viewport);
+
+    private static bool IsOpenXrExternalSwapchainTargetPass(XRViewport? explicitViewport)
+    {
+        if (explicitViewport?.RendersToExternalSwapchainTarget == true)
+            return true;
+
+        XRViewport? viewport = explicitViewport ??
+            RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport ??
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport ??
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastWindowViewport;
+
+        return viewport?.RendersToExternalSwapchainTarget == true &&
+            !RuntimeEngine.Rendering.State.IsSceneCapturePass &&
+            !RuntimeEngine.Rendering.State.IsLightProbePass;
+    }
 
     private static bool IsVulkanRuntimeActiveOrExpected()
     {
@@ -474,6 +493,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         => !RuntimeEnableVendorUpscale && ResolveAntiAliasingMode() == EAntiAliasingMode.Smaa;
 
     /// <summary>
+    /// True when SMAA resources are part of the pipeline-owned resource layout.
+    /// </summary>
+    private static bool RuntimeEnableDeclaredSmaa
+        => RuntimeEnableSmaa;
+
+    /// <summary>
     /// True when the current camera's AA mode is TSR and internal resolution is
     /// below 100%, meaning a dedicated upscale pass is required.
     /// </summary>
@@ -485,6 +510,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     private static bool RuntimeNeedsTemporalAaVelocityBuffer
         => !DisableHistoryBasedVrEffects()
         && ResolveAntiAliasingMode() is EAntiAliasingMode.Taa or EAntiAliasingMode.Dlaa;
+
+    private static bool RuntimeNeedsTemporalAaResources
+        => !RuntimeEnableVendorUpscale
+        && !DisableHistoryBasedVrEffects()
+        && ResolveAntiAliasingMode() is EAntiAliasingMode.Taa or EAntiAliasingMode.Tsr or EAntiAliasingMode.Dlaa;
 
     private static bool ShouldGenerateVelocityBuffer()
         => RuntimeEnableVendorUpscale
@@ -1506,6 +1536,10 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     public const string DeferredGBufferPreForwardCopyFBOName = "DeferredGBufferPreForwardCopyFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string SmaaOutputTextureName = "SmaaOutputTexture";
+    public const string SmaaEdgeTextureName = SmaaFBOName + "_EdgeTexture";
+    public const string SmaaBlendTextureName = SmaaFBOName + "_BlendTexture";
+    public const string SmaaEdgeFBOName = SmaaFBOName + "_EdgeFBO";
+    public const string SmaaBlendFBOName = SmaaFBOName + "_BlendFBO";
     public const string TsrOutputTextureName = "TsrOutputTexture";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
     public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
@@ -1584,8 +1618,13 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     /// <summary>
     /// True when the current camera uses MSAA and the deferred pipeline should run in MSAA mode.
     /// </summary>
-    internal static bool RuntimeEnableMsaaDeferred
+    internal static bool RuntimeEnableMsaaTargets
         => RuntimeEnableMsaa
+        && !UseOpenXrVulkanDesktopStartupSafePath;
+
+    internal static bool RuntimeEnableMsaaDeferred
+        => RuntimeEnableMsaaTargets
+        && !UseOpenXrVulkanDesktopStartupSafePath
         && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;
 
     private const string TonemappingStageKey = "tonemapping";

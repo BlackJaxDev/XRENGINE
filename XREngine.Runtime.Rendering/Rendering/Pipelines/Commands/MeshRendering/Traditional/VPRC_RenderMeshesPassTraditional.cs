@@ -14,15 +14,15 @@ internal static class VPRC_RenderMeshesPassTraditional
     private static int _excludedGpuFallbackLogBudget = 16;
     private static int _cpuSafetyNetLogBudget = 8;
 
-    public static void Execute(VPRC_RenderMeshesPassShared command)
+    public static void Execute(VPRC_RenderMeshesPassShared command, EMeshSubmissionStrategy meshSubmissionStrategy)
     {
-        if (command.MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
-            RenderGPU(command);
+        if (meshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
+            RenderGPU(command, meshSubmissionStrategy);
         else
             RenderCPU(command);
     }
 
-    private static void RenderGPU(VPRC_RenderMeshesPassShared command)
+    private static void RenderGPU(VPRC_RenderMeshesPassShared command, EMeshSubmissionStrategy meshSubmissionStrategy)
     {
         using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
         using var prof = RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU", ProfilerScopeKind.AlwaysOnHotPathLoop);
@@ -44,11 +44,11 @@ internal static class VPRC_RenderMeshesPassTraditional
             commands.RenderCPUNonMeshAndExcluded(command.RenderPass);
 
         using (RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.Dispatch", ProfilerScopeKind.AlwaysOnHotPathLoop))
-            commands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);
+            commands.RenderGPU(command.RenderPass, meshSubmissionStrategy);
 
         if (commands.TryGetGpuPass(command.RenderPass, out var gpuPass))
         {
-            if (ShouldUseOpenGLZeroReadbackProgramWarmupFallback(command.MeshSubmissionStrategy, gpuPass))
+            if (ShouldUseOpenGLZeroReadbackProgramWarmupFallback(meshSubmissionStrategy, gpuPass))
             {
                 RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);
                 WarnZeroReadbackProgramWarmupFallback(command.RenderPass, gpuPass.ZeroReadbackProgramPendingCountThisFrame);
@@ -59,8 +59,8 @@ internal static class VPRC_RenderMeshesPassTraditional
             if (gpuPass.VisibleCommandCount != 0)
                 return;
 
-            bool shaderWarmupFallback = ShouldUseOpenGLShaderWarmupFallback(command.MeshSubmissionStrategy);
-            bool allowCpuSafetyNet = shaderWarmupFallback || IsExplicitCpuFallbackAllowed(command.MeshSubmissionStrategy);
+            bool shaderWarmupFallback = ShouldUseOpenGLShaderWarmupFallback(meshSubmissionStrategy);
+            bool allowCpuSafetyNet = shaderWarmupFallback || IsExplicitCpuFallbackAllowed(meshSubmissionStrategy);
 
             if (allowCpuSafetyNet)
             {

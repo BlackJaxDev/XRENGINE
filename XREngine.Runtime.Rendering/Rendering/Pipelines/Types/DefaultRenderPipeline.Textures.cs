@@ -1704,6 +1704,73 @@ public partial class DefaultRenderPipeline
         return texture;
     }
 
+    private XRTexture CreateSmaaEdgeTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeFull();
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba,
+            EPixelType.UnsignedByte,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = SmaaEdgeTextureName;
+        texture.Name = SmaaEdgeTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateSmaaBlendTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeFull();
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba,
+            EPixelType.UnsignedByte,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = SmaaBlendTextureName;
+        texture.Name = SmaaBlendTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateSmaaOutputTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeFull();
+        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
+        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
+        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
+
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            internalFormat,
+            EPixelFormat.Rgba,
+            pixelType,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = sized;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = SmaaOutputTextureName;
+        texture.Name = SmaaOutputTextureName;
+        return texture;
+    }
+
     private XRTexture CreateTsrOutputTexture()
     {
         var (width, height) = GetDesiredFBOSizeFull();

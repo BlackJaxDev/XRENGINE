@@ -186,14 +186,18 @@ public sealed partial class XRRenderPipelineInstance
         private bool PushInitialMainRenderArea(XRViewport? viewport, XRFrameBuffer? target)
         {
             AbstractRenderer? renderer = AbstractRenderer.Current;
-            if (renderer?.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion) == true)
+            bool renderingExternalSwapchainViewport =
+                viewport?.RendersToExternalSwapchainTarget == true &&
+                renderer?.IsRenderingExternalSwapchainTarget == true;
+
+            if (renderingExternalSwapchainViewport &&
+                renderer?.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion) == true)
             {
                 PushRequiredRenderArea(externalRegion, "OpenXR external swapchain target");
                 return true;
             }
 
-            if (renderer?.IsRenderingExternalSwapchainTarget == true ||
-                viewport?.RendersToExternalSwapchainTarget == true)
+            if (renderingExternalSwapchainViewport)
             {
                 BoundingRectangle externalViewportRegion = viewport?.InternalResolutionRegion ?? default;
                 PushRequiredRenderArea(externalViewportRegion, "OpenXR external swapchain viewport");

@@ -175,6 +175,28 @@ public unsafe partial class VulkanRenderer
         {
             try
             {
+                if (_physicalGroup is not null || Data.FrameBufferAttachment.HasValue || Data.RequiresStorageUsage)
+                {
+                    Generate();
+                    if (!RefreshPhysicalGroupImageIfStaleNoLock())
+                        return false;
+
+                    if (IsDescriptorReadyNoLock())
+                        return true;
+
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Texture.ImageBackedDescriptorNotReady.{Data.GetHashCode()}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Image-backed texture descriptor readiness failed for '{0}' ({1}): image=0x{2:X} view=0x{3:X} sampler=0x{4:X} descriptorDirty={5}.",
+                        ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
+                        reason,
+                        _image.Handle,
+                        _view.Handle,
+                        _sampler.Handle,
+                        IsDescriptorDirty);
+                    return false;
+                }
+
                 EnsureDescriptorReadyForVulkanUse(reason);
                 return true;
             }
@@ -1338,11 +1360,25 @@ public unsafe partial class VulkanRenderer
 
             VulkanMemoryAllocation allocation = Renderer.AllocateImageMemoryWithFallback(_image, MemoryProperties);
             Renderer._imageAllocations[_image.Handle] = allocation;
+            Renderer.TrackImageAllocation(
+                _image,
+                allocation,
+                ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
+                "dedicated-texture",
+                ResolvedExtent.Width,
+                ResolvedExtent.Height,
+                ResolvedExtent.Depth,
+                ResolvedArrayLayers,
+                ResolvedMipLevels,
+                ResolvedFormat,
+                Usage,
+                SampleCount);
             _memory = allocation.Memory;
 
             if (Api!.BindImageMemory(Device, _image, allocation.Memory, allocation.Offset) != Result.Success)
             {
                 Renderer._imageAllocations.TryRemove(_image.Handle, out _);
+                Renderer.UntrackImageAllocation(_image);
                 Renderer.FreeMemoryAllocation(allocation);
                 throw new Exception("Failed to bind memory for texture image.");
             }
@@ -1778,12 +1814,26 @@ public unsafe partial class VulkanRenderer
             }
 
             Renderer._imageAllocations[image.Handle] = allocation;
+            Renderer.TrackImageAllocation(
+                image,
+                allocation,
+                ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName(),
+                "imported-texture-upload",
+                extent.Width,
+                extent.Height,
+                extent.Depth,
+                arrayLayers,
+                mipLevels,
+                format,
+                usage,
+                SampleCountFlags.Count1Bit);
             memory = allocation.Memory;
 
             Result bindResult = Api!.BindImageMemory(Device, image, allocation.Memory, allocation.Offset);
             if (bindResult != Result.Success)
             {
                 Renderer._imageAllocations.TryRemove(image.Handle, out _);
+                Renderer.UntrackImageAllocation(image);
                 Renderer.FreeMemoryAllocation(allocation);
                 Api!.DestroyImage(Device, image, null);
                 image = default;

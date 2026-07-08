@@ -4,8 +4,16 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Resources;
 
+/// <summary>
+/// Defines a predicate delegate for filtering render pipeline resource profiles based on custom criteria.
+/// </summary>
+/// <param name="profile">The render pipeline resource profile to evaluate.</param>
+/// <returns>True if the profile matches the criteria; otherwise, false.</returns>
 public delegate bool RenderPipelineResourcePredicate(RenderPipelineResourceProfile profile);
 
+/// <summary>
+/// Represents the layout of resources used in a render pipeline, including their specifications and organization.
+/// </summary>
 public sealed class RenderPipelineResourceLayout
 {
     private readonly IReadOnlyDictionary<string, RenderPipelineResourceSpec> _byName;
@@ -20,19 +28,42 @@ public sealed class RenderPipelineResourceLayout
         _byName = byName;
     }
 
+    /// <summary>
+    /// Gets an empty render pipeline resource layout with no resources or specifications.
+    /// </summary>
     public static RenderPipelineResourceLayout Empty { get; } = new(
         RenderPipelineResourceProfile.Empty,
         Array.Empty<RenderPipelineResourceSpec>(),
         new ReadOnlyDictionary<string, RenderPipelineResourceSpec>(
             new Dictionary<string, RenderPipelineResourceSpec>(StringComparer.OrdinalIgnoreCase)));
 
+    /// <summary>
+    /// Gets the render pipeline resource profile associated with this layout, which defines the characteristics and constraints of the resources used in the render pipeline.
+    /// </summary>
     public RenderPipelineResourceProfile Profile { get; }
+    /// <summary>
+    /// Gets the ordered list of resource specifications that define the resources used in the render pipeline, including their types, usage patterns, and other relevant details.
+    /// </summary>
     public IReadOnlyList<RenderPipelineResourceSpec> OrderedSpecs { get; }
+    /// <summary>
+    /// Gets a read-only dictionary that maps resource names to their corresponding specifications, allowing for efficient lookup of resource specifications by name.
+    /// </summary>
     public IReadOnlyDictionary<string, RenderPipelineResourceSpec> ResourcesByName => _byName;
 
+    /// <summary>
+    /// Attempts to retrieve the resource specification associated with the specified resource name. Returns true if the resource specification is found; otherwise, false.
+    /// </summary>
+    /// <param name="name">The name of the resource.</param>
+    /// <param name="spec">When this method returns, contains the resource specification associated with the specified name, if found; otherwise, null.</param>
+    /// <returns>True if the resource specification is found; otherwise, false.</returns>
     public bool TryGet(string name, [NotNullWhen(true)] out RenderPipelineResourceSpec? spec)
         => _byName.TryGetValue(name, out spec);
 
+    /// <summary>
+    /// Determines whether the current render pipeline resource layout is structurally equivalent to another layout, based on their profiles and resource specifications. Two layouts are considered structurally equivalent if they have the same profile and the same number of resource specifications, and each corresponding specification is structurally equivalent.
+    /// </summary>
+    /// <param name="other">The other render pipeline resource layout to compare with.</param>
+    /// <returns>True if the layouts are structurally equivalent; otherwise, false.</returns>
     public bool IsStructurallyEquivalentTo(RenderPipelineResourceLayout? other)
     {
         if (other is null ||
@@ -49,6 +80,10 @@ public sealed class RenderPipelineResourceLayout
         return true;
     }
 
+    /// <summary>
+    /// Gets the descriptors for all texture resources in the render pipeline.
+    /// </summary>
+    /// <returns>An enumerable of texture resource descriptors.</returns>
     public IEnumerable<TextureResourceDescriptor> LowerTextureDescriptors()
     {
         foreach (RenderPipelineResourceSpec spec in OrderedSpecs)
@@ -60,6 +95,10 @@ public sealed class RenderPipelineResourceLayout
         }
     }
 
+    /// <summary>
+    /// Gets the descriptors for all frame buffer resources in the render pipeline.
+    /// </summary>
+    /// <returns>An enumerable of frame buffer resource descriptors.</returns>
     public IEnumerable<FrameBufferResourceDescriptor> LowerFrameBufferDescriptors()
     {
         foreach (RenderPipelineResourceSpec spec in OrderedSpecs)
@@ -67,6 +106,10 @@ public sealed class RenderPipelineResourceLayout
                 yield return frameBufferSpec.ToDescriptor();
     }
 
+    /// <summary>
+    /// Gets the descriptors for all render buffer resources in the render pipeline.
+    /// </summary>
+    /// <returns>An enumerable of render buffer resource descriptors.</returns>
     public IEnumerable<RenderBufferResourceDescriptor> LowerRenderBufferDescriptors()
     {
         foreach (RenderPipelineResourceSpec spec in OrderedSpecs)
@@ -74,6 +117,10 @@ public sealed class RenderPipelineResourceLayout
                 yield return renderBufferSpec.ToDescriptor();
     }
 
+    /// <summary>
+    /// Gets the descriptors for all buffer resources in the render pipeline.
+    /// </summary>
+    /// <returns>An enumerable of buffer resource descriptors.</returns>
     public IEnumerable<BufferResourceDescriptor> LowerBufferDescriptors()
     {
         foreach (RenderPipelineResourceSpec spec in OrderedSpecs)
