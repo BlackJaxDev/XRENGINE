@@ -3,8 +3,17 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Resources;
 
+/// <summary>
+/// Factory for creating <see cref="RenderResourceDescriptor"/> instances from live render resources.
+/// </summary>
 internal static class RenderResourceDescriptorFactory
 {
+    /// <summary>
+    /// Creates a <see cref="TextureResourceDescriptor"/> from a live <see cref="XRTexture"/> instance.
+    /// </summary>
+    /// <param name="texture">The live texture instance.</param>
+    /// <param name="lifetime">The lifetime of the resource.</param>
+    /// <returns>A <see cref="TextureResourceDescriptor"/> representing the texture.</returns>
     public static TextureResourceDescriptor FromTexture(XRTexture texture, RenderResourceLifetime lifetime = RenderResourceLifetime.Persistent)
     {
         ArgumentNullException.ThrowIfNull(texture);
@@ -52,6 +61,12 @@ internal static class RenderResourceDescriptorFactory
             Multisample: ResolveMultisample(texture));
     }
 
+    /// <summary>
+    /// Creates a <see cref="FrameBufferResourceDescriptor"/> from a live <see cref="XRFrameBuffer"/> instance.
+    /// </summary>
+    /// <param name="frameBuffer">The live frame buffer instance.</param>
+    /// <param name="lifetime">The lifetime of the resource.</param>
+    /// <returns>A <see cref="FrameBufferResourceDescriptor"/> representing the frame buffer.</returns>
     public static FrameBufferResourceDescriptor FromFrameBuffer(XRFrameBuffer frameBuffer, RenderResourceLifetime lifetime = RenderResourceLifetime.Persistent)
     {
         ArgumentNullException.ThrowIfNull(frameBuffer);
@@ -77,6 +92,12 @@ internal static class RenderResourceDescriptorFactory
             attachments);
     }
 
+    /// <summary>
+    /// Creates a <see cref="BufferResourceDescriptor"/> from a live <see cref="XRDataBuffer"/> instance.
+    /// </summary>
+    /// <param name="buffer">The live data buffer instance.</param>
+    /// <param name="lifetime">The lifetime of the resource.</param>
+    /// <returns>A <see cref="BufferResourceDescriptor"/> representing the data buffer.</returns>
     public static BufferResourceDescriptor FromBuffer(XRDataBuffer buffer, RenderResourceLifetime lifetime = RenderResourceLifetime.Persistent)
     {
         ArgumentNullException.ThrowIfNull(buffer);
@@ -104,6 +125,12 @@ internal static class RenderResourceDescriptorFactory
             AccessPattern: accessPattern);
     }
 
+    /// <summary>
+    /// Creates a <see cref="RenderBufferResourceDescriptor"/> from a live <see cref="XRRenderBuffer"/> instance.
+    /// </summary>
+    /// <param name="renderBuffer">The live render buffer instance.</param>
+    /// <param name="lifetime">The lifetime of the resource.</param>
+    /// <returns>A <see cref="RenderBufferResourceDescriptor"/> representing the render buffer.</returns>
     public static RenderBufferResourceDescriptor FromRenderBuffer(XRRenderBuffer renderBuffer, RenderResourceLifetime lifetime = RenderResourceLifetime.Persistent)
     {
         ArgumentNullException.ThrowIfNull(renderBuffer);

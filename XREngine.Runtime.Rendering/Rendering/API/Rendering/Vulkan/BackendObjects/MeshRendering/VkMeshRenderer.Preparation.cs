@@ -109,7 +109,16 @@ public unsafe partial class VulkanRenderer
 			ActivateCapturedProgram(material, preparedProgram, preparedProgramIdentity);
 			EnsureRuntimeDeformationBuffersCurrent();
 			if (CanReuseCapturedPreparedRenderState(material, preparedProgram, preparedProgramIdentity))
+			{
+				ApplyScopedProgramBindingsForPreparation(material);
+				if (programBindingSnapshot is not null)
+					_program?.ApplyBindingSnapshot(programBindingSnapshot);
+
+				if (!TryEnsureDescriptorSetsForPreparation(material, drawUniformSlot, out string reuseDescriptorDetail))
+					return SetPrepareResult(false, "DescriptorsPending", reuseDescriptorDetail, out reason);
+
 				return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Deferred"), out reason);
+			}
 
 			bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
 			EnsureBuffers(usesShaderGeneratedVertices);

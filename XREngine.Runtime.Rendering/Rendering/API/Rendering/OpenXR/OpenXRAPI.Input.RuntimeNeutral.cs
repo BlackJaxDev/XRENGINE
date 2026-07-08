@@ -403,11 +403,16 @@ public unsafe partial class OpenXRAPI
 
     private void SuggestRuntimeNeutralBindings()
     {
-        if (_handAimPoseAction.Handle == 0 && _runtimeInputActionList.Count == 0 && _hapticAction.Handle == 0)
+        if (_handGripPoseAction.Handle == 0 &&
+            _handAimPoseAction.Handle == 0 &&
+            _runtimeInputActionList.Count == 0 &&
+            _hapticAction.Handle == 0)
             return;
 
         SuggestRuntimeBindingsForProfile(
             "/interaction_profiles/valve/index_controller",
+            (_handGripPoseAction, "/user/hand/left/input/grip/pose"),
+            (_handGripPoseAction, "/user/hand/right/input/grip/pose"),
             (GetAction("Global", "Locomote"), "/user/hand/left/input/thumbstick"),
             (GetAction("Global", "Turn"), "/user/hand/right/input/thumbstick"),
             (GetAction("Global", "GrabLeft"), "/user/hand/left/input/squeeze/value"),
@@ -422,6 +427,8 @@ public unsafe partial class OpenXRAPI
 
         SuggestRuntimeBindingsForProfile(
             "/interaction_profiles/htc/vive_controller",
+            (_handGripPoseAction, "/user/hand/left/input/grip/pose"),
+            (_handGripPoseAction, "/user/hand/right/input/grip/pose"),
             (GetAction("Global", "Locomote"), "/user/hand/left/input/trackpad"),
             (GetAction("Global", "Turn"), "/user/hand/right/input/trackpad"),
             (GetAction("Global", "GrabLeft"), "/user/hand/left/input/trigger/value"),
@@ -436,6 +443,8 @@ public unsafe partial class OpenXRAPI
 
         SuggestRuntimeBindingsForProfile(
             "/interaction_profiles/khr/simple_controller",
+            (_handGripPoseAction, "/user/hand/left/input/grip/pose"),
+            (_handGripPoseAction, "/user/hand/right/input/grip/pose"),
             (GetAction("Global", "GrabLeft"), "/user/hand/left/input/select/click"),
             (GetAction("Global", "GrabRight"), "/user/hand/right/input/select/click"),
             (GetAction("Global", "Jump"), "/user/hand/right/input/menu/click"),
@@ -446,6 +455,8 @@ public unsafe partial class OpenXRAPI
 
         SuggestRuntimeBindingsForProfile(
             "/interaction_profiles/oculus/touch_controller",
+            (_handGripPoseAction, "/user/hand/left/input/grip/pose"),
+            (_handGripPoseAction, "/user/hand/right/input/grip/pose"),
             (GetAction("Global", "Locomote"), "/user/hand/left/input/thumbstick"),
             (GetAction("Global", "Turn"), "/user/hand/right/input/thumbstick"),
             (GetAction("Global", "GrabLeft"), "/user/hand/left/input/squeeze/value"),
@@ -460,6 +471,8 @@ public unsafe partial class OpenXRAPI
 
         SuggestRuntimeBindingsForProfile(
             "/interaction_profiles/microsoft/motion_controller",
+            (_handGripPoseAction, "/user/hand/left/input/grip/pose"),
+            (_handGripPoseAction, "/user/hand/right/input/grip/pose"),
             (GetAction("Global", "Locomote"), "/user/hand/left/input/thumbstick"),
             (GetAction("Global", "Turn"), "/user/hand/right/input/thumbstick"),
             (GetAction("Global", "GrabLeft"), "/user/hand/left/input/squeeze/value"),

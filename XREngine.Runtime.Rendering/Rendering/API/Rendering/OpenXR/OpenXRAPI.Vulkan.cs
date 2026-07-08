@@ -1,3 +1,4 @@
+using Silk.NET.Core.Native;
 using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.KHR;
 using System;
@@ -196,6 +197,7 @@ public unsafe partial class OpenXRAPI
         }
 
         _ = TryResolveOpenXrFoveation(ERenderLibrary.Vulkan, out _);
+        ValidateSessionVulkanGraphicsDevice(renderer, useEnable2Binding, vulkanExtension, vulkan2Extension);
 
         GraphicsBindingVulkanKHR vkBinding = default;
         void* graphicsBinding = null;
@@ -236,6 +238,60 @@ public unsafe partial class OpenXRAPI
 
             throw new OpenXrGraphicsSessionException(result, message);
         }
+    }
+
+    private void ValidateSessionVulkanGraphicsDevice(
+        VulkanRenderer renderer,
+        bool useEnable2Binding,
+        KhrVulkanEnable? vulkanExtension,
+        KhrVulkanEnable2? vulkan2Extension)
+    {
+        VkHandle requestedDevice = default;
+        Result deviceResult;
+
+        if (useEnable2Binding && vulkan2Extension is not null)
+        {
+            VulkanGraphicsDeviceGetInfoKHR deviceGetInfo = new()
+            {
+                Type = StructureType.VulkanGraphicsDeviceGetInfoKhr,
+                SystemId = _systemId,
+                VulkanInstance = new VkHandle(renderer.Instance.Handle)
+            };
+
+            deviceResult = vulkan2Extension.GetVulkanGraphicsDevice2(
+                _instance,
+                ref deviceGetInfo,
+                ref requestedDevice);
+        }
+        else if (vulkanExtension is not null)
+        {
+            deviceResult = vulkanExtension.GetVulkanGraphicsDevice(
+                _instance,
+                _systemId,
+                new VkHandle(renderer.Instance.Handle),
+                ref requestedDevice);
+        }
+        else
+        {
+            throw new Exception("Cannot validate OpenXR Vulkan graphics device because no Vulkan OpenXR extension was loaded.");
+        }
+
+        if (deviceResult != Result.Success)
+            throw new Exception($"Failed to query OpenXR Vulkan graphics device before session creation: {deviceResult}");
+
+        if (requestedDevice.Handle == 0)
+            throw new Exception("OpenXR runtime returned a zero Vulkan physical-device handle before session creation.");
+
+        if ((nint)requestedDevice.Handle != (nint)renderer.PhysicalDevice.Handle)
+        {
+            throw new Exception(
+                "OpenXR runtime-selected Vulkan physical device does not match the renderer device. " +
+                $"Runtime=0x{(nuint)requestedDevice.Handle:X}, Renderer=0x{(nuint)renderer.PhysicalDevice.Handle:X}.");
+        }
+
+        Debug.Vulkan(
+            "[OpenXR] Session instance confirmed Vulkan graphics device 0x{0:X} before xrCreateSession.",
+            (nuint)requestedDevice.Handle);
     }
 
     private bool TryResolveOpenXrViewRenderModeForCurrentBackend(out VrViewRenderModeResolution resolution)
@@ -1065,6 +1121,7 @@ public unsafe partial class OpenXRAPI
         uint rightImageIndex = 0;
         bool leftAcquired = false;
         bool rightAcquired = false;
+        bool allowSequentialFallback = false;
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         bool trueSinglePassStereo =
             modeResolution.EffectiveImplementationPath == EVrViewRenderImplementationPath.TrueSinglePassStereo;
@@ -1103,13 +1160,19 @@ public unsafe partial class OpenXRAPI
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.AcquireWaitLeft"))
             {
                 if (!AcquireAndWaitOpenXrEyeImage(0, ref leftImageIndex, ref leftAcquired, frameNo))
+                {
+                    allowSequentialFallback = true;
                     return false;
+                }
             }
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.AcquireWaitRight"))
             {
                 if (!AcquireAndWaitOpenXrEyeImage(1, ref rightImageIndex, ref rightAcquired, frameNo))
+                {
+                    allowSequentialFallback = true;
                     return false;
+                }
             }
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RenderSwapchains"))
@@ -1133,7 +1196,14 @@ public unsafe partial class OpenXRAPI
                 };
 
                 if (!rendered)
+                {
+                    allowSequentialFallback = true;
+                    Debug.VulkanWarningEvery(
+                        $"OpenXR.Vulkan.Batch.SequentialFallback.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] Vulkan batched eye render returned false; releasing acquired images and falling back to sequential eye rendering for this frame.");
                     return false;
+                }
             }
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.FillProjectionViews"))
@@ -1149,16 +1219,24 @@ public unsafe partial class OpenXRAPI
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"OpenXR Vulkan batched eye render failed: {ex.Message}");
+            allowSequentialFallback = true;
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.Batch.ExceptionSequentialFallback.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Vulkan batched eye render failed; releasing acquired images and falling back to sequential eye rendering for this frame. {0}",
+                ex.Message);
             return false;
         }
         finally
         {
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.ReleaseEyes"))
             {
-                ReleaseOpenXrEyeImageIfAcquired(1, rightAcquired, frameNo);
                 ReleaseOpenXrEyeImageIfAcquired(0, leftAcquired, frameNo);
+                ReleaseOpenXrEyeImageIfAcquired(1, rightAcquired, frameNo);
             }
+
+            if (allowSequentialFallback)
+                handled = false;
         }
     }
 

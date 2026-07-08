@@ -340,7 +340,8 @@ namespace XREngine.Rendering.OpenGL
                 XRMaterial? materialOverride,
                 RenderingParameters? renderOptionsOverride,
                 uint instances,
-                EMeshBillboardMode billboardMode)
+                EMeshBillboardMode billboardMode,
+                bool forceNoStereo)
             {
                 Dbg($"Render request (instances={instances}, billboard={billboardMode})", "Render");
                 LogBatchedTextDraw("Render request", instances, $"billboard={billboardMode}");
@@ -434,7 +435,8 @@ namespace XREngine.Rendering.OpenGL
                     materialOverride,
                     renderOptionsOverride,
                     instances,
-                    billboardMode))
+                    billboardMode,
+                    forceNoStereo))
                 {
                     return;
                 }
@@ -448,7 +450,8 @@ namespace XREngine.Rendering.OpenGL
                         materialOverride,
                         renderOptionsOverride,
                         instances,
-                        billboardMode))
+                        billboardMode,
+                        forceNoStereo))
                 {
                     LogBatchedTextDraw("Render pending-uber-fallback", instances);
                     LogModelDrawDiagnostic("Render pending-uber-fallback", instances);
@@ -468,7 +471,8 @@ namespace XREngine.Rendering.OpenGL
                 XRMaterial? materialOverride,
                 RenderingParameters? renderOptionsOverride,
                 uint instances,
-                EMeshBillboardMode billboardMode)
+                EMeshBillboardMode billboardMode,
+                bool forceNoStereo)
             {
                 if (!GetPrograms(material, out var vtx, out var mat))
                     return false;
@@ -505,7 +509,7 @@ namespace XREngine.Rendering.OpenGL
                 MeshRenderer.PushBoneMatricesToGPU();
                 MeshRenderer.PushBlendshapeWeightsToGPU();
 
-                SetMeshUniforms(modelMatrix, prevModelMatrix, MeshRenderer, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
+                SetMeshUniforms(modelMatrix, prevModelMatrix, MeshRenderer, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode, forceNoStereo);
 
                 using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
@@ -711,9 +715,10 @@ namespace XREngine.Rendering.OpenGL
                 XRMeshRenderer meshRenderer,
                 GLRenderProgram vertexProgram,
                 GLRenderProgram? materialProgram,
-                EMeshBillboardMode billboardMode)
+                EMeshBillboardMode billboardMode,
+                bool forceNoStereo)
             {
-                bool stereoPass = RuntimeEngine.Rendering.State.IsStereoPass;
+                bool stereoPass = !forceNoStereo && RuntimeEngine.Rendering.State.IsStereoPass;
                 var cam = RuntimeEngine.Rendering.State.RenderingCamera;
                 if (stereoPass)
                 {

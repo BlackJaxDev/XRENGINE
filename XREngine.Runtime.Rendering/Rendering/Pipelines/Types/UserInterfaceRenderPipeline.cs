@@ -29,7 +29,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.MaskedForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
-            { (int)EDefaultRenderPass.OnTopForward, null },
+            { (int)EDefaultRenderPass.OnTopForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.PostRender, null }
         };
 

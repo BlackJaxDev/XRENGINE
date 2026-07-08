@@ -153,7 +153,7 @@ namespace XREngine.Rendering
 
             protected abstract string? GenerateVertexShaderSource();
 
-            public delegate void DelRenderRequested(Matrix4x4 worldMatrix, Matrix4x4 prevWorldMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode);
+            public delegate void DelRenderRequested(Matrix4x4 worldMatrix, Matrix4x4 prevWorldMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo);
             /// <summary>
             /// Tells all renderers to render this mesh.
             /// </summary>
@@ -165,8 +165,8 @@ namespace XREngine.Rendering
             /// <param name="modelMatrix"></param>
             /// <param name="prevModelMatrix"></param>
             /// <param name="materialOverride"></param>
-            public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode)
-                => RenderRequested?.Invoke(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, billboardMode);
+            public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo)
+                => RenderRequested?.Invoke(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, billboardMode, forceNoStereo);
         }
 
         public class Version<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(XRMeshRenderer renderer, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines) 
@@ -922,7 +922,7 @@ namespace XREngine.Rendering
         /// <param name="modelMatrix"></param>
         /// <param name="materialOverride"></param>
         public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null)
-            => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None);
+            => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo);
 
         public bool TryPrepareForRendering(bool forceNoStereo = false)
         {

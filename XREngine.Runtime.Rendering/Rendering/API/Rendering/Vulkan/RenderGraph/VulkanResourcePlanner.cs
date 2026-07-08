@@ -22,9 +22,11 @@ internal sealed class VulkanResourcePlanner
     public IReadOnlyDictionary<string, FrameBufferResourceDescriptor> FrameBufferDescriptors => _frameBuffers;
     public IReadOnlyDictionary<string, BufferResourceDescriptor> BufferDescriptors => _buffers;
     public VulkanResourcePlan CurrentPlan => _plan;
+    public string? OutputFrameBufferName { get; private set; }
 
-    public void Sync(RenderResourceRegistry? registry)
+    public void Sync(RenderResourceRegistry? registry, string? outputFrameBufferName = null)
     {
+        OutputFrameBufferName = outputFrameBufferName;
         _textures.Clear();
         _textureViews.Clear();
         _frameBuffers.Clear();
@@ -89,6 +91,13 @@ internal sealed class VulkanResourcePlanner
 
     public bool TryGetFrameBufferDescriptor(string name, out FrameBufferResourceDescriptor? descriptor)
         => _frameBuffers.TryGetValue(name, out descriptor);
+
+    public bool TryGetOutputFrameBufferDescriptor(out FrameBufferResourceDescriptor? descriptor)
+    {
+        descriptor = null;
+        return !string.IsNullOrWhiteSpace(OutputFrameBufferName) &&
+            _frameBuffers.TryGetValue(OutputFrameBufferName!, out descriptor);
+    }
 
     public bool TryGetBufferDescriptor(string name, out BufferResourceDescriptor? descriptor)
         => _buffers.TryGetValue(name, out descriptor);

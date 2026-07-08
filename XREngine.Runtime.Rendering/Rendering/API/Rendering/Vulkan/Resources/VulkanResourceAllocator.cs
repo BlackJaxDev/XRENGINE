@@ -397,7 +397,12 @@ internal sealed class VulkanResourceAllocator
         bool bufferType = IsBufferResourceType(usage.ResourceType);
 
         if (resourceBinding.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (string resourceName in ExpandOutputFrameBufferResources(usage, planner))
+                yield return resourceName;
+
             yield break;
+        }
 
         if (imageType && resourceBinding.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase))
         {
@@ -437,6 +442,31 @@ internal sealed class VulkanResourceAllocator
 
         yield return imageType ? planner.ResolveImageResourceName(resourceBinding) : resourceBinding;
     }
+
+    private static IEnumerable<string> ExpandOutputFrameBufferResources(RenderPassResourceUsage usage, VulkanResourcePlanner planner)
+    {
+        if (!IsImageResourceType(usage.ResourceType) ||
+            !planner.TryGetOutputFrameBufferDescriptor(out FrameBufferResourceDescriptor? descriptor) ||
+            descriptor is null)
+        {
+            yield break;
+        }
+
+        string slot = ResolveOutputFrameBufferSlot(usage.ResourceType);
+        foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
+        {
+            if (MatchesSlot(attachment.Attachment, slot) && !string.IsNullOrWhiteSpace(attachment.ResourceName))
+                yield return planner.ResolveImageResourceName(attachment.ResourceName);
+        }
+    }
+
+    private static string ResolveOutputFrameBufferSlot(ERenderPassResourceType resourceType)
+        => resourceType switch
+        {
+            ERenderPassResourceType.DepthAttachment => "depth",
+            ERenderPassResourceType.StencilAttachment => "stencil",
+            _ => "color",
+        };
 
     private static bool IsImageResourceType(ERenderPassResourceType type)
         => type is ERenderPassResourceType.ColorAttachment

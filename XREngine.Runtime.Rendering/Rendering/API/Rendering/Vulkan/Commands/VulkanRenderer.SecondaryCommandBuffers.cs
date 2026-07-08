@@ -358,9 +358,9 @@ namespace XREngine.Rendering.Vulkan
                 PStencilAttachment = null,
             };
 
-            Api.CmdBeginRendering(commandBuffer, &renderingInfo);
+            CmdBeginDynamicRendering(commandBuffer, &renderingInfo);
             Api.CmdExecuteCommands(commandBuffer, 1, &secondaryCommandBuffer);
-            Api.CmdEndRendering(commandBuffer);
+            CmdEndDynamicRendering(commandBuffer);
 
             TransitionSwapchainImageForImGuiOverlay(
                 commandBuffer,
@@ -643,6 +643,9 @@ namespace XREngine.Rendering.Vulkan
                     break;
                 case MemoryBarrierOp memoryBarrierOp:
                     EmitMemoryBarrierMask(secondaryCommandBuffer, memoryBarrierOp.Mask);
+                    break;
+                case PublishFramebufferForSamplingOp publishOp:
+                    RecordPublishFramebufferForSamplingOp(secondaryCommandBuffer, publishOp);
                     break;
             }
         }

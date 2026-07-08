@@ -95,8 +95,7 @@ internal sealed class ImportedTextureStreamingManager
         int activeGpuUploads = _tieredBackend.ActiveGpuUploadCount + _sparseBackend.ActiveGpuUploadCount + _vulkanDenseBackend.ActiveGpuUploadCount;
         bool hasVulkanUploadWork = VulkanTextureUploadService.TryDescribeActiveUploadWork(out string vulkanUploadReason);
 
-        if (activeImportScopes <= 0 &&
-            pendingTransitions <= 0 &&
+        if (pendingTransitions <= 0 &&
             activeDecodes <= 0 &&
             queuedDecodes <= 0 &&
             activeGpuUploads <= 0 &&
@@ -107,7 +106,7 @@ internal sealed class ImportedTextureStreamingManager
         }
 
         reason =
-            $"imported texture streaming is still active (imports={activeImportScopes}, pendingTransitions={pendingTransitions}, activeGpuUploads={activeGpuUploads}, activeDecodes={activeDecodes}, queuedDecodes={queuedDecodes}";
+            $"imported texture streaming has startup-blocking work (imports={activeImportScopes}, pendingTransitions={pendingTransitions}, activeGpuUploads={activeGpuUploads}, activeDecodes={activeDecodes}, queuedDecodes={queuedDecodes}";
         if (hasVulkanUploadWork)
             reason += $"; {vulkanUploadReason}";
         reason += ")";
@@ -797,19 +796,15 @@ internal sealed class ImportedTextureStreamingManager
         long trackedBudgetBytes = RuntimeRenderingHostServices.Current.TrackedVramBudgetBytes;
         long trackedVramBytes = RuntimeRenderingHostServices.Current.TrackedVramBytes;
         long nonManagedBytes = Math.Max(0L, trackedVramBytes - currentManagedBytes);
-        bool usingVulkanAllocatorBudget = TryApplyVulkanAllocatorStreamingBudget(
-            currentManagedBytes,
-            ref trackedBudgetBytes,
-            ref nonManagedBytes,
+        bool usingVulkanAllocatorBudget = TryGetVulkanAllocatorStreamingPressure(
+            out bool vulkanAllocatorPressure,
             out string vulkanAllocatorBudgetReason);
         long availableManagedBytes = trackedBudgetBytes == long.MaxValue
             ? long.MaxValue
             : Math.Max(0L, trackedBudgetBytes - nonManagedBytes);
-        if (usingVulkanAllocatorBudget
-            && availableManagedBytes < currentManagedBytes)
-        {
+        bool suppressPromotionsForVulkanPressure = usingVulkanAllocatorBudget && vulkanAllocatorPressure;
+        if (availableManagedBytes < currentManagedBytes)
             allowPromotions = false;
-        }
 
         snapshots.Sort((left, right) => ComparePriority(left, right, frameId));
         int visibleWithoutPreviewCount = 0;
@@ -867,6 +862,9 @@ internal sealed class ImportedTextureStreamingManager
             bool visibleThisFrame = snapshot.LastVisibleFrameId == frameId || IsRecentlyBound(snapshot, frameId);
             if (isPromotion)
             {
+                if (suppressPromotionsForVulkanPressure)
+                    return false;
+
                 if (IsFailedPromotionCoolingDown(snapshot, assignedResidentSize, frameId))
                     return false;
 
@@ -1005,8 +1003,11 @@ internal sealed class ImportedTextureStreamingManager
             desiredResidentSize = ResolveVulkanSafeResidentSize(snapshot, desiredResidentSize);
             if (IsFailedPromotionCoolingDown(snapshot, desiredResidentSize, frameId))
                 desiredResidentSize = snapshot.ResidentMaxDimension;
+            if (suppressPromotionsForVulkanPressure && desiredResidentSize > snapshot.ResidentMaxDimension)
+                desiredResidentSize = snapshot.ResidentMaxDimension;
 
             if (allowPromotions
+                && !suppressPromotionsForVulkanPressure
                 && !freezeResidentSizeForVulkan
                 && (visibleThisFrame || useBoundFallbackMetrics))
             {
@@ -1240,12 +1241,11 @@ internal sealed class ImportedTextureStreamingManager
         return failedTarget == 0 || targetResidentSize >= failedTarget;
     }
 
-    private static bool TryApplyVulkanAllocatorStreamingBudget(
-        long currentManagedBytes,
-        ref long trackedBudgetBytes,
-        ref long nonManagedBytes,
+    private static bool TryGetVulkanAllocatorStreamingPressure(
+        out bool pressure,
         out string reason)
     {
+        pressure = false;
         reason = string.Empty;
         IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
         if (host.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
@@ -1267,13 +1267,9 @@ internal sealed class ImportedTextureStreamingManager
             return false;
         }
 
-        if (trackedBudgetBytes == long.MaxValue || allocatorBudgetBytes < trackedBudgetBytes)
-            trackedBudgetBytes = allocatorBudgetBytes;
-
-        long allocatorNonManagedBytes = Math.Max(0L, allocatorBytes - Math.Max(0L, currentManagedBytes));
-        nonManagedBytes = Math.Max(nonManagedBytes, allocatorNonManagedBytes);
+        pressure = allocatorBytes >= allocatorBudgetBytes;
         reason =
-            $"allocated={allocatorBytes}, budget={allocatorBudgetBytes}, largestHeap={largestHeapBytes}, activeVkAllocations={activeAllocationCount}";
+            $"allocated={allocatorBytes}, budget={allocatorBudgetBytes}, largestHeap={largestHeapBytes}, activeVkAllocations={activeAllocationCount}, pressure={pressure}";
         return true;
     }
 

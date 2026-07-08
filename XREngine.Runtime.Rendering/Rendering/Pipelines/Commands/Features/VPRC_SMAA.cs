@@ -197,6 +197,7 @@ void main()
     private ESizedInternalFormat _cachedOutputSizedFormat;
     private EPixelFormat _cachedOutputPixelFormat;
     private EPixelType _cachedOutputPixelType;
+    private bool _ownsResources;
 
     public string? SourceTextureName { get; set; }
     public string? SourceFBOName { get; set; }
@@ -247,17 +248,7 @@ void main()
 
     internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
     {
-        RemoveRegisteredResources(instance);
-
-        _edgeFbo?.Destroy();
-        _edgeFbo = null;
-        _blendFbo?.Destroy();
-        _blendFbo = null;
-
-        _edgeTexture?.Destroy();
-        _edgeTexture = null;
-        _blendTexture?.Destroy();
-        _blendTexture = null;
+        ReleaseRenderTargets(instance);
 
         if (_edgeQuad is not null)
         {
@@ -447,6 +438,17 @@ void main()
     {
         (EPixelInternalFormat sourceInternalFormat, ESizedInternalFormat sourceSizedFormat, EPixelFormat sourcePixelFormat, EPixelType sourcePixelType) = ResolveSourceFormat(sourceTexture);
 
+        if (TryUseDeclaredResources(
+            instance,
+            sourceTexture,
+            width,
+            height,
+            sourceInternalFormat,
+            sourceSizedFormat,
+            sourcePixelFormat,
+            sourcePixelType))
+            return;
+
         bool resourcesRegistered = instance.Resources.TryGetTexture(ResolvedEdgeTextureName, out XRTexture? registeredEdgeTexture)
             && ReferenceEquals(registeredEdgeTexture, _edgeTexture)
             && instance.Resources.TryGetTexture(ResolvedBlendTextureName, out XRTexture? registeredBlendTexture)
@@ -475,12 +477,7 @@ void main()
             _outputFbo is not null)
             return;
 
-        RemoveRegisteredResources(instance);
-
-        _edgeFbo?.Destroy();
-        _blendFbo?.Destroy();
-        _edgeTexture?.Destroy();
-        _blendTexture?.Destroy();
+        ReleaseRenderTargets(instance);
 
         _edgeTexture = XRTexture2D.CreateFrameBufferTexture(width, height, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
         _edgeTexture.Name = ResolvedEdgeTextureName;
@@ -532,27 +529,8 @@ void main()
         instance.SetFBO(_blendFbo);
         instance.SetFBO(_outputFbo);
 
-        // Populate the material texture arrays so the rendering backend
-        // sets up the correct texture units for the shader programs.
-        // The SettingUniforms callbacks still override per frame, but
-        // having textures in the arrays ensures the backend doesn't
-        // skip texture-unit activation for materials with empty arrays.
-        if (_edgeMaterial is not null)
-        {
-            _edgeMaterial.Textures.Clear();
-            _edgeMaterial.Textures.Add(sourceTexture);
-        }
-        if (_blendMaterial is not null)
-        {
-            _blendMaterial.Textures.Clear();
-            _blendMaterial.Textures.Add(_edgeTexture);
-        }
-        if (_neighborhoodMaterial is not null)
-        {
-            _neighborhoodMaterial.Textures.Clear();
-            _neighborhoodMaterial.Textures.Add(sourceTexture);
-            _neighborhoodMaterial.Textures.Add(_blendTexture);
-        }
+        _ownsResources = true;
+        BindMaterialTextures(sourceTexture);
 
         _cachedWidth = width;
         _cachedHeight = height;
@@ -560,6 +538,87 @@ void main()
         _cachedOutputSizedFormat = sourceSizedFormat;
         _cachedOutputPixelFormat = sourcePixelFormat;
         _cachedOutputPixelType = sourcePixelType;
+    }
+
+    private bool TryUseDeclaredResources(
+        XRRenderPipelineInstance instance,
+        XRTexture sourceTexture,
+        uint width,
+        uint height,
+        EPixelInternalFormat sourceInternalFormat,
+        ESizedInternalFormat sourceSizedFormat,
+        EPixelFormat sourcePixelFormat,
+        EPixelType sourcePixelType)
+    {
+        if (!instance.Resources.TryGetTexture(ResolvedEdgeTextureName, out XRTexture? edgeTexture) ||
+            edgeTexture is not XRTexture2D declaredEdgeTexture ||
+            !instance.Resources.TryGetTexture(ResolvedBlendTextureName, out XRTexture? blendTexture) ||
+            blendTexture is not XRTexture2D declaredBlendTexture ||
+            !instance.Resources.TryGetTexture(OutputTextureName, out XRTexture? outputTexture) ||
+            outputTexture is not XRTexture2D declaredOutputTexture ||
+            !instance.Resources.TryGetFrameBuffer(ResolvedEdgeFboName, out XRFrameBuffer? declaredEdgeFbo) ||
+            !instance.Resources.TryGetFrameBuffer(ResolvedBlendFboName, out XRFrameBuffer? declaredBlendFbo) ||
+            !instance.Resources.TryGetFrameBuffer(ResolvedOutputFboName, out XRFrameBuffer? declaredOutputFbo))
+        {
+            return false;
+        }
+
+        if (!MatchesSize(declaredEdgeTexture, width, height) ||
+            !MatchesSize(declaredBlendTexture, width, height) ||
+            !MatchesSize(declaredOutputTexture, width, height))
+        {
+            return false;
+        }
+
+        if (_ownsResources)
+            ReleaseRenderTargets(instance);
+
+        _edgeTexture = declaredEdgeTexture;
+        _blendTexture = declaredBlendTexture;
+        _outputTexture = declaredOutputTexture;
+        _edgeFbo = declaredEdgeFbo;
+        _blendFbo = declaredBlendFbo;
+        _outputFbo = declaredOutputFbo;
+        _ownsResources = false;
+
+        BindMaterialTextures(sourceTexture);
+
+        _cachedWidth = width;
+        _cachedHeight = height;
+        _cachedOutputInternalFormat = sourceInternalFormat;
+        _cachedOutputSizedFormat = sourceSizedFormat;
+        _cachedOutputPixelFormat = sourcePixelFormat;
+        _cachedOutputPixelType = sourcePixelType;
+        return true;
+    }
+
+    private static bool MatchesSize(XRTexture texture, uint width, uint height)
+    {
+        Vector3 size = texture.WidthHeightDepth;
+        return (uint)Math.Max(1.0f, size.X) == width &&
+            (uint)Math.Max(1.0f, size.Y) == height;
+    }
+
+    private void BindMaterialTextures(XRTexture sourceTexture)
+    {
+        // Populate the material texture arrays so the rendering backend sets up
+        // texture units even though SettingUniforms refreshes the samplers per frame.
+        if (_edgeMaterial is not null)
+        {
+            _edgeMaterial.Textures.Clear();
+            _edgeMaterial.Textures.Add(sourceTexture);
+        }
+        if (_blendMaterial is not null && _edgeTexture is not null)
+        {
+            _blendMaterial.Textures.Clear();
+            _blendMaterial.Textures.Add(_edgeTexture);
+        }
+        if (_neighborhoodMaterial is not null && _blendTexture is not null)
+        {
+            _neighborhoodMaterial.Textures.Clear();
+            _neighborhoodMaterial.Textures.Add(sourceTexture);
+            _neighborhoodMaterial.Textures.Add(_blendTexture);
+        }
     }
 
     private static (EPixelInternalFormat, ESizedInternalFormat, EPixelFormat, EPixelType) ResolveSourceFormat(XRTexture sourceTexture)
@@ -591,43 +650,48 @@ void main()
         return (EPixelInternalFormat.Rgba8, ESizedInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
     }
 
-    private void RemoveRegisteredResources(XRRenderPipelineInstance instance)
+    private void ReleaseRenderTargets(XRRenderPipelineInstance instance)
     {
-        if (_edgeFbo is not null)
+        if (_ownsResources)
         {
-            instance.Resources.RemoveFrameBuffer(ResolvedEdgeFboName);
-            _edgeFbo = null;
+            RemoveOwnedFrameBuffer(instance, ResolvedEdgeFboName, _edgeFbo);
+            RemoveOwnedFrameBuffer(instance, ResolvedBlendFboName, _blendFbo);
+            RemoveOwnedFrameBuffer(instance, ResolvedOutputFboName, _outputFbo);
+            RemoveOwnedTexture(instance, ResolvedEdgeTextureName, _edgeTexture);
+            RemoveOwnedTexture(instance, ResolvedBlendTextureName, _blendTexture);
+            RemoveOwnedTexture(instance, OutputTextureName, _outputTexture);
+
+            _edgeFbo?.Destroy();
+            _blendFbo?.Destroy();
+            _outputFbo?.Destroy();
+            _edgeTexture?.Destroy();
+            _blendTexture?.Destroy();
+            _outputTexture?.Destroy();
         }
 
-        if (_blendFbo is not null)
-        {
-            instance.Resources.RemoveFrameBuffer(ResolvedBlendFboName);
-            _blendFbo = null;
-        }
+        _edgeFbo = null;
+        _blendFbo = null;
+        _outputFbo = null;
+        _edgeTexture = null;
+        _blendTexture = null;
+        _outputTexture = null;
+        _ownsResources = false;
+    }
 
-        if (_outputFbo is not null)
-        {
-            instance.Resources.RemoveFrameBuffer(ResolvedOutputFboName);
-            _outputFbo = null;
-        }
+    private static void RemoveOwnedFrameBuffer(XRRenderPipelineInstance instance, string name, XRFrameBuffer? frameBuffer)
+    {
+        if (frameBuffer is not null &&
+            instance.Resources.TryGetFrameBuffer(name, out XRFrameBuffer? registered) &&
+            ReferenceEquals(registered, frameBuffer))
+            instance.Resources.RemoveFrameBuffer(name);
+    }
 
-        if (_edgeTexture is not null)
-        {
-            instance.Resources.RemoveTexture(ResolvedEdgeTextureName);
-            _edgeTexture = null;
-        }
-
-        if (_blendTexture is not null)
-        {
-            instance.Resources.RemoveTexture(ResolvedBlendTextureName);
-            _blendTexture = null;
-        }
-
-        if (_outputTexture is not null)
-        {
-            instance.Resources.RemoveTexture(OutputTextureName);
-            _outputTexture = null;
-        }
+    private static void RemoveOwnedTexture(XRRenderPipelineInstance instance, string name, XRTexture? texture)
+    {
+        if (texture is not null &&
+            instance.Resources.TryGetTexture(name, out XRTexture? registered) &&
+            ReferenceEquals(registered, texture))
+            instance.Resources.RemoveTexture(name);
     }
 
     private (uint Width, uint Height) ResolveTargetSize(XRRenderPipelineInstance instance, XRTexture sourceTexture)

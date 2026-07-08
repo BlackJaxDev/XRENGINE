@@ -151,12 +151,26 @@ public unsafe partial class VulkanRenderer
             }
 
             _imageAllocations[image.Handle] = allocation;
+            TrackImageAllocation(
+                image,
+                allocation,
+                group.Key.ToString(),
+                "resource-planner",
+                group.ResolvedExtent.Width,
+                group.ResolvedExtent.Height,
+                group.ResolvedExtent.Depth,
+                Math.Max(group.Template.Layers, 1u),
+                Math.Max(group.MipLevels, 1u),
+                group.Format,
+                group.Usage,
+                group.Samples);
             memory = allocation.Memory;
 
             Result bindResult = Api!.BindImageMemory(device, image, memory, allocation.Offset);
             if (bindResult != Result.Success)
             {
                 _imageAllocations.TryRemove(image.Handle, out _);
+                UntrackImageAllocation(image);
                 FreeMemoryAllocation(allocation);
                 if (image.Handle != 0)
                 {
@@ -222,6 +236,8 @@ public unsafe partial class VulkanRenderer
         VulkanMemoryAllocation trackedAllocation = default;
         bool hasTrackedAllocation = imageToDestroy.Handle != 0 &&
             _imageAllocations.TryRemove(imageToDestroy.Handle, out trackedAllocation);
+        if (imageToDestroy.Handle != 0)
+            UntrackImageAllocation(imageToDestroy);
 
         if (imageToDestroy.Handle != 0)
             Api!.DestroyImage(device, imageToDestroy, null);

@@ -106,6 +106,7 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
         private VR? _modelOnlyOpenVr;
         private bool _triedModelOnlyOpenVr;
         private bool _openVrUnavailableLogged;
+        private bool _openVrFallbackDisabledLogged;
         private Action? _modelsChanged;
 
         public event Action? ModelsChanged
@@ -123,6 +124,12 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
                 openXrApi.TryGetControllerRenderModel(leftHand, out renderModel))
             {
                 return true;
+            }
+
+            if (ShouldBlockOpenVrRenderModelFallbackDuringOpenXr())
+            {
+                LogOpenVrFallbackDisabledDuringOpenXr();
+                return false;
             }
 
             if (TryGetOpenVrControllerDevice(leftHand) is DeviceModel deviceModel)
@@ -164,6 +171,12 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
                 return true;
             }
 
+            if (ShouldBlockOpenVrRenderModelFallbackDuringOpenXr())
+            {
+                LogOpenVrFallbackDisabledDuringOpenXr();
+                return false;
+            }
+
             if (!TryGetOpenVrSystem(out CVRSystem? cvr))
                 return false;
 
@@ -199,9 +212,7 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
         public string DescribeAvailability()
         {
             string openXr = Engine.VRState.OpenXRApi?.DescribeControllerRenderModelAvailability() ?? "OpenXR not initialized";
-            string openVr = TryGetOpenVrSystem(out _)
-                ? "SteamVR/OpenVR render-model service available"
-                : "SteamVR/OpenVR render-model service unavailable";
+            string openVr = DescribeOpenVrRenderModelAvailability();
             return $"{openXr}; {openVr}";
         }
 
@@ -243,6 +254,12 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
                 return true;
             }
 
+            if (ShouldBlockOpenVrRenderModelFallbackDuringOpenXr())
+            {
+                LogOpenVrFallbackDisabledDuringOpenXr();
+                return false;
+            }
+
             if (_modelOnlyOpenVr is { State: var state } && state.HasFlag(VrState.OK) && _modelOnlyOpenVr.CVR is { } modelOnlyCvr)
             {
                 cvr = modelOnlyCvr;
@@ -274,6 +291,54 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
             return cvr is not null;
         }
 
+        private string DescribeOpenVrRenderModelAvailability()
+        {
+            if (ShouldBlockOpenVrRenderModelFallbackDuringOpenXr())
+            {
+                return
+                    $"SteamVR/OpenVR render-model fallback disabled while OpenXR is requested or active; set {XREngineEnvironmentVariables.OpenXrAllowOpenVrRenderModelFallback}=1 to opt in";
+            }
+
+            return TryGetOpenVrSystem(out _)
+                ? "SteamVR/OpenVR render-model service available"
+                : "SteamVR/OpenVR render-model service unavailable";
+        }
+
+        private static bool ShouldBlockOpenVrRenderModelFallbackDuringOpenXr()
+        {
+            if (Engine.VRState.IsOpenVRActive)
+                return false;
+
+            return IsOpenXrRuntimeRequestedOrInitialized() && !IsTruthyEnvironmentValue(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrAllowOpenVrRenderModelFallback));
+        }
+
+        private static bool IsOpenXrRuntimeRequestedOrInitialized()
+        {
+            if (Engine.VRState.IsOpenXRActive ||
+                Engine.VRState.OpenXRApi is not null ||
+                Engine.StartupOpenXrRuntimeRequested ||
+                Engine.GameSettings is IVRGameStartupSettings { VRRuntime: EVRRuntime.OpenXR })
+            {
+                return true;
+            }
+
+            string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+            return string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase) ||
+                   IsTruthyEnvironmentValue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
+        }
+
+        private void LogOpenVrFallbackDisabledDuringOpenXr()
+        {
+            if (_openVrFallbackDisabledLogged)
+                return;
+
+            _openVrFallbackDisabledLogged = true;
+            Debug.LogWarning(
+                $"SteamVR/OpenVR render-model fallback skipped while OpenXR is requested or active. Set {XREngineEnvironmentVariables.OpenXrAllowOpenVrRenderModelFallback}=1 to opt in.");
+        }
+
         private void LogOpenVrUnavailable(string reason)
         {
             if (_openVrUnavailableLogged)
@@ -282,6 +347,13 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
             _openVrUnavailableLogged = true;
             Debug.LogWarning($"SteamVR render models unavailable while resolving runtime VR device models. Reason={reason}");
         }
+
+        private static bool IsTruthyEnvironmentValue(string? value)
+            => value is not null &&
+               (value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("on", StringComparison.OrdinalIgnoreCase));
 
         private static bool TryCreateOpenVrDescriptorForDevice(
             CVRSystem cvr,

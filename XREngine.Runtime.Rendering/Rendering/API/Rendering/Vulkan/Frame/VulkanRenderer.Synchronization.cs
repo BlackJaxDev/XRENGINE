@@ -184,7 +184,7 @@ public unsafe partial class VulkanRenderer
                     PSignalSemaphoreInfos = signalCount > 0 ? signalInfosFixed : null,
                 };
 
-                return Api!.QueueSubmit2(queue, 1, &submitInfo2, fence);
+                return QueueSubmit2Compat(queue, 1, &submitInfo2, fence);
             }
         }
         finally
@@ -308,7 +308,7 @@ public unsafe partial class VulkanRenderer
                     PImageMemoryBarriers = imageBarrierCount > 0 ? imageBarrierInfos : null,
                 };
 
-                Api!.CmdPipelineBarrier2(commandBuffer, &dependencyInfo);
+                CmdPipelineBarrier2Compat(commandBuffer, &dependencyInfo);
             }
         }
         finally

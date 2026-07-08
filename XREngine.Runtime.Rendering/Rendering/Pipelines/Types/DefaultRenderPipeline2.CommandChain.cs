@@ -43,9 +43,21 @@ public partial class DefaultRenderPipeline2
     }
 
     private static bool ShouldUseViewportTargetCommands()
-        => State.WindowViewport is not null
-        && (RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null
-            || RuntimeEngine.Rendering.State.IsStereoPass);
+    {
+        XRViewport? viewport = State.WindowViewport;
+        if (viewport is null)
+            return false;
+
+        if (RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null)
+            return true;
+
+        if (viewport.UseDirectFboTargetCommandsWhenRenderingToFbo)
+            return false;
+
+        return RuntimeEngine.Rendering.State.IsStereoPass
+            || RuntimeEngine.Rendering.State.IsSceneCapturePass
+            || RuntimeEngine.Rendering.State.IsLightProbePass;
+    }
     public ViewportRenderCommandContainer CreateFBOTargetCommands()
     {
         ViewportRenderCommandContainer c = new(this);
@@ -295,9 +307,11 @@ public partial class DefaultRenderPipeline2
         }))
         {
             c.Add<VPRC_StencilMask>().Set(~0u);
-                c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, MeshSubmissionStrategy);
+            c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = true;
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, MeshSubmissionStrategy);
         }
         EndGpuScope(c, "Deferred GBuffer");
 
@@ -1387,7 +1401,9 @@ public partial class DefaultRenderPipeline2
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
-                c.Add<VPRC_RenderQuadToFBO>().SetOptions(ForwardPassFBOName);
+                c.Add<VPRC_RenderQuadToFBO>()
+                    .SetOptions(FinalPostProcessFBOName)
+                    .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.FinalPostProcessToOutputTarget());
                 AppendDebugOverlay(c);
             }
         }

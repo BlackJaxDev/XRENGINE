@@ -249,7 +249,7 @@ public static class RenderDiagnosticsFlags
         PushSubDataTrace = ReadBool(XREngineEnvironmentVariables.PushSubDataTrace);
         DispatchTrace = ReadBool(XREngineEnvironmentVariables.DispatchTrace);
         DispatchFinish = ReadBool(XREngineEnvironmentVariables.DispatchFinish);
-        UploadStageLogging = ReadBool(XREngineEnvironmentVariables.UploadStageLogging) || System.Diagnostics.Debugger.IsAttached;
+        UploadStageLogging = ReadBool(XREngineEnvironmentVariables.UploadStageLogging);
         CrashBreadcrumbs = ReadBool(XREngineEnvironmentVariables.CrashBreadcrumbs);
 
         try

@@ -1,5 +1,17 @@
 namespace XREngine.Rendering.Resources;
 
+/// <summary>
+/// Represents a profile of the render pipeline resource configuration, including display and internal dimensions, HDR output, anti-aliasing settings, stereo rendering, and feature mask.
+/// </summary>
+/// <param name="DisplayWidth">The width of the display.</param>
+/// <param name="DisplayHeight">The height of the display.</param>
+/// <param name="InternalWidth">The internal width used for rendering.</param>
+/// <param name="InternalHeight">The internal height used for rendering.</param>
+/// <param name="OutputHDR">Indicates whether HDR output is enabled.</param>
+/// <param name="AntiAliasingMode">The anti-aliasing mode.</param>
+/// <param name="MsaaSampleCount">The number of MSAA samples.</param>
+/// <param name="Stereo">Indicates whether stereo rendering is enabled.</param>
+/// <param name="FeatureMask">The feature mask for the render pipeline.</param>
 public readonly record struct RenderPipelineResourceProfile(
     uint DisplayWidth,
     uint DisplayHeight,
@@ -11,6 +23,9 @@ public readonly record struct RenderPipelineResourceProfile(
     bool Stereo,
     ulong FeatureMask = 0)
 {
+    /// <summary>
+    /// Gets an empty render pipeline resource profile with default values for all properties.
+    /// </summary>
     public static RenderPipelineResourceProfile Empty { get; } = new(
         1u,
         1u,

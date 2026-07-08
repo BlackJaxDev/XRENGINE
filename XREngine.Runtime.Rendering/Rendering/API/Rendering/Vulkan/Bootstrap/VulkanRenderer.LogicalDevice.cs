@@ -1776,6 +1776,10 @@ public unsafe partial class VulkanRenderer
         _supportsVulkanFragmentDensityMapDynamic = enableFragmentDensityMapFeature && fragmentDensityMapDynamicSupported;
         _supportsVulkanTaskShaderFeature = enableMeshShaderFeature;
         _supportsVulkanMeshShaderFeature = enableMeshShaderFeature;
+
+        // Load optional extension command tables before resolving backend modes that depend on them.
+        LoadOptionalDeviceExtensions(extensionsArray);
+
         ResolveDescriptorBackendAfterDeviceCreate(
             VulkanFeatureProfile.RequestedDescriptorBackend,
             enableDescriptorIndexing,
@@ -1974,9 +1978,6 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
-        // Load optional extensions
-        LoadOptionalDeviceExtensions(extensionsArray);
-
         // Retrieve handles to the queues we need
         Api!.GetDeviceQueue(device, indices.GraphicsFamilyIndex!.Value, 0, out graphicsQueue);
         if (_supportsMultipleGraphicsQueues)
@@ -1998,6 +1999,36 @@ public unsafe partial class VulkanRenderer
     private void LoadOptionalDeviceExtensions(string[] enabledExtensions)
     {
         bool descriptorIndexingExtensionLoaded = enabledExtensions.Contains("VK_EXT_descriptor_indexing");
+
+        if (enabledExtensions.Contains("VK_KHR_dynamic_rendering") && !UseCoreDynamicRenderingCommands)
+        {
+            if (Api!.TryGetDeviceExtension(instance, device, out _khrDynamicRendering))
+            {
+                Debug.Vulkan(
+                    "[Vulkan] VK_KHR_dynamic_rendering extension command table loaded for Vulkan instance API {0}.",
+                    FormatVulkanApiVersion(_vulkanInstanceApiVersion));
+            }
+            else
+            {
+                Debug.VulkanWarning("[Vulkan] Failed to load VK_KHR_dynamic_rendering extension command table.");
+                _supportsDynamicRendering = false;
+            }
+        }
+
+        if (enabledExtensions.Contains("VK_KHR_synchronization2") && !UseCoreSynchronization2Commands)
+        {
+            if (Api!.TryGetDeviceExtension(instance, device, out _khrSynchronization2))
+            {
+                Debug.Vulkan(
+                    "[Vulkan] VK_KHR_synchronization2 extension command table loaded for Vulkan instance API {0}.",
+                    FormatVulkanApiVersion(_vulkanInstanceApiVersion));
+            }
+            else
+            {
+                Debug.VulkanWarning("[Vulkan] Failed to load VK_KHR_synchronization2 extension command table.");
+                _supportsSynchronization2 = false;
+            }
+        }
 
         // Check if VK_KHR_draw_indirect_count was enabled
         if (enabledExtensions.Contains("VK_KHR_draw_indirect_count"))

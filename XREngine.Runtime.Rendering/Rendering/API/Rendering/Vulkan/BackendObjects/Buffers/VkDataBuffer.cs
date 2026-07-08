@@ -1,5 +1,7 @@
 using XREngine.Extensions;
 using Silk.NET.Vulkan;
+using System;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using XREngine.Core.Files;
 using XREngine.Data;
@@ -41,6 +43,102 @@ namespace XREngine.Rendering.Vulkan
         /// Key: Image.Handle.
         /// </summary>
         private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, VulkanMemoryAllocation> _imageAllocations = new();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, VulkanImageAllocationDebugInfo> _imageAllocationDebugInfo = new();
+
+        private readonly record struct VulkanImageAllocationDebugInfo(
+            ulong Handle,
+            string Name,
+            string Source,
+            long SizeBytes,
+            uint Width,
+            uint Height,
+            uint Depth,
+            uint Layers,
+            uint MipLevels,
+            string Format,
+            string Usage,
+            string Samples);
+
+        internal void TrackImageAllocation(
+            Image image,
+            VulkanMemoryAllocation allocation,
+            string? name,
+            string source,
+            uint width,
+            uint height,
+            uint depth,
+            uint layers,
+            uint mipLevels,
+            Format format,
+            ImageUsageFlags usage,
+            SampleCountFlags samples)
+        {
+            if (image.Handle == 0)
+                return;
+
+            _imageAllocationDebugInfo[image.Handle] = new VulkanImageAllocationDebugInfo(
+                image.Handle,
+                string.IsNullOrWhiteSpace(name) ? "<unnamed>" : name!,
+                source,
+                allocation.Size > long.MaxValue ? long.MaxValue : (long)allocation.Size,
+                width,
+                height,
+                depth,
+                layers,
+                Math.Max(1u, mipLevels),
+                format.ToString(),
+                usage.ToString(),
+                samples.ToString());
+        }
+
+        internal void UntrackImageAllocation(Image image)
+        {
+            if (image.Handle != 0)
+                _imageAllocationDebugInfo.TryRemove(image.Handle, out _);
+        }
+
+        public object GetLiveImageAllocationDiagnostics(int limit = 64)
+        {
+            int clampedLimit = Math.Clamp(limit, 1, 512);
+            var entries = _imageAllocationDebugInfo.Values.ToArray();
+            long knownBytes = 0L;
+            for (int i = 0; i < entries.Length; i++)
+            {
+                long size = entries[i].SizeBytes;
+                knownBytes = knownBytes > long.MaxValue - size ? long.MaxValue : knownBytes + size;
+            }
+
+            var largest = entries
+                .OrderByDescending(static entry => entry.SizeBytes)
+                .Take(clampedLimit)
+                .Select(static entry => new
+                {
+                    handle = $"0x{entry.Handle:X}",
+                    entry.Name,
+                    entry.Source,
+                    entry.SizeBytes,
+                    sizeMiB = entry.SizeBytes / (1024.0 * 1024.0),
+                    entry.Width,
+                    entry.Height,
+                    entry.Depth,
+                    entry.Layers,
+                    entry.MipLevels,
+                    entry.Format,
+                    entry.Usage,
+                    entry.Samples
+                })
+                .ToArray();
+
+            return new
+            {
+                allocatorActiveVkAllocations = MemoryAllocator.ActiveVkAllocationCount,
+                allocatorTotalAllocatedBytes = MemoryAllocator.TotalAllocatedBytes,
+                knownImageAllocationCount = entries.Length,
+                knownImageAllocationBytes = knownBytes,
+                knownImageAllocationMiB = knownBytes / (1024.0 * 1024.0),
+                largest
+            };
+        }
 
         /// <summary>
         /// Returns the suballocation offset for a tracked buffer, or 0 if untracked (legacy).

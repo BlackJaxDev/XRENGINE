@@ -33,6 +33,7 @@ public static class XREngineEnvironmentVariables
     public const string OpenXrEyeResolutionScale = "XRE_OPENXR_EYE_RESOLUTION_SCALE";
     public const string OpenXrEyeResolutionWidth = "XRE_OPENXR_EYE_RESOLUTION_WIDTH";
     public const string OpenXrEyeResolutionHeight = "XRE_OPENXR_EYE_RESOLUTION_HEIGHT";
+    public const string OpenXrAllowOpenVrRenderModelFallback = "XRE_OPENXR_ALLOW_OPENVR_RENDER_MODEL_FALLBACK";
 
     public const string WorldMode = "XRE_WORLD_MODE";
     public const string NetMode = "XRE_NET_MODE";
@@ -250,10 +251,12 @@ public static class XREngineEnvironmentVariables
     public const string OpenXrVulkanSerialEyeSubmit = "XRE_OPENXR_VULKAN_SERIAL_EYE_SUBMIT";
     public const string OpenXrVulkanTrueStereo = "XRE_OPENXR_VULKAN_TRUE_STEREO";
     public const string OpenXrVulkanPrimaryReuse = "XRE_OPENXR_VULKAN_PRIMARY_REUSE";
+    public const string OpenXrVulkanEnable2Bootstrap = "XRE_OPENXR_VULKAN_ENABLE2_BOOTSTRAP";
     public const string VulkanAllowCpuMeshSafetyNet = "XRE_VULKAN_ALLOW_CPU_MESH_SAFETY_NET";
     public const string VulkanParallelRecordingValidate = "XRE_VULKAN_PARALLEL_RECORDING_VALIDATE";
     public const string VulkanCaptureEyeOutputs = "XRE_VULKAN_CAPTURE_EYE_OUTPUTS";
     public const string VulkanGpuBvhCulling = "XRE_VULKAN_GPU_BVH_CULLING";
+    public const string VulkanDirectionalCascades = "XRE_VULKAN_DIRECTIONAL_CASCADES";
 
     public const string CaptureDefaultPipelineSkipFrames = "XRE_CAPTURE_DEFAULT_PIPELINE_SKIP_FRAMES";
     public const string CaptureDefaultPipelineFbo = "XRE_CAPTURE_DEFAULT_PIPELINE_FBO";

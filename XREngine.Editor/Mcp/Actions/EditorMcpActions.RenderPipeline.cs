@@ -8,11 +8,16 @@ using System.Threading;
 using System.Threading.Tasks;
 using ImageMagick;
 using XREngine;
+using XREngine.Components;
 using XREngine.Core;
 using XREngine.Data.Core;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.UI;
 using XREngine.Rendering.Vulkan;
+using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor.Mcp
 {
@@ -71,6 +76,230 @@ namespace XREngine.Editor.Mcp
                 }));
         }
 
+        [XRMcp(Name = "list_ui_viewport_diagnostics", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("List hidden/editor UI viewport components and their offscreen render command state.")]
+        public static Task<McpToolResponse> ListUiViewportDiagnosticsAsync(McpToolContext context)
+        {
+            HashSet<UIViewportComponent> seen = [];
+            List<object> viewports = [];
+            List<object> activeWindowViewports = [];
+
+            void AddFromRoot(SceneNode? root, string source)
+            {
+                if (root is null)
+                    return;
+
+                root.IterateComponents<UIViewportComponent>(component =>
+                {
+                    if (!seen.Add(component))
+                        return;
+
+                    XRViewport viewport = component.Viewport;
+                    RenderCommandCollection commands = viewport.RenderPipelineInstance.MeshRenderCommands;
+                    XRCamera? camera = viewport.ActiveCamera;
+                    TransformBase? cameraTransform = camera?.Transform ?? viewport.CameraComponent?.Transform;
+                    SceneNode? cameraNode = cameraTransform?.SceneNode;
+                    XRTexture? renderedTexture = component.RenderedTexture;
+                    XRFrameBuffer renderTargetFbo = component.RenderTargetFBO;
+
+                    viewports.Add(new
+                    {
+                        source,
+                        componentId = component.ID,
+                        componentName = component.Name,
+                        nodeId = component.SceneNode?.ID,
+                        nodeName = component.SceneNode?.Name,
+                        nodePath = component.SceneNode?.GetPath(),
+                        componentActive = component.IsActive,
+                        nodeActiveSelf = component.SceneNode?.IsActiveSelf,
+                        nodeActiveInHierarchy = component.SceneNode?.IsActiveInHierarchy,
+                        viewport = new
+                        {
+                            index = viewport.Index,
+                            regionX = viewport.Region.X,
+                            regionY = viewport.Region.Y,
+                            width = viewport.Width,
+                            height = viewport.Height,
+                            internalX = viewport.InternalResolutionRegion.X,
+                            internalY = viewport.InternalResolutionRegion.Y,
+                            internalWidth = viewport.InternalWidth,
+                            internalHeight = viewport.InternalHeight,
+                            automaticallyCollectVisible = viewport.AutomaticallyCollectVisible,
+                            automaticallySwapBuffers = viewport.AutomaticallySwapBuffers,
+                            useDirectFboTargetCommandsWhenRenderingToFbo = viewport.UseDirectFboTargetCommandsWhenRenderingToFbo,
+                            meshSubmissionStrategyOverride = viewport.MeshSubmissionStrategyOverride?.ToString(),
+                            suppress3DSceneRendering = viewport.Suppress3DSceneRendering,
+                            allowUiRender = viewport.AllowUIRender,
+                            cullWithFrustum = viewport.CullWithFrustum,
+                            cameraCullWithFrustum = viewport.CameraComponent?.CullWithFrustum,
+                            pipelineInstanceId = viewport.RenderPipelineInstance.InstanceId,
+                            pipelineDebugName = viewport.RenderPipelineInstance.DebugName,
+                            pipelineType = viewport.RenderPipeline?.GetType().FullName,
+                            resourceGeneration = viewport.RenderPipelineInstance.ResourceGeneration,
+                            renderedTextureName = renderedTexture?.Name,
+                            renderedTextureSize = renderedTexture is null ? null : new
+                            {
+                                width = renderedTexture.WidthHeightDepth.X,
+                                height = renderedTexture.WidthHeightDepth.Y,
+                                depth = renderedTexture.WidthHeightDepth.Z
+                            }
+                        },
+                        offscreenRenderTarget = new
+                        {
+                            name = renderTargetFbo.Name,
+                            width = renderTargetFbo.Width,
+                            height = renderTargetFbo.Height,
+                            isLastCheckComplete = renderTargetFbo.IsLastCheckComplete,
+                            targetCount = renderTargetFbo.Targets?.Length ?? 0,
+                            targets = renderTargetFbo.Targets?.Select(static target => new
+                            {
+                                name = target.Target switch
+                                {
+                                    XRTexture texture => texture.Name,
+                                    XRRenderBuffer renderBuffer => renderBuffer.Name,
+                                    _ => target.Target?.ToString()
+                                },
+                                type = target.Target?.GetType().Name,
+                                attachment = target.Attachment.ToString(),
+                                mipLevel = target.MipLevel,
+                                layerIndex = target.LayerIndex,
+                                width = target.Target?.Width,
+                                height = target.Target?.Height
+                            }).ToArray()
+                        },
+                        lifecycle = new
+                        {
+                            collectVisibleAttempts = component.CollectVisibleAttempts,
+                            collectVisibleCompleted = component.CollectVisibleCompleted,
+                            collectVisibleSkipped = component.CollectVisibleSkipped,
+                            swapBuffersAttempts = component.SwapBuffersAttempts,
+                            swapBuffersCompleted = component.SwapBuffersCompleted,
+                            swapBuffersSkipped = component.SwapBuffersSkipped,
+                            renderAttempts = component.RenderAttempts,
+                            renderCompleted = component.RenderCompleted,
+                            renderSkipped = component.RenderSkipped,
+                            renderTargetIncompleteSkipped = component.RenderTargetIncompleteSkipped,
+                            lastRenderFrameId = component.LastRenderFrameId
+                        },
+                        camera = new
+                        {
+                            componentId = viewport.CameraComponent?.ID,
+                            componentName = viewport.CameraComponent?.Name,
+                            nodeId = cameraNode?.ID,
+                            nodeName = cameraNode?.Name,
+                            nodePath = cameraNode?.GetPath(),
+                            worldPosition = cameraTransform is null ? null : ToMcpVector3(cameraTransform.WorldTranslation),
+                            worldForward = cameraTransform is null ? null : ToMcpVector3(cameraTransform.WorldForward)
+                        },
+                        commands = new
+                        {
+                            renderingCommandCount = commands.GetRenderingCommandCount(),
+                            updatingCommandCount = commands.GetUpdatingCommandCount(),
+                            commandsAddedCount = commands.GetCommandsAddedCount(),
+                            renderingPasses = BuildRenderCommandPassSummary(commands)
+                        }
+                    });
+                }, iterateChildHierarchy: true);
+            }
+
+            foreach (SceneNode root in context.WorldInstance.RootNodes)
+                AddFromRoot(root, "world_root");
+
+            if (context.WorldInstance is XRWorldInstance world)
+            {
+                foreach (SceneNode root in world.EditorScene.RootNodes)
+                    AddFromRoot(root, "editor_scene");
+            }
+
+            for (int windowIndex = 0; windowIndex < Engine.Windows.Count; windowIndex++)
+            {
+                XRWindow window = Engine.Windows[windowIndex];
+                for (int viewportIndex = 0; viewportIndex < window.Viewports.Count; viewportIndex++)
+                {
+                    XRViewport viewport = window.Viewports[viewportIndex];
+                    CameraComponent? cameraComponent = viewport.CameraComponent;
+                    IRuntimeScreenSpaceUserInterface? ui = cameraComponent?.GetUserInterfaceOverlay();
+                    SceneNode? cameraNode = cameraComponent?.SceneNode;
+                    activeWindowViewports.Add(new
+                    {
+                        windowIndex,
+                        viewportIndex,
+                        viewport = new
+                        {
+                            index = viewport.Index,
+                            width = viewport.Width,
+                            height = viewport.Height,
+                            internalWidth = viewport.InternalWidth,
+                            internalHeight = viewport.InternalHeight,
+                            allowUiRender = viewport.AllowUIRender,
+                            suppress3DSceneRendering = viewport.Suppress3DSceneRendering,
+                        },
+                        camera = new
+                        {
+                            componentId = cameraComponent?.ID,
+                            componentName = cameraComponent?.Name,
+                            nodeId = cameraNode?.ID,
+                            nodeName = cameraNode?.Name,
+                            nodePath = cameraNode?.GetPath(),
+                        },
+                        screenSpaceUi = ui is null ? null : new
+                        {
+                            type = ui.GetType().FullName,
+                            active = ui.IsActive,
+                            screenSpace = ui.IsScreenSpace,
+                        }
+                    });
+                }
+            }
+
+            return Task.FromResult(new McpToolResponse(
+                $"Listed {viewports.Count} UI viewport component(s).",
+                new { count = viewports.Count, viewports, activeWindowViewports }));
+        }
+
+        [XRMcp(Name = "list_vulkan_image_allocation_diagnostics", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("List live Vulkan image allocation sizes by debug name for VRAM pressure diagnostics.")]
+        public static Task<McpToolResponse> ListVulkanImageAllocationDiagnosticsAsync(
+            [McpName("limit"), Description("Maximum number of largest allocations to return.")] int limit = 64)
+        {
+            VulkanRenderer? renderer = AbstractRenderer.Current as VulkanRenderer;
+            if (renderer is null)
+            {
+                renderer = Engine.Windows
+                    .Select(static window => window.Renderer)
+                    .OfType<VulkanRenderer>()
+                    .FirstOrDefault();
+            }
+
+            if (renderer is null)
+                return Task.FromResult(new McpToolResponse("The active renderer is not Vulkan.", isError: true));
+
+            object diagnostics = renderer.GetLiveImageAllocationDiagnostics(limit);
+            return Task.FromResult(new McpToolResponse("Listed Vulkan image allocation diagnostics.", diagnostics));
+        }
+
+        [XRMcp(Name = "get_vulkan_frame_op_trace", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Return the latest Vulkan frame-op trace snapshot. Requires launching with XRE_VULKAN_FRAMEOP_TRACE=1.")]
+        public static Task<McpToolResponse> GetVulkanFrameOpTraceAsync(
+            [McpName("limit"), Description("Maximum entries to return.")] int limit = 128,
+            [McpName("target_contains"), Description("Optional case-insensitive filter applied to target, pass, and detail text.")] string? targetContains = null)
+        {
+            VulkanRenderer? renderer = AbstractRenderer.Current as VulkanRenderer;
+            if (renderer is null)
+            {
+                renderer = Engine.Windows
+                    .Select(static window => window.Renderer)
+                    .OfType<VulkanRenderer>()
+                    .FirstOrDefault();
+            }
+
+            if (renderer is null)
+                return Task.FromResult(new McpToolResponse("The active renderer is not Vulkan.", isError: true));
+
+            object diagnostics = renderer.GetLastFrameOpTraceDiagnostics(limit, targetContains);
+            return Task.FromResult(new McpToolResponse("Retrieved Vulkan frame-op trace diagnostics.", diagnostics));
+        }
+
         [XRMcp(Name = "capture_render_pipeline_texture", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Capture a named live render-pipeline texture to PNG, EXR, or Radiance HDR and report pixel statistics.")]
         public static async Task<McpToolResponse> CaptureRenderPipelineTextureAsync(
@@ -125,7 +354,9 @@ namespace XREngine.Editor.Mcp
             var tcs = new TaskCompletionSource<PipelineTextureCaptureResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             Action? deferredHandler = null;
 
-            XRWindow? window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+            XRWindow? window = viewport.Window
+                ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
+                ?? Engine.Windows.FirstOrDefault();
             if (window is null)
                 return new McpToolResponse("No window found for the target viewport.", isError: true);
 
@@ -162,12 +393,6 @@ namespace XREngine.Editor.Mcp
 
             void ScheduleCaptureOnRenderThread()
             {
-                if (AbstractRenderer.Current is { } currentRenderer)
-                {
-                    BeginCapture(currentRenderer);
-                    return;
-                }
-
                 int captureStarted = 0;
                 deferredHandler = () =>
                 {
@@ -178,11 +403,11 @@ namespace XREngine.Editor.Mcp
                     if (Interlocked.CompareExchange(ref captureStarted, 1, 0) != 0)
                         return;
 
-                    window.RenderViewportsCallback -= deferredHandler;
+                    window.PostRenderViewportsCallback -= deferredHandler;
                     BeginCapture(renderer);
                 };
 
-                window.RenderViewportsCallback += deferredHandler;
+                window.PostRenderViewportsCallback += deferredHandler;
             }
 
             if (Engine.IsRenderThread)
@@ -193,7 +418,7 @@ namespace XREngine.Editor.Mcp
             using var reg = token.Register(() =>
             {
                 if (deferredHandler is not null)
-                    window.RenderViewportsCallback -= deferredHandler;
+                    window.PostRenderViewportsCallback -= deferredHandler;
 
                 tcs.TrySetCanceled(token);
             });
@@ -341,12 +566,6 @@ namespace XREngine.Editor.Mcp
 
             void ScheduleCaptureOnRenderThread()
             {
-                if (AbstractRenderer.Current is { } currentRenderer)
-                {
-                    BeginCapture(currentRenderer);
-                    return;
-                }
-
                 int captureStarted = 0;
                 deferredHandler = () =>
                 {
@@ -357,11 +576,11 @@ namespace XREngine.Editor.Mcp
                     if (Interlocked.CompareExchange(ref captureStarted, 1, 0) != 0)
                         return;
 
-                    window.RenderViewportsCallback -= deferredHandler;
+                    window.PostRenderViewportsCallback -= deferredHandler;
                     BeginCapture(renderer);
                 };
 
-                window.RenderViewportsCallback += deferredHandler;
+                window.PostRenderViewportsCallback += deferredHandler;
             }
 
             if (Engine.IsRenderThread)
@@ -372,7 +591,7 @@ namespace XREngine.Editor.Mcp
             using var reg = token.Register(() =>
             {
                 if (deferredHandler is not null)
-                    window.RenderViewportsCallback -= deferredHandler;
+                    window.PostRenderViewportsCallback -= deferredHandler;
 
                 tcs.TrySetCanceled(token);
             });
@@ -499,12 +718,6 @@ namespace XREngine.Editor.Mcp
 
             void ScheduleCaptureOnRenderThread()
             {
-                if (AbstractRenderer.Current is { } currentRenderer)
-                {
-                    BeginCapture(currentRenderer);
-                    return;
-                }
-
                 int captureStarted = 0;
                 deferredHandler = () =>
                 {
@@ -515,11 +728,11 @@ namespace XREngine.Editor.Mcp
                     if (Interlocked.CompareExchange(ref captureStarted, 1, 0) != 0)
                         return;
 
-                    window.RenderViewportsCallback -= deferredHandler;
+                    window.PostRenderViewportsCallback -= deferredHandler;
                     BeginCapture(renderer);
                 };
 
-                window.RenderViewportsCallback += deferredHandler;
+                window.PostRenderViewportsCallback += deferredHandler;
             }
 
             if (Engine.IsRenderThread)
@@ -530,7 +743,7 @@ namespace XREngine.Editor.Mcp
             using var reg = token.Register(() =>
             {
                 if (deferredHandler is not null)
-                    window.RenderViewportsCallback -= deferredHandler;
+                    window.PostRenderViewportsCallback -= deferredHandler;
 
                 tcs.TrySetCanceled(token);
             });

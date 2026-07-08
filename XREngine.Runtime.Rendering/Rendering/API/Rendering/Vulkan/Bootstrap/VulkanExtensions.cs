@@ -16,6 +16,8 @@ namespace XREngine.Rendering.Vulkan
         /// The KHR_draw_indirect_count extension handle, loaded at device creation if available.
         /// </summary>
         private KhrDrawIndirectCount? _khrDrawIndirectCount;
+        private KhrDynamicRendering? _khrDynamicRendering;
+        private KhrSynchronization2? _khrSynchronization2;
         private ExtMeshShader? _extMeshShader;
         private ExtTransformFeedback? _extTransformFeedback;
         private KhrExternalMemoryWin32? _khrExternalMemoryWin32;
@@ -130,6 +132,62 @@ namespace XREngine.Rendering.Vulkan
         public MemoryDecompressionMethodFlagsNV NvMemoryDecompressionMethods => _nvMemoryDecompressionMethods;
         public ulong NvMaxMemoryDecompressionIndirectCount => _nvMaxMemoryDecompressionIndirectCount;
         public ulong NvCopyMemoryIndirectSupportedQueues => _nvCopyMemoryIndirectSupportedQueues;
+
+        private bool UseCoreDynamicRenderingCommands => _vulkanInstanceApiVersion >= Vk.Version13;
+        private bool UseCoreSynchronization2Commands => _vulkanInstanceApiVersion >= Vk.Version13;
+
+        private void CmdBeginDynamicRendering(CommandBuffer commandBuffer, RenderingInfo* renderingInfo)
+        {
+            if (UseCoreDynamicRenderingCommands)
+            {
+                Api!.CmdBeginRendering(commandBuffer, renderingInfo);
+                return;
+            }
+
+            if (_khrDynamicRendering is null)
+                throw new InvalidOperationException("VK_KHR_dynamic_rendering command extension is not loaded.");
+
+            _khrDynamicRendering.CmdBeginRendering(commandBuffer, renderingInfo);
+        }
+
+        private void CmdEndDynamicRendering(CommandBuffer commandBuffer)
+        {
+            if (UseCoreDynamicRenderingCommands)
+            {
+                Api!.CmdEndRendering(commandBuffer);
+                return;
+            }
+
+            if (_khrDynamicRendering is null)
+                throw new InvalidOperationException("VK_KHR_dynamic_rendering command extension is not loaded.");
+
+            _khrDynamicRendering.CmdEndRendering(commandBuffer);
+        }
+
+        private Result QueueSubmit2Compat(Queue queue, uint submitCount, SubmitInfo2* submits, Fence fence)
+        {
+            if (UseCoreSynchronization2Commands)
+                return Api!.QueueSubmit2(queue, submitCount, submits, fence);
+
+            if (_khrSynchronization2 is null)
+                throw new InvalidOperationException("VK_KHR_synchronization2 command extension is not loaded.");
+
+            return _khrSynchronization2.QueueSubmit2(queue, submitCount, submits, fence);
+        }
+
+        private void CmdPipelineBarrier2Compat(CommandBuffer commandBuffer, DependencyInfo* dependencyInfo)
+        {
+            if (UseCoreSynchronization2Commands)
+            {
+                Api!.CmdPipelineBarrier2(commandBuffer, dependencyInfo);
+                return;
+            }
+
+            if (_khrSynchronization2 is null)
+                throw new InvalidOperationException("VK_KHR_synchronization2 command extension is not loaded.");
+
+            _khrSynchronization2.CmdPipelineBarrier2(commandBuffer, dependencyInfo);
+        }
 
         internal void RegisterRenderPassColorAttachmentCount(RenderPass renderPass, uint colorAttachmentCount, string? semanticSignature = null)
         {

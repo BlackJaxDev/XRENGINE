@@ -303,9 +303,12 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeMatrices\", cascadeMatrices);");
         directionalSource.ShouldContain("program.Uniform($\"{flatPrefix}CascadeSplits[{i}]\", cascadeSplits[i]);");
 
-        cascadeSource.ShouldContain("Atlas cascade");
-        cascadeSource.ShouldContain("sequential per-tile renders");
+        cascadeSource.ShouldContain("SteamVR and ordinary Vulkan sessions exercise the atlas toggle");
+        cascadeSource.ShouldContain("Grouped atlas rendering is still gated separately");
+        cascadeSource.ShouldContain("grouped atlas path");
+        cascadeSource.ShouldContain("sequential");
         cascadeSource.ShouldNotContain("if (IsVulkanDirectionalShadowBackend())\r\n                return false;");
+        cascadeSource.ShouldNotContain("CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)\r\n                return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.VulkanLayeredRenderingDisabled);");
         cascadeSource.ShouldContain("private void RenderCascadeShadowMaps(");
         cascadeSource.ShouldContain("DirectionalCascadeShadowRenderPlan plan = CreateLegacyCascadeShadowRenderPlan(source, cascadeCount);");
         cascadeSource.IndexOf("requestedMode == EDirectionalCascadeShadowRenderMode.Sequential", StringComparison.Ordinal)

@@ -25,7 +25,11 @@ public static partial class EditorUnitTests
     public static class Pawns
     {
         private const string EditorViewCameraName = "Editor View";
+        private const string CameraVRPickupName = "VR Pickup Camera";
         private const float FirstPersonDesktopHorizontalFieldOfView = 50.0f;
+        private const float CameraVRPickupDirectionEpsilonSquared = 1.0e-8f;
+        private static readonly Vector3 CameraVRPickupInitialPosition = new(0.0f, 1.7f, 4.5f);
+        private static readonly Vector3 CameraVRPickupInitialLookAt = new(0.0f, 1.4f, 0.0f);
 
         public static SceneNode? CreatePlayerPawn(bool setUI, bool isServer, SceneNode rootNode)
         {
@@ -35,24 +39,14 @@ public static partial class EditorUnitTests
                 if (Toggles.Locomotion)
                 {
                     characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, setUI, out _, out _, out _, out _);
-                    if (Toggles.AllowEditingInVR || Toggles.AddCameraVRPickup)
-                    {
-                        SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
-                        var pawn2 = CreateDesktopCamera(cameraNode, isServer, Toggles.AllowEditingInVR && !Toggles.AddCameraVRPickup, Toggles.AddCameraVRPickup, false);
-                        if (setUI)
-                            UserInterface.CreateEditorUI(rootNode, camComp, pawn2);
-                    }
+                    CreateVrDesktopEditorCamera(rootNode, setUI, isServer);
+                    CreateCameraVRPickup(rootNode, setUI);
                 }
                 else
                 {
                     CreateFlyingVRPawn(rootNode, setUI);
-                    if (Toggles.AllowEditingInVR || Toggles.AddCameraVRPickup)
-                    {
-                        SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
-                        var pawn = CreateDesktopCamera(cameraNode, isServer, Toggles.AllowEditingInVR && !Toggles.AddCameraVRPickup, Toggles.AddCameraVRPickup, false);
-                        if (setUI)
-                            UserInterface.CreateEditorUI(rootNode, camComp!, pawn);
-                    }
+                    CreateVrDesktopEditorCamera(rootNode, setUI, isServer);
+                    CreateCameraVRPickup(rootNode, setUI);
                 }
             }
             else if (Toggles.Locomotion)
@@ -60,12 +54,93 @@ public static partial class EditorUnitTests
             else
             {
                 SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
-                var pawn = CreateDesktopCamera(cameraNode, isServer, true, false, true);
+                var pawn = CreateDesktopCamera(cameraNode, isServer, true, true);
                 if (setUI)
                     UserInterface.CreateEditorUI(rootNode, camComp!, pawn);
             }
 
             return characterPawnModelParentNode;
+        }
+
+        private static void CreateVrDesktopEditorCamera(SceneNode rootNode, bool setUI, bool isServer)
+        {
+            if (!Toggles.AllowEditingInVR)
+                return;
+
+            SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
+            var pawn = CreateDesktopCamera(cameraNode, isServer, flyable: true, addListener: false);
+            if (setUI)
+                UserInterface.CreateEditorUI(rootNode, camComp, pawn);
+        }
+
+        private static void CreateCameraVRPickup(SceneNode rootNode, bool setUI)
+        {
+            if (!Toggles.AddCameraVRPickup)
+                return;
+
+            SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null, cameraName: CameraVRPickupName);
+            cameraNode.SuppressTransformDebugLineAndPoint = false;
+            cameraNode.SuppressTransformTools = false;
+            var (initialPosition, initialRotation) = GetInitialCameraVRPickupPose();
+            DynamicRigidBodyComponent pickupBody = AddCameraPickupPhysicsBody(cameraNode, initialPosition, initialRotation);
+            ApplyCameraVRPickupPose(cameraNode, pickupBody, initialPosition, initialRotation);
+
+            if (camComp is not null)
+                ConfigureCameraVRPickupPreviewCamera(camComp);
+
+            if (setUI && camComp is not null)
+                UserInterface.CreateCameraPreviewOverlay(camComp, CameraVRPickupName);
+        }
+
+        private static void ConfigureCameraVRPickupPreviewCamera(CameraComponent camera)
+        {
+            camera.AntiAliasingModeOverride = EAntiAliasingMode.None;
+            camera.Camera.MsaaSampleCountOverride = 1u;
+            camera.Camera.OutputHDROverride = false;
+            camera.Camera.TsrRenderScaleOverride = 1.0f;
+        }
+
+        private static (Vector3 Position, Quaternion Rotation) GetInitialCameraVRPickupPose()
+        {
+            Vector3 direction = CameraVRPickupInitialLookAt - CameraVRPickupInitialPosition;
+            if (direction.LengthSquared() < CameraVRPickupDirectionEpsilonSquared)
+                direction = Globals.Forward;
+            else
+                direction = Vector3.Normalize(direction);
+
+            Vector3 up = Globals.Up;
+            if (MathF.Abs(Vector3.Dot(direction, up)) > 0.999f)
+                up = Globals.Right;
+
+            Quaternion rotation = Quaternion.CreateFromRotationMatrix(
+                Matrix4x4.CreateWorld(CameraVRPickupInitialPosition, direction, up));
+
+            return (CameraVRPickupInitialPosition, rotation);
+        }
+
+        private static void ApplyCameraVRPickupPose(
+            SceneNode cameraNode,
+            DynamicRigidBodyComponent pickupBody,
+            Vector3 position,
+            Quaternion rotation)
+        {
+            RigidBodyTransform rigidBodyTransform = pickupBody.RigidBodyTransform;
+            rigidBodyTransform.SetPositionAndRotation(position, rotation);
+
+            if (pickupBody.RigidBody is PhysxDynamicRigidBody body)
+            {
+                body.SetTransform(position, rotation, wake: false);
+                body.SetLinearVelocity(Vector3.Zero);
+                body.SetAngularVelocity(Vector3.Zero);
+            }
+
+            Debug.Rendering(
+                "[UnitTestingWorld] Camera VR pickup pose applied node='{0}' position={1} rotation={2} transformPosition={3} transformRotation={4}",
+                cameraNode.Name ?? "<null>",
+                position,
+                rotation,
+                rigidBodyTransform.Position,
+                rigidBodyTransform.Rotation);
         }
 
         public static MeshEditingPawnComponent CreateMeshEditingPawn(SceneNode rootNode, bool setUI)
@@ -315,24 +390,32 @@ public static partial class EditorUnitTests
 
         #region Desktop
 
-        private static PawnComponent? CreateDesktopCamera(SceneNode cameraNode, bool isServer, bool flyable, bool addPhysicsBody, bool addListener)
+        private static DynamicRigidBodyComponent AddCameraPickupPhysicsBody(
+            SceneNode cameraNode,
+            Vector3 initialPosition,
+            Quaternion initialRotation)
         {
-            if (addPhysicsBody)
-            {
-                IPhysicsGeometry.Sphere s = new(0.2f);
-                PhysxMaterial mat = new(0.5f, 0.5f, 0.5f);
-                PhysxShape shape = new(s, mat, PxShapeFlags.TriggerShape | PxShapeFlags.Visualization, true);
-                var cameraPickup = cameraNode.AddComponent<DynamicRigidBodyComponent>()!;
-                PhysxDynamicRigidBody body = new(shape, 1.0f);
-                cameraPickup.RigidBody = body;
+            var rigidBodyTransform = cameraNode.GetTransformAs<RigidBodyTransform>(true)!;
+            rigidBodyTransform.SetPositionAndRotation(initialPosition, initialRotation);
 
-                body.Mass = 1.0f;
-                body.Flags = 0;
-                body.GravityEnabled = false;
-                body.SimulationEnabled = true;
-                body.DebugVisualize = true;
-            }
+            IPhysicsGeometry.Sphere s = new(0.2f);
+            PhysxMaterial mat = new(0.5f, 0.5f, 0.5f);
+            PhysxShape shape = new(s, mat, PxShapeFlags.TriggerShape | PxShapeFlags.Visualization, true);
+            var cameraPickup = cameraNode.AddComponent<DynamicRigidBodyComponent>()!;
+            PhysxDynamicRigidBody body = new(shape, 1.0f, initialPosition, initialRotation);
+            cameraPickup.RigidBody = body;
 
+            body.Mass = 1.0f;
+            body.Flags = 0;
+            body.GravityEnabled = false;
+            body.SimulationEnabled = true;
+            body.DebugVisualize = true;
+
+            return cameraPickup;
+        }
+
+        private static PawnComponent? CreateDesktopCamera(SceneNode cameraNode, bool isServer, bool flyable, bool addListener)
+        {
             if (addListener)
             {
                 var listener = cameraNode.AddComponent<AudioListenerComponent>("Desktop Flying Listener")!;
@@ -355,8 +438,6 @@ public static partial class EditorUnitTests
                 pawnComp!.Name = "Desktop Camera Pawn (Flyable)";
                 if (cameraNode.GetComponent<CameraComponent>() is { } cameraComponent)
                     pawnComp.CameraComponent = cameraComponent;
-                if (cameraNode.Parent is { } parent)
-                    ConfigureEditorViewCamera(parent, cameraNode);
             }
             else
             {
@@ -365,6 +446,9 @@ public static partial class EditorUnitTests
                 if (cameraNode.GetComponent<CameraComponent>() is { } cameraComponent)
                     pawnComp.CameraComponent = cameraComponent;
             }
+
+            if (cameraNode.Parent is { } parent)
+                ConfigureEditorViewCamera(parent, cameraNode);
 
             pawnComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
             Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();
@@ -432,9 +516,14 @@ public static partial class EditorUnitTests
 
         #endregion
 
-        private static SceneNode CreateCamera(SceneNode parentNode, out CameraComponent? camComp, float? smoothed = 50.0f, bool localSmoothing = true)
+        private static SceneNode CreateCamera(
+            SceneNode parentNode,
+            out CameraComponent? camComp,
+            float? smoothed = 50.0f,
+            bool localSmoothing = true,
+            string cameraName = EditorViewCameraName)
         {
-            var cameraNode = new SceneNode(parentNode, EditorViewCameraName);
+            var cameraNode = new SceneNode(parentNode, cameraName);
             cameraNode.SuppressTransformDebugLineAndPoint = true;
             cameraNode.SuppressTransformTools = true;
 
@@ -458,7 +547,7 @@ public static partial class EditorUnitTests
                 }
             }
 
-            if (cameraNode.TryAddComponent(out camComp, EditorViewCameraName))
+            if (cameraNode.TryAddComponent(out camComp, cameraName))
             {
                 camComp!.SetPerspective(60.0f, 0.1f, 100000.0f, null);
                 if (Toggles.CameraAntiAliasingModeOverride.HasValue)

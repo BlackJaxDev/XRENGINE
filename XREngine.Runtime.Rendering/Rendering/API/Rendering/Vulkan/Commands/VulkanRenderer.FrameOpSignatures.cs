@@ -125,6 +125,9 @@ namespace XREngine.Rendering.Vulkan
                     case MemoryBarrierOp barrier:
                         AddMemoryBarrierSignaturePart(parts, i, opType, barrier);
                         break;
+                    case PublishFramebufferForSamplingOp publish:
+                        AddPublishFramebufferForSamplingSignaturePart(parts, i, opType, publish);
+                        break;
                     case DlssUpscaleOp dlss:
                         AddDlssUpscaleSignaturePart(parts, i, opType, dlss);
                         break;
@@ -365,6 +368,13 @@ namespace XREngine.Rendering.Vulkan
             HashCode hash = new();
             hash.Add((int)barrier.Mask);
             AddSignaturePart(parts, opIndex, opType, "barrier", hash, $"mask={barrier.Mask}");
+        }
+
+        private static void AddPublishFramebufferForSamplingSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, PublishFramebufferForSamplingOp publish)
+        {
+            HashCode hash = new();
+            hash.Add(publish.FrameBuffer.GetHashCode());
+            AddSignaturePart(parts, opIndex, opType, "publish-fbo-sampling", hash, $"fbo='{publish.FrameBuffer.Name ?? "<unnamed>"}'");
         }
 
         private static void AddDlssUpscaleSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, DlssUpscaleOp dlss)

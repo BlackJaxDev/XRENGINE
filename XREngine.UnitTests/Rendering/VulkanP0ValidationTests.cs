@@ -77,6 +77,33 @@ public sealed class VulkanP0ValidationTests
         statsSource.ShouldContain("RuntimeEngine.Rendering.State.IsVulkan && RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled");
     }
 
+    [Test]
+    public void OpenXrVulkanImagePressure_UsesTrackedRenderVramInsteadOfAggregateAllocatorBytes()
+    {
+        string initializationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
+
+        string imagePreflight = SliceMethod(initializationSource, "private bool ShouldDeferVulkanImageMemoryAllocationForPressure(");
+        imagePreflight.ShouldContain("TryGetOpenXrVulkanImageAllocationPressureSnapshot");
+        imagePreflight.ShouldNotContain("TryGetVulkanAllocatorBudgetSnapshot");
+
+        string pressureSnapshot = SliceMethod(initializationSource, "private bool TryGetOpenXrVulkanImageAllocationPressureSnapshot(");
+        pressureSnapshot.ShouldContain("MemoryAllocator.ActiveVkAllocationCount");
+        pressureSnapshot.ShouldContain("host.TrackedVramBytes");
+        pressureSnapshot.ShouldContain("host.TrackedVramBudgetBytes");
+        pressureSnapshot.ShouldNotContain("TotalAllocatedBytes");
+
+        string pressureDescription = SliceMethod(initializationSource, "private bool TryDescribeOpenXrVulkanImageAllocationPressure(");
+        pressureDescription.ShouldContain("tracked VRAM pressure");
+        pressureDescription.ShouldContain("allocation-count pressure");
+        pressureDescription.ShouldNotContain("largestHeap");
+        pressureDescription.ShouldNotContain("allocated={allocatedBytes}");
+
+        string resourcePlannerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string allocationDeferralClassifier = SliceMethod(resourcePlannerSource, "internal static bool IsExpectedVulkanImageAllocationDeferral(string failureReason)");
+        allocationDeferralClassifier.ShouldContain("Vulkan image allocation deferred under");
+        allocationDeferralClassifier.ShouldContain("allocation deferred under allocator pressure");
+    }
+
     #endregion
 
     #region Final Output Contract

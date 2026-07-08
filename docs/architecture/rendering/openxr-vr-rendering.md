@@ -273,7 +273,17 @@ This is not needed for Vulkan, which can create sessions from any thread since d
    ```
 4. Call `xrCreateSession` with the binding
 
-The Vulkan path is simpler because all handles (`VkInstance`, `VkPhysicalDevice`, `VkDevice`) are plain integers that don't require thread-local context.
+The Vulkan renderer supports two creation modes. For runtimes that work well with `XR_KHR_vulkan_enable2`, the renderer can let OpenXR create the `VkInstance` and `VkDevice`, then reuse that OpenXR instance for session creation. For SteamVR, `Auto` mode uses app-created Vulkan handles and the legacy `XR_KHR_vulkan_enable` binding by default because SteamVR can raise a native breakpoint inside `xrCreateVulkanInstanceKHR` on some installations. Override with `XRE_OPENXR_VULKAN_ENABLE2_BOOTSTRAP=Force` for diagnostics, or `Disable` to force app-created Vulkan handles on any runtime.
+
+When the renderer owns Vulkan handle creation for an OpenXR launch, the Vulkan instance `ApiVersion` is resolved from the active runtime's `xrGetVulkanGraphicsRequirementsKHR` range. This prevents SteamVR from rejecting `xrCreateSession` because the app-created Vulkan instance requested a newer Vulkan version than the runtime advertises for OpenXR.
+
+SteamVR also expects `xrGetVulkanGraphicsDeviceKHR` to be called on the same OpenXR instance that will later create the session. The app-owned Vulkan path validates the renderer's selected physical device with that session instance immediately before `xrCreateSession`; do not replace that with a cached result from an earlier bootstrap instance.
+
+When SteamVR clamps the app Vulkan instance below Vulkan 1.3, renderer code that normally uses dynamic rendering or synchronization2 must call the loaded KHR extension commands (`vkCmdBeginRenderingKHR`, `vkCmdEndRenderingKHR`, `vkQueueSubmit2KHR`, and `vkCmdPipelineBarrier2KHR`). Direct Vulkan 1.3 entry points are not guaranteed to exist on that instance.
+
+Vulkan OpenXR session creation waits for startup texture streaming and allocation pressure to settle before calling `xrCreateSession`. It also waits briefly for desktop command buffers to stop being dirtied and for submitted desktop frame slots to retire, but those desktop-idle gates are bounded so normal editor preview rendering cannot starve SteamVR session creation forever. The actual session transition still serializes with in-flight Vulkan work and idles the device before and after `xrCreateSession` and swapchain creation.
+
+The Vulkan path is otherwise simpler because all handles (`VkInstance`, `VkPhysicalDevice`, `VkDevice`) are plain integers that don't require thread-local context.
 
 Vulkan OpenXR renders directly to the runtime-owned eye swapchain by default. This keeps the normal viewport render pipeline active, including deferred G-buffer lighting and post-processing. Set `XRE_OPENXR_VULKAN_MIRROR_FBO=1` only for compatibility debugging; that path first renders each eye through an offscreen FBO command chain, so it does not match the full deferred viewport lighting path.
 
@@ -370,6 +380,13 @@ path blits into runtime-owned swapchain images and is not considered SteamVR
 stable. Set `XRE_OPENXR_VULKAN_TRUE_STEREO=1` only for focused diagnostics or
 RenderDoc work on that path.
 
+`SequentialViews`, `ParallelCommandBufferRecording`, and
+`OpenXrSinglePassCompatibility` all render the same external per-eye swapchain
+resource model. `ParallelCommandBufferRecording` changes how eye command-buffer
+work is prepared, not what the headset should see. If the SteamVR logs report
+`OpenXrSinglePassCompatibility`, changing between those modes is expected to
+look visually identical.
+
 The Vulkan true-stereo path uses the engine stereo pipeline through
 `XRViewport.RenderStereo(...)`; it does not render multiview directly into an
 OpenXR array swapchain yet. The direct array-swapchain path is a future
@@ -384,6 +401,12 @@ optimization.
 - TAA/TSR and motion-vector history are enabled only when the active temporal
   history policy says the resource model is stereo safe. OpenXR external
   per-eye modes keep history-based AA disabled.
+- External OpenXR per-eye swapchain passes use the combined stereo visibility
+  command set collected from both eye frusta. They must not run a second
+  strict per-eye GPU frustum/BVH cull over that shared list, because doing so
+  can reject commands that were collected for the other eye and cause left/right
+  mesh popping. The GPU pass filter preserves the shared command list and lets
+  the per-view indirect stage select the active eye's draw stream.
 - Atmosphere and volumetric-fog temporal history are disabled in OpenXR stereo
   paths until their half-resolution resources and shaders are stereo arrays.
   Mono atmosphere/fog history remains camera-keyed.
@@ -407,6 +430,18 @@ Useful diagnostics:
   true-stereo support.
 - `XRE_OPENXR_VULKAN_TRUE_STEREO=1` opts into the diagnostic true-stereo
   staging path for runtimes where it is guarded off by default.
+- `XRE_OPENXR_VULKAN_ENABLE2_BOOTSTRAP=Force` tests OpenXR-created Vulkan
+  handles through `XR_KHR_vulkan_enable2`; `Disable` forces app-created Vulkan
+  handles for comparison. SteamVR uses the app-created path in `Auto`.
+- `XRE_VULKAN_DIRECTIONAL_CASCADES=1` forces Vulkan directional cascades on;
+  `0` forces them off. By default they are enabled for SteamVR and ordinary
+  Vulkan sessions, but still guarded off for known Monado OpenXR runtimes until
+  the layered cascade planner path is safe there. Legacy texture-array cascades
+  use the requested layered mode when the backend exposes the required layered
+  framebuffer and shader layer-output capabilities. SteamVR Vulkan can also use
+  grouped directional atlas cascades when indexed viewport/scissor and shader
+  viewport-output capabilities are available; Monado remains on the guarded
+  sequential atlas path.
 - `VPRC_ExposureUpdate` logs the VR exposure policy and source texture type.
 - `VPRC_VendorUpscale` logs the VR vendor support matrix before throwing for
   explicit unsupported vendor requests.
@@ -856,6 +891,11 @@ Default bindings are suggested for multiple controller types:
 | `microsoft/motion_controller` | WMR controllers |
 | `htc/vive_tracker_htcx` | Vive body trackers |
 
+Controller bindings are submitted as one complete table per interaction profile.
+The table includes the hand grip pose, hand aim pose, runtime-neutral gameplay
+actions, and haptics together so runtimes that replace same-profile suggestions
+do not drop the grip pose binding.
+
 ### Per-Frame Updates
 
 `UpdateActionPoseCaches()` is called for predicted and late timing. By default, `xrSyncActions` runs during the predicted call only and the late call re-locates spaces at the same XR frame target display time. `OpenXrActionSyncPolicy.PredictedAndLate` can opt back into synchronizing on both calls.
@@ -864,6 +904,11 @@ Default bindings are suggested for multiple controller types:
 2. For each hand: `xrLocateSpace(gripSpace, appSpace, time)` returns position/orientation
 3. For each tracker role: `xrLocateSpace(trackerSpace, appSpace, time)` returns position/orientation
 4. Poses are stored double-buffered under `_openXrPoseLock`
+
+Controller and tracker poses require both `PositionValidBit` and
+`OrientationValidBit`. When valid, the cached local matrix is built from the
+OpenXR orientation quaternion and position, so tracker rotation is preserved in
+the same path as translation.
 
 ---
 
@@ -892,6 +937,8 @@ The VR rig is built from specialized scene graph components:
 | `VRTrackerCollectionComponent` | Manages body trackers |
 | `VRPlayerInputSet` | Input bindings for VR player |
 | `VRHeightScaleComponent` | Scales avatar to match real-world height |
+
+Controller model loading first uses the OpenXR `XR_MSFT_controller_model` extension when the active runtime exposes it. During an OpenXR launch, the engine does not start a separate OpenVR utility instance for SteamVR render-model fallback by default because that can native-crash in SteamVR while the OpenXR session is coming up or active. Set `XRE_OPENXR_ALLOW_OPENVR_RENDER_MODEL_FALLBACK=1` only when diagnosing or deliberately testing that mixed-API fallback.
 
 ### VRGameMode
 

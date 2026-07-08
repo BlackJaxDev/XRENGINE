@@ -9,7 +9,7 @@ internal static class VPRC_RenderMeshesPassMeshlet
 {
     private static int _cpuSafetyNetLogBudget = 8;
 
-    public static void Execute(VPRC_RenderMeshesPassShared command)
+    public static void Execute(VPRC_RenderMeshesPassShared command, EMeshSubmissionStrategy meshSubmissionStrategy)
     {
         using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.RenderPass);
         var activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
@@ -24,9 +24,9 @@ internal static class VPRC_RenderMeshesPassMeshlet
         gpuPass.UseMeshletPipeline = true;
         try
         {
-            commands.RenderGPU(command.RenderPass, command.MeshSubmissionStrategy);
+            commands.RenderGPU(command.RenderPass, meshSubmissionStrategy);
 
-            if (ShouldUseOpenGLMeshletProgramWarmupFallback(command.MeshSubmissionStrategy, gpuPass))
+            if (ShouldUseOpenGLMeshletProgramWarmupFallback(meshSubmissionStrategy, gpuPass))
             {
                 RuntimeEngine.Rendering.Stats.GpuFallback.RecordGpuCpuFallback(1, 0);
                 WarnMeshletProgramWarmupFallback(command.RenderPass, gpuPass.ZeroReadbackProgramPendingCountThisFrame);

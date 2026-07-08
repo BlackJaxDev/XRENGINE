@@ -40,7 +40,9 @@ public unsafe partial class VulkanRenderer
         uint DisplayWidth = 1u,
         uint DisplayHeight = 1u,
         uint InternalWidth = 1u,
-        uint InternalHeight = 1u)
+        uint InternalHeight = 1u,
+        string? OutputFrameBufferName = null,
+        bool PreserveSubmissionOrderBlock = false)
     {
         public int SchedulingIdentity => HashCode.Combine(PipelineIdentity, ViewportIdentity);
     }
@@ -94,7 +96,9 @@ public unsafe partial class VulkanRenderer
             displayWidth,
             displayHeight,
             internalWidth,
-            internalHeight);
+            internalHeight,
+            pipeline?.RenderState.OutputFBO?.Name,
+            ShouldPreserveSubmissionOrderBlock());
         context = ApplyInteractiveResizePlannerFreeze(context);
 
         if (pipeline is not null)
@@ -224,10 +228,17 @@ public unsafe partial class VulkanRenderer
             displayWidth,
             displayHeight,
             internalWidth,
-            internalHeight);
+            internalHeight,
+            pipeline.RenderState.OutputFBO?.Name,
+            ShouldPreserveSubmissionOrderBlock());
 
         return ApplyInteractiveResizePlannerFreeze(context);
     }
+
+    private static bool ShouldPreserveSubmissionOrderBlock()
+        => RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is not null &&
+           (RuntimeEngine.Rendering.State.IsSceneCapturePass ||
+            RuntimeEngine.Rendering.State.IsLightProbePass);
 
     private readonly struct ExternalResourcePlannerReadbackScope : IDisposable
     {
@@ -623,6 +634,10 @@ public unsafe partial class VulkanRenderer
             if (compare != 0)
                 return compare;
 
+            compare = left.OutputFrameBufferIdentity.CompareTo(right.OutputFrameBufferIdentity);
+            if (compare != 0)
+                return compare;
+
             compare = left.ActivePassSetSignature.CompareTo(right.ActivePassSetSignature);
             if (compare != 0)
                 return compare;
@@ -673,6 +688,10 @@ public unsafe partial class VulkanRenderer
             if (compare != 0)
                 return compare;
 
+            compare = left.OutputFrameBufferIdentity.CompareTo(right.OutputFrameBufferIdentity);
+            if (compare != 0)
+                return compare;
+
             compare = left.ActivePassSetSignature.CompareTo(right.ActivePassSetSignature);
             if (compare != 0)
                 return compare;
@@ -693,6 +712,7 @@ public unsafe partial class VulkanRenderer
             hash.Add(key.DisplayHeight);
             hash.Add(key.InternalWidth);
             hash.Add(key.InternalHeight);
+            hash.Add(key.OutputFrameBufferIdentity);
             hash.Add(key.ActivePassSetSignature);
             hash.Add(key.ActiveResourceSetSignature);
 
@@ -890,6 +910,7 @@ public unsafe partial class VulkanRenderer
             context.DisplayHeight,
             context.InternalWidth,
             context.InternalHeight,
+            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
             activePassSetSignature,
             activeResourceSetSignature);
 
@@ -905,7 +926,13 @@ public unsafe partial class VulkanRenderer
             context.DisplayWidth == key.DisplayWidth &&
             context.DisplayHeight == key.DisplayHeight &&
             context.InternalWidth == key.InternalWidth &&
-            context.InternalHeight == key.InternalHeight;
+            context.InternalHeight == key.InternalHeight &&
+            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName) == key.OutputFrameBufferIdentity;
+
+    private static int ComputeOutputFrameBufferIdentity(string? outputFrameBufferName)
+        => string.IsNullOrWhiteSpace(outputFrameBufferName)
+            ? 0
+            : StringComparer.OrdinalIgnoreCase.GetHashCode(outputFrameBufferName!);
 
     private FrameOpContext RefreshPlannerExtentsFromLiveContext(FrameOpContext context, FrameOp[] ops)
     {
@@ -1123,6 +1150,11 @@ public unsafe partial class VulkanRenderer
 
         compare = (left.ResourceRegistry?.DescriptorSignature ?? 0)
             .CompareTo(right.ResourceRegistry?.DescriptorSignature ?? 0);
+        if (compare != 0)
+            return compare;
+
+        compare = ComputeOutputFrameBufferIdentity(left.OutputFrameBufferName)
+            .CompareTo(ComputeOutputFrameBufferIdentity(right.OutputFrameBufferName));
         if (compare != 0)
             return compare;
 
@@ -1498,7 +1530,10 @@ public unsafe partial class VulkanRenderer
         if (!ReferenceEquals(previous.PassMetadata, next.PassMetadata))
             return true;
 
-        return false;
+        return !string.Equals(
+            previous.OutputFrameBufferName,
+            next.OutputFrameBufferName,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private void UpdateResourcePlannerFromContext(
@@ -1604,7 +1639,7 @@ public unsafe partial class VulkanRenderer
             reusedImageGroups,
             retiredImageCount,
             retiredBufferCount);
-        RebuildRenderGraphAndBarriers(planningInputs, allocationPlan.Signature);
+        RebuildRenderGraphAndBarriers(planningInputs, plannerSignature, allocationPlan.Signature);
 
         ActiveResourcePlannerSignature = plannerSignature;
         ActiveResourceAllocationSignature = allocationPlan.Signature;
@@ -1635,6 +1670,7 @@ public unsafe partial class VulkanRenderer
             ComputePassMetadataRevisionStamp(activePassMetadata),
             activePassSetSignature,
             activeResourceSetSignature,
+            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
             context.DisplayWidth,
             context.DisplayHeight,
             context.InternalWidth,
@@ -1661,7 +1697,7 @@ public unsafe partial class VulkanRenderer
         IReadOnlyCollection<RenderPassMetadata>? activePassMetadata)
     {
         VulkanResourcePlanner pendingPlanner = new();
-        pendingPlanner.Sync(context.ResourceRegistry);
+        pendingPlanner.Sync(context.ResourceRegistry, context.OutputFrameBufferName);
         ValidateVulkanResourcePlanMetadata(activePassMetadata, pendingPlanner);
         return pendingPlanner;
     }
@@ -1922,7 +1958,8 @@ public unsafe partial class VulkanRenderer
         => IsExpectedVulkanImageAllocationDeferral(exception.Message);
 
     internal static bool IsExpectedVulkanImageAllocationDeferral(string failureReason)
-        => failureReason.Contains("allocation deferred under allocator pressure", StringComparison.OrdinalIgnoreCase);
+        => failureReason.Contains("Vulkan image allocation deferred under", StringComparison.OrdinalIgnoreCase) ||
+            failureReason.Contains("allocation deferred under allocator pressure", StringComparison.OrdinalIgnoreCase);
 
     private void CommitPhysicalAllocatorPlan(
         bool physicalPlanChanged,
@@ -2189,12 +2226,14 @@ public unsafe partial class VulkanRenderer
 
     private void RebuildRenderGraphAndBarriers(
         in ResourcePlanningInputs planningInputs,
+        ulong resourcePlannerSignature,
         ulong resourceAllocationSignature)
     {
         ActiveCompiledRenderGraph = planningInputs.CompiledGraph;
 
         BarrierPlanFastPathKey barrierKey = new(
             planningInputs.CompiledGraph,
+            resourcePlannerSignature,
             resourceAllocationSignature,
             planningInputs.QueueOwnership);
         if (ActiveHasBarrierPlanFastPathKey && barrierKey.Matches(ActiveBarrierPlanFastPathKey))
@@ -2391,7 +2430,7 @@ public unsafe partial class VulkanRenderer
             {
                 string resourceName = usage.ResourceName;
                 if (string.IsNullOrWhiteSpace(resourceName)
-                    || IsVulkanExternalOutputResourceBinding(resourceName))
+                    || IsVulkanExternalOutputResourceBinding(resourceName, planner))
                 {
                     continue;
                 }
@@ -2496,10 +2535,18 @@ public unsafe partial class VulkanRenderer
             usage.ResourceType);
     }
 
-    private static bool IsVulkanExternalOutputResourceBinding(string resourceName)
+    private static bool IsVulkanExternalOutputResourceBinding(string resourceName, VulkanResourcePlanner planner)
     {
         if (resourceName.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
-            return true;
+            return !planner.TryGetOutputFrameBufferDescriptor(out _);
+
+        if (planner.TryGetOutputFrameBufferDescriptor(out _) &&
+            resourceName.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase))
+        {
+            string[] outputSegments = resourceName.Split("::", StringSplitOptions.RemoveEmptyEntries);
+            if (outputSegments.Length >= 2 && IsVulkanExternalOutputName(outputSegments[1]))
+                return false;
+        }
 
         if (!resourceName.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase))
             return false;
@@ -2583,6 +2630,7 @@ public unsafe partial class VulkanRenderer
     {
         HashCode hash = new();
         hash.Add(ComputeResourceRegistrySignature(context.ResourceRegistry));
+        hash.Add(ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName));
 
         hash.Add(context.DisplayWidth);
         hash.Add(context.DisplayHeight);
@@ -2633,6 +2681,7 @@ public unsafe partial class VulkanRenderer
         IReadOnlyCollection<RenderPassMetadata>? passMetadata)
         => new(
             ComputeResourceRegistrySignature(context.ResourceRegistry),
+            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
             context.DisplayWidth,
             context.DisplayHeight,
             context.InternalWidth,

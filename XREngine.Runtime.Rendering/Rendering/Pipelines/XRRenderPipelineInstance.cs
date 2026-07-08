@@ -565,7 +565,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             dimensions.DisplayWidth,
             dimensions.DisplayHeight,
             dimensions.InternalWidth,
-            dimensions.InternalHeight);
+            dimensions.InternalHeight,
+            viewport);
 
         if (viewport.RendersToExternalSwapchainTarget)
             return EnsureExternalSwapchainResourceGenerationForCurrentFrame(viewport, key);
@@ -871,7 +872,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         int displayWidth,
         int displayHeight,
         int internalWidth,
-        int internalHeight)
+        int internalHeight,
+        XRViewport? viewport = null)
     {
         RenderPipeline? pipeline = _pipeline;
 
@@ -900,7 +902,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         ulong featureMask = pipeline switch
         {
-            DefaultRenderPipeline defaultPipeline => defaultPipeline.BuildResourceFeatureMaskForGenerationKey(),
+            DefaultRenderPipeline defaultPipeline => defaultPipeline.BuildResourceFeatureMaskForGenerationKey(viewport ?? RenderState.WindowViewport ?? LastWindowViewport),
             _ => 0UL
         };
 
@@ -1092,7 +1094,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             dimensions.DisplayWidth,
             dimensions.DisplayHeight,
             dimensions.InternalWidth,
-            dimensions.InternalHeight);
+            dimensions.InternalHeight,
+            viewport);
         return true;
     }
 

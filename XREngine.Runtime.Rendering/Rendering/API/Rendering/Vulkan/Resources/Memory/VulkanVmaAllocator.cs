@@ -15,6 +15,7 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
 {
     private const uint AllocatorCreateBufferDeviceAddressBit = 0x00000020;
     private const int VmaBlockId = -2;
+    private const int MaxMemoryHeaps = 16;
 
     private nint _allocator;
     private int _activeAllocationCount;
@@ -22,6 +23,7 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
     private bool _disposed;
     private readonly ConcurrentDictionary<nint, int> _mapCounts = new();
     private readonly object _mapCountsGate = new();
+    private readonly VulkanVmaNative.Budget[] _heapBudgetScratch = new VulkanVmaNative.Budget[MaxMemoryHeaps];
 
     public VulkanVmaAllocator(
         Instance instance,
@@ -262,6 +264,86 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
         }
     }
 
+    public bool TryGetDeviceLocalHeapBudgetSnapshot(
+        in PhysicalDeviceMemoryProperties memoryProperties,
+        double budgetRatio,
+        long reserveBytes,
+        out long allocatedBytes,
+        out long budgetBytes,
+        out long largestHeapBytes)
+    {
+        allocatedBytes = 0L;
+        budgetBytes = 0L;
+        largestHeapBytes = 0L;
+
+        if (memoryProperties.MemoryHeapCount == 0)
+            return false;
+
+        lock (_mapCountsGate)
+        {
+            ThrowIfDisposed();
+
+            Array.Clear(_heapBudgetScratch, 0, _heapBudgetScratch.Length);
+            uint budgetCount = VulkanVmaNative.GetHeapBudgets(
+                _allocator,
+                _heapBudgetScratch,
+                (uint)_heapBudgetScratch.Length);
+            if (budgetCount == 0)
+                return false;
+
+            uint heapCount = Math.Min(
+                Math.Min(budgetCount, memoryProperties.MemoryHeapCount),
+                (uint)_heapBudgetScratch.Length);
+            if (heapCount == 0)
+                return false;
+
+            long selectedUsageBytes = 0L;
+            long selectedBudgetBytes = 0L;
+            long selectedLargestHeapBytes = 0L;
+            bool selectedAnyDeviceLocal = false;
+
+            for (uint i = 0; i < heapCount; i++)
+            {
+                MemoryHeap heap = memoryProperties.MemoryHeaps[(int)i];
+                if ((heap.Flags & MemoryHeapFlags.DeviceLocalBit) == 0)
+                    continue;
+
+                VulkanVmaNative.Budget budget = _heapBudgetScratch[i];
+                selectedAnyDeviceLocal = true;
+                selectedLargestHeapBytes = Math.Max(selectedLargestHeapBytes, ClampToLong(heap.Size));
+                selectedUsageBytes = SaturatingAdd(selectedUsageBytes, ResolveHeapUsageBytes(budget));
+                selectedBudgetBytes = SaturatingAdd(selectedBudgetBytes, ResolveHeapBudgetBytes(budget, heap.Size));
+            }
+
+            if (!selectedAnyDeviceLocal)
+            {
+                for (uint i = 0; i < heapCount; i++)
+                {
+                    MemoryHeap heap = memoryProperties.MemoryHeaps[(int)i];
+                    VulkanVmaNative.Budget budget = _heapBudgetScratch[i];
+                    selectedLargestHeapBytes = Math.Max(selectedLargestHeapBytes, ClampToLong(heap.Size));
+                    selectedUsageBytes = SaturatingAdd(selectedUsageBytes, ResolveHeapUsageBytes(budget));
+                    selectedBudgetBytes = SaturatingAdd(selectedBudgetBytes, ResolveHeapBudgetBytes(budget, heap.Size));
+                }
+            }
+
+            if (selectedLargestHeapBytes <= 0L)
+                return false;
+
+            long rawBudgetBytes = selectedBudgetBytes > 0L ? selectedBudgetBytes : selectedLargestHeapBytes;
+            double clampedRatio = Math.Clamp(budgetRatio, 0.1, 1.0);
+            long ratioLimitBytes = (long)Math.Floor(rawBudgetBytes * clampedRatio);
+            long reserveLimitBytes = rawBudgetBytes > reserveBytes
+                ? rawBudgetBytes - Math.Max(0L, reserveBytes)
+                : rawBudgetBytes;
+
+            allocatedBytes = selectedUsageBytes;
+            budgetBytes = Math.Max(0L, Math.Min(ratioLimitBytes, reserveLimitBytes));
+            largestHeapBytes = selectedLargestHeapBytes;
+            return budgetBytes > 0L;
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -386,4 +468,17 @@ internal sealed unsafe class VulkanVmaAllocator : IVulkanMemoryAllocator
 
     private static long ClampToLong(ulong value)
         => value > long.MaxValue ? long.MaxValue : (long)value;
+
+    private static long ResolveHeapUsageBytes(VulkanVmaNative.Budget budget)
+        => ClampToLong(budget.Usage != 0 ? budget.Usage : budget.BlockBytes);
+
+    private static long ResolveHeapBudgetBytes(VulkanVmaNative.Budget budget, ulong fallbackHeapSize)
+        => ClampToLong(budget.BudgetBytes != 0 ? budget.BudgetBytes : fallbackHeapSize);
+
+    private static long SaturatingAdd(long left, long right)
+    {
+        if (right <= 0L)
+            return left;
+        return left > long.MaxValue - right ? long.MaxValue : left + right;
+    }
 }

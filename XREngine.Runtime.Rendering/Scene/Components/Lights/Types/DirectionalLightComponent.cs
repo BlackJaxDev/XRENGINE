@@ -371,31 +371,37 @@ namespace XREngine.Components.Lights
                 ? (ShadowMomentUseMipmaps ? ETexMinFilter.LinearMipmapLinear : ETexMinFilter.Linear)
                 : ETexMinFilter.Nearest;
             ETexMagFilter magFilter = selection.Format.RequiresLinearFiltering ? ETexMagFilter.Linear : ETexMagFilter.Nearest;
-            XRTexture[] refs =
-            [
-                new XRTexture2D(width, height, depthFormat.InternalFormat, depthFormat.PixelFormat, depthFormat.PixelType)
-                {
-                    Name = GetDirectionalShadowResourceName("PrimaryRasterDepth"),
-                    MinFilter = ETexMinFilter.Nearest,
-                    MagFilter = ETexMagFilter.Nearest,
-                    UWrap = ETexWrapMode.ClampToEdge,
-                    VWrap = ETexWrapMode.ClampToEdge,
-                    FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
-                    SamplerName = "ShadowRasterDepth",
-                },
-                new XRTexture2D(width, height, shadowFormat.InternalFormat, shadowFormat.PixelFormat, shadowFormat.PixelType)
-                {
-                    Name = GetDirectionalShadowResourceName("PrimaryColor"),
-                    MinFilter = minFilter,
-                    MagFilter = magFilter,
-                    UWrap = ETexWrapMode.ClampToEdge,
-                    VWrap = ETexWrapMode.ClampToEdge,
-                    FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
-                    SamplerName = "ShadowMap",
-                    AutoGenerateMipmaps = momentEncoding && ShadowMomentUseMipmaps,
-                    SmallestAllowedMipmapLevel = ResolveShadowMomentSmallestAllowedMipmapLevel(momentEncoding, ShadowMomentUseMipmaps, width, height),
-                },
-            ];
+            XRTexture2D rasterDepth = XRTexture2D.CreateFrameBufferTexture(
+                width,
+                height,
+                depthFormat.InternalFormat,
+                depthFormat.PixelFormat,
+                depthFormat.PixelType,
+                EFrameBufferAttachment.DepthAttachment);
+            rasterDepth.Name = GetDirectionalShadowResourceName("PrimaryRasterDepth");
+            rasterDepth.MinFilter = ETexMinFilter.Nearest;
+            rasterDepth.MagFilter = ETexMagFilter.Nearest;
+            rasterDepth.UWrap = ETexWrapMode.ClampToEdge;
+            rasterDepth.VWrap = ETexWrapMode.ClampToEdge;
+            rasterDepth.SamplerName = "ShadowRasterDepth";
+
+            XRTexture2D shadowColor = XRTexture2D.CreateFrameBufferTexture(
+                width,
+                height,
+                shadowFormat.InternalFormat,
+                shadowFormat.PixelFormat,
+                shadowFormat.PixelType,
+                EFrameBufferAttachment.ColorAttachment0);
+            shadowColor.Name = GetDirectionalShadowResourceName("PrimaryColor");
+            shadowColor.MinFilter = minFilter;
+            shadowColor.MagFilter = magFilter;
+            shadowColor.UWrap = ETexWrapMode.ClampToEdge;
+            shadowColor.VWrap = ETexWrapMode.ClampToEdge;
+            shadowColor.SamplerName = "ShadowMap";
+            shadowColor.AutoGenerateMipmaps = momentEncoding && ShadowMomentUseMipmaps;
+            shadowColor.SmallestAllowedMipmapLevel = ResolveShadowMomentSmallestAllowedMipmapLevel(momentEncoding, ShadowMomentUseMipmaps, width, height);
+
+            XRTexture[] refs = [rasterDepth, shadowColor];
 
             // This material is used for rendering to the framebuffer.
             XRMaterial mat = new(refs, new XRShader(EShaderType.Fragment, ShaderHelper.Frag_ShadowMomentOutput));

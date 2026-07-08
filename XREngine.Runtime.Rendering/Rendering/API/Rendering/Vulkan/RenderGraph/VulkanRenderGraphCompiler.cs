@@ -37,10 +37,12 @@ public unsafe partial class VulkanRenderer
 
         private readonly struct FrameOpSortKey(
             FrameOp operation,
+            int contextBlockOrder,
             int passOrder,
             int originalIndex)
         {
             public FrameOp Operation { get; } = operation;
+            public int ContextBlockOrder { get; } = contextBlockOrder;
             public int PassOrder { get; } = passOrder;
             public int OriginalIndex { get; } = originalIndex;
         }
@@ -51,6 +53,10 @@ public unsafe partial class VulkanRenderer
 
             public int Compare(FrameOpSortKey x, FrameOpSortKey y)
             {
+                int blockCompare = x.ContextBlockOrder.CompareTo(y.ContextBlockOrder);
+                if (blockCompare != 0)
+                    return blockCompare;
+
                 int passCompare = x.PassOrder.CompareTo(y.PassOrder);
                 if (passCompare != 0)
                     return passCompare;
@@ -69,7 +75,13 @@ public unsafe partial class VulkanRenderer
             }
 
             private static bool CanCanonicalizeMeshDrawOrder(MeshDrawOp op)
-                => op.Draw.Renderer is not null && !op.Draw.BlendEnabled && !op.PreserveSubmissionOrder;
+                => op.Draw.Renderer is not null &&
+                   !op.Draw.BlendEnabled &&
+                   !op.PreserveSubmissionOrder &&
+                   !IsUiPipelineDraw(op);
+
+            private static bool IsUiPipelineDraw(MeshDrawOp op)
+                => op.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline;
 
             private static int CompareCanonicalMeshDrawOrder(MeshDrawOp x, MeshDrawOp y)
             {
@@ -214,12 +226,14 @@ public unsafe partial class VulkanRenderer
             try
             {
                 sortKeys = ArrayPool<FrameOpSortKey>.Shared.Rent(opCount);
+                bool preserveContextBlocks = HasSubmissionOrderBlock(ops);
 
                 for (int i = 0; i < opCount; i++)
                 {
                     FrameOp op = ops[i];
                     sortKeys[i] = new FrameOpSortKey(
                         op,
+                        preserveContextBlocks ? ResolveContextBlockOrder(ops, i) : 0,
                         ResolvePassOrder(op, graph),
                         i);
                 }
@@ -251,6 +265,29 @@ public unsafe partial class VulkanRenderer
                 if (sortKeys is not null)
                     ArrayPool<FrameOpSortKey>.Shared.Return(sortKeys, clearArray: true);
             }
+        }
+
+        private static bool HasSubmissionOrderBlock(FrameOp[] ops)
+        {
+            for (int i = 0; i < ops.Length; i++)
+            {
+                if (ops[i].Context.PreserveSubmissionOrderBlock)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static int ResolveContextBlockOrder(FrameOp[] ops, int index)
+        {
+            int schedulingIdentity = ops[index].Context.SchedulingIdentity;
+            for (int i = 0; i < index; i++)
+            {
+                if (ops[i].Context.SchedulingIdentity == schedulingIdentity)
+                    return i;
+            }
+
+            return index;
         }
 
         private static bool MoveTargetClearsBeforeFirstSameTargetUse(FrameOpSortKey[] sortKeys, int opCount)

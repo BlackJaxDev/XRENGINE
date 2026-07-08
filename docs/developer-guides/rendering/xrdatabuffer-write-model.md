@@ -131,6 +131,8 @@ When `RenderDiagnosticsFlags.UploadStageLogging` or
 `RenderDiagnosticsFlags.PushSubDataTrace` is enabled, writer commits log rows
 that include buffer name, policy, route, bytes, dirty range count, allocated
 bytes, uploaded revision, current revision, readiness, and pending state.
+Upload-stage logging is explicit opt-in through `XRE_UPLOAD_STAGE_LOGGING` or
+the editor preference; attaching a debugger alone must not enable it.
 
 ## Migrated Callers
 

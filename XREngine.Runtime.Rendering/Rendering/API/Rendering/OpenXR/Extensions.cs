@@ -1,6 +1,7 @@
 using Silk.NET.OpenXR.Extensions.HTC;
 using Silk.NET.OpenXR.Extensions.HTCX;
 using Silk.NET.OpenXR.Extensions.KHR;
+using XREngine.Rendering.Vulkan;
 using OxrExtDebugUtils = global::Silk.NET.OpenXR.Extensions.EXT.ExtDebugUtils;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
@@ -52,7 +53,7 @@ public unsafe partial class OpenXRAPI
         {
             case ERenderer.Vulkan:
                 {
-                    extensions = [.. extensions, KhrVulkanEnable.ExtensionName, KhrVulkanEnable2.ExtensionName];
+                    extensions = [.. extensions, .. GetVulkanGraphicsBindingExtensions()];
                 }
                 break;
             case ERenderer.OpenGL:
@@ -70,5 +71,20 @@ public unsafe partial class OpenXRAPI
         extensions = [.. extensions, KhrWin32ConvertPerformanceCounterTime.ExtensionName];
 
         return [.. extensions, KhrVisibilityMaskExtensionName, ExtHandTrackingExtensionName, MsftControllerModelExtensionName, .. HTC_Extensions, .. Foveation_Extensions];
+    }
+
+    private string[] GetVulkanGraphicsBindingExtensions()
+    {
+        if (Window?.Renderer is VulkanRenderer vulkanRenderer &&
+            vulkanRenderer.UsesOpenXrVulkanEnable2Creation)
+        {
+            return [KhrVulkanEnable2.ExtensionName];
+        }
+
+        string? runtimePath = ResolveCurrentOpenXrRuntimePath();
+        if (!string.IsNullOrWhiteSpace(runtimePath) && IsSteamVrRuntimePath(runtimePath))
+            return [KhrVulkanEnable.ExtensionName];
+
+        return [KhrVulkanEnable.ExtensionName, KhrVulkanEnable2.ExtensionName];
     }
 }

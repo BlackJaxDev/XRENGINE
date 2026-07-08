@@ -644,7 +644,10 @@ namespace XREngine.Rendering.Vulkan
                 bool hasTrackedImageAllocation = false;
                 VulkanMemoryAllocation trackedImageAllocation = default;
                 if (r.Image.Handle != 0)
+                {
                     hasTrackedImageAllocation = _imageAllocations.TryRemove(r.Image.Handle, out trackedImageAllocation);
+                    UntrackImageAllocation(r.Image);
+                }
 
                 if (r.Sampler.Handle != 0)
                 {

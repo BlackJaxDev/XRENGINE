@@ -1205,9 +1205,11 @@ namespace XREngine.Rendering
                 return;
             }
 
+            int currentThreadId = Environment.CurrentManagedThreadId;
+            bool isRenderOwnerThread = currentThreadId == RenderOwnerThreadId;
             bool canRenderOnCurrentThread =
                 (RuntimeEngine.IsRenderThread && !deferWhenOnRenderThread) ||
-                (allowCurrentThread && Window.API.API == ContextAPI.OpenGL);
+                (allowCurrentThread && (Window.API.API == ContextAPI.OpenGL || isRenderOwnerThread));
 
             if (!canRenderOnCurrentThread)
             {
@@ -1234,14 +1236,26 @@ namespace XREngine.Rendering
                 return;
             }
 
-            if (Interlocked.CompareExchange(ref _interactiveResizeRenderActive, 1, 0) != 0 ||
-                Volatile.Read(ref _normalRenderActive) != 0)
+            if (Interlocked.CompareExchange(ref _interactiveResizeRenderActive, 1, 0) != 0)
             {
-                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":reentrant");
+                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":interactive-active");
                 Debug.RenderingWarningEvery(
-                    $"XRWindow.InteractiveResize.Reentrant.{GetHashCode()}",
+                    $"XRWindow.InteractiveResize.InteractiveActive.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
-                    "[InteractiveResize] Suppressed interactive render window={0} reason={1}.",
+                    "[InteractiveResize] Suppressed interactive render window={0} reason={1} cause=interactive-active.",
+                    GetHashCode(),
+                    reason);
+                return;
+            }
+
+            if (Volatile.Read(ref _normalRenderActive) != 0)
+            {
+                Volatile.Write(ref _interactiveResizeRenderActive, 0);
+                InteractiveResizeDiagnostics.RecordSuppressedRender(reason + ":normal-render-active");
+                Debug.RenderingWarningEvery(
+                    $"XRWindow.InteractiveResize.NormalRenderActive.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[InteractiveResize] Suppressed interactive render window={0} reason={1} cause=normal-render-active.",
                     GetHashCode(),
                     reason);
                 return;
@@ -3201,6 +3215,8 @@ namespace XREngine.Rendering
                     uint targetHeight = (uint)Math.Max(1, fb.Y);
                     long mirrorStart = System.Diagnostics.Stopwatch.GetTimestamp();
                     bool mirrorRendered = RuntimeRenderingHostServices.Current.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);
+                    if (mirrorRendered)
+                        RenderDesktopMirrorUiOverlays();
                     RecordWindowFrameOutput(
                         EFrameOutputKind.DesktopMirror,
                         EVrOutputViewKind.CyclopeanDesktop,
@@ -3213,6 +3229,17 @@ namespace XREngine.Rendering
                         sharedVisibility: true,
                         System.Diagnostics.Stopwatch.GetTimestamp() - mirrorStart);
                 }
+            }
+        }
+
+        private void RenderDesktopMirrorUiOverlays()
+        {
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.RenderDesktopMirrorUiOverlays");
+
+            foreach (var viewport in Viewports)
+            {
+                using var viewportSample = RuntimeRenderingHostServices.Current.StartProfileScope($"XRViewport.RenderDesktopMirrorUiOverlay[{viewport.Index}]");
+                viewport.RenderScreenSpaceUIOnly();
             }
         }
 

@@ -1242,12 +1242,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
 
         if (NeedsDepthHit())
-        {
-            if (AbstractRenderer.Current?.IsRenderingExternalSwapchainTarget == true)
-                return;
-
             GetDepthHit(vp, GetCursorInternalCoordinatePosition(vp));
-        }
     }
 
     private void ApplyInput(XRViewport? vp)
@@ -1857,11 +1852,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private static float? GetDepth(XRViewport vp, Vector2 internalSizeCoordinate)
     {
-        var fbo = vp.RenderPipelineInstance?.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName);
+        var fbo = ResolveDepthReadbackFbo(vp);
         if (fbo is null)
             return null;
 
         IVector2 readbackCoordinate = GetDepthReadbackCoordinate(fbo, internalSizeCoordinate);
+        using IDisposable? readbackScope = vp.EnterRenderPipelineReadbackScope();
         float? depth = XRViewport.GetDepth(fbo, readbackCoordinate);
         return depth;
     }
@@ -1888,9 +1884,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     public EditorDepthHitProbeResult ProbeDepthHitAtNormalizedViewport(XRViewport vp, Vector2 normalizedViewportPoint)
     {
-        var fbo = vp.RenderPipelineInstance?.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName);
+        var fbo = ResolveDepthReadbackFbo(vp);
         if (fbo is null)
-            throw new InvalidOperationException($"Viewport render pipeline has no '{DefaultRenderPipeline.ForwardPassFBOName}' framebuffer.");
+            throw new InvalidOperationException($"Viewport has no depth-readable output framebuffer or '{DefaultRenderPipeline.ForwardPassFBOName}' framebuffer.");
 
         Vector2 clamped = ClampNormalizedViewport(normalizedViewportPoint);
         Vector2 internalCoordinate = vp.DenormalizeInternalCoordinate(clamped);
@@ -1899,6 +1895,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         IVector2 currentCoordinate = GetDepthReadbackCoordinate(fbo, internalCoordinate);
         bool currentPolicyFlipsY = ShouldFlipDepthReadbackY();
 
+        using IDisposable? readbackScope = vp.EnterRenderPipelineReadbackScope();
         EditorDepthHitReadbackSample unflipped = ReadDepthSample(vp, fbo, clamped, unflippedCoordinate);
         EditorDepthHitReadbackSample flipped = CoordinatesEqual(unflippedCoordinate, flippedCoordinate)
             ? unflipped
@@ -1996,6 +1993,32 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private static bool CoordinatesEqual(IVector2 left, IVector2 right)
         => left.X == right.X && left.Y == right.Y;
+
+    private static XRFrameBuffer? ResolveDepthReadbackFbo(XRViewport vp)
+    {
+        XRFrameBuffer? targetFbo = vp.LastRenderedTargetFBO;
+        if (targetFbo is not null && HasDepthStencilAttachment(targetFbo))
+            return targetFbo;
+
+        return vp.RenderPipelineInstance?.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName);
+    }
+
+    private static bool HasDepthStencilAttachment(XRFrameBuffer fbo)
+    {
+        var targets = fbo.Targets;
+        if (targets is null)
+            return false;
+
+        foreach (var (_, attachment, _, _) in targets)
+        {
+            if (attachment is EFrameBufferAttachment.DepthAttachment
+                or EFrameBufferAttachment.DepthStencilAttachment
+                or EFrameBufferAttachment.StencilAttachment)
+                return true;
+        }
+
+        return false;
+    }
 
     private static EditorDepthHitReadbackSample ReadDepthSample(
         XRViewport vp,

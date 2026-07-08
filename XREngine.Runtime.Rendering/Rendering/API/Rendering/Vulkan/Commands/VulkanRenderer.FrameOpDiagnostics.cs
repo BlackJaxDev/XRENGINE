@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -74,6 +75,123 @@ namespace XREngine.Rendering.Vulkan
                 materialName,
                 shaderName,
                 exception.Message);
+        }
+
+        private readonly object _lastFrameOpTraceLock = new();
+        private FrameOpTraceEntry[] _lastFrameOpTraceEntries = [];
+        private ulong _lastFrameOpTraceFrameId;
+        private int _lastFrameOpTraceTotalCount;
+
+        private sealed record FrameOpTraceEntry(
+            int Index,
+            string OpType,
+            int PassIndex,
+            string PassName,
+            string TargetName,
+            int TargetIdentity,
+            int PipelineIdentity,
+            string PipelineName,
+            int ViewportIdentity,
+            uint DisplayWidth,
+            uint DisplayHeight,
+            uint InternalWidth,
+            uint InternalHeight,
+            string Detail);
+
+        private void CaptureLastFrameOpTrace(FrameOp[] ops)
+        {
+            const int MaxCapturedEntries = 512;
+            int count = Math.Min(ops.Length, MaxCapturedEntries);
+            FrameOpTraceEntry[] entries = new FrameOpTraceEntry[count];
+
+            for (int i = 0; i < count; i++)
+            {
+                FrameOp op = ops[i];
+                FrameOpContext context = op.Context;
+                entries[i] = new FrameOpTraceEntry(
+                    i,
+                    op.GetType().Name,
+                    op.PassIndex,
+                    TryGetPassName(op) ?? "<unknown>",
+                    ResolveCommandChainTargetName(op),
+                    ResolveCommandChainTargetIdentity(op),
+                    context.PipelineIdentity,
+                    context.PipelineInstance?.Pipeline?.GetType().Name ?? "<no pipeline>",
+                    context.ViewportIdentity,
+                    context.DisplayWidth,
+                    context.DisplayHeight,
+                    context.InternalWidth,
+                    context.InternalHeight,
+                    BuildFrameOpTraceDetail(op));
+            }
+
+            lock (_lastFrameOpTraceLock)
+            {
+                _lastFrameOpTraceFrameId = VulkanFrameCounter;
+                _lastFrameOpTraceTotalCount = ops.Length;
+                _lastFrameOpTraceEntries = entries;
+            }
+        }
+
+        private static string BuildFrameOpTraceDetail(FrameOp op)
+            => op switch
+            {
+                MeshDrawOp drawOp => BuildMeshDrawFrameOpTraceDetail(drawOp),
+                BlitOp blitOp => $"in='{blitOp.InFbo?.Name ?? "<swapchain>"}' out='{blitOp.OutFbo?.Name ?? "<swapchain>"}'",
+                ComputeDispatchOp computeOp => $"compute='{computeOp.Program.Data.Name ?? "<unnamed program>"}' groups={computeOp.GroupsX},{computeOp.GroupsY},{computeOp.GroupsZ}",
+                IndirectDrawOp indirectOp => $"renderer='{indirectOp.MeshRenderer.MeshRenderer?.Name ?? "<unnamed renderer>"}' draws={indirectOp.DrawCount}",
+                QueryOp queryOp => $"query={queryOp.Operation} target={queryOp.QueryTarget}",
+                ClearOp clearOp => $"clearColor={clearOp.ClearColor} clearDepth={clearOp.ClearDepth} clearStencil={clearOp.ClearStencil}",
+                _ => string.Empty
+            };
+
+        private static string BuildMeshDrawFrameOpTraceDetail(MeshDrawOp drawOp)
+        {
+            XRMeshRenderer meshRenderer = drawOp.Draw.Renderer.MeshRenderer;
+            XRMaterial? material = drawOp.Draw.MaterialOverride ?? meshRenderer.Material;
+            return
+                $"mesh='{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}' material='{material?.Name ?? "<unnamed material>"}' instances={drawOp.Draw.Instances}";
+        }
+
+        public object GetLastFrameOpTraceDiagnostics(int limit = 128, string? targetContains = null)
+        {
+            FrameOpTraceEntry[] entries;
+            ulong frameId;
+            int totalCount;
+            lock (_lastFrameOpTraceLock)
+            {
+                entries = _lastFrameOpTraceEntries;
+                frameId = _lastFrameOpTraceFrameId;
+                totalCount = _lastFrameOpTraceTotalCount;
+            }
+
+            int clampedLimit = Math.Clamp(limit, 1, 512);
+            bool hasFilter = !string.IsNullOrWhiteSpace(targetContains);
+            List<FrameOpTraceEntry> filtered = new(Math.Min(entries.Length, clampedLimit));
+            for (int i = 0; i < entries.Length && filtered.Count < clampedLimit; i++)
+            {
+                FrameOpTraceEntry entry = entries[i];
+                if (hasFilter &&
+                    !entry.TargetName.Contains(targetContains!, StringComparison.OrdinalIgnoreCase) &&
+                    !entry.Detail.Contains(targetContains!, StringComparison.OrdinalIgnoreCase) &&
+                    !entry.PassName.Contains(targetContains!, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                filtered.Add(entry);
+            }
+
+            return new
+            {
+                enabled = FrameOpTraceEnabled,
+                frameId,
+                totalCount,
+                capturedCount = entries.Length,
+                returnedCount = filtered.Count,
+                targetContains,
+                entries = filtered
+            };
         }
 
         private static string BuildFrameOpFailureContext(FrameOp op)
@@ -247,6 +365,39 @@ namespace XREngine.Rendering.Vulkan
                 string.Equals(meshRenderer.Mesh?.Name, "UIBatchTextQuadMesh", StringComparison.Ordinal);
         }
 
+        private static bool IsDynamicUiOverlayDrawOp(FrameOp op)
+        {
+            if (IsUiBatchTextDrawOp(op))
+                return true;
+
+            if (op is not MeshDrawOp drawOp ||
+                drawOp.Target is not null ||
+                drawOp.PassIndex != (int)EDefaultRenderPass.OnTopForward ||
+                drawOp.Context.PipelineInstance?.Pipeline is not UserInterfaceRenderPipeline)
+            {
+                return false;
+            }
+
+            PendingMeshDraw draw = drawOp.Draw;
+            Matrix4x4 model = draw.ModelMatrix;
+            float width = MathF.Abs(model.M11);
+            float height = MathF.Abs(model.M22);
+            if (width < 1.0f || height < 1.0f)
+                return false;
+
+            float maxX = MathF.Max(draw.RenderAreaWidth, drawOp.Context.DisplayWidth);
+            float maxY = MathF.Max(draw.RenderAreaHeight, drawOp.Context.DisplayHeight);
+            if (maxX <= 0.0f || maxY <= 0.0f)
+                return false;
+
+            const float edgeTolerance = 4.0f;
+            return !draw.IsStereoPass &&
+                model.M41 >= -edgeTolerance &&
+                model.M42 >= -edgeTolerance &&
+                model.M41 <= maxX + edgeTolerance &&
+                model.M42 <= maxY + edgeTolerance;
+        }
+
         private static bool HasTextureUploadFrameOps(FrameOp[] ops)
         {
             for (int i = 0; i < ops.Length; i++)
@@ -304,7 +455,7 @@ namespace XREngine.Rendering.Vulkan
             int dynamicCount = 0;
             for (int i = 0; i < ops.Length; i++)
             {
-                if (IsUiBatchTextDrawOp(ops[i]))
+                if (IsDynamicUiOverlayDrawOp(ops[i]))
                     dynamicCount++;
             }
 
@@ -322,7 +473,7 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < ops.Length; i++)
             {
                 FrameOp op = ops[i];
-                if (IsUiBatchTextDrawOp(op))
+                if (IsDynamicUiOverlayDrawOp(op))
                     dynamicUiBatchTextOps[dynamicIndex++] = op;
                 else
                     staticOps[staticIndex++] = op;

@@ -1,4 +1,5 @@
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering;
 
@@ -113,6 +114,9 @@ internal static class DefaultRenderPipelineQuadDescriptors
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor FinalPostProcess()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(DefaultRenderPipeline.PostProcessOutputTextureName);
+
+    public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor FinalPostProcessToOutputTarget()
+        => FinalPostProcess();
 
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor TsrUpscale()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()

@@ -435,9 +435,18 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
              RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
              RuntimeEngine.VRState.OpenXRApi is not null ||
              RuntimeEngine.VRState.IsOpenXRActive);
-        if (openXrVulkanRuntimeSelected && !RuntimeEngine.Rendering.State.IsStereoPass)
+
+        if (!externalSwapchainTarget && !RuntimeEngine.Rendering.State.IsStereoPass)
         {
-            reason = "pending/running OpenXR Vulkan runtime";
+            reason = "mono/shared temporal history";
+            return EVrTemporalHistoryPolicy.HeadsetShared;
+        }
+
+        if (openXrVulkanRuntimeSelected &&
+            externalSwapchainTarget &&
+            !RuntimeEngine.Rendering.State.IsStereoPass)
+        {
+            reason = "external OpenXR Vulkan swapchain target";
             return EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain;
         }
 

@@ -54,31 +54,34 @@ public partial class DefaultRenderPipeline
 
     private const int BloomMaxMipmapLevel = 4;
 
-    internal ulong BuildResourceFeatureMaskForGenerationKey()
+    internal ulong BuildResourceFeatureMaskForGenerationKey(XRViewport? viewport = null)
     {
         DefaultPipelineResourceFeature mask = DefaultPipelineResourceFeature.None;
+        bool useOpenXrVulkanSafePath = UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport);
 
-        if (EnableDeferredMsaa)
+        if (EnableDeferredMsaa && !useOpenXrVulkanSafePath)
             mask |= DefaultPipelineResourceFeature.DeferredMsaaEnabled;
-        bool useForwardPrePassResources = ForwardDepthPrePassEnabled && !UseOpenXrVulkanDesktopStartupSafePath;
+        bool useForwardPrePassResources = ForwardDepthPrePassEnabled && !useOpenXrVulkanSafePath;
         if (useForwardPrePassResources)
             mask |= DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled;
         if (useForwardPrePassResources && ForwardPrePassSharesGBufferTargets)
             mask |= DefaultPipelineResourceFeature.ForwardPrePassSharesGBufferTargets;
-        if (RuntimeEnableVendorUpscale)
+        if (!useOpenXrVulkanSafePath && RuntimeEnableVendorUpscale)
             mask |= DefaultPipelineResourceFeature.VendorUpscalePreferred;
-        if (EnableWeightedBlendedOitPasses)
+        if (!useOpenXrVulkanSafePath && EnableWeightedBlendedOitPasses)
             mask |= DefaultPipelineResourceFeature.WeightedBlendedOitEnabled;
-        if (ExactTransparencyEnabled)
+        if (!useOpenXrVulkanSafePath && ExactTransparencyEnabled)
             mask |= DefaultPipelineResourceFeature.ExactTransparencyEnabled;
-        if (ShouldUseMotionBlur())
+        if (!useOpenXrVulkanSafePath && ShouldUseMotionBlur())
             mask |= DefaultPipelineResourceFeature.MotionBlurEnabled;
-        if (ShouldUseDepthOfField())
+        if (!useOpenXrVulkanSafePath && ShouldUseDepthOfField())
             mask |= DefaultPipelineResourceFeature.DepthOfFieldEnabled;
 
-        if (UseOpenXrVulkanDesktopStartupSafePath)
+        if (useOpenXrVulkanSafePath)
         {
             mask |= DefaultPipelineResourceFeature.OpenXrVulkanDesktopSafePath;
+            if (RuntimeNeedsTemporalAaResources)
+                mask |= DefaultPipelineResourceFeature.TemporalResourcesEnabled;
         }
         else
         {
@@ -785,7 +788,9 @@ public partial class DefaultRenderPipeline
     {
         RenderResourceSizePolicy windowSize = RenderResourceSizePolicy.Window();
         RenderPipelineResourcePredicate fxaa = static profile =>
-            !UsesOpenXrVulkanDesktopSafePath(profile) && profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;
+            profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;
+        RenderPipelineResourcePredicate smaa = static profile =>
+            profile.AntiAliasingMode == EAntiAliasingMode.Smaa;
         RenderPipelineResourcePredicate tsr = static profile =>
             UsesTemporalResources(profile) && profile.AntiAliasingMode == EAntiAliasingMode.Tsr;
 
@@ -802,6 +807,53 @@ public partial class DefaultRenderPipeline
             .Color(0, FxaaOutputTextureName)
             .Factory(CreateFxaaFBO)
             .When(fxaa)
+            .Add();
+
+        Texture(builder, SmaaEdgeTextureName, windowSize, SampledColorAttachment,
+            EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8,
+            CreateSmaaEdgeTexture)
+            .When(smaa)
+            .Add();
+
+        Texture(builder, SmaaBlendTextureName, windowSize, SampledColorAttachment,
+            EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8,
+            CreateSmaaBlendTexture)
+            .When(smaa)
+            .Add();
+
+        Texture(builder, SmaaOutputTextureName, windowSize, SampledColorAttachment,
+            ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
+            CreateSmaaOutputTexture)
+            .When(smaa)
+            .Add();
+
+        builder.FrameBuffer(SmaaEdgeFBOName)
+            .Size(windowSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Color(0, SmaaEdgeTextureName)
+            .Factory(CreateSmaaEdgeFBO)
+            .When(smaa)
+            .Add();
+
+        builder.FrameBuffer(SmaaBlendFBOName)
+            .Size(windowSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(SmaaEdgeTextureName)
+            .Color(0, SmaaBlendTextureName)
+            .Factory(CreateSmaaBlendFBO)
+            .When(smaa)
+            .Add();
+
+        builder.FrameBuffer(SmaaFBOName)
+            .Size(windowSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(SmaaBlendTextureName)
+            .Color(0, SmaaOutputTextureName)
+            .Factory(CreateSmaaFBO)
+            .When(smaa)
             .Add();
 
         Texture(builder, TsrOutputTextureName, windowSize, SampledColorAttachment,
@@ -1225,6 +1277,7 @@ public partial class DefaultRenderPipeline
     private bool UsesDeferredMsaa(RenderPipelineResourceProfile profile)
         => EnableDeferredMsaa
         && !profile.Stereo
+        && !UsesOpenXrVulkanDesktopSafePath(profile)
         && profile.AntiAliasingMode == EAntiAliasingMode.Msaa
         && profile.MsaaSampleCount > 1u;
 

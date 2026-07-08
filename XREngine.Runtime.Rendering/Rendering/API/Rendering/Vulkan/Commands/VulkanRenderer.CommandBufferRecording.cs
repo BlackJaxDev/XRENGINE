@@ -1053,6 +1053,7 @@ namespace XREngine.Rendering.Vulkan
                 MeshTaskDispatchIndirectCountOp => "Vulkan.RecordPrimary.Op.MeshTaskDispatch",
                 ComputeDispatchOp => "Vulkan.RecordPrimary.Op.ComputeDispatch",
                 MemoryBarrierOp => "Vulkan.RecordPrimary.Op.MemoryBarrier",
+                PublishFramebufferForSamplingOp => "Vulkan.RecordPrimary.Op.PublishFramebufferForSampling",
                 DlssUpscaleOp => "Vulkan.RecordPrimary.Op.DlssUpscale",
                 DlssFrameGenerationOp => "Vulkan.RecordPrimary.Op.DlssFrameGeneration",
                 TextureUploadFrameOp => "Vulkan.RecordPrimary.Op.TextureUpload",
@@ -1963,6 +1964,8 @@ namespace XREngine.Rendering.Vulkan
                     computeCount,
                     swapchainWriteCount,
                     fboOnlyDrawOps + fboOnlyBlitOps);
+                if (FrameOpTraceEnabled)
+                    CaptureLastFrameOpTrace(ops);
 
                 if (VulkanFrameDiagnosticsTraceEnabled)
                 {
@@ -2397,7 +2400,7 @@ namespace XREngine.Rendering.Vulkan
                 bool transitionSwapchainToPresent = activeDynamicRendering && activeTarget is null;
                 if (activeDynamicRendering)
                 {
-                    Api!.CmdEndRendering(commandBuffer);
+                    CmdEndDynamicRendering(commandBuffer);
 
                     if (transitionSwapchainToPresent)
                     {
@@ -2514,7 +2517,7 @@ namespace XREngine.Rendering.Vulkan
                     }
                 }
 
-                Api!.CmdBeginRendering(commandBuffer, &renderingInfo);
+                CmdBeginDynamicRendering(commandBuffer, &renderingInfo);
             }
 
             static SampleCountFlags ResolveDynamicRenderingSampleCount(FrameBufferAttachmentSignature[] signatures)
@@ -4441,7 +4444,7 @@ namespace XREngine.Rendering.Vulkan
 
                         BeginDynamicRenderingScope(in scopePlan, secondaryContents: true);
                         Api!.CmdExecuteCommands(commandBuffer, 1, &secondaryCommandBuffer);
-                        Api!.CmdEndRendering(commandBuffer);
+                        CmdEndDynamicRendering(commandBuffer);
 
                         usedSwapchainDynamicRendering = true;
                         swapchainInColorAttachmentLayout = true;
@@ -4954,6 +4957,8 @@ namespace XREngine.Rendering.Vulkan
                         if (TryExecuteScheduledMeshCommandChainSecondaryRun(opIndex, meshCommandChainRunCount, opPassIndex, drawOp) ||
                             TryExecuteMeshCommandChainSecondaryRun(opIndex, meshCommandChainRunCount, opPassIndex, drawOp))
                         {
+                            if (drawOp.Target is null)
+                                actualSwapchainWriteCount += meshCommandChainRunCount;
                             opIndex = opIndex + meshCommandChainRunCount - 1;
                             break;
                         }
@@ -5034,6 +5039,13 @@ namespace XREngine.Rendering.Vulkan
                         EndActiveRenderPass();
                         CmdBeginLabel(commandBuffer, "MemoryBarrier");
                         EmitMemoryBarrierMask(commandBuffer, memoryBarrierOp.Mask);
+                        CmdEndLabel(commandBuffer);
+                        break;
+
+                    case PublishFramebufferForSamplingOp publishOp:
+                        EndActiveRenderPass();
+                        CmdBeginLabel(commandBuffer, "PublishFramebufferForSampling");
+                        RecordPublishFramebufferForSamplingOp(commandBuffer, publishOp);
                         CmdEndLabel(commandBuffer);
                         break;
 
@@ -5632,6 +5644,205 @@ namespace XREngine.Rendering.Vulkan
                 return int.MinValue;
             return (int)value;
         }
+
+        private void RecordPublishFramebufferForSamplingOp(CommandBuffer commandBuffer, PublishFramebufferForSamplingOp op)
+        {
+            XRFrameBuffer fbo = op.FrameBuffer;
+            EnsureFrameBufferRegistered(fbo);
+            EnsureFrameBufferAttachmentsRegistered(fbo);
+
+            if (GetOrCreateAPIRenderObject(fbo, generateNow: true) is not VkFrameBuffer vkFbo)
+                return;
+
+            vkFbo.EnsureCurrent();
+            if (vkFbo.AttachmentCount == 0)
+                return;
+
+            int maxLayerSpan = Math.Max((int)vkFbo.FramebufferLayers, 1);
+            ImageMemoryBarrier* barriers = stackalloc ImageMemoryBarrier[checked((int)vkFbo.AttachmentCount * maxLayerSpan)];
+            uint barrierCount = 0;
+            PipelineStageFlags srcStages = 0;
+            PipelineStageFlags dstStages = 0;
+
+            for (int attachmentIndex = 0; attachmentIndex < (int)vkFbo.AttachmentCount; attachmentIndex++)
+            {
+                if (!vkFbo.TryGetAttachmentTarget(
+                    attachmentIndex,
+                    out IFrameBufferAttachement? target,
+                    out EFrameBufferAttachment attachment,
+                    out int mipLevel,
+                    out int layerIndex) ||
+                    !IsColorAttachment(attachment))
+                {
+                    continue;
+                }
+
+                const ImageAspectFlags requestedAspect = ImageAspectFlags.ColorBit;
+                if (!TryResolveAttachmentImage(target, mipLevel, layerIndex, requestedAspect, out BlitImageInfo info) ||
+                    info.Image.Handle == 0)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.PublishFboForSampling.Unresolved.{fbo.GetHashCode()}.{attachmentIndex}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Skipping publish-for-sampling for '{0}' attachment {1}: image handle could not be resolved.",
+                        fbo.Name ?? "<unnamed>",
+                        attachmentIndex);
+                    continue;
+                }
+
+                Image transitionImage = info.Image;
+                uint transitionMipLevel = info.MipLevel;
+                uint imageBaseLayer;
+                uint transitionLayerCount;
+                ImageAspectFlags aspectMask = NormalizeBarrierAspectMask(info.Format, requestedAspect);
+
+                if (vkFbo.TryGetAttachmentView(attachmentIndex, out ImageView attachmentView) &&
+                    TryGetDescriptorHeapImageViewCreateInfo(attachmentView, out ImageViewCreateInfo viewInfo) &&
+                    viewInfo.Image.Handle != 0)
+                {
+                    transitionImage = viewInfo.Image;
+                    transitionMipLevel = viewInfo.SubresourceRange.BaseMipLevel;
+                    imageBaseLayer = viewInfo.SubresourceRange.BaseArrayLayer;
+                    transitionLayerCount = Math.Max(viewInfo.SubresourceRange.LayerCount, 1u);
+
+                    ImageAspectFlags viewAspect = NormalizeBarrierAspectMask(info.Format, viewInfo.SubresourceRange.AspectMask);
+                    if (viewAspect != ImageAspectFlags.None)
+                        aspectMask = viewAspect;
+                }
+                else
+                {
+                    ResolveFboAttachmentImageLayerSpan(
+                        vkFbo,
+                        layerIndex,
+                        in info,
+                        out imageBaseLayer,
+                        out transitionLayerCount);
+                }
+
+                ResolveFboAttachmentTrackedLayerSpan(
+                    vkFbo,
+                    layerIndex,
+                    out uint trackedBaseLayer,
+                    out uint trackedLayerCount);
+
+                ImageLayout targetLayout = ResolvePublishedSampledLayout(info.DescriptorSource, aspectMask);
+                uint layerCount = Math.Max(transitionLayerCount, 1u);
+                for (uint layerOffset = 0; layerOffset < layerCount; layerOffset++)
+                {
+                    uint imageLayer = imageBaseLayer + layerOffset;
+                    int trackedLayer = checked((int)(trackedBaseLayer + Math.Min(layerOffset, Math.Max(trackedLayerCount, 1u) - 1u)));
+                    ImageSubresourceRange transitionRange = new()
+                    {
+                        AspectMask = aspectMask,
+                        BaseMipLevel = transitionMipLevel,
+                        LevelCount = 1,
+                        BaseArrayLayer = imageLayer,
+                        LayerCount = 1
+                    };
+
+                    ImageLayout oldLayout = TryGetTrackedImageLayout(transitionImage, transitionRange, out ImageLayout trackedImageLayout)
+                        ? trackedImageLayout
+                        : ResolveFboAttachmentOldLayout(target, mipLevel, trackedLayer, info.PreferredLayout);
+                    if (oldLayout == ImageLayout.Undefined)
+                        oldLayout = ImageLayout.ColorAttachmentOptimal;
+
+                    if (oldLayout == targetLayout)
+                    {
+                        UpdateAttachmentTrackedLayout(target, mipLevel, trackedLayer, targetLayout);
+                        continue;
+                    }
+
+                    PipelineStageFlags srcStage = ResolvePublishedSampledSourceStage(oldLayout);
+                    PipelineStageFlags dstStage = ResolvePublishedSampledDestinationStage(targetLayout);
+                    ImageMemoryBarrier barrier = new()
+                    {
+                        SType = StructureType.ImageMemoryBarrier,
+                        SrcAccessMask = ResolvePublishedSampledSourceAccess(oldLayout),
+                        DstAccessMask = ResolvePublishedSampledDestinationAccess(targetLayout),
+                        OldLayout = oldLayout,
+                        NewLayout = targetLayout,
+                        SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                        DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                        Image = transitionImage,
+                        SubresourceRange = transitionRange
+                    };
+
+                    barriers[barrierCount++] = barrier;
+                    srcStages |= srcStage;
+                    dstStages |= dstStage;
+                    UpdateAttachmentTrackedLayout(target, mipLevel, trackedLayer, targetLayout);
+                }
+            }
+
+            if (barrierCount == 0)
+                return;
+
+            CmdPipelineBarrierTracked(
+                commandBuffer,
+                NormalizePipelineStages(srcStages),
+                NormalizePipelineStages(dstStages),
+                DependencyFlags.None,
+                0,
+                null,
+                0,
+                null,
+                barrierCount,
+                barriers);
+        }
+
+        private static ImageLayout ResolvePublishedSampledLayout(IVkImageDescriptorSource? source, ImageAspectFlags aspectMask)
+        {
+            if (source is not null &&
+                (source.DescriptorUsage & ImageUsageFlags.StorageBit) != 0 &&
+                (source.DescriptorUsage & ImageUsageFlags.SampledBit) != 0)
+            {
+                return ImageLayout.General;
+            }
+
+            return IsDepthOrStencilAspect(aspectMask)
+                ? ImageLayout.DepthStencilReadOnlyOptimal
+                : ImageLayout.ShaderReadOnlyOptimal;
+        }
+
+        private static PipelineStageFlags ResolvePublishedSampledSourceStage(ImageLayout layout)
+            => layout switch
+            {
+                ImageLayout.Undefined => PipelineStageFlags.TopOfPipeBit,
+                ImageLayout.ColorAttachmentOptimal => PipelineStageFlags.ColorAttachmentOutputBit,
+                ImageLayout.DepthStencilAttachmentOptimal or ImageLayout.DepthAttachmentOptimal =>
+                    PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
+                ImageLayout.TransferSrcOptimal or ImageLayout.TransferDstOptimal => PipelineStageFlags.TransferBit,
+                ImageLayout.ShaderReadOnlyOptimal or ImageLayout.DepthStencilReadOnlyOptimal =>
+                    PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                ImageLayout.General => PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                ImageLayout.PresentSrcKhr => PipelineStageFlags.BottomOfPipeBit,
+                _ => PipelineStageFlags.AllCommandsBit
+            };
+
+        private static PipelineStageFlags ResolvePublishedSampledDestinationStage(ImageLayout layout)
+            => layout == ImageLayout.General
+                ? PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit
+                : PipelineStageFlags.FragmentShaderBit;
+
+        private static AccessFlags ResolvePublishedSampledSourceAccess(ImageLayout layout)
+            => layout switch
+            {
+                ImageLayout.Undefined => 0,
+                ImageLayout.ColorAttachmentOptimal => AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
+                ImageLayout.DepthStencilAttachmentOptimal or ImageLayout.DepthAttachmentOptimal =>
+                    AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit,
+                ImageLayout.DepthStencilReadOnlyOptimal => AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.ShaderReadBit,
+                ImageLayout.TransferSrcOptimal => AccessFlags.TransferReadBit,
+                ImageLayout.TransferDstOptimal => AccessFlags.TransferWriteBit,
+                ImageLayout.ShaderReadOnlyOptimal => AccessFlags.ShaderReadBit,
+                ImageLayout.General => AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+                _ => AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit
+            };
+
+        private static AccessFlags ResolvePublishedSampledDestinationAccess(ImageLayout layout)
+            => layout == ImageLayout.General
+                ? AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit
+                : AccessFlags.ShaderReadBit;
 
         private bool RecordBlitOp(CommandBuffer commandBuffer, uint imageIndex, BlitOp op)
         {

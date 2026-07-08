@@ -36,6 +36,33 @@ namespace XREngine.Rendering.Vulkan
 
             EnqueueFrameOp(new MemoryBarrierOp(passIndex, mask, context));
         }
+
+        public override void PublishFrameBufferAttachmentsForSampling(XRFrameBuffer frameBuffer)
+        {
+            ArgumentNullException.ThrowIfNull(frameBuffer);
+
+            EnsureFrameBufferRegistered(frameBuffer);
+            EnsureFrameBufferAttachmentsRegistered(frameBuffer);
+
+            FrameOpContext context;
+            int passIndex;
+            if (TryGetLastFrameOpForTarget(frameBuffer, out FrameOp lastWriter))
+            {
+                context = lastWriter.Context;
+                passIndex = lastWriter.PassIndex;
+            }
+            else
+            {
+                context = CaptureFrameOpContextOrLastActive();
+                passIndex = EnsureValidPassIndex(
+                    RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+                    "PublishFrameBufferAttachmentsForSampling",
+                    context.PassMetadata);
+            }
+
+            EnqueueFrameOp(new PublishFramebufferForSamplingOp(passIndex, frameBuffer, context));
+        }
+
         public override void ColorMask(bool red, bool green, bool blue, bool alpha)
         {
             ActiveState.SetColorMask(red, green, blue, alpha);

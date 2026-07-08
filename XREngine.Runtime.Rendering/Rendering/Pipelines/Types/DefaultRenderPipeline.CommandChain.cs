@@ -14,8 +14,6 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline
 {
-    #region Command Chain Generation
-
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer c = new(this);
@@ -27,9 +25,21 @@ public partial class DefaultRenderPipeline
     }
 
     private static bool ShouldUseViewportTargetCommands()
-        => State.WindowViewport is not null
-        && (RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null
-            || RuntimeEngine.Rendering.State.IsStereoPass);
+    {
+        XRViewport? viewport = State.WindowViewport;
+        if (viewport is null)
+            return false;
+
+        if (RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null)
+            return true;
+
+        if (viewport.UseDirectFboTargetCommandsWhenRenderingToFbo)
+            return false;
+
+        return RuntimeEngine.Rendering.State.IsStereoPass
+            || RuntimeEngine.Rendering.State.IsSceneCapturePass
+            || RuntimeEngine.Rendering.State.IsLightProbePass;
+    }
 
     public ViewportRenderCommandContainer CreateFBOTargetCommands()
     {
@@ -166,7 +176,7 @@ public partial class DefaultRenderPipeline
         || ShouldRunExactTransparencyPasses();
 
     private static bool ShouldUseTemporalAccumulationResources()
-        => !UseOpenXrVulkanDesktopStartupSafePath;
+        => RuntimeNeedsTemporalAaResources;
 
     private static bool ShouldUseFullSizePostProcessCompositeInputDefaults()
         => !UseOpenXrVulkanDesktopStartupSafePath;
@@ -274,21 +284,26 @@ public partial class DefaultRenderPipeline
         }))
         {
             c.Add<VPRC_StencilMask>().Set(~0u);
+            c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
             c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = true;
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, MeshSubmissionStrategy);
         }
 
-        var msaaGBufferBranch = c.Add<VPRC_IfElse>();
-        msaaGBufferBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+        if (!UseOpenXrVulkanDesktopStartupSafePath)
         {
-            var msaaGeomCmds = new ViewportRenderCommandContainer(this);
-            msaaGeomCmds.Add<VPRC_ResolveMsaaGBuffer>().SetOptions(
-                MsaaGBufferFBOName,
-                DeferredGBufferFBOName,
-                colorAttachmentCount: 4,
-                resolveDepthStencil: true);
-            msaaGBufferBranch.TrueCommands = msaaGeomCmds;
+            var msaaGBufferBranch = c.Add<VPRC_IfElse>();
+            msaaGBufferBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+            {
+                var msaaGeomCmds = new ViewportRenderCommandContainer(this);
+                msaaGeomCmds.Add<VPRC_ResolveMsaaGBuffer>().SetOptions(
+                    MsaaGBufferFBOName,
+                    DeferredGBufferFBOName,
+                    colorAttachmentCount: 4,
+                    resolveDepthStencil: true);
+                msaaGBufferBranch.TrueCommands = msaaGeomCmds;
+            }
         }
 
         AppendDiagnosticTextureCapture(c, "01_AlbedoOpacity", AlbedoOpacityTextureName);
@@ -413,134 +428,150 @@ public partial class DefaultRenderPipeline
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Black, null, null);
 
-        var msaaMarkBranch = c.Add<VPRC_IfElse>();
-        msaaMarkBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+        if (!UseOpenXrVulkanDesktopStartupSafePath)
         {
-            var markCmds = new ViewportRenderCommandContainer(this);
-            using (markCmds.AddUsing<VPRC_BindFBOByName>(x =>
-                x.SetOptions(MsaaLightingFBOName, write: true, clearColor: true, clearDepth: false, clearStencil: true)))
+            var msaaMarkBranch = c.Add<VPRC_IfElse>();
+            msaaMarkBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
             {
-                markCmds.Add<VPRC_StencilMask>().Set(~0u);
-                markCmds.Add<VPRC_MarkComplexMsaaPixels>().SetOptions(
-                    MsaaNormalTextureName,
-                    MsaaDepthViewTextureName);
-            }
-            msaaMarkBranch.TrueCommands = markCmds;
-        }
-
-        var msaaLightingBranch = c.Add<VPRC_IfElse>();
-        msaaLightingBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
-        {
-            var msaaLightCmds = new ViewportRenderCommandContainer(this);
-            using (msaaLightCmds.AddUsing<VPRC_BindFBOByName>(x =>
-                x.SetOptions(MsaaLightingFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
-            using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
-            {
-                x.BufferName = LightProbePositionBufferName;
-                x.BindingLocation = DeferredLightProbePositionBufferBinding;
-            }))
-            using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
-            {
-                x.BufferName = LightProbeTetraBufferName;
-                x.BindingLocation = DeferredLightProbeTetraBufferBinding;
-            }))
-            using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
-            {
-                x.BufferName = LightProbeParamBufferName;
-                x.BindingLocation = DeferredLightProbeParamBufferBinding;
-            }))
-            using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
-            {
-                x.BufferName = LightProbeGridCellBufferName;
-                x.BindingLocation = DeferredLightProbeGridCellBufferBinding;
-            }))
-            using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
-            {
-                x.BufferName = LightProbeGridIndexBufferName;
-                x.BindingLocation = DeferredLightProbeGridIndexBufferBinding;
-            }))
-            using (msaaLightCmds.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
-            {
-                msaaLightCmds.Add<VPRC_StencilMask>().Set(~0u);
-                var msaaLightPass = msaaLightCmds.Add<VPRC_LightCombinePass>();
-                msaaLightPass.SetOptions(
-                    AlbedoOpacityTextureName,
-                    NormalTextureName,
-                    RMSETextureName,
-                    DepthViewTextureName);
-                msaaLightPass.MsaaDeferred = true;
+                var markCmds = new ViewportRenderCommandContainer(this);
+                using (markCmds.AddUsing<VPRC_BindFBOByName>(x =>
+                    x.SetOptions(MsaaLightingFBOName, write: true, clearColor: true, clearDepth: false, clearStencil: true)))
+                {
+                    markCmds.Add<VPRC_StencilMask>().Set(~0u);
+                    markCmds.Add<VPRC_MarkComplexMsaaPixels>().SetOptions(
+                        MsaaNormalTextureName,
+                        MsaaDepthViewTextureName);
+                }
+                msaaMarkBranch.TrueCommands = markCmds;
             }
 
-            msaaLightCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
-                MsaaLightingFBOName,
-                LightingAccumFBOName,
-                EReadBufferMode.ColorAttachment0,
-                blitColor: true,
-                blitDepth: false,
-                blitStencil: false,
-                linearFilter: false);
-            msaaLightingBranch.TrueCommands = msaaLightCmds;
-        }
-        {
-            var stdLightCmds = new ViewportRenderCommandContainer(this);
-            using (stdLightCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightingAccumFBOName, clearDepth: false, clearStencil: false)))
-            using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+            var msaaLightingBranch = c.Add<VPRC_IfElse>();
+            msaaLightingBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
             {
-                x.BufferName = LightProbePositionBufferName;
-                x.BindingLocation = DeferredLightProbePositionBufferBinding;
-            }))
-            using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
-            {
-                x.BufferName = LightProbeTetraBufferName;
-                x.BindingLocation = DeferredLightProbeTetraBufferBinding;
-            }))
-            using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
-            {
-                x.BufferName = LightProbeParamBufferName;
-                x.BindingLocation = DeferredLightProbeParamBufferBinding;
-            }))
-            using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
-            {
-                x.BufferName = LightProbeGridCellBufferName;
-                x.BindingLocation = DeferredLightProbeGridCellBufferBinding;
-            }))
-            using (stdLightCmds.AddUsing<VPRC_BindBuffer>(x =>
-            {
-                x.BufferName = LightProbeGridIndexBufferName;
-                x.BindingLocation = DeferredLightProbeGridIndexBufferBinding;
-            }))
-            using (stdLightCmds.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
-            {
-                stdLightCmds.Add<VPRC_StencilMask>().Set(~0u);
-                stdLightCmds.Add<VPRC_LightCombinePass>().SetOptions(
-                    AlbedoOpacityTextureName,
-                    NormalTextureName,
-                    RMSETextureName,
-                    DepthViewTextureName);
+                var msaaLightCmds = new ViewportRenderCommandContainer(this);
+                using (msaaLightCmds.AddUsing<VPRC_BindFBOByName>(x =>
+                    x.SetOptions(MsaaLightingFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+                using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbePositionBufferName;
+                    x.BindingLocation = DeferredLightProbePositionBufferBinding;
+                }))
+                using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeTetraBufferName;
+                    x.BindingLocation = DeferredLightProbeTetraBufferBinding;
+                }))
+                using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeParamBufferName;
+                    x.BindingLocation = DeferredLightProbeParamBufferBinding;
+                }))
+                using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeGridCellBufferName;
+                    x.BindingLocation = DeferredLightProbeGridCellBufferBinding;
+                }))
+                using (msaaLightCmds.AddUsing<VPRC_BindBuffer>(x =>
+                {
+                    x.BufferName = LightProbeGridIndexBufferName;
+                    x.BindingLocation = DeferredLightProbeGridIndexBufferBinding;
+                }))
+                using (msaaLightCmds.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
+                {
+                    msaaLightCmds.Add<VPRC_StencilMask>().Set(~0u);
+                    var msaaLightPass = msaaLightCmds.Add<VPRC_LightCombinePass>();
+                    msaaLightPass.SetOptions(
+                        AlbedoOpacityTextureName,
+                        NormalTextureName,
+                        RMSETextureName,
+                        DepthViewTextureName);
+                    msaaLightPass.MsaaDeferred = true;
+                }
+
+                msaaLightCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                    MsaaLightingFBOName,
+                    LightingAccumFBOName,
+                    EReadBufferMode.ColorAttachment0,
+                    blitColor: true,
+                    blitDepth: false,
+                    blitStencil: false,
+                    linearFilter: false);
+                msaaLightingBranch.TrueCommands = msaaLightCmds;
             }
-            msaaLightingBranch.FalseCommands = stdLightCmds;
+            {
+                var stdLightCmds = new ViewportRenderCommandContainer(this);
+                AppendStandardLightingCommands(stdLightCmds);
+                msaaLightingBranch.FalseCommands = stdLightCmds;
+            }
+        }
+        else
+        {
+            AppendStandardLightingCommands(c);
         }
 
         AppendDiagnosticTextureCapture(c, "05_LightingAccum", LightingAccumTextureName);
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, null, null);
     }
 
+    private void AppendStandardLightingCommands(ViewportRenderCommandContainer c)
+    {
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightingAccumFBOName, clearDepth: false, clearStencil: false)))
+        using (c.AddUsing<VPRC_BindBuffer>(x =>
+        {
+            x.BufferName = LightProbePositionBufferName;
+            x.BindingLocation = DeferredLightProbePositionBufferBinding;
+        }))
+        using (c.AddUsing<VPRC_BindBuffer>(x =>
+        {
+            x.BufferName = LightProbeTetraBufferName;
+            x.BindingLocation = DeferredLightProbeTetraBufferBinding;
+        }))
+        using (c.AddUsing<VPRC_BindBuffer>(x =>
+        {
+            x.BufferName = LightProbeParamBufferName;
+            x.BindingLocation = DeferredLightProbeParamBufferBinding;
+        }))
+        using (c.AddUsing<VPRC_BindBuffer>(x =>
+        {
+            x.BufferName = LightProbeGridCellBufferName;
+            x.BindingLocation = DeferredLightProbeGridCellBufferBinding;
+        }))
+        using (c.AddUsing<VPRC_BindBuffer>(x =>
+        {
+            x.BufferName = LightProbeGridIndexBufferName;
+            x.BindingLocation = DeferredLightProbeGridIndexBufferBinding;
+        }))
+        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyLightCombineProgramBindings))
+        {
+            c.Add<VPRC_StencilMask>().Set(~0u);
+            c.Add<VPRC_LightCombinePass>().SetOptions(
+                AlbedoOpacityTextureName,
+                NormalTextureName,
+                RMSETextureName,
+                DepthViewTextureName);
+        }
+    }
+
     private void AppendForwardPass(ViewportRenderCommandContainer c, bool enableComputePasses)
     {
-        AddConditionalFboCache(c, "ForwardPassMsaaFBO", () => RuntimeEnableMsaa,
-            ForwardPassMsaaFBOName,
-            CreateForwardPassMsaaFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateMsaaFbo);
-        AddConditionalFboCache(c, "MsaaLightCombineFBO", () => RuntimeEnableMsaaDeferred,
-            MsaaLightCombineFBOName,
-            CreateMsaaLightCombineFBO,
-            GetDesiredFBOSizeInternal,
-            NeedsRecreateMsaaLightCombineFbo);
-        AddConditionalFboCache(c, "DepthPreloadFBO", () => RuntimeEnableMsaa && !RuntimeEnableMsaaDeferred,
-            DepthPreloadFBOName,
-            CreateDepthPreloadFBO,
-            GetDesiredFBOSizeInternal);
+        bool includeMsaaCommandGraph = !UseOpenXrVulkanDesktopStartupSafePath;
+        if (includeMsaaCommandGraph)
+        {
+            AddConditionalFboCache(c, "ForwardPassMsaaFBO", () => RuntimeEnableMsaaTargets,
+                ForwardPassMsaaFBOName,
+                CreateForwardPassMsaaFBO,
+                GetDesiredFBOSizeInternal,
+                NeedsRecreateMsaaFbo);
+            AddConditionalFboCache(c, "MsaaLightCombineFBO", () => RuntimeEnableMsaaDeferred,
+                MsaaLightCombineFBOName,
+                CreateMsaaLightCombineFBO,
+                GetDesiredFBOSizeInternal,
+                NeedsRecreateMsaaLightCombineFbo);
+            AddConditionalFboCache(c, "DepthPreloadFBO", () => RuntimeEnableMsaaTargets && !RuntimeEnableMsaaDeferred,
+                DepthPreloadFBOName,
+                CreateDepthPreloadFBO,
+                GetDesiredFBOSizeInternal);
+        }
 
         AddConditionalTransientFboCache(c, "TransparencySceneCopyFBO", () => EnableTransparencySceneCopyResources, SceneCopyFBOName, CreateSceneCopyFBO);
 
@@ -553,38 +584,41 @@ public partial class DefaultRenderPipeline
         {
             x.FrameBufferName = ForwardPassFBOName;
             x.Write = true;
-            x.DynamicName = () => RuntimeEnableMsaa ? ForwardPassMsaaFBOName : ForwardPassFBOName;
+            x.DynamicName = () => RuntimeEnableMsaaTargets ? ForwardPassMsaaFBOName : ForwardPassFBOName;
             x.ClearColor = true;
             x.ClearDepth = false;
             x.ClearStencil = false;
-            x.DynamicClearDepth = () => RuntimeEnableMsaa;
+            x.DynamicClearDepth = () => RuntimeEnableMsaaTargets;
         }))
         {
-            var msaaPreload = c.Add<VPRC_IfElse>();
-            msaaPreload.ConditionEvaluator = () => RuntimeEnableMsaa;
+            if (includeMsaaCommandGraph)
             {
-                var preloadCmds = new ViewportRenderCommandContainer(this);
-                var deferredChoice = preloadCmds.Add<VPRC_IfElse>();
-                deferredChoice.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+                var msaaPreload = c.Add<VPRC_IfElse>();
+                msaaPreload.ConditionEvaluator = () => RuntimeEnableMsaaTargets;
                 {
-                    var blitCmds = new ViewportRenderCommandContainer(this);
-                    blitCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
-                        MsaaGBufferFBOName,
-                        ForwardPassMsaaFBOName,
-                        EReadBufferMode.ColorAttachment0,
-                        blitColor: false,
-                        blitDepth: true,
-                        blitStencil: false,
-                        linearFilter: false);
-                    deferredChoice.TrueCommands = blitCmds;
-                }
-                {
-                    var shaderCmds = new ViewportRenderCommandContainer(this);
-                    shaderCmds.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthPreloadFBOName, ForwardPassMsaaFBOName);
-                    deferredChoice.FalseCommands = shaderCmds;
-                }
+                    var preloadCmds = new ViewportRenderCommandContainer(this);
+                    var deferredChoice = preloadCmds.Add<VPRC_IfElse>();
+                    deferredChoice.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+                    {
+                        var blitCmds = new ViewportRenderCommandContainer(this);
+                        blitCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                            MsaaGBufferFBOName,
+                            ForwardPassMsaaFBOName,
+                            EReadBufferMode.ColorAttachment0,
+                            blitColor: false,
+                            blitDepth: true,
+                            blitStencil: false,
+                            linearFilter: false);
+                        deferredChoice.TrueCommands = blitCmds;
+                    }
+                    {
+                        var shaderCmds = new ViewportRenderCommandContainer(this);
+                        shaderCmds.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthPreloadFBOName, ForwardPassMsaaFBOName);
+                        deferredChoice.FalseCommands = shaderCmds;
+                    }
 
-                msaaPreload.TrueCommands = preloadCmds;
+                    msaaPreload.TrueCommands = preloadCmds;
+                }
             }
 
             c.Add<VPRC_DepthTest>().Enable = false;
@@ -643,17 +677,20 @@ public partial class DefaultRenderPipeline
 
         }
 
-        var msaaResolve = c.Add<VPRC_IfElse>();
-        msaaResolve.ConditionEvaluator = () => RuntimeEnableMsaa;
+        if (includeMsaaCommandGraph)
         {
-            var resolveCmds = new ViewportRenderCommandContainer(this);
-            resolveCmds.Add<VPRC_ResolveMsaaGBuffer>().SetOptions(
-                ForwardPassMsaaFBOName,
-                ForwardPassFBOName,
-                colorAttachmentCount: 1,
-                resolveDepthStencil: true,
-                depthViewTextureName: ForwardPassMsaaDepthViewTextureName);
-            msaaResolve.TrueCommands = resolveCmds;
+            var msaaResolve = c.Add<VPRC_IfElse>();
+            msaaResolve.ConditionEvaluator = () => RuntimeEnableMsaaTargets;
+            {
+                var resolveCmds = new ViewportRenderCommandContainer(this);
+                resolveCmds.Add<VPRC_ResolveMsaaGBuffer>().SetOptions(
+                    ForwardPassMsaaFBOName,
+                    ForwardPassFBOName,
+                    colorAttachmentCount: 1,
+                    resolveDepthStencil: true,
+                    depthViewTextureName: ForwardPassMsaaDepthViewTextureName);
+                msaaResolve.TrueCommands = resolveCmds;
+            }
         }
 
         AppendDiagnosticTextureCapture(c, "06_ForwardPass", HDRSceneTextureName);
@@ -728,9 +765,6 @@ public partial class DefaultRenderPipeline
 
     private void AppendVelocityPassSwitch(ViewportRenderCommandContainer c)
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
-            return;
-
         var velocityChoice = c.Add<VPRC_IfElse>();
         velocityChoice.Label = "Velocity Buffer";
         velocityChoice.ConditionEvaluator = ShouldGenerateVelocityBuffer;
@@ -802,9 +836,6 @@ public partial class DefaultRenderPipeline
 
     private void AppendTemporalBegin(ViewportRenderCommandContainer c)
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
-            return;
-
         var temporalBegin = c.Add<VPRC_IfElse>();
         temporalBegin.Label = "TemporalBeginActive";
         temporalBegin.ConditionEvaluator = ShouldUseTemporalAccumulationResources;
@@ -815,9 +846,6 @@ public partial class DefaultRenderPipeline
 
     private void AppendTemporalAccumulation(ViewportRenderCommandContainer c)
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
-            return;
-
         var temporalChoice = c.Add<VPRC_IfElse>();
         temporalChoice.Label = "TemporalAccumulationActive";
         temporalChoice.ConditionEvaluator = ShouldUseTemporalAccumulationResources;
@@ -1012,11 +1040,8 @@ public partial class DefaultRenderPipeline
 
     private void AppendFxaaTsrUpscaleChain(ViewportRenderCommandContainer c)
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
-            return;
-
         var upscaleChoice = c.Add<VPRC_IfElse>();
-        upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
+        upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableDeclaredSmaa || RuntimeNeedsTsrUpscale;
         {
             var upscaleCmds = new ViewportRenderCommandContainer(this);
 
@@ -1397,9 +1422,6 @@ public partial class DefaultRenderPipeline
 
     private void AppendTemporalCommit(ViewportRenderCommandContainer c)
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
-            return;
-
         var temporalCommit = c.Add<VPRC_IfElse>();
         temporalCommit.Label = "TemporalCommitActive";
         temporalCommit.ConditionEvaluator = ShouldUseTemporalAccumulationResources;
@@ -1431,7 +1453,9 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_DepthTest>().Enable = false;
                 c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-                c.Add<VPRC_RenderQuadToFBO>().SetOptions(ForwardPassFBOName);
+                c.Add<VPRC_RenderQuadToFBO>()
+                    .SetOptions(FinalPostProcessFBOName)
+                    .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.FinalPostProcessToOutputTarget());
                 AppendDebugOverlay(c);
             }
         }
@@ -1528,17 +1552,8 @@ public partial class DefaultRenderPipeline
 
     private void AppendStandardViewportFinalOutputCommands(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
-        {
-            var directOutput = c.Add<VPRC_IfElse>();
-            directOutput.Label = "OpenXrVulkanSafeFinalOutput";
-            directOutput.ConditionEvaluator = static () => true;
-            directOutput.TrueCommands = CreateFinalBlitCommands(ResolveStandardFinalOutputFboName(), bypassVendorUpscale);
-            return;
-        }
-
         var upscaleOutputChoice = c.Add<VPRC_IfElse>();
-        upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
+        upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableDeclaredSmaa || RuntimeNeedsTsrUpscale;
         {
             var upscaleOutput = new ViewportRenderCommandContainer(this);
             var tsrOrPostAaFinal = upscaleOutput.Add<VPRC_IfElse>();
@@ -1640,6 +1655,4 @@ public partial class DefaultRenderPipeline
             return false;
         }
     }
-
-    #endregion
 }
