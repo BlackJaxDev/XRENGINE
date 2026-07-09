@@ -421,7 +421,15 @@ public unsafe partial class VulkanRenderer
         bool commandBufferCompleted = false;
         try
         {
-            submitted = SubmitAndWaitOpenXrCommandBuffer(recorded.CommandBuffer, out commandBufferCompleted);
+            VulkanSubmissionDiagnosticContext diagnosticContext =
+                CreateOpenXrSubmissionDiagnosticContext(
+                    "OpenXrEyeSubmit",
+                    "OpenXrEye",
+                    recorded.OpenXrViewIndex,
+                    recorded.OpenXrImageIndex,
+                    recorded.FrameDataSlotIndex,
+                    request.Extent);
+            submitted = SubmitAndWaitOpenXrCommandBuffer(recorded.CommandBuffer, out commandBufferCompleted, diagnosticContext);
             if (submitted)
             {
                 int publishCount = eyeUploads.Count;
@@ -507,7 +515,13 @@ public unsafe partial class VulkanRenderer
                 submitted = SubmitAndWaitOpenXrCommandBuffers(
                     firstRecorded.CommandBuffer,
                     secondRecorded.CommandBuffer,
-                    out commandBuffersCompleted);
+                    out commandBuffersCompleted,
+                    CreateOpenXrBatchSubmissionDiagnosticContext(
+                        "OpenXrEyeBatchSubmit",
+                        "OpenXrEyeBatch",
+                        in firstRecorded,
+                        in secondRecorded,
+                        firstEye.Extent));
             }
 
             if (submitted)
@@ -1739,7 +1753,16 @@ public unsafe partial class VulkanRenderer
             if (!hasRecorded)
                 return false;
 
-            submitted = SubmitAndWaitOpenXrCommandBuffer(recorded.CommandBuffer, out commandBufferCompleted);
+            submitted = SubmitAndWaitOpenXrCommandBuffer(
+                recorded.CommandBuffer,
+                out commandBufferCompleted,
+                CreateOpenXrSubmissionDiagnosticContext(
+                    "OpenXrEyeMirrorSubmit",
+                    "OpenXrEyeMirror",
+                    recorded.OpenXrViewIndex,
+                    recorded.OpenXrImageIndex,
+                    recorded.FrameDataSlotIndex,
+                    request.Extent));
             if (submitted)
             {
                 CompleteOpenXrGpuProfilerSubmission(in recorded);
@@ -1790,7 +1813,13 @@ public unsafe partial class VulkanRenderer
             submitted = SubmitAndWaitOpenXrCommandBuffers(
                 firstRecorded.CommandBuffer,
                 secondRecorded.CommandBuffer,
-                out commandBuffersCompleted);
+                out commandBuffersCompleted,
+                CreateOpenXrBatchSubmissionDiagnosticContext(
+                    "OpenXrEyeMirrorBatchSubmit",
+                    "OpenXrEyeMirrorBatch",
+                    in firstRecorded,
+                    in secondRecorded,
+                    firstEye.Extent));
 
             if (submitted)
             {
@@ -1872,7 +1901,13 @@ public unsafe partial class VulkanRenderer
             submitted = SubmitAndWaitOpenXrCommandBuffers(
                 commandBuffers,
                 3,
-                out commandBuffersCompleted);
+                out commandBuffersCompleted,
+                CreateOpenXrBatchSubmissionDiagnosticContext(
+                    "OpenXrEyeMirrorRenderPublishSubmit",
+                    "OpenXrEyeMirrorRenderPublish",
+                    in firstRecorded,
+                    in secondRecorded,
+                    firstPublish.Extent));
 
             if (submitted)
             {
@@ -1971,7 +2006,13 @@ public unsafe partial class VulkanRenderer
             submitted = SubmitAndWaitOpenXrCommandBuffers(
                 commandBuffers,
                 2,
-                out commandBuffersCompleted);
+                out commandBuffersCompleted,
+                CreateOpenXrPublishBatchSubmissionDiagnosticContext(
+                    "OpenXrStereoLayerRenderPublishSubmit",
+                    "OpenXrStereoLayerRenderPublish",
+                    in recorded,
+                    leftDestinationExtent,
+                    leftDestinationLabel));
 
             if (submitted)
             {
@@ -5018,6 +5059,7 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException("Failed to create OpenXR Vulkan swapchain image view.");
 
         TrackLiveImageView(imageView, in viewInfo, "OpenXR.SwapchainImageView");
+        SetDebugObjectName(ObjectType.ImageView, imageView.Handle, $"OpenXR.SwapchainImageView.0x{image.Handle:X}.{format}");
         return imageView;
     }
 
@@ -5632,28 +5674,33 @@ public unsafe partial class VulkanRenderer
         RestoreResourcePlannerRuntimeState(previousState);
     }
 
-    private bool SubmitAndWaitOpenXrCommandBuffer(CommandBuffer commandBuffer, out bool commandBufferCompleted)
+    private bool SubmitAndWaitOpenXrCommandBuffer(
+        CommandBuffer commandBuffer,
+        out bool commandBufferCompleted,
+        VulkanSubmissionDiagnosticContext diagnosticContext = default)
     {
         CommandBuffer* commandBuffers = stackalloc CommandBuffer[1];
         commandBuffers[0] = commandBuffer;
-        return SubmitAndWaitOpenXrCommandBuffers(commandBuffers, 1, out commandBufferCompleted);
+        return SubmitAndWaitOpenXrCommandBuffers(commandBuffers, 1, out commandBufferCompleted, diagnosticContext);
     }
 
     private bool SubmitAndWaitOpenXrCommandBuffers(
         CommandBuffer firstCommandBuffer,
         CommandBuffer secondCommandBuffer,
-        out bool commandBuffersCompleted)
+        out bool commandBuffersCompleted,
+        VulkanSubmissionDiagnosticContext diagnosticContext = default)
     {
         CommandBuffer* commandBuffers = stackalloc CommandBuffer[2];
         commandBuffers[0] = firstCommandBuffer;
         commandBuffers[1] = secondCommandBuffer;
-        return SubmitAndWaitOpenXrCommandBuffers(commandBuffers, 2, out commandBuffersCompleted);
+        return SubmitAndWaitOpenXrCommandBuffers(commandBuffers, 2, out commandBuffersCompleted, diagnosticContext);
     }
 
     private bool SubmitAndWaitOpenXrCommandBuffers(
         CommandBuffer* commandBuffers,
         uint commandBufferCount,
-        out bool commandBufferCompleted)
+        out bool commandBufferCompleted,
+        VulkanSubmissionDiagnosticContext diagnosticContext = default)
     {
         commandBufferCompleted = false;
         if (commandBuffers is null || commandBufferCount == 0)
@@ -5667,6 +5714,8 @@ public unsafe partial class VulkanRenderer
 
         if (Api!.CreateFence(device, ref fenceCreateInfo, null, out Fence fence) != Result.Success)
             throw new InvalidOperationException("Failed to create OpenXR Vulkan submit fence.");
+
+        SetDebugObjectName(ObjectType.Fence, fence.Handle, "OpenXR.SubmitAndWaitFence");
 
         try
         {
@@ -5687,7 +5736,7 @@ public unsafe partial class VulkanRenderer
                 {
                     Monitor.Enter(_oneTimeSubmitLock, ref queueLockTaken);
                     LogOpenXrSerializedCriticalSectionWait("QueueSubmit", queueLockWaitStart, Stopwatch.GetTimestamp());
-                    submitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, fence);
+                    submitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, fence, diagnosticContext);
                 }
                 finally
                 {
@@ -5714,7 +5763,10 @@ public unsafe partial class VulkanRenderer
             if (waitResult != Result.Success)
             {
                 if (waitResult == Result.ErrorDeviceLost)
+                {
+                    RecordFirstFailingVulkanApi($"vkWaitForFences:OpenXR.Vulkan.SubmitFenceWait:{waitResult}");
                     MarkDeviceLost("OpenXR Vulkan eye fence wait returned ErrorDeviceLost");
+                }
 
                 Debug.VulkanWarning($"[OpenXR] Vulkan eye fence wait failed: {waitResult}");
                 return false;

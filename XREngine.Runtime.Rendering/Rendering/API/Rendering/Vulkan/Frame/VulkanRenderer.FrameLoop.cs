@@ -1518,7 +1518,21 @@ namespace XREngine.Rendering.Vulkan
                 MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.RenderSubmitStart);
                 lock (_oneTimeSubmitLock)
                 {
-                    submitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, default);
+                    ulong frameOpsSignature =
+                        _commandBufferFrameOpSignatures is not null &&
+                        imageIndex < (uint)_commandBufferFrameOpSignatures.Length
+                            ? _commandBufferFrameOpSignatures[imageIndex]
+                            : 0UL;
+                    VulkanSubmissionDiagnosticContext diagnosticContext =
+                        CreateSwapchainSubmissionDiagnosticContext(
+                            "SwapchainDraw",
+                            imageIndex,
+                            frameNumber,
+                            0UL,
+                            graphicsSignalValue,
+                            sceneCommandBufferDirtyGeneration,
+                            frameOpsSignature);
+                    submitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, default, diagnosticContext);
                 }
                 MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.RenderSubmitEnd);
             }

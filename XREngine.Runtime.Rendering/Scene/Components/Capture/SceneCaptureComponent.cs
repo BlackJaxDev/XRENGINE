@@ -288,6 +288,7 @@ namespace XREngine.Components.Lights
                 AutomaticallyCollectVisible = false,
                 AutomaticallySwapBuffers = false,
                 AllowUIRender = false,
+                AllowAutomaticInternalResolution = false,
                 CullWithFrustum = true,
             };
 
@@ -302,6 +303,8 @@ namespace XREngine.Components.Lights
             viewport.AutomaticallyCollectVisible = false;
             viewport.AutomaticallySwapBuffers = false;
             viewport.AllowUIRender = false;
+            viewport.AllowAutomaticInternalResolution = false;
+            viewport.UseDirectFboTargetCommandsWhenRenderingToFbo = UseDirectFboTargetCommandsForCapture;
             viewport.CullWithFrustum = true;
 
             if ((uint)viewport.Width != Resolution ||
@@ -350,6 +353,9 @@ namespace XREngine.Components.Lights
 
         protected virtual bool ShouldEncodeEnvironmentToOctahedralMap()
             => true;
+
+        protected virtual bool UseDirectFboTargetCommandsForCapture
+            => false;
 
         private bool _progressiveRenderEnabled = true;
         /// <summary>

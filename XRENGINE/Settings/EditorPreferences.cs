@@ -1535,6 +1535,8 @@ namespace XREngine
         private bool _vkTextureUploadTrace = XREngine.Rendering.RenderDiagnosticsFlags.VkTextureUploadTrace;
         private bool _vkProgressiveTextureUpload = XREngine.Rendering.RenderDiagnosticsFlags.VkProgressiveTextureUpload;
         private bool _vkImportedTexturePreviewFreeze = XREngine.Rendering.RenderDiagnosticsFlags.VkImportedTexturePreviewFreeze;
+        private string? _vkDiagnosticPreset = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticPreset);
+        private string? _vkDiagnosticFlags = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticFlags);
 
         private static int NormalizeProfilerProducerBufferCapacity(int value)
         {
@@ -2522,6 +2524,38 @@ namespace XREngine
             }
         }
 
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Diagnostic Preset")]
+        [Description("Named Vulkan diagnostic preset used at backend startup. Values: Off, StandardValidation, SyncValidation, GpuAssisted, BestPractices, CrashDiagnostics, RenderDocFriendly. Seed env: XRE_VULKAN_DIAGNOSTIC_PRESET.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanDiagnosticPreset)]
+        [DefaultValue(null)]
+        public string? VkDiagnosticPreset
+        {
+            get => _vkDiagnosticPreset;
+            set
+            {
+                string? normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+                if (SetField(ref _vkDiagnosticPreset, normalized))
+                    Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticPreset, normalized);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Diagnostic Flags")]
+        [Description("Additional Vulkan diagnostic flags, separated by comma or pipe. Seed env: XRE_VULKAN_DIAGNOSTIC_FLAGS.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanDiagnosticFlags)]
+        [DefaultValue(null)]
+        public string? VkDiagnosticFlags
+        {
+            get => _vkDiagnosticFlags;
+            set
+            {
+                string? normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+                if (SetField(ref _vkDiagnosticFlags, normalized))
+                    Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticFlags, normalized);
+            }
+        }
+
         [Category("Profiling")]
         [DisplayName("Enable Profiler Frame Logging")]
         [Description("When enabled, the code profiler records method timings for the Profiler panel. Disable to reduce overhead in hot paths.")]
@@ -3202,6 +3236,8 @@ namespace XREngine
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkTextureUploadTrace(_vkTextureUploadTrace);
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkProgressiveTextureUpload(_vkProgressiveTextureUpload);
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkImportedTexturePreviewFreeze(_vkImportedTexturePreviewFreeze);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticPreset, _vkDiagnosticPreset);
+            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticFlags, _vkDiagnosticFlags);
         }
 
         public void CopyFrom(EditorDebugOptions source)
@@ -3274,6 +3310,8 @@ namespace XREngine
             VkTextureUploadTrace = source.VkTextureUploadTrace;
             VkProgressiveTextureUpload = source.VkProgressiveTextureUpload;
             VkImportedTexturePreviewFreeze = source.VkImportedTexturePreviewFreeze;
+            VkDiagnosticPreset = source.VkDiagnosticPreset;
+            VkDiagnosticFlags = source.VkDiagnosticFlags;
             UseDebugOpaquePipeline = source.UseDebugOpaquePipeline;
             ForceGpuPassthroughCulling = source.ForceGpuPassthroughCulling;
             AllowGpuCpuFallback = source.AllowGpuCpuFallback;

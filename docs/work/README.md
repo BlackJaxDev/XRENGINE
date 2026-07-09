@@ -4,6 +4,20 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 
 [Docs index](../README.md)
 
+## Placement Guide
+
+Work docs are organized by document purpose first, subsystem second:
+
+| Path | Use |
+|---|---|
+| `investigations/<subsystem>/` | Bug, regression, crash, performance, visual artifact, and evidence-driven debug notes. |
+| `progress/<subsystem>/` | Implementation phase ledgers, status updates, validation manifests, and closeout/progress notes for active work. |
+| `design/<subsystem>/` | Design proposals and architecture plans. |
+| `todo/<subsystem>/` | Execution checklists and backlog items. |
+| `testing/<subsystem>/` | Validation plans, reproducible test notes, and hardware/software test matrices. |
+
+Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigation or progress notes. Use `docs/work/investigations/rendering/` or `docs/work/progress/rendering/` instead.
+
 ## Status Guide
 
 | Status | Meaning |
@@ -41,7 +55,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 | Avatar optimization and virtualized rendering | Active | [todo/avatar/avatar-optimization-roadmap.md](todo/avatar/avatar-optimization-roadmap.md), [design/rendering/avatar-optimization-and-virtualized-rendering-design.md](design/rendering/avatar-optimization-and-virtualized-rendering-design.md) | In-editor automatic avatar optimization, material consolidation, atlasing, simplification, skin/blendshape reduction, LODs, cluster-virtualized avatars, and Gaussian-splat distant crowds. |
 | Humanoid body/root compensation | Active | [todo/avatar/humanoid-body-root-compensation-todo.md](todo/avatar/humanoid-body-root-compensation-todo.md) | Unity-style humanoid body-frame, root-motion, muscle, and IK ordering work so hips/body motion compensates correctly during humanoid animation playback. |
 | GPU meshlet zero-readback rendering | Active | [design/rendering/gpu-meshlet-zero-readback-rendering-design.md](design/rendering/gpu-meshlet-zero-readback-rendering-design.md), [todo/rendering/gpu/gpu-meshlet-zero-readback-rendering-todo.md](todo/rendering/gpu/gpu-meshlet-zero-readback-rendering-todo.md), [todo/rendering/gpu/production-rendering-pipeline-roadmap.md](todo/rendering/gpu/production-rendering-pipeline-roadmap.md) | Production meshlet renderer design covering GPUScene meshlet storage, GPU expansion, mesh-shader dispatch, culling, material-table shading, and zero-readback invariants. |
-| OpenXR no-HMD testing | Implemented + validation | [design/VR/openxr-monado-testing-pipeline.md](design/VR/openxr-monado-testing-pipeline.md), [rendering/openxr-monado-vulkan-rendering-2026-06-24.md](rendering/openxr-monado-vulkan-rendering-2026-06-24.md), [todo/rendering/vr/openxr-monado-testing-pipeline-todo.md](todo/rendering/vr/openxr-monado-testing-pipeline-todo.md), [todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md](todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md), [todo/tests/openxr-timing-tests-todo.md](todo/tests/openxr-timing-tests-todo.md), [todo/rendering/vr/openxr-future-work-todo.md](todo/rendering/vr/openxr-future-work-todo.md) | Local scene-only and Monado-backed no-HMD lanes are implemented; Vulkan/Monado rendering investigation records the latest black-frame and mirror fixes. CI promotion, Monado baseline selection, and hardware rows remain follow-up validation. |
+| OpenXR no-HMD testing | Implemented + validation | [design/VR/openxr-monado-testing-pipeline.md](design/VR/openxr-monado-testing-pipeline.md), [investigations/rendering/openxr-monado-vulkan-rendering-2026-06-24.md](investigations/rendering/openxr-monado-vulkan-rendering-2026-06-24.md), [todo/rendering/vr/openxr-monado-testing-pipeline-todo.md](todo/rendering/vr/openxr-monado-testing-pipeline-todo.md), [todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md](todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md), [todo/tests/openxr-timing-tests-todo.md](todo/tests/openxr-timing-tests-todo.md), [todo/rendering/vr/openxr-future-work-todo.md](todo/rendering/vr/openxr-future-work-todo.md) | Local scene-only and Monado-backed no-HMD lanes are implemented; Vulkan/Monado rendering investigation records the latest black-frame and mirror fixes. CI promotion, Monado baseline selection, and hardware rows remain follow-up validation. |
 | OpenXR SteamVR/OpenVR parity | Active | [todo/rendering/vr/openxr-steamvr-openvr-parity-todo.md](todo/rendering/vr/openxr-steamvr-openvr-parity-todo.md) | Hardware and input parity roadmap for running SteamVR hardware through OpenXR instead of OpenVR, including controller actions, haptics, VIVE trackers, and hand/finger data. |
 | OpenXR stereo and temporal isolation | Active | [todo/rendering/vr/openxr-stereo-temporal-isolation-todo.md](todo/rendering/vr/openxr-stereo-temporal-isolation-todo.md) | Roadmap for honest OpenXR stereo mode semantics, true single-pass stereo, per-eye temporal history, TSR, exposure, fog/atmosphere, vendor upscale, and CPU/GPU profiling validation. |
 | RVC VR debug views | Active | [todo/rendering/vr/retinal-visibility-cache-debug-views-todo.md](todo/rendering/vr/retinal-visibility-cache-debug-views-todo.md) | Debug-view and validation surface for Retinal Visibility Cache across serial, single-pass stereo, Vulkan parallel recording, and quad-view paths. |
@@ -121,6 +135,7 @@ In-flight design notes, implementation trackers, and short-lived investigations.
 - [todo/shader-and-snippet-optimization-todo.md](todo/shader-and-snippet-optimization-todo.md)
 - [todo/rendering/shadows/shadow-atlas-overhaul-todo.md](todo/rendering/shadows/shadow-atlas-overhaul-todo.md)
 - [todo/transparency-and-oit-todo.md](todo/transparency-and-oit-todo.md)
+- [todo/tests/unit-test-project-reorganization-todo.md](todo/tests/unit-test-project-reorganization-todo.md)
 - [todo/texturing/texture-compression-and-cooked-cache-todo.md](todo/texturing/texture-compression-and-cooked-cache-todo.md)
 - [todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md](todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md)
 - [todo/usd-import-export-todo.md](todo/usd-import-export-todo.md)

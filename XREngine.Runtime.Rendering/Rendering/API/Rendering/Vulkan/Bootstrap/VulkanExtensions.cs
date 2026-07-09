@@ -358,7 +358,12 @@ namespace XREngine.Rendering.Vulkan
             "VK_KHR_deferred_host_operations",
             "VK_EXT_device_generated_commands",
             "VK_NV_memory_decompression",
-            "VK_NV_copy_memory_indirect"
+            "VK_NV_copy_memory_indirect",
+            KhrDeviceFaultExtensionName,
+            ExtDeviceFaultExtensionName,
+            ExtDeviceAddressBindingReportExtensionName,
+            NvDeviceDiagnosticCheckpointsExtensionName,
+            NvDeviceDiagnosticsConfigExtensionName
         ];
 
         private string[] GetRequiredExtensions()
@@ -369,7 +374,7 @@ namespace XREngine.Rendering.Vulkan
             if (openXrRequirements.InstanceExtensions.Length > 0)
                 extensions = [.. extensions, .. openXrRequirements.InstanceExtensions];
 
-            if (EnableValidationLayers || CommandBufferDebugLabelsEnabled)
+            if (EnableValidationLayers || _diagnosticOptions.EnableDebugUtils)
                 extensions = [.. extensions, ExtDebugUtils.ExtensionName];
 
             return [.. extensions

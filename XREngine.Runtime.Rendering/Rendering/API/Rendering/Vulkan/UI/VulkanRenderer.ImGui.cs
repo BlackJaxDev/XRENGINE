@@ -955,6 +955,8 @@ public unsafe partial class VulkanRenderer
         if (Api.AllocateDescriptorSets(device, ref allocInfo, out _imguiFontDescriptorSet) != Result.Success)
             throw new InvalidOperationException("Failed to allocate ImGui descriptor set.");
 
+        SetDebugDescriptorSetName(_imguiFontDescriptorSet, "ImGui.Font.DescriptorSet");
+        RecordVulkanDescriptorTableGeneration("ImGui.FontDescriptorSet.Allocated");
         _imguiTextureDescriptorSets[(nint)1] = _imguiFontDescriptorSet;
 
         DescriptorImageInfo imageInfo = new()
@@ -976,6 +978,7 @@ public unsafe partial class VulkanRenderer
         };
 
         Api.UpdateDescriptorSets(device, 1, &write, 0, null);
+        RecordVulkanDescriptorTableGeneration("ImGui.FontDescriptorSet.Update");
         UpdateImGuiDescriptorHeapPayload((nint)1, imageInfo);
     }
 
@@ -2106,6 +2109,8 @@ public unsafe partial class VulkanRenderer
         if (Api!.AllocateDescriptorSets(device, ref allocInfo, out DescriptorSet descriptorSet) != Result.Success)
             return default;
 
+        SetDebugDescriptorSetName(descriptorSet, $"ImGui.Texture.DescriptorSet.0x{descriptorView.Handle:X}");
+        RecordVulkanDescriptorTableGeneration("ImGui.TextureDescriptorSet.Allocated");
         UpdateImGuiDescriptorSet(descriptorSet, descriptorView, descriptorSampler, descriptorLayout);
         return descriptorSet;
     }
@@ -2131,6 +2136,7 @@ public unsafe partial class VulkanRenderer
         };
 
         Api!.UpdateDescriptorSets(device, 1, &write, 0, null);
+        RecordVulkanDescriptorTableGeneration("ImGui.TextureDescriptorSet.Update");
     }
 
     private bool UpdateImGuiDescriptorHeapPayload(nint textureId, DescriptorImageInfo imageInfo)

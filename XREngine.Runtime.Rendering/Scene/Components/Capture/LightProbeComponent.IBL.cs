@@ -35,6 +35,9 @@ namespace XREngine.Components.Capture.Lights
         protected override bool ShouldInitializeCaptureResourcesOnActivate
             => false;
 
+        protected override bool UseDirectFboTargetCommandsForCapture
+            => RuntimeEngine.Rendering.State.IsVulkan;
+
         protected override void InitializeForCapture()
         {
             base.InitializeForCapture();

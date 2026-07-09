@@ -166,6 +166,8 @@ public unsafe partial class VulkanRenderer
 						}
 					}
 
+					Renderer.SetDebugDescriptorSetNames(frameSets, $"MeshRenderer.DescriptorSet.Frame{frame}.Draw{drawSlot}");
+					Renderer.RecordVulkanDescriptorTableGeneration("MeshRendererDescriptorSets.Allocated");
 					int descriptorSlotIndex = ResolveUniformBufferIndex(frame, drawSlot, descriptorSets.Length);
 					descriptorSets[descriptorSlotIndex] = frameSets;
 					descriptorHeapPushData[descriptorSlotIndex] = Renderer.CreateDescriptorHeapPushDataPayload(_program.DescriptorHeapLayout);
@@ -1202,6 +1204,7 @@ public unsafe partial class VulkanRenderer
 					}
 
 					Api!.UpdateDescriptorSets(Device, 1, &write, 0, null);
+					Renderer.RecordVulkanDescriptorTableGeneration("MeshRendererDescriptorSet.SingleUpdate");
 				}
 
 				RecordFrameSourceDescriptorWriteSignature(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos);
@@ -1831,6 +1834,7 @@ public unsafe partial class VulkanRenderer
 
 					if (!TryUpdateDescriptorSetsWithTemplates(frameSets, writeArray))
 						Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
+					Renderer.RecordVulkanDescriptorTableGeneration("MeshRendererDescriptorSets.Update");
 
 					foreach (var (_, imageIndex, binding, descriptorCount) in imageMap)
 					{

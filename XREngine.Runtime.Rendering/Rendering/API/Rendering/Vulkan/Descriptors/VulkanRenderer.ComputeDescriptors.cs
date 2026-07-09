@@ -311,7 +311,14 @@ public unsafe partial class VulkanRenderer
                 PSetLayouts = layoutPtr
             };
 
-            return Api!.AllocateDescriptorSets(device, ref allocInfo, setPtr);
+            Result result = Api!.AllocateDescriptorSets(device, ref allocInfo, setPtr);
+            if (result == Result.Success)
+            {
+                SetDebugDescriptorSetNames(descriptorSets, "Compute.DescriptorSet");
+                RecordVulkanDescriptorTableGeneration("ComputeDescriptorSets.Allocated");
+            }
+
+            return result;
         }
     }
 }

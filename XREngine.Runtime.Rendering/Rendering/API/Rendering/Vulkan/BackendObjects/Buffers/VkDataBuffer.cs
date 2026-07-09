@@ -2023,6 +2023,12 @@ namespace XREngine.Rendering.Vulkan
                 throw new Exception($"Failed to bind Vulkan buffer memory ({bindResult}).");
             }
 
+            if (enableDeviceAddress)
+            {
+                ulong address = GetBufferDeviceAddress(buffer);
+                RegisterVulkanDeviceAddressRange(buffer, address, bufferSize, $"Buffer.Allocator.{usage}");
+            }
+
             return (buffer, allocation.Memory);
         }
 
@@ -2131,6 +2137,12 @@ namespace XREngine.Rendering.Vulkan
                 if (TryBeginDestroyBuffer(buffer, "CreateBufferRawLegacy.BindFailure"))
                     Api.DestroyBuffer(device, buffer, null);
                 throw new Exception($"Failed to bind Vulkan buffer memory ({bindResult}).");
+            }
+
+            if (enableDeviceAddress)
+            {
+                ulong address = GetBufferDeviceAddress(buffer);
+                RegisterVulkanDeviceAddressRange(buffer, address, bufferSize, $"Buffer.Legacy.{usage}");
             }
 
             return (buffer, memory);
@@ -2287,7 +2299,10 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             if (_liveBufferHandles.TryRemove(buffer.Handle, out _))
+            {
+                UnregisterVulkanDeviceAddressRange(buffer);
                 return true;
+            }
 
             Debug.VulkanWarningEvery(
                 $"Vulkan.Buffer.SkipStaleDestroy.{GetHashCode()}.{owner}.{buffer.Handle}",

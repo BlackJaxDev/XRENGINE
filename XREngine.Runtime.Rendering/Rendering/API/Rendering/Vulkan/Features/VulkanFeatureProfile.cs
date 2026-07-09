@@ -26,6 +26,36 @@ public enum EVulkanBindlessMaterialMode
     Diagnostics,
 }
 
+[Flags]
+public enum EVulkanDiagnosticFlags
+{
+    None = 0,
+    StandardValidation = 1 << 0,
+    SynchronizationValidation = 1 << 1,
+    GpuAssistedValidation = 1 << 2,
+    BestPractices = 1 << 3,
+    DebugUtils = 1 << 4,
+    CommandBufferLabels = 1 << 5,
+    CrashBreadcrumbs = 1 << 6,
+    DeviceFault = 1 << 7,
+    DeviceAddressBindingReport = 1 << 8,
+    NvDiagnosticCheckpoints = 1 << 9,
+    NvDiagnosticsConfig = 1 << 10,
+    RenderDocFriendly = 1 << 11,
+    DeviceFaultDeviceLostOnMasked = 1 << 12,
+}
+
+public enum EVulkanDiagnosticPreset
+{
+    Off = 0,
+    StandardValidation,
+    SyncValidation,
+    GpuAssisted,
+    BestPractices,
+    CrashDiagnostics,
+    RenderDocFriendly,
+}
+
 public enum EVulkanBindlessMaterialCapabilityTier
 {
     DescriptorIndexingUnavailable = 0,

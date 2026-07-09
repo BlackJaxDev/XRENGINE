@@ -10,7 +10,7 @@ Earlier failed run root: `Build/_AgentValidation/20260625-175629-openxr-vulkan-p
 
 Recovery TODO:
 
-- `docs/work/rendering/openxr-monado-vulkan-parallel-rendering-todo-2026-06-25.md`
+- `docs/work/todo/COMPLETED/openxr-monado-vulkan-parallel-rendering-todo-2026-06-25.md`
 
 Latest failed validation session before the recovery plan:
 

@@ -44,9 +44,9 @@ Silk.NET operates as the main C# backend glue for supporting most typical render
 
 - **Physics:** PhysX is the current default with character controller support. Jolt is being actively developed as an alternate main option. *Wishlisted: Jitter 2, Box3D*
 
-- **Audio:** OpenAL & Steam Audio are the two supported output options. NAudio & FFmpeg drive audio buffer processing.
+- **Audio:** OpenAL & NAudio are the two supported buffering & output options, and Steam Audio and OpenAL EFX are the two supported audio effect drivers. *Wishlisted: FMOD*
 
-- **Video:** FFmpeg (via FFmpeg.AutoGen) for video textures, streaming, and audio extraction.
+- **Video:** FFmpeg (via FFmpeg.AutoGen) is the de-facto standard for video textures, streaming, and audio extraction. yt-dlp is utilized for YouTube playback.
 
 - **Texturing:** Mipmaps primarily load via ImageMagick/Magick.NET. Other imaging support for fonts, icons, and SVGs is provided by ImageSharp and SkiaSharp.
 

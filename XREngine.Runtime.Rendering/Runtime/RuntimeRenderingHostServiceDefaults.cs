@@ -54,6 +54,8 @@ public static class RuntimeRenderingHostServiceDefaults
     public const EVulkanRenderTargetMode VulkanRenderTargetMode = EVulkanRenderTargetMode.Auto;
     public const EVulkanGpuDrivenProfile VulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Auto;
     public const EVulkanQueueOverlapMode VulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
+    public const EVulkanDiagnosticPreset VulkanDiagnosticPreset = EVulkanDiagnosticPreset.Off;
+    public const EVulkanDiagnosticFlags VulkanDiagnosticFlags = EVulkanDiagnosticFlags.None;
 
     public const bool IsRenderThread = true;
     public const bool IsRendererActive = false;

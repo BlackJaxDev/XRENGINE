@@ -268,6 +268,16 @@ public interface IRuntimeRenderingHostServices
     EVulkanQueueOverlapMode VulkanQueueOverlapMode => RuntimeRenderingHostServiceDefaults.VulkanQueueOverlapMode;
 
     /// <summary>
+    /// Gets the named Vulkan diagnostics preset requested by the host.
+    /// </summary>
+    EVulkanDiagnosticPreset VulkanDiagnosticPreset => RuntimeRenderingHostServiceDefaults.VulkanDiagnosticPreset;
+
+    /// <summary>
+    /// Gets additional Vulkan diagnostics flags requested by the host.
+    /// </summary>
+    EVulkanDiagnosticFlags VulkanDiagnosticFlags => RuntimeRenderingHostServiceDefaults.VulkanDiagnosticFlags;
+
+    /// <summary>
     /// Subscribes a callback to host rendering setting changes.
     /// </summary>
     void SubscribeRenderingSettingsChanged(Action callback);

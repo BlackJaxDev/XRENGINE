@@ -487,6 +487,8 @@ public partial class VulkanMemorySettings : XRBase
 public partial class VulkanDiagnosticsSettings : XRBase
 {
     private bool _pipelineCreationTrace;
+    private EVulkanDiagnosticPreset _diagnosticPreset = EVulkanDiagnosticPreset.Off;
+    private EVulkanDiagnosticFlags _diagnosticFlags;
 
     [Category("Vulkan Diagnostics")]
     [Description("Traces Vulkan pipeline creation details. Heavy; intended for pipeline bring-up only.")]
@@ -494,5 +496,21 @@ public partial class VulkanDiagnosticsSettings : XRBase
     {
         get => _pipelineCreationTrace;
         set => SetField(ref _pipelineCreationTrace, value);
+    }
+
+    [Category("Vulkan Diagnostics")]
+    [Description("Selects the named Vulkan diagnostics preset used at backend startup. Environment variable XRE_VULKAN_DIAGNOSTIC_PRESET has highest priority.")]
+    public EVulkanDiagnosticPreset DiagnosticPreset
+    {
+        get => _diagnosticPreset;
+        set => SetField(ref _diagnosticPreset, value);
+    }
+
+    [Category("Vulkan Diagnostics")]
+    [Description("Additional Vulkan diagnostic flags to enable independently of the selected preset. Environment variable XRE_VULKAN_DIAGNOSTIC_FLAGS accepts comma/pipe-separated flag names.")]
+    public EVulkanDiagnosticFlags DiagnosticFlags
+    {
+        get => _diagnosticFlags;
+        set => SetField(ref _diagnosticFlags, value);
     }
 }

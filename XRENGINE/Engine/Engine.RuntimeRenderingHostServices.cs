@@ -95,6 +95,8 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     public EVulkanRenderTargetMode VulkanRenderTargetMode => Engine.EffectiveSettings.VulkanRenderTargetMode;
     public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile => Engine.EffectiveSettings.VulkanGpuDrivenProfile;
     public EVulkanQueueOverlapMode VulkanQueueOverlapMode => Engine.EffectiveSettings.VulkanQueueOverlapMode;
+    public EVulkanDiagnosticPreset VulkanDiagnosticPreset => Engine.EffectiveSettings.VulkanDiagnosticPreset;
+    public EVulkanDiagnosticFlags VulkanDiagnosticFlags => Engine.EffectiveSettings.VulkanDiagnosticFlags;
 
     public void SubscribeRenderingSettingsChanged(Action callback)
         => Engine.Rendering.SettingsChanged += callback;

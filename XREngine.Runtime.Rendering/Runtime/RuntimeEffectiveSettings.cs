@@ -37,6 +37,8 @@ internal sealed class RuntimeEffectiveSettings
     private EVulkanRenderTargetMode _vulkanRenderTargetMode = RuntimeRenderingHostServiceDefaults.VulkanRenderTargetMode;
     private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = RuntimeRenderingHostServiceDefaults.VulkanGpuDrivenProfile;
     private EVulkanQueueOverlapMode _vulkanQueueOverlapMode = RuntimeRenderingHostServiceDefaults.VulkanQueueOverlapMode;
+    private EVulkanDiagnosticPreset _vulkanDiagnosticPreset = RuntimeRenderingHostServiceDefaults.VulkanDiagnosticPreset;
+    private EVulkanDiagnosticFlags _vulkanDiagnosticFlags = RuntimeRenderingHostServiceDefaults.VulkanDiagnosticFlags;
 
     public bool AllowInitialSkinnedBoundsBuildWhenNever { get; set; } = true;
     public EAntiAliasingMode AntiAliasingMode { get; set; } = EAntiAliasingMode.None;
@@ -418,6 +420,20 @@ internal sealed class RuntimeEffectiveSettings
             ? services.VulkanQueueOverlapMode
             : _vulkanQueueOverlapMode;
         set => _vulkanQueueOverlapMode = value;
+    }
+    public EVulkanDiagnosticPreset VulkanDiagnosticPreset
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.VulkanDiagnosticPreset
+            : _vulkanDiagnosticPreset;
+        set => _vulkanDiagnosticPreset = value;
+    }
+    public EVulkanDiagnosticFlags VulkanDiagnosticFlags
+    {
+        get => TryGetHostRuntimeSettings(out IRuntimeRenderingHostServices services)
+            ? services.VulkanDiagnosticFlags
+            : _vulkanDiagnosticFlags;
+        set => _vulkanDiagnosticFlags = value;
     }
     public EXessQualityMode XessQuality { get; set; } = EXessQualityMode.Quality;
 

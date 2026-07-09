@@ -113,8 +113,12 @@ public unsafe partial class VulkanRenderer
         Queue queue,
         ref SubmitInfo submitInfo,
         Fence fence,
+        VulkanSubmissionDiagnosticContext diagnosticContext = default,
         [CallerMemberName] string? caller = null)
     {
+        diagnosticContext = CompleteSubmissionDiagnosticContext(queue, ref submitInfo, fence, diagnosticContext, caller);
+        RecordLastVulkanSubmissionDiagnosticContext(diagnosticContext);
+
         Result result = UsesSynchronization2
             ? SubmitToQueueSync2(queue, ref submitInfo, fence)
             : Api!.QueueSubmit(queue, 1, ref submitInfo, fence);
@@ -122,9 +126,12 @@ public unsafe partial class VulkanRenderer
         if (result == Result.Success)
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
         else if (result == Result.ErrorDeviceLost)
+        {
+            RecordFirstFailingVulkanApi($"vkQueueSubmit:{caller ?? "<unknown>"}:{result}");
             MarkDeviceLost(
                 $"QueueSubmit returned ErrorDeviceLost in {caller ?? "<unknown>"} " +
                 $"(waits={submitInfo.WaitSemaphoreCount}, signals={submitInfo.SignalSemaphoreCount}, commandBuffers={submitInfo.CommandBufferCount}, fence=0x{fence.Handle:X})");
+        }
 
         return result;
     }
@@ -230,6 +237,7 @@ public unsafe partial class VulkanRenderer
         [CallerMemberName] string? caller = null)
     {
         WarnBroadBarrierStages(srcStageMask, dstStageMask, caller);
+        RecordVulkanImageLayoutTransitionBreadcrumb(imageBarrierCount, imageBarriers, caller);
 
         if (!UsesSynchronization2)
         {
