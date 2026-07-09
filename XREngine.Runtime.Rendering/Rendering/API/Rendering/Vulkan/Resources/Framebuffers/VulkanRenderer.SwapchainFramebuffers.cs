@@ -54,6 +54,8 @@ public unsafe partial class VulkanRenderer
 
                 if (Api!.CreateFramebuffer(device, ref framebufferInfo, null, out swapChainFramebuffers[i]) != Result.Success)
                     throw new Exception("Failed to create framebuffer.");
+
+                SetDebugObjectName(ObjectType.Framebuffer, swapChainFramebuffers[i].Handle, $"Swapchain.Framebuffer[{i}]");
             }
         }
 

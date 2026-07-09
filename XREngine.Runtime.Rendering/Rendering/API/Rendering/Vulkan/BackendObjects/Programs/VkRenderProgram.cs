@@ -1961,6 +1961,7 @@ public unsafe partial class VulkanRenderer
 
                 if (!TryUpdateComputeDescriptorSetsWithTemplates(descriptorSets, writeArray))
                     Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
+                Renderer.RecordVulkanDescriptorTableGeneration("ComputeDescriptorSets.Update");
             }
         }
 

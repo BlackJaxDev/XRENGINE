@@ -712,6 +712,20 @@ public sealed class EditorVulkanDiagnosticsPreferences(EditorDebugOptions owner)
         set => owner.VkImportedTexturePreviewFreeze = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanDiagnosticPreset)]
+    public string? DiagnosticPreset
+    {
+        get => owner.VkDiagnosticPreset;
+        set => owner.VkDiagnosticPreset = value;
+    }
+
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VulkanDiagnosticFlags)]
+    public string? DiagnosticFlags
+    {
+        get => owner.VkDiagnosticFlags;
+        set => owner.VkDiagnosticFlags = value;
+    }
+
     public void CopyFrom(EditorVulkanDiagnosticsPreferences source)
     {
         AutoUniformRewrite = source.AutoUniformRewrite;
@@ -732,6 +746,8 @@ public sealed class EditorVulkanDiagnosticsPreferences(EditorDebugOptions owner)
         TextureUploadTrace = source.TextureUploadTrace;
         ProgressiveTextureUpload = source.ProgressiveTextureUpload;
         ImportedTexturePreviewFreeze = source.ImportedTexturePreviewFreeze;
+        DiagnosticPreset = source.DiagnosticPreset;
+        DiagnosticFlags = source.DiagnosticFlags;
     }
 
     public void ApplyOverrides(EditorVulkanDiagnosticsPreferenceOverrides overrides)

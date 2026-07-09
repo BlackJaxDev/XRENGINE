@@ -672,6 +672,14 @@ public unsafe partial class VulkanRenderer
                     throw new Exception("Failed to create framebuffer.");
             }
 
+            string debugName = string.IsNullOrWhiteSpace(Data?.Name)
+                ? $"FBO.0x{frameBuffer.Handle:X}"
+                : $"FBO.{Data.Name}";
+            Renderer.SetDebugObjectName(
+                ObjectType.Framebuffer,
+                frameBuffer.Handle,
+                $"{debugName}.{fbWidth}x{fbHeight}.Layers{framebufferLayers}");
+
             return new CachedFrameBufferState(
                 frameBuffer,
                 renderPass,

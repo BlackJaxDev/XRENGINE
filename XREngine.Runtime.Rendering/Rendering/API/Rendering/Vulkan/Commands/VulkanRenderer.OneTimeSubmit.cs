@@ -100,6 +100,10 @@ namespace XREngine.Rendering.Vulkan
                 Debug.VulkanWarning($"[Vulkan] Failed to create one-shot submit fence (result={fenceResult}). Falling back to QueueWaitIdle.");
                 submitFence = default;
             }
+            else
+            {
+                SetDebugObjectName(ObjectType.Fence, submitFence.Handle, useTransferQueue ? "OneShot.TransferFence" : "OneShot.GraphicsFence");
+            }
 
             SubmitInfo submitInfo = new()
             {

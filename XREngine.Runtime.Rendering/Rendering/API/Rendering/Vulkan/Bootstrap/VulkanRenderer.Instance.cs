@@ -108,6 +108,13 @@ public unsafe partial class VulkanRenderer
         createInfo.EnabledExtensionCount = (uint)extensions.Length;
         createInfo.PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(extensions); ;
 
+        LogResolvedVulkanDiagnosticOptions(extensions);
+
+        ValidationFeatureEnableEXT* enabledValidationFeatures = stackalloc ValidationFeatureEnableEXT[4];
+        uint enabledValidationFeatureCount = EnableValidationLayers
+            ? PopulateEnabledValidationFeatures(enabledValidationFeatures)
+            : 0u;
+
         if (EnableValidationLayers)
         {
             createInfo.EnabledLayerCount = (uint)validationLayers.Length;
@@ -115,7 +122,22 @@ public unsafe partial class VulkanRenderer
 
             DebugUtilsMessengerCreateInfoEXT debugCreateInfo = new();
             PopulateDebugMessengerCreateInfo(ref debugCreateInfo);
-            createInfo.PNext = &debugCreateInfo;
+
+            if (enabledValidationFeatureCount > 0)
+            {
+                ValidationFeaturesEXT validationFeatures = new()
+                {
+                    SType = StructureType.ValidationFeaturesExt,
+                    EnabledValidationFeatureCount = enabledValidationFeatureCount,
+                    PEnabledValidationFeatures = enabledValidationFeatures,
+                    PNext = &debugCreateInfo,
+                };
+                createInfo.PNext = &validationFeatures;
+            }
+            else
+            {
+                createInfo.PNext = &debugCreateInfo;
+            }
         }
         else
         {

@@ -434,6 +434,8 @@ namespace XREngine.Rendering.Vulkan
                         }
                     }
 
+                    Renderer.SetDebugDescriptorSetNames(frameSets, $"Material.DescriptorSet.Frame{frame}");
+                    Renderer.RecordVulkanDescriptorTableGeneration("MaterialDescriptorSets.Allocated");
                     descriptorSets[frame] = frameSets;
                     descriptorHeapPushData[frame] = Renderer.CreateDescriptorHeapPushDataPayload(program.DescriptorHeapLayout);
                 }
@@ -861,6 +863,7 @@ namespace XREngine.Rendering.Vulkan
 
                         if (!TryUpdateDescriptorSetsWithTemplates(state, frameIndex, writeArray))
                             Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
+                        Renderer.RecordVulkanDescriptorTableGeneration("MaterialDescriptorSets.Update");
                     }
                 }
 

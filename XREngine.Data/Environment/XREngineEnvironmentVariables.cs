@@ -242,6 +242,17 @@ public static class XREngineEnvironmentVariables
     public const string VulkanCommandChainMeshSecondaryNoop = "XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP";
     public const string VulkanPrimaryCommandBufferReuse = "XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE";
     public const string VulkanValidation = "XRE_VULKAN_VALIDATION";
+    public const string VulkanDiagnosticPreset = "XRE_VULKAN_DIAGNOSTIC_PRESET";
+    public const string VulkanDiagnosticFlags = "XRE_VULKAN_DIAGNOSTIC_FLAGS";
+    public const string VulkanSynchronizationValidation = "XRE_VULKAN_SYNC_VALIDATION";
+    public const string VulkanGpuAssistedValidation = "XRE_VULKAN_GPU_ASSISTED_VALIDATION";
+    public const string VulkanBestPracticesValidation = "XRE_VULKAN_BEST_PRACTICES";
+    public const string VulkanCrashBreadcrumbs = "XRE_VULKAN_CRASH_BREADCRUMBS";
+    public const string VulkanDeviceFault = "XRE_VULKAN_DEVICE_FAULT";
+    public const string VulkanDeviceAddressBindingReport = "XRE_VULKAN_DEVICE_ADDRESS_BINDING_REPORT";
+    public const string VulkanNvDiagnosticCheckpoints = "XRE_VULKAN_NV_DIAGNOSTIC_CHECKPOINTS";
+    public const string VulkanNvDiagnosticsConfig = "XRE_VULKAN_NV_DIAGNOSTICS_CONFIG";
+    public const string VulkanRenderDocFriendly = "XRE_VULKAN_RENDERDOC_FRIENDLY";
     public const string VulkanFrameOpTrace = "XRE_VULKAN_FRAMEOP_TRACE";
     public const string VulkanTargetTrace = "XRE_VULKAN_TARGET_TRACE";
     public const string VulkanIndirectTrace = "XRE_VULKAN_INDIRECT_TRACE";

@@ -499,6 +499,277 @@ public sealed class VulkanDeferredProbeGiFixesTests
     }
 
     [Test]
+    public void VulkanLightProbeCapture_UsesDirectFboRenderPath()
+    {
+        string sceneCaptureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/SceneCaptureComponent.cs");
+        string lightProbeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/LightProbeComponent.IBL.cs");
+
+        sceneCaptureSource.ShouldContain("protected virtual bool UseDirectFboTargetCommandsForCapture");
+        sceneCaptureSource.ShouldContain("viewport.AllowAutomaticInternalResolution = false;");
+        sceneCaptureSource.ShouldContain("viewport.UseDirectFboTargetCommandsWhenRenderingToFbo = UseDirectFboTargetCommandsForCapture;");
+        lightProbeSource.ShouldContain("protected override bool UseDirectFboTargetCommandsForCapture");
+        lightProbeSource.ShouldContain("=> RuntimeEngine.Rendering.State.IsVulkan;");
+    }
+
+    [Test]
+    public void VulkanDeviceLossDiagnostics_IncludeLastSubmissionContext()
+    {
+        string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.cs");
+        string syncSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SyncObjects.cs");
+        string submitSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+
+        diagnosticsSource.ShouldContain("VulkanSubmissionDiagnosticContext");
+        diagnosticsSource.ShouldContain("RecordLastVulkanSubmissionDiagnosticContext");
+        diagnosticsSource.ShouldContain("LastSubmit kind=");
+        diagnosticsSource.ShouldContain("frameOp=");
+        diagnosticsSource.ShouldContain("target=");
+        diagnosticsSource.ShouldContain("cmdGen=");
+        diagnosticsSource.ShouldContain("timeline(wait=");
+
+        syncSource.ShouldContain("_deviceLostTransitionLock");
+        syncSource.ShouldContain("BuildDeviceLostReasonWithSubmissionContext(reason)");
+        syncSource.ShouldContain("Reason={DeviceLostReason ?? \"<unknown>\"}");
+
+        submitSource.ShouldContain("VulkanSubmissionDiagnosticContext diagnosticContext = default");
+        submitSource.ShouldContain("CompleteSubmissionDiagnosticContext(queue, ref submitInfo, fence, diagnosticContext, caller)");
+        submitSource.ShouldContain("RecordLastVulkanSubmissionDiagnosticContext(diagnosticContext)");
+    }
+
+    [Test]
+    public void VulkanDeviceLossDiagnostics_TagSwapchainAndOpenXrSubmissions()
+    {
+        string frameLoopSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
+        string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrWorkerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.EyeRecordWorkers.cs");
+
+        frameLoopSource.ShouldContain("CreateSwapchainSubmissionDiagnosticContext(");
+        frameLoopSource.ShouldContain("\"SwapchainDraw\"");
+        frameLoopSource.ShouldContain("sceneCommandBufferDirtyGeneration");
+        frameLoopSource.ShouldContain("_commandBufferFrameOpSignatures");
+
+        openXrSource.ShouldContain("CreateOpenXrSubmissionDiagnosticContext(");
+        openXrSource.ShouldContain("\"OpenXrEyeSubmit\"");
+        openXrSource.ShouldContain("\"OpenXrEyeMirrorSubmit\"");
+        openXrSource.ShouldContain("\"OpenXrEyeMirrorRenderPublishSubmit\"");
+        openXrSource.ShouldContain("\"OpenXrStereoLayerRenderPublishSubmit\"");
+        openXrSource.ShouldContain("SubmitToQueueTracked(graphicsQueue, ref submitInfo, fence, diagnosticContext)");
+        openXrWorkerSource.ShouldContain("\"OpenXrEyeParallelBatchSubmit\"");
+    }
+
+    [Test]
+    public void VulkanPhase1Diagnostics_DefinePresetFlagsSettingsAndEnvironmentBridge()
+    {
+        string profileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/VulkanFeatureProfile.cs");
+        string backendSettingsSource = ReadWorkspaceFile("XREngine/Settings/Rendering/BackendRenderSettings.cs");
+        string environmentSource = ReadWorkspaceFile("XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
+        string runtimeEffectiveSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEffectiveSettings.cs");
+        string hostServicesSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs");
+        string editorPreferencesSource = ReadWorkspaceFile("XREngine/Settings/EditorPreferences.cs");
+
+        profileSource.ShouldContain("public enum EVulkanDiagnosticPreset");
+        profileSource.ShouldContain("Off");
+        profileSource.ShouldContain("StandardValidation");
+        profileSource.ShouldContain("SyncValidation");
+        profileSource.ShouldContain("GpuAssisted");
+        profileSource.ShouldContain("BestPractices");
+        profileSource.ShouldContain("CrashDiagnostics");
+        profileSource.ShouldContain("RenderDocFriendly");
+        profileSource.ShouldContain("[Flags]");
+        profileSource.ShouldContain("SynchronizationValidation");
+        profileSource.ShouldContain("DeviceFault");
+        profileSource.ShouldContain("DeviceFaultDeviceLostOnMasked");
+        profileSource.ShouldContain("NvDiagnosticCheckpoints");
+
+        backendSettingsSource.ShouldContain("public EVulkanDiagnosticPreset DiagnosticPreset");
+        backendSettingsSource.ShouldContain("public EVulkanDiagnosticFlags DiagnosticFlags");
+        environmentSource.ShouldContain("VulkanDiagnosticPreset");
+        environmentSource.ShouldContain("VulkanDiagnosticFlags");
+        environmentSource.ShouldContain("VulkanSynchronizationValidation");
+        environmentSource.ShouldContain("VulkanGpuAssistedValidation");
+        environmentSource.ShouldContain("VulkanRenderDocFriendly");
+        runtimeEffectiveSource.ShouldContain("public EVulkanDiagnosticPreset VulkanDiagnosticPreset");
+        runtimeEffectiveSource.ShouldContain("public EVulkanDiagnosticFlags VulkanDiagnosticFlags");
+        hostServicesSource.ShouldContain("EVulkanDiagnosticPreset VulkanDiagnosticPreset");
+        hostServicesSource.ShouldContain("EVulkanDiagnosticFlags VulkanDiagnosticFlags");
+        editorPreferencesSource.ShouldContain("VkDiagnosticPreset");
+        editorPreferencesSource.ShouldContain("VkDiagnosticFlags");
+    }
+
+    [Test]
+    public void VulkanPhase1Diagnostics_WireValidationFeaturesAndCapabilityReports()
+    {
+        string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanDiagnosticOptions.cs");
+        string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Validation.cs");
+        string instanceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Instance.cs");
+        string extensionsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+        string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+
+        resolverSource.ShouldContain("FlagsForPreset");
+        resolverSource.ShouldContain("EVulkanDiagnosticPreset.CrashDiagnostics");
+        resolverSource.ShouldContain("XREngineEnvironmentVariables.VulkanValidation");
+        resolverSource.ShouldContain("ApplyBooleanEnvOverride");
+        resolverSource.ShouldContain("BuildOverheadWarnings");
+
+        validationSource.ShouldContain("PopulateEnabledValidationFeatures");
+        validationSource.ShouldContain("ValidationFeatureEnableEXT.SynchronizationValidationExt");
+        validationSource.ShouldContain("ValidationFeatureEnableEXT.GpuAssistedExt");
+        validationSource.ShouldContain("ValidationFeatureEnableEXT.BestPracticesExt");
+        validationSource.ShouldContain("RecordStructuredVulkanValidationMessage");
+        validationSource.ShouldContain("DescribeVulkanValidationSummary");
+        instanceSource.ShouldContain("ValidationFeaturesEXT");
+        instanceSource.ShouldContain("LogResolvedVulkanDiagnosticOptions(extensions)");
+        extensionsSource.ShouldContain("ExtDebugUtils.ExtensionName");
+
+        logicalDeviceSource.ShouldContain("ExtDeviceFaultExtensionName");
+        logicalDeviceSource.ShouldContain("KhrDeviceFaultExtensionName");
+        logicalDeviceSource.ShouldContain("NvDeviceDiagnosticCheckpointsExtensionName");
+        logicalDeviceSource.ShouldContain("PhysicalDeviceFaultFeaturesEXT");
+        logicalDeviceSource.ShouldContain("VulkanKhrPhysicalDeviceFaultFeatures");
+        logicalDeviceSource.ShouldContain("QueryKhrDeviceFaultCapabilities");
+        logicalDeviceSource.ShouldContain("TryLoadKhrDeviceFaultFunctionPointers");
+        logicalDeviceSource.ShouldContain("DeviceDiagnosticsConfigCreateInfoNV");
+        logicalDeviceSource.ShouldContain("LogVulkanDiagnosticDeviceCapabilities");
+        logicalDeviceSource.ShouldContain("Requested diagnostic device extension is unsupported");
+    }
+
+    [Test]
+    public void VulkanPhase1Diagnostics_DeviceLossFooterIncludesBreadcrumbsFaultsAndNamedSyncObjects()
+    {
+        string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.cs");
+        string phase1Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.Phase1.cs");
+        string syncSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SyncObjects.cs");
+        string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string oneTimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.OneTimeSubmit.cs");
+
+        diagnosticsSource.ShouldContain("VulkanCrashBreadcrumbCapacity");
+        diagnosticsSource.ShouldContain("RecordVulkanCrashBreadcrumb");
+        diagnosticsSource.ShouldContain("DescribeVulkanCrashBreadcrumbTail");
+        diagnosticsSource.ShouldContain("DescribeVulkanValidationSummary");
+        diagnosticsSource.ShouldContain("DescribeVulkanFaultDiagnosticsAfterDeviceLoss");
+        diagnosticsSource.ShouldContain("LastCommandMarkerSerial");
+        diagnosticsSource.ShouldContain("ImageLayoutTransitionSerial");
+        diagnosticsSource.ShouldContain("DescriptorTableGeneration");
+        diagnosticsSource.ShouldContain("FirstFailingApi");
+        diagnosticsSource.ShouldContain("AppendDeviceAddressBindingSummary");
+        phase1Source.ShouldContain("GetDeviceFaultInfo");
+        phase1Source.ShouldContain("GetQueueCheckpointData2");
+
+        syncSource.ShouldContain("Timeline.Graphics");
+        syncSource.ShouldContain("AcquireBridge[");
+        syncSource.ShouldContain("PresentBridge[");
+        openXrSource.ShouldContain("OpenXR.SubmitAndWaitFence");
+        oneTimeSource.ShouldContain("OneShot.TransferFence");
+        oneTimeSource.ShouldContain("OneShot.GraphicsFence");
+    }
+
+    [Test]
+    public void VulkanPhase1Diagnostics_CollectFaultArtifactsAddressBindingsAndCheckpoints()
+    {
+        string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.cs");
+        string phase1Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.Phase1.cs");
+        string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Validation.cs");
+        string synchronizationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        string recordingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string bufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
+        string descriptorHeapSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorHeap.cs");
+        string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+
+        diagnosticsSource.ShouldContain("FirstFailingApi");
+        phase1Source.ShouldContain("DeviceFaultInfoEXT");
+        phase1Source.ShouldContain("PAddressInfos");
+        phase1Source.ShouldContain("PVendorInfos");
+        phase1Source.ShouldContain("PVendorBinaryData");
+        phase1Source.ShouldContain("vulkan-device-fault-report.log");
+        phase1Source.ShouldContain("vulkan-device-fault-vendor-");
+        phase1Source.ShouldContain("Result.Incomplete");
+        phase1Source.ShouldContain("vendorBinaryStatus");
+        phase1Source.ShouldContain("DeviceAddressBindingCallbackDataEXT");
+        phase1Source.ShouldContain("RegisterVulkanDeviceAddressRange");
+        phase1Source.ShouldContain("DescribeVulkanAddressCorrelation");
+        phase1Source.ShouldContain("CmdSetCheckpoint");
+        phase1Source.ShouldContain("VulkanNvCheckpointMarkerCapacity");
+        phase1Source.ShouldContain("GetQueueCheckpointData2");
+        validationSource.ShouldContain("RecordVulkanDeviceAddressBindingCallback(pCallbackData)");
+        synchronizationSource.ShouldContain("RecordVulkanImageLayoutTransitionBreadcrumb(imageBarrierCount, imageBarriers, caller)");
+        recordingSource.ShouldContain("RecordVulkanCommandDiagnosticMarker(commandBuffer, op, opPassIndex, opIndex)");
+        bufferSource.ShouldContain("RegisterVulkanDeviceAddressRange(buffer, address, bufferSize");
+        descriptorHeapSource.ShouldContain("RecordVulkanDescriptorTableGeneration");
+        logicalDeviceSource.ShouldContain("VendorCrashHooks");
+    }
+
+    [Test]
+    public void VulkanPhase1Diagnostics_DebugNamesCoverPhase1ObjectTypes()
+    {
+        string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Validation.cs");
+        string swapchainFramebufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Framebuffers/VulkanRenderer.SwapchainFramebuffers.cs");
+        string framebufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
+        string swapchainDescriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs");
+        string materialTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.BindlessMaterialTextureTable.cs");
+        string imguiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
+        string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string phase1Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.Phase1.cs");
+
+        validationSource.ShouldContain("SetDebugDescriptorSetName");
+        validationSource.ShouldContain("SetDebugDescriptorSetNames");
+        swapchainFramebufferSource.ShouldContain("ObjectType.Framebuffer");
+        swapchainFramebufferSource.ShouldContain("Swapchain.Framebuffer[");
+        framebufferSource.ShouldContain("ObjectType.Framebuffer");
+        framebufferSource.ShouldContain("FBO.");
+        swapchainDescriptorSource.ShouldContain("SetDebugDescriptorSetNames(descriptorSets, \"Swapchain.DescriptorSet\")");
+        materialTextureSource.ShouldContain("GlobalMaterialTexture.DescriptorSet");
+        imguiSource.ShouldContain("ImGui.Font.DescriptorSet");
+        openXrSource.ShouldContain("OpenXR.SwapchainImageView");
+        phase1Source.ShouldContain("FrameOpContext.");
+    }
+
+    [Test]
+    public void VulkanPhase11Diagnostics_KhrDeviceFaultShimIsWired()
+    {
+        string shimSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.KhrDeviceFault.cs");
+        string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+        string phase1Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.Phase1.cs");
+        string todoSource = ReadWorkspaceFile("docs/work/todo/rendering/vulkan-core-hardening-and-device-loss-todo.md");
+
+        shimSource.ShouldContain("VulkanKhrDeviceFaultPhysicalDeviceFeaturesSType = 1000573000");
+        shimSource.ShouldContain("VulkanKhrDeviceFaultPhysicalDevicePropertiesSType = 1000573001");
+        shimSource.ShouldContain("VulkanKhrDeviceFaultInfoSType = 1000573002");
+        shimSource.ShouldContain("VulkanKhrDeviceFaultDebugInfoSType = 1000573003");
+        shimSource.ShouldContain("VulkanKhrPhysicalDeviceFaultFeatures");
+        shimSource.ShouldContain("VulkanKhrPhysicalDeviceFaultProperties");
+        shimSource.ShouldContain("VulkanKhrDeviceFaultAddressInfo");
+        shimSource.ShouldContain("VulkanKhrDeviceFaultVendorInfo");
+        shimSource.ShouldContain("VulkanKhrDeviceFaultInfo");
+        shimSource.ShouldContain("VulkanKhrDeviceFaultDebugInfo");
+        shimSource.ShouldContain("VulkanKhrDeviceFaultVendorBinaryHeaderVersionOne");
+        shimSource.ShouldContain("VkGetDeviceFaultReportsKhrDelegate");
+        shimSource.ShouldContain("VkGetDeviceFaultDebugInfoKhrDelegate");
+        shimSource.ShouldContain("vkGetDeviceFaultReportsKHR");
+        shimSource.ShouldContain("vkGetDeviceFaultDebugInfoKHR");
+        shimSource.ShouldContain("GetDeviceProcAddr");
+        shimSource.ShouldContain("DeviceFaultKHR active");
+        shimSource.ShouldContain("KHR advertised but function pointer unavailable");
+        shimSource.ShouldContain("vulkan-device-fault-khr-reports.log");
+        shimSource.ShouldContain("vulkan-device-fault-khr-debug-info.log");
+        shimSource.ShouldContain("vulkan-device-fault-khr-vendor-");
+
+        logicalDeviceSource.ShouldContain("AddDiagnosticDeviceExtensionIfRequested(KhrDeviceFaultExtensionName");
+        logicalDeviceSource.ShouldContain("enableKhrDeviceFaultFeature");
+        logicalDeviceSource.ShouldContain("enableExtDeviceFaultFeature");
+        logicalDeviceSource.ShouldContain("enableKhrDeviceFaultReportMasked");
+        logicalDeviceSource.ShouldContain("RequestDeviceFaultDeviceLostOnMasked");
+        logicalDeviceSource.ShouldContain("DeviceFaultEXT compatibility active");
+        logicalDeviceSource.ShouldContain("activePath=");
+
+        phase1Source.ShouldContain("TryAppendKhrDeviceFaultSummary(builder)");
+        phase1Source.ShouldContain("_deviceFaultUsingKhr && khrQueried");
+        phase1Source.ShouldContain("_supportsExtDeviceFault");
+
+        todoSource.ShouldContain("- [x] Add a small local KHR shim partial");
+        todoSource.ShouldContain("- [x] A driver that advertises `VK_KHR_device_fault` uses the KHR query path");
+        todoSource.ShouldContain("- [x] Logs make KHR-vs-EXT coverage unambiguous.");
+    }
+
+    [Test]
     public void FrameOps_CaptureContextBeforePassValidation()
     {
         string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");

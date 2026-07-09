@@ -11,6 +11,11 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private const uint VulkanApiVersion14 = (1u << 22) | (4u << 12);
+    private const string ExtDeviceFaultExtensionName = "VK_EXT_device_fault";
+    private const string KhrDeviceFaultExtensionName = "VK_KHR_device_fault";
+    private const string ExtDeviceAddressBindingReportExtensionName = "VK_EXT_device_address_binding_report";
+    private const string NvDeviceDiagnosticCheckpointsExtensionName = "VK_NV_device_diagnostic_checkpoints";
+    private const string NvDeviceDiagnosticsConfigExtensionName = "VK_NV_device_diagnostics_config";
 
     private bool _supportsAnisotropy;
     private string[] _availableDeviceExtensions = Array.Empty<string>();
@@ -25,6 +30,13 @@ public unsafe partial class VulkanRenderer
     private bool _supportsMultipleGraphicsQueues;
     private bool _supportsTimelineSemaphores;
     private bool _supportsSynchronization2Feature;
+    private ExtDeviceFault? _extDeviceFault;
+    private NVDeviceDiagnosticCheckpoints? _nvDeviceDiagnosticCheckpoints;
+    private bool _supportsDeviceFault;
+    private bool _supportsDeviceFaultVendorBinary;
+    private bool _supportsDeviceAddressBindingReport;
+    private bool _supportsNvDiagnosticCheckpoints;
+    private bool _supportsNvDiagnosticsConfig;
 
     public Device Device => device;
     internal bool IsLogicalDeviceReady => device.Handle != 0;
@@ -36,6 +48,12 @@ public unsafe partial class VulkanRenderer
     public IReadOnlyList<string> AvailableDeviceExtensions => _availableDeviceExtensions;
     public IReadOnlyList<string> EnabledDeviceExtensions => _enabledDeviceExtensions;
     public bool HasSecondaryGraphicsQueue => _supportsMultipleGraphicsQueues && secondaryGraphicsQueue.Handle != 0;
+    public bool SupportsDeviceFault => _supportsDeviceFault &&
+        ((_supportsKhrDeviceFault && _vkGetDeviceFaultReportsKHR is not null) ||
+         (_supportsExtDeviceFault && _extDeviceFault is not null));
+    public bool SupportsDeviceAddressBindingReport => _supportsDeviceAddressBindingReport;
+    public bool SupportsNvDiagnosticCheckpoints => _supportsNvDiagnosticCheckpoints && _nvDeviceDiagnosticCheckpoints is not null;
+    public bool SupportsNvDiagnosticsConfig => _supportsNvDiagnosticsConfig;
 
     private void DestroyLogicalDevice()
     {
@@ -51,6 +69,7 @@ public unsafe partial class VulkanRenderer
         DestroyVulkanPipelineCache();
         DestroyCanonicalImmutableSamplers();
         DestroyRemainingTrackedSamplers();
+        ReleaseVulkanDiagnosticStorage();
         Api!.DestroyDevice(device, null);
         device = default;
         graphicsQueue = default;
@@ -611,6 +630,81 @@ public unsafe partial class VulkanRenderer
         featureSupported = features.DeviceGeneratedCommands;
     }
 
+    private unsafe void QueryDeviceFaultCapabilities(
+        bool extensionEnabled,
+        out bool deviceFaultSupported,
+        out bool vendorBinarySupported)
+    {
+        deviceFaultSupported = false;
+        vendorBinarySupported = false;
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceFaultFeaturesEXT features = new()
+        {
+            SType = StructureType.PhysicalDeviceFaultFeaturesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        deviceFaultSupported = features.DeviceFault;
+        vendorBinarySupported = features.DeviceFaultVendorBinary;
+    }
+
+    private unsafe void QueryDeviceAddressBindingReportCapabilities(
+        bool extensionEnabled,
+        out bool reportAddressBindingSupported)
+    {
+        reportAddressBindingSupported = false;
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceAddressBindingReportFeaturesEXT features = new()
+        {
+            SType = StructureType.PhysicalDeviceAddressBindingReportFeaturesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        reportAddressBindingSupported = features.ReportAddressBinding;
+    }
+
+    private unsafe void QueryNvDiagnosticsConfigCapabilities(
+        bool extensionEnabled,
+        out bool diagnosticsConfigSupported)
+    {
+        diagnosticsConfigSupported = false;
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceDiagnosticsConfigFeaturesNV features = new()
+        {
+            SType = StructureType.PhysicalDeviceDiagnosticsConfigFeaturesNV,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        diagnosticsConfigSupported = features.DiagnosticsConfig;
+    }
+
     private unsafe void QueryShaderDrawParametersCapabilities(out bool featureSupported)
     {
         featureSupported = false;
@@ -1027,6 +1121,39 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        void AddDiagnosticDeviceExtensionIfRequested(string extensionName, bool requested)
+        {
+            if (!requested)
+                return;
+
+            if (availableExtensionSet.Contains(extensionName))
+            {
+                if (!extensionsToEnable.Contains(extensionName, StringComparer.Ordinal))
+                {
+                    extensionsToEnable.Add(extensionName);
+                    Debug.Vulkan("[VulkanDiag] Enabling requested diagnostic device extension: {0}", extensionName);
+                }
+            }
+            else
+            {
+                Debug.VulkanWarning("[VulkanDiag] Requested diagnostic device extension is unsupported: {0}", extensionName);
+            }
+        }
+
+        if (_diagnosticOptions.RequestDeviceFault && availableExtensionSet.Contains(KhrDeviceFaultExtensionName))
+        {
+            Debug.Vulkan(
+                "[VulkanDiag] {0} is exposed; preferring local KHR device-fault shim with {1} compatibility fallback when available.",
+                KhrDeviceFaultExtensionName,
+                ExtDeviceFaultExtensionName);
+        }
+
+        AddDiagnosticDeviceExtensionIfRequested(KhrDeviceFaultExtensionName, _diagnosticOptions.RequestDeviceFault);
+        AddDiagnosticDeviceExtensionIfRequested(ExtDeviceFaultExtensionName, _diagnosticOptions.RequestDeviceFault);
+        AddDiagnosticDeviceExtensionIfRequested(ExtDeviceAddressBindingReportExtensionName, _diagnosticOptions.RequestDeviceAddressBindingReport);
+        AddDiagnosticDeviceExtensionIfRequested(NvDeviceDiagnosticCheckpointsExtensionName, _diagnosticOptions.RequestNvDiagnosticCheckpoints);
+        AddDiagnosticDeviceExtensionIfRequested(NvDeviceDiagnosticsConfigExtensionName, _diagnosticOptions.RequestNvDiagnosticsConfig);
+
         foreach (var optionalExt in optionalDeviceExtensions)
         {
             if (optionalExt == "VK_EXT_graphics_pipeline_library" &&
@@ -1255,6 +1382,67 @@ public unsafe partial class VulkanRenderer
         QueryDeviceGeneratedCommandsCapabilities(
             deviceGeneratedCommandsExtensionAvailable,
             out bool deviceGeneratedCommandsFeatureSupported);
+        bool khrDeviceFaultExtensionAvailable = availableExtensionSet.Contains(KhrDeviceFaultExtensionName);
+        bool extDeviceFaultExtensionAvailable = availableExtensionSet.Contains(ExtDeviceFaultExtensionName);
+        bool khrDeviceFaultExtensionEnabled = extensionsArray.Contains(KhrDeviceFaultExtensionName);
+        bool extDeviceFaultExtensionEnabled = extensionsArray.Contains(ExtDeviceFaultExtensionName);
+        QueryKhrDeviceFaultCapabilities(
+            khrDeviceFaultExtensionEnabled,
+            out bool khrDeviceFaultFeatureSupported,
+            out bool khrDeviceFaultVendorBinaryFeatureSupported,
+            out bool khrDeviceFaultReportMaskedFeatureSupported,
+            out bool khrDeviceFaultDeviceLostOnMaskedFeatureSupported,
+            out uint khrDeviceFaultMaxReportCount);
+        QueryDeviceFaultCapabilities(
+            extDeviceFaultExtensionEnabled,
+            out bool extDeviceFaultFeatureSupported,
+            out bool extDeviceFaultVendorBinaryFeatureSupported);
+        bool enableKhrDeviceFaultFeature =
+            _diagnosticOptions.RequestDeviceFault &&
+            khrDeviceFaultExtensionEnabled &&
+            khrDeviceFaultFeatureSupported;
+        bool enableKhrDeviceFaultVendorBinary =
+            enableKhrDeviceFaultFeature &&
+            khrDeviceFaultVendorBinaryFeatureSupported;
+        bool enableKhrDeviceFaultReportMasked =
+            enableKhrDeviceFaultFeature &&
+            _diagnosticOptions.Preset == EVulkanDiagnosticPreset.CrashDiagnostics &&
+            khrDeviceFaultReportMaskedFeatureSupported;
+        bool enableKhrDeviceFaultDeviceLostOnMasked =
+            enableKhrDeviceFaultFeature &&
+            _diagnosticOptions.RequestDeviceFaultDeviceLostOnMasked &&
+            khrDeviceFaultDeviceLostOnMaskedFeatureSupported;
+        bool enableExtDeviceFaultFeature =
+            _diagnosticOptions.RequestDeviceFault &&
+            extDeviceFaultExtensionEnabled &&
+            extDeviceFaultFeatureSupported;
+        bool enableDeviceFaultFeature =
+            enableKhrDeviceFaultFeature ||
+            enableExtDeviceFaultFeature;
+
+        bool deviceAddressBindingReportExtensionAvailable = availableExtensionSet.Contains(ExtDeviceAddressBindingReportExtensionName);
+        bool deviceAddressBindingReportExtensionEnabled = extensionsArray.Contains(ExtDeviceAddressBindingReportExtensionName);
+        QueryDeviceAddressBindingReportCapabilities(
+            deviceAddressBindingReportExtensionEnabled,
+            out bool deviceAddressBindingReportFeatureSupported);
+        bool enableDeviceAddressBindingReportFeature =
+            _diagnosticOptions.RequestDeviceAddressBindingReport &&
+            deviceAddressBindingReportExtensionEnabled &&
+            deviceAddressBindingReportFeatureSupported;
+
+        bool nvDiagnosticCheckpointsExtensionAvailable = availableExtensionSet.Contains(NvDeviceDiagnosticCheckpointsExtensionName);
+        bool nvDiagnosticCheckpointsExtensionEnabled = extensionsArray.Contains(NvDeviceDiagnosticCheckpointsExtensionName);
+        bool enableNvDiagnosticCheckpoints = _diagnosticOptions.RequestNvDiagnosticCheckpoints && nvDiagnosticCheckpointsExtensionEnabled;
+
+        bool nvDiagnosticsConfigExtensionAvailable = availableExtensionSet.Contains(NvDeviceDiagnosticsConfigExtensionName);
+        bool nvDiagnosticsConfigExtensionEnabled = extensionsArray.Contains(NvDeviceDiagnosticsConfigExtensionName);
+        QueryNvDiagnosticsConfigCapabilities(
+            nvDiagnosticsConfigExtensionEnabled,
+            out bool nvDiagnosticsConfigFeatureSupported);
+        bool enableNvDiagnosticsConfigFeature =
+            _diagnosticOptions.RequestNvDiagnosticsConfig &&
+            nvDiagnosticsConfigExtensionEnabled &&
+            nvDiagnosticsConfigFeatureSupported;
         bool descriptorHeapDependenciesReady =
             descriptorHeapExtensionAvailable &&
             (vulkan14PromotedToCore ||
@@ -1516,6 +1704,47 @@ public unsafe partial class VulkanRenderer
             FragmentDensityMapNonSubsampledImages = enableFragmentDensityMapFeature && fragmentDensityMapNonSubsampledImagesSupported,
         };
 
+        PhysicalDeviceFaultFeaturesEXT deviceFaultFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceFaultFeaturesExt,
+            PNext = null,
+            DeviceFault = enableExtDeviceFaultFeature,
+            DeviceFaultVendorBinary = enableExtDeviceFaultFeature && extDeviceFaultVendorBinaryFeatureSupported,
+        };
+
+        VulkanKhrPhysicalDeviceFaultFeatures khrDeviceFaultFeatureEnable = new()
+        {
+            SType = KhrStructureType(VulkanKhrDeviceFaultPhysicalDeviceFeaturesSType),
+            PNext = null,
+            DeviceFault = ToVulkanBool(enableKhrDeviceFaultFeature),
+            DeviceFaultVendorBinary = ToVulkanBool(enableKhrDeviceFaultVendorBinary),
+            DeviceFaultReportMasked = ToVulkanBool(enableKhrDeviceFaultReportMasked),
+            DeviceFaultDeviceLostOnMasked = ToVulkanBool(enableKhrDeviceFaultDeviceLostOnMasked),
+        };
+
+        PhysicalDeviceAddressBindingReportFeaturesEXT deviceAddressBindingReportFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceAddressBindingReportFeaturesExt,
+            PNext = null,
+            ReportAddressBinding = enableDeviceAddressBindingReportFeature,
+        };
+
+        PhysicalDeviceDiagnosticsConfigFeaturesNV nvDiagnosticsConfigFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceDiagnosticsConfigFeaturesNV,
+            PNext = null,
+            DiagnosticsConfig = enableNvDiagnosticsConfigFeature,
+        };
+
+        DeviceDiagnosticsConfigCreateInfoNV nvDiagnosticsConfigCreateInfo = new()
+        {
+            SType = StructureType.DeviceDiagnosticsConfigCreateInfoNV,
+            PNext = null,
+            Flags = DeviceDiagnosticsConfigFlagsNV.ResourceTrackingBitNV |
+                    DeviceDiagnosticsConfigFlagsNV.AutomaticCheckpointsBitNV |
+                    DeviceDiagnosticsConfigFlagsNV.ShaderErrorReportingBitNV,
+        };
+
         PhysicalDeviceDescriptorHeapFeaturesEXTNative descriptorHeapFeatureEnable = new()
         {
             SType = VulkanDescriptorHeapExt.PhysicalDeviceDescriptorHeapFeaturesSType,
@@ -1672,12 +1901,43 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &fragmentDensityMapFeatureEnable;
         }
 
+        if (enableExtDeviceFaultFeature)
+        {
+            deviceFaultFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &deviceFaultFeatureEnable;
+        }
+
+        if (enableKhrDeviceFaultFeature)
+        {
+            khrDeviceFaultFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &khrDeviceFaultFeatureEnable;
+        }
+
+        if (enableDeviceAddressBindingReportFeature)
+        {
+            deviceAddressBindingReportFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &deviceAddressBindingReportFeatureEnable;
+        }
+
+        if (enableNvDiagnosticsConfigFeature)
+        {
+            nvDiagnosticsConfigFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &nvDiagnosticsConfigFeatureEnable;
+        }
+
         PhysicalDeviceFeatures2 featureChain = new()
         {
             SType = StructureType.PhysicalDeviceFeatures2,
             PNext = enabledFeaturesPNext,
             Features = deviceFeatures,
         };
+
+        void* deviceCreatePNext = &featureChain;
+        if (enableNvDiagnosticsConfigFeature)
+        {
+            nvDiagnosticsConfigCreateInfo.PNext = deviceCreatePNext;
+            deviceCreatePNext = &nvDiagnosticsConfigCreateInfo;
+        }
 
         // Configure the logical device creation
         DeviceCreateInfo createInfo = new()
@@ -1686,7 +1946,7 @@ public unsafe partial class VulkanRenderer
             QueueCreateInfoCount = (uint)uniqueQueueFamilies.Length,
             PQueueCreateInfos = queueCreateInfos,
 
-            PNext = &featureChain,
+            PNext = deviceCreatePNext,
             PEnabledFeatures = null,
 
             // Enable required device extensions (e.g., swapchain)
@@ -1758,6 +2018,18 @@ public unsafe partial class VulkanRenderer
         _supportsRayTracingPipeline = rayTracingPipelineFeatureSupported;
         _supportsRayQuery = rayQueryFeatureSupported;
         _supportsDeviceGeneratedCommands = deviceGeneratedCommandsFeatureSupported;
+        _supportsKhrDeviceFault = enableKhrDeviceFaultFeature;
+        _supportsKhrDeviceFaultVendorBinary = enableKhrDeviceFaultVendorBinary;
+        _supportsKhrDeviceFaultReportMasked = enableKhrDeviceFaultReportMasked;
+        _supportsKhrDeviceFaultDeviceLostOnMasked = enableKhrDeviceFaultDeviceLostOnMasked;
+        _khrDeviceFaultMaxReportCount = khrDeviceFaultMaxReportCount;
+        _supportsExtDeviceFault = enableExtDeviceFaultFeature;
+        _supportsExtDeviceFaultVendorBinary = enableExtDeviceFaultFeature && extDeviceFaultVendorBinaryFeatureSupported;
+        _supportsDeviceFault = enableDeviceFaultFeature;
+        _supportsDeviceFaultVendorBinary = _supportsKhrDeviceFaultVendorBinary || _supportsExtDeviceFaultVendorBinary;
+        _supportsDeviceAddressBindingReport = enableDeviceAddressBindingReportFeature;
+        _supportsNvDiagnosticCheckpoints = enableNvDiagnosticCheckpoints;
+        _supportsNvDiagnosticsConfig = enableNvDiagnosticsConfigFeature;
         _shaderObjectProperties = shaderObjectFeatureSupported ? shaderObjectProperties : default;
         _supportsIndexTypeUint8 = enableIndexTypeUint8Feature;
         _supportsTimelineSemaphores = enableTimelineSemaphoreFeature;
@@ -1779,6 +2051,26 @@ public unsafe partial class VulkanRenderer
 
         // Load optional extension command tables before resolving backend modes that depend on them.
         LoadOptionalDeviceExtensions(extensionsArray);
+        LogVulkanDiagnosticDeviceCapabilities(
+            khrDeviceFaultExtensionAvailable,
+            khrDeviceFaultExtensionEnabled,
+            khrDeviceFaultFeatureSupported,
+            khrDeviceFaultVendorBinaryFeatureSupported,
+            khrDeviceFaultReportMaskedFeatureSupported,
+            khrDeviceFaultDeviceLostOnMaskedFeatureSupported,
+            khrDeviceFaultMaxReportCount,
+            extDeviceFaultExtensionAvailable,
+            extDeviceFaultExtensionEnabled,
+            extDeviceFaultFeatureSupported,
+            extDeviceFaultVendorBinaryFeatureSupported,
+            deviceAddressBindingReportExtensionAvailable,
+            deviceAddressBindingReportExtensionEnabled,
+            deviceAddressBindingReportFeatureSupported,
+            nvDiagnosticCheckpointsExtensionAvailable,
+            nvDiagnosticCheckpointsExtensionEnabled,
+            nvDiagnosticsConfigExtensionAvailable,
+            nvDiagnosticsConfigExtensionEnabled,
+            nvDiagnosticsConfigFeatureSupported);
 
         ResolveDescriptorBackendAfterDeviceCreate(
             VulkanFeatureProfile.RequestedDescriptorBackend,
@@ -2155,6 +2447,52 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        if (enabledExtensions.Contains(KhrDeviceFaultExtensionName) && _supportsKhrDeviceFault)
+        {
+            if (!TryLoadKhrDeviceFaultFunctionPointers())
+            {
+                _supportsKhrDeviceFault = false;
+                _supportsKhrDeviceFaultVendorBinary = false;
+                _supportsKhrDeviceFaultReportMasked = false;
+                _supportsKhrDeviceFaultDeviceLostOnMasked = false;
+                _deviceFaultUsingKhr = false;
+                _supportsDeviceFault = _supportsExtDeviceFault;
+                _supportsDeviceFaultVendorBinary = _supportsExtDeviceFaultVendorBinary;
+            }
+        }
+
+        if (enabledExtensions.Contains(ExtDeviceFaultExtensionName) && _supportsExtDeviceFault)
+        {
+            if (Api!.TryGetDeviceExtension(instance, device, out _extDeviceFault))
+            {
+                Debug.Vulkan(
+                    "[VulkanDiag] DeviceFaultEXT compatibility active extension={0} vendorBinary={1}.",
+                    ExtDeviceFaultExtensionName,
+                    _supportsExtDeviceFaultVendorBinary);
+            }
+            else
+            {
+                Debug.VulkanWarning("[VulkanDiag] Failed to load {0} extension handle.", ExtDeviceFaultExtensionName);
+                _supportsExtDeviceFault = false;
+                _supportsExtDeviceFaultVendorBinary = false;
+                _supportsDeviceFault = _supportsKhrDeviceFault;
+                _supportsDeviceFaultVendorBinary = _supportsKhrDeviceFaultVendorBinary;
+            }
+        }
+
+        if (enabledExtensions.Contains(NvDeviceDiagnosticCheckpointsExtensionName) && _supportsNvDiagnosticCheckpoints)
+        {
+            if (Api!.TryGetDeviceExtension(instance, device, out _nvDeviceDiagnosticCheckpoints))
+            {
+                Debug.Vulkan("[VulkanDiag] {0} loaded successfully.", NvDeviceDiagnosticCheckpointsExtensionName);
+            }
+            else
+            {
+                Debug.VulkanWarning("[VulkanDiag] Failed to load {0} extension handle.", NvDeviceDiagnosticCheckpointsExtensionName);
+                _supportsNvDiagnosticCheckpoints = false;
+            }
+        }
+
         if (_supportsNvCopyMemoryIndirect && !_supportsBufferDeviceAddress)
         {
             _supportsNvCopyMemoryIndirect = false;
@@ -2177,6 +2515,79 @@ public unsafe partial class VulkanRenderer
 
         if (descriptorIndexingExtensionLoaded && _supportsDescriptorIndexing)
             Debug.Vulkan("[Vulkan] VK_EXT_descriptor_indexing enabled for descriptor update-after-bind support.");
+    }
+
+    private void LogVulkanDiagnosticDeviceCapabilities(
+        bool khrDeviceFaultExtensionAvailable,
+        bool khrDeviceFaultExtensionEnabled,
+        bool khrDeviceFaultFeatureSupported,
+        bool khrDeviceFaultVendorBinaryFeatureSupported,
+        bool khrDeviceFaultReportMaskedFeatureSupported,
+        bool khrDeviceFaultDeviceLostOnMaskedFeatureSupported,
+        uint khrDeviceFaultMaxReportCount,
+        bool extDeviceFaultExtensionAvailable,
+        bool extDeviceFaultExtensionEnabled,
+        bool extDeviceFaultFeatureSupported,
+        bool extDeviceFaultVendorBinaryFeatureSupported,
+        bool deviceAddressBindingReportExtensionAvailable,
+        bool deviceAddressBindingReportExtensionEnabled,
+        bool deviceAddressBindingReportFeatureSupported,
+        bool nvDiagnosticCheckpointsExtensionAvailable,
+        bool nvDiagnosticCheckpointsExtensionEnabled,
+        bool nvDiagnosticsConfigExtensionAvailable,
+        bool nvDiagnosticsConfigExtensionEnabled,
+        bool nvDiagnosticsConfigFeatureSupported)
+    {
+        Debug.Vulkan(
+            "[VulkanDiag] DeviceFault requested={0} khrAvailable={1} khrEnabled={2} khrFeature={3} khrVendorBinary={4} khrReportMasked={5} khrDeviceLostOnMasked={6} khrMaxReports={7} khrCommandTable={8} extAvailable={9} extEnabled={10} extFeature={11} extVendorBinary={12} extCommandTable={13} activePath={14}",
+            _diagnosticOptions.RequestDeviceFault,
+            khrDeviceFaultExtensionAvailable,
+            khrDeviceFaultExtensionEnabled,
+            khrDeviceFaultFeatureSupported,
+            khrDeviceFaultVendorBinaryFeatureSupported,
+            khrDeviceFaultReportMaskedFeatureSupported,
+            khrDeviceFaultDeviceLostOnMaskedFeatureSupported,
+            khrDeviceFaultMaxReportCount,
+            _vkGetDeviceFaultReportsKHR is not null,
+            extDeviceFaultExtensionAvailable,
+            extDeviceFaultExtensionEnabled,
+            extDeviceFaultFeatureSupported,
+            extDeviceFaultVendorBinaryFeatureSupported,
+            _extDeviceFault is not null,
+            _deviceFaultUsingKhr ? "KHR" : _extDeviceFault is not null ? "EXT" : "unavailable");
+
+        Debug.Vulkan(
+            "[VulkanDiag] AddressBindingReport requested={0} available={1} enabled={2} feature={3}",
+            _diagnosticOptions.RequestDeviceAddressBindingReport,
+            deviceAddressBindingReportExtensionAvailable,
+            deviceAddressBindingReportExtensionEnabled,
+            deviceAddressBindingReportFeatureSupported);
+
+        Debug.Vulkan(
+            "[VulkanDiag] NvDiagnosticCheckpoints requested={0} available={1} enabled={2} commandTable={3}",
+            _diagnosticOptions.RequestNvDiagnosticCheckpoints,
+            nvDiagnosticCheckpointsExtensionAvailable,
+            nvDiagnosticCheckpointsExtensionEnabled,
+            _nvDeviceDiagnosticCheckpoints is not null);
+
+        Debug.Vulkan(
+            "[VulkanDiag] NvDiagnosticsConfig requested={0} available={1} enabled={2} feature={3}",
+            _diagnosticOptions.RequestNvDiagnosticsConfig,
+            nvDiagnosticsConfigExtensionAvailable,
+            nvDiagnosticsConfigExtensionEnabled,
+            nvDiagnosticsConfigFeatureSupported);
+
+        Debug.Vulkan(
+            "[VulkanDiag] VendorCrashHooks amdIntelRuntimeDependency=none amdIntelNativeHook={0} fallbackArtifacts={1}",
+            "unavailable",
+            "deviceFault,addressBindingReport,validationSummary");
+
+        if (_diagnosticOptions.RequestDeviceFault && !_supportsDeviceFault)
+            Debug.VulkanWarning("[VulkanDiag] Device-fault reports will be unavailable for this run.");
+        if (_diagnosticOptions.RequestNvDiagnosticCheckpoints && !SupportsNvDiagnosticCheckpoints)
+            Debug.VulkanWarning("[VulkanDiag] NV diagnostic checkpoints will be unavailable for this run.");
+        if (_diagnosticOptions.RequestNvDiagnosticsConfig && !SupportsNvDiagnosticsConfig)
+            Debug.VulkanWarning("[VulkanDiag] NV diagnostics config will be unavailable for this run.");
     }
 
     private void ReportLayeredShadowCapabilities(

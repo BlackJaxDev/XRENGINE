@@ -34,25 +34,42 @@ public unsafe partial class VulkanRenderer
 
     private void MarkDeviceLost(string? reason = null)
     {
-        bool firstObservation = !_deviceLost;
-        _deviceLost = true;
-        if (!string.IsNullOrWhiteSpace(reason) && string.IsNullOrWhiteSpace(_deviceLostReason))
-            _deviceLostReason = reason;
+        RecordFirstFailingVulkanApi(reason);
 
-        // Device loss means pending timeline signals will never arrive. Clear
-        // them so teardown/recovery paths do not block on dead semaphore values.
-        if (_frameSlotTimelineValues is not null)
-            Array.Clear(_frameSlotTimelineValues);
-        if (_swapchainImageTimelineValues is not null)
-            Array.Clear(_swapchainImageTimelineValues);
-        _acquireTimelineValue = 0;
-        _graphicsTimelineValue = 0;
+        bool firstObservation;
+        string deviceLostReason;
+        lock (_deviceLostTransitionLock)
+        {
+            firstObservation = !_deviceLost;
+            if (firstObservation)
+            {
+                _deviceLost = true;
+                _deviceLostReason = BuildDeviceLostReasonWithSubmissionContext(reason);
+
+                // Device loss means pending timeline signals will never arrive. Clear
+                // them so teardown/recovery paths do not block on dead semaphore values.
+                if (_frameSlotTimelineValues is not null)
+                    Array.Clear(_frameSlotTimelineValues);
+                if (_swapchainImageTimelineValues is not null)
+                    Array.Clear(_swapchainImageTimelineValues);
+                _acquireTimelineValue = 0;
+                _graphicsTimelineValue = 0;
+            }
+            else if (!string.IsNullOrWhiteSpace(reason) && string.IsNullOrWhiteSpace(_deviceLostReason))
+            {
+                _deviceLostReason = BuildDeviceLostReasonWithSubmissionContext(reason);
+            }
+
+            deviceLostReason = string.IsNullOrWhiteSpace(_deviceLostReason)
+                ? "<unknown>"
+                : _deviceLostReason;
+        }
 
         if (firstObservation)
         {
             Debug.VulkanWarning(
                 "[Vulkan] Logical device lost. Reason={0}. The current Vulkan renderer cannot submit more work; recreate the renderer/window to recover.",
-                string.IsNullOrWhiteSpace(_deviceLostReason) ? "<unknown>" : _deviceLostReason);
+                deviceLostReason);
         }
     }
 
@@ -60,7 +77,7 @@ public unsafe partial class VulkanRenderer
     {
         MarkDeviceLost($"{operation} returned {result}");
         return new InvalidOperationException(
-            $"Vulkan device lost during {operation} ({result}). The logical device is terminal and the renderer/window must be recreated before Vulkan can render again.");
+            $"Vulkan device lost during {operation} ({result}). Reason={DeviceLostReason ?? "<unknown>"}. The logical device is terminal and the renderer/window must be recreated before Vulkan can render again.");
     }
 
     private void EnsureSwapchainTimelineState()
@@ -226,12 +243,18 @@ public unsafe partial class VulkanRenderer
             throw new Exception("failed to create timeline synchronization semaphores.");
         }
 
+        SetDebugObjectName(ObjectType.Semaphore, _graphicsTimelineSemaphore.Handle, "Timeline.Graphics");
+        SetDebugObjectName(ObjectType.Semaphore, _presentTimelineSemaphore.Handle, "Timeline.Present");
+        SetDebugObjectName(ObjectType.Semaphore, _transferTimelineSemaphore.Handle, "Timeline.Transfer");
+
         for (var i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
             if (Api!.CreateSemaphore(device, ref semaphoreInfo, null, out acquireBridgeSemaphores[i]) != Result.Success)
             {
                 throw new Exception("failed to create acquire bridge synchronization semaphores.");
             }
+
+            SetDebugObjectName(ObjectType.Semaphore, acquireBridgeSemaphores[i].Handle, $"AcquireBridge[{i}]");
         }
 
         for (var i = 0; i < presentSemaphoreCount; i++)
@@ -240,6 +263,8 @@ public unsafe partial class VulkanRenderer
             {
                 throw new Exception("failed to create frame bridge synchronization semaphores.");
             }
+
+            SetDebugObjectName(ObjectType.Semaphore, presentBridgeSemaphores[i].Handle, $"PresentBridge[{i}]");
         }
     }
 }

@@ -3,53 +3,41 @@ using Silk.NET.Vulkan.Extensions.EXT;
 using Silk.NET.Core.Native;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Collections.Generic;
 
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
+    private const int MaxStructuredVulkanValidationMessages = 128;
+
     private ExtDebugUtils? debugUtils;
     private DebugUtilsMessengerEXT debugMessenger;
 
-    private bool EnableValidationLayers = ResolveValidationLayerDefault();
+    private readonly VulkanDiagnosticOptions _diagnosticOptions = VulkanDiagnosticOptions.Resolve();
+    private bool? _validationLayersEnabledOverride;
+    private readonly object _vulkanValidationSummaryLock = new();
+    private readonly Dictionary<string, VulkanValidationMessageAggregate> _vulkanValidationMessages = new(StringComparer.Ordinal);
+    private int _vulkanValidationMessageOverflowCount;
 
-    private static readonly bool CommandBufferDebugLabelsEnabled = ResolveCommandBufferDebugLabelsDefault();
-
-    private bool SupportsDebugUtils => debugUtils is not null;
-    private bool SupportsDebugUtilsLabels => SupportsDebugUtils && CommandBufferDebugLabelsEnabled;
-    private bool CanRecordCommandBufferDebugLabels => SupportsDebugUtilsLabels;
-
-    private static bool ResolveValidationLayerDefault()
+    private bool EnableValidationLayers
     {
-        // Validation layers are opt-in in all configurations (including DEBUG):
-        // VK_LAYER_KHRONOS_validation intercepts every Vulkan call on the render
-        // thread and multiplies primary command recording cost several times over,
-        // which dominates frame time on CPU-bound scenes. Set XRE_VULKAN_VALIDATION=1
-        // to enable them for correctness debugging sessions.
-        const bool defaultValue = false;
-
-        string? raw = Environment.GetEnvironmentVariable(global::XREngine.XREngineEnvironmentVariables.VulkanValidation);
-        if (string.IsNullOrWhiteSpace(raw))
-            return defaultValue;
-
-        return !string.Equals(raw, "0", StringComparison.OrdinalIgnoreCase) &&
-               !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) &&
-               !string.Equals(raw, "off", StringComparison.OrdinalIgnoreCase) &&
-               !string.Equals(raw, "no", StringComparison.OrdinalIgnoreCase);
+        get => _validationLayersEnabledOverride ?? _diagnosticOptions.EnableValidationLayers;
+        set => _validationLayersEnabledOverride = value;
     }
 
-    private static bool ResolveCommandBufferDebugLabelsDefault()
-    {
-        // Command-buffer labels are useful for RenderDoc/validation captures, but
-        // recording them marshals label strings on the render hot path. Keep them
-        // opt-in so normal editor runs do not pay that cost.
-        string? raw = Environment.GetEnvironmentVariable(global::XREngine.XREngineEnvironmentVariables.VulkanCommandBufferLabels);
-        if (string.IsNullOrWhiteSpace(raw))
-            return false;
+    private bool SupportsDebugUtils => debugUtils is not null;
+    private bool SupportsDebugUtilsLabels => SupportsDebugUtils && _diagnosticOptions.EnableCommandBufferLabels;
+    private bool CanRecordCommandBufferDebugLabels => SupportsDebugUtilsLabels;
 
-        return !string.Equals(raw, "0", StringComparison.OrdinalIgnoreCase) &&
-               !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) &&
-               !string.Equals(raw, "off", StringComparison.OrdinalIgnoreCase) &&
-               !string.Equals(raw, "no", StringComparison.OrdinalIgnoreCase);
+    private sealed class VulkanValidationMessageAggregate
+    {
+        public int Count;
+        public int ErrorCount;
+        public int WarningCount;
+        public ulong FirstFrameId;
+        public ulong LastFrameId;
+        public string FirstSample = string.Empty;
+        public string LastSample = string.Empty;
     }
 
     private bool CmdBeginLabel(CommandBuffer commandBuffer, string name)
@@ -107,6 +95,18 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    private void SetDebugDescriptorSetName(DescriptorSet descriptorSet, string name)
+        => SetDebugObjectName(ObjectType.DescriptorSet, descriptorSet.Handle, name);
+
+    private void SetDebugDescriptorSetNames(DescriptorSet[]? sets, string prefix)
+    {
+        if (sets is null || sets.Length == 0)
+            return;
+
+        for (int i = 0; i < sets.Length; i++)
+            SetDebugDescriptorSetName(sets[i], $"{prefix}[{i}]");
+    }
+
     private readonly string[] validationLayers =
     [
         "VK_LAYER_KHRONOS_validation"
@@ -131,7 +131,7 @@ public unsafe partial class VulkanRenderer
     }
     private void SetupDebugMessenger()
     {
-        if (!EnableValidationLayers && !CommandBufferDebugLabelsEnabled)
+        if (!EnableValidationLayers && !_diagnosticOptions.EnableDebugUtils)
             return;
 
         //TryGetInstanceExtension equivilant to method CreateDebugUtilsMessengerEXT from original tutorial.
@@ -147,6 +147,71 @@ public unsafe partial class VulkanRenderer
         if (debugUtils!.CreateDebugUtilsMessenger(instance, in createInfo, null, out debugMessenger) != Result.Success)
             throw new Exception("failed to set up debug messenger!");
     }
+
+    private uint PopulateEnabledValidationFeatures(ValidationFeatureEnableEXT* enabledFeatures)
+    {
+        uint count = 0;
+        if (_diagnosticOptions.EnableSynchronizationValidation)
+            enabledFeatures[count++] = ValidationFeatureEnableEXT.SynchronizationValidationExt;
+
+        if (_diagnosticOptions.EnableGpuAssistedValidation)
+        {
+            enabledFeatures[count++] = ValidationFeatureEnableEXT.GpuAssistedExt;
+            enabledFeatures[count++] = ValidationFeatureEnableEXT.GpuAssistedReserveBindingSlotExt;
+        }
+
+        if (_diagnosticOptions.EnableBestPractices)
+            enabledFeatures[count++] = ValidationFeatureEnableEXT.BestPracticesExt;
+
+        return count;
+    }
+
+    private string DescribeEnabledValidationFeatures()
+    {
+        StringBuilder builder = new();
+        if (_diagnosticOptions.EnableSynchronizationValidation)
+            AppendCommaSeparated(builder, "SynchronizationValidation");
+        if (_diagnosticOptions.EnableGpuAssistedValidation)
+        {
+            AppendCommaSeparated(builder, "GpuAssisted");
+            AppendCommaSeparated(builder, "GpuAssistedReserveBindingSlot");
+        }
+        if (_diagnosticOptions.EnableBestPractices)
+            AppendCommaSeparated(builder, "BestPractices");
+
+        return builder.Length == 0 ? "<none>" : builder.ToString();
+    }
+
+    private void LogResolvedVulkanDiagnosticOptions(IReadOnlyList<string> instanceExtensions)
+    {
+        Debug.Vulkan(
+            "[VulkanDiag] Preset={0} Flags={1} ValidationLayers={2} DebugUtils={3} Labels={4} Breadcrumbs={5} RenderDocFriendly={6} Source='{7}'",
+            _diagnosticOptions.Preset,
+            _diagnosticOptions.Flags,
+            EnableValidationLayers,
+            _diagnosticOptions.EnableDebugUtils,
+            _diagnosticOptions.EnableCommandBufferLabels,
+            _diagnosticOptions.EnableCrashBreadcrumbs,
+            _diagnosticOptions.RenderDocFriendly,
+            _diagnosticOptions.SourceSummary);
+
+        if (!string.IsNullOrWhiteSpace(_diagnosticOptions.OverheadWarnings))
+            Debug.VulkanWarning("[VulkanDiag] Overhead warnings: {0}", _diagnosticOptions.OverheadWarnings);
+
+        Debug.Vulkan("[VulkanDiag] InstanceExtensions={0}", string.Join(",", instanceExtensions));
+        Debug.Vulkan(
+            "[VulkanDiag] ValidationLayer VK_LAYER_KHRONOS_validation: {0}",
+            EnableValidationLayers ? "enabled" : "disabled: no validation diagnostic flag requested or layer unavailable");
+        Debug.Vulkan("[VulkanDiag] ValidationFeatures={0}", DescribeEnabledValidationFeatures());
+    }
+
+    private static void AppendCommaSeparated(StringBuilder builder, string value)
+    {
+        if (builder.Length > 0)
+            builder.Append(',');
+        builder.Append(value);
+    }
+
     private bool CheckValidationLayerSupport()
     {
         uint layerCount = 0;
@@ -181,11 +246,14 @@ public unsafe partial class VulkanRenderer
             return Vk.False;
         }
 
+        RecordVulkanDeviceAddressBindingCallback(pCallbackData);
+
         string objectSummary = FormatDebugCallbackObjects(pCallbackData);
         if (!string.IsNullOrEmpty(objectSummary))
             msg = $"{msg} objects=[{objectSummary}]";
 
         bool isError = messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt);
+        RecordStructuredVulkanValidationMessage(messageSeverity, pCallbackData, msg);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanValidationMessage(isError, msg);
 
         if (isError)
@@ -196,6 +264,128 @@ public unsafe partial class VulkanRenderer
             Debug.Vulkan($"[Vulkan] {msg}");
 
         return Vk.False;
+    }
+
+    private void RecordStructuredVulkanValidationMessage(
+        DebugUtilsMessageSeverityFlagsEXT messageSeverity,
+        DebugUtilsMessengerCallbackDataEXT* callbackData,
+        string message)
+    {
+        if (callbackData is null)
+            return;
+
+        VulkanSubmissionDiagnosticContext submitContext = SnapshotLastVulkanSubmissionDiagnosticContext();
+        string key = BuildStructuredVulkanValidationMessageKey(callbackData, message, submitContext.FrameOpKind);
+        bool isError = messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt);
+        bool isWarning = messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.WarningBitExt);
+
+        lock (_vulkanValidationSummaryLock)
+        {
+            if (!_vulkanValidationMessages.TryGetValue(key, out VulkanValidationMessageAggregate? aggregate))
+            {
+                if (_vulkanValidationMessages.Count >= MaxStructuredVulkanValidationMessages)
+                {
+                    _vulkanValidationMessageOverflowCount++;
+                    return;
+                }
+
+                aggregate = new()
+                {
+                    FirstFrameId = submitContext.FrameId,
+                    FirstSample = message,
+                };
+                _vulkanValidationMessages.Add(key, aggregate);
+            }
+
+            aggregate.Count++;
+            if (isError)
+                aggregate.ErrorCount++;
+            if (isWarning)
+                aggregate.WarningCount++;
+            aggregate.LastFrameId = submitContext.FrameId;
+            aggregate.LastSample = message;
+        }
+    }
+
+    private static string BuildStructuredVulkanValidationMessageKey(
+        DebugUtilsMessengerCallbackDataEXT* callbackData,
+        string message,
+        string? frameOpKind)
+    {
+        string? vuid = ExtractVulkanValidationVuid(message);
+        string? messageIdName = callbackData->PMessageIdName is null
+            ? null
+            : Marshal.PtrToStringAnsi((nint)callbackData->PMessageIdName);
+
+        ulong firstObjectHandle = 0;
+        ObjectType firstObjectType = ObjectType.Unknown;
+        if (callbackData->ObjectCount > 0 && callbackData->PObjects is not null)
+        {
+            DebugUtilsObjectNameInfoEXT firstObject = callbackData->PObjects[0];
+            firstObjectHandle = firstObject.ObjectHandle;
+            firstObjectType = firstObject.ObjectType;
+        }
+
+        return $"{vuid ?? messageIdName ?? "<unknown>"}:0x{callbackData->MessageIdNumber:X}:frameOp={frameOpKind ?? "<unknown>"}:object={firstObjectType}/0x{firstObjectHandle:X}";
+    }
+
+    private static string? ExtractVulkanValidationVuid(string message)
+    {
+        const string prefix = "VUID-";
+        int start = message.IndexOf(prefix, StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+
+        int end = start + prefix.Length;
+        while (end < message.Length)
+        {
+            char c = message[end];
+            if (char.IsWhiteSpace(c) || c is ':' or '\'' or '"' or ')' or '(')
+                break;
+            end++;
+        }
+
+        return message[start..end];
+    }
+
+    private string DescribeVulkanValidationSummary(int maxEntries = 6)
+    {
+        lock (_vulkanValidationSummaryLock)
+        {
+            if (_vulkanValidationMessages.Count == 0 && _vulkanValidationMessageOverflowCount == 0)
+                return string.Empty;
+
+            StringBuilder builder = new();
+            builder.Append("ValidationSummary count=").Append(_vulkanValidationMessages.Count);
+            if (_vulkanValidationMessageOverflowCount > 0)
+                builder.Append(" overflow=").Append(_vulkanValidationMessageOverflowCount);
+
+            int emitted = 0;
+            foreach (KeyValuePair<string, VulkanValidationMessageAggregate> pair in _vulkanValidationMessages)
+            {
+                if (emitted >= maxEntries)
+                    break;
+
+                VulkanValidationMessageAggregate aggregate = pair.Value;
+                builder
+                    .Append(" [")
+                    .Append(pair.Key)
+                    .Append(" hits=")
+                    .Append(aggregate.Count)
+                    .Append(" errors=")
+                    .Append(aggregate.ErrorCount)
+                    .Append(" warnings=")
+                    .Append(aggregate.WarningCount)
+                    .Append(" frames=")
+                    .Append(aggregate.FirstFrameId)
+                    .Append('-')
+                    .Append(aggregate.LastFrameId)
+                    .Append(']');
+                emitted++;
+            }
+
+            return builder.ToString();
+        }
     }
 
     private static string FormatDebugCallbackObjects(DebugUtilsMessengerCallbackDataEXT* callbackData)

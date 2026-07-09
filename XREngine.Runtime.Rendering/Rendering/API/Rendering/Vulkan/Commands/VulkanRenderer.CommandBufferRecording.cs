@@ -4821,6 +4821,7 @@ namespace XREngine.Rendering.Vulkan
                             }
 
                             CmdBeginLabel(commandBuffer, "TextureUpload");
+                            RecordVulkanCommandDiagnosticMarker(commandBuffer, textureUploadOp, textureUploadOp.PassIndex, opIndex);
                             RecordTextureUploadOp(commandBuffer, textureUploadOp.Upload);
                             CmdEndLabel(commandBuffer);
                             continue;
@@ -5004,6 +5005,7 @@ namespace XREngine.Rendering.Vulkan
                             }
                         }
 
+                        RecordVulkanCommandDiagnosticMarker(commandBuffer, op, opPassIndex, opIndex);
                         using var vulkanGpuScope = TryBeginVulkanGpuProfilerScope(commandBuffer, op, opPassIndex);
 
                         IDisposable? frameOpProfileScope = null;

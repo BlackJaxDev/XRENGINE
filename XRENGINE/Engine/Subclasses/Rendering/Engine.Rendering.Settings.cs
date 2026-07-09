@@ -1603,6 +1603,30 @@ namespace XREngine
                 }
 
                 /// <summary>
+                /// Selects the named Vulkan diagnostics preset used during backend startup.
+                /// Environment override: XRE_VULKAN_DIAGNOSTIC_PRESET=Off|StandardValidation|SyncValidation|GpuAssisted|BestPractices|CrashDiagnostics|RenderDocFriendly.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Selects the named Vulkan diagnostics preset used during backend startup. Environment override: XRE_VULKAN_DIAGNOSTIC_PRESET.")]
+                public EVulkanDiagnosticPreset VulkanDiagnosticPreset
+                {
+                    get => Vulkan.Diagnostics.DiagnosticPreset;
+                    set => Vulkan.Diagnostics.DiagnosticPreset = value;
+                }
+
+                /// <summary>
+                /// Enables additional Vulkan diagnostics independently of the selected preset.
+                /// Environment override: XRE_VULKAN_DIAGNOSTIC_FLAGS accepts comma/pipe-separated flag names.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Enables additional Vulkan diagnostics independently of the selected preset. Environment override: XRE_VULKAN_DIAGNOSTIC_FLAGS.")]
+                public EVulkanDiagnosticFlags VulkanDiagnosticFlags
+                {
+                    get => Vulkan.Diagnostics.DiagnosticFlags;
+                    set => Vulkan.Diagnostics.DiagnosticFlags = value;
+                }
+
+                /// <summary>
                 /// Enables Vulkan descriptor indexing for large runtime descriptor arrays when supported.
                 /// </summary>
                 [Category("Vulkan")]

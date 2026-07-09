@@ -149,7 +149,7 @@ Long-lived findings, decisions, and reproduction steps belong in tracked docs su
 
 "Iterate on the editor" (a.k.a. "iterate on the editor") means driving a tight, evidence-based debug loop against a live editor process using the MCP server and the per-run logs, instead of guessing from source alone. Use it for rendering, scene, transform, and other visually observable issues. Each iteration is one full pass through the loop below.
 
-When iterating on the editor to debug one or more issues, create or update a work doc under `docs/work/` for the investigation. Use it as the durable progress tracker until the issue is solved. It should record the problem statement, issues found, suggested solutions, attempted solutions, validation evidence, and whether the user reported each attempted solution worked or did not work.
+When iterating on the editor to debug one or more issues, create or update an investigation doc under `docs/work/investigations/<subsystem>/` for the issue, for example `docs/work/investigations/rendering/` for rendering/editor-viewport work. Use it as the durable progress tracker until the issue is solved. It should record the problem statement, issues found, suggested solutions, attempted solutions, validation evidence, and whether the user reported each attempted solution worked or did not work.
 
 The loop:
 
@@ -273,6 +273,16 @@ Repository-managed native/tooling dependencies include CoACD scripts, MagicPhysX
 ## Docs And Work Items
 
 Update docs with behavior/workflow changes. Likely touchpoints are `README.md`, `docs/README.md`, and relevant docs under `docs/`.
+
+Work docs are organized by document purpose first, subsystem second:
+
+- `docs/work/investigations/<subsystem>/` - bug, regression, crash, performance, visual artifact, and evidence-driven debug notes.
+- `docs/work/progress/<subsystem>/` - implementation phase ledgers, status updates, validation manifests, and closeout/progress notes for active work.
+- `docs/work/design/<subsystem>/` - design proposals and architecture plans.
+- `docs/work/todo/<subsystem>/` - execution checklists and backlog items.
+- `docs/work/testing/<subsystem>/` - validation plans, reproducible test notes, and hardware/software test matrices.
+
+Do not create top-level subsystem buckets such as `docs/work/rendering/` for investigation or progress notes. For rendering debug loops, use `docs/work/investigations/rendering/`; for rendering implementation status, use `docs/work/progress/rendering/`.
 
 When generating a todo from a design doc:
 

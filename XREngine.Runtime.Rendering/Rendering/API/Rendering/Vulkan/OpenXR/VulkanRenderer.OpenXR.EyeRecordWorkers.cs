@@ -52,7 +52,13 @@ public unsafe partial class VulkanRenderer
                 submitted = SubmitAndWaitOpenXrCommandBuffers(
                     firstRecorded.CommandBuffer,
                     secondRecorded.CommandBuffer,
-                    out commandBuffersCompleted);
+                    out commandBuffersCompleted,
+                    CreateOpenXrBatchSubmissionDiagnosticContext(
+                        "OpenXrEyeParallelBatchSubmit",
+                        "OpenXrEyeParallelBatch",
+                        in firstRecorded,
+                        in secondRecorded,
+                        firstEye.Extent));
             }
 
             if (submitted)

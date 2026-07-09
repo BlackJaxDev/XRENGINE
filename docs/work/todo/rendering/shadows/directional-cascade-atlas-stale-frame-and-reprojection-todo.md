@@ -16,7 +16,7 @@ fresh render catches up. The latest audited MCP move showed smooth
 `decision=PreservedPrevious`, `fallback=StaleTile`, `sampleable=True`, and
 `DirectionalCascade.MixedGenerationPrevented` only during startup.
 See the follow-ups in
-`docs/work/rendering/shadow-atlas-framerate-regression-2026-07-02.md`.
+`docs/work/investigations/rendering/shadow-atlas-framerate-regression-2026-07-02.md`.
 
 Goal: eliminate directional cascade shadow lag, one-frame post-camera-stop
 jitter, and movement-related frame drops in the shadow atlas path. Stale atlas
@@ -36,7 +36,7 @@ Primary code:
 
 Related notes:
 
-- `docs/work/rendering/shadow-atlas-framerate-regression-2026-07-02.md`
+- `docs/work/investigations/rendering/shadow-atlas-framerate-regression-2026-07-02.md`
 - `docs/work/todo/rendering/shadows/shadow-atlas-allocation-and-threading-todo.md`
 - `docs/work/todo/rendering/optimization/vulkan-primary-command-recording-fast-path-todo.md`
 

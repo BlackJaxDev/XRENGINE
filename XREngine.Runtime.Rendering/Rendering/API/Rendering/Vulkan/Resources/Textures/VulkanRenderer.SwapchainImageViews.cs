@@ -54,6 +54,7 @@ public unsafe partial class VulkanRenderer
                 throw new Exception("Failed to create image views.");
 
             TrackLiveImageView(swapChainImageViews[i], in createInfo, "Swapchain.Color");
+            SetDebugObjectName(ObjectType.ImageView, swapChainImageViews[i].Handle, $"Swapchain.ColorView[{i}]");
         }
     }
 }

@@ -141,6 +141,20 @@ namespace XREngine
                 => Rendering.Settings.VulkanQueueOverlapMode;
 
             /// <summary>
+            /// Gets the effective Vulkan diagnostics preset.
+            /// Resolved from: Environment Override > Engine Default.
+            /// </summary>
+            public static EVulkanDiagnosticPreset VulkanDiagnosticPreset
+                => ResolveVulkanDiagnosticPreset();
+
+            /// <summary>
+            /// Gets additional Vulkan diagnostics flags requested by settings.
+            /// Environment flags are merged by the Vulkan diagnostic resolver.
+            /// </summary>
+            public static EVulkanDiagnosticFlags VulkanDiagnosticFlags
+                => Rendering.Settings.VulkanDiagnosticFlags;
+
+            /// <summary>
             /// Gets the effective Vulkan target mode used to choose dynamic rendering or legacy render passes.
             /// Resolved from: Project Override > Engine Default.
             /// </summary>
@@ -212,6 +226,18 @@ namespace XREngine
                     Rendering.Settings.UseGpuBvh,
                     GameSettings?.UseGpuBvhOverride,
                     null);
+
+            private static EVulkanDiagnosticPreset ResolveVulkanDiagnosticPreset()
+            {
+                string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticPreset);
+                if (!string.IsNullOrWhiteSpace(raw) &&
+                    Enum.TryParse(raw.Trim(), ignoreCase: true, out EVulkanDiagnosticPreset parsed))
+                {
+                    return parsed;
+                }
+
+                return Rendering.Settings.VulkanDiagnosticPreset;
+            }
 
             /// <summary>
             /// Gets the CPU spatial structure used for render visibility when GPU dispatch is disabled.

@@ -31,7 +31,7 @@ Merge gate:
 
 Related investigation log:
 
-- `docs/work/rendering/openxr-monado-vulkan-parallel-rendering-2026-06-25.md`
+- `docs/work/investigations/rendering/openxr-monado-vulkan-parallel-rendering-2026-06-25.md`
 
 ## Goal
 

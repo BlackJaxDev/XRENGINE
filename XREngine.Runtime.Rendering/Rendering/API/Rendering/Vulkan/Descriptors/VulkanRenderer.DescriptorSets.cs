@@ -29,6 +29,9 @@ public unsafe partial class VulkanRenderer
             }
         }
 
+        SetDebugDescriptorSetNames(descriptorSets, "Swapchain.DescriptorSet");
+        RecordVulkanDescriptorTableGeneration("SwapchainDescriptorSets.Allocated");
+
         for (int i = 0; i < swapChainImages.Length; i++)
         {
             //DescriptorBufferInfo ubo = new()

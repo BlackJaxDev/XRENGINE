@@ -267,6 +267,8 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException($"{name} descriptor heap storage has no device address.");
         }
 
+        RegisterVulkanDeviceAddressRange(buffer, address, size, $"DescriptorHeap.{name}");
+        RecordVulkanDescriptorTableGeneration($"DescriptorHeapStorage.{name}");
         return new DescriptorHeapStorage(buffer, memory, mapped, size, address);
     }
 
@@ -437,6 +439,7 @@ public unsafe partial class VulkanRenderer
         }
 
         _descriptorHeapSamplerWriteCount += samplerCount;
+        RecordVulkanDescriptorTableGeneration("DescriptorHeap.SamplerWrite");
         _descriptorHeapSamplerHighWaterBytes = Math.Max(_descriptorHeapSamplerHighWaterBytes, destinationOffsetBytes + destinationSizeBytes);
         return true;
     }
@@ -473,6 +476,7 @@ public unsafe partial class VulkanRenderer
         }
 
         _descriptorHeapResourceWriteCount += resourceCount;
+        RecordVulkanDescriptorTableGeneration("DescriptorHeap.ResourceWrite");
         _descriptorHeapResourceHighWaterBytes = Math.Max(_descriptorHeapResourceHighWaterBytes, destinationOffsetBytes + destinationSizeBytes);
         return true;
     }

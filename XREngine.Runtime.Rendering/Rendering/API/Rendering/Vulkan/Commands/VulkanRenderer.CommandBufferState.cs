@@ -1345,7 +1345,11 @@ namespace XREngine.Rendering.Vulkan
 
                         Result allocResult = Api!.AllocateDescriptorSets(device, ref allocInfo, setPtr);
                         if (allocResult == Result.Success)
+                        {
+                            SetDebugDescriptorSetNames(sets, "RendererOwned.DescriptorSet");
+                            RecordVulkanDescriptorTableGeneration("RendererOwnedDescriptorSets.Allocated");
                             return true;
+                        }
 
                         sets = Array.Empty<DescriptorSet>();
                         return false;
