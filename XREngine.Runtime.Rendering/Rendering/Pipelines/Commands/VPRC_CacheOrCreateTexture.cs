@@ -92,7 +92,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                         {
                             RegisterDescriptor(texture);
                             RecordChurn("Resized", "Resize");
-                            ActivePipelineInstance.NotifyRenderResourcesChanged();
+                            ActivePipelineInstance.NotifyRenderResourcesChanged("VPRC_CacheOrCreateTexture.Resize");
                             return;
                         }
                     }

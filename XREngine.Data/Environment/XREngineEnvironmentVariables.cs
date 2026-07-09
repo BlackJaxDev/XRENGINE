@@ -209,6 +209,7 @@ public static class XREngineEnvironmentVariables
     public const string VkTraceDraw = "XRE_VK_TRACE_DRAW";
     public const string VkSkipUiPipeline = "XRE_SKIP_UI_PIPELINE";
     public const string VkSkipUiBatchText = "XRE_SKIP_UI_BATCH_TEXT";
+    public const string VkSkipOcclusionQueryOps = "XRE_VK_SKIP_OCCLUSION_QUERY_OPS";
     public const string VkForceSwapchainMagenta = "XRE_FORCE_SWAPCHAIN_MAGENTA";
     public const string VkSkipImGui = "XRE_SKIP_IMGUI";
     public const string VulkanAsyncTextureUpload = "XRE_VULKAN_ASYNC_TEXTURE_UPLOAD";
@@ -237,6 +238,7 @@ public static class XREngineEnvironmentVariables
     public const string VulkanDisableParallelChainRecording = "XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING";
     public const string VulkanParallelPacketBuild = "XRE_VULKAN_PARALLEL_PACKET_BUILD";
     public const string VulkanCommandChainMultiQueue = "XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE";
+    public const string VulkanCommandChainStabilityGuard = "XRE_VULKAN_COMMAND_CHAIN_STABILITY_GUARD";
     public const string VulkanCommandChainMeshSecondaryNoop = "XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP";
     public const string VulkanPrimaryCommandBufferReuse = "XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE";
     public const string VulkanValidation = "XRE_VULKAN_VALIDATION";

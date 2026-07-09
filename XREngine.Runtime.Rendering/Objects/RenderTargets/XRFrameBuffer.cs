@@ -200,7 +200,7 @@ namespace XREngine.Rendering
             }
 
             Resized?.Invoke();
-            AbstractRenderer.Current?.NotifyRenderResourcesChanged();
+            AbstractRenderer.Current?.NotifyRenderResourcesChanged("XRFrameBuffer.Resize");
         }
 
         public void SetRenderTargets(XRMaterial? material)

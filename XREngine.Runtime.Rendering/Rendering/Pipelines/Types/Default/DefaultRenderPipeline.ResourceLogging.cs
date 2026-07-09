@@ -21,7 +21,7 @@ public partial class DefaultRenderPipeline
         */
     }
 
-    internal void LogTextureBinding(XRRenderPipelineInstance instance, string name, XRTexture texture, XRTexture? replacedTexture)
+    internal override void OnTextureBound(XRRenderPipelineInstance instance, string name, XRTexture texture, XRTexture? replacedTexture)
     {
         if (replacedTexture is not null && !ReferenceEquals(replacedTexture, texture))
         {
@@ -47,7 +47,7 @@ public partial class DefaultRenderPipeline
         */
     }
 
-    internal void LogFrameBufferBinding(XRRenderPipelineInstance instance, string name, XRFrameBuffer frameBuffer, XRFrameBuffer? replacedFrameBuffer)
+    internal override void OnFrameBufferBound(XRRenderPipelineInstance instance, string name, XRFrameBuffer frameBuffer, XRFrameBuffer? replacedFrameBuffer)
     {
         if (replacedFrameBuffer is not null && !ReferenceEquals(replacedFrameBuffer, frameBuffer))
         {
@@ -73,7 +73,7 @@ public partial class DefaultRenderPipeline
         */
     }
 
-    internal void LogTextureDestroy(XRRenderPipelineInstance instance, string name, XRTexture texture, string reason)
+    internal override void OnTextureDestroyed(XRRenderPipelineInstance instance, string name, XRTexture texture, string reason)
     {
         /*
         Debug.Rendering(
@@ -86,7 +86,7 @@ public partial class DefaultRenderPipeline
         */
     }
 
-    internal void LogFrameBufferDestroy(XRRenderPipelineInstance instance, string name, XRFrameBuffer frameBuffer, string reason)
+    internal override void OnFrameBufferDestroyed(XRRenderPipelineInstance instance, string name, XRFrameBuffer frameBuffer, string reason)
     {
         /*
         Debug.Rendering(

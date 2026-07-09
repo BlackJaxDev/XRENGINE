@@ -156,6 +156,9 @@ public static class RenderDiagnosticsFlags
     /// <summary>Skip Vulkan batched UI text draw ops to isolate dynamic editor/profiler text from scene command recording. Seed: <c>XRE_SKIP_UI_BATCH_TEXT=1</c>.</summary>
     public static volatile bool VkSkipUiBatchText;
 
+    /// <summary>Skip Vulkan occlusion QueryOp begin/end enqueue for command-chain ceiling diagnostics. Seed: <c>XRE_VK_SKIP_OCCLUSION_QUERY_OPS=1</c>.</summary>
+    public static volatile bool VkSkipOcclusionQueryOps;
+
     /// <summary>Clear the Vulkan swapchain to magenta after main composition (sanity check). Seed: <c>XRE_FORCE_SWAPCHAIN_MAGENTA=1</c>.</summary>
     public static volatile bool VkForceSwapchainMagenta;
 
@@ -338,6 +341,7 @@ public static class RenderDiagnosticsFlags
         VkTraceDraw = ReadBool(XREngineEnvironmentVariables.VkTraceDraw);
         VkSkipUiPipeline = ReadBool(XREngineEnvironmentVariables.VkSkipUiPipeline);
         VkSkipUiBatchText = ReadBool(XREngineEnvironmentVariables.VkSkipUiBatchText);
+        VkSkipOcclusionQueryOps = ReadBool(XREngineEnvironmentVariables.VkSkipOcclusionQueryOps);
         VkForceSwapchainMagenta = ReadBool(XREngineEnvironmentVariables.VkForceSwapchainMagenta);
         VkSkipImGui = ReadBool(XREngineEnvironmentVariables.VkSkipImGui);
         VkAsyncTextureUpload = ReadBoolDefaultTrue(XREngineEnvironmentVariables.VulkanAsyncTextureUpload);
@@ -456,6 +460,7 @@ public static class RenderDiagnosticsFlags
     public static void SetVkTraceDraw(bool value) => VkTraceDraw = value;
     public static void SetVkSkipUiPipeline(bool value) => VkSkipUiPipeline = value;
     public static void SetVkSkipUiBatchText(bool value) => VkSkipUiBatchText = value;
+    public static void SetVkSkipOcclusionQueryOps(bool value) => VkSkipOcclusionQueryOps = value;
     public static void SetVkForceSwapchainMagenta(bool value) => VkForceSwapchainMagenta = value;
     public static void SetVkSkipImGui(bool value) => VkSkipImGui = value;
     public static void SetVkAsyncTextureUpload(bool value) => VkAsyncTextureUpload = value;

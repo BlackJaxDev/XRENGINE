@@ -642,6 +642,13 @@ public sealed class EditorVulkanDiagnosticsPreferences(EditorDebugOptions owner)
         set => owner.VkSkipUiBatchText = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkSkipOcclusionQueryOps)]
+    public bool SkipOcclusionQueryOps
+    {
+        get => owner.VkSkipOcclusionQueryOps;
+        set => owner.VkSkipOcclusionQueryOps = value;
+    }
+
     [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkForceSwapchainMagenta)]
     public bool ForceSwapchainMagenta
     {
@@ -715,6 +722,7 @@ public sealed class EditorVulkanDiagnosticsPreferences(EditorDebugOptions owner)
         TraceAllDraws = source.TraceAllDraws;
         SkipUiPipeline = source.SkipUiPipeline;
         SkipUiBatchText = source.SkipUiBatchText;
+        SkipOcclusionQueryOps = source.SkipOcclusionQueryOps;
         ForceSwapchainMagenta = source.ForceSwapchainMagenta;
         SkipImGui = source.SkipImGui;
         AsyncTextureUpload = source.AsyncTextureUpload;

@@ -24,7 +24,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private const string StereoShaderPath = "ForwardPlus/LightCullingStereo.comp";
 
         public const int TileSize = 16;
-        public const int MaxLightsPerTile = 1024;
+        public const int MaxLightsPerTile = 256;
 
         // Chosen to avoid conflicts with other SSBO users.
         public const uint LocalLightsBinding = 20;

@@ -93,4 +93,7 @@ public unsafe partial class VulkanRenderer
     internal override void NotifyRenderResourcesChanged()
         => MarkCommandBuffersDirty();
 
+    internal override void NotifyRenderResourcesChanged(string? reason)
+        => MarkCommandBuffersDirty(string.IsNullOrWhiteSpace(reason) ? nameof(NotifyRenderResourcesChanged) : reason);
+
 }

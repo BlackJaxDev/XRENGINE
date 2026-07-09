@@ -2028,7 +2028,7 @@ public unsafe partial class VulkanRenderer
             }
 
             pendingUpload.DetachPublishedImageHandles();
-            Renderer.MarkCommandBuffersDirty(
+            Renderer.NotifyTextureDescriptorPublished(
                 $"ImportedTextureUploadPublished texture='{ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName()}' descriptorGeneration={DescriptorGeneration}");
         }
 

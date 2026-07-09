@@ -248,11 +248,20 @@ namespace XREngine.Rendering.Commands
             return true;
         }
 
+        /// <summary>
+        /// Prepares the BVH for culling, which may involve building or refreshing the BVH structure on the GPU.
+        /// This method is called during the render pipeline execution to ensure the BVH is up-to-date with the current command count and state.
+        /// If the BVH is dirty or not ready, it will attempt to rebuild or refit the BVH as necessary. 
+        /// If the BVH build is suppressed due to previous overflow, it will skip rebuilding until the command count changes.
+        /// </summary>
+        /// <param name="commandCount">The number of commands currently in the scene.</param>
         public void PrepareBvhForCulling(uint commandCount)
         {
+            // If GPU BVH is not enabled, we can skip building the BVH and return early.
             if (!_useInternalBvh)
                 return;
 
+            // If there are no commands or the command buffer is null, reset the BVH state and return early.
             if (commandCount == 0 || _allLoadedCommandsBuffer is null)
             {
                 _bvhReady = false;

@@ -21,6 +21,24 @@ public unsafe partial class VulkanRenderer
         uint ArrayLayer,
         ImageAspectFlags Aspect);
 
+    private sealed class VulkanImageLayoutStateSnapshot(
+        VulkanTrackedImageLayoutEntry[] trackedLayouts,
+        VulkanPhysicalImageGroupLayoutEntry[] physicalGroups,
+        ulong signature)
+    {
+        public VulkanTrackedImageLayoutEntry[] TrackedLayouts { get; } = trackedLayouts;
+        public VulkanPhysicalImageGroupLayoutEntry[] PhysicalGroups { get; } = physicalGroups;
+        public ulong Signature { get; } = signature;
+    }
+
+    private readonly record struct VulkanTrackedImageLayoutEntry(
+        VulkanTrackedImageSubresource Key,
+        ImageLayout Layout);
+
+    private readonly record struct VulkanPhysicalImageGroupLayoutEntry(
+        VulkanPhysicalImageGroup Group,
+        VulkanPhysicalImageGroup.LayoutSnapshot Layout);
+
     /// <summary>
     /// Debug-only assertion that fires when <c>AllCommandsBit</c> is used in a barrier.
     /// Callers in hot paths should route through
@@ -473,6 +491,75 @@ public unsafe partial class VulkanRenderer
 
         common = tracked;
         return true;
+    }
+
+    private VulkanImageLayoutStateSnapshot CaptureImageLayoutStateSnapshot(ulong signature)
+    {
+        VulkanTrackedImageLayoutEntry[] trackedLayouts = _trackedImageSubresourceLayouts.Count == 0
+            ? Array.Empty<VulkanTrackedImageLayoutEntry>()
+            : new VulkanTrackedImageLayoutEntry[_trackedImageSubresourceLayouts.Count];
+        int trackedIndex = 0;
+        foreach (KeyValuePair<VulkanTrackedImageSubresource, ImageLayout> pair in _trackedImageSubresourceLayouts)
+            trackedLayouts[trackedIndex++] = new VulkanTrackedImageLayoutEntry(pair.Key, pair.Value);
+
+        int physicalGroupCount = 0;
+        foreach (VulkanPhysicalImageGroup group in ResourceAllocator.EnumeratePhysicalGroups())
+        {
+            if (group.IsAllocated)
+                physicalGroupCount++;
+        }
+
+        VulkanPhysicalImageGroupLayoutEntry[] physicalGroups = physicalGroupCount == 0
+            ? Array.Empty<VulkanPhysicalImageGroupLayoutEntry>()
+            : new VulkanPhysicalImageGroupLayoutEntry[physicalGroupCount];
+        int physicalGroupIndex = 0;
+        foreach (VulkanPhysicalImageGroup group in ResourceAllocator.EnumeratePhysicalGroups())
+        {
+            if (!group.IsAllocated)
+                continue;
+
+            physicalGroups[physicalGroupIndex++] = new VulkanPhysicalImageGroupLayoutEntry(
+                group,
+                group.CaptureLayoutSnapshot());
+        }
+
+        return new VulkanImageLayoutStateSnapshot(trackedLayouts, physicalGroups, signature);
+    }
+
+    private void CaptureCommandBufferVariantImageLayoutEndState(CommandBufferCacheVariant variant)
+    {
+        ulong signature = ComputeImageLayoutStateSignature();
+        variant.RecordedImageLayoutEndSignature = signature;
+        variant.RecordedImageLayoutEndState = CaptureImageLayoutStateSnapshot(signature);
+    }
+
+    private void RestoreRecordedImageLayoutEndState(CommandBufferCacheVariant variant)
+    {
+        VulkanImageLayoutStateSnapshot? snapshot = variant.RecordedImageLayoutEndState;
+        if (snapshot is null)
+            return;
+
+        RestoreImageLayoutStateSnapshot(snapshot);
+    }
+
+    private void RestoreImageLayoutStateSnapshot(VulkanImageLayoutStateSnapshot snapshot)
+    {
+        _trackedImageSubresourceLayouts.Clear();
+
+        VulkanTrackedImageLayoutEntry[] trackedLayouts = snapshot.TrackedLayouts;
+        for (int i = 0; i < trackedLayouts.Length; i++)
+        {
+            VulkanTrackedImageLayoutEntry entry = trackedLayouts[i];
+            _trackedImageSubresourceLayouts[entry.Key] = entry.Layout;
+        }
+
+        VulkanPhysicalImageGroupLayoutEntry[] physicalGroups = snapshot.PhysicalGroups;
+        for (int i = 0; i < physicalGroups.Length; i++)
+        {
+            VulkanPhysicalImageGroupLayoutEntry entry = physicalGroups[i];
+            if (entry.Group.IsAllocated)
+                entry.Group.RestoreLayoutSnapshot(entry.Layout);
+        }
     }
 
     private ulong ComputeImageLayoutStateSignature()

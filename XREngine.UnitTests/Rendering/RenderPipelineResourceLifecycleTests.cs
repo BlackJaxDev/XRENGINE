@@ -568,7 +568,7 @@ public sealed class RenderPipelineResourceLifecycleTests
 
         string source = File.ReadAllText(Path.Combine(
             TestContext.CurrentContext.TestDirectory,
-            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs"))
+            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs"))
             .Replace("\r\n", "\n");
 
         source.ShouldNotContain("LightCombineFBOName,\n            CreateLightCombineFBO,\n            GetDesiredFBOSizeInternal,\n            NeedsRecreateLightCombineFbo)");
@@ -633,7 +633,7 @@ public sealed class RenderPipelineResourceLifecycleTests
     {
         string source = File.ReadAllText(Path.Combine(
             TestContext.CurrentContext.TestDirectory,
-            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs"))
+            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs"))
             .Replace("\r\n", "\n");
 
         source.ShouldContain("private XRTexture EnsurePipelineTexture(string textureName, Func<XRTexture> factory)");
@@ -648,11 +648,11 @@ public sealed class RenderPipelineResourceLifecycleTests
     {
         string pipelineSource = File.ReadAllText(Path.Combine(
             TestContext.CurrentContext.TestDirectory,
-            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs"))
+            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs"))
             .Replace("\r\n", "\n");
         string postProcessSource = File.ReadAllText(Path.Combine(
             TestContext.CurrentContext.TestDirectory,
-            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs"))
+            "../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs"))
             .Replace("\r\n", "\n");
         string bloomSource = File.ReadAllText(Path.Combine(
             TestContext.CurrentContext.TestDirectory,
@@ -814,15 +814,16 @@ public sealed class RenderPipelineResourceLifecycleTests
     public void DefaultRenderPipeline_ResourceFeatureMaskIsStableUntilStructuralFeatureChanges()
     {
         DefaultRenderPipeline pipeline = new();
+        XRRenderPipelineInstance instance = new();
 
-        ulong first = pipeline.BuildResourceFeatureMaskForGenerationKey();
-        ulong second = pipeline.BuildResourceFeatureMaskForGenerationKey();
+        ulong first = pipeline.BuildResourceFeatureMaskForGenerationKey(instance, null);
+        ulong second = pipeline.BuildResourceFeatureMaskForGenerationKey(instance, null);
 
         second.ShouldBe(first);
 
         pipeline.EnableDeferredMsaa = !pipeline.EnableDeferredMsaa;
 
-        pipeline.BuildResourceFeatureMaskForGenerationKey().ShouldNotBe(first);
+        pipeline.BuildResourceFeatureMaskForGenerationKey(instance, null).ShouldNotBe(first);
     }
 
     [Test]

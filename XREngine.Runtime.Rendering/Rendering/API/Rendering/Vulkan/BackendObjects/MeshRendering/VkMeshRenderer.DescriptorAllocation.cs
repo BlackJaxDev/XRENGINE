@@ -21,6 +21,7 @@ public unsafe partial class VulkanRenderer
             public DescriptorHeapPushDataPayload[] DescriptorHeapPushData = [];
             public ulong SchemaFingerprint;
             public ulong ResourceFingerprint;
+            public ulong[] SlotResourceFingerprints = [];
             public string ResourceFingerprintDetails = string.Empty;
             public readonly Dictionary<FrameSourceDescriptorWriteKey, ulong> FrameSourceDescriptorWriteSignatures = new();
         }

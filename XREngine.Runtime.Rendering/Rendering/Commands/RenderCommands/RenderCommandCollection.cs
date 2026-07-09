@@ -585,21 +585,6 @@ namespace XREngine.Rendering.Commands
             return isShadowPass || isDepthNormalPrePass;
         }
 
-        private static bool ShouldSuppressCpuQueryOcclusionForCurrentView(int renderPass, XRCamera? camera)
-        {
-            IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
-            if (!RuntimeEngine.Rendering.State.IsVulkan ||
-                !host.IsOpenXrRuntimeRequested ||
-                !host.IsInVR ||
-                !host.RenderWindowsWhileInVR)
-            {
-                return false;
-            }
-
-            OcclusionViewKey viewKey = CpuRenderOcclusionCoordinator.CreatePassKey(renderPass, camera);
-            return viewKey.Scope == EOcclusionViewScope.EditorDesktopWhileVr;
-        }
-
         internal bool PrepareCpuSoftwareOcclusion(int renderPass, XRCamera? camera, bool suppressCpuOcclusionForPass = false)
         {
             bool suppressOcclusion = ShouldSuppressOcclusionForCurrentPass(suppressCpuOcclusionForPass, out _, out _);
@@ -658,10 +643,8 @@ namespace XREngine.Rendering.Commands
 
             EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;
             bool suppressOcclusion = ShouldSuppressOcclusionForCurrentPass(suppressCpuOcclusionForPass, out bool isShadowPass, out bool isDepthNormalPrePass);
-            bool suppressCpuQueryForView = ShouldSuppressCpuQueryOcclusionForCurrentView(renderPass, camera);
             bool useCpuQueryOcclusion =
                 !suppressOcclusion &&
-                !suppressCpuQueryForView &&
                 camera is not null &&
                 occlusionMode == EOcclusionCullingMode.CpuQueryAsync &&
                 RenderPassIsOcclusionTestable(renderPass);
@@ -688,7 +671,7 @@ namespace XREngine.Rendering.Commands
                     noCamera: camera is null,
                     shadowPass: isShadowPass,
                     depthNormalPrePass: isDepthNormalPrePass,
-                    modeOff: suppressCpuQueryForView || occlusionMode != EOcclusionCullingMode.CpuQueryAsync);
+                    modeOff: occlusionMode != EOcclusionCullingMode.CpuQueryAsync);
             }
 
             // Phase 2 deferred-probe queues (reused per-thread).
@@ -1056,11 +1039,8 @@ namespace XREngine.Rendering.Commands
                 RenderPassIsOcclusionTestable(renderPass);
             XRCamera? camera = occlusionTestable ? GetActiveCpuOcclusionCamera() : null;
             EOcclusionCullingMode occlusionMode = RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode;
-            bool suppressCpuQueryForView = camera is not null &&
-                ShouldSuppressCpuQueryOcclusionForCurrentView(renderPass, camera);
             bool useCpuQueryOcclusion =
                 occlusionTestable &&
-                !suppressCpuQueryForView &&
                 camera is not null &&
                 occlusionMode == EOcclusionCullingMode.CpuQueryAsync;
             bool useCpuSocOcclusion =

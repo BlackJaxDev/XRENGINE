@@ -166,6 +166,11 @@ namespace XREngine.Rendering.UI
             if (transform is not UIBoundableTransform tfm)
                 return;
 
+            RefreshRenderCommandFromTransform(tfm);
+        }
+
+        private void RefreshRenderCommandFromTransform(UIBoundableTransform tfm)
+        {
             tfm.UpdateRenderInfoBounds(RenderInfo2D, RenderInfo3D);
             var mtx = GetRenderWorldMatrix(tfm);
             RenderCommand3D.WorldMatrix = mtx;
@@ -272,6 +277,13 @@ namespace XREngine.Rendering.UI
             base.UITransformPropertyChanged(sender, e);
             switch (e.PropertyName)
             {
+                case nameof(UIBoundableTransform.ActualSize):
+                    if (sender is UIBoundableTransform tfm)
+                    {
+                        tfm.RefreshAxisAlignedRegion();
+                        RefreshRenderCommandFromTransform(tfm);
+                    }
+                    break;
                 case nameof(ClipToBounds):
                     //Toggle setting the region here
                     RenderCommand2D.WorldCropRegion = ClipToBounds ? BoundableTransform.AxisAlignedRegion.AsBoundingRectangle() : null;

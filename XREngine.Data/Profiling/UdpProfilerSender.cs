@@ -130,8 +130,7 @@ public static class UdpProfilerSender
     {
         // Pre-allocate a reusable send buffer to avoid per-frame allocations.
         byte[] sendBuffer = new byte[ProfilerProtocol.MaxDatagramSize];
-        byte[] payloadBuffer = new byte[ProfilerProtocol.MaxPayloadSize];
-        FixedBufferWriter payloadWriter = new(payloadBuffer);
+        using PooledBufferWriter payloadWriter = new(ProfilerProtocol.MaxPayloadSize);
         var endpoint = new IPEndPoint(IPAddress.Loopback, port);
 
         using var udp = new UdpClient();
@@ -201,7 +200,7 @@ public static class UdpProfilerSender
     private static void TrySend<T>(
         UdpClient udp,
         byte[] buffer,
-        FixedBufferWriter payloadWriter,
+        PooledBufferWriter payloadWriter,
         ProfilerProtocol.MessageType type,
         Func<T?>? collector)
         where T : class
@@ -222,7 +221,7 @@ public static class UdpProfilerSender
     private static void TrySendPacket<T>(
         UdpClient udp,
         byte[] buffer,
-        FixedBufferWriter payloadWriter,
+        PooledBufferWriter payloadWriter,
         ProfilerProtocol.MessageType type,
         T packet)
     {
@@ -230,7 +229,7 @@ public static class UdpProfilerSender
         try
         {
             payloadWriter.Reset();
-            MemoryPackSerializer.Serialize<T, FixedBufferWriter>(in payloadWriter, in packet);
+            MemoryPackSerializer.Serialize<T, PooledBufferWriter>(in payloadWriter, in packet);
             payload = payloadWriter.WrittenSpan;
         }
         catch { return; }
@@ -248,7 +247,7 @@ public static class UdpProfilerSender
             try
             {
                 payloadWriter.Reset();
-                MemoryPackSerializer.Serialize<ProfilerFramePacket, FixedBufferWriter>(in payloadWriter, in frame);
+                MemoryPackSerializer.Serialize<ProfilerFramePacket, PooledBufferWriter>(in payloadWriter, in frame);
                 payload = payloadWriter.WrittenSpan;
             }
             catch { return; }
@@ -261,10 +260,17 @@ public static class UdpProfilerSender
         // Other packet types that are too large are silently dropped.
     }
 
-    private sealed class FixedBufferWriter(byte[] buffer) : IBufferWriter<byte>
+    private sealed class PooledBufferWriter : IBufferWriter<byte>, IDisposable
     {
-        private readonly byte[] _buffer = buffer;
+        private const int MaxBufferedPayloadSize = 1024 * 1024;
+
+        private byte[] _buffer;
         private int _written;
+
+        public PooledBufferWriter(int initialCapacity)
+        {
+            _buffer = ArrayPool<byte>.Shared.Rent(Math.Max(initialCapacity, 1));
+        }
 
         public ReadOnlySpan<byte> WrittenSpan => _buffer.AsSpan(0, _written);
 
@@ -274,7 +280,7 @@ public static class UdpProfilerSender
         public void Advance(int count)
         {
             if (count < 0 || _written + count > _buffer.Length)
-                throw new InvalidOperationException("Profiler UDP serialization exceeded the reusable payload buffer.");
+                throw new InvalidOperationException("Profiler UDP serialization exceeded the bounded payload buffer.");
 
             _written += count;
         }
@@ -298,7 +304,31 @@ public static class UdpProfilerSender
 
             int required = sizeHint == 0 ? 1 : sizeHint;
             if (_buffer.Length - _written < required)
-                throw new InvalidOperationException("Profiler UDP serialization exceeded the reusable payload buffer.");
+                Grow(_written + required);
+        }
+
+        private void Grow(int requiredCapacity)
+        {
+            if (requiredCapacity > MaxBufferedPayloadSize)
+                throw new InvalidOperationException("Profiler UDP serialization exceeded the bounded payload buffer.");
+
+            int newCapacity = _buffer.Length;
+            while (newCapacity < requiredCapacity)
+                newCapacity = Math.Min(newCapacity * 2, MaxBufferedPayloadSize);
+
+            byte[] previous = _buffer;
+            _buffer = ArrayPool<byte>.Shared.Rent(newCapacity);
+            previous.AsSpan(0, _written).CopyTo(_buffer);
+            ArrayPool<byte>.Shared.Return(previous);
+        }
+
+        public void Dispose()
+        {
+            byte[] buffer = _buffer;
+            _buffer = [];
+            _written = 0;
+            if (buffer.Length > 0)
+                ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 

@@ -801,7 +801,18 @@ public partial class DefaultRenderPipeline
 
     private void AppendBloomPass(ViewportRenderCommandContainer c)
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
+        bool safePath = UseOpenXrVulkanDesktopStartupSafePath;
+        if (RenderDiagnosticsFlags.DiagPostProcess)
+        {
+            Debug.Rendering(
+                "[BloomDiag] AppendBloomPass bake: safePath={0} pipeline=0x{1:X8} stereo={2} vp='{3}' external={4}",
+                safePath,
+                GetHashCode(),
+                Stereo,
+                RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport?.Index.ToString() ?? "<null>",
+                RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport?.RendersToExternalSwapchainTarget.ToString() ?? "<null>");
+        }
+        if (safePath)
             return;
 
         var bloomChoice = c.Add<VPRC_IfElse>();

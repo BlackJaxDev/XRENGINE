@@ -484,29 +484,29 @@ namespace XREngine.Rendering.Vulkan
                 opIndex,
                 opType,
                 $"{prefix}.samplerUnits",
-                HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline),
-                $"count={snapshot.Samplers.Count} stable=0x{unchecked((ulong)HashSamplerUnitBindingsStable(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline)):X16} keys=[{SampleKeys(snapshot.Samplers.Keys)}]");
+                HashSamplerUnitBindingLayout(snapshot.Samplers, snapshot.SamplerNamesByUnit),
+                $"count={snapshot.Samplers.Count} descriptor=0x{HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline):X16} stableDescriptor=0x{unchecked((ulong)HashSamplerUnitBindingsStable(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline)):X16} keys=[{SampleKeys(snapshot.Samplers.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 $"{prefix}.samplerNames",
-                HashSamplerNameBindings(snapshot.SamplersByName, pipeline),
-                $"count={snapshot.SamplersByName.Count} stable=0x{unchecked((ulong)HashSamplerNameBindingsStable(snapshot.SamplersByName, pipeline)):X16} keys=[{SampleKeys(snapshot.SamplersByName.Keys)}]");
+                HashSamplerNameBindingLayout(snapshot.SamplersByName),
+                $"count={snapshot.SamplersByName.Count} descriptor=0x{HashSamplerNameBindings(snapshot.SamplersByName, pipeline):X16} stableDescriptor=0x{unchecked((ulong)HashSamplerNameBindingsStable(snapshot.SamplersByName, pipeline)):X16} keys=[{SampleKeys(snapshot.SamplersByName.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 $"{prefix}.images",
-                HashImageBindings(snapshot.Images),
-                $"count={snapshot.Images.Count} stable=0x{unchecked((ulong)HashImageBindingsStable(snapshot.Images)):X16} keys=[{SampleKeys(snapshot.Images.Keys)}]");
+                HashImageBindingLayout(snapshot.Images),
+                $"count={snapshot.Images.Count} descriptor=0x{unchecked((ulong)HashImageBindings(snapshot.Images)):X16} stableDescriptor=0x{unchecked((ulong)HashImageBindingsStable(snapshot.Images)):X16} keys=[{SampleKeys(snapshot.Images.Keys)}]");
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 $"{prefix}.buffers",
-                HashBufferBindings(snapshot.Buffers),
-                $"count={snapshot.Buffers.Count} stable=0x{unchecked((ulong)HashBufferBindingsStable(snapshot.Buffers)):X16} keys=[{SampleKeys(snapshot.Buffers.Keys)}]");
+                HashBufferBindingLayout(snapshot.Buffers),
+                $"count={snapshot.Buffers.Count} descriptor=0x{unchecked((ulong)HashBufferBindings(snapshot.Buffers)):X16} stableDescriptor=0x{unchecked((ulong)HashBufferBindingsStable(snapshot.Buffers)):X16} keys=[{SampleKeys(snapshot.Buffers.Keys)}]");
         }
 
         private static void AddSignaturePart(
@@ -590,12 +590,8 @@ namespace XREngine.Rendering.Vulkan
 
         private static bool IsMutableFrameSourceSamplerNameForSignatureDebug(string? name, XRRenderPipelineInstance? pipeline)
         {
-            if (string.Equals(name, "SourceTexture", StringComparison.Ordinal) ||
-                string.Equals(name, "SourceTexture0", StringComparison.Ordinal) ||
-                string.Equals(name, "SourceTexture1", StringComparison.Ordinal))
-            {
+            if (IsFrameSourceSamplerName(name))
                 return true;
-            }
 
             return !string.IsNullOrWhiteSpace(name) &&
                 pipeline is not null &&

@@ -487,6 +487,8 @@ public sealed class OpenXrTimingPipelineContractTests
         string snapshotHashing = samplerUnitHashing + samplerNameHashing;
 
         meshRenderer.ShouldContain("private static bool IsMutableFrameSourceSamplerName(string? name, XRRenderPipelineInstance? pipeline)");
+        meshRenderer.ShouldContain("string.Equals(name, \"SourceTexture0\", StringComparison.Ordinal)");
+        meshRenderer.ShouldContain("string.Equals(name, \"SourceTexture1\", StringComparison.Ordinal)");
         meshRenderer.ShouldContain("pipeline.TryGetTexture(name, out XRTexture? texture)");
         meshRenderer.ShouldContain("HashProgramBindingSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot, meshDraw.Context.PipelineInstance);");
         meshRenderer.ShouldContain("HashProgramBindingSnapshot(ref hash, compute.Snapshot, compute.Context.PipelineInstance);");
@@ -516,6 +518,7 @@ public sealed class OpenXrTimingPipelineContractTests
         frameOpSignatures.ShouldContain("AddProgramBindingSignatureParts(parts, opIndex, opType, \"program\", draw.ProgramBindingSnapshot, meshDraw.Context.PipelineInstance);");
         frameOpSignatures.ShouldContain("HashSamplerUnitBindings(snapshot.Samplers, snapshot.SamplerNamesByUnit, pipeline)");
         frameOpSignatures.ShouldContain("IsMutableFrameSourceSamplerNameForSignatureDebug");
+        frameOpSignatures.ShouldContain("IsFrameSourceSamplerName(name)");
         frameOpSignatures.ShouldContain("ComputeTextureDescriptorSignature(pair.Value)");
         frameOpSignatures.ShouldContain("hash.Add(ComputeTextureDescriptorSignature(binding.Texture));");
         frameOpSignatures.ShouldContain("ComputeCommandBufferDataBufferSignature(indirect.IndirectBuffer)");

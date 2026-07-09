@@ -254,6 +254,7 @@ namespace XREngine.Rendering.Vulkan
             evicted.RecordedSwapchainRefreshFromLastPresentSource = false;
             evicted.RecordedImageLayoutStartSignature = ulong.MaxValue;
             evicted.RecordedImageLayoutEndSignature = ulong.MaxValue;
+            evicted.RecordedImageLayoutEndState = null;
             evicted.CommandChainScheduleSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupSignature = ulong.MaxValue;
             evicted.CommandChainPrimaryGroupCount = -1;
@@ -314,7 +315,7 @@ namespace XREngine.Rendering.Vulkan
             CommandBufferCacheVariant variant,
             ulong imageLayoutStartSignature)
             => variant.RecordedImageLayoutStartSignature != imageLayoutStartSignature ||
-               variant.RecordedImageLayoutEndSignature != imageLayoutStartSignature;
+               variant.RecordedImageLayoutEndState is null;
 
         private void LogCommandChainSecondaryInheritanceMismatch(
             string chainName,

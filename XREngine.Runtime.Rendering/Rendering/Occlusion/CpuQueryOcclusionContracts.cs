@@ -23,31 +23,35 @@ public enum EOcclusionViewScope
 /// <summary>
 /// Stable key for per-pass CPU occlusion state. It intentionally avoids camera
 /// object identity so recreated eye cameras do not look first-seen every frame.
+/// State is isolated per render pipeline instance so the desktop view, each VR
+/// eye, and capture/preview cameras track occlusion completely independently.
 /// </summary>
 public readonly struct OcclusionViewKey : IEquatable<OcclusionViewKey>
 {
-    public OcclusionViewKey(int renderPass, EOcclusionViewScope scope, int viewId = 0)
+    public OcclusionViewKey(int renderPass, EOcclusionViewScope scope, int viewId = 0, int pipelineInstanceId = 0)
     {
         RenderPass = renderPass;
         Scope = scope;
         ViewId = viewId;
+        PipelineInstanceId = pipelineInstanceId;
     }
 
     public int RenderPass { get; }
     public EOcclusionViewScope Scope { get; }
     public int ViewId { get; }
+    public int PipelineInstanceId { get; }
 
     public bool Equals(OcclusionViewKey other)
-        => RenderPass == other.RenderPass && Scope == other.Scope && ViewId == other.ViewId;
+        => RenderPass == other.RenderPass && Scope == other.Scope && ViewId == other.ViewId && PipelineInstanceId == other.PipelineInstanceId;
 
     public override bool Equals(object? obj)
         => obj is OcclusionViewKey other && Equals(other);
 
     public override int GetHashCode()
-        => HashCode.Combine(RenderPass, Scope, ViewId);
+        => HashCode.Combine(RenderPass, Scope, ViewId, PipelineInstanceId);
 
     public override string ToString()
-        => $"{Scope}:{RenderPass}:{ViewId}";
+        => $"{Scope}:{RenderPass}:{ViewId}:pipe{PipelineInstanceId}";
 
     public bool IsSharedStereoScope
         => Scope is EOcclusionViewScope.VrStereoPair

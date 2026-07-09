@@ -1158,6 +1158,38 @@ internal sealed class VulkanPhysicalImageGroup
         return common ?? ImageLayout.Undefined;
     }
 
+    internal LayoutSnapshot CaptureLayoutSnapshot()
+    {
+        if (_subresourceLayouts.Count == 0)
+            return new LayoutSnapshot(_lastKnownLayout, Array.Empty<SubresourceLayoutSnapshot>());
+
+        SubresourceLayoutSnapshot[] subresources = new SubresourceLayoutSnapshot[_subresourceLayouts.Count];
+        int index = 0;
+        foreach (KeyValuePair<SubresourceLayoutKey, ImageLayout> pair in _subresourceLayouts)
+        {
+            subresources[index++] = new SubresourceLayoutSnapshot(
+                pair.Key.MipLevel,
+                pair.Key.ArrayLayer,
+                pair.Value);
+        }
+
+        return new LayoutSnapshot(_lastKnownLayout, subresources);
+    }
+
+    internal void RestoreLayoutSnapshot(in LayoutSnapshot snapshot)
+    {
+        _lastKnownLayout = snapshot.LastKnownLayout;
+        _subresourceLayouts.Clear();
+
+        SubresourceLayoutSnapshot[] subresources = snapshot.Subresources;
+        for (int i = 0; i < subresources.Length; i++)
+        {
+            SubresourceLayoutSnapshot subresource = subresources[i];
+            _subresourceLayouts[new SubresourceLayoutKey(subresource.MipLevel, subresource.ArrayLayer)] =
+                subresource.Layout;
+        }
+    }
+
     public void UpdateKnownLayout(ImageLayout layout, uint baseMipLevel, uint levelCount, uint baseArrayLayer, uint layerCount)
     {
         ResolveSubresourceRange(
@@ -1342,6 +1374,12 @@ internal sealed class VulkanPhysicalImageGroup
     }
 
     private readonly record struct SubresourceLayoutKey(uint MipLevel, uint ArrayLayer);
+
+    internal readonly record struct SubresourceLayoutSnapshot(uint MipLevel, uint ArrayLayer, ImageLayout Layout);
+
+    internal readonly record struct LayoutSnapshot(
+        ImageLayout LastKnownLayout,
+        SubresourceLayoutSnapshot[] Subresources);
 }
 
 internal sealed class VulkanPhysicalBufferGroup
