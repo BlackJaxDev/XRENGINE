@@ -2,7 +2,7 @@
 
 Last Updated: 2026-07-09
 Owner: Rendering
-Status: Phase 1.1 KHR Device-Fault Shim Implemented; Hardware KHR Launch Pending
+Status: Phase 2 Frame-Op Context Isolation Implemented; Hardware KHR/OpenXR Stress Pending
 Target Branch: `rendering-vulkan-core-hardening`
 
 ## Goal
@@ -311,45 +311,47 @@ Acceptance criteria:
 
 ## Phase 2 - Frame-Op Context Isolation
 
-- [ ] Define a canonical `FrameOpContext` contract for every command-producing
+- [x] Define a canonical `FrameOpContext` contract for every command-producing
   render operation:
-  - [ ] context kind (`MainViewport`, `OpenXrEye`, `OpenXrMirror`,
+  - [x] context kind (`MainViewport`, `OpenXrEye`, `OpenXrMirror`,
     `SceneCapture`, `LightProbeCapture`, `Shadow`, `UiPreview`,
     `DiagnosticCapture`),
-  - [ ] viewport identity,
-  - [ ] output FBO identity,
-  - [ ] output target image identity,
-  - [ ] display/internal dimensions,
-  - [ ] stereo/multiview flags,
-  - [ ] pass metadata,
-  - [ ] resource generation,
-  - [ ] descriptor generation,
-  - [ ] submission queue family.
-- [ ] Include a monotonically increasing context ID and immutable recording
+  - [x] viewport identity,
+  - [x] output FBO identity,
+  - [x] output target image identity,
+  - [x] display/internal dimensions,
+  - [x] stereo/multiview flags,
+  - [x] pass metadata,
+  - [x] resource generation,
+  - [x] descriptor generation,
+  - [x] submission queue family.
+- [x] Include a monotonically increasing context ID and immutable recording
   fingerprint. Do not use raw Vulkan handle reuse as resource identity.
-- [ ] Audit all paths that currently call `XRViewport.Render`,
+- [x] Audit all paths that currently call `XRViewport.Render`,
   `XRRenderPipelineInstance.Render`, `VPRC_RenderQuadToFBO`,
   Vulkan blits, compute dispatches, and OpenXR eye rendering.
-- [ ] Require command-buffer recording to capture the exact `FrameOpContext`.
-- [ ] Reject or rerecord command buffers when the active context no longer
+- [x] Require command-buffer recording to capture the exact `FrameOpContext`.
+- [x] Reject or rerecord command buffers when the active context no longer
   matches the recorded context.
-- [ ] Make mismatch behavior explicit by build mode: fail-fast in diagnostics;
+- [x] Make mismatch behavior explicit by build mode: fail-fast in diagnostics;
   discard and rerecord only when the operation is still valid and the device is
   healthy. Never submit a known mismatch.
-- [ ] Split resource-planner runtime state by frame-op context where dimensions,
+- [x] Split resource-planner runtime state by frame-op context where dimensions,
   output target, pass metadata, or resource lifetime differ.
-- [ ] Ensure frame-op context switching cannot overwrite live OpenXR eye planner
+- [x] Ensure frame-op context switching cannot overwrite live OpenXR eye planner
   state during scene/probe capture.
-- [ ] Add tests that simulate alternating OpenXR eye rendering and light-probe
+- [x] Add tests that simulate alternating OpenXR eye rendering and light-probe
   capture contexts.
-- [ ] Add logs that distinguish metadata-only graph changes from allocation
+- [x] Add logs that distinguish metadata-only graph changes from allocation
   signature changes per context.
 
 Acceptance criteria:
 
-- [ ] Alternating capture and OpenXR eye frames do not churn the same physical
-  resources unless an explicit shared-resource policy says they may.
-- [ ] A command buffer recorded for one context cannot be submitted under another
+- [x] Alternating capture and OpenXR eye frames do not churn the same physical
+  resources unless an explicit shared-resource policy says they may. Source
+  isolation is implemented; live OpenXR/light-probe hardware stress remains the
+  runtime proof.
+- [x] A command buffer recorded for one context cannot be submitted under another
   context silently.
 
 ## Phase 3 - Dedicated Capture Pipeline

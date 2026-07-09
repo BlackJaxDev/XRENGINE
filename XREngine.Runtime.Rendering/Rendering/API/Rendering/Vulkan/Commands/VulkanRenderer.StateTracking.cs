@@ -668,6 +668,7 @@ public unsafe partial class VulkanRenderer
         => new(this, state);
 
     private readonly record struct FrameOpPlannerStateKey(
+        EVulkanFrameOpContextKind ContextKind,
         int PipelineIdentity,
         int ViewportIdentity,
         uint DisplayWidth,
@@ -675,9 +676,16 @@ public unsafe partial class VulkanRenderer
         uint InternalWidth,
         uint InternalHeight,
         int OutputFrameBufferIdentity,
-        int OutputTargetIdentity);
+        int OutputTargetIdentity,
+        int PassMetadataSignature,
+        ulong ResourceGeneration,
+        ulong DescriptorGeneration,
+        uint SubmissionQueueFamily);
 
     private readonly record struct ResourcePlannerSignatureBreakdown(
+        EVulkanFrameOpContextKind ContextKind,
+        ulong ContextId,
+        ulong RecordingFingerprint,
         int Registry,
         int OutputFrameBuffer,
         int OutputTarget,
@@ -688,18 +696,23 @@ public unsafe partial class VulkanRenderer
         int PassMetadata,
         int GraphBatches,
         int GraphEdges,
+        ulong ResourceGeneration,
+        ulong DescriptorGeneration,
+        uint SubmissionQueueFamily,
         uint GraphicsQueueFamily,
         uint ComputeQueueFamily,
         uint TransferQueueFamily)
     {
         public override string ToString()
-            => $"registry=0x{Registry:X8} outputFbo=0x{OutputFrameBuffer:X8} outputTarget=0x{OutputTarget:X8} dims={DisplayWidth}x{DisplayHeight}/{InternalWidth}x{InternalHeight} " +
-               $"passes=0x{PassMetadata:X8} batches=0x{GraphBatches:X8} edges=0x{GraphEdges:X8} " +
+            => $"kind={ContextKind} contextId={ContextId} context=0x{RecordingFingerprint:X16} registry=0x{Registry:X8} outputFbo=0x{OutputFrameBuffer:X8} outputTarget=0x{OutputTarget:X8} dims={DisplayWidth}x{DisplayHeight}/{InternalWidth}x{InternalHeight} " +
+               $"passes=0x{PassMetadata:X8} batches=0x{GraphBatches:X8} edges=0x{GraphEdges:X8} resourceGen={ResourceGeneration} descriptorGen={DescriptorGeneration} submitQ={SubmissionQueueFamily} " +
                $"queues=g{GraphicsQueueFamily}/c{ComputeQueueFamily}/t{TransferQueueFamily}";
 
         public string DescribeDelta(in ResourcePlannerSignatureBreakdown previous)
         {
             StringBuilder builder = new();
+            AppendDelta(builder, "context-kind", (int)previous.ContextKind, (int)ContextKind);
+            AppendDelta(builder, "context-fingerprint", previous.RecordingFingerprint, RecordingFingerprint, hexadecimal: true);
             AppendDelta(builder, "resource-registry", previous.Registry, Registry, hexadecimal: true);
             AppendDelta(builder, "output-fbo", previous.OutputFrameBuffer, OutputFrameBuffer, hexadecimal: true);
             AppendDelta(builder, "output-target", previous.OutputTarget, OutputTarget, hexadecimal: true);
@@ -710,6 +723,9 @@ public unsafe partial class VulkanRenderer
             AppendDelta(builder, "pass-metadata", previous.PassMetadata, PassMetadata, hexadecimal: true);
             AppendDelta(builder, "graph-batches", previous.GraphBatches, GraphBatches, hexadecimal: true);
             AppendDelta(builder, "graph-edges", previous.GraphEdges, GraphEdges, hexadecimal: true);
+            AppendDelta(builder, "resource-generation", previous.ResourceGeneration, ResourceGeneration);
+            AppendDelta(builder, "descriptor-generation", previous.DescriptorGeneration, DescriptorGeneration);
+            AppendDelta(builder, "submission-queue-family", previous.SubmissionQueueFamily, SubmissionQueueFamily);
             AppendDelta(builder, "graphics-queue-family", previous.GraphicsQueueFamily, GraphicsQueueFamily);
             AppendDelta(builder, "compute-queue-family", previous.ComputeQueueFamily, ComputeQueueFamily);
             AppendDelta(builder, "transfer-queue-family", previous.TransferQueueFamily, TransferQueueFamily);
@@ -735,6 +751,18 @@ public unsafe partial class VulkanRenderer
 
             AppendDeltaPrefix(builder);
             builder.Append(name).Append('=').Append(oldValue).Append("->").Append(newValue);
+        }
+
+        private static void AppendDelta(StringBuilder builder, string name, ulong oldValue, ulong newValue, bool hexadecimal = false)
+        {
+            if (oldValue == newValue)
+                return;
+
+            AppendDeltaPrefix(builder);
+            if (hexadecimal)
+                builder.Append(name).Append("=0x").Append(oldValue.ToString("X16")).Append("->0x").Append(newValue.ToString("X16"));
+            else
+                builder.Append(name).Append('=').Append(oldValue).Append("->").Append(newValue);
         }
 
         private static void AppendDeltaPrefix(StringBuilder builder)

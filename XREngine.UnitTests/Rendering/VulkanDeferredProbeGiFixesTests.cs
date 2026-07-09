@@ -770,6 +770,81 @@ public sealed class VulkanDeferredProbeGiFixesTests
     }
 
     [Test]
+    public void VulkanPhase2_FrameOpContextContractIncludesIsolationFingerprint()
+    {
+        string plannerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
+        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+
+        plannerSource.ShouldContain("internal enum EVulkanFrameOpContextKind");
+        plannerSource.ShouldContain("MainViewport");
+        plannerSource.ShouldContain("OpenXrEye");
+        plannerSource.ShouldContain("OpenXrMirror");
+        plannerSource.ShouldContain("SceneCapture");
+        plannerSource.ShouldContain("LightProbeCapture");
+        plannerSource.ShouldContain("Shadow");
+        plannerSource.ShouldContain("UiPreview");
+        plannerSource.ShouldContain("DiagnosticCapture");
+        plannerSource.ShouldContain("ulong ContextId");
+        plannerSource.ShouldContain("ulong RecordingFingerprint");
+        plannerSource.ShouldContain("uint SubmissionQueueFamily");
+        plannerSource.ShouldContain("bool StereoEnabled");
+        plannerSource.ShouldContain("bool MultiviewEnabled");
+        plannerSource.ShouldContain("ulong ResourceGeneration");
+        plannerSource.ShouldContain("ulong DescriptorGeneration");
+        plannerSource.ShouldContain("CompleteFrameOpContext");
+        plannerSource.ShouldContain("ComputeFrameOpContextRecordingFingerprint");
+        plannerSource.ShouldContain("RefreshFrameOpContextRecordingFingerprint");
+        plannerSource.ShouldContain("ResolveFrameOpContextKind");
+
+        stateSource.ShouldContain("EVulkanFrameOpContextKind ContextKind");
+        stateSource.ShouldContain("int PassMetadataSignature");
+        stateSource.ShouldContain("ulong ResourceGeneration");
+        stateSource.ShouldContain("ulong DescriptorGeneration");
+        stateSource.ShouldContain("uint SubmissionQueueFamily");
+        stateSource.ShouldContain("kind={ContextKind} contextId={ContextId} context=0x{RecordingFingerprint:X16}");
+
+        meshSource.ShouldContain("hash.Add((int)op.Context.ContextKind)");
+        meshSource.ShouldContain("hash.Add(op.Context.RecordingFingerprint)");
+        meshSource.ShouldContain("hash.Add(op.Context.OutputFrameBufferIdentity)");
+        plannerSource.ShouldContain("metadata-only graph change");
+    }
+
+    [Test]
+    public void VulkanPhase2_CommandBufferReuseRejectsFrameOpContextMismatch()
+    {
+        string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferState.cs");
+        string recordingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string allocationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferAllocation.cs");
+        string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        string openXrScopeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXrExternalSwapchainRenderScope.cs");
+
+        stateSource.ShouldContain("RecordedFrameOpContextFingerprint");
+        stateSource.ShouldContain("RecordedFrameOpContextId");
+        allocationSource.ShouldContain("evicted.RecordedFrameOpContextFingerprint = ulong.MaxValue");
+        recordingSource.ShouldContain("ComputeCommandBufferFrameOpContextFingerprint");
+        recordingSource.ShouldContain("TryValidateCommandBufferVariantContext");
+        recordingSource.ShouldContain("EnsureCommandBufferVariantContextBeforeSubmit");
+        recordingSource.ShouldContain("Vulkan command buffer frame-op context mismatch before submit");
+        recordingSource.ShouldContain("LogCommandBufferFrameOpContextMismatch");
+        recordingSource.ShouldContain("frame-op context mismatch");
+        recordingSource.ShouldContain("ShouldFailFastOnFrameOpContextMismatch");
+        recordingSource.ShouldContain("variant.RecordedFrameOpContextFingerprint = frameOpContextFingerprint");
+        recordingSource.ShouldContain("\"last-swapchain-writer\"");
+        recordingSource.ShouldContain("\"command-chain-primary\"");
+
+        openXrSource.ShouldContain("_threadOpenXrExternalSwapchainContextKind");
+        openXrSource.ShouldContain("EVulkanFrameOpContextKind.OpenXrMirror");
+        openXrSource.ShouldContain("openxr-primary-miss:context");
+        openXrSource.ShouldContain("openxr-mirror-primary-miss:context");
+        openXrSource.ShouldContain("frameOpContextFingerprint");
+        openXrSource.ShouldContain("hash = (hash * 397) ^ 0x53494E54");
+        openXrSource.ShouldContain("HashCode.Combine(\"OpenXR\", viewIndex, imageIndex)");
+        openXrScopeSource.ShouldContain("_previousThreadContextKind");
+        openXrScopeSource.ShouldContain("_threadOpenXrExternalSwapchainContextKind = contextKind");
+    }
+
+    [Test]
     public void FrameOps_CaptureContextBeforePassValidation()
     {
         string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");

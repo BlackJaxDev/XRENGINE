@@ -141,23 +141,9 @@ The repo includes ready-to-go `.vscode/` configs. Use **Run and Debug** (Ctrl+Sh
 
 There are also no-debug tasks under **Terminal → Run Task** for the common editor, server, client, and networking scenarios.
 
-To export the code-defined default render pipeline as an `.xrs` script, run the `Export-DefaultRenderPipelineScript` task. The editor executable also supports `--export-default-render-pipeline-script --render-pipeline-script-output <path>` as a one-shot CLI command.
-
-`Debug VRClient` is mainly for the legacy OpenVR path. OpenVR cannot be cleanly shut down and restarted inside the same running app, so `XREngine.VRClient` exists to hold that SteamVR connection in a separate process. The main engine app can then stay alive and switch between desktop and VR gameplay without forcing a full restart. OpenXR does not have that limitation, so this extra process is specifically for legacy OpenVR support.
-
 ### Visual Studio
 
 Open `XRENGINE.slnx`, set your startup project (`XREngine.Editor`, `XREngine.Server`, etc.), and hit F5. Environment variables like `XRE_NET_MODE` and `XRE_WORLD_MODE` can be set in Project → Properties → Debug to switch between server/client/local modes.
-
-If you are working on the legacy OpenVR path, use `XREngine.VRClient` as the companion process rather than treating it like a second copy of the main game. It collects VR-side player input and sends it to the main engine app over a pipe, while the engine streams back the left/right eye renders for presentation through SteamVR/OpenVR.
-
-### Networking quick test
-
-```powershell
-./Tools/Start-NetworkTest.bat              # dedicated server + two clients
-./Tools/Start-NetworkTest.bat mismatch     # one good client + one rejected world-hash mismatch
-./Tools/Start-NetworkTest.bat pose         # server + pose source + pose receiver
-```
 
 ### ExecTool
 

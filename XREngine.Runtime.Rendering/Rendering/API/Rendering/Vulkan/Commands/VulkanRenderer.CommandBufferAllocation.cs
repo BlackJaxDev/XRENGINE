@@ -249,6 +249,8 @@ namespace XREngine.Rendering.Vulkan
             evicted.DynamicUiOpCount = -1;
             evicted.DynamicUiSecondaryRecorded = false;
             evicted.PreserveSwapchainForOverlay = false;
+            evicted.RecordedFrameOpContextFingerprint = ulong.MaxValue;
+            evicted.RecordedFrameOpContextId = 0;
             evicted.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
             evicted.RecordedSwapchainWriteCount = 0;
             evicted.RecordedSwapchainRefreshFromLastPresentSource = false;
