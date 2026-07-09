@@ -223,6 +223,8 @@ public unsafe partial class VulkanRenderer
     private static int _threadOpenXrExternalSwapchainTargetIdentity;
     [ThreadStatic]
     private static string? _threadOpenXrExternalSwapchainTargetName;
+    [ThreadStatic]
+    private static EVulkanFrameOpContextKind _threadOpenXrExternalSwapchainContextKind;
     private int _openXrExternalSwapchainPrewarmDepth;
     private int _synchronousResourceUploadBlockDepth;
     [ThreadStatic]
@@ -350,7 +352,8 @@ public unsafe partial class VulkanRenderer
         uint width,
         uint height,
         int targetIdentity = 0,
-        string? targetName = null)
+        string? targetName = null,
+        EVulkanFrameOpContextKind contextKind = EVulkanFrameOpContextKind.OpenXrEye)
     {
         if (width == 0 || height == 0)
             throw new InvalidOperationException("OpenXR external swapchain render scope requires a non-zero target extent.");
@@ -364,19 +367,17 @@ public unsafe partial class VulkanRenderer
             (int)width,
             (int)height);
 
-        return new OpenXrExternalSwapchainRenderScope(this, region, targetIdentity, targetName);
+        return new OpenXrExternalSwapchainRenderScope(this, region, targetIdentity, targetName, contextKind);
     }
 
     private static int BuildOpenXrExternalSwapchainTargetIdentity(uint openXrViewIndex, uint openXrImageIndex, Image image)
     {
         unchecked
         {
-            ulong imageHandle = image.Handle;
             int hash = 0x4F585254;
             hash = (hash * 397) ^ (int)openXrViewIndex;
             hash = (hash * 397) ^ (int)openXrImageIndex;
-            hash = (hash * 397) ^ (int)imageHandle;
-            hash = (hash * 397) ^ (int)(imageHandle >> 32);
+            hash = (hash * 397) ^ 0x53494E54;
             return hash == 0 ? 1 : hash;
         }
     }
@@ -843,6 +844,17 @@ public unsafe partial class VulkanRenderer
                 using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.ReuseOrRecordPrimary"))
                 {
                     ulong imageLayoutStartSignature = ComputeImageLayoutStateSignature();
+                    FrameOpContext fallbackContext = prepared.Ops.Length > 0
+                        ? prepared.Ops[0].Context
+                        : prepared.PlannerContext;
+                    ulong frameOpContextFingerprint = ComputeCommandBufferFrameOpContextFingerprint(
+                        prepared.Ops,
+                        Array.Empty<FrameOp>(),
+                        fallbackContext);
+                    ulong frameOpContextId = ResolveCommandBufferFrameOpContextId(
+                        prepared.Ops,
+                        Array.Empty<FrameOp>(),
+                        fallbackContext);
                     reusedPrimary = TryReuseOpenXrPrimaryCommandBuffer(
                         targetContext.FrameDataSlotIndex,
                         targetContext.CommandChainImageKey,
@@ -850,6 +862,8 @@ public unsafe partial class VulkanRenderer
                         prepared.Request,
                         prepared.Ops,
                         prepared.FrameOpsSignature,
+                        frameOpContextFingerprint,
+                        frameOpContextId,
                         prepared.PlannerRevision,
                         imageLayoutStartSignature,
                         prepared.CommandChainSchedule,
@@ -864,6 +878,8 @@ public unsafe partial class VulkanRenderer
                             prepared.Request,
                             prepared.Ops,
                             prepared.FrameOpsSignature,
+                            frameOpContextFingerprint,
+                            frameOpContextId,
                             prepared.PlannerRevision,
                             imageLayoutStartSignature,
                             prepared.CommandChainSchedule);
@@ -1037,6 +1053,8 @@ public unsafe partial class VulkanRenderer
         in OpenXrEyeSwapchainRenderRequest request,
         FrameOp[] ops,
         ulong frameOpsSignature,
+        ulong frameOpContextFingerprint,
+        ulong frameOpContextId,
         ulong plannerRevision,
         ulong imageLayoutStartSignature,
         CommandChainSchedule? commandChainSchedule,
@@ -1096,6 +1114,12 @@ public unsafe partial class VulkanRenderer
                 if (variant.Dirty ||
                     variant.PrimaryCommandBuffer.Handle == 0 ||
                     (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature) ||
+                    !TryValidateCommandBufferVariantContext(
+                        recordImageIndex,
+                        variant,
+                        frameOpContextFingerprint,
+                        frameOpContextId,
+                        "openxr-eye-primary") ||
                     (!usingCommandChains && variant.PlannerRevision != plannerRevision) ||
                     IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
                     variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented ||
@@ -1138,6 +1162,12 @@ public unsafe partial class VulkanRenderer
                     dirtyReason: null);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(primaryCommandBuffersReused: 1);
 
+                EnsureCommandBufferVariantContextBeforeSubmit(
+                    recordImageIndex,
+                    variant,
+                    frameOpContextFingerprint,
+                    frameOpContextId,
+                    "openxr-eye-primary");
                 commandBuffer = variant.PrimaryCommandBuffer;
                 if (OpenXrVulkanTraceEnabled)
                 {
@@ -1159,6 +1189,7 @@ public unsafe partial class VulkanRenderer
                 requiresExactFrameOps,
                 usingCommandChains,
                 frameOpsSignature,
+                frameOpContextFingerprint,
                 plannerRevision,
                 imageLayoutStartSignature,
                 ContainsQueryFrameOp(ops),
@@ -1177,6 +1208,8 @@ public unsafe partial class VulkanRenderer
                         requiresExactFrameOps,
                         usingCommandChains,
                         frameOpsSignature,
+                        frameOpContextFingerprint,
+                        frameOpContextId,
                         plannerRevision,
                         imageLayoutStartSignature,
                         true,
@@ -1202,6 +1235,8 @@ public unsafe partial class VulkanRenderer
         in OpenXrEyeSwapchainRenderRequest request,
         FrameOp[] ops,
         ulong frameOpsSignature,
+        ulong frameOpContextFingerprint,
+        ulong frameOpContextId,
         ulong plannerRevision,
         ulong imageLayoutStartSignature,
         CommandChainSchedule? commandChainSchedule)
@@ -1277,6 +1312,8 @@ public unsafe partial class VulkanRenderer
         variant.DynamicUiOpCount = 0;
         variant.DynamicUiSecondaryRecorded = false;
         variant.PreserveSwapchainForOverlay = false;
+        variant.RecordedFrameOpContextFingerprint = frameOpContextFingerprint;
+        variant.RecordedFrameOpContextId = frameOpContextId;
         variant.RecordedSwapchainImageEverPresented = false;
         variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
         variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
@@ -1328,6 +1365,12 @@ public unsafe partial class VulkanRenderer
                 recordMs);
         }
 
+        EnsureCommandBufferVariantContextBeforeSubmit(
+            recordImageIndex,
+            variant,
+            frameOpContextFingerprint,
+            frameOpContextId,
+            "recorded-openxr-eye-primary");
         return variant.PrimaryCommandBuffer;
     }
 
@@ -1553,6 +1596,7 @@ public unsafe partial class VulkanRenderer
         bool requiresExactFrameOps,
         bool usingCommandChains,
         ulong frameOpsSignature,
+        ulong frameOpContextFingerprint,
         ulong plannerRevision,
         ulong imageLayoutStartSignature,
         bool hasQueryFrameOps,
@@ -1579,6 +1623,8 @@ public unsafe partial class VulkanRenderer
 
             return mirror ? "openxr-mirror-primary-miss:frame-ops" : "openxr-primary-miss:frame-ops";
         }
+        if (IsCommandBufferVariantFrameOpContextDirty(variant, frameOpContextFingerprint))
+            return mirror ? "openxr-mirror-primary-miss:context" : "openxr-primary-miss:context";
         if (!usingCommandChains && variant.PlannerRevision != plannerRevision)
             return mirror ? "openxr-mirror-primary-miss:planner" : "openxr-primary-miss:planner";
         if (IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature))
@@ -1609,6 +1655,8 @@ public unsafe partial class VulkanRenderer
         bool requiresExactFrameOps,
         bool usingCommandChains,
         ulong frameOpsSignature,
+        ulong frameOpContextFingerprint,
+        ulong frameOpContextId,
         ulong plannerRevision,
         ulong imageLayoutStartSignature,
         bool compareSwapchainImageEverPresented,
@@ -1629,6 +1677,8 @@ public unsafe partial class VulkanRenderer
             return "empty-handle";
         if (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature)
             return $"frame-ops recorded=0x{variant.FrameOpsSignature:X16} current=0x{frameOpsSignature:X16}";
+        if (IsCommandBufferVariantFrameOpContextDirty(variant, frameOpContextFingerprint))
+            return $"context recordedId={variant.RecordedFrameOpContextId} recorded=0x{variant.RecordedFrameOpContextFingerprint:X16} currentId={frameOpContextId} current=0x{frameOpContextFingerprint:X16}";
         if (!usingCommandChains && variant.PlannerRevision != plannerRevision)
             return $"planner recorded={variant.PlannerRevision} current={plannerRevision}";
         if (IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature))
@@ -2074,7 +2124,8 @@ public unsafe partial class VulkanRenderer
                     request.OpenXrViewIndex,
                     request.OpenXrImageIndex,
                     default),
-                ResolveOpenXrExternalSwapchainTargetName(request.OpenXrViewIndex))
+                ResolveOpenXrExternalSwapchainTargetName(request.OpenXrViewIndex),
+                EVulkanFrameOpContextKind.OpenXrMirror)
             : null;
 
         try
@@ -2163,12 +2214,23 @@ public unsafe partial class VulkanRenderer
                     plannerRevision);
 
                 ulong imageLayoutStartSignature = ComputeImageLayoutStateSignature();
+                FrameOpContext fallbackContext = ops.Length > 0 ? ops[0].Context : plannerContext;
+                ulong frameOpContextFingerprint = ComputeCommandBufferFrameOpContextFingerprint(
+                    ops,
+                    Array.Empty<FrameOp>(),
+                    fallbackContext);
+                ulong frameOpContextId = ResolveCommandBufferFrameOpContextId(
+                    ops,
+                    Array.Empty<FrameOp>(),
+                    fallbackContext);
                 bool reusedPrimary = TryReuseOpenXrMirrorPrimaryCommandBuffer(
                     recordImageIndex,
                     mirrorCommandChainImageIndex,
                     request,
                     ops,
                     frameOpsSignature,
+                    frameOpContextFingerprint,
+                    frameOpContextId,
                     plannerRevision,
                     imageLayoutStartSignature,
                     commandChainSchedule,
@@ -2182,6 +2244,8 @@ public unsafe partial class VulkanRenderer
                         request,
                         ops,
                         frameOpsSignature,
+                        frameOpContextFingerprint,
+                        frameOpContextId,
                         plannerRevision,
                         imageLayoutStartSignature,
                         commandChainSchedule);
@@ -2218,6 +2282,8 @@ public unsafe partial class VulkanRenderer
         in OpenXrEyeMirrorRenderRequest request,
         FrameOp[] ops,
         ulong frameOpsSignature,
+        ulong frameOpContextFingerprint,
+        ulong frameOpContextId,
         ulong plannerRevision,
         ulong imageLayoutStartSignature,
         CommandChainSchedule? commandChainSchedule,
@@ -2276,6 +2342,12 @@ public unsafe partial class VulkanRenderer
                 if (variant.Dirty ||
                     variant.PrimaryCommandBuffer.Handle == 0 ||
                     (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature) ||
+                    !TryValidateCommandBufferVariantContext(
+                        recordImageIndex,
+                        variant,
+                        frameOpContextFingerprint,
+                        frameOpContextId,
+                        "openxr-mirror-primary") ||
                     (!usingCommandChains && variant.PlannerRevision != plannerRevision) ||
                     IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
                     variant.CommandChainScheduleSignature != (commandChainSchedule?.StructuralSignature ?? ulong.MaxValue) ||
@@ -2317,6 +2389,12 @@ public unsafe partial class VulkanRenderer
                     dirtyReason: null);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(primaryCommandBuffersReused: 1);
 
+                EnsureCommandBufferVariantContextBeforeSubmit(
+                    recordImageIndex,
+                    variant,
+                    frameOpContextFingerprint,
+                    frameOpContextId,
+                    "openxr-mirror-primary");
                 commandBuffer = variant.PrimaryCommandBuffer;
                 if (OpenXrVulkanTraceEnabled)
                 {
@@ -2339,6 +2417,7 @@ public unsafe partial class VulkanRenderer
                 requiresExactFrameOps,
                 usingCommandChains,
                 frameOpsSignature,
+                frameOpContextFingerprint,
                 plannerRevision,
                 imageLayoutStartSignature,
                 ContainsQueryFrameOp(ops),
@@ -2357,6 +2436,8 @@ public unsafe partial class VulkanRenderer
                         requiresExactFrameOps,
                         usingCommandChains,
                         frameOpsSignature,
+                        frameOpContextFingerprint,
+                        frameOpContextId,
                         plannerRevision,
                         imageLayoutStartSignature,
                         false,
@@ -2381,6 +2462,8 @@ public unsafe partial class VulkanRenderer
         in OpenXrEyeMirrorRenderRequest request,
         FrameOp[] ops,
         ulong frameOpsSignature,
+        ulong frameOpContextFingerprint,
+        ulong frameOpContextId,
         ulong plannerRevision,
         ulong imageLayoutStartSignature,
         CommandChainSchedule? commandChainSchedule)
@@ -2444,6 +2527,8 @@ public unsafe partial class VulkanRenderer
             variant.DynamicUiOpCount = 0;
             variant.DynamicUiSecondaryRecorded = false;
             variant.PreserveSwapchainForOverlay = false;
+            variant.RecordedFrameOpContextFingerprint = frameOpContextFingerprint;
+            variant.RecordedFrameOpContextId = frameOpContextId;
             variant.RecordedSwapchainImageEverPresented = swapchainImageEverPresented;
             variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
             variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
@@ -2511,6 +2596,12 @@ public unsafe partial class VulkanRenderer
                 _openXrRecordedTextureUploadsForSubmit.Count);
         }
 
+        EnsureCommandBufferVariantContextBeforeSubmit(
+            recordImageIndex,
+            variant,
+            frameOpContextFingerprint,
+            frameOpContextId,
+            "recorded-openxr-mirror-primary");
         return variant.PrimaryCommandBuffer;
     }
 
@@ -2593,7 +2684,7 @@ public unsafe partial class VulkanRenderer
 
     private static uint BuildOpenXrCommandChainImageIndex(uint viewIndex, uint imageIndex, Image image)
     {
-        int hash = HashCode.Combine("OpenXR", viewIndex, imageIndex, image.Handle);
+        int hash = HashCode.Combine("OpenXR", viewIndex, imageIndex);
         return 1_000_000u + (uint)(hash & 0x0FFF_FFFF);
     }
 

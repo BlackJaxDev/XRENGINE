@@ -724,8 +724,11 @@ public unsafe partial class VulkanRenderer
             hash.Add(GetFrameOpKindId(op));
             hash.Add(op.PassIndex);
             hash.Add(ResolveCommandChainTargetIdentity(op));
+            hash.Add((int)op.Context.ContextKind);
+            hash.Add(op.Context.RecordingFingerprint);
             hash.Add(op.Context.PipelineIdentity);
             hash.Add(op.Context.ViewportIdentity);
+            hash.Add(op.Context.OutputFrameBufferIdentity);
             hash.Add(op.Context.OutputTargetIdentity);
 
             switch (op)

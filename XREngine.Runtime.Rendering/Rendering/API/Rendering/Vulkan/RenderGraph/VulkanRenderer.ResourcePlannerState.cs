@@ -34,6 +34,21 @@ public unsafe partial class VulkanRenderer
         UpdateResourcePlannerFromContext(CaptureFrameOpContext());
     }
 
+    internal enum EVulkanFrameOpContextKind
+    {
+        Unknown = 0,
+        MainViewport = 1,
+        OpenXrEye = 2,
+        OpenXrMirror = 3,
+        SceneCapture = 4,
+        LightProbeCapture = 5,
+        Shadow = 6,
+        UiPreview = 7,
+        DiagnosticCapture = 8,
+    }
+
+    private long _frameOpContextId;
+
     internal readonly record struct FrameOpContext(
         int PipelineIdentity,
         int ViewportIdentity,
@@ -47,7 +62,16 @@ public unsafe partial class VulkanRenderer
         string? OutputFrameBufferName = null,
         bool PreserveSubmissionOrderBlock = false,
         int OutputTargetIdentity = 0,
-        string? OutputTargetName = null)
+        string? OutputTargetName = null,
+        int OutputFrameBufferIdentity = 0,
+        EVulkanFrameOpContextKind ContextKind = EVulkanFrameOpContextKind.Unknown,
+        ulong ContextId = 0,
+        ulong RecordingFingerprint = ulong.MaxValue,
+        uint SubmissionQueueFamily = 0,
+        bool StereoEnabled = false,
+        bool MultiviewEnabled = false,
+        ulong ResourceGeneration = 0,
+        ulong DescriptorGeneration = 0)
     {
         public int SchedulingIdentity => OutputTargetIdentity == 0
             ? HashCode.Combine(PipelineIdentity, ViewportIdentity)
@@ -116,6 +140,7 @@ public unsafe partial class VulkanRenderer
             outputTargetIdentity,
             outputTargetName);
         context = ApplyInteractiveResizePlannerFreeze(context);
+        context = CompleteFrameOpContext(context);
 
         if (pipeline is not null)
             ActiveLastActiveFrameOpContext = context;
@@ -145,13 +170,13 @@ public unsafe partial class VulkanRenderer
                 _interactiveResizeFrozenInternalWidth,
                 _interactiveResizeFrozenInternalHeight);
         }
-        return context with
+        return RefreshFrameOpContextRecordingFingerprint(context with
         {
             DisplayWidth = _interactiveResizeFrozenDisplayWidth,
             DisplayHeight = _interactiveResizeFrozenDisplayHeight,
             InternalWidth = _interactiveResizeFrozenInternalWidth,
             InternalHeight = _interactiveResizeFrozenInternalHeight
-        };
+        });
     }
 
     private void CaptureInteractiveResizePlannerExtents(in FrameOpContext context)
@@ -273,7 +298,102 @@ public unsafe partial class VulkanRenderer
             outputTargetIdentity,
             outputTargetName);
 
-        return ApplyInteractiveResizePlannerFreeze(context);
+        context = ApplyInteractiveResizePlannerFreeze(context);
+        return CompleteFrameOpContext(context);
+    }
+
+    private FrameOpContext CompleteFrameOpContext(in FrameOpContext context)
+    {
+        FrameOpContext complete = context with
+        {
+            OutputFrameBufferIdentity = ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
+            ContextKind = ResolveFrameOpContextKind(context),
+            ContextId = unchecked((ulong)Interlocked.Increment(ref _frameOpContextId)),
+            SubmissionQueueFamily = ResolveFrameOpSubmissionQueueFamily(context.PassMetadata),
+            StereoEnabled = RuntimeEngine.Rendering.State.IsStereoPass,
+            MultiviewEnabled = ResolveFrameOpContextMultiviewEnabled(context),
+            ResourceGeneration = ResolveFrameOpContextResourceGeneration(context.PipelineInstance),
+            DescriptorGeneration = ResolveFrameOpContextDescriptorGeneration(context.ResourceRegistry),
+        };
+
+        return RefreshFrameOpContextRecordingFingerprint(complete);
+    }
+
+    private FrameOpContext RefreshFrameOpContextRecordingFingerprint(in FrameOpContext context)
+        => context with { RecordingFingerprint = ComputeFrameOpContextRecordingFingerprint(context) };
+
+    private EVulkanFrameOpContextKind ResolveFrameOpContextKind(in FrameOpContext context)
+    {
+        if (IsThreadOpenXrExternalSwapchainTarget)
+        {
+            return _threadOpenXrExternalSwapchainContextKind == EVulkanFrameOpContextKind.Unknown
+                ? EVulkanFrameOpContextKind.OpenXrEye
+                : _threadOpenXrExternalSwapchainContextKind;
+        }
+
+        if (RuntimeEngine.Rendering.State.IsLightProbePass)
+            return EVulkanFrameOpContextKind.LightProbeCapture;
+        if (RuntimeEngine.Rendering.State.IsShadowPass)
+            return EVulkanFrameOpContextKind.Shadow;
+        if (RuntimeEngine.Rendering.State.IsSceneCapturePass)
+            return EVulkanFrameOpContextKind.SceneCapture;
+
+        string pipelineTypeName = context.PipelineInstance?.Pipeline?.GetType().Name ?? string.Empty;
+        if (pipelineTypeName.Contains("Diagnostic", StringComparison.OrdinalIgnoreCase))
+            return EVulkanFrameOpContextKind.DiagnosticCapture;
+        if (pipelineTypeName.Contains("UserInterface", StringComparison.OrdinalIgnoreCase) ||
+            pipelineTypeName.Contains("UiPreview", StringComparison.OrdinalIgnoreCase))
+        {
+            return EVulkanFrameOpContextKind.UiPreview;
+        }
+
+        return EVulkanFrameOpContextKind.MainViewport;
+    }
+
+    private uint ResolveFrameOpSubmissionQueueFamily(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+        => BuildQueueOwnershipConfig(passMetadata).GraphicsQueueFamilyIndex;
+
+    private static bool ResolveFrameOpContextMultiviewEnabled(in FrameOpContext context)
+    {
+        if (!RuntimeEngine.Rendering.State.IsStereoPass)
+            return false;
+
+        string pipelineTypeName = context.PipelineInstance?.Pipeline?.GetType().Name ?? string.Empty;
+        return pipelineTypeName.Contains("MultiView", StringComparison.OrdinalIgnoreCase) ||
+            pipelineTypeName.Contains("Multiview", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static ulong ResolveFrameOpContextResourceGeneration(XRRenderPipelineInstance? pipeline)
+        => unchecked((ulong)Math.Max(pipeline?.ResourceGeneration ?? 0, 0));
+
+    private ulong ResolveFrameOpContextDescriptorGeneration(RenderResourceRegistry? registry)
+    {
+        ulong descriptorTableGeneration = unchecked((ulong)Math.Max(Volatile.Read(ref _vulkanDescriptorTableGeneration), 0L));
+        return MixSignature(descriptorTableGeneration, unchecked((uint)ComputeResourceRegistrySignature(registry)));
+    }
+
+    private static ulong ComputeFrameOpContextRecordingFingerprint(in FrameOpContext context)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(0x46524D4F50435458UL);
+        hash.Add((int)context.ContextKind);
+        hash.Add(context.PipelineIdentity);
+        hash.Add(context.ViewportIdentity);
+        hash.Add(context.OutputFrameBufferIdentity);
+        hash.Add(context.OutputTargetIdentity);
+        hash.Add(context.OutputTargetName);
+        hash.Add(context.DisplayWidth);
+        hash.Add(context.DisplayHeight);
+        hash.Add(context.InternalWidth);
+        hash.Add(context.InternalHeight);
+        hash.Add(context.StereoEnabled);
+        hash.Add(context.MultiviewEnabled);
+        hash.Add(ComputeResourceRegistrySignature(context.ResourceRegistry));
+        hash.Add(ComputePassMetadataSignature(context.PassMetadata));
+        hash.Add(context.ResourceGeneration);
+        hash.Add(context.DescriptorGeneration);
+        hash.Add(context.SubmissionQueueFamily);
+        return hash.ToHash();
     }
 
     private static XRFrameBuffer? ResolveFrameOpOutputFrameBuffer(
@@ -833,6 +953,10 @@ public unsafe partial class VulkanRenderer
             if (compare != 0)
                 return compare;
 
+            compare = left.ContextKind.CompareTo(right.ContextKind);
+            if (compare != 0)
+                return compare;
+
             compare = left.ViewportIdentity.CompareTo(right.ViewportIdentity);
             if (compare != 0)
                 return compare;
@@ -858,6 +982,22 @@ public unsafe partial class VulkanRenderer
                 return compare;
 
             compare = left.OutputTargetIdentity.CompareTo(right.OutputTargetIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = left.PassMetadataSignature.CompareTo(right.PassMetadataSignature);
+            if (compare != 0)
+                return compare;
+
+            compare = left.ResourceGeneration.CompareTo(right.ResourceGeneration);
+            if (compare != 0)
+                return compare;
+
+            compare = left.DescriptorGeneration.CompareTo(right.DescriptorGeneration);
+            if (compare != 0)
+                return compare;
+
+            compare = left.SubmissionQueueFamily.CompareTo(right.SubmissionQueueFamily);
             return compare;
         });
     }
@@ -876,6 +1016,10 @@ public unsafe partial class VulkanRenderer
             if (compare != 0)
                 return compare;
 
+            compare = left.ContextKind.CompareTo(right.ContextKind);
+            if (compare != 0)
+                return compare;
+
             compare = left.ViewportIdentity.CompareTo(right.ViewportIdentity);
             if (compare != 0)
                 return compare;
@@ -901,6 +1045,22 @@ public unsafe partial class VulkanRenderer
                 return compare;
 
             compare = left.OutputTargetIdentity.CompareTo(right.OutputTargetIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = left.PassMetadataSignature.CompareTo(right.PassMetadataSignature);
+            if (compare != 0)
+                return compare;
+
+            compare = left.ResourceGeneration.CompareTo(right.ResourceGeneration);
+            if (compare != 0)
+                return compare;
+
+            compare = left.DescriptorGeneration.CompareTo(right.DescriptorGeneration);
+            if (compare != 0)
+                return compare;
+
+            compare = left.SubmissionQueueFamily.CompareTo(right.SubmissionQueueFamily);
             return compare;
         });
 
@@ -909,6 +1069,7 @@ public unsafe partial class VulkanRenderer
         for (int i = 0; i < keys.Count; i++)
         {
             FrameOpPlannerStateKey key = keys[i];
+            hash.Add((int)key.ContextKind);
             hash.Add(key.PipelineIdentity);
             hash.Add(key.ViewportIdentity);
             hash.Add(key.DisplayWidth);
@@ -917,6 +1078,10 @@ public unsafe partial class VulkanRenderer
             hash.Add(key.InternalHeight);
             hash.Add(key.OutputFrameBufferIdentity);
             hash.Add(key.OutputTargetIdentity);
+            hash.Add(key.PassMetadataSignature);
+            hash.Add(key.ResourceGeneration);
+            hash.Add(key.DescriptorGeneration);
+            hash.Add(key.SubmissionQueueFamily);
 
             if (!switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state))
             {
@@ -1104,28 +1269,38 @@ public unsafe partial class VulkanRenderer
 
     private static FrameOpPlannerStateKey BuildFrameOpPlannerStateKey(in FrameOpContext context)
         => new(
+            context.ContextKind,
             context.PipelineIdentity,
             context.ViewportIdentity,
             context.DisplayWidth,
             context.DisplayHeight,
             context.InternalWidth,
             context.InternalHeight,
-            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
-            context.OutputTargetIdentity);
+            context.OutputFrameBufferIdentity,
+            context.OutputTargetIdentity,
+            ComputePassMetadataSignature(context.PassMetadata),
+            context.ResourceGeneration,
+            context.DescriptorGeneration,
+            context.SubmissionQueueFamily);
 
     private static bool FrameOpMatchesPlannerStateKey(FrameOp op, in FrameOpPlannerStateKey key)
         => FrameOpContextHasPlannerResources(op.Context) &&
             FrameOpContextMatchesPlannerStateKey(op.Context, key);
 
     private static bool FrameOpContextMatchesPlannerStateKey(in FrameOpContext context, in FrameOpPlannerStateKey key)
-        => context.PipelineIdentity == key.PipelineIdentity &&
+        => context.ContextKind == key.ContextKind &&
+            context.PipelineIdentity == key.PipelineIdentity &&
             context.ViewportIdentity == key.ViewportIdentity &&
             context.DisplayWidth == key.DisplayWidth &&
             context.DisplayHeight == key.DisplayHeight &&
             context.InternalWidth == key.InternalWidth &&
             context.InternalHeight == key.InternalHeight &&
-            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName) == key.OutputFrameBufferIdentity &&
-            context.OutputTargetIdentity == key.OutputTargetIdentity;
+            context.OutputFrameBufferIdentity == key.OutputFrameBufferIdentity &&
+            context.OutputTargetIdentity == key.OutputTargetIdentity &&
+            ComputePassMetadataSignature(context.PassMetadata) == key.PassMetadataSignature &&
+            context.ResourceGeneration == key.ResourceGeneration &&
+            context.DescriptorGeneration == key.DescriptorGeneration &&
+            context.SubmissionQueueFamily == key.SubmissionQueueFamily;
 
     private static int ComputeOutputFrameBufferIdentity(string? outputFrameBufferName)
         => string.IsNullOrWhiteSpace(outputFrameBufferName)
@@ -1165,13 +1340,13 @@ public unsafe partial class VulkanRenderer
                 externalExtent.Width,
                 externalExtent.Height);
 
-            return context with
+        return RefreshFrameOpContextRecordingFingerprint(context with
             {
                 DisplayWidth = externalExtent.Width,
                 DisplayHeight = externalExtent.Height,
                 InternalWidth = externalExtent.Width,
                 InternalHeight = externalExtent.Height
-            };
+            });
         }
 
         if (XRWindow.IsInteractiveResizeInProgress)
@@ -1232,13 +1407,13 @@ public unsafe partial class VulkanRenderer
                 internalHeight);
         }
 
-        return context with
+        return RefreshFrameOpContextRecordingFingerprint(context with
         {
             DisplayWidth = displayWidth,
             DisplayHeight = displayHeight,
             InternalWidth = internalWidth,
             InternalHeight = internalHeight
-        };
+        });
     }
 
     private static FrameOpContext SelectPrimaryPlannerContext(FrameOp[] ops)
@@ -1342,6 +1517,10 @@ public unsafe partial class VulkanRenderer
         if (compare != 0)
             return compare;
 
+        compare = left.ContextKind.CompareTo(right.ContextKind);
+        if (compare != 0)
+            return compare;
+
         compare = left.ViewportIdentity.CompareTo(right.ViewportIdentity);
         if (compare != 0)
             return compare;
@@ -1351,8 +1530,7 @@ public unsafe partial class VulkanRenderer
         if (compare != 0)
             return compare;
 
-        compare = ComputeOutputFrameBufferIdentity(left.OutputFrameBufferName)
-            .CompareTo(ComputeOutputFrameBufferIdentity(right.OutputFrameBufferName));
+        compare = left.OutputFrameBufferIdentity.CompareTo(right.OutputFrameBufferIdentity);
         if (compare != 0)
             return compare;
 
@@ -1360,7 +1538,15 @@ public unsafe partial class VulkanRenderer
         if (compare != 0)
             return compare;
 
-        return (left.PassMetadata?.Count ?? 0).CompareTo(right.PassMetadata?.Count ?? 0);
+        compare = left.ResourceGeneration.CompareTo(right.ResourceGeneration);
+        if (compare != 0)
+            return compare;
+
+        compare = left.DescriptorGeneration.CompareTo(right.DescriptorGeneration);
+        if (compare != 0)
+            return compare;
+
+        return ComputePassMetadataSignature(left.PassMetadata).CompareTo(ComputePassMetadataSignature(right.PassMetadata));
     }
 
     private static uint ResolvePositiveDimension(uint? primary, int? secondary, uint tertiary, uint fallback)
@@ -1780,9 +1966,12 @@ public unsafe partial class VulkanRenderer
             planningInputs.CompiledGraph,
             planningInputs.ActivePassMetadata);
         Debug.VulkanEvery(
-            $"Vulkan.ResourcePlanner.SignatureChange.{context.PipelineIdentity}.{context.ViewportIdentity}",
+            $"Vulkan.ResourcePlanner.SignatureChange.{context.ContextKind}.{context.PipelineIdentity}.{context.ViewportIdentity}.{context.OutputTargetIdentity}",
             TimeSpan.FromSeconds(1),
-            "[VulkanResourcePlanner] Signature changed. Revision={0} Old=0x{1:X16} New=0x{2:X16} ChangedFields=[{3}] OldComponents=[{4}] NewComponents=[{5}]",
+            "[VulkanResourcePlanner] Signature changed for context kind={0} id={1} fingerprint=0x{2:X16}. Revision={3} Old=0x{4:X16} New=0x{5:X16} ChangedFields=[{6}] OldComponents=[{7}] NewComponents=[{8}]",
+            context.ContextKind,
+            context.ContextId,
+            context.RecordingFingerprint,
             ActiveResourcePlannerRevision,
             ActiveResourcePlannerSignature,
             plannerSignature,
@@ -1944,9 +2133,12 @@ public unsafe partial class VulkanRenderer
                 allocationPlan.ExtentContext,
                 SupportsTransformFeedback);
             Debug.VulkanEvery(
-                $"Vulkan.ResourcePlanner.PhysicalPlanChange.{context.PipelineIdentity}.{context.ViewportIdentity}",
+                $"Vulkan.ResourcePlanner.PhysicalPlanChange.{context.ContextKind}.{context.PipelineIdentity}.{context.ViewportIdentity}.{context.OutputTargetIdentity}",
                 TimeSpan.FromSeconds(1),
-                "[VulkanResourcePlanner] Physical resource plan changed. Revision={0} Old=0x{1:X16} New=0x{2:X16} Components=[{3}]",
+                "[VulkanResourcePlanner] Physical resource plan changed for context kind={0} id={1} fingerprint=0x{2:X16}. Revision={3} Old=0x{4:X16} New=0x{5:X16} Components=[{6}]",
+                context.ContextKind,
+                context.ContextId,
+                context.RecordingFingerprint,
                 ActiveResourcePlannerRevision,
                 ActiveResourceAllocationSignature,
                 allocationPlan.Signature,
@@ -1955,9 +2147,12 @@ public unsafe partial class VulkanRenderer
         }
 
         Debug.VulkanEvery(
-            $"Vulkan.ResourcePlanner.PhysicalPlanReuse.{context.PipelineIdentity}.{context.ViewportIdentity}",
+            $"Vulkan.ResourcePlanner.PhysicalPlanReuse.{context.ContextKind}.{context.PipelineIdentity}.{context.ViewportIdentity}.{context.OutputTargetIdentity}",
             TimeSpan.FromSeconds(1),
-            "[VulkanResourcePlanner] Reusing physical resource plan for metadata-only graph change. Revision={0} AllocationSignature=0x{1:X16}",
+            "[VulkanResourcePlanner] Reusing physical resource plan for metadata-only graph change in context kind={0} id={1} fingerprint=0x{2:X16}. Revision={3} AllocationSignature=0x{4:X16}",
+            context.ContextKind,
+            context.ContextId,
+            context.RecordingFingerprint,
             ActiveResourcePlannerRevision,
             allocationPlan.Signature);
     }
@@ -2920,8 +3115,10 @@ public unsafe partial class VulkanRenderer
         IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
         HashCode hash = new();
+        hash.Add((int)context.ContextKind);
+        hash.Add(context.RecordingFingerprint);
         hash.Add(ComputeResourceRegistrySignature(context.ResourceRegistry));
-        hash.Add(ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName));
+        hash.Add(context.OutputFrameBufferIdentity);
         hash.Add(context.OutputTargetIdentity);
 
         hash.Add(context.DisplayWidth);
@@ -2930,6 +3127,9 @@ public unsafe partial class VulkanRenderer
         hash.Add(context.InternalHeight);
 
         hash.Add(ComputePassMetadataSignature(passMetadata));
+        hash.Add(context.ResourceGeneration);
+        hash.Add(context.DescriptorGeneration);
+        hash.Add(context.SubmissionQueueFamily);
 
         hash.Add(compiledGraph.Batches.Count);
         foreach (VulkanCompiledPassBatch batch in compiledGraph.Batches)
@@ -2972,8 +3172,11 @@ public unsafe partial class VulkanRenderer
         VulkanCompiledRenderGraph compiledGraph,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata)
         => new(
+            context.ContextKind,
+            context.ContextId,
+            context.RecordingFingerprint,
             ComputeResourceRegistrySignature(context.ResourceRegistry),
-            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
+            context.OutputFrameBufferIdentity,
             context.OutputTargetIdentity,
             context.DisplayWidth,
             context.DisplayHeight,
@@ -2982,6 +3185,9 @@ public unsafe partial class VulkanRenderer
             ComputePassMetadataSignature(passMetadata),
             ComputeCompiledGraphBatchSignature(compiledGraph),
             ComputeCompiledGraphEdgeSignature(compiledGraph),
+            context.ResourceGeneration,
+            context.DescriptorGeneration,
+            context.SubmissionQueueFamily,
             queueOwnership.GraphicsQueueFamilyIndex,
             queueOwnership.ComputeQueueFamilyIndex ?? queueOwnership.GraphicsQueueFamilyIndex,
             queueOwnership.TransferQueueFamilyIndex ?? queueOwnership.GraphicsQueueFamilyIndex);

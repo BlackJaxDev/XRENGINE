@@ -223,6 +223,20 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
+            FrameOpContext commandBufferFallbackContext = hasStaticFrameOps
+                ? ops[0].Context
+                : dynamicUiBatchTextOps.Length > 0
+                    ? dynamicUiBatchTextOps[0].Context
+                    : CaptureFrameOpContext();
+            ulong frameOpContextFingerprint = ComputeCommandBufferFrameOpContextFingerprint(
+                ops,
+                dynamicUiBatchTextOps,
+                commandBufferFallbackContext);
+            ulong frameOpContextId = ResolveCommandBufferFrameOpContextId(
+                ops,
+                dynamicUiBatchTextOps,
+                commandBufferFallbackContext);
+
             BeginRecordedTextureUploadSubmitBatch();
             FrameOp[] textureUploadOps = DrainTextureUploadFrameOps();
             if (textureUploadOps.Length > 0)
@@ -252,6 +266,8 @@ namespace XREngine.Rendering.Vulkan
                 !imageForcedDirty &&
                 TryReuseLastSwapchainWriterVariant(
                     imageIndex,
+                    frameOpContextFingerprint,
+                    frameOpContextId,
                     plannerRevision,
                     imageLayoutStartSignature,
                     swapchainImageEverPresentedAtRecord,
@@ -271,6 +287,8 @@ namespace XREngine.Rendering.Vulkan
                 TryReuseCleanCommandChainPrimaryVariant(
                     imageIndex,
                     frameOpsSignature,
+                    frameOpContextFingerprint,
+                    frameOpContextId,
                     dynamicUiBatchTextSignature,
                     dynamicUiBatchTextOps.Length,
                     plannerRevision,
@@ -380,6 +398,18 @@ namespace XREngine.Rendering.Vulkan
 
                 if (gpuProfilerCommandBufferStateDirty)
                     profilerDirty = true;
+
+                if (!dirty &&
+                    !TryValidateCommandBufferVariantContext(
+                        imageIndex,
+                        variant,
+                        frameOpContextFingerprint,
+                        frameOpContextId,
+                        usingCommandChains ? "primary-command-chain" : "primary"))
+                {
+                    dirty = true;
+                    frameOpSignatureDirty = true;
+                }
 
                 if (!dirty && !usingCommandChains && hasFrameOps && variant.FrameOpsSignature != frameOpsSignature)
                 {
@@ -556,6 +586,12 @@ namespace XREngine.Rendering.Vulkan
                                 dynamicUiBatchTextOverlayVariant = variant;
                             }
                         }
+                        EnsureCommandBufferVariantContextBeforeSubmit(
+                            imageIndex,
+                            variant,
+                            frameOpContextFingerprint,
+                            frameOpContextId,
+                            usingCommandChains ? "primary-command-chain" : "primary");
                         return variant.PrimaryCommandBuffer;
                     }
                 }
@@ -651,6 +687,8 @@ namespace XREngine.Rendering.Vulkan
                 : 0;
             variant.DynamicUiOpCount = recordedDynamicUiSecondaryReady ? dynamicUiBatchTextOps.Length : 0;
             variant.PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
+            variant.RecordedFrameOpContextFingerprint = frameOpContextFingerprint;
+            variant.RecordedFrameOpContextId = frameOpContextId;
             variant.RecordedSwapchainImageEverPresented = swapchainImageEverPresentedAtRecord;
             variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
             variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
@@ -691,11 +729,19 @@ namespace XREngine.Rendering.Vulkan
             commandBufferDirtyGenerationAfterRecord = SnapshotCommandBufferDirtyGeneration();
             if (HaveCommandBuffersDirtiedSince(ensureStartDirtyGeneration))
                 MarkCommandBufferVariantDirtyAfterConcurrentInvalidation(variant);
+            EnsureCommandBufferVariantContextBeforeSubmit(
+                imageIndex,
+                variant,
+                frameOpContextFingerprint,
+                frameOpContextId,
+                usingCommandChains ? "recorded-primary-command-chain" : "recorded-primary");
             return variant.PrimaryCommandBuffer;
         }
 
         private bool TryReuseLastSwapchainWriterVariant(
             uint imageIndex,
+            ulong frameOpContextFingerprint,
+            ulong frameOpContextId,
             ulong plannerRevision,
             ulong imageLayoutStartSignature,
             bool swapchainImageEverPresented,
@@ -721,6 +767,12 @@ namespace XREngine.Rendering.Vulkan
                 if (variant.Dirty ||
                     variant.RecordedSwapchainWriteCount <= 0 ||
                     variant.RecordedSwapchainFinalLayout != ImageLayout.PresentSrcKhr ||
+                    !TryValidateCommandBufferVariantContext(
+                        imageIndex,
+                        variant,
+                        frameOpContextFingerprint,
+                        frameOpContextId,
+                        "last-swapchain-writer") ||
                     variant.PlannerRevision != plannerRevision ||
                     IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
                     variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented ||
@@ -760,6 +812,12 @@ namespace XREngine.Rendering.Vulkan
                 profilerDirty: false,
                 dirtyReason: null);
 
+            EnsureCommandBufferVariantContextBeforeSubmit(
+                imageIndex,
+                best,
+                frameOpContextFingerprint,
+                frameOpContextId,
+                "last-swapchain-writer");
             commandBuffer = best.PrimaryCommandBuffer;
             swapchainLayoutAfterCommandBuffer = best.RecordedSwapchainFinalLayout;
             return true;
@@ -785,6 +843,8 @@ namespace XREngine.Rendering.Vulkan
             variant.DynamicUiOpCount = -1;
             variant.DynamicUiSecondaryRecorded = false;
             variant.PreserveSwapchainForOverlay = false;
+            variant.RecordedFrameOpContextFingerprint = ulong.MaxValue;
+            variant.RecordedFrameOpContextId = 0;
             variant.RecordedSwapchainImageEverPresented = false;
             variant.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
             variant.RecordedSwapchainWriteCount = 0;
@@ -809,9 +869,120 @@ namespace XREngine.Rendering.Vulkan
             variant.DirtyReason = "concurrent invalidation during primary record";
         }
 
+        private static ulong ComputeCommandBufferFrameOpContextFingerprint(
+            FrameOp[] ops,
+            FrameOp[] dynamicUiBatchTextOps,
+            in FrameOpContext fallbackContext)
+        {
+            FrameOpSignatureHasher hash = new();
+            hash.Add(0x434D444354584654UL);
+            AddFrameOpContextFingerprints(ref hash, ops);
+            AddFrameOpContextFingerprints(ref hash, dynamicUiBatchTextOps);
+            if (ops.Length == 0 && dynamicUiBatchTextOps.Length == 0)
+                hash.Add(fallbackContext.RecordingFingerprint);
+
+            return hash.ToHash();
+        }
+
+        private static void AddFrameOpContextFingerprints(ref FrameOpSignatureHasher hash, FrameOp[] ops)
+        {
+            hash.Add(ops.Length);
+            for (int i = 0; i < ops.Length; i++)
+            {
+                hash.Add(ops[i].Context.RecordingFingerprint);
+                hash.Add((int)ops[i].Context.ContextKind);
+            }
+        }
+
+        private static ulong ResolveCommandBufferFrameOpContextId(FrameOp[] ops, FrameOp[] dynamicUiBatchTextOps, in FrameOpContext fallbackContext)
+        {
+            if (ops.Length > 0)
+                return ops[0].Context.ContextId;
+            if (dynamicUiBatchTextOps.Length > 0)
+                return dynamicUiBatchTextOps[0].Context.ContextId;
+            return fallbackContext.ContextId;
+        }
+
+        private static bool IsCommandBufferVariantFrameOpContextDirty(
+            CommandBufferCacheVariant variant,
+            ulong frameOpContextFingerprint)
+            => variant.RecordedFrameOpContextFingerprint != frameOpContextFingerprint;
+
+        private bool TryValidateCommandBufferVariantContext(
+            uint imageIndex,
+            CommandBufferCacheVariant variant,
+            ulong frameOpContextFingerprint,
+            ulong frameOpContextId,
+            string reusePath)
+        {
+            if (!IsCommandBufferVariantFrameOpContextDirty(variant, frameOpContextFingerprint))
+                return true;
+
+            LogCommandBufferFrameOpContextMismatch(
+                imageIndex,
+                variant,
+                frameOpContextFingerprint,
+                frameOpContextId,
+                reusePath);
+            return false;
+        }
+
+        private void EnsureCommandBufferVariantContextBeforeSubmit(
+            uint imageIndex,
+            CommandBufferCacheVariant variant,
+            ulong frameOpContextFingerprint,
+            ulong frameOpContextId,
+            string submitPath)
+        {
+            if (!IsCommandBufferVariantFrameOpContextDirty(variant, frameOpContextFingerprint))
+                return;
+
+            LogCommandBufferFrameOpContextMismatch(
+                imageIndex,
+                variant,
+                frameOpContextFingerprint,
+                frameOpContextId,
+                submitPath);
+            throw new InvalidOperationException(
+                $"Vulkan command buffer frame-op context mismatch before submit in {submitPath}. " +
+                $"Image={imageIndex} RecordedContextId={variant.RecordedFrameOpContextId} " +
+                $"Recorded=0x{variant.RecordedFrameOpContextFingerprint:X16} CurrentContextId={frameOpContextId} " +
+                $"Current=0x{frameOpContextFingerprint:X16}.");
+        }
+
+        private void LogCommandBufferFrameOpContextMismatch(
+            uint imageIndex,
+            CommandBufferCacheVariant variant,
+            ulong frameOpContextFingerprint,
+            ulong frameOpContextId,
+            string reusePath)
+        {
+            string policy = ShouldFailFastOnFrameOpContextMismatch()
+                ? "diagnostic-fail-fast-before-submit"
+                : "discard-rerecord";
+            Debug.VulkanWarningEvery(
+                $"Vulkan.CommandBuffer.FrameOpContextMismatch.{GetHashCode()}.{imageIndex}.{reusePath}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] frame-op context mismatch in {0}; rejecting cached primary before submit. Image={1} Policy={2} RecordedContextId={3} Recorded=0x{4:X16} CurrentContextId={5} Current=0x{6:X16}",
+                reusePath,
+                imageIndex,
+                policy,
+                variant.RecordedFrameOpContextId,
+                variant.RecordedFrameOpContextFingerprint,
+                frameOpContextId,
+                frameOpContextFingerprint);
+        }
+
+        private bool ShouldFailFastOnFrameOpContextMismatch()
+            => _diagnosticOptions.EnableValidationLayers ||
+               _diagnosticOptions.EnableCrashBreadcrumbs ||
+               _diagnosticOptions.Preset == EVulkanDiagnosticPreset.CrashDiagnostics;
+
         private bool TryReuseCleanCommandChainPrimaryVariant(
             uint imageIndex,
             ulong frameOpsSignature,
+            ulong frameOpContextFingerprint,
+            ulong frameOpContextId,
             ulong dynamicUiBatchTextSignature,
             int dynamicUiBatchTextOpCount,
             ulong plannerRevision,
@@ -874,6 +1045,12 @@ namespace XREngine.Rendering.Vulkan
                     variant.CommandChainScheduleSignature != cachedSchedule.StructuralSignature ||
                     variant.CommandChainPrimaryGroupSignature != currentPrimaryGroupSignature ||
                     variant.CommandChainPrimaryGroupCount != currentPrimaryGroupCount ||
+                    !TryValidateCommandBufferVariantContext(
+                        imageIndex,
+                        variant,
+                        frameOpContextFingerprint,
+                        frameOpContextId,
+                        "command-chain-primary") ||
                     variant.FrameOpsSignature != frameOpsSignature ||
                     variant.PlannerRevision != plannerRevision ||
                     IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature) ||
@@ -952,6 +1129,12 @@ namespace XREngine.Rendering.Vulkan
                     profilerDirty: false,
                     dirtyReason: null);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(primaryCommandBuffersReused: 1);
+                EnsureCommandBufferVariantContextBeforeSubmit(
+                    imageIndex,
+                    variant,
+                    frameOpContextFingerprint,
+                    frameOpContextId,
+                    "command-chain-primary");
                 commandBuffer = variant.PrimaryCommandBuffer;
                 if (dynamicUiSecondaryReady)
                 {

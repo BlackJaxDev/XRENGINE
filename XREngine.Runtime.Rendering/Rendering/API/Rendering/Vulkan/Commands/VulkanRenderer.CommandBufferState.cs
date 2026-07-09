@@ -195,6 +195,8 @@ namespace XREngine.Rendering.Vulkan
             public int DynamicUiOpCount { get; set; } = -1;
             public bool DynamicUiSecondaryRecorded { get; set; }
             public bool PreserveSwapchainForOverlay { get; set; }
+            public ulong RecordedFrameOpContextFingerprint { get; set; } = ulong.MaxValue;
+            public ulong RecordedFrameOpContextId { get; set; }
             public bool RecordedSwapchainImageEverPresented { get; set; }
             public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;
             public int RecordedSwapchainWriteCount { get; set; }
