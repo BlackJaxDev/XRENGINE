@@ -292,7 +292,6 @@ namespace XREngine.Components.Lights
                 CullWithFrustum = true,
             };
 
-            ApplyCaptureCameraSettings(captureCamera);
             return viewport;
         }
 
@@ -302,9 +301,7 @@ namespace XREngine.Components.Lights
             viewport.SetRenderPipelineFromCamera = false;
             viewport.AutomaticallyCollectVisible = false;
             viewport.AutomaticallySwapBuffers = false;
-            viewport.AllowUIRender = false;
-            viewport.AllowAutomaticInternalResolution = false;
-            viewport.UseDirectFboTargetCommandsWhenRenderingToFbo = UseDirectFboTargetCommandsForCapture;
+            viewport.ApplyCapturePolicy(CaptureRenderPolicy);
             viewport.CullWithFrustum = true;
 
             if ((uint)viewport.Width != Resolution ||
@@ -319,12 +316,16 @@ namespace XREngine.Components.Lights
                 ApplyCaptureCameraSettings(viewport.Camera);
         }
 
-        private static void ApplyCaptureCameraSettings(XRCamera camera)
+        private void ApplyCaptureCameraSettings(XRCamera camera)
         {
             // Exclude gizmos so debug visuals don't end up inside the captured probe data.
             camera.CullingMask = DefaultLayers.EverythingExceptGizmos;
+            CaptureRenderPolicy.ApplyCameraOverrides(camera);
 
             var colorStage = camera.GetPostProcessStageState<ColorGradingSettings>();
+            if (CaptureRenderPolicy.AllowAutoExposure)
+                return;
+
             if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
             {
                 grading.AutoExposure = false;
@@ -354,8 +355,8 @@ namespace XREngine.Components.Lights
         protected virtual bool ShouldEncodeEnvironmentToOctahedralMap()
             => true;
 
-        protected virtual bool UseDirectFboTargetCommandsForCapture
-            => false;
+        protected virtual RenderCapturePolicy CaptureRenderPolicy
+            => RenderCapturePolicy.GenericSceneCapture;
 
         private bool _progressiveRenderEnabled = true;
         /// <summary>

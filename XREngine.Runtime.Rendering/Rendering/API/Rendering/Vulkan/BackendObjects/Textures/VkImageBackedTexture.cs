@@ -1323,6 +1323,9 @@ public unsafe partial class VulkanRenderer
 
         private void CreateDedicatedImage()
         {
+            if (!Renderer.IsDeviceOperational)
+                throw new InvalidOperationException($"Cannot create a Vulkan image while device state is {Renderer.DeviceState}.");
+
             ImageCreateInfo imageInfo = new()
             {
                 SType = StructureType.ImageCreateInfo,
@@ -1765,6 +1768,12 @@ public unsafe partial class VulkanRenderer
             memory = default;
             committedBytes = 0L;
             failureReason = null;
+
+            if (!Renderer.IsDeviceOperational)
+            {
+                failureReason = $"Vulkan device state is {Renderer.DeviceState}";
+                return false;
+            }
 
             ImageUsageFlags usage = DefaultUsage;
             if (Data.RequiresStorageUsage)
@@ -3176,8 +3185,8 @@ public unsafe partial class VulkanRenderer
             uint transferFamily = queueFamilies.TransferFamilyIndex ?? graphicsFamily;
             bool dedicatedTransferFamily = transferFamily != graphicsFamily;
 
-            if (dedicatedTransferFamily)
-                Api!.QueueWaitIdle(Renderer.GraphicsQueue);
+            if (dedicatedTransferFamily && Renderer.WaitForQueueIdleTracked(Renderer.GraphicsQueue) != Result.Success)
+                return;
 
             using (var transferScope = Renderer.NewTransferCommandScope())
             {

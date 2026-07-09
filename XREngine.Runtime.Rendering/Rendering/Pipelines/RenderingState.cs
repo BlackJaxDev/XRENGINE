@@ -93,6 +93,11 @@ public sealed partial class XRRenderPipelineInstance
         /// </summary>
         public RenderCommandCollection? MeshRenderCommands { get; set; }
 
+        /// <summary>
+        /// Immutable capture policy snapshot used for this render invocation.
+        /// </summary>
+        public RenderCapturePolicy CapturePolicy { get; private set; }
+
         IRuntimeViewportHost? IRuntimeRenderCommandExecutionState.WindowViewport
             => WindowViewport;
 
@@ -132,6 +137,7 @@ public sealed partial class XRRenderPipelineInstance
             GlobalMaterialOverride = globalMaterialOverride;
             ScreenSpaceUserInterface = screenSpaceUI?.IsScreenSpace == true ? screenSpaceUI : null;
             MeshRenderCommands = meshRenderCommands;
+            CapturePolicy = viewport?.CapturePolicy ?? RenderCapturePolicy.None;
 
             if (WindowViewport is not null)
                 _renderingViewports.Push(WindowViewport);
@@ -179,6 +185,7 @@ public sealed partial class XRRenderPipelineInstance
             GlobalMaterialOverride = null;
             ScreenSpaceUserInterface = null;
             MeshRenderCommands = null;
+            CapturePolicy = RenderCapturePolicy.None;
         }
 
         private readonly Stack<bool> _mainAttributeRenderAreaPushed = new();

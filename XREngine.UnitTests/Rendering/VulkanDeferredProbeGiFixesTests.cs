@@ -499,16 +499,15 @@ public sealed class VulkanDeferredProbeGiFixesTests
     }
 
     [Test]
-    public void VulkanLightProbeCapture_UsesDirectFboRenderPath()
+    public void LightProbeCapture_UsesExplicitMinimalDirectFboPolicy()
     {
         string sceneCaptureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/SceneCaptureComponent.cs");
         string lightProbeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/LightProbeComponent.IBL.cs");
 
-        sceneCaptureSource.ShouldContain("protected virtual bool UseDirectFboTargetCommandsForCapture");
-        sceneCaptureSource.ShouldContain("viewport.AllowAutomaticInternalResolution = false;");
-        sceneCaptureSource.ShouldContain("viewport.UseDirectFboTargetCommandsWhenRenderingToFbo = UseDirectFboTargetCommandsForCapture;");
-        lightProbeSource.ShouldContain("protected override bool UseDirectFboTargetCommandsForCapture");
-        lightProbeSource.ShouldContain("=> RuntimeEngine.Rendering.State.IsVulkan;");
+        sceneCaptureSource.ShouldContain("protected virtual RenderCapturePolicy CaptureRenderPolicy");
+        sceneCaptureSource.ShouldContain("viewport.ApplyCapturePolicy(CaptureRenderPolicy);");
+        lightProbeSource.ShouldContain("protected override RenderCapturePolicy CaptureRenderPolicy");
+        lightProbeSource.ShouldContain("=> RenderCapturePolicy.LightProbe;");
     }
 
     [Test]
@@ -690,7 +689,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
         phase1Source.ShouldContain("VulkanNvCheckpointMarkerCapacity");
         phase1Source.ShouldContain("GetQueueCheckpointData2");
         validationSource.ShouldContain("RecordVulkanDeviceAddressBindingCallback(pCallbackData)");
-        synchronizationSource.ShouldContain("RecordVulkanImageLayoutTransitionBreadcrumb(imageBarrierCount, imageBarriers, caller)");
+        synchronizationSource.ShouldContain("RecordVulkanImageLayoutTransitionBreadcrumb(commandBuffer, imageBarrierCount, imageBarriers, caller)");
         recordingSource.ShouldContain("RecordVulkanCommandDiagnosticMarker(commandBuffer, op, opPassIndex, opIndex)");
         bufferSource.ShouldContain("RegisterVulkanDeviceAddressRange(buffer, address, bufferSize");
         descriptorHeapSource.ShouldContain("RecordVulkanDescriptorTableGeneration");
@@ -725,7 +724,9 @@ public sealed class VulkanDeferredProbeGiFixesTests
     [Test]
     public void VulkanPhase11Diagnostics_KhrDeviceFaultShimIsWired()
     {
-        string shimSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.KhrDeviceFault.cs");
+        string shimSource = ReadWorkspaceFiles(
+            "XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/KhrDeviceFault",
+            "*.cs");
         string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
         string phase1Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.Phase1.cs");
         string todoSource = ReadWorkspaceFile("docs/work/todo/rendering/vulkan-core-hardening-and-device-loss-todo.md");
@@ -869,6 +870,16 @@ public sealed class VulkanDeferredProbeGiFixesTests
         string path = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue($"Expected workspace file '{path}' to exist.");
         return File.ReadAllText(path);
+    }
+
+    private static string ReadWorkspaceFiles(string relativeDirectory, string searchPattern)
+    {
+        string repoRoot = ResolveRepoRoot();
+        string path = Path.Combine(repoRoot, relativeDirectory.Replace('/', Path.DirectorySeparatorChar));
+        Directory.Exists(path).ShouldBeTrue($"Expected workspace directory '{path}' to exist.");
+        string[] files = Directory.GetFiles(path, searchPattern, SearchOption.TopDirectoryOnly);
+        files.Length.ShouldBeGreaterThan(0, $"Expected workspace files matching '{searchPattern}' under '{path}'.");
+        return string.Join(Environment.NewLine, Array.ConvertAll(files, File.ReadAllText));
     }
 
     private static string ResolveRepoRoot()

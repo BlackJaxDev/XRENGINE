@@ -729,13 +729,16 @@ public class GpuRenderingBacklogTests
     [Test]
     public void VR_Vulkan_ParallelSecondaryCommands_NoRenderThreadBlock()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string recording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+        string secondary = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.SecondaryCommandBuffers.cs");
+        string workers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainWorkers.cs");
+        string commandPools = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandPool.cs");
 
-        source.ShouldContain("ExecuteSecondaryCommandBufferBatchParallel");
-        source.ShouldContain("Task.Run");
-        source.ShouldContain("IndirectDrawBatch");
-        source.ShouldContain("DispatchCommandChainRecordingWorkers");
-        source.ShouldContain("GetThreadCommandPool");
+        secondary.ShouldContain("ExecuteSecondaryCommandBufferBatchParallel");
+        secondary.ShouldContain("Task.Run");
+        recording.ShouldContain("TryExecuteIndirectCommandChainSecondaryRun");
+        workers.ShouldContain("DispatchCommandChainRecordingWorkers");
+        commandPools.ShouldContain("GetThreadCommandPool");
     }
 
     [Test]
@@ -802,18 +805,24 @@ public class GpuRenderingBacklogTests
             .Replace("\r\n", "\n");
         string commandBuffers = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs")
             .Replace("\r\n", "\n");
+        string commandBufferState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferState.cs")
+            .Replace("\r\n", "\n");
+        string commandBufferAllocation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferAllocation.cs")
+            .Replace("\r\n", "\n");
         string imgui = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs")
             .Replace("\r\n", "\n");
 
         drawingCore.ShouldContain("TryConsumeRenderableImGuiOverlaySnapshot(out imguiOverlaySnapshot)");
         drawingCore.ShouldContain("bool preserveSwapchainForImGuiOverlay = hasPendingImGuiOverlay && UseDynamicRenderingRenderTargets;");
-        drawingCore.ShouldContain("EnsureCommandBufferRecorded(\n                        imageIndex,\n                        preserveSwapchainForImGuiOverlay,\n                        out swapchainLayoutAfterScene)");
+        drawingCore.ShouldContain("submitCommandBuffer = EnsureCommandBufferRecorded(");
+        drawingCore.ShouldContain("imageIndex,\n                        preserveSwapchainForImGuiOverlay,");
+        drawingCore.ShouldContain("out swapchainLayoutAfterScene,\n                        out sceneCommandBufferDirtyGeneration)");
         drawingCore.ShouldContain("TryRecordImGuiOverlayCommandBuffer(\n                            imageIndex,\n                            imguiOverlaySnapshot,\n                            swapchainLayoutAfterScene,");
 
-        commandBuffers.ShouldContain("public bool PreserveSwapchainForOverlay { get; set; }");
-        commandBuffers.ShouldContain("public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;");
-        commandBuffers.ShouldContain("variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay");
-        commandBuffers.ShouldContain("int expectedPresentTransitions = preserveSwapchainForOverlay ? 0 : 1;");
+        commandBufferState.ShouldContain("public bool PreserveSwapchainForOverlay { get; set; }");
+        commandBufferState.ShouldContain("public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;");
+        commandBufferAllocation.ShouldContain("variant.PreserveSwapchainForOverlay == preserveSwapchainForOverlay");
+        commandBuffers.ShouldContain("int expectedPresentTransitions = preserveSwapchainForOverlay || !transitionSwapchainToPresent ? 0 : 1;");
 
         imgui.ShouldContain("ImageLayout initialSwapchainLayout");
         imgui.ShouldContain("initialSwapchainLayout,\n                ImageLayout.ColorAttachmentOptimal");

@@ -35,8 +35,8 @@ namespace XREngine.Components.Capture.Lights
         protected override bool ShouldInitializeCaptureResourcesOnActivate
             => false;
 
-        protected override bool UseDirectFboTargetCommandsForCapture
-            => RuntimeEngine.Rendering.State.IsVulkan;
+        protected override RenderCapturePolicy CaptureRenderPolicy
+            => RenderCapturePolicy.LightProbe;
 
         protected override void InitializeForCapture()
         {
@@ -74,14 +74,7 @@ namespace XREngine.Components.Capture.Lights
                 if (viewport is null)
                     continue;
 
-                if (viewport.Camera is not null)
-                {
-                    viewport.Camera.OutputHDROverride = true;
-                    viewport.Camera.AntiAliasingModeOverride = EAntiAliasingMode.None;
-                    viewport.Camera.MsaaSampleCountOverride = 1u;
-                    viewport.Camera.TsrRenderScaleOverride = 1.0f;
-                }
-
+                viewport.ApplyCapturePolicy(CaptureRenderPolicy);
                 viewport.RenderPipeline ??= RuntimeEngine.Rendering.NewRenderPipeline();
                 viewport.SetRenderPipelineFromCamera = false;
             }
@@ -652,7 +645,8 @@ namespace XREngine.Components.Capture.Lights
 
         public override void Render()
         {
-            _registeredWorld?.Lights.EnsureShadowMapsCurrentForCapture(false);
+            if (CaptureRenderPolicy.RenderShadows)
+                _registeredWorld?.Lights.EnsureShadowMapsCurrentForCapture(false);
             RuntimeEngine.Rendering.State.IsLightProbePass = true;
 
             try
@@ -690,7 +684,8 @@ namespace XREngine.Components.Capture.Lights
         public override void FinalizeCubemapCapture()
         {
             EnsureCaptureResourcesInitialized();
-            _registeredWorld?.Lights.EnsureShadowMapsCurrentForCapture(false);
+            if (CaptureRenderPolicy.RenderShadows)
+                _registeredWorld?.Lights.EnsureShadowMapsCurrentForCapture(false);
             RuntimeEngine.Rendering.State.IsLightProbePass = true;
 
             try

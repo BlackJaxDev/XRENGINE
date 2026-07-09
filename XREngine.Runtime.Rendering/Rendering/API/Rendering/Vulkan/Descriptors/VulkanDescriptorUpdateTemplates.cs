@@ -37,6 +37,9 @@ public unsafe partial class VulkanRenderer
         uint setIndex,
         ReadOnlySpan<WriteDescriptorSet> writes)
     {
+        if (!IsDeviceOperational)
+            return false;
+
         if (descriptorSet.Handle == 0 || descriptorSetLayout.Handle == 0 || writes.Length == 0)
             return false;
 
@@ -103,6 +106,9 @@ public unsafe partial class VulkanRenderer
             {
                 return false;
             }
+
+            if (!IsDeviceOperational)
+                return false;
 
             Api!.UpdateDescriptorSetWithTemplate(device, descriptorSet, updateTemplate, data);
             return true;

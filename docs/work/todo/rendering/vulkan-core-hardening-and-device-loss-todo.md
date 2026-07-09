@@ -2,7 +2,7 @@
 
 Last Updated: 2026-07-09
 Owner: Rendering
-Status: Phase 2 Frame-Op Context Isolation Implemented; Hardware KHR/OpenXR Stress Pending
+Status: Phase 2.1 Implemented; Validation Follow-Ups Open; Phase 3 Source Implementation Complete
 Target Branch: `rendering-vulkan-core-hardening`
 
 ## Goal
@@ -107,16 +107,21 @@ Phase 0 implementation note: the first code/doc slice landed on
 
 - [x] Create dedicated branch `rendering-vulkan-core-hardening`.
 - [ ] Record baseline Vulkan behavior for:
-  - [ ] editor desktop viewport,
+  - [x] editor desktop viewport,
   - [x] OpenXR Vulkan eye rendering failing baseline from July 9 logs,
-  - [ ] OpenXR mirror rendering,
+  - [x] OpenXR mirror rendering,
   - [x] light-probe batch capture failing baseline from July 9 logs,
-  - [ ] scene capture,
+  - [x] scene capture through the light-probe capture path,
   - [ ] shadow rendering,
   - [ ] UI preview rendering.
-- [x] Define a deterministic repro manifest for the July 9 scenario, including
+- [x] Define a deterministic repro manifest template for the July 9 scenario,
+  including
   world settings, probe count/resolution, OpenXR runtime, headset refresh rate,
   render resolution, and exact launch command.
+- [x] Populate that template with one complete, machine-readable July 9
+  equivalent rerun manifest; remove all placeholder values and record its
+  tracked path alongside the raw log-session path. See
+  [vulkan-core-hardening-phase21-validation-2026-07-09.json](../../testing/rendering/vulkan-core-hardening-phase21-validation-2026-07-09.json).
 - [x] Preserve the July 9, 2026 probe crash summary in this document or a linked
   durable work note; do not depend on ignored `Build/_AgentValidation` files.
 - [x] Categorize existing device-loss risks:
@@ -134,17 +139,17 @@ Phase 0 implementation note: the first code/doc slice landed on
   - [x] application race/external-synchronization violation.
 - [x] Add a short renderer log summary that reports device loss with the last
   known frame-op context and submission kind.
-- [ ] Define an explicit renderer device state machine such as `Healthy` ->
+- [x] Define an explicit renderer device state machine such as `Healthy` ->
   `LossDetected` -> `CollectingFaultData` -> `Quiesced` -> `Disposed`, including
   which calls are legal in each state and how producer threads are cancelled.
 
 Acceptance criteria:
 
-- [ ] There is a repeatable baseline for at least one light-probe batch capture
+- [x] There is a repeatable baseline for at least one light-probe batch capture
   and one OpenXR Vulkan session.
 - [x] Device-loss logs name the active frame op, output target, dimensions,
   command-buffer generation, and timeline/fence values where available.
-- [ ] Repeated runs use the same repro manifest and produce a comparable result
+- [x] Repeated runs use the same repro manifest and produce a comparable result
   manifest rather than relying on visual memory.
 
 ## Phase 1 - Diagnostic Modes, Fault Data, And Validation Presets
@@ -169,12 +174,10 @@ Acceptance criteria:
   `VK_EXT_device_fault` compatibility where required by current bindings/drivers:
   - [x] enable the device-fault feature at logical-device creation,
   - [x] use `vkGetDeviceFaultReportsKHR` for asynchronous and internally
-    recovered fault reports when KHR support is active and callable bindings are
-    available; the current Silk.NET 2.23 path logs KHR exposure and falls back
-    to the EXT compatibility collector because the KHR report/debug-info
-    bindings are not exposed locally,
-  - [x] call `vkGetDeviceFaultDebugInfoKHR` only after device loss when callable
-    bindings are available; on the EXT compatibility path, query counts and then
+    recovered fault reports when KHR support is active through the local
+    `GetDeviceProcAddr` shim,
+  - [x] call `vkGetDeviceFaultDebugInfoKHR` through the local shim only after
+    device loss; on the EXT compatibility path, query counts and then
     `vkGetDeviceFaultInfoEXT` only after the device is in the lost state,
     - [x] EXT compatibility path queries device-fault counts after device loss,
   - [x] persist the human-readable description, address/vendor records, and
@@ -203,14 +206,16 @@ Acceptance criteria:
   - [x] frame-op context id,
   - [x] pass name,
   - [x] output target,
-  - [x] active resource generation,
-  - [x] image layout transitions,
+  - [x] active resource/planner generation from the submitted context,
+  - [x] image, subresource, old/new layout, and caller for recent layout
+    transitions,
   - [x] descriptor table generation.
 - [x] Keep breadcrumb writes allocation-free and assign stable IDs whose backing
   storage remains valid until the associated submission completes. Include
   queue, submit serial, batch index, draw/dispatch/blit identity, and the first
   failing Vulkan/OpenXR API.
-  - [x] Breadcrumb writes are allocation-free and include queue, submit serial,
+  - [x] Breadcrumb writes are allocation-free, thread-safe under parallel eye
+    recording, and include queue, submit serial,
     frame context, output target, command buffer, fence, timeline, caller,
     command marker, batch index, layout serial, descriptor generation, and first
     failing API.
@@ -340,62 +345,213 @@ Acceptance criteria:
   output target, pass metadata, or resource lifetime differ.
 - [x] Ensure frame-op context switching cannot overwrite live OpenXR eye planner
   state during scene/probe capture.
-- [x] Add tests that simulate alternating OpenXR eye rendering and light-probe
-  capture contexts.
+- [x] Add behavioral tests that simulate alternating OpenXR eye rendering and
+  light-probe capture contexts.
 - [x] Add logs that distinguish metadata-only graph changes from allocation
   signature changes per context.
 
 Acceptance criteria:
 
-- [x] Alternating capture and OpenXR eye frames do not churn the same physical
-  resources unless an explicit shared-resource policy says they may. Source
-  isolation is implemented; live OpenXR/light-probe hardware stress remains the
-  runtime proof.
+- [ ] Alternating capture and OpenXR eye frames do not churn the same physical
+  resources unless an explicit shared-resource policy says they may. Allocator
+  ownership is now isolated and the post-fix stress run did not reproduce
+  cross-eye descriptor invalidation or device loss, but growing probe arrays
+  still produce intentional allocation churn that needs a narrower steady-state
+  measurement before this criterion is checked.
 - [x] A command buffer recorded for one context cannot be submitted under another
   context silently.
 
-## Phase 3 - Dedicated Capture Pipeline
+## Phase 2.1 - Audit Remediation: Planner Ownership, Queue Serialization, And Diagnostics
 
-- [ ] Define capture policies for:
-  - [ ] generic scene capture,
-  - [ ] light probes,
-  - [ ] reflection probes,
-  - [ ] GI probes,
-  - [ ] thumbnails/UI previews,
-  - [ ] diagnostic FBO capture.
-- [ ] Create a minimal Vulkan-safe capture pipeline path that renders only what
-  capture actually needs:
-  - [ ] pre-render hooks,
-  - [ ] background/sky policy,
-  - [ ] opaque deferred or opaque forward policy,
-  - [ ] masked/transparent policy,
-  - [ ] optional shadows,
-  - [ ] no temporal history,
-  - [ ] no auto exposure,
-  - [ ] no bloom,
-  - [ ] no TSR/TAA,
-  - [ ] no vendor upscale,
-  - [ ] no viewport final-output path.
-- [ ] Decide whether capture uses a dedicated `RenderPipeline` type or a
-  `DefaultRenderPipeline` capture variant.
-- [ ] Keep `DefaultRenderPipeline` and `DefaultRenderPipeline2` behavior
-  consistent while both exist.
-- [ ] Make capture viewports opt into direct FBO commands by policy rather than
-  by ad hoc property mutations.
-- [ ] Add a debug overlay/log line that reports the effective capture policy.
-- [ ] Confirm capture output orientation and clip-space policy for Vulkan and
-  OpenGL.
-- [ ] Validate that light-probe IBL generation uses only explicit fullscreen
-  probe passes after cubemap capture.
+The July 9 post-implementation audit found that the Phase 0-2 source slices are
+present, but several ownership, synchronization, and diagnostic-fidelity claims
+are not yet safe to accept. Complete this corrective phase before Phase 4 or
+before treating Phase 2 hardware stress as authoritative.
+
+Implementation and hardware evidence:
+[vulkan-core-hardening-phase21-validation-2026-07-09.json](../../testing/rendering/vulkan-core-hardening-phase21-validation-2026-07-09.json).
+All source tasks below are complete. The final aggregate live-validation
+criterion remains open because unrelated synchronization, query lifecycle,
+cube-view, and teardown VUIDs are still present.
+
+Planner state ownership and isolation:
+
+- [x] Redesign `ExternalResourcePlannerReadbackScope` so a cache miss builds the
+  new context from an empty isolated `ResourcePlannerRuntimeState`; it must not
+  mutate, retire, or destroy resources owned by the state captured for restore.
+- [x] Activate an existing cached planner state before calling
+  `PrepareResourcePlannerForFrameOps`, including the single-key path. Do not
+  update the shared active planner first and cache the result afterward.
+- [x] Separate command-recording identity from physical-allocation ownership.
+  Keep descriptor/resource generations in recording invalidation where needed,
+  but do not create a new allocator owner solely because a descriptor generation
+  changed while the physical allocation signature stayed constant.
+- [x] Give every cached allocator state explicit unique ownership or shared
+  ownership with reference counting. Prune, replacement, and teardown must
+  destroy a physical allocator only after its final owner is removed.
+- [x] Deduplicate allocator destruction in
+  `PruneFrameOpResourcePlannerStatesToCapacity`,
+  `DestroyFrameOpResourcePlannerStates`, and OpenXR planner-state teardown.
+- [x] Add debug assertions that a restored planner state does not reference a
+  retired/destroyed allocator, physical image group, buffer group, framebuffer,
+  or descriptor generation.
+- [x] Add an explicit purpose/context-kind field to
+  `OpenXrViewResourcePlannerContextKey` so eye, mirror, publish, and prewarm
+  states cannot collide when foveation is disabled.
+
+Queue access and terminal device state:
+
+- [x] Add one renderer-owned queue-operation gateway that serializes every host
+  operation on each Vulkan queue and records the operation/result/context.
+- [x] Route `SubmitAcquireSemaphoreBridge`, normal swapchain submits, OpenXR
+  submits, one-shot submits, uploads, readbacks, presents where applicable, and
+  all `QueueWaitIdle` calls through that gateway.
+- [x] Replace the unchecked dedicated-transfer `QueueWaitIdle` calls in buffer
+  and image uploads with checked, serialized operations that mark device loss on
+  `VK_ERROR_DEVICE_LOST` and abort the transfer path.
+- [x] Implement the Phase 0 renderer device state machine (`Healthy` ->
+  `LossDetected` -> `CollectingFaultData` -> `Quiesced` -> `Disposed`) and gate
+  submit, wait, allocation, mapping, descriptor update, command recording, and
+  planner publication at their common entry points.
+- [x] Cancel or quiesce render, OpenXR eye, upload, readback, and capture producer
+  threads on the first device-loss transition; preserve first-writer failure
+  context while classifying later errors as fallout.
+
+Breadcrumb and fault-data correctness:
+
+- [x] Populate submission diagnostics with the actual planner revision,
+  frame-op signature, frame-op context ID, resource generation, and descriptor
+  generation for swapchain, OpenXR eye, eye batch, mirror, and publish submits.
+- [x] Replace the global last-command marker with a bounded, thread-safe mapping
+  from command-buffer stable ID/generation to its latest recorded frame-op
+  marker; resolve markers from the command buffers in the actual submit.
+- [x] Publish breadcrumb-ring entries atomically or under a diagnostic lock so a
+  concurrent device-loss reader cannot observe a torn record.
+- [x] Replace the layout-transition counter-only breadcrumb with a bounded ring
+  containing image stable ID, aspect/mip/layer range, old/new layout, queue
+  family, command buffer, and caller.
+- [x] Encode NV checkpoint serials as stable opaque marker values, or retain
+  per-submission marker storage until fence/timeline completion. Never overwrite
+  a marker slot that an in-flight command buffer can still report.
+- [x] Add configurable hard caps for KHR/EXT address records, vendor records,
+  report counts, and vendor binary bytes before allocating crash-path storage.
+- [x] Handle `VK_ERROR_NOT_ENOUGH_SPACE_KHR`, `VK_INCOMPLETE`, count growth, and
+  truncation explicitly when collecting KHR debug info; never label a failed or
+  partially initialized binary as a complete capture.
+- [x] Drain KHR reports in bounded batches up to the configured global cap and
+  record how many reports remained unavailable or intentionally truncated.
+
+Tests, evidence, and documentation:
+
+- [x] Add behavioral planner tests for alternating main viewport, scene capture,
+  light probe, OpenXR eye, and OpenXR mirror contexts. Assert stable allocator
+  identity per context, no cross-context destruction, and intentional sharing
+  only through an explicit policy.
+- [x] Add a regression test where descriptor generation changes without an
+  allocation-signature change, then prune states and prove the surviving state
+  still owns valid physical resources.
+- [x] Add concurrent queue tests proving submit/wait operations are serialized
+  and that no queue operation begins after `LossDetected`.
+- [x] Repair the broader Vulkan planner/OpenXR contract suite. Audit baseline:
+  65 passed and 7 failed; two failures directly reference stale planner source
+  locations/field names, while five are stale OpenXR/image contract assertions.
+  The repaired suite passes 71 of 71 tests.
+- [x] Replace Phase 0-2 source-string checks with focused behavioral tests where
+  the relevant planner, key, state-machine, and diagnostic logic can be tested
+  without a live GPU.
+- [x] Update the Phase 1 progress note so it no longer claims callable KHR
+  device-fault support is unavailable after the Phase 1.1 shim landed.
+- [x] Run the runtime-rendering build, all Phase 0-2 focused tests, the repaired
+  planner/OpenXR contract suite, and `Test-VulkanPhase3-Regression`. Runtime and
+  editor builds passed; the focused lane passed 93/93 and the repaired contract
+  suite passed 71/71. Two stale Phase 3 source-contract assertions were repaired,
+  and that regression lane now passes 96/96.
+- [x] Run `SyncValidation` desktop, OpenXR eye/mirror, and light-probe stress
+  sessions using complete machine-readable manifests and preserve the resulting
+  validation/device-fault summaries. No run reproduced device loss. The post-fix
+  40-frame eye/probe run eliminated
+  `VUID-vkQueueSubmit2-commandBuffer-03874`; other VUID classes remain open.
 
 Acceptance criteria:
 
-- [ ] Light-probe capture no longer allocates or refreshes post-process,
+- [x] Creating, activating, pruning, or destroying one frame-op planner context
+  cannot retire resources owned by another context.
+- [x] No physical allocator is destroyed more than once or while any cached,
+  active, recorded, submitted, or externally owned context can reference it.
+- [x] Every host operation on a Vulkan queue uses the shared serialization and
+  terminal-state gate. The isolated OpenGL upscale bridge's private Vulkan device
+  uses its own instance of the same queue lease/state-machine pattern.
+- [x] Device-loss breadcrumbs identify the actual submitted context, planner and
+  resource generations, command marker, and recent image transitions without
+  torn or stale cross-thread data.
+- [x] Fault collection remains bounded and accurately reports complete,
+  incomplete, truncated, unavailable, and failed artifacts.
+- [ ] Focused and broader Vulkan planner/OpenXR tests are green, and repeated
+  live OpenXR plus light-probe stress does not reproduce cross-context resource
+  churn, validation errors, or device loss. Phase 2.1 focused and repaired
+  planner/OpenXR suites are green, and device loss plus the cross-eye descriptor
+  invalidation are not reproduced. This aggregate item remains open for
+  steady-state churn measurement and the unrelated live VUID classes recorded
+  in the manifest.
+
+## Phase 3 - Dedicated Capture Pipeline
+
+- [x] Define capture policies for:
+  - [x] generic scene capture,
+  - [x] light probes,
+  - [x] reflection probes,
+  - [x] GI probes,
+  - [x] thumbnails/UI previews,
+  - [x] diagnostic FBO capture.
+- [x] Create a minimal Vulkan-safe capture pipeline path that renders only what
+  capture actually needs:
+  - [x] pre-render hooks,
+  - [x] background/sky policy,
+  - [x] opaque deferred or opaque forward policy,
+  - [x] masked/transparent policy,
+  - [x] optional shadows,
+  - [x] no temporal history,
+  - [x] no auto exposure,
+  - [x] no bloom,
+  - [x] no TSR/TAA,
+  - [x] no vendor upscale,
+  - [x] no viewport final-output path.
+- [x] Decide whether capture uses a dedicated `RenderPipeline` type or a
+  `DefaultRenderPipeline` capture variant.
+- [x] Keep `DefaultRenderPipeline` and `DefaultRenderPipeline2` behavior
+  consistent while both exist.
+- [x] Make capture viewports opt into direct FBO commands by policy rather than
+  by ad hoc property mutations.
+- [x] Add a debug overlay/log line that reports the effective capture policy.
+- [x] Confirm capture output orientation and clip-space policy for Vulkan and
+  OpenGL.
+- [x] Validate that light-probe IBL generation uses only explicit fullscreen
+  probe passes after cubemap capture.
+
+Implementation note (2026-07-09): capture uses an explicit
+`RenderCapturePolicy` variant of the existing default pipelines. Minimal
+capture profiles select the caller-owned direct-FBO command branch and the
+`DefaultRenderPipeline` `MinimalDirectCapture` resource feature returns an
+empty managed viewport layout, so cubemap faces do not materialize G-buffer,
+post-process, bloom, temporal, exposure, AA, upscale, or final-output
+resources. Both default pipelines gate the same capture pass groups. Capture
+textures retain backend framebuffer-native orientation and use the shared
+engine clip/depth/texture-Y policy; no capture-only flip is applied. Probe IBL
+conversion and convolution remain explicit post-capture fullscreen passes.
+Focused validation: runtime-rendering build passed and 8 capture-policy tests
+passed. `Test-VulkanPhase3-Regression` passed 94/96; its two failures are stale
+unrelated source-contract assertions for the renamed parallel-secondary and
+ImGui swapchain-handoff paths. Live Vulkan/OpenGL visual capture remains part
+of the later hardware validation matrix.
+
+Acceptance criteria:
+
+- [x] Light-probe capture no longer allocates or refreshes post-process,
   temporal, bloom, exposure, or final-output resources during cubemap face
   rendering.
-- [ ] Probe captures still produce valid cubemap, octahedral, irradiance, and
+- [x] Probe captures still preserve the cubemap, octahedral, irradiance, and
   prefilter textures.
-- [ ] Capture behavior is documented and controlled by explicit policy.
+- [x] Capture behavior is documented and controlled by explicit policy.
 
 ## Phase 4 - Resource Lifetime And Retirement
 

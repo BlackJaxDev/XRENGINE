@@ -624,3 +624,45 @@ Resource-generation diagnostics must include stereo state, reserved view count,
 feature mask, HDR, AA, MSAA, and dimensions so mode toggles explain whether the
 pipeline rebuilt for mono, per-eye external swapchain, or true stereo-array
 rendering.
+
+---
+
+## 30. Offscreen Capture Policy
+
+**Rule:** Scene captures must apply a `RenderCapturePolicy` to their viewport.
+Do not toggle `UseDirectFboTargetCommandsWhenRenderingToFbo` ad hoc from capture
+components.
+
+`RenderCapturePolicy` defines presets for generic scene captures, light probes,
+reflection probes, GI probes, thumbnail/UI previews, and diagnostic FBO
+captures. `XRViewport.ApplyCapturePolicy(...)` applies the viewport and camera
+invariants and emits a `[CapturePolicy]` diagnostic containing the effective
+passes, post-process exclusions, backend, clip-space direction, depth range,
+and framebuffer-texture Y direction.
+
+Capture is a variant of the existing default pipelines rather than a separate
+`RenderPipeline` type. Both `DefaultRenderPipeline` and
+`DefaultRenderPipeline2` route minimal policies through the same caller-owned
+FBO command shape: optional pre-render hooks, background, policy-selected
+deferred/forward/masked/transparent geometry, optional on-top/debug/UI work,
+and post-render hooks. The branch does not execute temporal history, auto
+exposure, bloom, TAA/TSR, vendor upscaling, or viewport final output.
+
+`DefaultRenderPipeline` reserves the `MinimalDirectCapture` resource-profile
+bit for this path. When set, `DescribeResources(...)` returns before declaring
+the viewport G-buffer, post-process, temporal, bloom, exposure, AA, or final
+output resources. The caller-owned color/depth attachments and mesh-command
+resources are sufficient for the direct branch. `DefaultRenderPipeline2`
+already allocates its legacy command resources lazily by selected branch, so
+selecting its direct branch provides the same capture behavior.
+
+Capture textures retain backend framebuffer-native row orientation and do not
+receive a capture-specific vertical flip. OpenGL and Vulkan use the engine's
+configured clip-space policy; shaders sampling framebuffer textures must use
+`RenderClipSpacePolicy.FramebufferTextureYDirection(...)`. Screenshot/readback
+row flipping is a separate CPU export policy.
+
+Light-probe cubemap faces use `RenderCapturePolicy.LightProbe`. Cubemap mip
+generation and cubemap-to-octahedral, irradiance, and prefilter work happen only
+after face capture through explicit `XRQuadFrameBuffer` fullscreen passes; they
+are not part of the scene-capture command chain.

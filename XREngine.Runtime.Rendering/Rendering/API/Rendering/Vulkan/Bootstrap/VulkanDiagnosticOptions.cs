@@ -8,6 +8,10 @@ internal readonly record struct VulkanDiagnosticOptions
     public EVulkanDiagnosticFlags Flags { get; init; }
     public string SourceSummary { get; init; }
     public string OverheadWarnings { get; init; }
+    public int DeviceFaultAddressRecordCap { get; init; }
+    public int DeviceFaultVendorRecordCap { get; init; }
+    public int DeviceFaultReportCap { get; init; }
+    public int DeviceFaultVendorBinaryByteCap { get; init; }
 
     public bool EnableValidationLayers =>
         Flags.HasFlag(EVulkanDiagnosticFlags.StandardValidation) ||
@@ -109,14 +113,63 @@ internal readonly record struct VulkanDiagnosticOptions
         if (flags.HasFlag(EVulkanDiagnosticFlags.CommandBufferLabels))
             flags |= EVulkanDiagnosticFlags.DebugUtils;
 
+        int addressRecordCap = ResolvePositiveIntEnv(
+            global::XREngine.XREngineEnvironmentVariables.VulkanDeviceFaultAddressRecordCap,
+            defaultValue: 256,
+            maximumValue: 4096,
+            sources);
+        int vendorRecordCap = ResolvePositiveIntEnv(
+            global::XREngine.XREngineEnvironmentVariables.VulkanDeviceFaultVendorRecordCap,
+            defaultValue: 256,
+            maximumValue: 4096,
+            sources);
+        int reportCap = ResolvePositiveIntEnv(
+            global::XREngine.XREngineEnvironmentVariables.VulkanDeviceFaultReportCap,
+            defaultValue: 64,
+            maximumValue: 1024,
+            sources);
+        int vendorBinaryByteCap = ResolvePositiveIntEnv(
+            global::XREngine.XREngineEnvironmentVariables.VulkanDeviceFaultVendorBinaryByteCap,
+            defaultValue: 64 * 1024 * 1024,
+            maximumValue: 1024 * 1024 * 1024,
+            sources);
+
         return new()
         {
             Preset = preset,
             Flags = flags,
             SourceSummary = sources.ToString(),
             OverheadWarnings = BuildOverheadWarnings(flags),
+            DeviceFaultAddressRecordCap = addressRecordCap,
+            DeviceFaultVendorRecordCap = vendorRecordCap,
+            DeviceFaultReportCap = reportCap,
+            DeviceFaultVendorBinaryByteCap = vendorBinaryByteCap,
         };
     }
+
+    private static int ResolvePositiveIntEnv(
+        string variableName,
+        int defaultValue,
+        int maximumValue,
+        StringBuilder sources)
+    {
+        string? raw = Environment.GetEnvironmentVariable(variableName);
+        if (string.IsNullOrWhiteSpace(raw))
+            return defaultValue;
+
+        if (!int.TryParse(raw.Trim(), out int value) || value <= 0)
+        {
+            sources.Append("; ").Append(variableName).Append("=<invalid:").Append(raw.Trim()).Append('>');
+            return defaultValue;
+        }
+
+        int capped = NormalizePositiveCap(value, defaultValue, maximumValue);
+        sources.Append("; ").Append(variableName).Append('=').Append(capped);
+        return capped;
+    }
+
+    internal static int NormalizePositiveCap(int value, int defaultValue, int maximumValue)
+        => value <= 0 ? defaultValue : Math.Min(value, maximumValue);
 
     private static EVulkanDiagnosticFlags FlagsForPreset(EVulkanDiagnosticPreset preset)
         => preset switch

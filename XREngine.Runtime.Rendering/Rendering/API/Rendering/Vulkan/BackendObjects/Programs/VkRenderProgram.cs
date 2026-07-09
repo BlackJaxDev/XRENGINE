@@ -1960,7 +1960,7 @@ public unsafe partial class VulkanRenderer
                 }
 
                 if (!TryUpdateComputeDescriptorSetsWithTemplates(descriptorSets, writeArray))
-                    Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
+                    Renderer.UpdateDescriptorSetsTracked((uint)writeArray.Length, writePtr);
                 Renderer.RecordVulkanDescriptorTableGeneration("ComputeDescriptorSets.Update");
             }
         }

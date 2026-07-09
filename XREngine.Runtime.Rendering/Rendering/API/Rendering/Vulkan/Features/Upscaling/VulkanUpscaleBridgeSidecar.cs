@@ -188,6 +188,8 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
     private readonly uint _streamlineGraphicsQueueIndex;
     private readonly uint _streamlineComputeQueueIndex;
     private readonly uint _streamlineOpticalFlowQueueIndex;
+    private readonly object _graphicsQueueOperationGate = new();
+    private readonly VulkanDeviceStateMachine _deviceState = new();
     private bool _disposed;
     private Instance _instance;
     private Device _device;
@@ -261,8 +263,12 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
         if (_disposed)
             throw new ObjectDisposedException(nameof(VulkanUpscaleBridgeSidecar));
 
+        if (!_deviceState.IsOperational)
+            throw new InvalidOperationException($"The Vulkan upscale bridge device is {_deviceState.State}.");
+
         Fence submitFence = slot.SubmitFence;
         Result waitResult = _api.WaitForFences(_device, 1, in submitFence, true, ulong.MaxValue);
+        ObserveDeviceResult(waitResult);
         if (waitResult != Result.Success)
             throw new InvalidOperationException($"Failed to wait for bridge slot {slot.SlotIndex} availability ({waitResult}).");
     }
@@ -429,8 +435,9 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             PSignalSemaphores = &signalSemaphore,
         };
 
-        if (_api.QueueSubmit(_graphicsQueue, 1, &submitInfo, slot.SubmitFence) != Result.Success)
-            throw new InvalidOperationException($"Failed to submit bridge handoff for slot {slot.SlotIndex}.");
+        Result submitResult = SubmitToGraphicsQueue(ref submitInfo, slot.SubmitFence);
+        if (submitResult != Result.Success)
+            throw new InvalidOperationException($"Failed to submit bridge handoff for slot {slot.SlotIndex} ({submitResult}).");
     }
 
     public void SubmitPassthroughBlit(VulkanUpscaleBridgeFrameSlot slot)
@@ -529,8 +536,9 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             PSignalSemaphores = &signalSemaphore,
         };
 
-        if (_api.QueueSubmit(_graphicsQueue, 1, &submitInfo, slot.SubmitFence) != Result.Success)
-            throw new InvalidOperationException($"Failed to submit bridge passthrough blit for slot {slot.SlotIndex}.");
+        Result submitResult = SubmitToGraphicsQueue(ref submitInfo, slot.SubmitFence);
+        if (submitResult != Result.Success)
+            throw new InvalidOperationException($"Failed to submit bridge passthrough blit for slot {slot.SlotIndex} ({submitResult}).");
     }
 
     public bool SubmitVendorUpscale(
@@ -600,14 +608,34 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
             PSignalSemaphores = &signalSemaphore,
         };
 
-        if (_api.QueueSubmit(_graphicsQueue, 1, &submitInfo, slot.SubmitFence) != Result.Success)
+        Result submitResult = SubmitToGraphicsQueue(ref submitInfo, slot.SubmitFence);
+        if (submitResult != Result.Success)
         {
             ResetVendorSession(parameters.Vendor);
-            failureReason = $"Failed to submit bridge {parameters.Vendor} dispatch for slot {slot.SlotIndex}.";
+            failureReason = $"Failed to submit bridge {parameters.Vendor} dispatch for slot {slot.SlotIndex} ({submitResult}).";
             return false;
         }
 
         return true;
+    }
+
+    private Result SubmitToGraphicsQueue(ref SubmitInfo submitInfo, Fence fence)
+    {
+        using VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(
+            _graphicsQueueOperationGate,
+            _deviceState);
+        if (!lease.Acquired)
+            return Result.ErrorDeviceLost;
+
+        Result result = _api.QueueSubmit(_graphicsQueue, 1, ref submitInfo, fence);
+        ObserveDeviceResult(result);
+        return result;
+    }
+
+    private void ObserveDeviceResult(Result result)
+    {
+        if (result == Result.ErrorDeviceLost && _deviceState.TryBeginLossCollection())
+            _deviceState.CompleteLossCollection();
     }
 
     public void RecordTransitionImageLayout(
@@ -693,19 +721,23 @@ internal sealed unsafe class VulkanUpscaleBridgeSidecar : IDisposable
 
         _disposed = true;
 
-        if (_device.Handle != 0)
+        lock (_graphicsQueueOperationGate)
         {
-            _api.DeviceWaitIdle(_device);
-            _xessSession?.Dispose();
-            _xessSession = null;
-            _dlssSession?.Dispose();
-            _dlssSession = null;
-            DestroyOwnedFrameSlots();
+            _deviceState.Dispose();
+            if (_device.Handle != 0)
+            {
+                _api.DeviceWaitIdle(_device);
+                _xessSession?.Dispose();
+                _xessSession = null;
+                _dlssSession?.Dispose();
+                _dlssSession = null;
+                DestroyOwnedFrameSlots();
 
-            if (_commandPool.Handle != 0)
-                _api.DestroyCommandPool(_device, _commandPool, null);
-            _api.DestroyDevice(_device, null);
-            _device = default;
+                if (_commandPool.Handle != 0)
+                    _api.DestroyCommandPool(_device, _commandPool, null);
+                _api.DestroyDevice(_device, null);
+                _device = default;
+            }
         }
 
         if (_instance.Handle != 0)

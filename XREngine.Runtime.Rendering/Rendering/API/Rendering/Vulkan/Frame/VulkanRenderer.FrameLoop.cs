@@ -16,6 +16,10 @@ namespace XREngine.Rendering.Vulkan
     {
         // =========== Basic Render State ===========
 
+        /// <summary>
+        /// Inserts a memory barrier into the current frame, ensuring proper synchronization of memory accesses based on the specified barrier mask.
+        /// </summary>
+        /// <param name="mask">The memory barrier mask specifying the types of memory accesses to synchronize.</param>
         public override void MemoryBarrier(EMemoryBarrierMask mask)
         {
             if (mask == EMemoryBarrierMask.None)
@@ -37,6 +41,10 @@ namespace XREngine.Rendering.Vulkan
             EnqueueFrameOp(new MemoryBarrierOp(passIndex, mask, context));
         }
 
+        /// <summary>
+        /// Publishes the attachments of the specified frame buffer for sampling in subsequent rendering passes.
+        /// </summary>
+        /// <param name="frameBuffer">The frame buffer whose attachments are to be published for sampling.</param>
         public override void PublishFrameBufferAttachmentsForSampling(XRFrameBuffer frameBuffer)
         {
             ArgumentNullException.ThrowIfNull(frameBuffer);
@@ -63,6 +71,13 @@ namespace XREngine.Rendering.Vulkan
             EnqueueFrameOp(new PublishFramebufferForSamplingOp(passIndex, frameBuffer, context));
         }
 
+        /// <summary>
+        /// Sets the color mask for rendering, specifying which color channels are writable.
+        /// </summary>
+        /// <param name="red">Indicates whether the red color channel is writable.</param>
+        /// <param name="green">Indicates whether the green color channel is writable.</param>
+        /// <param name="blue">Indicates whether the blue color channel is writable.</param>
+        /// <param name="alpha">Indicates whether the alpha color channel is writable.</param>
         public override void ColorMask(bool red, bool green, bool blue, bool alpha)
         {
             ActiveState.SetColorMask(red, green, blue, alpha);
@@ -95,9 +110,7 @@ namespace XREngine.Rendering.Vulkan
             if (count <= 0 ||
                 !RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray ||
                 count > RuntimeEngine.Rendering.State.MaxOpenGLViewports)
-            {
                 return false;
-            }
 
             ActiveState.SetIndexedViewportScissors(viewports[..count], scissors[..count]);
             return true;
@@ -561,6 +574,12 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
+        /// <summary>
+        /// Renders a frame for the window, using the specified time delta since the last frame.
+        /// </summary>
+        /// <param name="delta">The time delta since the last frame, in seconds.</param>
+        /// <exception cref="InvalidOperationException">Thrown if the Vulkan device is lost or the window render callback is reentrant.</exception>
+        /// <exception cref="Exception">Thrown if an unexpected error occurs during the rendering of the frame.</exception>
         protected override void WindowRenderCallback(double delta)
         {
             if (Interlocked.CompareExchange(ref _windowRenderCallbackInProgress, 1, 0) != 0)
@@ -1134,24 +1153,18 @@ namespace XREngine.Rendering.Vulkan
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.DirtyAbortQueuePresent"))
                     {
                         MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.PresentStart);
-                        lock (_oneTimeSubmitLock)
+                        if (!TryPresentToQueueTracked(
+                            presentQueue,
+                            ref presentInfo,
+                            out result,
+                            out string failureReason))
                         {
-                            if (_streamlineFrameGenerationSwapchainActive)
-                            {
-                                if (!NvidiaDlssManager.Native.TryQueueProxyPresent(this, presentQueue, ref presentInfo, out result, out string failureReason))
-                                {
-                                    if (result == Result.ErrorDeviceLost)
-                                        throw CreateDeviceLostException("Streamline dirty abort QueuePresent", result);
+                            if (result == Result.ErrorDeviceLost)
+                                throw CreateDeviceLostException("Streamline dirty abort QueuePresent", result);
 
-                                    string message = $"NVIDIA DLSS frame generation failed to present skipped frame through Streamline: {failureReason}";
-                                    Debug.RenderingError(message);
-                                    throw new InvalidOperationException(message);
-                                }
-                            }
-                            else
-                            {
-                                result = khrSwapChain!.QueuePresent(presentQueue, ref presentInfo);
-                            }
+                            string message = $"NVIDIA DLSS frame generation failed to present skipped frame through Streamline: {failureReason}";
+                            Debug.RenderingError(message);
+                            throw new InvalidOperationException(message);
                         }
                         MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.PresentEnd);
                     }
@@ -1523,6 +1536,13 @@ namespace XREngine.Rendering.Vulkan
                         imageIndex < (uint)_commandBufferFrameOpSignatures.Length
                             ? _commandBufferFrameOpSignatures[imageIndex]
                             : 0UL;
+                    _ = TryGetCommandBufferDiagnosticMetadata(
+                        imageIndex,
+                        submitCommandBuffer,
+                        out ulong plannerRevision,
+                        out ulong frameOpContextId,
+                        out ulong resourceGeneration,
+                        out ulong descriptorGeneration);
                     VulkanSubmissionDiagnosticContext diagnosticContext =
                         CreateSwapchainSubmissionDiagnosticContext(
                             "SwapchainDraw",
@@ -1531,7 +1551,11 @@ namespace XREngine.Rendering.Vulkan
                             0UL,
                             graphicsSignalValue,
                             sceneCommandBufferDirtyGeneration,
-                            frameOpsSignature);
+                            frameOpsSignature,
+                            plannerRevision,
+                            frameOpContextId,
+                            resourceGeneration,
+                            descriptorGeneration);
                     submitResult = SubmitToQueueTracked(graphicsQueue, ref submitInfo, default, diagnosticContext);
                 }
                 MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.RenderSubmitEnd);
@@ -1603,24 +1627,18 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.FrameLifecycle.QueuePresent"))
             {
                 MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.PresentStart);
-                lock (_oneTimeSubmitLock)
+                if (!TryPresentToQueueTracked(
+                    presentQueue,
+                    ref presentInfo,
+                    out result,
+                    out string failureReason))
                 {
-                    if (_streamlineFrameGenerationSwapchainActive)
-                    {
-                        if (!NvidiaDlssManager.Native.TryQueueProxyPresent(this, presentQueue, ref presentInfo, out result, out string failureReason))
-                        {
-                            if (result == Result.ErrorDeviceLost)
-                                throw CreateDeviceLostException("Streamline QueuePresent", result);
+                    if (result == Result.ErrorDeviceLost)
+                        throw CreateDeviceLostException("Streamline QueuePresent", result);
 
-                            string message = $"NVIDIA DLSS frame generation failed to present through Streamline: {failureReason}";
-                            Debug.RenderingError(message);
-                            throw new InvalidOperationException(message);
-                        }
-                    }
-                    else
-                    {
-                        result = khrSwapChain!.QueuePresent(presentQueue, ref presentInfo);
-                    }
+                    string message = $"NVIDIA DLSS frame generation failed to present through Streamline: {failureReason}";
+                    Debug.RenderingError(message);
+                    throw new InvalidOperationException(message);
                 }
                 MarkDlssFrameGenerationPclMarker(NvidiaDlssManager.Native.StreamlinePclMarker.PresentEnd);
             }

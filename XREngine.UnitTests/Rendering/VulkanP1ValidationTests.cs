@@ -462,15 +462,16 @@ public sealed class VulkanP1ValidationTests
     public void ResourcePlanner_SplitsPhysicalAllocationSignatureFromGraphSignature()
     {
         string stateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.StateTracking.cs");
+        string resourcePlannerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
         string plannerUpdate = SliceBetween(
-            stateSource,
+            resourcePlannerSource,
             "private void UpdateResourcePlannerFromContext",
             "private IReadOnlyCollection<RenderPassMetadata>? FilterActivePassMetadata");
 
         stateSource.ShouldContain("_resourceAllocationSignature");
         stateSource.ShouldContain("_resourcePlannerFastPathKey");
         stateSource.ShouldContain("_barrierPlanFastPathKey");
-        stateSource.ShouldContain("ComputeResourceAllocationSignature");
+        resourcePlannerSource.ShouldContain("ComputeResourceAllocationSignature");
         plannerUpdate.ShouldContain("PrepareResourcePlanningInputs");
         plannerUpdate.ShouldContain("CanReuseResourcePlannerFastPath");
         plannerUpdate.ShouldContain("BuildResourceDescriptorPlan");
@@ -479,10 +480,10 @@ public sealed class VulkanP1ValidationTests
         plannerUpdate.ShouldContain("CommitPhysicalAllocatorPlan");
         plannerUpdate.ShouldContain("RebuildRenderGraphAndBarriers");
         plannerUpdate.ShouldContain("Reusing physical resource plan for metadata-only graph change");
-        plannerUpdate.ShouldContain("_resourceAllocationSignature = allocationPlan.Signature;");
+        plannerUpdate.ShouldContain("ActiveResourceAllocationSignature = allocationPlan.Signature;");
         plannerUpdate.ShouldContain("RememberResourcePlannerFastPath");
         stateSource.ShouldContain("BarrierPlanFastPathKey");
-        stateSource.ShouldContain("barrierKey.Matches(_barrierPlanFastPathKey)");
+        resourcePlannerSource.ShouldContain("barrierKey.Matches(ActiveBarrierPlanFastPathKey)");
 
         string allocatorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/VulkanResourceAllocator.cs");
         allocatorSource.ShouldContain("ComputePhysicalPlanUsageSignature");
@@ -525,24 +526,25 @@ public sealed class VulkanP1ValidationTests
         string loweringSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainLowering.cs").Replace("\r\n", "\n");
         string initializationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs").Replace("\r\n", "\n");
 
-        stateSource.ShouldContain("_frameOpResourcePlannerStates");
+        stateSource.ShouldContain("Dictionary<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> States");
+        stateSource.ShouldContain("private readonly struct FrameOpResourcePlannerPreparationScope : IDisposable");
         stateSource.ShouldContain("private readonly struct FrameOpResourcePlannerRecordingScope : IDisposable");
-        stateSource.ShouldContain("renderer._frameOpResourcePlannerRecordingScopeActive = true;");
+        stateSource.ShouldContain("switchingState.RecordingScopeActive = true;");
 
         plannerSource.ShouldContain("private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(FrameOp[] ops)");
         plannerSource.ShouldContain("private FrameOpContext PrepareResourcePlannerForFrameOps(FrameOp[] ops, in FrameOpPlannerStateKey key)");
         plannerSource.ShouldContain("private bool TryActivateFrameOpResourcePlannerState(in FrameOpContext context)");
         plannerSource.ShouldContain("private void SaveActiveFrameOpResourcePlannerState()");
-        plannerSource.ShouldContain("BuildActiveFrameOpPassSet(ops, key)");
-        plannerSource.ShouldContain("BuildActiveFrameOpFrameBufferSet(ops, key)");
+        plannerSource.ShouldContain("SelectPrimaryPlannerContext(ops, key)");
+        plannerSource.ShouldContain("filterByPlannerKey: true, plannerKey: key");
 
         commandBufferSource.ShouldContain("PrepareFrameOpResourcePlannerStatesForFrameOps(ops)");
         commandBufferSource.ShouldContain("using FrameOpResourcePlannerRecordingScope frameOpResourcePlannerRecordingScope = EnterFrameOpResourcePlannerRecordingScope();");
         commandBufferSource.ShouldContain("_ = TryActivateFrameOpResourcePlannerState(initialContext);");
         commandBufferSource.ShouldContain("if (TryActivateFrameOpResourcePlannerState(activeContext))");
-        commandBufferSource.ShouldContain("if (_frameOpResourcePlannerSwitchingActive)\n                return false;");
+        commandBufferSource.ShouldContain("if (ActiveFrameOpResourcePlannerSwitchingState.SwitchingActive)");
 
-        loweringSource.ShouldContain("if (_frameOpResourcePlannerSwitchingActive)\n            return null;");
+        loweringSource.ShouldContain("FrameOpResourcePlannerSwitchingState frameOpSwitchingState = ActiveFrameOpResourcePlannerSwitchingState;");
         initializationSource.ShouldContain("DestroyFrameOpResourcePlannerStates();");
     }
 

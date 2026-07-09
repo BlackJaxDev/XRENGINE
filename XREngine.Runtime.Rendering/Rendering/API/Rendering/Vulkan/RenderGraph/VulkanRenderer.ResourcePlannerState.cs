@@ -521,7 +521,8 @@ public unsafe partial class VulkanRenderer
         {
             _renderer = renderer;
             _previousState = renderer.CaptureResourcePlannerRuntimeState();
-            _active = FrameOpResourcePlannerSwitchingEnabled &&
+            _active = renderer.IsDeviceOperational &&
+                FrameOpResourcePlannerSwitchingEnabled &&
                 FrameOpContextHasPlannerResources(context);
 
             if (!_active)
@@ -540,6 +541,7 @@ public unsafe partial class VulkanRenderer
             }
 
             _key = requestedKey;
+            renderer.RestoreResourcePlannerRuntimeState(ResourcePlannerRuntimeState.CreateEmpty());
             renderer.UpdateResourcePlannerFromContext(context);
             switchingState.States[_key] = renderer.CaptureResourcePlannerRuntimeState();
             renderer.MarkFrameOpResourcePlannerStateUsed(switchingState, _key);
@@ -547,16 +549,25 @@ public unsafe partial class VulkanRenderer
 
         public void Dispose()
         {
-            if (_active)
+            ResourcePlannerRuntimeState currentState = default;
+            bool canPublish = _active && _renderer.IsDeviceOperational;
+            if (canPublish)
             {
+                currentState = _renderer.CaptureResourcePlannerRuntimeState();
                 _renderer.ActiveFrameOpResourcePlannerSwitchingState.States[_key] =
-                    _renderer.CaptureResourcePlannerRuntimeState();
+                    currentState;
                 _renderer.MarkFrameOpResourcePlannerStateUsed(
                     _renderer.ActiveFrameOpResourcePlannerSwitchingState,
                     _key);
             }
 
-            _renderer.RestoreResourcePlannerRuntimeState(_previousState);
+            ResourcePlannerRuntimeState restoreState =
+                _active && _previousState.ResourceAllocator is not null && _previousState.ResourceAllocator.IsRetired
+                    ? canPublish
+                        ? currentState
+                        : ResourcePlannerRuntimeState.CreateEmpty()
+                    : _previousState;
+            _renderer.RestoreResourcePlannerRuntimeState(restoreState);
         }
     }
 
@@ -717,10 +728,14 @@ public unsafe partial class VulkanRenderer
 
     private ulong PrepareFrameOpResourcePlannerStatesForFrameOps(FrameOp[] ops)
     {
+        if (!IsDeviceOperational)
+            return ResourcePlannerRevision;
+
         FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
         switchingState.SwitchingActive = false;
         switchingState.RecordingScopeActive = false;
         switchingState.HasActiveKey = false;
+        switchingState.HasActiveContext = false;
         switchingState.ActiveKeys.Clear();
 
         if (!FrameOpResourcePlannerSwitchingEnabled)
@@ -748,6 +763,7 @@ public unsafe partial class VulkanRenderer
             switchingState.States[key] = CaptureResourcePlannerRuntimeState();
             switchingState.ActiveKeys.Add(key);
             MarkFrameOpResourcePlannerStateUsed(switchingState, key);
+            AssertFrameOpPlannerAllocatorOwnership(switchingState);
             keys.Clear();
             PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
             return ResourcePlannerRevision;
@@ -801,6 +817,7 @@ public unsafe partial class VulkanRenderer
         }
 
         PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
+        AssertFrameOpPlannerAllocatorOwnership(switchingState);
 
         ulong signature = ComputeActiveFrameOpResourcePlannerStatesSignature();
         if (VulkanFrameDiagnosticsTraceEnabled)
@@ -827,6 +844,7 @@ public unsafe partial class VulkanRenderer
     private static void ResetActiveFrameOpResourcePlannerState(FrameOpResourcePlannerSwitchingState switchingState)
     {
         switchingState.HasActiveKey = false;
+        switchingState.HasActiveContext = false;
         switchingState.ActiveKey = default;
     }
 
@@ -873,15 +891,19 @@ public unsafe partial class VulkanRenderer
                 continue;
 
             switchingState.LastUsedSerials.Remove(key);
-            RestoreResourcePlannerRuntimeState(state);
-            ReleaseDescriptorReferencesForPhysicalResourceDestruction(
-                $"FrameOpResourcePlannerStatePrune.pipe{key.PipelineIdentity}.vp{key.ViewportIdentity}");
-            DrainAllRetiredDescriptorPools();
-            ResourceAllocator.DestroyPhysicalImages(this);
-            ResourceAllocator.DestroyPhysicalBuffers(this);
+            if (!IsAllocatorOwnedByFrameOpPlannerState(switchingState, state.ResourceAllocator))
+            {
+                RestoreResourcePlannerRuntimeState(state);
+                ReleaseDescriptorReferencesForPhysicalResourceDestruction(
+                    $"FrameOpResourcePlannerStatePrune.pipe{key.PipelineIdentity}.vp{key.ViewportIdentity}");
+                DrainAllRetiredDescriptorPools();
+                _ = ResourceAllocator.TryRetirePhysicalResources(this);
+            }
             prunedCount++;
         }
 
+        if (previousState.ResourceAllocator is not null && previousState.ResourceAllocator.IsRetired)
+            previousState = ResourcePlannerRuntimeState.CreateEmpty();
         RestoreResourcePlannerRuntimeState(previousState);
         if (prunedCount > 0 && !IsDeviceLost)
             ForceFlushAllRetiredResourcesAfterWaiting("FrameOpResourcePlannerStatePrune");
@@ -993,10 +1015,6 @@ public unsafe partial class VulkanRenderer
             if (compare != 0)
                 return compare;
 
-            compare = left.DescriptorGeneration.CompareTo(right.DescriptorGeneration);
-            if (compare != 0)
-                return compare;
-
             compare = left.SubmissionQueueFamily.CompareTo(right.SubmissionQueueFamily);
             return compare;
         });
@@ -1056,10 +1074,6 @@ public unsafe partial class VulkanRenderer
             if (compare != 0)
                 return compare;
 
-            compare = left.DescriptorGeneration.CompareTo(right.DescriptorGeneration);
-            if (compare != 0)
-                return compare;
-
             compare = left.SubmissionQueueFamily.CompareTo(right.SubmissionQueueFamily);
             return compare;
         });
@@ -1080,7 +1094,6 @@ public unsafe partial class VulkanRenderer
             hash.Add(key.OutputTargetIdentity);
             hash.Add(key.PassMetadataSignature);
             hash.Add(key.ResourceGeneration);
-            hash.Add(key.DescriptorGeneration);
             hash.Add(key.SubmissionQueueFamily);
 
             if (!switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state))
@@ -1103,8 +1116,11 @@ public unsafe partial class VulkanRenderer
 
     private bool TryActivateFrameOpResourcePlannerState(in FrameOpContext context)
     {
+        if (!IsDeviceOperational)
+            return false;
+
         FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
-        if (!switchingState.SwitchingActive ||
+        if (switchingState.ActiveKeys.Count == 0 ||
             !FrameOpContextHasPlannerResources(context))
         {
             return false;
@@ -1116,6 +1132,8 @@ public unsafe partial class VulkanRenderer
         if (switchingState.HasActiveKey &&
             key.Equals(switchingState.ActiveKey))
         {
+            switchingState.ActiveContext = context;
+            switchingState.HasActiveContext = true;
             MarkFrameOpResourcePlannerStateUsed(switchingState, key);
             return true;
         }
@@ -1125,9 +1143,12 @@ public unsafe partial class VulkanRenderer
         if (!switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state))
             return false;
 
+        AssertFrameOpPlannerStateMatchesContext(state, key, context);
         RestoreResourcePlannerRuntimeState(state);
         switchingState.ActiveKey = key;
         switchingState.HasActiveKey = true;
+        switchingState.ActiveContext = context;
+        switchingState.HasActiveContext = true;
         MarkFrameOpResourcePlannerStateUsed(switchingState, key);
         return true;
     }
@@ -1152,33 +1173,46 @@ public unsafe partial class VulkanRenderer
 
     private void SaveActiveFrameOpResourcePlannerState()
     {
+        if (!IsDeviceOperational)
+            return;
+
         FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
         if (!switchingState.RecordingScopeActive ||
-            !switchingState.HasActiveKey)
+            !switchingState.HasActiveKey ||
+            !switchingState.HasActiveContext)
         {
             return;
         }
 
-        switchingState.States[switchingState.ActiveKey] = CaptureResourcePlannerRuntimeState();
+        ResourcePlannerRuntimeState state = CaptureResourcePlannerRuntimeState();
+        state.LastActiveFrameOpContext = switchingState.ActiveContext;
+        switchingState.States[switchingState.ActiveKey] = state;
         MarkFrameOpResourcePlannerStateUsed(switchingState, switchingState.ActiveKey);
     }
 
     private void DestroyFrameOpResourcePlannerStates()
     {
         FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
-        if (switchingState.States.Count == 0)
+        if (switchingState.States.Count == 0 && !switchingState.HasPreparationState)
             return;
 
         ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
         WaitForAllInFlightWork();
+        HashSet<VulkanResourceAllocator> retiredAllocators = new(ReferenceEqualityComparer.Instance);
         foreach (KeyValuePair<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> pair in switchingState.States)
         {
-            RestoreResourcePlannerRuntimeState(pair.Value);
-            ReleaseDescriptorReferencesForPhysicalResourceDestruction(
+            RetireResourcePlannerRuntimeStateAllocator(
+                pair.Value,
+                retiredAllocators,
                 $"FrameOpResourcePlannerStateDestroy.pipe{pair.Key.PipelineIdentity}.vp{pair.Key.ViewportIdentity}");
-            DrainAllRetiredDescriptorPools();
-            ResourceAllocator.DestroyPhysicalImages(this);
-            ResourceAllocator.DestroyPhysicalBuffers(this);
+        }
+
+        if (switchingState.HasPreparationState)
+        {
+            RetireResourcePlannerRuntimeStateAllocator(
+                switchingState.PreparationState,
+                retiredAllocators,
+                "FrameOpResourcePlannerPreparationStateDestroy");
         }
 
         switchingState.States.Clear();
@@ -1187,9 +1221,114 @@ public unsafe partial class VulkanRenderer
         switchingState.SwitchingActive = false;
         switchingState.RecordingScopeActive = false;
         switchingState.HasActiveKey = false;
+        switchingState.HasActiveContext = false;
+        switchingState.PreparationState = default;
+        switchingState.HasPreparationState = false;
+        if (previousState.ResourceAllocator is not null && previousState.ResourceAllocator.IsRetired)
+            previousState = ResourcePlannerRuntimeState.CreateEmpty();
         RestoreResourcePlannerRuntimeState(previousState);
         if (!IsDeviceLost)
             ForceFlushAllRetiredResourcesAfterWaiting("FrameOpResourcePlannerStateDestroy");
+    }
+
+    private static bool IsAllocatorOwnedByFrameOpPlannerState(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        VulkanResourceAllocator allocator)
+    {
+        foreach (ResourcePlannerRuntimeState state in switchingState.States.Values)
+        {
+            if (ReferenceEquals(state.ResourceAllocator, allocator))
+                return true;
+        }
+
+        return switchingState.HasPreparationState &&
+            ReferenceEquals(switchingState.PreparationState.ResourceAllocator, allocator);
+    }
+
+    private void RetireResourcePlannerRuntimeStateAllocator(
+        in ResourcePlannerRuntimeState state,
+        HashSet<VulkanResourceAllocator> retiredAllocators,
+        string reason)
+    {
+        VulkanResourceAllocator allocator = state.ResourceAllocator;
+        if (allocator is null || !retiredAllocators.Add(allocator) || allocator.IsRetired)
+            return;
+
+        RestoreResourcePlannerRuntimeState(state);
+        ReleaseDescriptorReferencesForPhysicalResourceDestruction(reason);
+        DrainAllRetiredDescriptorPools();
+        _ = allocator.TryRetirePhysicalResources(this);
+    }
+
+    private void RetireResourcePlannerRuntimeStateAllocators(
+        in ResourcePlannerRuntimeState state,
+        HashSet<VulkanResourceAllocator> retiredAllocators,
+        string reason)
+    {
+        RetireResourcePlannerRuntimeStateAllocator(state, retiredAllocators, reason);
+
+        FrameOpResourcePlannerSwitchingState? switchingState = state.FrameOpResourcePlannerSwitchingState;
+        if (switchingState is null)
+            return;
+
+        foreach (ResourcePlannerRuntimeState nestedState in switchingState.States.Values)
+            RetireResourcePlannerRuntimeStateAllocator(nestedState, retiredAllocators, reason);
+
+        if (switchingState.HasPreparationState)
+            RetireResourcePlannerRuntimeStateAllocator(switchingState.PreparationState, retiredAllocators, reason);
+    }
+
+    [Conditional("DEBUG")]
+    private static void AssertResourcePlannerRuntimeStateCanBeRestored(in ResourcePlannerRuntimeState state)
+    {
+        System.Diagnostics.Debug.Assert(state.ResourcePlanner is not null);
+        System.Diagnostics.Debug.Assert(state.ResourceAllocator is not null);
+        System.Diagnostics.Debug.Assert(state.BarrierPlanner is not null);
+        System.Diagnostics.Debug.Assert(state.ResourceAllocator.OwnershipId == state.AllocatorOwnershipId);
+        System.Diagnostics.Debug.Assert(!state.ResourceAllocator.IsRetired);
+    }
+
+    [Conditional("DEBUG")]
+    private void AssertFrameOpPlannerAllocatorOwnership(FrameOpResourcePlannerSwitchingState switchingState)
+    {
+        foreach (KeyValuePair<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> first in switchingState.States)
+        {
+            AssertResourcePlannerRuntimeStateCanBeRestored(first.Value);
+            foreach (KeyValuePair<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> second in switchingState.States)
+            {
+                if (first.Key.Equals(second.Key))
+                    continue;
+
+                System.Diagnostics.Debug.Assert(
+                    !ReferenceEquals(first.Value.ResourceAllocator, second.Value.ResourceAllocator),
+                    $"Frame-op planner states {first.Key} and {second.Key} share allocator owner {first.Value.AllocatorOwnershipId} without an explicit sharing policy.");
+            }
+
+            if (switchingState.HasPreparationState)
+            {
+                System.Diagnostics.Debug.Assert(
+                    !ReferenceEquals(first.Value.ResourceAllocator, switchingState.PreparationState.ResourceAllocator),
+                    $"Frame-op planner state {first.Key} shares allocator owner {first.Value.AllocatorOwnershipId} with the merged preparation state.");
+            }
+        }
+
+        if (switchingState.HasPreparationState)
+            AssertResourcePlannerRuntimeStateCanBeRestored(switchingState.PreparationState);
+    }
+
+    [Conditional("DEBUG")]
+    private static void AssertFrameOpPlannerStateMatchesContext(
+        in ResourcePlannerRuntimeState state,
+        in FrameOpPlannerStateKey key,
+        in FrameOpContext context)
+    {
+        AssertResourcePlannerRuntimeStateCanBeRestored(state);
+        System.Diagnostics.Debug.Assert(context.ResourceGeneration == key.ResourceGeneration);
+        if (state.LastActiveFrameOpContext is not FrameOpContext lastContext)
+            return;
+
+        System.Diagnostics.Debug.Assert(FrameOpContextMatchesPlannerStateKey(lastContext, key));
+        System.Diagnostics.Debug.Assert(FrameOpContextMatchesPlannerStateKey(context, key));
     }
 
     private static HashSet<int>? BuildActiveFrameOpPassSet(FrameOp[] ops)
@@ -1267,7 +1406,7 @@ public unsafe partial class VulkanRenderer
         => context.ResourceRegistry is not null ||
             context.PassMetadata is { Count: > 0 };
 
-    private static FrameOpPlannerStateKey BuildFrameOpPlannerStateKey(in FrameOpContext context)
+    internal static FrameOpPlannerStateKey BuildFrameOpPlannerStateKey(in FrameOpContext context)
         => new(
             context.ContextKind,
             context.PipelineIdentity,
@@ -1280,7 +1419,6 @@ public unsafe partial class VulkanRenderer
             context.OutputTargetIdentity,
             ComputePassMetadataSignature(context.PassMetadata),
             context.ResourceGeneration,
-            context.DescriptorGeneration,
             context.SubmissionQueueFamily);
 
     private static bool FrameOpMatchesPlannerStateKey(FrameOp op, in FrameOpPlannerStateKey key)
@@ -1299,7 +1437,6 @@ public unsafe partial class VulkanRenderer
             context.OutputTargetIdentity == key.OutputTargetIdentity &&
             ComputePassMetadataSignature(context.PassMetadata) == key.PassMetadataSignature &&
             context.ResourceGeneration == key.ResourceGeneration &&
-            context.DescriptorGeneration == key.DescriptorGeneration &&
             context.SubmissionQueueFamily == key.SubmissionQueueFamily;
 
     private static int ComputeOutputFrameBufferIdentity(string? outputFrameBufferName)
@@ -1931,6 +2068,9 @@ public unsafe partial class VulkanRenderer
         int activeResourceSetSignature = 0,
         bool constrainToActivePassSet = false)
     {
+        if (!IsDeviceOperational)
+            return;
+
         if (IsCommandChainResourcePlanFrozen)
         {
             throw new InvalidOperationException(
@@ -2387,8 +2527,7 @@ public unsafe partial class VulkanRenderer
 
         VulkanPhysicalImageGroup? retainedAutoExposureGroup = PreserveAutoExposureHistory(oldAllocator);
 
-        oldAllocator.DestroyPhysicalImages(this, retainedAutoExposureGroup, reusedImageGroups);
-        oldAllocator.DestroyPhysicalBuffers(this);
+        _ = oldAllocator.TryRetirePhysicalResources(this, retainedAutoExposureGroup, reusedImageGroups);
         if (retiredImageCount > 0 || retiredBufferCount > 0)
             ForceFlushAllRetiredResourcesAfterWaiting("ResourcePlanReplacement");
     }

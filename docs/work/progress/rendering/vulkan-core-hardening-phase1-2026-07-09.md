@@ -25,10 +25,12 @@
   - address-binding report correlation when available,
   - NV checkpoint counts and resolved marker metadata when available.
 - Device-fault collection now persists a human-readable `vulkan-device-fault-report.log` with description, address records, vendor records, address-to-object correlation, `VK_INCOMPLETE` status, and vendor binary status.
-- Vendor binary payloads are written before teardown when reported and reasonably bounded; unavailable or disabled binary payloads are logged explicitly.
+- KHR device-fault reports and debug info are callable through the local `GetDeviceProcAddr` shim added in Phase 1.1, while EXT remains the compatibility fallback.
+- KHR and EXT address records, vendor records, report counts, and vendor binary payloads have configurable hard caps. Count growth, bounded batch draining, `VK_ERROR_NOT_ENOUGH_SPACE_KHR`, `VK_INCOMPLETE`, and truncation are reported explicitly.
+- Vendor binary payloads are written before teardown when reported and within the configured cap; unavailable, failed, incomplete, truncated, or disabled payloads are labeled explicitly.
 - Address-bearing buffers and descriptor-heap storage are registered in a bounded GPU-address range table, and `VK_EXT_device_address_binding_report` callbacks populate a recent binding-event ring.
-- `VK_NV_device_diagnostic_checkpoints` markers are recorded per frame operation with pinned backing storage that remains valid until renderer teardown.
-- Breadcrumbs now include command marker serial/kind, pass and batch index, image-layout transition serial, descriptor table generation, and the first failing Vulkan/OpenXR API.
+- `VK_NV_device_diagnostic_checkpoints` markers use stable opaque serial values and resolve through bounded renderer-owned metadata instead of overwritable pinned marker slots.
+- Breadcrumbs now include the submitted command-buffer handle and recording generation, actual frame-op/planner/resource/descriptor generations, command marker serial/kind, pass and batch index, a bounded image-layout transition tail, queue-operation history, and the first failing Vulkan/OpenXR API.
 - Descriptor table generation is bumped for descriptor set allocations and descriptor writes across swapchain, bindless material textures, ImGui, compute, mesh renderer, material, renderer-owned, and descriptor-heap paths.
 - Added debug names for framebuffers, descriptor sets, command-buffer frame-op contexts, and OpenXR swapchain image views, in addition to the existing image/view and sync-object names.
 - Added a no-runtime-dependency AMD/Intel vendor hook report that names the standard fallback artifacts when no native vendor hook is loaded.
@@ -57,12 +59,14 @@ Normal runs keep the preset at `Off`, so validation and labels remain disabled u
 
 ## Known Gaps
 
-- Current Silk.NET 2.23 bindings in this repo expose `VK_EXT_device_fault`, but not callable `VK_KHR_device_fault` report/debug-info entry points. Startup logs KHR exposure when present and uses the EXT compatibility collector for persisted artifacts until the binding layer is upgraded.
-- Runtime validation is still needed on hardware exposing device fault, address-binding report, and NV checkpoint extensions to confirm each capability produces driver data in a real device-loss session.
+- The RTX 4070 Laptop GPU used for the July 9 Phase 2.1 validation does not advertise `VK_KHR_device_fault`; it advertises `VK_EXT_device_fault`. The callable KHR shim therefore remains source- and unit-tested but still needs a real device-loss run on hardware that exposes the KHR extension.
+- Runtime validation is still needed on hardware exposing device fault, address-binding report, and NV checkpoint extensions with `CrashDiagnostics` enabled to confirm each capability produces driver data in a real device-loss session.
 
 ## Validation
 
 - `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore`
 - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "Name=VulkanPhase1Diagnostics_DefinePresetFlagsSettingsAndEnvironmentBridge|Name=VulkanPhase1Diagnostics_WireValidationFeaturesAndCapabilityReports|Name=VulkanPhase1Diagnostics_DeviceLossFooterIncludesBreadcrumbsFaultsAndNamedSyncObjects|Name=VulkanPhase1Diagnostics_CollectFaultArtifactsAddressBindingsAndCheckpoints|Name=VulkanPhase1Diagnostics_DebugNamesCoverPhase1ObjectTypes"`
+- Phase 0 through 2.1 focused lane: 93 passed, 0 failed.
+- Hardware and software evidence: [vulkan-core-hardening-phase21-validation-2026-07-09.json](../../testing/rendering/vulkan-core-hardening-phase21-validation-2026-07-09.json).
 
-The renderer build and five focused Phase 1 source-contract tests passed. The output still includes the repo's existing Magick.NET advisory warnings.
+The renderer build, focused diagnostics tests, and the broader Phase 2.1 lane passed. Build output still includes the repo's existing Magick.NET advisory warnings. SyncValidation hardware runs did not lose the device, but they remain validation-unclean for synchronization, query lifecycle, cube-view, and teardown issues recorded in the linked manifest.

@@ -12,7 +12,8 @@ public unsafe partial class VulkanRenderer
     private const uint VulkanKhrDeviceFaultPhysicalDevicePropertiesSType = 1000573001;
     private const uint VulkanKhrDeviceFaultInfoSType = 1000573002;
     private const uint VulkanKhrDeviceFaultDebugInfoSType = 1000573003;
-    private const int MaxKhrDeviceFaultReports = 64;
+    private const int KhrDeviceFaultReportBatchSize = 16;
+    private const Result VulkanErrorNotEnoughSpaceKhr = (Result)(-1000483000);
 
     private VkGetDeviceFaultReportsKhrDelegate? _vkGetDeviceFaultReportsKHR;
     private VkGetDeviceFaultDebugInfoKhrDelegate? _vkGetDeviceFaultDebugInfoKHR;
@@ -25,106 +26,14 @@ public unsafe partial class VulkanRenderer
     private bool _supportsExtDeviceFaultVendorBinary;
     private bool _deviceFaultUsingKhr;
 
-    [Flags]
-    private enum VulkanKhrDeviceFaultFlags : uint
-    {
-        DeviceLost = 0x00000001,
-        MemoryAddress = 0x00000002,
-        InstructionAddress = 0x00000004,
-        Vendor = 0x00000008,
-        WatchdogTimeout = 0x00000010,
-        Overflow = 0x00000020,
-    }
-
-    private enum VulkanKhrDeviceFaultAddressType : int
-    {
-        None = 0,
-        ReadInvalid = 1,
-        WriteInvalid = 2,
-        ExecuteInvalid = 3,
-        InstructionPointerUnknown = 4,
-        InstructionPointerInvalid = 5,
-        InstructionPointerFault = 6,
-    }
-
-    private enum VulkanKhrDeviceFaultVendorBinaryHeaderVersion : int
-    {
-        One = 1,
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct VulkanKhrPhysicalDeviceFaultFeatures
-    {
-        public StructureType SType;
-        public void* PNext;
-        public uint DeviceFault;
-        public uint DeviceFaultVendorBinary;
-        public uint DeviceFaultReportMasked;
-        public uint DeviceFaultDeviceLostOnMasked;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct VulkanKhrPhysicalDeviceFaultProperties
-    {
-        public StructureType SType;
-        public void* PNext;
-        public uint MaxDeviceFaultCount;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct VulkanKhrDeviceFaultAddressInfo
-    {
-        public VulkanKhrDeviceFaultAddressType AddressType;
-        public ulong ReportedAddress;
-        public ulong AddressPrecision;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private unsafe struct VulkanKhrDeviceFaultVendorInfo
-    {
-        public fixed byte Description[VulkanDeviceFaultDescriptionBytes];
-        public ulong VendorFaultCode;
-        public ulong VendorFaultData;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private unsafe struct VulkanKhrDeviceFaultInfo
-    {
-        public StructureType SType;
-        public void* PNext;
-        public VulkanKhrDeviceFaultFlags Flags;
-        public ulong GroupId;
-        public fixed byte Description[VulkanDeviceFaultDescriptionBytes];
-        public VulkanKhrDeviceFaultAddressInfo FaultAddressInfo;
-        public VulkanKhrDeviceFaultAddressInfo InstructionAddressInfo;
-        public VulkanKhrDeviceFaultVendorInfo VendorInfo;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct VulkanKhrDeviceFaultDebugInfo
-    {
-        public StructureType SType;
-        public void* PNext;
-        public uint VendorBinarySize;
-        public void* PVendorBinaryData;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private unsafe struct VulkanKhrDeviceFaultVendorBinaryHeaderVersionOne
-    {
-        public uint HeaderSize;
-        public VulkanKhrDeviceFaultVendorBinaryHeaderVersion HeaderVersion;
-        public uint VendorID;
-        public uint DeviceID;
-        public uint DriverVersion;
-        public fixed byte PipelineCacheUUID[16];
-        public uint ApplicationNameOffset;
-        public uint ApplicationVersion;
-        public uint EngineNameOffset;
-        public uint EngineVersion;
-        public uint ApiVersion;
-    }
-
+    /// <summary>
+    /// Retrieves the KHR device fault reports for the specified device within the given timeout period.
+    /// </summary>
+    /// <param name="device">The logical device to query for fault reports.</param>
+    /// <param name="timeout">The maximum time to wait for fault reports, in nanoseconds.</param>
+    /// <param name="pFaultCounts">A pointer to a variable that will receive the number of fault reports.</param>
+    /// <param name="pFaultInfo">A pointer to an array of VulkanKhrDeviceFaultInfo structures that will receive the fault details.</param>
+    /// <returns>A Result indicating success or failure of the operation.</returns>
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate Result VkGetDeviceFaultReportsKhrDelegate(
         Device device,
@@ -132,17 +41,37 @@ public unsafe partial class VulkanRenderer
         uint* pFaultCounts,
         VulkanKhrDeviceFaultInfo* pFaultInfo);
 
+    /// <summary>
+    /// Retrieves the debug information for a KHR device fault on the specified device.
+    /// </summary>
+    /// <param name="device">The logical device to query for fault debug information.</param>
+    /// <param name="pDebugInfo">A pointer to a VulkanKhrDeviceFaultDebugInfo structure that will receive the debug information.</param>
+    /// <returns>A Result indicating success or failure of the operation.</returns>
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate Result VkGetDeviceFaultDebugInfoKhrDelegate(
         Device device,
         VulkanKhrDeviceFaultDebugInfo* pDebugInfo);
 
+    /// <summary>
+    /// Converts a raw uint value to the corresponding Vulkan StructureType.
+    /// </summary>
+    /// <param name="value">The raw uint value representing a Vulkan structure type.</param>
+    /// <returns>The corresponding Vulkan StructureType.</returns>
     private static StructureType KhrStructureType(uint value)
         => (StructureType)value;
 
+    /// <summary>
+    /// Converts a boolean value to its Vulkan representation (1 for true, 0 for false).
+    /// </summary>
+    /// <param name="value">The boolean value to convert.</param>
+    /// <returns>1 if the value is true; 0 if the value is false.</returns>
     private static uint ToVulkanBool(bool value)
         => value ? 1u : 0u;
 
+    /// <summary>
+    /// Attempts to load the function pointers for the KHR device fault extension.
+    /// </summary>
+    /// <returns>True if the function pointers were successfully loaded; otherwise, false.</returns>
     private bool TryLoadKhrDeviceFaultFunctionPointers()
     {
         _vkGetDeviceFaultReportsKHR = null;
@@ -175,6 +104,9 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
+    /// <summary>
+    /// Releases the function pointers for the KHR device fault extension.
+    /// </summary>
     private void ReleaseKhrDeviceFaultFunctionPointers()
     {
         _vkGetDeviceFaultReportsKHR = null;
@@ -182,6 +114,15 @@ public unsafe partial class VulkanRenderer
         _deviceFaultUsingKhr = false;
     }
 
+    /// <summary>
+    /// Queries the capabilities of the KHR device fault extension for the current physical device.
+    /// </summary>
+    /// <param name="extensionEnabled">Indicates whether the KHR device fault extension is enabled.</param>
+    /// <param name="deviceFaultSupported">Outputs whether device fault reporting is supported.</param>
+    /// <param name="vendorBinarySupported">Outputs whether vendor binary support is available for device faults.</param>
+    /// <param name="reportMaskedSupported">Outputs whether masked reporting is supported for device faults.</param>
+    /// <param name="deviceLostOnMaskedSupported">Outputs whether the device can be lost on masked faults.</param>
+    /// <param name="maxReportCount">Outputs the maximum number of device fault reports supported.</param>
     private unsafe void QueryKhrDeviceFaultCapabilities(
         bool extensionEnabled,
         out bool deviceFaultSupported,
@@ -232,6 +173,11 @@ public unsafe partial class VulkanRenderer
         maxReportCount = properties.MaxDeviceFaultCount;
     }
 
+    /// <summary>
+    /// Attempts to append a summary of the KHR device fault reports to the provided StringBuilder.
+    /// </summary>
+    /// <param name="builder">The StringBuilder to append the summary to.</param>
+    /// <returns>True if a summary was appended, false otherwise.</returns>
     private bool TryAppendKhrDeviceFaultSummary(StringBuilder builder)
     {
         if (!_supportsKhrDeviceFault)
@@ -258,7 +204,7 @@ public unsafe partial class VulkanRenderer
                 return true;
             }
 
-            if (countResult is not (Result.Success or Result.Incomplete))
+            if (!IsKhrDeviceFaultPartialResult(countResult))
             {
                 AppendFaultSection(builder, $"DeviceFaultKHR reportsResult={countResult}");
                 if (_deviceLost)
@@ -266,39 +212,76 @@ public unsafe partial class VulkanRenderer
                 return true;
             }
 
-            uint writableCount = Math.Min(availableCount, MaxKhrDeviceFaultReports);
-            VulkanKhrDeviceFaultInfo[] reports = new VulkanKhrDeviceFaultInfo[checked((int)writableCount)];
-            for (int i = 0; i < reports.Length; i++)
+            int configuredCap = _khrDeviceFaultMaxReportCount == 0
+                ? _diagnosticOptions.DeviceFaultReportCap
+                : Math.Min(_diagnosticOptions.DeviceFaultReportCap, checked((int)Math.Min(_khrDeviceFaultMaxReportCount, int.MaxValue)));
+            VulkanKhrDeviceFaultInfo[] reports = new VulkanKhrDeviceFaultInfo[configuredCap];
+            VulkanKhrDeviceFaultInfo[] batch = new VulkanKhrDeviceFaultInfo[Math.Min(KhrDeviceFaultReportBatchSize, configuredCap)];
+            uint firstAvailableCount = availableCount;
+            uint remainingCount = availableCount;
+            uint returnedCount = 0;
+            Result reportsResult = Result.Success;
+            bool incomplete = countResult != Result.Success;
+
+            while (remainingCount > 0 && returnedCount < reports.Length)
             {
-                reports[i] = new()
+                uint writableCount = Math.Min(
+                    remainingCount,
+                    (uint)Math.Min(batch.Length, reports.Length - checked((int)returnedCount)));
+                for (int i = 0; i < writableCount; i++)
                 {
-                    SType = KhrStructureType(VulkanKhrDeviceFaultInfoSType),
-                    PNext = null,
-                };
+                    batch[i] = new()
+                    {
+                        SType = KhrStructureType(VulkanKhrDeviceFaultInfoSType),
+                        PNext = null,
+                    };
+                }
+
+                uint batchReturnedCount = writableCount;
+                fixed (VulkanKhrDeviceFaultInfo* batchPtr = batch)
+                    reportsResult = _vkGetDeviceFaultReportsKHR(device, 0, &batchReturnedCount, batchPtr);
+
+                uint initializedCount = Math.Min(batchReturnedCount, writableCount);
+                if (initializedCount > 0)
+                    Array.Copy(batch, 0, reports, returnedCount, initializedCount);
+                returnedCount += initializedCount;
+                incomplete |= reportsResult != Result.Success || batchReturnedCount > writableCount;
+
+                if (!IsKhrDeviceFaultPartialResult(reportsResult) || initializedCount == 0)
+                    break;
+
+                remainingCount = 0;
+                Result nextCountResult = _vkGetDeviceFaultReportsKHR(device, 0, &remainingCount, null);
+                incomplete |= nextCountResult != Result.Success;
+                if (nextCountResult == Result.Timeout || !IsKhrDeviceFaultPartialResult(nextCountResult))
+                    break;
             }
 
-            Result reportsResult;
-            uint returnedCount = writableCount;
-            fixed (VulkanKhrDeviceFaultInfo* reportsPtr = reports)
+            if (returnedCount == reports.Length)
             {
-                reportsResult = _vkGetDeviceFaultReportsKHR(device, 0, &returnedCount, reportsPtr);
+                uint unavailableCount = 0;
+                Result remainingResult = _vkGetDeviceFaultReportsKHR(device, 0, &unavailableCount, null);
+                if (IsKhrDeviceFaultPartialResult(remainingResult))
+                    remainingCount = unavailableCount;
+                incomplete |= unavailableCount > 0 || remainingResult != Result.Success;
             }
 
-            bool incomplete = countResult == Result.Incomplete ||
-                reportsResult == Result.Incomplete ||
-                availableCount > writableCount;
+            if (returnedCount < reports.Length)
+                Array.Resize(ref reports, checked((int)returnedCount));
+
             string artifactSummary = PersistKhrDeviceFaultReports(
                 reports,
                 returnedCount,
                 countResult,
                 reportsResult,
                 incomplete,
-                availableCount);
+                firstAvailableCount);
 
             AppendFaultSection(
                 builder,
                 $"DeviceFaultKHR active countResult={countResult} reportsResult={reportsResult} " +
-                $"available={availableCount} returned={returnedCount} incomplete={incomplete} {artifactSummary}");
+                $"available={firstAvailableCount} returned={returnedCount} remainingOrTruncated={remainingCount} " +
+                $"cap={configuredCap} incomplete={incomplete} {artifactSummary}");
 
             if (_deviceLost)
                 TryAppendKhrDeviceFaultDebugInfo(builder);
@@ -312,6 +295,18 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Determines whether the specified Vulkan result indicates a partial result for the KHR device fault extension.
+    /// </summary>
+    /// <param name="result">The Vulkan result to check.</param>
+    /// <returns>True if the result indicates a partial result for the KHR device fault extension; otherwise, false.</returns>
+    private static bool IsKhrDeviceFaultPartialResult(Result result)
+        => result is Result.Success or Result.Incomplete || result == VulkanErrorNotEnoughSpaceKhr;
+
+    /// <summary>
+    /// Attempts to append the KHR device fault debug information to the provided StringBuilder.
+    /// </summary>
+    /// <param name="builder">The StringBuilder to append the debug information to.</param>
     private void TryAppendKhrDeviceFaultDebugInfo(StringBuilder builder)
     {
         if (!_supportsKhrDeviceFaultVendorBinary || _vkGetDeviceFaultDebugInfoKHR is null)
@@ -330,7 +325,7 @@ public unsafe partial class VulkanRenderer
 
         Result sizeResult = _vkGetDeviceFaultDebugInfoKHR(device, &sizeInfo);
         uint vendorBinarySize = sizeInfo.VendorBinarySize;
-        if (sizeResult is not (Result.Success or Result.Incomplete))
+        if (!IsKhrDeviceFaultPartialResult(sizeResult))
         {
             AppendFaultSection(builder, $"DeviceFaultKHRDebugInfo sizeResult={sizeResult}");
             return;
@@ -342,7 +337,8 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        byte[] vendorBinary = new byte[checked((int)vendorBinarySize)];
+        uint writableVendorBinarySize = Math.Min(vendorBinarySize, checked((uint)_diagnosticOptions.DeviceFaultVendorBinaryByteCap));
+        byte[] vendorBinary = new byte[checked((int)writableVendorBinarySize)];
         Result dataResult;
         uint actualVendorBinarySize;
         fixed (byte* vendorBinaryPtr = vendorBinary)
@@ -351,24 +347,43 @@ public unsafe partial class VulkanRenderer
             {
                 SType = KhrStructureType(VulkanKhrDeviceFaultDebugInfoSType),
                 PNext = null,
-                VendorBinarySize = vendorBinarySize,
+                VendorBinarySize = writableVendorBinarySize,
                 PVendorBinaryData = vendorBinaryPtr,
             };
             dataResult = _vkGetDeviceFaultDebugInfoKHR(device, &dataInfo);
             actualVendorBinarySize = dataInfo.VendorBinarySize;
         }
 
-        if (actualVendorBinarySize < vendorBinary.Length)
-            Array.Resize(ref vendorBinary, checked((int)actualVendorBinarySize));
+        bool dataResultUsable = IsKhrDeviceFaultPartialResult(dataResult);
+        uint initializedVendorBinarySize = dataResultUsable
+            ? Math.Min(actualVendorBinarySize, writableVendorBinarySize)
+            : 0u;
+        if (initializedVendorBinarySize < vendorBinary.Length)
+            Array.Resize(ref vendorBinary, checked((int)initializedVendorBinarySize));
 
-        bool incomplete = sizeResult == Result.Incomplete || dataResult == Result.Incomplete;
+        bool incomplete = sizeResult != Result.Success ||
+            dataResult != Result.Success ||
+            vendorBinarySize > writableVendorBinarySize ||
+            actualVendorBinarySize > writableVendorBinarySize;
         string artifactSummary = PersistKhrDeviceFaultDebugInfo(vendorBinary, sizeResult, dataResult, incomplete);
         AppendFaultSection(
             builder,
             $"DeviceFaultKHRDebugInfo sizeResult={sizeResult} dataResult={dataResult} " +
-            $"vendorBinaryBytes={vendorBinary.Length} incomplete={incomplete} {artifactSummary}");
+            $"vendorBinaryBytes={vendorBinary.Length}/{vendorBinarySize} cap={writableVendorBinarySize} " +
+            $"status={(dataResultUsable ? (incomplete ? "incomplete-or-truncated" : "complete") : "failed-unusable")} " +
+            $"incomplete={incomplete} {artifactSummary}");
     }
 
+    /// <summary>
+    /// Persists the KHR device fault reports to a string for diagnostic purposes.
+    /// </summary>
+    /// <param name="reports">The array of KHR device fault reports.</param>
+    /// <param name="returnedCount">The number of reports returned by the Vulkan API.</param>
+    /// <param name="countResult">The Vulkan result of the count query.</param>
+    /// <param name="reportsResult">The Vulkan result of the reports query.</param>
+    /// <param name="incomplete">Indicates whether the reports are incomplete.</param>
+    /// <param name="availableCount">The total number of available reports.</param>
+    /// <returns>A string containing the persisted KHR device fault reports for diagnostic purposes.</returns>
     private string PersistKhrDeviceFaultReports(
         VulkanKhrDeviceFaultInfo[] reports,
         uint returnedCount,
@@ -420,6 +435,14 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Persists the KHR device fault debug information to a string for diagnostic purposes.
+    /// </summary>
+    /// <param name="vendorBinary">The vendor-specific binary data associated with the device fault.</param>
+    /// <param name="sizeResult">The Vulkan result of the size query for the vendor binary.</param>
+    /// <param name="dataResult">The Vulkan result of the data query for the vendor binary.</param>
+    /// <param name="incomplete">Indicates whether the vendor binary data is incomplete.</param>
+    /// <returns>A string containing the persisted KHR device fault debug information for diagnostic purposes.</returns>
     private string PersistKhrDeviceFaultDebugInfo(
         byte[] vendorBinary,
         Result sizeResult,
@@ -458,6 +481,12 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Appends the KHR device fault address information to the given report.
+    /// </summary>
+    /// <param name="report">The StringBuilder to which the address information will be appended.</param>
+    /// <param name="label">A label identifying the address information being appended.</param>
+    /// <param name="info">The VulkanKhrDeviceFaultAddressInfo structure containing the address information.</param>
     private void AppendKhrDeviceFaultAddressInfo(
         StringBuilder report,
         string label,
@@ -471,6 +500,11 @@ public unsafe partial class VulkanRenderer
             .AppendLine();
     }
 
+    /// <summary>
+    /// Appends the KHR vendor binary header information to the given report.
+    /// </summary>
+    /// <param name="report">The StringBuilder to which the vendor binary header information will be appended.</param>
+    /// <param name="vendorBinary">The vendor-specific binary data containing the header information.</param>
     private static void AppendKhrVendorBinaryHeader(StringBuilder report, byte[] vendorBinary)
     {
         if (vendorBinary.Length < sizeof(VulkanKhrDeviceFaultVendorBinaryHeaderVersionOne))

@@ -168,6 +168,7 @@ public unsafe partial class VulkanRenderer
             if (TryCaptureThreadResourcePlannerRuntimeState(out ResourcePlannerRuntimeState state))
             {
                 state.ResourceAllocator = value;
+                state.AllocatorOwnershipId = value.OwnershipId;
                 StoreThreadResourcePlannerRuntimeState(in state);
                 return;
             }
@@ -490,6 +491,10 @@ public unsafe partial class VulkanRenderer
         public bool RecordingScopeActive;
         public bool HasActiveKey;
         public FrameOpPlannerStateKey ActiveKey;
+        public bool HasActiveContext;
+        public FrameOpContext ActiveContext;
+        public ResourcePlannerRuntimeState PreparationState;
+        public bool HasPreparationState;
     }
 
     private struct ResourcePlannerRuntimeState
@@ -510,21 +515,26 @@ public unsafe partial class VulkanRenderer
         public bool HasBarrierPlanFastPathKey;
         public ResourcePlannerSignatureBreakdown ResourcePlannerSignatureBreakdown;
         public ulong ResourcePlannerRevision;
+        public long AllocatorOwnershipId;
         public FrameOpResourcePlannerSwitchingState? FrameOpResourcePlannerSwitchingState;
 
         public static ResourcePlannerRuntimeState CreateEmpty()
-            => new()
+        {
+            VulkanResourceAllocator allocator = new();
+            return new()
             {
                 ResourcePlanner = new VulkanResourcePlanner(),
-                ResourceAllocator = new VulkanResourceAllocator(),
+                ResourceAllocator = allocator,
                 BarrierPlanner = new VulkanBarrierPlanner(),
                 CompiledRenderGraph = VulkanCompiledRenderGraph.Empty,
                 ResourcePlannerSignature = ulong.MaxValue,
                 ResourceAllocationSignature = ulong.MaxValue,
                 FailedResourcePlannerSignature = ulong.MaxValue,
                 FailedResourceAllocationSignature = ulong.MaxValue,
+                AllocatorOwnershipId = allocator.OwnershipId,
                 FrameOpResourcePlannerSwitchingState = new FrameOpResourcePlannerSwitchingState(),
             };
+        }
     }
 
     private readonly struct ThreadRenderStateScope : IDisposable
@@ -667,7 +677,7 @@ public unsafe partial class VulkanRenderer
         FrameOpResourcePlannerSwitchingState state)
         => new(this, state);
 
-    private readonly record struct FrameOpPlannerStateKey(
+    internal readonly record struct FrameOpPlannerStateKey(
         EVulkanFrameOpContextKind ContextKind,
         int PipelineIdentity,
         int ViewportIdentity,
@@ -679,7 +689,6 @@ public unsafe partial class VulkanRenderer
         int OutputTargetIdentity,
         int PassMetadataSignature,
         ulong ResourceGeneration,
-        ulong DescriptorGeneration,
         uint SubmissionQueueFamily);
 
     private readonly record struct ResourcePlannerSignatureBreakdown(
@@ -843,6 +852,124 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    private readonly struct FrameOpResourcePlannerPreparationScope : IDisposable
+    {
+        private readonly VulkanRenderer _renderer;
+        private readonly FrameOpResourcePlannerSwitchingState? _switchingState;
+        private readonly ResourcePlannerRuntimeState _previousState;
+        private readonly FrameOpPlannerStateKey _singleKey;
+        private readonly bool _singleContext;
+        private readonly bool _active;
+
+        public FrameOpResourcePlannerPreparationScope(VulkanRenderer renderer, FrameOp[] ops)
+        {
+            _renderer = renderer;
+            _switchingState = null;
+            _previousState = default;
+            _singleKey = default;
+            _singleContext = false;
+            _active = false;
+
+            if (!renderer.IsDeviceOperational ||
+                !FrameOpResourcePlannerSwitchingEnabled ||
+                ops.Length == 0)
+                return;
+
+            bool found = false;
+            bool multiple = false;
+            FrameOpPlannerStateKey firstKey = default;
+            for (int i = 0; i < ops.Length; i++)
+            {
+                FrameOpContext context = ops[i].Context;
+                if (!FrameOpContextHasPlannerResources(context))
+                    continue;
+
+                FrameOpPlannerStateKey key = BuildFrameOpPlannerStateKey(context);
+                if (!found)
+                {
+                    firstKey = key;
+                    found = true;
+                }
+                else if (!key.Equals(firstKey))
+                {
+                    multiple = true;
+                    break;
+                }
+            }
+
+            if (!found)
+                return;
+
+            FrameOpResourcePlannerSwitchingState switchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
+            _switchingState = switchingState;
+            _previousState = renderer.CaptureResourcePlannerRuntimeState();
+            _singleKey = firstKey;
+            _singleContext = !multiple;
+            _active = true;
+
+            ResourcePlannerRuntimeState state;
+            if (_singleContext)
+            {
+                state = switchingState.States.TryGetValue(firstKey, out ResourcePlannerRuntimeState cachedState)
+                    ? cachedState
+                    : ResourcePlannerRuntimeState.CreateEmpty();
+            }
+            else
+            {
+                state = switchingState.HasPreparationState
+                    ? switchingState.PreparationState
+                    : ResourcePlannerRuntimeState.CreateEmpty();
+            }
+
+            renderer.RestoreResourcePlannerRuntimeState(state);
+        }
+
+        public void Dispose()
+        {
+            if (!_active || _switchingState is null)
+                return;
+
+            if (!_renderer.IsDeviceOperational)
+            {
+                ResourcePlannerRuntimeState terminalRestoreState =
+                    _previousState.ResourceAllocator is not null && _previousState.ResourceAllocator.IsRetired
+                        ? ResourcePlannerRuntimeState.CreateEmpty()
+                        : _previousState;
+                _renderer.RestoreResourcePlannerRuntimeState(terminalRestoreState);
+                return;
+            }
+
+            ResourcePlannerRuntimeState state = PublishCurrentState();
+
+            ResourcePlannerRuntimeState restoreState =
+                _previousState.ResourceAllocator is not null && _previousState.ResourceAllocator.IsRetired
+                    ? state
+                    : _previousState;
+            _renderer.RestoreResourcePlannerRuntimeState(restoreState);
+            _renderer.AssertFrameOpPlannerAllocatorOwnership(_switchingState);
+        }
+
+        public ResourcePlannerRuntimeState PublishCurrentState()
+        {
+            if (!_active || _switchingState is null || !_renderer.IsDeviceOperational)
+                return default;
+
+            ResourcePlannerRuntimeState state = _renderer.CaptureResourcePlannerRuntimeState();
+            if (_singleContext)
+            {
+                _switchingState.States[_singleKey] = state;
+                _renderer.MarkFrameOpResourcePlannerStateUsed(_switchingState, _singleKey);
+            }
+            else
+            {
+                _switchingState.PreparationState = state;
+                _switchingState.HasPreparationState = true;
+            }
+
+            return state;
+        }
+    }
+
     private readonly struct FrameOpResourcePlannerRecordingScope : IDisposable
     {
         private readonly VulkanRenderer _renderer;
@@ -853,7 +980,7 @@ public unsafe partial class VulkanRenderer
         {
             _renderer = renderer;
             FrameOpResourcePlannerSwitchingState switchingState = renderer.ActiveFrameOpResourcePlannerSwitchingState;
-            _active = switchingState.SwitchingActive;
+            _active = renderer.IsDeviceOperational && switchingState.ActiveKeys.Count > 0;
             _previousState = _active
                 ? renderer.CaptureResourcePlannerRuntimeState()
                 : default;
@@ -862,6 +989,7 @@ public unsafe partial class VulkanRenderer
             {
                 switchingState.RecordingScopeActive = true;
                 switchingState.HasActiveKey = false;
+                switchingState.HasActiveContext = false;
             }
         }
 
@@ -870,11 +998,17 @@ public unsafe partial class VulkanRenderer
             if (!_active)
                 return;
 
-            _renderer.SaveActiveFrameOpResourcePlannerState();
             FrameOpResourcePlannerSwitchingState switchingState = _renderer.ActiveFrameOpResourcePlannerSwitchingState;
+            if (_renderer.IsDeviceOperational)
+                _renderer.SaveActiveFrameOpResourcePlannerState();
             switchingState.RecordingScopeActive = false;
             switchingState.HasActiveKey = false;
-            _renderer.RestoreResourcePlannerRuntimeState(_previousState);
+            switchingState.HasActiveContext = false;
+            ResourcePlannerRuntimeState restoreState =
+                _previousState.ResourceAllocator is not null && _previousState.ResourceAllocator.IsRetired
+                    ? ResourcePlannerRuntimeState.CreateEmpty()
+                    : _previousState;
+            _renderer.RestoreResourcePlannerRuntimeState(restoreState);
         }
     }
 
@@ -905,12 +1039,14 @@ public unsafe partial class VulkanRenderer
             HasBarrierPlanFastPathKey = _hasBarrierPlanFastPathKey,
             ResourcePlannerSignatureBreakdown = _resourcePlannerSignatureBreakdown,
             ResourcePlannerRevision = _resourcePlannerRevision,
+            AllocatorOwnershipId = _resourceAllocator.OwnershipId,
             FrameOpResourcePlannerSwitchingState = _frameOpResourcePlannerSwitchingState,
         };
     }
 
     private void RestoreResourcePlannerRuntimeState(in ResourcePlannerRuntimeState state)
     {
+        AssertResourcePlannerRuntimeStateCanBeRestored(state);
         if (HasThreadResourcePlannerRuntimeState)
         {
             ResourcePlannerRuntimeState next = state;

@@ -41,6 +41,7 @@ namespace XREngine.Rendering.Vulkan
         private readonly object _commandBindStateLock = new();
         private readonly Dictionary<ulong, CommandBufferBindState> _commandBindStates = new();
         private readonly Dictionary<ulong, int> _commandBufferImageIndices = new();
+        private long _commandBufferRecordingGeneration;
         private readonly object _ownedCommandChainSecondaryPoolsLock = new();
         private readonly Dictionary<ulong, OwnedCommandChainSecondaryPool> _ownedCommandChainSecondaryPools = new();
         private bool _enableSecondaryCommandBuffers = true;
@@ -197,6 +198,8 @@ namespace XREngine.Rendering.Vulkan
             public bool PreserveSwapchainForOverlay { get; set; }
             public ulong RecordedFrameOpContextFingerprint { get; set; } = ulong.MaxValue;
             public ulong RecordedFrameOpContextId { get; set; }
+            public ulong RecordedResourceGeneration { get; set; }
+            public ulong RecordedDescriptorGeneration { get; set; }
             public bool RecordedSwapchainImageEverPresented { get; set; }
             public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;
             public int RecordedSwapchainWriteCount { get; set; }
@@ -214,6 +217,38 @@ namespace XREngine.Rendering.Vulkan
             public int GpuProfilerQueryCount { get; set; }
             public ulong LastUsedFrameId { get; set; }
             public FrameOpSignatureDebugPart[]? SignatureDebugParts { get; set; }
+        }
+
+        private bool TryGetCommandBufferDiagnosticMetadata(
+            uint imageIndex,
+            CommandBuffer commandBuffer,
+            out ulong plannerRevision,
+            out ulong frameOpContextId,
+            out ulong resourceGeneration,
+            out ulong descriptorGeneration)
+        {
+            plannerRevision = 0;
+            frameOpContextId = 0;
+            resourceGeneration = 0;
+            descriptorGeneration = 0;
+            if (_commandBufferVariants is null || imageIndex >= (uint)_commandBufferVariants.Length)
+                return false;
+
+            List<CommandBufferCacheVariant> variants = _commandBufferVariants[imageIndex];
+            for (int i = 0; i < variants.Count; i++)
+            {
+                CommandBufferCacheVariant variant = variants[i];
+                if (variant.PrimaryCommandBuffer.Handle != commandBuffer.Handle)
+                    continue;
+
+                plannerRevision = variant.PlannerRevision == ulong.MaxValue ? 0 : variant.PlannerRevision;
+                frameOpContextId = variant.RecordedFrameOpContextId;
+                resourceGeneration = variant.RecordedResourceGeneration;
+                descriptorGeneration = variant.RecordedDescriptorGeneration;
+                return true;
+            }
+
+            return false;
         }
 
         private sealed class ComputeTransientResources
@@ -248,6 +283,7 @@ namespace XREngine.Rendering.Vulkan
 
         private struct CommandBufferBindState
         {
+            public ulong RecordingGeneration;
             public ulong GraphicsPipeline;
             public ulong ComputePipeline;
             public ulong GraphicsDescriptorSignature;
@@ -264,8 +300,24 @@ namespace XREngine.Rendering.Vulkan
         internal void ResetCommandBufferBindState(CommandBuffer commandBuffer)
         {
             ulong key = (ulong)commandBuffer.Handle;
+            CommandBufferBindState state = new()
+            {
+                RecordingGeneration = unchecked((ulong)Interlocked.Increment(ref _commandBufferRecordingGeneration)),
+            };
             lock (_commandBindStateLock)
-                _commandBindStates[key] = default;
+                _commandBindStates[key] = state;
+        }
+
+        private ulong ResolveCommandBufferRecordingGeneration(CommandBuffer commandBuffer)
+        {
+            if (commandBuffer.Handle == 0)
+                return 0;
+
+            ulong key = unchecked((ulong)commandBuffer.Handle);
+            lock (_commandBindStateLock)
+                return _commandBindStates.TryGetValue(key, out CommandBufferBindState state)
+                    ? state.RecordingGeneration
+                    : 0;
         }
 
         private void InvalidateDescriptorHeapBindingState(CommandBuffer commandBuffer)

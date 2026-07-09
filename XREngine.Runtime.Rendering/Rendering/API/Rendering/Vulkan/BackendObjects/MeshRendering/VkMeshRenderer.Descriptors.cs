@@ -1203,7 +1203,7 @@ public unsafe partial class VulkanRenderer
 						}
 					}
 
-					Api!.UpdateDescriptorSets(Device, 1, &write, 0, null);
+					Renderer.UpdateDescriptorSetsTracked(1, &write);
 					Renderer.RecordVulkanDescriptorTableGeneration("MeshRendererDescriptorSet.SingleUpdate");
 				}
 
@@ -1833,7 +1833,7 @@ public unsafe partial class VulkanRenderer
 					}
 
 					if (!TryUpdateDescriptorSetsWithTemplates(frameSets, writeArray))
-						Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
+						Renderer.UpdateDescriptorSetsTracked((uint)writeArray.Length, writePtr);
 					Renderer.RecordVulkanDescriptorTableGeneration("MeshRendererDescriptorSets.Update");
 
 					foreach (var (_, imageIndex, binding, descriptorCount) in imageMap)

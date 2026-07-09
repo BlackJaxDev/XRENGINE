@@ -249,6 +249,10 @@ public static class XREngineEnvironmentVariables
     public const string VulkanBestPracticesValidation = "XRE_VULKAN_BEST_PRACTICES";
     public const string VulkanCrashBreadcrumbs = "XRE_VULKAN_CRASH_BREADCRUMBS";
     public const string VulkanDeviceFault = "XRE_VULKAN_DEVICE_FAULT";
+    public const string VulkanDeviceFaultAddressRecordCap = "XRE_VULKAN_DEVICE_FAULT_ADDRESS_CAP";
+    public const string VulkanDeviceFaultVendorRecordCap = "XRE_VULKAN_DEVICE_FAULT_VENDOR_CAP";
+    public const string VulkanDeviceFaultReportCap = "XRE_VULKAN_DEVICE_FAULT_REPORT_CAP";
+    public const string VulkanDeviceFaultVendorBinaryByteCap = "XRE_VULKAN_DEVICE_FAULT_VENDOR_BINARY_CAP";
     public const string VulkanDeviceAddressBindingReport = "XRE_VULKAN_DEVICE_ADDRESS_BINDING_REPORT";
     public const string VulkanNvDiagnosticCheckpoints = "XRE_VULKAN_NV_DIAGNOSTIC_CHECKPOINTS";
     public const string VulkanNvDiagnosticsConfig = "XRE_VULKAN_NV_DIAGNOSTICS_CONFIG";

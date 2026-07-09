@@ -293,6 +293,9 @@ namespace XREngine.Rendering.Vulkan
             out void* mappedPtr)
         {
             mappedPtr = null;
+            if (!IsDeviceOperational)
+                return false;
+
             ulong mappedLength = Math.Max(length, 1UL);
 
             if (TryGetBufferMemoryAllocation(buffer, out VulkanMemoryAllocation allocation))
@@ -1810,8 +1813,8 @@ namespace XREngine.Rendering.Vulkan
                 transferFamily,
                 dedicatedTransferFamily);
 
-            if (dedicatedTransferFamily)
-                Api!.QueueWaitIdle(graphicsQueue);
+            if (dedicatedTransferFamily && WaitForQueueIdleTracked(graphicsQueue) != Result.Success)
+                return false;
 
             using (var transferScope = NewTransferCommandScope())
             {
@@ -1933,7 +1936,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void ThrowIfDeviceLostForResourceCreation(string operation)
         {
-            if (!_deviceLost)
+            if (IsDeviceOperational)
                 return;
 
             Debug.VulkanWarningEvery(

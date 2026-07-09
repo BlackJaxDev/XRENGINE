@@ -73,7 +73,17 @@ public unsafe partial class VulkanRenderer
             DepthView.Handle != 0;
     }
 
+    internal enum EOpenXrResourcePlannerPurpose : byte
+    {
+        Eye,
+        Mirror,
+        Publish,
+        EyePrewarm,
+        MirrorPrewarm,
+    }
+
     internal readonly record struct OpenXrViewResourcePlannerContextKey(
+        EOpenXrResourcePlannerPurpose Purpose,
         int ResourcePlannerStateIndex,
         uint OpenXrViewIndex,
         uint OpenXrImageIndex,
@@ -92,6 +102,7 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         public static OpenXrViewResourcePlannerContextKey FromTarget(in OpenXrEyeRenderTargetContext target)
             => new(
+                EOpenXrResourcePlannerPurpose.Eye,
                 target.ResourcePlannerStateIndex,
                 target.OpenXrViewIndex,
                 OpenXrExternalSwapchainTargetImageIndex,
@@ -187,6 +198,11 @@ public unsafe partial class VulkanRenderer
         uint OpenXrViewIndex,
         uint OpenXrImageIndex,
         uint FrameDataSlotIndex,
+        ulong FrameOpsSignature,
+        ulong PlannerRevision,
+        ulong FrameOpContextId,
+        ulong ResourceGeneration,
+        ulong DescriptorGeneration,
         bool OwnedByOpenXrPrimaryCache);
 
     private readonly record struct OpenXrEyePreviewCopyPlan(
@@ -429,7 +445,12 @@ public unsafe partial class VulkanRenderer
                     recorded.OpenXrViewIndex,
                     recorded.OpenXrImageIndex,
                     recorded.FrameDataSlotIndex,
-                    request.Extent);
+                    request.Extent,
+                    recorded.FrameOpsSignature,
+                    recorded.PlannerRevision,
+                    recorded.FrameOpContextId,
+                    recorded.ResourceGeneration,
+                    recorded.DescriptorGeneration);
             submitted = SubmitAndWaitOpenXrCommandBuffer(recorded.CommandBuffer, out commandBufferCompleted, diagnosticContext);
             if (submitted)
             {
@@ -494,6 +515,8 @@ public unsafe partial class VulkanRenderer
         ClearOpenXrEyeRecordedTextureUploads();
         OpenXrRecordedEyeCommandBuffer firstRecorded = default;
         OpenXrRecordedEyeCommandBuffer secondRecorded = default;
+        OpenXrPreparedEyeCommandBufferInput firstPrepared = default;
+        OpenXrPreparedEyeCommandBufferInput secondPrepared = default;
         bool hasFirst = false;
         bool hasSecond = false;
         bool submitted = false;
@@ -501,13 +524,27 @@ public unsafe partial class VulkanRenderer
 
         try
         {
+            // Planner replacement can retire descriptor references globally. Finish both
+            // eyes' resource preparation before either command buffer captures descriptors.
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.PrepareLeftEye"))
+            {
+                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out firstPrepared))
+                    return false;
+            }
+
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.PrepareRightEye"))
+            {
+                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out secondPrepared))
+                    return false;
+            }
+
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RecordLeftEye"))
-                hasFirst = TryRecordOpenXrEyeSwapchainCommandBuffer(firstEye, out firstRecorded);
+                hasFirst = TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in firstPrepared, out firstRecorded);
             if (!hasFirst)
                 return false;
 
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.Batch.RecordRightEye"))
-                hasSecond = TryRecordOpenXrEyeSwapchainCommandBuffer(secondEye, out secondRecorded);
+                hasSecond = TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in secondPrepared, out secondRecorded);
             if (!hasSecond)
                 return false;
 
@@ -904,6 +941,11 @@ public unsafe partial class VulkanRenderer
                     targetContext.OpenXrViewIndex,
                     targetContext.OpenXrImageIndex,
                     targetContext.FrameDataSlotIndex,
+                    prepared.FrameOpsSignature,
+                    prepared.PlannerRevision,
+                    prepared.PlannerContext.ContextId,
+                    prepared.PlannerContext.ResourceGeneration,
+                    prepared.PlannerContext.DescriptorGeneration,
                     OwnedByOpenXrPrimaryCache: true);
                 return true;
             }
@@ -1812,7 +1854,12 @@ public unsafe partial class VulkanRenderer
                     recorded.OpenXrViewIndex,
                     recorded.OpenXrImageIndex,
                     recorded.FrameDataSlotIndex,
-                    request.Extent));
+                    request.Extent,
+                    recorded.FrameOpsSignature,
+                    recorded.PlannerRevision,
+                    recorded.FrameOpContextId,
+                    recorded.ResourceGeneration,
+                    recorded.DescriptorGeneration));
             if (submitted)
             {
                 CompleteOpenXrGpuProfilerSubmission(in recorded);
@@ -2138,7 +2185,9 @@ public unsafe partial class VulkanRenderer
 
             using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
                 CreateOpenXrPrewarmRenderStateTracker(request.Extent));
-            using (EnterOpenXrResourcePlannerThreadScope(request.ResourcePlannerStateIndex))
+            using (EnterOpenXrResourcePlannerThreadScope(
+                request.ResourcePlannerStateIndex,
+                EOpenXrResourcePlannerPurpose.Mirror))
             {
                 FrameOp[] ops = CaptureFrameOpsExcludingTextureUploads(request.EmitFrameOps, out _);
                 drainedFrameOps = true;
@@ -2256,6 +2305,11 @@ public unsafe partial class VulkanRenderer
                     request.OpenXrViewIndex,
                     request.OpenXrImageIndex,
                     recordImageIndex,
+                    frameOpsSignature,
+                    plannerRevision,
+                    frameOpContextId,
+                    fallbackContext.ResourceGeneration,
+                    fallbackContext.DescriptorGeneration,
                     OwnedByOpenXrPrimaryCache: true);
                 return true;
             }
@@ -4160,7 +4214,9 @@ public unsafe partial class VulkanRenderer
             EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);
             DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
 
-            using (EnterOpenXrResourcePlannerThreadScope(resourcePlannerStateIndex))
+            using (EnterOpenXrResourcePlannerThreadScope(
+                resourcePlannerStateIndex,
+                EOpenXrResourcePlannerPurpose.EyePrewarm))
             {
                 if (ShouldDeferOpenXrVulkanResourceWork(out string scopedResourceWorkReason))
                 {
@@ -4277,7 +4333,9 @@ public unsafe partial class VulkanRenderer
             EnsureDescriptorFrameSlotFrameCountFloor(openXrFrameDataSlotCount);
             DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
 
-            using (EnterOpenXrResourcePlannerThreadScope(resourcePlannerStateIndex))
+            using (EnterOpenXrResourcePlannerThreadScope(
+                resourcePlannerStateIndex,
+                EOpenXrResourcePlannerPurpose.MirrorPrewarm))
             {
                 if (ShouldDeferOpenXrVulkanResourceWork(out string scopedResourceWorkReason))
                 {
@@ -4664,8 +4722,10 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    private OpenXrResourcePlannerThreadScope EnterOpenXrResourcePlannerThreadScope(int stateIndex)
-        => new(this, CreateLegacyOpenXrResourcePlannerContextKey(stateIndex));
+    private OpenXrResourcePlannerThreadScope EnterOpenXrResourcePlannerThreadScope(
+        int stateIndex,
+        EOpenXrResourcePlannerPurpose purpose)
+        => new(this, CreateLegacyOpenXrResourcePlannerContextKey(stateIndex, purpose));
 
     private OpenXrResourcePlannerThreadScope EnterOpenXrResourcePlannerThreadScope(in OpenXrViewResourcePlannerContextKey contextKey)
         => new(this, contextKey);
@@ -4673,11 +4733,14 @@ public unsafe partial class VulkanRenderer
     private static int NormalizeOpenXrResourcePlannerStateIndex(int stateIndex)
         => (uint)stateIndex < OpenXrEyeResourcePlannerStateCount ? stateIndex : 0;
 
-    private static OpenXrViewResourcePlannerContextKey CreateLegacyOpenXrResourcePlannerContextKey(int stateIndex)
+    private static OpenXrViewResourcePlannerContextKey CreateLegacyOpenXrResourcePlannerContextKey(
+        int stateIndex,
+        EOpenXrResourcePlannerPurpose purpose)
     {
         int normalizedStateIndex = NormalizeOpenXrResourcePlannerStateIndex(stateIndex);
         uint legacyIndex = unchecked((uint)normalizedStateIndex);
         return new OpenXrViewResourcePlannerContextKey(
+            purpose,
             normalizedStateIndex,
             legacyIndex,
             OpenXrExternalSwapchainTargetImageIndex,
@@ -4689,7 +4752,7 @@ public unsafe partial class VulkanRenderer
     }
 
     private static string DescribeOpenXrResourcePlannerContextKey(in OpenXrViewResourcePlannerContextKey key)
-        => $"planner={key.ResourcePlannerStateIndex} eye={key.OpenXrViewIndex} imageIndex={key.OpenXrImageIndex} " +
+        => $"purpose={key.Purpose} planner={key.ResourcePlannerStateIndex} eye={key.OpenXrViewIndex} imageIndex={key.OpenXrImageIndex} " +
            $"commandKey={key.CommandChainImageKey} frameSlot={key.FrameDataSlotIndex} foveationKey=0x{key.FoveationResourceKey:X} " +
            $"foveationAttachment={key.FoveationAttachmentKind} foveationOwned={key.FoveationAttachmentOwnedByResourcePlanner}";
 
@@ -4729,8 +4792,11 @@ public unsafe partial class VulkanRenderer
         {
             ResourcePlannerRuntimeState state = _threadScope.CaptureCurrent(_renderer);
             state.FrameOpResourcePlannerSwitchingState = _frameOpThreadScope.CaptureCurrent(_renderer);
-            lock (_renderer._openXrResourcePlannerStatesLock)
-                _renderer._openXrResourcePlannerStates[_contextKey] = state;
+            if (_renderer.IsDeviceOperational)
+            {
+                lock (_renderer._openXrResourcePlannerStatesLock)
+                    _renderer._openXrResourcePlannerStates[_contextKey] = state;
+            }
             if (OpenXrVulkanTraceEnabled)
             {
                 Debug.Vulkan(
@@ -5752,16 +5818,17 @@ public unsafe partial class VulkanRenderer
 
         ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
         WaitForAllInFlightWork();
+        HashSet<VulkanResourceAllocator> retiredAllocators = new(ReferenceEqualityComparer.Instance);
         foreach (KeyValuePair<OpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState> pair in states)
         {
-            RestoreResourcePlannerRuntimeState(pair.Value);
-            ReleaseDescriptorReferencesForPhysicalResourceDestruction(
+            RetireResourcePlannerRuntimeStateAllocators(
+                pair.Value,
+                retiredAllocators,
                 $"OpenXrResourcePlannerStateDestroy.{DescribeOpenXrResourcePlannerContextKey(pair.Key)}");
-            DrainAllRetiredDescriptorPools();
-            ResourceAllocator.DestroyPhysicalImages(this);
-            ResourceAllocator.DestroyPhysicalBuffers(this);
         }
 
+        if (previousState.ResourceAllocator is not null && previousState.ResourceAllocator.IsRetired)
+            previousState = ResourcePlannerRuntimeState.CreateEmpty();
         RestoreResourcePlannerRuntimeState(previousState);
     }
 
