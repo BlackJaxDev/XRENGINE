@@ -481,25 +481,32 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         // Honor any internal resolution request from the pipeline before executing commands.
         if (viewport is not null)
         {
-            float? requestedScale = Pipeline.GetRequestedInternalResolutionForCamera(
-                effectiveAntiAliasingCamera,
-                effectiveAntiAliasingMode);
-
-            // Avoid redundant resets: only touch the viewport when the requested scale changes.
-            if (requestedScale.HasValue)
+            if (viewport.AllowAutomaticInternalResolution)
             {
-                float scale = Math.Clamp(requestedScale.Value, 0.25f, 1.25f);
-                if (_appliedInternalResolutionScale != scale)
+                float? requestedScale = Pipeline.GetRequestedInternalResolutionForCamera(
+                    effectiveAntiAliasingCamera,
+                    effectiveAntiAliasingMode);
+
+                // Avoid redundant resets: only touch the viewport when the requested scale changes.
+                if (requestedScale.HasValue)
                 {
-                    _appliedInternalResolutionScale = scale;
-                    viewport.SetInternalResolutionPercentage(scale, scale);
+                    float scale = Math.Clamp(requestedScale.Value, 0.25f, 1.25f);
+                    if (_appliedInternalResolutionScale != scale)
+                    {
+                        _appliedInternalResolutionScale = scale;
+                        viewport.SetInternalResolutionPercentage(scale, scale);
+                    }
+                }
+                else if (_appliedInternalResolutionScale.HasValue)
+                {
+                    // Restore to native internal resolution once the request is cleared.
+                    _appliedInternalResolutionScale = null;
+                    viewport.SetInternalResolution(viewport.Width, viewport.Height, true);
                 }
             }
-            else if (_appliedInternalResolutionScale.HasValue)
+            else
             {
-                // Restore to native internal resolution once the request is cleared.
                 _appliedInternalResolutionScale = null;
-                viewport.SetInternalResolution(viewport.Width, viewport.Height, true);
             }
 
             if (!RuntimeEngine.Rendering.State.IsSceneCapturePass && !RuntimeEngine.Rendering.State.IsLightProbePass)
@@ -538,7 +545,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     }
                 }
 
-                Pipeline.CommandChain.Execute();
+                using (AbstractRenderer.Current?.EnterRenderPipelineFrameResourceScope(this, viewport))
+                {
+                    Pipeline.CommandChain.Execute();
+                }
 
                 ValidateActiveGenerationDescriptorParity();
                 ValidateRenderGraphExecutionAgainstMetadata();
@@ -1038,21 +1048,25 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         RenderPipeline? pipeline = _pipeline;
 
         bool stereo = pipeline?.UsesStereoResources(this, viewport) ?? RenderState.StereoPass;
+        XRCamera? viewportCamera = viewport?.ActiveCamera;
 
         bool outputHdr = EffectiveOutputHDRThisFrame
             ?? LastSceneCamera?.OutputHDROverride
             ?? LastRenderingCamera?.OutputHDROverride
+            ?? viewportCamera?.OutputHDROverride
             ?? RuntimeRenderingHostServices.Current.DefaultOutputHDR;
 
         EAntiAliasingMode antiAliasingMode = EffectiveAntiAliasingModeThisFrame
             ?? LastSceneCamera?.AntiAliasingModeOverride
             ?? LastRenderingCamera?.AntiAliasingModeOverride
+            ?? viewportCamera?.AntiAliasingModeOverride
             ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
 
         uint msaaSamples = Math.Max(1u,
             EffectiveMsaaSampleCountThisFrame
                 ?? LastSceneCamera?.MsaaSampleCountOverride
                 ?? LastRenderingCamera?.MsaaSampleCountOverride
+                ?? viewportCamera?.MsaaSampleCountOverride
                 ?? RuntimeRenderingHostServices.Current.DefaultMsaaSampleCount);
 
         ulong featureMask = pipeline?.BuildResourceFeatureMaskForGenerationKey(
@@ -1590,8 +1604,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// This method updates the render pipeline instance to handle the new viewport size.
     /// </summary>
     /// <param name="size">The new size of the viewport.</param>
-    public void ViewportResized(Vector2 size) 
+    public void ViewportResized(Vector2 size)
         => ViewportResized((int)size.X, (int)size.Y);
+
+    /// <summary>
+    /// Called when the viewport is resized.
+    /// This method updates the render pipeline instance to handle the new viewport size.
+    /// </summary>
+    /// <param name="size">The new size of the viewport.</param>
+    /// <param name="viewport">The viewport that owns the resize request, when known.</param>
+    public void ViewportResized(Vector2 size, XRViewport? viewport)
+        => ViewportResized((int)size.X, (int)size.Y, viewport);
     /// <summary>
     /// Called when the viewport is resized.
     /// This method updates the render pipeline instance to handle the new viewport size.
@@ -1599,8 +1622,18 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <param name="width">The new width of the viewport.</param>
     /// <param name="height">The new height of the viewport.</param>
     public void ViewportResized(int width, int height)
+        => ViewportResized(width, height, null);
+
+    /// <summary>
+    /// Called when the viewport is resized.
+    /// This method updates the render pipeline instance to handle the new viewport size.
+    /// </summary>
+    /// <param name="width">The new width of the viewport.</param>
+    /// <param name="height">The new height of the viewport.</param>
+    /// <param name="viewport">The viewport that owns the resize request, when known.</param>
+    public void ViewportResized(int width, int height, XRViewport? viewport)
     {
-        _pipeline?.HandleViewportResized(this, width, height);
+        _pipeline?.HandleViewportResized(this, width, height, viewport);
     }
 
     /// <summary>
@@ -1610,8 +1643,18 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <param name="internalWidth">The new internal width.</param>
     /// <param name="internalHeight">The new internal height.</param>
     public void InternalResolutionResized(int internalWidth, int internalHeight)
+        => InternalResolutionResized(internalWidth, internalHeight, null);
+
+    /// <summary>
+    /// Called when the internal resolution is resized.
+    /// This method updates the render pipeline instance to handle the new internal resolution.
+    /// </summary>
+    /// <param name="internalWidth">The new internal width.</param>
+    /// <param name="internalHeight">The new internal height.</param>
+    /// <param name="viewport">The viewport that owns the resize request, when known.</param>
+    public void InternalResolutionResized(int internalWidth, int internalHeight, XRViewport? viewport)
     {
-        XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
+        viewport ??= RenderState.WindowViewport ?? LastWindowViewport;
         var dimensions = ResolveViewportResizeResourceDimensions(
             viewport,
             viewport?.Width ?? internalWidth,

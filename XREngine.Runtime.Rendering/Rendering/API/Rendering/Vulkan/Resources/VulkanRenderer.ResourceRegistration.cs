@@ -341,7 +341,11 @@ public unsafe partial class VulkanRenderer
 
     private void EnsureFrameBufferRegistered(XRFrameBuffer frameBuffer)
     {
-        var registry = RuntimeEngine.Rendering.State.CurrentResourceRegistry;
+        EnsureFrameBufferRegistered(frameBuffer, RuntimeEngine.Rendering.State.CurrentResourceRegistry);
+    }
+
+    private void EnsureFrameBufferRegistered(XRFrameBuffer frameBuffer, RenderResourceRegistry? registry)
+    {
         if (registry is null)
             return;
 
@@ -357,7 +361,11 @@ public unsafe partial class VulkanRenderer
 
     private void EnsureFrameBufferAttachmentsRegistered(XRFrameBuffer frameBuffer)
     {
-        var registry = RuntimeEngine.Rendering.State.CurrentResourceRegistry;
+        EnsureFrameBufferAttachmentsRegistered(frameBuffer, RuntimeEngine.Rendering.State.CurrentResourceRegistry);
+    }
+
+    private void EnsureFrameBufferAttachmentsRegistered(XRFrameBuffer frameBuffer, RenderResourceRegistry? registry)
+    {
         if (registry is null)
             return;
 

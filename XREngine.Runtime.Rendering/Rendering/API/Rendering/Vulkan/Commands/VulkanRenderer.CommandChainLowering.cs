@@ -52,9 +52,9 @@ public unsafe partial class VulkanRenderer
         !CommandChainValidationEnabled &&
         !IsCommandChainFlagDisabled(CommandChainStabilityGuardEnvVar);
     private bool CommandChainsEnabledForCurrentRecording =>
-        IsRenderingExternalSwapchainTarget ||
-        (CommandChainsEnabled && !ShouldBypassCommandChainsForOpenXrIndependentDesktop) ||
-        ShouldUseCommandChainsForOpenXrIndependentDesktop;
+        !IsRenderingExternalSwapchainTarget &&
+        ((CommandChainsEnabled && !ShouldBypassCommandChainsForOpenXrIndependentDesktop) ||
+         ShouldUseCommandChainsForOpenXrIndependentDesktop);
 
     private static bool ShouldBypassCommandChainsForOpenXrIndependentDesktop =>
         ShouldUseOpenXrIndependentDesktopCommandChainPolicy &&
@@ -1086,30 +1086,38 @@ public unsafe partial class VulkanRenderer
         CommandPool pool = chain.SecondaryCommandPool;
         bool ownsPool = chain.OwnsSecondaryCommandPool;
 
+        if (ownsPool && pool.Handle != 0)
+            MarkOwnedCommandChainSecondaryPoolPendingDestroy(pool);
+
         if (secondary.Handle != 0)
         {
             if (!_deviceLost && pool.Handle != 0)
             {
-                CommandBuffer freedSecondary = secondary;
-                Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
-                RemoveCommandBufferBindState(freedSecondary);
-                UntrackOwnedCommandChainSecondaryCommandBuffer(pool, freedSecondary);
+                int imageIndex = ResolveCommandBufferImageIndex(secondary);
+                if (imageIndex >= 0)
+                {
+                    DeferSecondaryCommandBufferFree(unchecked((uint)imageIndex), pool, secondary);
+                }
+                else
+                {
+                    CommandBuffer freedSecondary = secondary;
+                    Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
+                    RemoveCommandBufferBindState(freedSecondary);
+                    UntrackOwnedCommandChainSecondaryCommandBuffer(pool, freedSecondary);
+                    DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(pool);
+                }
             }
             else
             {
                 RemoveCommandBufferBindState(secondary);
                 UntrackOwnedCommandChainSecondaryCommandBuffer(pool, secondary);
+                DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(pool);
             }
         }
-
-        if (ownsPool && pool.Handle != 0)
+        else if (ownsPool && pool.Handle != 0)
         {
-            DiscardDeferredSecondaryCommandBuffersForPool(pool);
-            Api!.DestroyCommandPool(device, pool, null);
+            DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(pool);
         }
-
-        if (ownsPool && pool.Handle != 0)
-            UntrackOwnedCommandChainSecondaryPool(pool);
 
         chain.SecondaryCommandBuffer = default;
         chain.SecondaryCommandPool = default;
@@ -1330,23 +1338,37 @@ public unsafe partial class VulkanRenderer
 
     internal static CommandChainKey[] BuildCommandChainKeysByFrameOpIndex(
         CommandChainSchedule schedule,
+        IReadOnlyDictionary<CommandChainKey, CommandChain> commandChains,
         int staticOpCount)
     {
         if (staticOpCount <= 0)
             return [];
 
         CommandChainKey[] keysByOpIndex = new CommandChainKey[staticOpCount];
-        int opIndex = 0;
+        CommandChainKey unmappedKey = new(0, default, 0, 0, false, -1);
+        Array.Fill(keysByOpIndex, unmappedKey);
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
-        for (int groupIndex = 0; groupIndex < groups.Length && opIndex < staticOpCount; groupIndex++)
+        for (int groupIndex = 0; groupIndex < groups.Length; groupIndex++)
         {
             RenderPassChainGroup group = groups[groupIndex];
             if (group.DynamicOverlay)
                 continue;
 
             ReadOnlySpan<CommandChainKey> keys = group.ChainKeys.Span;
-            for (int keyIndex = 0; keyIndex < keys.Length && opIndex < staticOpCount; keyIndex++)
-                keysByOpIndex[opIndex++] = keys[keyIndex];
+            for (int keyIndex = 0; keyIndex < keys.Length; keyIndex++)
+            {
+                CommandChainKey key = keys[keyIndex];
+                if (!commandChains.TryGetValue(key, out CommandChain? chain) ||
+                    chain.SourceStartIndex < 0 ||
+                    chain.SourceCount <= 0)
+                {
+                    continue;
+                }
+
+                int endIndex = Math.Min(staticOpCount, chain.SourceStartIndex + chain.SourceCount);
+                for (int opIndex = chain.SourceStartIndex; opIndex < endIndex; opIndex++)
+                    keysByOpIndex[opIndex] = key;
+            }
         }
 
         return keysByOpIndex;
@@ -1664,18 +1686,18 @@ public unsafe partial class VulkanRenderer
         return "<unknown>";
     }
 
-    private static int ResolveCommandChainTargetIdentity(FrameOp op)
+    internal static int ResolveCommandChainTargetIdentity(FrameOp op)
         => op switch
         {
-            BlitOp blit => blit.OutFbo?.GetHashCode() ?? 0,
-            _ => op.Target?.GetHashCode() ?? 0,
+            BlitOp blit => blit.OutFbo?.GetHashCode() ?? op.Context.OutputTargetIdentity,
+            _ => op.Target?.GetHashCode() ?? op.Context.OutputTargetIdentity,
         };
 
-    private static string ResolveCommandChainTargetName(FrameOp op)
+    internal static string ResolveCommandChainTargetName(FrameOp op)
         => op switch
         {
-            BlitOp blit => blit.OutFbo?.Name ?? "<swapchain>",
-            _ => op.Target?.Name ?? "<swapchain>",
+            BlitOp blit => blit.OutFbo?.Name ?? op.Context.OutputTargetName ?? "<swapchain>",
+            _ => op.Target?.Name ?? op.Context.OutputTargetName ?? "<swapchain>",
         };
 
     private static ulong ResolvePipelineGeneration(FrameOp op)

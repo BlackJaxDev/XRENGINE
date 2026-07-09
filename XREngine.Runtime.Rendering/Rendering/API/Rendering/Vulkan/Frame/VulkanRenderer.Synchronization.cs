@@ -580,7 +580,17 @@ public unsafe partial class VulkanRenderer
             hash.Add((ulong)group.Usage);
             hash.Add(group.MipLevels);
             hash.Add(group.Template.Layers);
-            hash.Add((int)group.LastKnownLayout);
+            VulkanPhysicalImageGroup.LayoutSnapshot layoutSnapshot = group.CaptureLayoutSnapshot();
+            hash.Add((int)layoutSnapshot.LastKnownLayout);
+            VulkanPhysicalImageGroup.SubresourceLayoutSnapshot[] subresources = layoutSnapshot.Subresources;
+            hash.Add(subresources.Length);
+            for (int i = 0; i < subresources.Length; i++)
+            {
+                VulkanPhysicalImageGroup.SubresourceLayoutSnapshot subresource = subresources[i];
+                hash.Add(subresource.MipLevel);
+                hash.Add(subresource.ArrayLayer);
+                hash.Add((int)subresource.Layout);
+            }
         }
 
         hash.Add(physicalGroupCount);

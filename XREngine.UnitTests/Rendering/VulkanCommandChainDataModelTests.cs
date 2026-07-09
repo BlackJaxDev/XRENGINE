@@ -148,6 +148,34 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     [Test]
+    public void NullSwapchainFrameOps_UseExternalOutputTargetIdentity()
+    {
+        VulkanRenderer.FrameOpContext leftContext = CreateFrameOpContext(
+            outputTargetIdentity: 101,
+            outputTargetName: "<left-eye>");
+        VulkanRenderer.FrameOpContext rightContext = CreateFrameOpContext(
+            outputTargetIdentity: 202,
+            outputTargetName: "<right-eye>");
+        VulkanRenderer.ClearOp left = CreateClearOp(0) with { Context = leftContext };
+        VulkanRenderer.ClearOp right = CreateClearOp(0) with { Context = rightContext };
+
+        VulkanRenderer.ResolveCommandChainTargetIdentity(left).ShouldBe(101);
+        VulkanRenderer.ResolveCommandChainTargetIdentity(right).ShouldBe(202);
+        VulkanRenderer.ResolveCommandChainTargetName(left).ShouldBe("<left-eye>");
+        VulkanRenderer.ResolveCommandChainTargetName(right).ShouldBe("<right-eye>");
+        left.Context.SchedulingIdentity.ShouldNotBe(right.Context.SchedulingIdentity);
+    }
+
+    [Test]
+    public void OpenXrExternalSwapchainTargets_DoNotForceCommandChains()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainLowering.cs");
+
+        source.ShouldContain("!IsRenderingExternalSwapchainTarget &&");
+        source.ShouldNotContain("IsRenderingExternalSwapchainTarget ||");
+    }
+
+    [Test]
     public void OpenXrEyePrimaryRecording_PassesTargetContextIntoCommandBufferRecording()
     {
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
@@ -156,11 +184,37 @@ public sealed class VulkanCommandChainDataModelTests
         commandBufferSource.ShouldContain("OpenXrEyeRenderTargetContext? openXrTargetContext = null");
         commandBufferSource.ShouldContain("SwapchainRecordingTarget swapchainTarget = ResolveSwapchainRecordingTarget(imageIndex, openXrTargetContext);");
         commandBufferSource.ShouldContain("CreateSwapchainDynamicRenderingFormatSignature(swapchainTarget.ImageFormat, swapchainTarget.DepthFormat)");
-        commandBufferSource.ShouldContain("Image = swapchainTarget.Image");
-        commandBufferSource.ShouldContain("ImageView = swapchainTarget.ImageView");
-        commandBufferSource.ShouldContain("ImageView = swapchainTarget.DepthView");
+        commandBufferSource.ShouldContain("openXrTarget.Image");
+        commandBufferSource.ShouldContain("openXrTarget.ImageView");
+        commandBufferSource.ShouldContain("openXrTarget.DepthImage");
+        commandBufferSource.ShouldContain("openXrTarget.DepthView");
         openXrSource.ShouldContain("openXrTargetContext: targetContext");
         openXrSource.ShouldNotContain("ApplyOpenXrEyeRenderTargetContext");
+    }
+
+    [Test]
+    public void SwapchainBlits_UseActiveCommandBufferRecordingTarget()
+    {
+        string blitSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+
+        blitSource.ShouldContain("ResolveSwapchainBlitImage(swapchainImageIndex, wantColor, wantDepth, wantStencil, in swapchainTarget)");
+        blitSource.ShouldContain("recordingTarget.Image");
+        blitSource.ShouldContain("recordingTarget.DepthImage");
+        commandBufferSource.ShouldContain("RecordBlitOp(commandBuffer, imageIndex, blit, in swapchainTarget);");
+        commandBufferSource.ShouldContain("TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.ColorAttachment0, wantColor: true, wantDepth: false, wantStencil: false, out var colorDestination, isSource: false, in swapchainTarget)");
+    }
+
+    [Test]
+    public void OpenXrExternalSwapchainBlits_AreNormalizedAndValidatedAsFullEyeWriters()
+    {
+        string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+
+        openXrSource.ShouldContain("NormalizeOpenXrExternalSwapchainFrameOps(ops, request.Extent)");
+        openXrSource.ShouldContain("NormalizeOpenXrExternalSwapchainFrameOps(ops, extent)");
+        openXrSource.ShouldContain("case BlitOp { OutFbo: null } blitOp:");
+        openXrSource.ShouldContain("ExpectedDestination=(0,0");
+        openXrSource.ShouldContain("IsFullOpenXrBlitDestination");
     }
 
     [Test]
@@ -1470,6 +1524,33 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     [Test]
+    public void BuildCommandChainKeysByFrameOpIndex_UsesRecordedSourceIndices()
+    {
+        RenderViewKey viewKey = new(1, 2, 0, RenderViewKind.Main, 0, -1);
+        CommandChainKey firstKey = new(0, viewKey, 3, 4, false, 0);
+        CommandChainKey secondKey = new(0, viewKey, 3, 4, false, 1);
+        CommandChainSchedule schedule = new(
+            structuralSignature: 0x100,
+            resourcePlanRevision: 0x200,
+            groups: new[] { CreateGroupForKeys(firstKey, secondKey) });
+        Dictionary<CommandChainKey, CommandChain> chains = new()
+        {
+            [firstKey] = new CommandChain(firstKey) { SourceStartIndex = 2, SourceCount = 1 },
+            [secondKey] = new CommandChain(secondKey) { SourceStartIndex = 5, SourceCount = 1 },
+        };
+
+        CommandChainKey[] keysByOp = VulkanRenderer.BuildCommandChainKeysByFrameOpIndex(schedule, chains, staticOpCount: 7);
+
+        keysByOp[0].ChainOrdinal.ShouldBe(-1);
+        keysByOp[1].ChainOrdinal.ShouldBe(-1);
+        keysByOp[2].ShouldBe(firstKey);
+        keysByOp[3].ChainOrdinal.ShouldBe(-1);
+        keysByOp[4].ChainOrdinal.ShouldBe(-1);
+        keysByOp[5].ShouldBe(secondKey);
+        keysByOp[6].ChainOrdinal.ShouldBe(-1);
+    }
+
+    [Test]
     public void ValidateCommandChainQueueSchedule_RequiresFallbackAndSidecarTimelineDependencies()
     {
         CommandChainQueueNode graphics = new(
@@ -1721,7 +1802,9 @@ public sealed class VulkanCommandChainDataModelTests
             Context: CreateFrameOpContext());
 
     private static VulkanRenderer.FrameOpContext CreateFrameOpContext(
-        IReadOnlyCollection<RenderPassMetadata>? passMetadata = null)
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata = null,
+        int outputTargetIdentity = 0,
+        string? outputTargetName = null)
         => new(
             PipelineIdentity: 1,
             ViewportIdentity: 2,
@@ -1731,7 +1814,9 @@ public sealed class VulkanCommandChainDataModelTests
             DisplayWidth: 1920,
             DisplayHeight: 1080,
             InternalWidth: 1920,
-            InternalHeight: 1080);
+            InternalHeight: 1080,
+            OutputTargetIdentity: outputTargetIdentity,
+            OutputTargetName: outputTargetName);
 
     private static string ReadWorkspaceFile(string relativePath)
     {

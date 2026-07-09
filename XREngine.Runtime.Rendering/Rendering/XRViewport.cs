@@ -89,9 +89,17 @@ namespace XREngine.Rendering
         private bool _allowUIRender = true;
 
         /// <summary>
+        /// When true, camera and pipeline settings may adjust this viewport's internal
+        /// rendering resolution. Disable for caller-sized offscreen previews whose FBO
+        /// extent must stay tied to their UI/layout target.
+        /// </summary>
+        private bool _allowAutomaticInternalResolution = true;
+
+        /// <summary>
         /// When true and a non-null output FBO is supplied, the default pipeline uses
         /// its direct FBO command chain instead of the full viewport/window chain.
-        /// This is intended for small offscreen previews that are later sampled by UI.
+        /// This is intended only for specialized callers that provide fully forward
+        /// renderable content and do not need deferred lighting or post-processing.
         /// </summary>
         private bool _useDirectFboTargetCommandsWhenRenderingToFbo;
 
@@ -414,8 +422,8 @@ namespace XREngine.Rendering
             // When the camera's pipeline changes, push current sizing into the
             // existing runtime instance so the new command chain sees valid targets
             // immediately instead of waiting for a later resize.
-            _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight);
-            _renderPipeline.ViewportResized(Width, Height);
+            _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight, this);
+            _renderPipeline.ViewportResized(Width, Height, this);
         }
 
         /// <summary>
@@ -461,9 +469,19 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Allows camera internal-resolution settings and pipeline AA/upscale hints to
+        /// resize this viewport's internal render extent automatically.
+        /// </summary>
+        public bool AllowAutomaticInternalResolution
+        {
+            get => _allowAutomaticInternalResolution;
+            set => SetField(ref _allowAutomaticInternalResolution, value);
+        }
+
+        /// <summary>
         /// Prefer direct FBO rendering whenever this viewport renders to a caller-owned
-        /// framebuffer. Offscreen UI previews use this to avoid window/swapchain-only
-        /// post-processing paths and their render-graph resource assumptions.
+        /// framebuffer. Most scene captures should keep this disabled so deferred
+        /// lighting and post-processing still feed the caller-owned target.
         /// </summary>
         public bool UseDirectFboTargetCommandsWhenRenderingToFbo
         {
@@ -745,14 +763,15 @@ namespace XREngine.Rendering
                     var newCam = CameraComponent?.Camera;
                     Debug.Rendering($"[XRViewport] CameraComponent changed: VP[{Index}] OldCamera={_camera?.GetHashCode().ToString() ?? "NULL"} NewCamera={newCam?.GetHashCode().ToString() ?? "NULL"} CamCompName={CameraComponent?.Name ?? "<null>"} CamCompHash={CameraComponent?.GetHashCode().ToString() ?? "null"}");
                     Camera = newCam;
-                    // IMPORTANT: Even if Camera reference didn't change, we must ensure this viewport
-                    // is in the camera's Viewports list. This can happen when:
+                    // IMPORTANT: Even if Camera reference didn't change, we must refresh
+                    // camera bindings and pipeline resources. This can happen when:
                     // 1. The editor pawn survives snapshot restore (same objects reused)
                     // 2. The viewport was removed from camera.Viewports during play mode
-                    // 3. SetField didn't detect a change because references are equal
+                    // 3. SetField didn't raise Camera changed because references are equal
                     EnsureViewportBoundToCamera();
+                    if (SetRenderPipelineFromCamera)
+                        SynchronizeRenderPipelineFromActiveCamera();
                     Debug.Rendering($"[XRViewport] After EnsureViewportBoundToCamera: VP[{Index}] Camera.Viewports.Count={ActiveCamera?.Viewports.Count ?? -1}");
-                    //_renderPipeline.Pipeline = CameraComponent?.RenderPipeline;
                     break;
                 case nameof(SetRenderPipelineFromCamera):
                     if (_setRenderPipelineFromCamera)
@@ -1820,7 +1839,7 @@ namespace XREngine.Rendering
 
             _internalResolutionRegion.Width = newWidth;
             _internalResolutionRegion.Height = newHeight;
-            _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight);
+            _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight, this);
             InternalResolutionResized?.Invoke(this);
         }
 
@@ -1839,7 +1858,7 @@ namespace XREngine.Rendering
         /// Called internally by Resize() to update framebuffer sizes and other resolution-dependent resources.
         /// </summary>
         private void ResizeRenderPipeline()
-            => _renderPipeline.ViewportResized(Width, Height);
+            => _renderPipeline.ViewportResized(Width, Height, this);
 
         /// <summary>
         /// Updates the camera's aspect ratio to match the viewport dimensions.

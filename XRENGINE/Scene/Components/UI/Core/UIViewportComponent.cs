@@ -43,7 +43,9 @@ namespace XREngine.Rendering.UI
             SetBlendModeAllDrawBuffers(BlendMode.Disabled());
             Viewport.AutomaticallyCollectVisible = false;
             Viewport.AutomaticallySwapBuffers = false;
+            Viewport.UseDirectFboTargetCommandsWhenRenderingToFbo = false;
             Viewport.AllowUIRender = false;
+            Viewport.AllowAutomaticInternalResolution = false;
             _depthStencilTexture = CreateDepthStencilTexture(1u, 1u);
             _fbo = new XRMaterialFrameBuffer(Material, deriveRenderTargetsFromMaterial: false);
             ApplyUniqueRenderTargetNames();
@@ -95,7 +97,7 @@ namespace XREngine.Rendering.UI
 
         private static XRMaterial GetViewportMaterial()
             => new([CreateColorTexture(1u, 1u)],
-                XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedForward.fs"), EShaderType.Fragment));
+                XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedOpaqueForward.fs"), EShaderType.Fragment));
 
         private void ApplyFramebufferTargets()
         {
@@ -304,7 +306,6 @@ namespace XREngine.Rendering.UI
                 RuntimeEngine.Rendering.State.IsSceneCapturePass = true;
                 try
                 {
-                    BindRenderTargetsToPipelineResources();
                     Viewport.Render(_fbo, null, null, false);
                     AbstractRenderer.Current?.PublishFrameBufferAttachmentsForSampling(_fbo);
                     AbstractRenderer.Current?.MemoryBarrier(
@@ -323,16 +324,6 @@ namespace XREngine.Rendering.UI
             {
                 _rendering = false;
             }
-        }
-
-        private void BindRenderTargetsToPipelineResources()
-        {
-            var resources = Viewport.RenderPipelineInstance.Resources;
-            if (RenderedTexture is XRTexture colorTexture)
-                resources.BindTexture(colorTexture);
-
-            resources.BindTexture(_depthStencilTexture);
-            resources.BindFrameBuffer(_fbo);
         }
 
         [YamlIgnore]

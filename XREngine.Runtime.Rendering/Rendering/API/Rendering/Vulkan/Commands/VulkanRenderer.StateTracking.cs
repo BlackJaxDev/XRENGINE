@@ -33,6 +33,14 @@ public unsafe partial class VulkanRenderer
     private static VulkanRenderer? _threadFrameOpResourcePlannerSwitchingStateOwner;
     [ThreadStatic]
     private static FrameOpResourcePlannerSwitchingState? _threadFrameOpResourcePlannerSwitchingState;
+    [ThreadStatic]
+    private static VulkanRenderer? _threadFramebufferBindingOwner;
+    [ThreadStatic]
+    private static XRFrameBuffer? _threadBoundDrawFrameBuffer;
+    [ThreadStatic]
+    private static XRFrameBuffer? _threadBoundReadFrameBuffer;
+    [ThreadStatic]
+    private static EReadBufferMode _threadReadBufferMode;
     private VulkanResourcePlanner _resourcePlanner = new();
     private VulkanResourceAllocator _resourceAllocator = new();
     private VulkanBarrierPlanner _barrierPlanner = new();
@@ -71,6 +79,50 @@ public unsafe partial class VulkanRenderer
         _threadFrameOpResourcePlannerSwitchingState is not null
             ? _threadFrameOpResourcePlannerSwitchingState
             : _frameOpResourcePlannerSwitchingState;
+    private bool HasThreadFramebufferBindingState
+        => ReferenceEquals(_threadFramebufferBindingOwner, this);
+    private XRFrameBuffer? ActiveBoundDrawFrameBuffer
+    {
+        get => HasThreadFramebufferBindingState ? _threadBoundDrawFrameBuffer : _boundDrawFrameBuffer;
+        set
+        {
+            if (HasThreadFramebufferBindingState)
+            {
+                _threadBoundDrawFrameBuffer = value;
+                return;
+            }
+
+            _boundDrawFrameBuffer = value;
+        }
+    }
+    private XRFrameBuffer? ActiveBoundReadFrameBuffer
+    {
+        get => HasThreadFramebufferBindingState ? _threadBoundReadFrameBuffer : _boundReadFrameBuffer;
+        set
+        {
+            if (HasThreadFramebufferBindingState)
+            {
+                _threadBoundReadFrameBuffer = value;
+                return;
+            }
+
+            _boundReadFrameBuffer = value;
+        }
+    }
+    private EReadBufferMode ActiveReadBufferMode
+    {
+        get => HasThreadFramebufferBindingState ? _threadReadBufferMode : _readBufferMode;
+        set
+        {
+            if (HasThreadFramebufferBindingState)
+            {
+                _threadReadBufferMode = value;
+                return;
+            }
+
+            _readBufferMode = value;
+        }
+    }
     internal VulkanResourcePlanner ResourcePlanner =>
         HasThreadResourcePlannerRuntimeState
             ? _threadResourcePlannerRuntimeState!.Value.ResourcePlanner
@@ -479,19 +531,38 @@ public unsafe partial class VulkanRenderer
     {
         private readonly VulkanRenderer? _previousOwner;
         private readonly VulkanStateTracker? _previousState;
+        private readonly VulkanRenderer? _previousFramebufferBindingOwner;
+        private readonly XRFrameBuffer? _previousThreadBoundDrawFrameBuffer;
+        private readonly XRFrameBuffer? _previousThreadBoundReadFrameBuffer;
+        private readonly EReadBufferMode _previousThreadReadBufferMode;
+        private readonly IDisposable _currentRendererScope;
 
         public ThreadRenderStateScope(VulkanRenderer renderer, VulkanStateTracker state)
         {
             _previousOwner = _threadRenderStateOwner;
             _previousState = _threadRenderState;
+            _previousFramebufferBindingOwner = _threadFramebufferBindingOwner;
+            _previousThreadBoundDrawFrameBuffer = _threadBoundDrawFrameBuffer;
+            _previousThreadBoundReadFrameBuffer = _threadBoundReadFrameBuffer;
+            _previousThreadReadBufferMode = _threadReadBufferMode;
             _threadRenderStateOwner = renderer;
             _threadRenderState = state;
+            _threadFramebufferBindingOwner = renderer;
+            _threadBoundDrawFrameBuffer = null;
+            _threadBoundReadFrameBuffer = null;
+            _threadReadBufferMode = EReadBufferMode.ColorAttachment0;
+            _currentRendererScope = AbstractRenderer.PushThreadCurrent(renderer);
         }
 
         public void Dispose()
         {
+            _currentRendererScope.Dispose();
             _threadRenderStateOwner = _previousOwner;
             _threadRenderState = _previousState;
+            _threadFramebufferBindingOwner = _previousFramebufferBindingOwner;
+            _threadBoundDrawFrameBuffer = _previousThreadBoundDrawFrameBuffer;
+            _threadBoundReadFrameBuffer = _previousThreadBoundReadFrameBuffer;
+            _threadReadBufferMode = _previousThreadReadBufferMode;
         }
     }
 
@@ -603,11 +674,13 @@ public unsafe partial class VulkanRenderer
         uint DisplayHeight,
         uint InternalWidth,
         uint InternalHeight,
-        int OutputFrameBufferIdentity);
+        int OutputFrameBufferIdentity,
+        int OutputTargetIdentity);
 
     private readonly record struct ResourcePlannerSignatureBreakdown(
         int Registry,
         int OutputFrameBuffer,
+        int OutputTarget,
         uint DisplayWidth,
         uint DisplayHeight,
         uint InternalWidth,
@@ -620,7 +693,7 @@ public unsafe partial class VulkanRenderer
         uint TransferQueueFamily)
     {
         public override string ToString()
-            => $"registry=0x{Registry:X8} outputFbo=0x{OutputFrameBuffer:X8} dims={DisplayWidth}x{DisplayHeight}/{InternalWidth}x{InternalHeight} " +
+            => $"registry=0x{Registry:X8} outputFbo=0x{OutputFrameBuffer:X8} outputTarget=0x{OutputTarget:X8} dims={DisplayWidth}x{DisplayHeight}/{InternalWidth}x{InternalHeight} " +
                $"passes=0x{PassMetadata:X8} batches=0x{GraphBatches:X8} edges=0x{GraphEdges:X8} " +
                $"queues=g{GraphicsQueueFamily}/c{ComputeQueueFamily}/t{TransferQueueFamily}";
 
@@ -629,6 +702,7 @@ public unsafe partial class VulkanRenderer
             StringBuilder builder = new();
             AppendDelta(builder, "resource-registry", previous.Registry, Registry, hexadecimal: true);
             AppendDelta(builder, "output-fbo", previous.OutputFrameBuffer, OutputFrameBuffer, hexadecimal: true);
+            AppendDelta(builder, "output-target", previous.OutputTarget, OutputTarget, hexadecimal: true);
             AppendDelta(builder, "display-width", previous.DisplayWidth, DisplayWidth);
             AppendDelta(builder, "display-height", previous.DisplayHeight, DisplayHeight);
             AppendDelta(builder, "internal-width", previous.InternalWidth, InternalWidth);
@@ -692,6 +766,7 @@ public unsafe partial class VulkanRenderer
         int ActivePassSetSignature,
         int ActiveResourceSetSignature,
         int OutputFrameBufferIdentity,
+        int OutputTargetIdentity,
         uint DisplayWidth,
         uint DisplayHeight,
         uint InternalWidth,
@@ -707,6 +782,7 @@ public unsafe partial class VulkanRenderer
                 && ActivePassSetSignature == other.ActivePassSetSignature
                 && ActiveResourceSetSignature == other.ActiveResourceSetSignature
                 && OutputFrameBufferIdentity == other.OutputFrameBufferIdentity
+                && OutputTargetIdentity == other.OutputTargetIdentity
                 && DisplayWidth == other.DisplayWidth
                 && DisplayHeight == other.DisplayHeight
                 && InternalWidth == other.InternalWidth
@@ -886,10 +962,11 @@ public unsafe partial class VulkanRenderer
         BlendFactor DstAlphaBlendFactor);
 
     /// <summary>
-    /// Extent of the draw target that is actually bound right now. Quad-blit style
-    /// passes bind FBOs through <see cref="XRFrameBuffer.BindForWriting"/> (engine-side
-    /// stack) without invoking <see cref="BindFrameBuffer"/>, so the tracker's
-    /// last-bound extent can be stale; prefer the live engine binding.
+    /// Extent of the draw target that is actually bound right now. Pipeline commands
+    /// publish their logical render target through the render-state binding stack,
+    /// while quad-blit helpers bind FBOs directly through <see cref="XRFrameBuffer.BindForWriting"/>.
+    /// The backend tracker's last-bound extent can be stale in both cases, so prefer
+    /// the live engine-side binding before falling back to the tracker.
     /// </summary>
     internal Extent2D ResolveCurrentDrawTargetExtent()
     {
@@ -904,21 +981,19 @@ public unsafe partial class VulkanRenderer
     }
 
     internal XRFrameBuffer? GetCurrentDrawFrameBuffer()
-        => XRFrameBuffer.BoundForWriting ?? _boundDrawFrameBuffer;
-
-    internal XRFrameBuffer? ResolveCurrentFrameOpDrawTarget()
     {
-        XRFrameBuffer? target = GetCurrentDrawFrameBuffer();
-        if (target is not null)
-            return target;
-
         XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         XRRenderPipelineInstance.RenderingState.ScopedRenderTargetBinding? binding =
             pipeline?.RenderState.CurrentRenderTargetBinding;
         if (binding is { Write: true, FrameBuffer: { } scopedTarget })
             return scopedTarget;
 
-        return null;
+        return XRFrameBuffer.BoundForWriting ?? ActiveBoundDrawFrameBuffer;
+    }
+
+    internal XRFrameBuffer? ResolveCurrentFrameOpDrawTarget()
+    {
+        return GetCurrentDrawFrameBuffer();
     }
 
     internal static Extent2D ResolveFrameBufferDrawExtent(XRFrameBuffer fbo)
@@ -956,10 +1031,10 @@ public unsafe partial class VulkanRenderer
     }
 
     internal XRFrameBuffer? GetCurrentReadFrameBuffer()
-        => _boundReadFrameBuffer;
+        => ActiveBoundReadFrameBuffer;
 
     internal EReadBufferMode GetReadBufferMode()
-        => _readBufferMode;
+        => ActiveReadBufferMode;
 
     internal bool GetDepthTestEnabled()
         => ActiveState.GetDepthTestEnabled();

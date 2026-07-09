@@ -723,9 +723,10 @@ public unsafe partial class VulkanRenderer
             FrameOp op = ops[i];
             hash.Add(GetFrameOpKindId(op));
             hash.Add(op.PassIndex);
-            hash.Add(op.Target?.GetHashCode() ?? 0);
+            hash.Add(ResolveCommandChainTargetIdentity(op));
             hash.Add(op.Context.PipelineIdentity);
             hash.Add(op.Context.ViewportIdentity);
+            hash.Add(op.Context.OutputTargetIdentity);
 
             switch (op)
             {
@@ -1801,18 +1802,21 @@ public unsafe partial class VulkanRenderer
                 ? ToVulkanColorWriteMask(matOpts)
                 : Renderer.GetColorWriteMask();
 
-            // Snapshot camera matrices/vectors now. Fullscreen and UI paths may
-            // intentionally render while the transient rendering camera is null,
-            // but Vulkan records commands later and still needs the active pipeline
-            // camera for auto-uniforms such as inverse view/projection matrices.
+            // Snapshot camera matrices/vectors now. A pushed null camera is intentional
+            // for fullscreen quads; do not fall back to the scene camera in that scope.
             XRRenderPipelineInstance? currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-            XRCamera? snapshotCamera = RuntimeEngine.Rendering.State.RenderingCamera
-                ?? currentPipeline?.RenderState.RenderingCamera
-                ?? currentPipeline?.RenderState.SceneCamera
-                ?? currentPipeline?.LastRenderingCamera
-                ?? currentPipeline?.LastSceneCamera;
-            XRCamera? snapshotRightEyeCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera
-                ?? currentPipeline?.RenderState.StereoRightEyeCamera;
+            bool explicitCameraScope = RuntimeEngine.Rendering.State.RenderingPipelineState?.HasRenderingCameraScope == true;
+            XRCamera? snapshotCamera = explicitCameraScope
+                ? RuntimeEngine.Rendering.State.RenderingCamera
+                : RuntimeEngine.Rendering.State.RenderingCamera
+                    ?? currentPipeline?.RenderState.RenderingCamera
+                    ?? currentPipeline?.RenderState.SceneCamera
+                    ?? currentPipeline?.LastRenderingCamera
+                    ?? currentPipeline?.LastSceneCamera;
+            XRCamera? snapshotRightEyeCamera = snapshotCamera is null
+                ? null
+                : RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera
+                    ?? currentPipeline?.RenderState.StereoRightEyeCamera;
             bool useUnjitteredProjectionSnapshot = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
             Matrix4x4 viewMatrixSnapshot = snapshotCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
             Matrix4x4 inverseViewMatrixSnapshot = snapshotCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
@@ -2071,13 +2075,18 @@ public unsafe partial class VulkanRenderer
             bool alphaToCoverageEnabled = Renderer.GetAlphaToCoverageEnabled() && rasterizationSamples != SampleCountFlags.Count1Bit;
 
             XRRenderPipelineInstance? currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-            XRCamera? snapshotCamera = RuntimeEngine.Rendering.State.RenderingCamera
-                ?? currentPipeline?.RenderState.RenderingCamera
-                ?? currentPipeline?.RenderState.SceneCamera
-                ?? currentPipeline?.LastRenderingCamera
-                ?? currentPipeline?.LastSceneCamera;
-            XRCamera? snapshotRightEyeCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera
-                ?? currentPipeline?.RenderState.StereoRightEyeCamera;
+            bool explicitCameraScope = RuntimeEngine.Rendering.State.RenderingPipelineState?.HasRenderingCameraScope == true;
+            XRCamera? snapshotCamera = explicitCameraScope
+                ? RuntimeEngine.Rendering.State.RenderingCamera
+                : RuntimeEngine.Rendering.State.RenderingCamera
+                    ?? currentPipeline?.RenderState.RenderingCamera
+                    ?? currentPipeline?.RenderState.SceneCamera
+                    ?? currentPipeline?.LastRenderingCamera
+                    ?? currentPipeline?.LastSceneCamera;
+            XRCamera? snapshotRightEyeCamera = snapshotCamera is null
+                ? null
+                : RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera
+                    ?? currentPipeline?.RenderState.StereoRightEyeCamera;
             bool useUnjitteredProjectionSnapshot = RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
             Matrix4x4 viewMatrixSnapshot = snapshotCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
             Matrix4x4 inverseViewMatrixSnapshot = snapshotCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity;

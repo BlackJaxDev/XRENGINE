@@ -95,22 +95,29 @@ namespace XREngine.Rendering
         /// </summary>
         public bool IsLastCheckComplete { get; set; } = true;
 
-        private static readonly Stack<XRFrameBuffer> _readStack = new();
-        private static readonly Stack<XRFrameBuffer> _writeStack = new();
-        private static readonly Stack<XRFrameBuffer> _bindStack = new();
+        [ThreadStatic]
+        private static Stack<XRFrameBuffer>? _readStack;
+        [ThreadStatic]
+        private static Stack<XRFrameBuffer>? _writeStack;
+        [ThreadStatic]
+        private static Stack<XRFrameBuffer>? _bindStack;
+
+        private static Stack<XRFrameBuffer> ReadStack => _readStack ??= new();
+        private static Stack<XRFrameBuffer> WriteStack => _writeStack ??= new();
+        private static Stack<XRFrameBuffer> BindStack => _bindStack ??= new();
 
         /// <summary>
         /// The currently bound framebuffer for reading.
         /// </summary>
-        public static XRFrameBuffer? BoundForReading => _readStack.Count > 0 ? _readStack.Peek() : null;
+        public static XRFrameBuffer? BoundForReading => _readStack is { Count: > 0 } stack ? stack.Peek() : null;
         /// <summary>
         /// The currently bound framebuffer for writing.
         /// </summary>
-        public static XRFrameBuffer? BoundForWriting => _writeStack.Count > 0 ? _writeStack.Peek() : null;
+        public static XRFrameBuffer? BoundForWriting => _writeStack is { Count: > 0 } stack ? stack.Peek() : null;
         /// <summary>
         /// The currently bound framebuffer for general use.
         /// </summary>
-        public static XRFrameBuffer? CurrentlyBound => _bindStack.Count > 0 ? _bindStack.Peek() : null;
+        public static XRFrameBuffer? CurrentlyBound => _bindStack is { Count: > 0 } stack ? stack.Peek() : null;
 
         public uint Width => Targets?.FirstOrDefault().Target?.Width ?? 0u;
         public uint Height => Targets?.FirstOrDefault().Target?.Height ?? 0u;
@@ -336,7 +343,7 @@ namespace XREngine.Rendering
 
         public void BindForReading()
         {
-            _readStack.Push(this);
+            ReadStack.Push(this);
             OnBindForRead();
         }
 
@@ -355,10 +362,11 @@ namespace XREngine.Rendering
             if (BoundForReading != this)
                 return;
 
-            if (_readStack.Count > 0)
+            Stack<XRFrameBuffer>? stack = _readStack;
+            if (stack is { Count: > 0 })
             {
-                _readStack.Pop();
-                if (_readStack.TryPeek(out var fbo))
+                stack.Pop();
+                if (stack.TryPeek(out var fbo))
                     fbo.OnBindForRead();
                 else
                     UnbindFromReadRequested?.Invoke();
@@ -368,7 +376,7 @@ namespace XREngine.Rendering
         }
         public void BindForWriting()
         {
-            _writeStack.Push(this);
+            WriteStack.Push(this);
             TrackFBOBandwidth();
             OnBindForWrite();
         }
@@ -417,10 +425,11 @@ namespace XREngine.Rendering
             if (BoundForWriting != this)
                 return;
 
-            if (_writeStack.Count > 0)
+            Stack<XRFrameBuffer>? stack = _writeStack;
+            if (stack is { Count: > 0 })
             {
-                _writeStack.Pop();
-                if (_writeStack.TryPeek(out var fbo))
+                stack.Pop();
+                if (stack.TryPeek(out var fbo))
                     fbo.OnBindForWrite();
                 else
                     UnbindFromWriteRequested?.Invoke();
@@ -431,7 +440,7 @@ namespace XREngine.Rendering
 
         public void Bind()
         {
-            _bindStack.Push(this);
+            BindStack.Push(this);
             OnBind();
         }
 
@@ -451,10 +460,11 @@ namespace XREngine.Rendering
             if (CurrentlyBound != this)
                 return;
 
-            if (_bindStack.Count > 0)
+            Stack<XRFrameBuffer>? stack = _bindStack;
+            if (stack is { Count: > 0 })
             {
-                _bindStack.Pop();
-                if (_bindStack.TryPeek(out var fbo))
+                stack.Pop();
+                if (stack.TryPeek(out var fbo))
                     fbo.OnBind();
                 else
                     UnbindRequested?.Invoke();

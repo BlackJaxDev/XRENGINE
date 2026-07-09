@@ -520,9 +520,9 @@ public sealed class AlphaToCoveragePhase2Tests
     public void ViewportResize_EvictsPostProcessSourceChain_AndRequestsRenderRecheck()
     {
         string instanceSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/XRRenderPipelineInstance.cs").Replace("\r\n", "\n");
-        instanceSource.ShouldContain("case DefaultRenderPipeline pipeline:");
-        instanceSource.ShouldContain("pipeline.HandleViewportResized(this, width, height);");
-        instanceSource.ShouldContain("case DefaultRenderPipeline2 pipeline:");
+        instanceSource.ShouldContain("public void ViewportResized(int width, int height, XRViewport? viewport)");
+        instanceSource.ShouldContain("_pipeline?.HandleViewportResized(this, width, height, viewport);");
+        instanceSource.ShouldContain("public void InternalResolutionResized(int internalWidth, int internalHeight, XRViewport? viewport)");
 
         string helperSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/RenderPipelineAntiAliasingResources.cs").Replace("\r\n", "\n");
         helperSource.ShouldContain("internal static void InvalidateViewportResizeResources(XRRenderPipelineInstance instance)");
@@ -536,13 +536,13 @@ public sealed class AlphaToCoveragePhase2Tests
         helperSource.ShouldContain("PostProcessOutputFBOName");
         helperSource.ShouldContain("FxaaFBOName");
 
-        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        pipelineSource.ShouldContain("internal void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        pipelineSource.ShouldContain("internal override void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height, XRViewport? viewport = null)");
         pipelineSource.ShouldContain("RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);");
         pipelineSource.ShouldContain("RequestRenderStateRecheck(resetCircuitBreaker: true);");
 
-        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
-        pipeline2Source.ShouldContain("internal void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)");
+        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        pipeline2Source.ShouldContain("internal override void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height, XRViewport? viewport = null)");
         pipeline2Source.ShouldContain("RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);");
         pipeline2Source.ShouldContain("RequestRenderStateRecheck(resetCircuitBreaker: true);");
     }

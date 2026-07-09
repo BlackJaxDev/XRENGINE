@@ -252,6 +252,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             int commandChainSecondaryCount = InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease();
+            MarkOpenXrPrimaryCommandBufferVariantsDirty();
             MarkCommandBuffersDirty();
 
             Debug.VulkanEvery(

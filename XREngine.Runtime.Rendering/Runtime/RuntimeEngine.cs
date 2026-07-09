@@ -2109,8 +2109,16 @@ internal static partial class RuntimeEngine
             public static bool IsMirrorPass => StateData.IsMirrorPass;
             public static bool IsReflectedMirrorPass => (MirrorPassIndex & 1) == 1;
             public static bool IsMainPass => !IsMirrorPass && !IsSceneCapturePass && !IsLightProbePass;
-            public static bool ReverseWinding { get; internal set; }
-            public static bool ReverseCulling { get; internal set; }
+            public static bool ReverseWinding
+            {
+                get => StateData.ReverseWinding;
+                internal set => StateData.ReverseWinding = value;
+            }
+            public static bool ReverseCulling
+            {
+                get => StateData.ReverseCulling;
+                internal set => StateData.ReverseCulling = value;
+            }
             public static bool HasOvrMultiViewExtension { get; internal set; }
             public static bool SupportsOpenGLLayeredFramebuffers { get; internal set; }
             public static bool SupportsOpenGLGeometryShaderLayeredRendering { get; internal set; }
@@ -2157,7 +2165,7 @@ internal static partial class RuntimeEngine
             public static IDisposable PushTransformId(uint transformId) => StateData.PushTransformId(transformId);
             public static IDisposable? PushRenderingPipeline(XRRenderPipelineInstance pipeline) => Rendering.PushRenderingPipeline(pipeline);
             public static IDisposable? PushRenderingPipelineOverride(XRRenderPipelineInstance? pipeline)
-                => pipeline is null ? DisposableAction.Empty : Rendering.PushRenderingPipelineOverride(pipeline);
+                => Rendering.PushRenderingPipelineOverride(pipeline);
             public static void PushMirrorPass() => StateData.PushMirrorPass();
             public static void PopMirrorPass() => StateData.PopMirrorPass();
             internal static void BeginRenderFrame() => StateData.BeginRenderFrame();
@@ -2242,20 +2250,53 @@ internal static partial class RuntimeEngine
 
         public sealed class RuntimeRenderingState
         {
-            private readonly Stack<int> _renderGraphPasses = new();
-            private readonly Stack<XRCamera?> _cameraOverrides = new();
-            private readonly Stack<uint> _transformIds = new();
-            private readonly Stack<int> _mirrorPasses = new();
+            [ThreadStatic]
+            private static Stack<int>? t_renderGraphPasses;
+            [ThreadStatic]
+            private static Stack<XRCamera?>? t_cameraOverrides;
+            [ThreadStatic]
+            private static Stack<uint>? t_transformIds;
+            [ThreadStatic]
+            private static Stack<int>? t_mirrorPasses;
+            [ThreadStatic]
+            private static Stack<MirrorPassState>? t_mirrorPassStates;
+            [ThreadStatic]
+            private static bool t_isSceneCapturePass;
+            [ThreadStatic]
+            private static bool t_isLightProbePass;
+            [ThreadStatic]
+            private static bool t_reverseWinding;
+            [ThreadStatic]
+            private static bool t_reverseCulling;
+
+            private static Stack<int> RenderGraphPasses => t_renderGraphPasses ??= new();
+            private static Stack<XRCamera?> CameraOverrides => t_cameraOverrides ??= new();
+            private static Stack<uint> TransformIds => t_transformIds ??= new();
+            private static Stack<int> MirrorPasses => t_mirrorPasses ??= new();
+            private static Stack<MirrorPassState> MirrorPassStates => t_mirrorPassStates ??= new();
+
             private bool _isNvidia;
             private bool _isIntel;
             private bool _isVulkan;
+            private readonly record struct MirrorPassState(bool IsSceneCapturePass, bool ReverseCulling);
 
             public ulong RenderFrameId => RuntimeRenderingHostServices.Current.CurrentRenderFrameId;
             public IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => RuntimeRenderingHostServices.Current.ActiveRenderCommandExecutionState;
             public XRRenderPipelineInstance? CurrentRenderingPipeline
-                => PipelineOverrideStack.Count != 0
-                    ? PipelineOverrideStack.Peek()
-                    : RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance ?? (PipelineStack.Count != 0 ? PipelineStack.Peek() : null);
+            {
+                get
+                {
+                    if (t_pipelineOverrideStack is { Count: > 0 } overrideStack)
+                        return overrideStack.Peek();
+
+                    if (t_pipelineStack is { Count: > 0 } pipelineStack)
+                        return pipelineStack.Peek();
+
+                    return RuntimeRenderingHostServices.Current.IsRenderThread
+                        ? RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance
+                        : null;
+                }
+            }
             public XRRenderPipelineInstance.RenderingState? RenderingPipelineState => CurrentRenderingPipeline?.RenderState;
             public XRViewport? RenderingViewport => CurrentRenderingPipeline?.RenderState.WindowViewport ?? CurrentRenderingPipeline?.LastWindowViewport;
             public IRuntimeRenderWorld? RenderingWorld => RenderingViewport?.World;
@@ -2273,25 +2314,34 @@ internal static partial class RuntimeEngine
             }
             public XRCamera? RenderingCameraOverride
             {
-                get => _cameraOverrides.Count == 0 ? null : _cameraOverrides.Peek();
+                get => t_cameraOverrides is { Count: > 0 } stack ? stack.Peek() : null;
                 set
                 {
+                    Stack<XRCamera?> stack = CameraOverrides;
                     if (value is null)
                     {
-                        if (_cameraOverrides.Count != 0)
-                            _cameraOverrides.Pop();
+                        if (stack.Count != 0)
+                            stack.Pop();
                     }
                     else
                     {
-                        _cameraOverrides.Push(value);
+                        stack.Push(value);
                     }
                 }
             }
             public BoundingRectangle RenderArea => RenderingPipelineState?.CurrentRenderRegion ?? BoundingRectangle.Empty;
             public float DefaultDepthClearValue => 1.0f;
             public bool IsShadowPass => CurrentRenderingPipeline?.RenderState.ShadowPass ?? RuntimeRenderingHostServices.Current.IsShadowPass;
-            public bool IsSceneCapturePass { get; set; }
-            public bool IsLightProbePass { get; set; }
+            public bool IsSceneCapturePass
+            {
+                get => t_isSceneCapturePass;
+                set => t_isSceneCapturePass = value;
+            }
+            public bool IsLightProbePass
+            {
+                get => t_isLightProbePass;
+                set => t_isLightProbePass = value;
+            }
             public bool IsNVIDIA
             {
                 get => RuntimeRenderingHostServices.Current.IsNvidia || _isNvidia;
@@ -2308,9 +2358,20 @@ internal static partial class RuntimeEngine
                 internal set => _isVulkan = value;
             }
             public bool IsMirrorPass => MirrorPassIndex > 0;
-            public int MirrorPassIndex => _mirrorPasses.Count == 0 ? 0 : _mirrorPasses.Peek();
-            public int CurrentRenderGraphPassIndex => _renderGraphPasses.Count == 0 ? int.MinValue : _renderGraphPasses.Peek();
-            public uint CurrentTransformId => _transformIds.Count == 0 ? 0u : _transformIds.Peek();
+            public bool IsReflectedMirrorPass => (MirrorPassIndex & 1) == 1;
+            public int MirrorPassIndex => t_mirrorPasses is { Count: > 0 } stack ? stack.Peek() : 0;
+            public int CurrentRenderGraphPassIndex => t_renderGraphPasses is { Count: > 0 } stack ? stack.Peek() : int.MinValue;
+            public uint CurrentTransformId => t_transformIds is { Count: > 0 } stack ? stack.Peek() : 0u;
+            public bool ReverseWinding
+            {
+                get => t_reverseWinding;
+                internal set => t_reverseWinding = value;
+            }
+            public bool ReverseCulling
+            {
+                get => t_reverseCulling;
+                internal set => t_reverseCulling = value;
+            }
 
             public void BeginRenderFrame()
             {
@@ -2319,29 +2380,69 @@ internal static partial class RuntimeEngine
 
             public IDisposable PushRenderGraphPassIndex(int passIndex)
             {
-                _renderGraphPasses.Push(passIndex);
-                return new DisposableAction(() => _renderGraphPasses.Pop());
+                Stack<int> stack = RenderGraphPasses;
+                stack.Push(passIndex);
+                return new DisposableAction(() => stack.Pop());
             }
 
             public IDisposable PushTransformId(uint transformId)
             {
-                _transformIds.Push(transformId);
-                return new DisposableAction(() => _transformIds.Pop());
+                Stack<uint> stack = TransformIds;
+                stack.Push(transformId);
+                return new DisposableAction(() => stack.Pop());
             }
 
             public IDisposable PushMirrorPass(int mirrorPassIndex)
             {
-                _mirrorPasses.Push(mirrorPassIndex);
-                return new DisposableAction(() => _mirrorPasses.Pop());
+                Stack<int> stack = MirrorPasses;
+                PushMirrorPassState();
+                stack.Push(mirrorPassIndex);
+                ApplyActiveMirrorPassState();
+                return new DisposableAction(() =>
+                {
+                    if (stack.Count != 0)
+                        stack.Pop();
+                    RestoreMirrorPassState();
+                });
             }
 
             public void PushMirrorPass()
-                => _mirrorPasses.Push(MirrorPassIndex + 1);
+            {
+                PushMirrorPassState();
+                MirrorPasses.Push(MirrorPassIndex + 1);
+                ApplyActiveMirrorPassState();
+            }
 
             public void PopMirrorPass()
             {
-                if (_mirrorPasses.Count != 0)
-                    _mirrorPasses.Pop();
+                if (t_mirrorPasses is { Count: > 0 } stack)
+                    stack.Pop();
+                RestoreMirrorPassState();
+            }
+
+            private void PushMirrorPassState()
+                => MirrorPassStates.Push(new(IsSceneCapturePass, ReverseCulling));
+
+            private void ApplyActiveMirrorPassState()
+            {
+                IsSceneCapturePass = true;
+                ReverseCulling = IsReflectedMirrorPass;
+            }
+
+            private void RestoreMirrorPassState()
+            {
+                MirrorPassState previous = t_mirrorPassStates is { Count: > 0 } stack
+                    ? stack.Pop()
+                    : default;
+
+                if (IsMirrorPass)
+                {
+                    ApplyActiveMirrorPassState();
+                    return;
+                }
+
+                IsSceneCapturePass = previous.IsSceneCapturePass;
+                ReverseCulling = previous.ReverseCulling;
             }
         }
     }

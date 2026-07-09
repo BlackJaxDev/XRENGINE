@@ -364,6 +364,7 @@ public sealed partial class XRRenderPipelineInstance
 
         public XRCamera? RenderingCamera
             => _renderingCameras.TryPeek(out var c) ? c : null;
+        public bool HasRenderingCameraScope => _renderingCameras.Count > 0;
         private readonly Stack<XRCamera?> _renderingCameras = new();
         public StateObject PushRenderingCamera(XRCamera? camera)
         {
@@ -394,6 +395,8 @@ public sealed partial class XRRenderPipelineInstance
             _renderRegionStack.Pop();
             if (_renderRegionStack.Count > 0)
                 AbstractRenderer.Current?.SetRenderArea(_renderRegionStack.Peek());
+            else
+                AbstractRenderer.Current?.ClearRenderArea();
         }
 
         public BoundingRectangle CurrentCropRegion
@@ -447,6 +450,8 @@ public sealed partial class XRRenderPipelineInstance
 
             if (_renderRegionStack.TryPeek(out BoundingRectangle renderArea))
                 AbstractRenderer.Current?.SetRenderArea(renderArea);
+            else
+                AbstractRenderer.Current?.ClearRenderArea();
 
             if (_cropRegionStack.TryPeek(out BoundingRectangle cropArea))
             {

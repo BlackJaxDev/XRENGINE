@@ -337,21 +337,38 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
+            uint candidates = VisibleCommandCount;
+
+            if (candidates == 0u)
+            {
+                HiZStageStats.Record("Exit.NoCandidates", 0.0);
+                RecordOcclusionTiming();
+                return;
+            }
+
+            if (ShouldUseExternalVrSharedVisibilityPassFilter(camera))
+            {
+                // External OpenXR eyes consume a combined stereo visibility set. A later
+                // per-eye occlusion refine would remove commands using one eye's depth and
+                // temporal state, making the shared set view-dependent again.
+                HiZStageStats.Record("Exit.ExternalVrSharedVisibility", 0.0);
+                RecordOcclusionFrameStats(candidates, 0u, 0u, 0u);
+                if (mode == EOcclusionCullingMode.GpuHiZ)
+                {
+                    XREngine.Rendering.Occlusion.OcclusionTelemetry.RecordGpuHiZSkipped(
+                        XREngine.Rendering.Occlusion.EGpuHiZSkipReason.ExternalVrSharedVisibility);
+                }
+
+                RecordOcclusionTiming();
+                return;
+            }
+
             // Pass-awareness: keep shadow/depth contributors out of occlusion hiding to avoid missing required passes.
             if (RuntimeEngine.Rendering.State.IsShadowPass ||
                 (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState?.UseDepthNormalMaterialVariants ?? false))
             {
                 HiZStageStats.Record("Exit.ShadowOrDepthPass", 0.0);
                 RecordOcclusionFrameStats(0u, 0u, 0u, 0u);
-                RecordOcclusionTiming();
-                return;
-            }
-
-            uint candidates = VisibleCommandCount;
-
-            if (candidates == 0u)
-            {
-                HiZStageStats.Record("Exit.NoCandidates", 0.0);
                 RecordOcclusionTiming();
                 return;
             }

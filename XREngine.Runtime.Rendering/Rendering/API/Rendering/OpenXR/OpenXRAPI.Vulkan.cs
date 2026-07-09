@@ -462,7 +462,7 @@ public unsafe partial class OpenXRAPI
             return;
         }
 
-        EnsureVulkanOpenXrPreviewTargets(renderer, width, height);
+        EnsureOpenXrPreviewTargets(renderer, width, height);
     }
 
     private void LogOpenXrViewRenderModeResolution(
@@ -886,6 +886,7 @@ public unsafe partial class OpenXRAPI
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
             SetRenderPipelineFromCamera = false,
+            AllowAutomaticInternalResolution = false,
             RendersToExternalSwapchainTarget = true
         };
 
@@ -894,6 +895,7 @@ public unsafe partial class OpenXRAPI
         // as an external target so resource generation catches up synchronously
         // before the array layers are published to acquired swapchain images.
         _openXrStereoViewport.RendersToExternalSwapchainTarget = true;
+        _openXrStereoViewport.AllowAutomaticInternalResolution = false;
         _openXrStereoViewport.CullWithFrustum = RuntimeEngine.Rendering.Settings.OpenXrCullWithFrustum;
         _openXrStereoViewport.SetFullScreen();
         if (_openXrStereoViewport.Width != (int)width || _openXrStereoViewport.Height != (int)height)

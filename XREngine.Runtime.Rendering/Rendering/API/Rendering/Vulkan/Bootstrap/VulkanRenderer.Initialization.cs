@@ -799,12 +799,12 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void SetReadBuffer(EReadBufferMode mode)
         {
-            _readBufferMode = mode;
+            ActiveReadBufferMode = mode;
         }
         public override void SetReadBuffer(XRFrameBuffer? fbo, EReadBufferMode mode)
         {
-            _boundReadFrameBuffer = fbo;
-            _readBufferMode = mode;
+            ActiveBoundReadFrameBuffer = fbo;
+            ActiveReadBufferMode = mode;
 
             if (fbo is not null)
             {
@@ -864,20 +864,21 @@ namespace XREngine.Rendering.Vulkan
             switch (fboTarget)
             {
                 case EFramebufferTarget.Framebuffer:
-                    _boundReadFrameBuffer = fbo;
-                    _boundDrawFrameBuffer = fbo;
+                    ActiveBoundReadFrameBuffer = fbo;
+                    ActiveBoundDrawFrameBuffer = fbo;
                     break;
                 case EFramebufferTarget.ReadFramebuffer:
-                    _boundReadFrameBuffer = fbo;
+                    ActiveBoundReadFrameBuffer = fbo;
                     break;
                 case EFramebufferTarget.DrawFramebuffer:
-                    _boundDrawFrameBuffer = fbo;
+                    ActiveBoundDrawFrameBuffer = fbo;
                     break;
                 default:
                     return;
             }
 
-            if (_boundDrawFrameBuffer is null)
+            XRFrameBuffer? boundDrawFrameBuffer = ActiveBoundDrawFrameBuffer;
+            if (boundDrawFrameBuffer is null)
             {
                 if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
                     ActiveState.SetCurrentTargetExtent(externalExtent);
@@ -886,7 +887,7 @@ namespace XREngine.Rendering.Vulkan
             }
             else
             {
-                ActiveState.SetCurrentTargetExtent(new Extent2D(Math.Max(_boundDrawFrameBuffer.Width, 1u), Math.Max(_boundDrawFrameBuffer.Height, 1u)));
+                ActiveState.SetCurrentTargetExtent(new Extent2D(Math.Max(boundDrawFrameBuffer.Width, 1u), Math.Max(boundDrawFrameBuffer.Height, 1u)));
             }
 
             if (fbo is not null)

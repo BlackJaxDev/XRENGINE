@@ -16,6 +16,9 @@ public unsafe partial class VulkanRenderer
 {
     private const int OpenXrEyeResourcePlannerStateCount = 2;
     private const uint OpenXrExternalSwapchainTargetImageIndex = 0;
+    private const string OpenXrLeftExternalSwapchainTargetName = "<openxr-left-swapchain>";
+    private const string OpenXrRightExternalSwapchainTargetName = "<openxr-right-swapchain>";
+    private const string OpenXrExternalSwapchainTargetName = "<openxr-swapchain>";
     private const ulong MinDesktopFramesBeforeOpenXrRuntimeSessionStart = 4;
     private const double OpenXrVulkanAllocatorPressureDeferRatio = 0.9;
     private const long OpenXrVulkanAllocatorPressureReserveBytes = 512L * 1024L * 1024L;
@@ -190,6 +193,7 @@ public unsafe partial class VulkanRenderer
         Image SourceImage,
         Format SourceFormat,
         Extent2D SourceExtent,
+        ImageLayout SourceOldLayout,
         IVkImageDescriptorSource DestinationSource,
         Image DestinationImage,
         Extent2D DestinationExtent,
@@ -205,8 +209,8 @@ public unsafe partial class VulkanRenderer
     private readonly object _openXrEyeCommandPoolsLock = new();
     private readonly List<VulkanImportedTexturePendingUpload>[] _openXrEyeRecordedTextureUploadsForSubmit = [new(), new()];
     private readonly List<VulkanImportedTexturePendingUpload> _openXrRecordedTextureUploadsForSubmit = new();
-    private OpenXrDepthTarget _openXrCachedDepthTarget;
-    private Extent2D _openXrCachedDepthExtent;
+    private readonly OpenXrDepthTarget[] _openXrCachedDepthTargets = new OpenXrDepthTarget[OpenXrEyeResourcePlannerStateCount];
+    private readonly Extent2D[] _openXrCachedDepthExtents = new Extent2D[OpenXrEyeResourcePlannerStateCount];
     private int _openXrExternalSwapchainRenderDepth;
     private BoundingRectangle _openXrExternalSwapchainTargetRegion;
     [ThreadStatic]
@@ -215,6 +219,10 @@ public unsafe partial class VulkanRenderer
     private static int _threadOpenXrExternalSwapchainRenderDepth;
     [ThreadStatic]
     private static BoundingRectangle _threadOpenXrExternalSwapchainTargetRegion;
+    [ThreadStatic]
+    private static int _threadOpenXrExternalSwapchainTargetIdentity;
+    [ThreadStatic]
+    private static string? _threadOpenXrExternalSwapchainTargetName;
     private int _openXrExternalSwapchainPrewarmDepth;
     private int _synchronousResourceUploadBlockDepth;
     [ThreadStatic]
@@ -323,7 +331,26 @@ public unsafe partial class VulkanRenderer
         return false;
     }
 
-    internal IDisposable EnterOpenXrExternalSwapchainRenderScope(uint width, uint height)
+    private bool TryGetExternalSwapchainTargetIdentity(out int targetIdentity, out string? targetName)
+    {
+        if (IsThreadOpenXrExternalSwapchainTarget &&
+            _threadOpenXrExternalSwapchainTargetIdentity != 0)
+        {
+            targetIdentity = _threadOpenXrExternalSwapchainTargetIdentity;
+            targetName = _threadOpenXrExternalSwapchainTargetName;
+            return true;
+        }
+
+        targetIdentity = 0;
+        targetName = null;
+        return false;
+    }
+
+    internal IDisposable EnterOpenXrExternalSwapchainRenderScope(
+        uint width,
+        uint height,
+        int targetIdentity = 0,
+        string? targetName = null)
     {
         if (width == 0 || height == 0)
             throw new InvalidOperationException("OpenXR external swapchain render scope requires a non-zero target extent.");
@@ -337,8 +364,33 @@ public unsafe partial class VulkanRenderer
             (int)width,
             (int)height);
 
-        return new OpenXrExternalSwapchainRenderScope(this, region);
+        return new OpenXrExternalSwapchainRenderScope(this, region, targetIdentity, targetName);
     }
+
+    private static int BuildOpenXrExternalSwapchainTargetIdentity(uint openXrViewIndex, uint openXrImageIndex, Image image)
+    {
+        unchecked
+        {
+            ulong imageHandle = image.Handle;
+            int hash = 0x4F585254;
+            hash = (hash * 397) ^ (int)openXrViewIndex;
+            hash = (hash * 397) ^ (int)openXrImageIndex;
+            hash = (hash * 397) ^ (int)imageHandle;
+            hash = (hash * 397) ^ (int)(imageHandle >> 32);
+            return hash == 0 ? 1 : hash;
+        }
+    }
+
+    private static uint ResolveOpenXrExternalSwapchainViewIndex(int resourcePlannerStateIndex)
+        => resourcePlannerStateIndex <= 0 ? 0u : (uint)resourcePlannerStateIndex;
+
+    private static string ResolveOpenXrExternalSwapchainTargetName(uint openXrViewIndex)
+        => openXrViewIndex switch
+        {
+            0u => OpenXrLeftExternalSwapchainTargetName,
+            1u => OpenXrRightExternalSwapchainTargetName,
+            _ => OpenXrExternalSwapchainTargetName,
+        };
 
     internal bool TryRenderOpenXrEyeSwapchain(
         Image image,
@@ -563,9 +615,15 @@ public unsafe partial class VulkanRenderer
         bool drainedFrameOps = false;
 
         int desktopSwapchainImageCount = swapChainImages?.Length ?? 0;
+        int externalTargetIdentity = BuildOpenXrExternalSwapchainTargetIdentity(
+            request.OpenXrViewIndex,
+            request.OpenXrImageIndex,
+            request.Image);
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
             request.Extent.Width,
-            request.Extent.Height);
+            request.Extent.Height,
+            externalTargetIdentity,
+            ResolveOpenXrExternalSwapchainTargetName(request.OpenXrViewIndex));
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(desktopSwapchainImageCount);
         uint recordImageIndex = ResolveOpenXrRecordImageIndex(
             request.ResourcePlannerStateIndex,
@@ -600,7 +658,7 @@ public unsafe partial class VulkanRenderer
             using (RuntimeRenderingHostServices.Current.StartProfileScope("OpenXR.Vulkan.RecordEye.PrepareTargets"))
             {
                 ImageView openXrImageView = GetOrCreateOpenXrSwapchainImageView(request.Image, request.Format);
-                OpenXrDepthTarget depthTarget = GetOrCreateOpenXrDepthTarget(request.Extent);
+                OpenXrDepthTarget depthTarget = GetOrCreateOpenXrDepthTarget(request.OpenXrViewIndex, request.Extent);
 
                 targetContext = CreateOpenXrEyeRenderTargetContext(
                     request,
@@ -638,6 +696,7 @@ public unsafe partial class VulkanRenderer
                         "[OpenXR] Vulkan eye rendering produced no frame operations.");
                     return false;
                 }
+                ops = NormalizeOpenXrExternalSwapchainFrameOps(ops, request.Extent);
                 ValidateOpenXrExternalFrameOpContexts(
                     ops,
                     request.Extent,
@@ -704,7 +763,7 @@ public unsafe partial class VulkanRenderer
                 prepared = new OpenXrPreparedEyeCommandBufferInput(
                     request,
                     targetContext,
-                    ops,
+                    CloneFrameOpsForPreparedOpenXrEye(ops),
                     plannerContext,
                     frameOpsSignature,
                     plannerRevision,
@@ -752,7 +811,12 @@ public unsafe partial class VulkanRenderer
 
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
             targetContext.Extent.Width,
-            targetContext.Extent.Height);
+            targetContext.Extent.Height,
+            BuildOpenXrExternalSwapchainTargetIdentity(
+                targetContext.OpenXrViewIndex,
+                targetContext.OpenXrImageIndex,
+                targetContext.Image),
+            ResolveOpenXrExternalSwapchainTargetName(targetContext.OpenXrViewIndex));
         using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
             CreateOpenXrEyeRenderStateTracker(in targetContext));
 
@@ -1964,7 +2028,12 @@ public unsafe partial class VulkanRenderer
         using IDisposable? externalScope = request.RendersExternalSwapchainTarget
             ? EnterOpenXrExternalSwapchainRenderScope(
                 request.Extent.Width,
-                request.Extent.Height)
+                request.Extent.Height,
+                BuildOpenXrExternalSwapchainTargetIdentity(
+                    request.OpenXrViewIndex,
+                    request.OpenXrImageIndex,
+                    default),
+                ResolveOpenXrExternalSwapchainTargetName(request.OpenXrViewIndex))
             : null;
 
         try
@@ -1992,6 +2061,7 @@ public unsafe partial class VulkanRenderer
                 }
                 if (request.RendersExternalSwapchainTarget)
                 {
+                    ops = NormalizeOpenXrExternalSwapchainFrameOps(ops, request.Extent);
                     ValidateOpenXrExternalFrameOpContexts(
                         ops,
                         request.Extent,
@@ -2496,7 +2566,18 @@ public unsafe partial class VulkanRenderer
     {
         try
         {
-            if (ShouldDeferOpenXrEyePreviewCopyWork(out string resourceWorkReason))
+            var request = new OpenXrEyePreviewCopyRequest(
+                sourceImage,
+                sourceFormat,
+                sourceExtent,
+                destinationTexture,
+                destinationLabel,
+                flipY);
+
+            bool prepared = false;
+            OpenXrEyePreviewCopyPlan plan = default;
+            if (ShouldDeferOpenXrEyePreviewCopyWork(out string resourceWorkReason) &&
+                !(prepared = TryPrepareOpenXrEyeSwapchainPreviewCopy(in request, allowDestinationGeneration: false, out plan)))
             {
                 Debug.VulkanWarningEvery(
                     $"OpenXR.Vulkan.Mirror.DeferCopy.{GetHashCode()}.{destinationLabel}",
@@ -2507,15 +2588,11 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
-            var request = new OpenXrEyePreviewCopyRequest(
-                sourceImage,
-                sourceFormat,
-                sourceExtent,
-                destinationTexture,
-                destinationLabel,
-                flipY);
-            if (!TryPrepareOpenXrEyeSwapchainPreviewCopy(in request, out OpenXrEyePreviewCopyPlan plan))
+            if (!prepared &&
+                !TryPrepareOpenXrEyeSwapchainPreviewCopy(in request, allowDestinationGeneration: true, out plan))
+            {
                 return false;
+            }
 
             using CommandScope scope = NewCommandScope();
             RecordOpenXrEyeSwapchainPreviewCopy(scope.CommandBuffer, in plan);
@@ -2536,6 +2613,7 @@ public unsafe partial class VulkanRenderer
 
     private bool TryPrepareOpenXrEyeSwapchainPreviewCopy(
         in OpenXrEyePreviewCopyRequest request,
+        bool allowDestinationGeneration,
         out OpenXrEyePreviewCopyPlan plan)
     {
         plan = default;
@@ -2547,7 +2625,20 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        if (GetOrCreateAPIRenderObject(request.DestinationTexture, generateNow: true) is not IVkImageDescriptorSource destinationSource)
+        XRTexture2D destinationTexture = request.DestinationTexture;
+        AbstractRenderAPIObject? destinationObject;
+        if (allowDestinationGeneration)
+        {
+            destinationObject = GetOrCreateAPIRenderObject(destinationTexture, generateNow: true);
+        }
+        else if (!TryGetAPIRenderObject(destinationTexture, out destinationObject) ||
+                 destinationObject is null ||
+                 !destinationObject.IsGenerated)
+        {
+            return false;
+        }
+
+        if (destinationObject is not IVkImageDescriptorSource destinationSource)
             return false;
 
         if (!destinationSource.TryEnsureDescriptorReadyForUse(
@@ -2574,6 +2665,7 @@ public unsafe partial class VulkanRenderer
             request.SourceImage,
             request.SourceFormat,
             request.SourceExtent,
+            ResolveOpenXrSwapchainImageTrackedLayout(request.SourceImage),
             destinationSource,
             destinationImage,
             destinationExtent,
@@ -2592,7 +2684,7 @@ public unsafe partial class VulkanRenderer
             commandBuffer,
             plan.SourceImage,
             plan.SourceFormat,
-            ImageLayout.ColorAttachmentOptimal,
+            plan.SourceOldLayout,
             ImageLayout.TransferSrcOptimal,
             ImageAspectFlags.ColorBit);
 
@@ -3917,9 +4009,15 @@ public unsafe partial class VulkanRenderer
 
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(swapChainImages?.Length ?? 0);
 
+        uint prewarmViewIndex = ResolveOpenXrExternalSwapchainViewIndex(resourcePlannerStateIndex);
         using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
             extent.Width,
-            extent.Height);
+            extent.Height,
+            BuildOpenXrExternalSwapchainTargetIdentity(
+                prewarmViewIndex,
+                OpenXrExternalSwapchainTargetImageIndex,
+                default),
+            ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex));
         using ThreadRenderStateScope renderStateScope = EnterThreadRenderStateScope(
             CreateOpenXrPrewarmRenderStateTracker(extent));
         _openXrExternalSwapchainPrewarmDepth++;
@@ -3946,6 +4044,7 @@ public unsafe partial class VulkanRenderer
                 ops = FilterDiagnosticSkippedFrameOps(ops);
                 if (ops.Length == 0)
                     return;
+                ops = NormalizeOpenXrExternalSwapchainFrameOps(ops, extent);
                 ValidateOpenXrExternalFrameOpContexts(
                     ops,
                     extent,
@@ -4028,7 +4127,15 @@ public unsafe partial class VulkanRenderer
             return;
         }
 
-        using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(extent.Width, extent.Height);
+        uint prewarmViewIndex = ResolveOpenXrExternalSwapchainViewIndex(resourcePlannerStateIndex);
+        using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(
+            extent.Width,
+            extent.Height,
+            BuildOpenXrExternalSwapchainTargetIdentity(
+                prewarmViewIndex,
+                OpenXrExternalSwapchainTargetImageIndex,
+                default),
+            ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex));
         _openXrExternalSwapchainPrewarmDepth++;
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(swapChainImages?.Length ?? 0);
 
@@ -4054,6 +4161,7 @@ public unsafe partial class VulkanRenderer
                 ops = FilterDiagnosticSkippedFrameOps(ops);
                 if (ops.Length == 0)
                     return;
+                ops = NormalizeOpenXrExternalSwapchainFrameOps(ops, extent);
                 ValidateOpenXrExternalFrameOpContexts(
                     ops,
                     extent,
@@ -4121,6 +4229,42 @@ public unsafe partial class VulkanRenderer
         => ex is InvalidOperationException &&
            ex.Message.StartsWith("OpenXR ", StringComparison.Ordinal);
 
+    private static FrameOp[] NormalizeOpenXrExternalSwapchainFrameOps(FrameOp[] ops, in Extent2D extent)
+    {
+        if (extent.Width == 0 || extent.Height == 0)
+            return ops;
+
+        FrameOp[]? normalized = null;
+        for (int i = 0; i < ops.Length; i++)
+        {
+            if (ops[i] is not BlitOp { OutFbo: null } blitOp)
+                continue;
+
+            if (IsFullOpenXrBlitDestination(blitOp, extent))
+                continue;
+
+            normalized ??= (FrameOp[])ops.Clone();
+            normalized[i] = blitOp with
+            {
+                OutX = 0,
+                OutY = 0,
+                OutW = extent.Width,
+                OutH = extent.Height
+            };
+        }
+
+        return normalized ?? ops;
+    }
+
+    private static FrameOp[] CloneFrameOpsForPreparedOpenXrEye(FrameOp[] ops)
+    {
+        // CaptureFrameOpsExcludingTextureUploads uses a thread-local scratch array keyed by
+        // op count. Parallel eye recording prepares both eyes before either one records, so
+        // the second eye can otherwise overwrite the first prepared input when their op
+        // counts match.
+        return ops.Length == 0 ? ops : (FrameOp[])ops.Clone();
+    }
+
     private static void ValidateOpenXrExternalFrameOpContexts(
         FrameOp[] ops,
         in Extent2D extent,
@@ -4184,8 +4328,39 @@ public unsafe partial class VulkanRenderer
                     openXrViewIndex,
                     phase);
                 break;
+            case BlitOp { OutFbo: null } blitOp:
+                ValidateOpenXrExternalSwapchainWriterBlitState(
+                    blitOp,
+                    opIndex,
+                    extent,
+                    openXrViewIndex,
+                    phase);
+                break;
         }
     }
+
+    private static void ValidateOpenXrExternalSwapchainWriterBlitState(
+        BlitOp blitOp,
+        int opIndex,
+        in Extent2D extent,
+        uint openXrViewIndex,
+        string phase)
+    {
+        if (IsFullOpenXrBlitDestination(blitOp, extent))
+            return;
+
+        throw new InvalidOperationException(
+            $"OpenXR {phase} eye {openXrViewIndex} captured a swapchain blit that does not cover the full eye target. " +
+            $"OpIndex={opIndex}; Op={nameof(BlitOp)}; Expected={extent.Width}x{extent.Height}; " +
+            $"Destination=({blitOp.OutX},{blitOp.OutY},{blitOp.OutW}x{blitOp.OutH}); " +
+            $"ExpectedDestination=(0,0,{extent.Width}x{extent.Height}).");
+    }
+
+    private static bool IsFullOpenXrBlitDestination(BlitOp blitOp, in Extent2D extent)
+        => blitOp.OutX == 0 &&
+           blitOp.OutY == 0 &&
+           blitOp.OutW == extent.Width &&
+           blitOp.OutH == extent.Height;
 
     private static void ValidateOpenXrExternalSwapchainWriterDrawState(
         in PendingMeshDraw draw,
@@ -4602,6 +4777,26 @@ public unsafe partial class VulkanRenderer
         return layout;
     }
 
+    private ImageLayout ResolveOpenXrSwapchainImageTrackedLayout(Image image)
+    {
+        if (image.Handle == 0)
+            return ImageLayout.ColorAttachmentOptimal;
+
+        ImageSubresourceRange colorRange = new()
+        {
+            AspectMask = ImageAspectFlags.ColorBit,
+            BaseMipLevel = 0,
+            LevelCount = 1,
+            BaseArrayLayer = 0,
+            LayerCount = 1
+        };
+
+        return TryGetTrackedImageLayout(image, colorRange, out ImageLayout trackedLayout) &&
+            trackedLayout != ImageLayout.Undefined
+                ? trackedLayout
+                : ImageLayout.ColorAttachmentOptimal;
+    }
+
     private static ImageAspectFlags NormalizeOpenXrMirrorAspect(Format format, ImageAspectFlags aspect)
     {
         if (!IsDepthStencilFormat(format))
@@ -4826,17 +5021,20 @@ public unsafe partial class VulkanRenderer
         return imageView;
     }
 
-    private OpenXrDepthTarget GetOrCreateOpenXrDepthTarget(Extent2D extent)
+    private OpenXrDepthTarget GetOrCreateOpenXrDepthTarget(uint openXrViewIndex, Extent2D extent)
     {
-        if (_openXrCachedDepthTarget.Image.Handle != 0 &&
-            _openXrCachedDepthExtent.Width == extent.Width &&
-            _openXrCachedDepthExtent.Height == extent.Height)
-            return _openXrCachedDepthTarget;
+        int targetIndex = ResolveOpenXrEyeUploadPublicationBufferIndex(openXrViewIndex);
+        ref OpenXrDepthTarget cachedTarget = ref _openXrCachedDepthTargets[targetIndex];
+        ref Extent2D cachedExtent = ref _openXrCachedDepthExtents[targetIndex];
+        if (cachedTarget.Image.Handle != 0 &&
+            cachedExtent.Width == extent.Width &&
+            cachedExtent.Height == extent.Height)
+            return cachedTarget;
 
-        DestroyOpenXrDepthTarget(_openXrCachedDepthTarget);
-        _openXrCachedDepthTarget = CreateOpenXrDepthTarget(extent);
-        _openXrCachedDepthExtent = extent;
-        return _openXrCachedDepthTarget;
+        DestroyOpenXrDepthTarget(cachedTarget);
+        cachedTarget = CreateOpenXrDepthTarget(extent);
+        cachedExtent = extent;
+        return cachedTarget;
     }
 
     private OpenXrDepthTarget CreateOpenXrDepthTarget(Extent2D extent)
@@ -4944,9 +5142,12 @@ public unsafe partial class VulkanRenderer
         
         _openXrSwapchainImageViews.Clear();
 
-        DestroyOpenXrDepthTarget(_openXrCachedDepthTarget);
-        _openXrCachedDepthTarget = default;
-        _openXrCachedDepthExtent = default;
+        for (int i = 0; i < _openXrCachedDepthTargets.Length; i++)
+        {
+            DestroyOpenXrDepthTarget(_openXrCachedDepthTargets[i]);
+            _openXrCachedDepthTargets[i] = default;
+            _openXrCachedDepthExtents[i] = default;
+        }
 
     }
 
@@ -5201,12 +5402,6 @@ public unsafe partial class VulkanRenderer
         if (ImportedTextureStreamingManager.Instance.TryDescribeBlockingOpenXrEyeTextureWork(out string textureWorkReason))
         {
             reason = textureWorkReason;
-            return true;
-        }
-
-        if (TryDescribeRecentResourceAllocationFailure(out string allocationFailureReason))
-        {
-            reason = allocationFailureReason;
             return true;
         }
 

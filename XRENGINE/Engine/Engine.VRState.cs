@@ -619,9 +619,13 @@ namespace XREngine
                     return;
 
                 bool shareStereoCommands = RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures;
-                bool independentDesktopView = RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR && !shareStereoCommands;
                 if (_sharedMeshRenderCommands is not null)
-                    _sharedMeshRenderCommands.IsRenderCommandSnapshotAuthority = !independentDesktopView;
+                {
+                    // The VR stereo collection is collected and swapped on its own timer path.
+                    // Let it publish command snapshots instead of depending on a desktop view
+                    // that may cull/swap at a different point in the frame.
+                    _sharedMeshRenderCommands.IsRenderCommandSnapshotAuthority = true;
+                }
 
                 if (shareStereoCommands)
                 {

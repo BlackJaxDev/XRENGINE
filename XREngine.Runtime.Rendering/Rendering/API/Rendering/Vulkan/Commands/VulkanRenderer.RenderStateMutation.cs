@@ -158,6 +158,16 @@ public unsafe partial class VulkanRenderer
             return true;
         }
 
+        public bool ClearViewport()
+        {
+            if (!_viewportExplicitlySet)
+                return false;
+
+            _viewportExplicitlySet = false;
+            _viewportRegion = default;
+            return true;
+        }
+
         public Rect2D GetScissor(Extent2D targetExtent)
             => CroppingEnabled
                 ? CreateVulkanScissor(_scissorRegion, targetExtent)

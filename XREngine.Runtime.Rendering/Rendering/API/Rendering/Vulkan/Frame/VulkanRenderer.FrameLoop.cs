@@ -41,9 +41,6 @@ namespace XREngine.Rendering.Vulkan
         {
             ArgumentNullException.ThrowIfNull(frameBuffer);
 
-            EnsureFrameBufferRegistered(frameBuffer);
-            EnsureFrameBufferAttachmentsRegistered(frameBuffer);
-
             FrameOpContext context;
             int passIndex;
             if (TryGetLastFrameOpForTarget(frameBuffer, out FrameOp lastWriter))
@@ -59,6 +56,9 @@ namespace XREngine.Rendering.Vulkan
                     "PublishFrameBufferAttachmentsForSampling",
                     context.PassMetadata);
             }
+
+            EnsureFrameBufferRegistered(frameBuffer, context.ResourceRegistry);
+            EnsureFrameBufferAttachmentsRegistered(frameBuffer, context.ResourceRegistry);
 
             EnqueueFrameOp(new PublishFramebufferForSamplingOp(passIndex, frameBuffer, context));
         }
@@ -80,6 +80,11 @@ namespace XREngine.Rendering.Vulkan
         public override void SetRenderArea(BoundingRectangle region)
         {
             ActiveState.SetViewport(region);
+        }
+
+        public override void ClearRenderArea()
+        {
+            ActiveState.ClearViewport();
         }
 
         public override bool SetIndexedViewportScissors(

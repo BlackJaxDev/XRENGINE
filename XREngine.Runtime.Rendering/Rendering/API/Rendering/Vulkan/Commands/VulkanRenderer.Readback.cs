@@ -268,13 +268,14 @@ namespace XREngine.Rendering.Vulkan
 
         public override float GetDepth(int x, int y)
         {
-            if (_boundReadFrameBuffer is not null)
+            XRFrameBuffer? boundReadFrameBuffer = ActiveBoundReadFrameBuffer;
+            if (boundReadFrameBuffer is not null)
             {
-                x = Math.Clamp(x, 0, Math.Max((int)_boundReadFrameBuffer.Width - 1, 0));
-                y = Math.Clamp(y, 0, Math.Max((int)_boundReadFrameBuffer.Height - 1, 0));
+                x = Math.Clamp(x, 0, Math.Max((int)boundReadFrameBuffer.Width - 1, 0));
+                y = Math.Clamp(y, 0, Math.Max((int)boundReadFrameBuffer.Height - 1, 0));
 
                 if (TryResolveBlitImage(
-                        _boundReadFrameBuffer,
+                        boundReadFrameBuffer,
                         _lastPresentedImageIndex,
                         GetReadBufferMode(),
                         wantColor: false,
@@ -291,7 +292,7 @@ namespace XREngine.Rendering.Vulkan
                     "Vulkan.Readback.DepthBoundFboFailed",
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] GetDepth fallback to swapchain: unable to resolve/read bound read framebuffer '{0}'.",
-                    _boundReadFrameBuffer.Name ?? "<unnamed>");
+                    boundReadFrameBuffer.Name ?? "<unnamed>");
             }
 
             return TryReadSwapchainDepthPixel(x, y, out float depth)
@@ -669,15 +670,16 @@ namespace XREngine.Rendering.Vulkan
 
         public override void GetPixelAsync(int x, int y, bool withTransparency, Action<ColorF4> colorCallback)
         {
-            if (_boundReadFrameBuffer is not null)
+            XRFrameBuffer? boundReadFrameBuffer = ActiveBoundReadFrameBuffer;
+            if (boundReadFrameBuffer is not null)
             {
-                x = Math.Clamp(x, 0, Math.Max((int)_boundReadFrameBuffer.Width - 1, 0));
-                y = Math.Clamp(y, 0, Math.Max((int)_boundReadFrameBuffer.Height - 1, 0));
+                x = Math.Clamp(x, 0, Math.Max((int)boundReadFrameBuffer.Width - 1, 0));
+                y = Math.Clamp(y, 0, Math.Max((int)boundReadFrameBuffer.Height - 1, 0));
 
                 if (TryResolveBlitImage(
-                        _boundReadFrameBuffer,
+                        boundReadFrameBuffer,
                         _lastPresentedImageIndex,
-                        _readBufferMode,
+                        ActiveReadBufferMode,
                         wantColor: true,
                         wantDepth: false,
                         wantStencil: false,
@@ -693,7 +695,7 @@ namespace XREngine.Rendering.Vulkan
                     "Vulkan.Readback.PixelBoundFboFailed",
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] GetPixelAsync fallback to swapchain: unable to resolve/read bound read framebuffer '{0}'.",
-                    _boundReadFrameBuffer.Name ?? "<unnamed>");
+                    boundReadFrameBuffer.Name ?? "<unnamed>");
             }
 
             if (!TryReadLastWindowPresentColorPixel(x, y, out ColorF4 fallbackColor))
@@ -717,14 +719,15 @@ namespace XREngine.Rendering.Vulkan
 
         public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {
-            if (_boundReadFrameBuffer is not null)
+            XRFrameBuffer? boundReadFrameBuffer = ActiveBoundReadFrameBuffer;
+            if (boundReadFrameBuffer is not null)
             {
-                ClampReadbackRegion(region, _boundReadFrameBuffer.Width, _boundReadFrameBuffer.Height, out int fboX, out int fboY, out int fboW, out int fboH);
+                ClampReadbackRegion(region, boundReadFrameBuffer.Width, boundReadFrameBuffer.Height, out int fboX, out int fboY, out int fboW, out int fboH);
 
                 if (TryResolveBlitImage(
-                        _boundReadFrameBuffer,
+                        boundReadFrameBuffer,
                         _lastPresentedImageIndex,
-                        _readBufferMode,
+                        ActiveReadBufferMode,
                         wantColor: true,
                         wantDepth: false,
                         wantStencil: false,
@@ -760,7 +763,7 @@ namespace XREngine.Rendering.Vulkan
                     "Vulkan.Readback.ScreenshotBoundFboFailed",
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] GetScreenshotAsync fallback to swapchain: unable to resolve/read bound read framebuffer '{0}'.",
-                    _boundReadFrameBuffer.Name ?? "<unnamed>");
+                    boundReadFrameBuffer.Name ?? "<unnamed>");
             }
 
             if (!TryReadLastWindowPresentColorRegionRgba8(region, out byte[] pixels, out int w, out int h))

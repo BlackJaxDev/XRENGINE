@@ -298,10 +298,11 @@ public unsafe partial class OpenXRAPI
     private TransformBase? _openXrLocomotionRoot;
 
     // OpenXR renders each eye in a separate pipeline execution (stereoPass=false).
-    // IMPORTANT: The OpenXR eye viewports must NOT share the desktop viewport's RenderPipeline instance.
-    // Sharing a pipeline instance across viewports of different sizes can cause constant FBO/cache churn.
-    // We therefore keep an OpenXR-owned pipeline instance (non-stereo) and never reuse the desktop's.
-    private RenderPipeline? _openXrRenderPipeline;
+    // IMPORTANT: The OpenXR eye viewports must NOT share the desktop viewport's RenderPipeline instance
+    // or each other's RenderPipeline command-chain objects. The shared visibility buffer may be reused,
+    // but render command objects can cache per-view state while lowering to backend frame ops.
+    private RenderPipeline? _openXrLeftRenderPipeline;
+    private RenderPipeline? _openXrRightRenderPipeline;
     private RenderPipeline? _openXrStereoRenderPipeline;
     private RenderCommandCollection? _openXrSharedMeshRenderCommands;
     private readonly Matrix4x4[] _openXrStereoCullProjections = new Matrix4x4[2];
@@ -542,21 +543,25 @@ public unsafe partial class OpenXRAPI
     /// Returns an OpenXR-owned pipeline instance that matches the source pipeline type/config as closely as possible,
     /// without sharing the source pipeline instance.
     /// </summary>
-    private RenderPipeline GetOrCreateOpenXrPipeline(RenderPipeline? sourcePipeline)
-        => GetOrCreateOpenXrPipeline(sourcePipeline, stereo: false);
+    private RenderPipeline GetOrCreateOpenXrPipeline(RenderPipeline? sourcePipeline, int eyeIndex)
+    {
+        sourcePipeline ??= RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
+        return eyeIndex == 1
+            ? GetOrCreateOpenXrPipelineInSlot(sourcePipeline, stereo: false, ref _openXrRightRenderPipeline)
+            : GetOrCreateOpenXrPipelineInSlot(sourcePipeline, stereo: false, ref _openXrLeftRenderPipeline);
+    }
 
     private RenderPipeline GetOrCreateOpenXrStereoPipeline(RenderPipeline? sourcePipeline)
-        => GetOrCreateOpenXrPipeline(sourcePipeline, stereo: true);
-
-    private RenderPipeline GetOrCreateOpenXrPipeline(RenderPipeline? sourcePipeline, bool stereo)
     {
-        // Best-effort: if no source pipeline exists, fall back to a sane default.
-        sourcePipeline ??= RuntimeEngine.Rendering.NewRenderPipeline(stereo);
+        sourcePipeline ??= RuntimeEngine.Rendering.NewRenderPipeline(stereo: true);
+        return GetOrCreateOpenXrPipelineInSlot(sourcePipeline, stereo: true, ref _openXrStereoRenderPipeline);
+    }
 
-        ref RenderPipeline? openXrPipeline = ref stereo
-            ? ref _openXrStereoRenderPipeline
-            : ref _openXrRenderPipeline;
-
+    private static RenderPipeline GetOrCreateOpenXrPipelineInSlot(
+        RenderPipeline sourcePipeline,
+        bool stereo,
+        ref RenderPipeline? openXrPipeline)
+    {
         // If the source pipeline type changed, recreate our dedicated instance.
         if (openXrPipeline is null || openXrPipeline.GetType() != sourcePipeline.GetType())
         {
@@ -623,14 +628,12 @@ public unsafe partial class OpenXRAPI
     {
         RenderCommandCollection commands = _openXrSharedMeshRenderCommands ??= new RenderCommandCollection();
         commands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
-        commands.IsRenderCommandSnapshotAuthority = !HasIndependentDesktopVrView();
+        // The combined OpenXR eye visibility collection can be swapped before an
+        // independent desktop VR viewport publishes its own collected commands. If
+        // this collection yields snapshot publication to the desktop view, editor
+        // camera culling changes can leave eye rendering on stale command snapshots.
+        commands.IsRenderCommandSnapshotAuthority = true;
         return commands;
-    }
-
-    private static bool HasIndependentDesktopVrView()
-    {
-        IRuntimeRenderingHostServices hostServices = RuntimeRenderingHostServices.Current;
-        return hostServices.RenderWindowsWhileInVR && !hostServices.VrMirrorComposeFromEyeTextures;
     }
 
     /// <summary>

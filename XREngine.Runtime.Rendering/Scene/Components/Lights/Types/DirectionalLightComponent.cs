@@ -77,11 +77,22 @@ namespace XREngine.Components.Lights
             ContactShadowJitterStrength = 1.0f;
         }
 
+        /// <summary>
+        /// Indicates whether the directional light uses the directional shadow atlas for the current shadow map encoding.
+        /// </summary>
         protected override EShadowMapStorageFormat DefaultShadowMapStorageFormat => EShadowMapStorageFormat.Depth24;
 
+        /// <summary>
+        /// Determines if the specified shadow map storage format is supported by the directional light.
+        /// </summary>
+        /// <param name="format">The shadow map storage format to check for support.</param>
+        /// <returns>True if the specified format is supported; otherwise, false.</returns>
         public override bool SupportsShadowMapStorageFormat(EShadowMapStorageFormat format)
             => IsDepthShadowMapStorageFormat(format);
 
+        /// <summary>
+        /// Indicates whether the directional light uses the directional shadow atlas for the current shadow map encoding.
+        /// </summary>
         [Browsable(false)]
         public bool UsesDirectionalShadowAtlasForCurrentEncoding
         {
@@ -102,6 +113,9 @@ namespace XREngine.Components.Lights
             }
         }
 
+        /// <summary>
+        /// Indicates whether the directional light uses the directional shadow atlas for the current shadow map encoding.
+        /// </summary>
         protected override bool UsesAtlasShadowViewport
             => UsesDirectionalShadowAtlasForCurrentEncoding;
 
@@ -138,6 +152,11 @@ namespace XREngine.Components.Lights
             }
         }
 
+        /// <summary>
+        /// Gets the effective far distance for cascaded shadows based on the source camera and the light's cascade settings.
+        /// </summary>
+        /// <param name="sourceCamera">The source camera used to determine the effective far distance.</param>
+        /// <returns>The effective far distance for cascaded shadows.</returns>
         internal float GetEffectiveCascadedShadowFarDistance(XRCamera sourceCamera)
         {
             float near = sourceCamera.NearZ;
@@ -150,17 +169,35 @@ namespace XREngine.Components.Lights
             return MathF.Max(near + 1e-4f, effectiveFar);
         }
 
+        /// <summary>
+        /// Resolves the effective finite cascade distance limit by comparing the current distance with a candidate distance and returning the smaller valid value.
+        /// </summary>
+        /// <param name="current">The current effective cascade distance.</param>
+        /// <param name="candidate">The candidate cascade distance to compare against.</param>
+        /// <returns>The resolved effective cascade distance limit.</returns>
         private static float ResolveFiniteCascadeDistanceLimit(float current, float candidate)
             => float.IsFinite(candidate) && candidate > 0.0f
                 ? MathF.Min(current, candidate)
                 : current;
 
+        /// <summary>
+        /// Gets the volume mesh used to represent the directional light's influence in the scene.
+        /// </summary>
+        /// <returns>The volume mesh representing the directional light's influence.</returns>
         public static XRMesh GetVolumeMesh()
             => XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f));
 
+        /// <summary>
+        /// Gets the wireframe mesh used to represent the directional light's influence in the scene.
+        /// </summary>
+        /// <returns>The wireframe mesh representing the directional light's influence.</returns>
         protected override XRMesh GetWireframeMesh()
             => XRMesh.Shapes.WireframeBox(new Vector3(-0.5f), new Vector3(0.5f));
 
+        /// <summary>
+        /// Gets the camera parameters used for the directional light's shadow camera.
+        /// </summary>
+        /// <returns>The camera parameters for the directional light's shadow camera.</returns>
         protected override XRCameraParameters GetCameraParameters()
         {
             XROrthographicCameraParameters parameters = new(Scale.X, Scale.Y, NearZ, Scale.Z - NearZ);
@@ -168,10 +205,19 @@ namespace XREngine.Components.Lights
             return parameters;
         }
 
+        /// <summary>
+        /// Gets the shadow bias projection parameters for the directional light's primary shadow map.
+        /// </summary>
+        /// <returns>The shadow bias projection parameters as a Vector4.</returns>
+        /// </summary>
         [Browsable(false)]
         public override Vector4 ShadowBiasProjectionParameters
             => GetPrimaryShadowBiasProjectionParameters();
 
+        /// <summary>
+        /// Gets the shadow bias projection parameters for the directional light's primary shadow map.
+        /// </summary>
+        /// <returns>The shadow bias projection parameters as a Vector4.</returns>
         internal Vector4 GetPrimaryShadowBiasProjectionParameters()
         {
             float width = MathF.Max(Scale.X, 1e-4f);
@@ -193,10 +239,19 @@ namespace XREngine.Components.Lights
             return new Vector4(constantDepthBias, normalOffset, texelWorldSize, depthRange);
         }
 
+        /// <summary>
+        /// Gets the parent transform for the directional light's shadow camera.
+        /// </summary>
+        /// <returns>The parent transform for the shadow camera.</returns>
         protected override TransformBase GetShadowCameraParentTransform()
             => ShadowCameraTransform;
 
         private Transform? _shadowCameraTransform;
+        /// <summary>
+        /// Gets the transform for the directional light's shadow camera.
+        /// </summary>
+        /// <returns>The transform for the shadow camera.</returns>
+        /// </summary>
         private Transform ShadowCameraTransform => _shadowCameraTransform ??= new Transform()
         {
             Parent = Transform,
@@ -204,24 +259,44 @@ namespace XREngine.Components.Lights
             Translation = Globals.Backward * Scale.Z * 0.5f,
         };
 
+        /// <summary>
+        /// Called when the transform of the directional light changes, updating the shadow camera's parent transform accordingly.
+        /// </summary>
+        /// <remarks>
+        /// This ensures that the shadow camera remains correctly positioned relative to the directional light.
+        /// </remarks>
         protected override void OnTransformChanged()
         {
             base.OnTransformChanged();
             _shadowCameraTransform?.Parent = Transform;
         }
 
+        /// <summary>
+        /// Registers the directional light as a dynamic light within the specified render world.
+        /// </summary>
+        /// <param name="world">The render world in which to register the dynamic light.</param>
         protected override void RegisterDynamicLight(IRuntimeRenderWorld world)
             => world.Lights.DynamicDirectionalLights.Add(this);
 
+        /// <summary>
+        /// Unregisters the directional light from the specified render world.
+        /// </summary>
+        /// <param name="world">The render world from which to unregister the dynamic light.</param>
         protected override void UnregisterDynamicLight(IRuntimeRenderWorld world)
             => world.Lights.DynamicDirectionalLights.Remove(this);
 
         /// <summary>
-        /// Publishes both the legacy flat uniforms and the structured ForwardLighting uniforms.
+        /// Sets the shader uniforms for the directional light, including both legacy flat uniforms and structured ForwardLighting uniforms.
         /// </summary>
+        /// <remarks>
+        /// This method ensures that both the legacy flat uniforms and the structured ForwardLighting uniforms are updated for the directional light.
+        /// </remarks>
+        /// <param name="program">The render program to which the uniforms will be set.</param>
+        /// <param name="targetStructName">Optional. The name of the target struct in the shader for structured uniforms.</param>
         public override void SetUniforms(XRRenderProgram program, string? targetStructName = null)
         {
             base.SetUniforms(program, targetStructName);
+
             bool enableCascadesForBackend = EnableCascadedShadows && CanRenderDirectionalCascadesForCurrentBackend();
             program.Uniform(RuntimeEngine.Rendering.Constants.EnableCascadedShadows, enableCascadesForBackend);
 
@@ -279,6 +354,7 @@ namespace XREngine.Components.Lights
                 renderedCascadeStaleAges,
                 out _);
 
+            // Set the cascade count uniform before setting individual cascade uniforms.
             program.Uniform($"{flatPrefix}CascadeCount", cascadeCount);
             if (IsVulkanDirectionalShadowBackend())
             {
@@ -297,6 +373,7 @@ namespace XREngine.Components.Lights
                 program.Uniform($"{flatPrefix}RenderedCascadeStaleAge", renderedCascadeStaleAges);
             }
 
+            // Set individual cascade uniforms for the maximum number of cascades.
             for (int i = 0; i < MaxCascadeRenderCount; i++)
             {
                 program.Uniform($"{flatPrefix}CascadeSplits[{i}]", cascadeSplits[i]);
@@ -321,14 +398,21 @@ namespace XREngine.Components.Lights
             program.Uniform($"{basePrefix}DiffuseIntensity", _diffuseIntensity);
             program.Uniform($"{basePrefix}AmbientIntensity", 0.05f);
             program.Uniform($"{basePrefix}WorldToLightSpaceProjMatrix", lightViewProj);
+
             // Note: Shadow map sampler is bound by the caller (deferred pass or forward lighting collection)
             // to avoid overwriting material texture units.
         }
 
+        /// <summary>
+        /// Sets the shadow map related uniforms for the directional light.
+        /// </summary>
+        /// <param name="material">The material for which the shadow map uniforms are being set.</param>
+        /// <param name="program">The render program to which the shadow map uniforms will be set.</param>
         protected override void SetShadowMapUniforms(XRMaterialBase material, XRRenderProgram program)
         {
             base.SetShadowMapUniforms(material, program);
 
+            // Resolve the appropriate shadow map format for the directional light.
             ShadowMapFormatSelection selection = ResolveDirectionalSamplingShadowMapFormat();
             program.Uniform("ShadowDepthSourceMode", 1);
             program.Uniform("ShadowMapEncoding", (int)selection.Encoding);
@@ -340,12 +424,14 @@ namespace XREngine.Components.Lights
             program.Uniform("CameraNearZ", ShadowCamera?.NearZ ?? NearZ);
             program.Uniform("CameraFarZ", ShadowCamera?.FarZ ?? MathF.Max(Scale.Z, NearZ + 0.001f));
 
+            // Set the cascade count uniform to zero initially. It will be updated later if cascades are available.
             if (!CanRenderDirectionalCascadesForCurrentBackend())
             {
                 program.Uniform("CascadeLayerCount", 0);
                 return;
             }
 
+            // Acquire the cascade data lock to safely access the cascade state and set the view-projection matrices for each cascade.
             int cascadeCount;
             lock (_cascadeDataLock)
             {
@@ -358,6 +444,13 @@ namespace XREngine.Components.Lights
             program.Uniform("CascadeLayerCount", cascadeCount);
         }
 
+        /// <summary>
+        /// Gets the shadow map material for the directional light with the specified width, height, and depth precision.
+        /// </summary>
+        /// <param name="width">The width of the shadow map texture.</param>
+        /// <param name="height">The height of the shadow map texture.</param>
+        /// <param name="precision">The depth precision for the shadow map.</param>
+        /// <returns>The material configured for rendering the directional light's shadow map.</returns>
         public override XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Int24)
         {
             EShadowMapStorageFormat depthStorageFormat = IsDepthShadowMapStorageFormat(ShadowMapStorageFormat)
@@ -413,38 +506,70 @@ namespace XREngine.Components.Lights
             return mat;
         }
 
+        /// <summary>
+        /// Gets the resource name for the directional shadow map with the specified suffix.
+        /// </summary>
+        /// <param name="suffix">The suffix to append to the directional shadow resource name.</param>
+        /// <returns>The full resource name for the directional shadow map.</returns>
         private string GetDirectionalShadowResourceName(string suffix)
             => $"DirectionalShadow.{ID:N}.{suffix}";
 
+        /// <summary>
+        /// Resolves the smallest allowed mipmap level for the shadow moment texture based on the encoding, mipmap usage, and texture dimensions.
+        /// </summary>
+        /// <param name="momentEncoding">Indicates whether the shadow moment texture uses moment encoding.</param>
+        /// <param name="useMipmaps">Indicates whether mipmaps are used for the shadow moment texture.</param>
+        /// <param name="width">The width of the shadow moment texture.</param>
+        /// <param name="height">The height of the shadow moment texture.</param>
+        /// <returns>The smallest allowed mipmap level for the shadow moment texture.</returns>
         private static int ResolveShadowMomentSmallestAllowedMipmapLevel(bool momentEncoding, bool useMipmaps, uint width, uint height)
             => momentEncoding && useMipmaps
                 ? XRTexture.GetSmallestMipmapLevel(width, height)
                 : 1000;
 
+        /// <summary>
+        /// Resolves the appropriate shadow map format for directional sampling based on the current settings.
+        /// </summary>
+        /// <returns>The selected shadow map format for directional sampling.</returns>
         private ShadowMapFormatSelection ResolveDirectionalSamplingShadowMapFormat()
             => ResolveShadowMapFormat(preferredStorageFormat: null);
 
+        /// <summary>
+        /// Determines whether the current directional shadow backend is using Vulkan.
+        /// </summary>
+        /// <returns>True if the current directional shadow backend is using Vulkan; otherwise, false.</returns>
         private static bool IsVulkanDirectionalShadowBackend()
             => RuntimeEngine.Rendering.State.IsVulkan ||
                RuntimeEngine.Rendering.IsVulkanRendererActive();
 
+        /// <summary>
+        /// Determines whether the Vulkan raster depth receiver texture should be used for the current directional shadow setup.
+        /// </summary>
+        /// <returns>True if the Vulkan raster depth receiver texture should be used; otherwise, false.</returns>
         private bool ShouldUseVulkanRasterDepthReceiverTexture()
             => IsVulkanDirectionalShadowBackend() &&
                ResolveDirectionalSamplingShadowMapFormat().Encoding == EShadowMapEncoding.Depth;
 
+        /// <summary>
+        /// Gets the primary shadow receiver texture for the current directional light setup.
+        /// </summary>
+        /// <returns>The primary shadow receiver texture if available; otherwise, null.</returns>
         internal XRTexture? PrimaryShadowReceiverTexture
             => FindShadowMapMaterialTexture(
                 ShouldUseVulkanRasterDepthReceiverTexture()
                     ? "ShadowRasterDepth"
                     : "ShadowMap");
 
+        /// <summary>
+        /// Finds the shadow map texture in the material by its sampler name.
+        /// </summary>
+        /// <param name="samplerName">The name of the sampler to look for in the material's textures.</param>
+        /// <returns>The shadow map texture if found; otherwise, null.</returns>
         private XRTexture? FindShadowMapMaterialTexture(string samplerName)
         {
             if (!CastsShadows ||
                 ShadowMap?.Material?.Textures is not { } textures)
-            {
                 return null;
-            }
 
             for (int i = 0; i < textures.Count; i++)
                 if (textures[i]?.SamplerName == samplerName)
@@ -453,6 +578,10 @@ namespace XREngine.Components.Lights
             return null;
         }
 
+        /// <summary>
+        /// Gets the clear color for the shadow map of the current directional light setup.
+        /// </summary>
+        /// <returns>The clear color for the shadow map.</returns>
         protected override ColorF4 GetShadowMapClearColor()
         {
             ShadowMapFormatSelection selection = ResolveDirectionalSamplingShadowMapFormat();
@@ -460,6 +589,13 @@ namespace XREngine.Components.Lights
             return new ColorF4(clear.X, clear.Y, clear.Z, clear.W);
         }
 
+        /// <summary>
+        /// Called when a property of the directional light component changes.
+        /// </summary>
+        /// <typeparam name="T">The type of the property that changed.</typeparam>
+        /// <param name="propName">The name of the property that changed.</param>
+        /// <param name="prev">The previous value of the property.</param>
+        /// <param name="field">The new value of the property.</param>
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);

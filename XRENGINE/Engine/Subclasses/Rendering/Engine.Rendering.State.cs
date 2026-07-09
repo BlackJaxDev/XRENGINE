@@ -38,22 +38,19 @@ namespace XREngine
                 /// Initialized to int.MinValue to indicate "no pass active".
                 /// </summary>
                 [ThreadStatic]
-                private static int _currentRenderGraphPassIndex;
+                private static int? _currentRenderGraphPassIndex;
 
                 /// <summary>
                 /// Static constructor that initializes thread-static fields.
                 /// Sets the initial render graph pass index to int.MinValue.
                 /// </summary>
-                static State()
-                {
-                    _currentRenderGraphPassIndex = int.MinValue;
-                }
+                static State() { }
 
                 /// <summary>
                 /// The render-graph pass index currently being executed by the active pipeline.
                 /// Vulkan uses this to align per-pass layout transitions and barriers with the pipeline DAG.
                 /// </summary>
-                public static int CurrentRenderGraphPassIndex => _currentRenderGraphPassIndex;
+                public static int CurrentRenderGraphPassIndex => _currentRenderGraphPassIndex ?? int.MinValue;
 
                 /// <summary>
                 /// Temporarily sets <see cref="CurrentRenderGraphPassIndex"/> for the duration of a scope.
@@ -64,7 +61,7 @@ namespace XREngine
                 /// <returns>A StateObject that restores the previous pass index when disposed.</returns>
                 public static StateObject PushRenderGraphPassIndex(int passIndex)
                 {
-                    int previous = _currentRenderGraphPassIndex;
+                    int? previous = _currentRenderGraphPassIndex;
                     _currentRenderGraphPassIndex = passIndex;
                     CurrentRenderingPipeline?.RegisterExecutedRenderGraphPass(passIndex);
                     return StateObject.New(() => _currentRenderGraphPassIndex = previous);
@@ -88,7 +85,14 @@ namespace XREngine
                 /// When set, RenderingCamera returns this instead of the pipeline's camera.
                 /// Useful for temporarily rendering from a different viewpoint (e.g., debug cameras, mirrors).
                 /// </summary>
-                public static XRCamera? RenderingCameraOverride { get; set; }
+                [ThreadStatic]
+                private static XRCamera? _renderingCameraOverride;
+
+                public static XRCamera? RenderingCameraOverride
+                {
+                    get => _renderingCameraOverride;
+                    set => _renderingCameraOverride = value;
+                }
 
                 /// <summary>
                 /// The current render area rectangle in pixels.
@@ -156,9 +160,13 @@ namespace XREngine
                 /// Supports nested rendering scenarios (e.g., main pass rendering a mirror that renders a reflection).
                 /// The topmost pipeline is the currently active one.
                 /// </summary>
-                private static Stack<XRRenderPipelineInstance> RenderingPipelineStack { get; } = new();
+                [ThreadStatic]
+                private static Stack<XRRenderPipelineInstance>? _renderingPipelineStack;
+                private static Stack<XRRenderPipelineInstance> RenderingPipelineStack => _renderingPipelineStack ??= new();
                 [ThreadStatic]
                 private static XRRenderPipelineInstance? ThreadRenderingPipelineOverride;
+                [ThreadStatic]
+                private static bool ThreadRenderingPipelineOverrideSet;
                 //private static Stack<XRRenderPipelineInstance> CollectingVisiblePipelineStack { get; } = new();
 
                 /// <summary>
@@ -181,8 +189,14 @@ namespace XREngine
                 public static StateObject PushRenderingPipelineOverride(XRRenderPipelineInstance? pipeline)
                 {
                     XRRenderPipelineInstance? previous = ThreadRenderingPipelineOverride;
+                    bool previousSet = ThreadRenderingPipelineOverrideSet;
                     ThreadRenderingPipelineOverride = pipeline;
-                    return StateObject.New(() => ThreadRenderingPipelineOverride = previous);
+                    ThreadRenderingPipelineOverrideSet = true;
+                    return StateObject.New(() =>
+                    {
+                        ThreadRenderingPipelineOverride = previous;
+                        ThreadRenderingPipelineOverrideSet = previousSet;
+                    });
                 }
                 //public static StateObject PushCollectingVisiblePipeline(XRRenderPipelineInstance pipeline)
                 //{
@@ -197,8 +211,8 @@ namespace XREngine
                 /// </summary>
                 public static void PopRenderingPipeline()
                 {
-                    if (RenderingPipelineStack.Count > 0)
-                        RenderingPipelineStack.Pop();
+                    if (_renderingPipelineStack is { Count: > 0 } stack)
+                        stack.Pop();
                 }
                 //public static void PopCollectingVisiblePipeline()
                 //{
@@ -211,7 +225,11 @@ namespace XREngine
                 /// Use this to retrieve FBOs and textures from the render pipeline.
                 /// </summary>
                 public static XRRenderPipelineInstance? CurrentRenderingPipeline
-                    => RenderingPipelineStack.TryPeek(out var result) ? result : ThreadRenderingPipelineOverride;
+                    => _renderingPipelineStack is { Count: > 0 } stack
+                        ? stack.Peek()
+                        : ThreadRenderingPipelineOverrideSet
+                            ? ThreadRenderingPipelineOverride
+                            : null;
 
                 /// <summary>
                 /// Logical resource registry describing textures/FBOs for the active pipeline.
@@ -410,15 +428,33 @@ namespace XREngine
                 /// If true, the current render is a light probe pass - only what's needed for light probes is rendered.
                 /// All light probe passes contain a scene capture pass.
                 /// </summary>
-                public static bool IsLightProbePass { get; internal set; }
+                [ThreadStatic]
+                private static bool _isLightProbePass;
+                public static bool IsLightProbePass
+                {
+                    get => _isLightProbePass;
+                    internal set => _isLightProbePass = value;
+                }
                 /// <summary>
                 /// If true, the current render is a scene capture pass - only what's needed for scene captures is rendered.
                 /// </summary>
-                public static bool IsSceneCapturePass { get; internal set; }
+                [ThreadStatic]
+                private static bool _isSceneCapturePass;
+                public static bool IsSceneCapturePass
+                {
+                    get => _isSceneCapturePass;
+                    internal set => _isSceneCapturePass = value;
+                }
                 /// <summary>
                 /// If this is greater than 0, the current render is a mirror pass.
                 /// </summary>
-                public static int MirrorPassIndex { get; internal set; } = 0;
+                [ThreadStatic]
+                private static int _mirrorPassIndex;
+                public static int MirrorPassIndex
+                {
+                    get => _mirrorPassIndex;
+                    internal set => _mirrorPassIndex = value;
+                }
                 /// <summary>
                 /// If true, the current render is a mirror pass - similar to a main pass, but the scene is reflected (or unreflected, depending on the mirror pass index).
                 /// </summary>
@@ -433,14 +469,26 @@ namespace XREngine
                 /// Used during mirror/reflection passes where the scene is flipped.
                 /// Affects which triangles are considered front-facing.
                 /// </summary>
-                public static bool ReverseWinding { get; internal set; } = false;
+                [ThreadStatic]
+                private static bool _reverseWinding;
+                public static bool ReverseWinding
+                {
+                    get => _reverseWinding;
+                    internal set => _reverseWinding = value;
+                }
 
                 /// <summary>
                 /// If true, culling direction is reversed (cull front instead of back, or vice versa).
                 /// Set automatically during mirror passes based on reflection depth.
                 /// Works with ReverseWinding to maintain correct visibility in reflected scenes.
                 /// </summary>
-                public static bool ReverseCulling { get; internal set; } = false;
+                [ThreadStatic]
+                private static bool _reverseCulling;
+                public static bool ReverseCulling
+                {
+                    get => _reverseCulling;
+                    internal set => _reverseCulling = value;
+                }
 
                 /// <summary>
                 /// If true, this is the main rendering pass (not a special pass like mirror, capture, or probe).
@@ -454,7 +502,9 @@ namespace XREngine
                 /// Allows nested transforms with automatic restoration via push/pop pattern.
                 /// Used when GPU instancing is not available or not suitable.
                 /// </summary>
-                private static Stack<uint> TransformIdStack { get; } = new();
+                [ThreadStatic]
+                private static Stack<uint>? _transformIdStack;
+                private static Stack<uint> TransformIdStack => _transformIdStack ??= new();
 
                 /// <summary>
                 /// Per-draw transform identifier for the CPU render path.
@@ -995,7 +1045,8 @@ namespace XREngine
                 /// </summary>
                 public static void PopMirrorPass()
                 {
-                    MirrorPassIndex--;
+                    if (MirrorPassIndex > 0)
+                        MirrorPassIndex--;
                     ReverseCulling = IsReflectedMirrorPass;
                     IsSceneCapturePass = IsMirrorPass;
                 }
