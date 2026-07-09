@@ -6,6 +6,30 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
+    internal enum EVulkanDeviceState : byte
+    {
+        /// <summary>
+        /// The device is functioning normally.
+        /// </summary>
+        Healthy,
+        /// <summary>
+        /// The device has encountered a loss.
+        /// </summary>
+        LossDetected,
+        /// <summary>
+        /// The device is currently collecting fault data after a loss has been detected.
+        /// </summary>
+        CollectingFaultData,
+        /// <summary>
+        /// The device has been quiesced after a loss has been detected and fault data has been collected.
+        /// </summary>
+        Quiesced,
+        /// <summary>
+        /// The device has been disposed.
+        /// </summary>
+        Disposed,
+    }
+
     private Semaphore[]? acquireBridgeSemaphores;
     /// <summary>
     /// Present bridge semaphores indexed by swapchain image index (one per swapchain image).
@@ -28,49 +52,62 @@ public unsafe partial class VulkanRenderer
     /// forever with cascading failures.
     /// </summary>
     private volatile bool _deviceLost;
+    private readonly VulkanDeviceStateMachine _deviceStateMachine = new();
+    private long _deviceLossFalloutCount;
     private string? _deviceLostReason;
     public override bool IsDeviceLost => _deviceLost;
     public override string? DeviceLostReason => _deviceLostReason;
+    internal EVulkanDeviceState DeviceState => _deviceStateMachine.State;
+    internal bool IsDeviceOperational => _deviceStateMachine.IsOperational;
 
     private void MarkDeviceLost(string? reason = null)
     {
         RecordFirstFailingVulkanApi(reason);
 
         bool firstObservation;
-        string deviceLostReason;
+        lock (_oneTimeSubmitLock)
+        {
+            lock (_deviceLostTransitionLock)
+            {
+                firstObservation = _deviceStateMachine.TryBeginLossCollection();
+                if (firstObservation)
+                {
+                    _deviceLost = true;
+
+                    // Pending timeline signals will never arrive after device loss.
+                    if (_frameSlotTimelineValues is not null)
+                        Array.Clear(_frameSlotTimelineValues);
+                    if (_swapchainImageTimelineValues is not null)
+                        Array.Clear(_swapchainImageTimelineValues);
+                    _acquireTimelineValue = 0;
+                    _graphicsTimelineValue = 0;
+                }
+                else
+                {
+                    Interlocked.Increment(ref _deviceLossFalloutCount);
+                }
+            }
+        }
+
+        if (!firstObservation)
+            return;
+
+        string deviceLostReason = BuildDeviceLostReasonWithSubmissionContext(reason);
         lock (_deviceLostTransitionLock)
         {
-            firstObservation = !_deviceLost;
-            if (firstObservation)
-            {
-                _deviceLost = true;
-                _deviceLostReason = BuildDeviceLostReasonWithSubmissionContext(reason);
-
-                // Device loss means pending timeline signals will never arrive. Clear
-                // them so teardown/recovery paths do not block on dead semaphore values.
-                if (_frameSlotTimelineValues is not null)
-                    Array.Clear(_frameSlotTimelineValues);
-                if (_swapchainImageTimelineValues is not null)
-                    Array.Clear(_swapchainImageTimelineValues);
-                _acquireTimelineValue = 0;
-                _graphicsTimelineValue = 0;
-            }
-            else if (!string.IsNullOrWhiteSpace(reason) && string.IsNullOrWhiteSpace(_deviceLostReason))
-            {
-                _deviceLostReason = BuildDeviceLostReasonWithSubmissionContext(reason);
-            }
-
-            deviceLostReason = string.IsNullOrWhiteSpace(_deviceLostReason)
-                ? "<unknown>"
-                : _deviceLostReason;
+            _deviceLostReason = deviceLostReason;
+            _deviceStateMachine.CompleteLossCollection();
         }
 
-        if (firstObservation)
-        {
-            Debug.VulkanWarning(
-                "[Vulkan] Logical device lost. Reason={0}. The current Vulkan renderer cannot submit more work; recreate the renderer/window to recover.",
-                deviceLostReason);
-        }
+        Debug.VulkanWarning(
+            "[Vulkan] Logical device lost. Reason={0}. The current Vulkan renderer cannot submit more work; recreate the renderer/window to recover.",
+            deviceLostReason);
+    }
+
+    private void MarkDeviceDisposed()
+    {
+        lock (_oneTimeSubmitLock)
+            _deviceStateMachine.Dispose();
     }
 
     private InvalidOperationException CreateDeviceLostException(string operation, Result result)

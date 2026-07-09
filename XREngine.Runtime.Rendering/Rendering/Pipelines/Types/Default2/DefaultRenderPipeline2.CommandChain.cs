@@ -67,7 +67,8 @@ public partial class DefaultRenderPipeline2
         c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
         c.Add<VPRC_DepthWrite>().Allow = true;
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
-        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
+        RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.PreRender, branch =>
+            branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false));
 
         using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
         {
@@ -77,36 +78,52 @@ public partial class DefaultRenderPipeline2
                 c.Add<VPRC_ClearByBoundFBO>();
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, MeshSubmissionStrategy);
+                RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.Background, branch =>
+                    branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, MeshSubmissionStrategy));
                 c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy);
+                RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.OpaqueDeferred, branch =>
+                    branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, MeshSubmissionStrategy));
                 if (enableComputePasses)
-                    c.Add<VPRC_ForwardPlusLightCullingPass>();
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, MeshSubmissionStrategy);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, MeshSubmissionStrategy);
-                c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, MeshSubmissionStrategy);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, MeshSubmissionStrategy);
-                c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, MeshSubmissionStrategy);
-                c.Add<VPRC_RenderMeshletDebugDisplay>();
-                c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-                c.Add<VPRC_BuildAccelerationStructure>();
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, MeshSubmissionStrategy);
-                // GPU BVH wireframe overlay; no-op unless toggled via the
-                // GpuBvhDebugSettings post-process stage on the active camera.
-                c.Add<VPRC_RenderDebugGpuBvh>();
-                c.Add<VPRC_RenderDebugShapes>();
+                {
+                    RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.ComputeLighting, branch =>
+                        branch.Add<VPRC_ForwardPlusLightCullingPass>());
+                }
+                RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.OpaqueForward, branch =>
+                    branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, MeshSubmissionStrategy));
+                RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.Masked, branch =>
+                    branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, MeshSubmissionStrategy));
+                RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.Transparent, branch =>
+                {
+                    branch.Add<VPRC_DepthWrite>().Allow = false;
+                    branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, MeshSubmissionStrategy);
+                    branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, MeshSubmissionStrategy);
+                    branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, MeshSubmissionStrategy);
+                    branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, MeshSubmissionStrategy);
+                });
+                RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.OnTop, branch =>
+                {
+                    branch.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
+                    branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, MeshSubmissionStrategy);
+                    branch.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
+                });
+                RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.DebugOverlays, branch =>
+                {
+                    branch.Add<VPRC_RenderMeshletDebugDisplay>();
+                    branch.Add<VPRC_BuildAccelerationStructure>();
+                    branch.Add<VPRC_RenderDebugGpuBvh>();
+                    branch.Add<VPRC_RenderDebugShapes>();
+                    if (enableComputePasses)
+                        branch.Add<VPRC_ForwardPlusDebugOverlay>();
+                });
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
                 c.Add<VPRC_DepthWrite>().Allow = true;
                 c.Add<VPRC_ColorMask>().Set(true, true, true, true);
-                if (enableComputePasses)
-                    c.Add<VPRC_ForwardPlusDebugOverlay>();
             }
         }
-        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
-        c.Add<VPRC_RenderScreenSpaceUI>();
+        RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.PostRender, branch =>
+            branch.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false));
+        RenderCaptureCommandPolicy.AddConditional(c, this, ERenderCapturePass.ScreenSpaceUi, branch =>
+            branch.Add<VPRC_RenderScreenSpaceUI>());
         return c;
     }
 

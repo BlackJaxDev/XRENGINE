@@ -542,7 +542,7 @@ public unsafe partial class VulkanRenderer
                     };
                 }
 
-                Api!.UpdateDescriptorSets(device, (uint)dirtyCount, writePtr, 0, null);
+                UpdateDescriptorSetsTracked((uint)dirtyCount, writePtr);
                 RecordVulkanDescriptorTableGeneration("GlobalMaterialTextureDescriptorSet.Update");
             }
         }

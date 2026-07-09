@@ -6,6 +6,14 @@ public unsafe partial class VulkanRenderer
 {
     private DescriptorSet[]? descriptorSets;
 
+    internal void UpdateDescriptorSetsTracked(uint descriptorWriteCount, WriteDescriptorSet* descriptorWrites)
+    {
+        if (!IsDeviceOperational)
+            throw new InvalidOperationException($"Cannot update Vulkan descriptors while device state is {DeviceState}.");
+
+        Api!.UpdateDescriptorSets(device, descriptorWriteCount, descriptorWrites, 0, null);
+    }
+
     private void CreateDescriptorSets()
     {
         var layouts = new DescriptorSetLayout[swapChainImages!.Length];

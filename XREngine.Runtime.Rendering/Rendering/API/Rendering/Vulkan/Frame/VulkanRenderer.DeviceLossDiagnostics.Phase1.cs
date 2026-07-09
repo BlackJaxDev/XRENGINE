@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text;
 using Silk.NET.Vulkan;
 using Buffer = Silk.NET.Vulkan.Buffer;
@@ -14,20 +13,71 @@ public unsafe partial class VulkanRenderer
     private const int MaxDeviceAddressBindingReportEntries = 8;
     private const int MaxNvCheckpointReportEntries = 8;
 
+    /// <summary>
+    /// Releases the Vulkan diagnostic storage, including function pointers for device fault reporting.
+    /// </summary>
     private void ReleaseVulkanDiagnosticStorage()
-    {
-        ReleaseKhrDeviceFaultFunctionPointers();
+        => ReleaseKhrDeviceFaultFunctionPointers();
 
-        lock (_vulkanNvCheckpointMarkerLock)
+    /// <summary>
+    /// Takes a snapshot of the Vulkan command diagnostic marker for the given submit info.
+    /// </summary>
+    /// <param name="submitInfo">The Vulkan submit info containing the command buffers to snapshot.</param>
+    /// <returns>The Vulkan command diagnostic marker corresponding to the given submit info, or the default marker if none is found.</returns>
+    private VulkanCommandDiagnosticMarker SnapshotVulkanCommandDiagnosticMarker(ref SubmitInfo submitInfo)
+    {
+        if (submitInfo.CommandBufferCount == 0 || submitInfo.PCommandBuffers is null)
+            return default;
+
+        lock (_vulkanSubmissionDiagnosticsLock)
         {
-            if (_vulkanNvCheckpointMarkerPayloadsPin.IsAllocated)
-                _vulkanNvCheckpointMarkerPayloadsPin.Free();
+            long latestSerial = Volatile.Read(ref _vulkanCommandDiagnosticMarkerSerial);
+            int available = (int)Math.Min(latestSerial, VulkanCommandDiagnosticMarkerCapacity);
+            for (long serial = latestSerial; serial > 0 && latestSerial - serial < available; serial--)
+            {
+                int index = unchecked((int)((serial - 1) % VulkanCommandDiagnosticMarkerCapacity));
+                VulkanCommandDiagnosticMarker marker = _vulkanCommandDiagnosticMarkers[index];
+                if (marker.Serial != unchecked((ulong)serial))
+                    continue;
+
+                for (uint i = 0; i < submitInfo.CommandBufferCount; i++)
+                {
+                    CommandBuffer submittedCommandBuffer = submitInfo.PCommandBuffers[i];
+                    ulong submittedGeneration = ResolveCommandBufferRecordingGeneration(submittedCommandBuffer);
+                    if (CommandDiagnosticMarkerMatchesSubmittedCommand(
+                            marker.CommandBufferHandle,
+                            marker.CommandBufferRecordingGeneration,
+                            unchecked((ulong)submittedCommandBuffer.Handle),
+                            submittedGeneration))
+                    {
+                        return marker;
+                    }
+                }
+            }
         }
+
+        return default;
     }
 
-    private VulkanCommandDiagnosticMarker SnapshotLastVulkanCommandDiagnosticMarker()
-        => _lastVulkanCommandDiagnosticMarker;
+    /// <summary>
+    /// Determines whether a Vulkan command diagnostic marker matches a submitted command buffer based on their handles and recording generations.
+    /// </summary>
+    /// <param name="markerHandle">The handle of the Vulkan command diagnostic marker.</param>
+    /// <param name="markerGeneration">The recording generation of the Vulkan command diagnostic marker.</param>
+    /// <param name="submittedHandle">The handle of the submitted Vulkan command buffer.</param>
+    /// <param name="submittedGeneration">The recording generation of the submitted Vulkan command buffer.</param>
+    /// <returns>True if the marker matches the submitted command buffer; otherwise, false.</returns>
+    internal static bool CommandDiagnosticMarkerMatchesSubmittedCommand(
+        ulong markerHandle,
+        ulong markerGeneration,
+        ulong submittedHandle,
+        ulong submittedGeneration)
+        => markerHandle == submittedHandle && markerGeneration == submittedGeneration;
 
+    /// <summary>
+    /// Records the first Vulkan API that failed, if it has not been recorded already.
+    /// </summary>
+    /// <param name="api">The name of the Vulkan API that failed.</param>
     private void RecordFirstFailingVulkanApi(string? api)
     {
         if (string.IsNullOrWhiteSpace(api))
@@ -36,14 +86,51 @@ public unsafe partial class VulkanRenderer
         Interlocked.CompareExchange(ref _firstFailingVulkanApi, api, null);
     }
 
-    private void RecordVulkanImageLayoutTransitionBreadcrumb(uint imageBarrierCount, ImageMemoryBarrier* imageBarriers, string? caller)
+    /// <summary>
+    /// Records a Vulkan image layout transition breadcrumb for diagnostic purposes.
+    /// </summary>
+    /// <param name="commandBuffer">The Vulkan command buffer associated with the image layout transition.</param>
+    /// <param name="imageBarrierCount">The number of image memory barriers.</param>
+    /// <param name="imageBarriers">A pointer to the array of image memory barriers.</param>
+    /// <param name="caller">The name of the calling method or context.</param>
+    private void RecordVulkanImageLayoutTransitionBreadcrumb(
+        CommandBuffer commandBuffer,
+        uint imageBarrierCount,
+        ImageMemoryBarrier* imageBarriers,
+        string? caller)
     {
         if (!_diagnosticOptions.EnableCrashBreadcrumbs || imageBarrierCount == 0 || imageBarriers is null)
             return;
 
-        Interlocked.Add(ref _vulkanImageLayoutTransitionSerial, imageBarrierCount);
+        lock (_vulkanSubmissionDiagnosticsLock)
+        {
+            for (uint i = 0; i < imageBarrierCount; i++)
+            {
+                ImageMemoryBarrier barrier = imageBarriers[i];
+                long serial = Interlocked.Increment(ref _vulkanImageLayoutTransitionSerial);
+                int index = unchecked((int)((serial - 1) % VulkanImageLayoutTransitionCapacity));
+                _vulkanImageLayoutTransitions[index] = new(
+                    unchecked((ulong)serial),
+                    unchecked((ulong)commandBuffer.Handle),
+                    barrier.Image.Handle,
+                    barrier.SubresourceRange.AspectMask,
+                    barrier.SubresourceRange.BaseMipLevel,
+                    barrier.SubresourceRange.LevelCount,
+                    barrier.SubresourceRange.BaseArrayLayer,
+                    barrier.SubresourceRange.LayerCount,
+                    barrier.OldLayout,
+                    barrier.NewLayout,
+                    barrier.SrcQueueFamilyIndex,
+                    barrier.DstQueueFamilyIndex,
+                    caller);
+            }
+        }
     }
 
+    /// <summary>
+    /// Records a Vulkan descriptor table generation event for diagnostic purposes.
+    /// </summary>
+    /// <param name="reason">The reason for recording the descriptor table generation event.</param>
     private void RecordVulkanDescriptorTableGeneration(string reason)
     {
         if (!_diagnosticOptions.EnableCrashBreadcrumbs)
@@ -52,6 +139,13 @@ public unsafe partial class VulkanRenderer
         Interlocked.Increment(ref _vulkanDescriptorTableGeneration);
     }
 
+    /// <summary>
+    /// Records a Vulkan command diagnostic marker for the specified command buffer and frame operation.
+    /// </summary>
+    /// <param name="commandBuffer">The Vulkan command buffer associated with the command.</param>
+    /// <param name="op">The frame operation being executed.</param>
+    /// <param name="passIndex">The index of the pass within the frame operation.</param>
+    /// <param name="batchIndex">The index of the batch within the pass.</param>
     private void RecordVulkanCommandDiagnosticMarker(CommandBuffer commandBuffer, FrameOp op, int passIndex, int batchIndex)
     {
         bool wantsCrashMarker = _diagnosticOptions.EnableCrashBreadcrumbs;
@@ -70,9 +164,14 @@ public unsafe partial class VulkanRenderer
             PipelineIdentity = op.Context.PipelineIdentity,
             ViewportIdentity = op.Context.ViewportIdentity,
             CommandBufferHandle = unchecked((ulong)commandBuffer.Handle),
+            CommandBufferRecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer),
         };
 
-        _lastVulkanCommandDiagnosticMarker = marker;
+        lock (_vulkanSubmissionDiagnosticsLock)
+        {
+            int index = unchecked((int)((serial - 1UL) % VulkanCommandDiagnosticMarkerCapacity));
+            _vulkanCommandDiagnosticMarkers[index] = marker;
+        }
         if (_diagnosticOptions.EnableCommandBufferLabels)
         {
             SetDebugObjectName(
@@ -85,6 +184,11 @@ public unsafe partial class VulkanRenderer
             TrySetNvDiagnosticCheckpoint(commandBuffer, marker);
     }
 
+    /// <summary>
+    /// Resolves the diagnostic target name for the specified frame operation.
+    /// </summary>
+    /// <param name="op">The frame operation for which to resolve the diagnostic target name.</param>
+    /// <returns>The resolved diagnostic target name.</returns>
     private static string ResolveFrameOpDiagnosticTargetName(FrameOp op)
     {
         if (!string.IsNullOrWhiteSpace(op.Context.OutputTargetName))
@@ -94,6 +198,11 @@ public unsafe partial class VulkanRenderer
         return "<swapchain>";
     }
 
+    /// <summary>
+    /// Attempts to set an NVIDIA diagnostic checkpoint for the specified command buffer and diagnostic marker.
+    /// </summary>
+    /// <param name="commandBuffer">The Vulkan command buffer for which to set the diagnostic checkpoint.</param>
+    /// <param name="marker">The diagnostic marker containing information about the command.</param>
     private void TrySetNvDiagnosticCheckpoint(CommandBuffer commandBuffer, VulkanCommandDiagnosticMarker marker)
     {
         if (_nvDeviceDiagnosticCheckpoints is null || !_supportsNvDiagnosticCheckpoints || commandBuffer.Handle == 0)
@@ -102,9 +211,6 @@ public unsafe partial class VulkanRenderer
         int index = unchecked((int)((marker.Serial - 1UL) % VulkanNvCheckpointMarkerCapacity));
         lock (_vulkanNvCheckpointMarkerLock)
         {
-            if (!_vulkanNvCheckpointMarkerPayloadsPin.IsAllocated)
-                _vulkanNvCheckpointMarkerPayloadsPin = GCHandle.Alloc(_vulkanNvCheckpointMarkerPayloads, GCHandleType.Pinned);
-
             _vulkanNvCheckpointMarkers[index] = new()
             {
                 Serial = marker.Serial,
@@ -115,20 +221,23 @@ public unsafe partial class VulkanRenderer
                 PipelineIdentity = marker.PipelineIdentity,
                 ViewportIdentity = marker.ViewportIdentity,
                 CommandBufferHandle = marker.CommandBufferHandle,
+                CommandBufferRecordingGeneration = marker.CommandBufferRecordingGeneration,
             };
-            _vulkanNvCheckpointMarkerPayloads[index] = marker.Serial;
-
-            byte* basePtr = (byte*)_vulkanNvCheckpointMarkerPayloadsPin.AddrOfPinnedObject();
-            _nvDeviceDiagnosticCheckpoints.CmdSetCheckpoint(commandBuffer, basePtr + (index * sizeof(ulong)));
+            _nvDeviceDiagnosticCheckpoints.CmdSetCheckpoint(commandBuffer, (void*)(nuint)marker.Serial);
         }
     }
 
+    /// <summary>
+    /// Resolves the human-readable representation of an NVIDIA checkpoint marker given its pointer.
+    /// </summary>
+    /// <param name="markerPtr">A pointer to the NVIDIA checkpoint marker.</param>
+    /// <returns>A string representing the resolved checkpoint marker, or an appropriate placeholder if the marker is null, zero, or evicted.</returns>
     private string ResolveNvCheckpointMarker(void* markerPtr)
     {
         if (markerPtr is null)
             return "<null>";
 
-        ulong serial = *(ulong*)markerPtr;
+        ulong serial = (ulong)(nuint)markerPtr;
         if (serial == 0)
             return "<zero>";
 
@@ -136,18 +245,23 @@ public unsafe partial class VulkanRenderer
         lock (_vulkanNvCheckpointMarkerLock)
         {
             VulkanNvCheckpointMarker marker = _vulkanNvCheckpointMarkers[index];
-            if (marker.Serial != serial)
-                return $"#{serial}:<evicted>";
-
-            return
-                $"#{marker.Serial}:{marker.OpKind ?? "<unknown>"} " +
-                $"target={marker.OutputTargetName ?? "<unknown>"} " +
-                $"pass={marker.PassIndex} batch={marker.BatchIndex} " +
-                $"pipe={marker.PipelineIdentity} vp={marker.ViewportIdentity} " +
-                $"cmd=0x{marker.CommandBufferHandle:X}";
+            return marker.Serial != serial
+                ? $"#{serial}:<evicted>"
+                : $"#{marker.Serial}:{marker.OpKind ?? "<unknown>"} " +
+                    $"target={marker.OutputTargetName ?? "<unknown>"} " +
+                    $"pass={marker.PassIndex} batch={marker.BatchIndex} " +
+                    $"pipe={marker.PipelineIdentity} vp={marker.ViewportIdentity} " +
+                    $"cmd=0x{marker.CommandBufferHandle:X} cmdRecordGen={marker.CommandBufferRecordingGeneration}";
         }
     }
 
+    /// <summary>
+    /// Registers a range of Vulkan device addresses for diagnostic purposes. This allows tracking of memory regions associated with specific Vulkan buffers.
+    /// </summary>
+    /// <param name="buffer">The Vulkan buffer associated with the device address range.</param>
+    /// <param name="baseAddress">The base address of the device address range.</param>
+    /// <param name="size">The size of the device address range.</param>
+    /// <param name="label">A label describing the purpose or usage of the device address range.</param>
     private void RegisterVulkanDeviceAddressRange(Buffer buffer, ulong baseAddress, ulong size, string label)
     {
         if (buffer.Handle == 0 || baseAddress == 0 || size == 0)
@@ -176,6 +290,10 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Unregisters a range of Vulkan device addresses associated with the specified buffer, marking them as inactive for diagnostic purposes.
+    /// </summary>
+    /// <param name="buffer">The Vulkan buffer whose associated device address range should be unregistered.</param>
     private void UnregisterVulkanDeviceAddressRange(Buffer buffer)
     {
         if (buffer.Handle == 0)
@@ -192,14 +310,16 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Records a Vulkan device address binding callback for diagnostic purposes.
+    /// </summary>
+    /// <param name="callbackData">The callback data containing information about the Vulkan device address binding event.</param>
     private void RecordVulkanDeviceAddressBindingCallback(DebugUtilsMessengerCallbackDataEXT* callbackData)
     {
         if (!_diagnosticOptions.RequestDeviceAddressBindingReport ||
             !_supportsDeviceAddressBindingReport ||
             callbackData is null)
-        {
             return;
-        }
 
         BaseInStructure* current = (BaseInStructure*)callbackData->PNext;
         while (current is not null)
@@ -214,6 +334,10 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Records a Vulkan device address binding event for diagnostic purposes.
+    /// </summary>
+    /// <param name="binding">The binding data containing information about the Vulkan device address binding event.</param>
     private void RecordVulkanDeviceAddressBindingEvent(DeviceAddressBindingCallbackDataEXT* binding)
     {
         if (binding is null || binding->BaseAddress == 0 || binding->Size == 0)
@@ -234,6 +358,11 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Describes the correlation of a Vulkan device address with known device address ranges.
+    /// </summary>
+    /// <param name="address">The Vulkan device address to describe.</param>
+    /// <returns>A string describing the correlation of the address with known device address ranges, or null if no correlation is found.</returns>
     private string? DescribeVulkanAddressCorrelation(ulong address)
     {
         if (address == 0)
@@ -260,6 +389,10 @@ public unsafe partial class VulkanRenderer
         return null;
     }
 
+    /// <summary>
+    /// Appends a summary of Vulkan device address binding events to the specified StringBuilder.
+    /// </summary>
+    /// <param name="builder">The StringBuilder to which the summary will be appended.</param>
     private void AppendDeviceAddressBindingSummary(StringBuilder builder)
     {
         if (!_diagnosticOptions.RequestDeviceAddressBindingReport)
@@ -307,21 +440,27 @@ public unsafe partial class VulkanRenderer
         AppendFaultSection(builder, section.ToString());
     }
 
+    /// <summary>
+    /// Counts the number of currently active Vulkan device address ranges.
+    /// </summary>
+    /// <returns>The number of currently active Vulkan device address ranges.</returns>
     private int CountTrackedVulkanDeviceAddressRanges()
     {
         int count = 0;
         lock (_vulkanDeviceAddressDiagnosticsLock)
         {
             for (int i = 0; i < _vulkanDeviceAddressRanges.Length; i++)
-            {
                 if (_vulkanDeviceAddressRanges[i].Active)
                     count++;
-            }
         }
 
         return count;
     }
 
+    /// <summary>
+    /// Appends a detailed summary of device faults to the specified StringBuilder.
+    /// </summary>
+    /// <param name="builder">The StringBuilder to which the detailed summary will be appended.</param>
     private void AppendDeviceFaultSummaryDetailed(StringBuilder builder)
     {
         if (!_diagnosticOptions.RequestDeviceFault)
@@ -362,14 +501,23 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
-            DeviceFaultAddressInfoEXT[] addressInfos = counts.AddressInfoCount == 0
-                ? Array.Empty<DeviceFaultAddressInfoEXT>()
-                : new DeviceFaultAddressInfoEXT[checked((int)counts.AddressInfoCount)];
-            DeviceFaultVendorInfoEXT[] vendorInfos = counts.VendorInfoCount == 0
-                ? Array.Empty<DeviceFaultVendorInfoEXT>()
-                : new DeviceFaultVendorInfoEXT[checked((int)counts.VendorInfoCount)];
+            uint reportedAddressInfoCount = counts.AddressInfoCount;
+            uint reportedVendorInfoCount = counts.VendorInfoCount;
+            ulong reportedVendorBinarySize = counts.VendorBinarySize;
+            uint writableAddressInfoCount = Math.Min(reportedAddressInfoCount, (uint)_diagnosticOptions.DeviceFaultAddressRecordCap);
+            uint writableVendorInfoCount = Math.Min(reportedVendorInfoCount, (uint)_diagnosticOptions.DeviceFaultVendorRecordCap);
+            ulong writableVendorBinarySize = Math.Min(reportedVendorBinarySize, (ulong)_diagnosticOptions.DeviceFaultVendorBinaryByteCap);
+            bool recordsTruncated = writableAddressInfoCount < reportedAddressInfoCount ||
+                writableVendorInfoCount < reportedVendorInfoCount;
 
-            ulong vendorBinarySize = counts.VendorBinarySize;
+            DeviceFaultAddressInfoEXT[] addressInfos = writableAddressInfoCount == 0
+                ? Array.Empty<DeviceFaultAddressInfoEXT>()
+                : new DeviceFaultAddressInfoEXT[checked((int)writableAddressInfoCount)];
+            DeviceFaultVendorInfoEXT[] vendorInfos = writableVendorInfoCount == 0
+                ? Array.Empty<DeviceFaultVendorInfoEXT>()
+                : new DeviceFaultVendorInfoEXT[checked((int)writableVendorInfoCount)];
+
+            ulong vendorBinarySize = writableVendorBinarySize;
             byte[]? vendorBinary = null;
             string vendorBinaryStatus;
             if (!_supportsExtDeviceFaultVendorBinary)
@@ -380,15 +528,17 @@ public unsafe partial class VulkanRenderer
             {
                 vendorBinaryStatus = "not-reported";
             }
-            else if (vendorBinarySize > int.MaxValue)
-            {
-                vendorBinaryStatus = $"too-large:{vendorBinarySize}";
-            }
             else
             {
                 vendorBinary = new byte[(int)vendorBinarySize];
-                vendorBinaryStatus = "captured";
+                vendorBinaryStatus = vendorBinarySize < reportedVendorBinarySize
+                    ? $"captured-truncated:{vendorBinarySize}/{reportedVendorBinarySize}"
+                    : "captured";
             }
+
+            counts.AddressInfoCount = writableAddressInfoCount;
+            counts.VendorInfoCount = writableVendorInfoCount;
+            counts.VendorBinarySize = vendorBinary?.LongLength is > 0 ? vendorBinarySize : 0UL;
 
             DeviceFaultInfoEXT faultInfo = new()
             {
@@ -406,7 +556,16 @@ public unsafe partial class VulkanRenderer
                 faultInfo.PVendorBinaryData = vendorBinaryBuffer.Length == 0 ? null : vendorBinaryPtr;
 
                 Result infoResult = _extDeviceFault.GetDeviceFaultInfo(device, &counts, &faultInfo);
-                bool incomplete = countsResult == Result.Incomplete || infoResult == Result.Incomplete;
+                bool infoResultUsable = infoResult is Result.Success or Result.Incomplete;
+                if (!infoResultUsable)
+                {
+                    vendorBinary = null;
+                    vendorBinaryStatus = $"failed-unusable:{infoResult}";
+                }
+                bool incomplete = countsResult == Result.Incomplete ||
+                    infoResult != Result.Success ||
+                    recordsTruncated ||
+                    vendorBinarySize < reportedVendorBinarySize;
                 string description = ReadNullTerminatedUtf8(faultInfo.Description, VulkanDeviceFaultDescriptionBytes);
 
                 string artifactSummary = PersistDeviceFaultArtifacts(
@@ -424,8 +583,8 @@ public unsafe partial class VulkanRenderer
                 AppendFaultSection(
                     builder,
                     $"DeviceFaultEXT countsResult={countsResult} infoResult={infoResult} incomplete={incomplete} " +
-                    $"addressInfos={counts.AddressInfoCount} vendorInfos={counts.VendorInfoCount} " +
-                    $"vendorBinaryBytes={vendorBinarySize} vendorBinary={vendorBinaryStatus} " +
+                    $"addressInfos={counts.AddressInfoCount}/{reportedAddressInfoCount} vendorInfos={counts.VendorInfoCount}/{reportedVendorInfoCount} " +
+                    $"vendorBinaryBytes={vendorBinarySize}/{reportedVendorBinarySize} vendorBinary={vendorBinaryStatus} " +
                     $"description='{SummarizeForInlineLog(description)}' {artifactSummary}");
             }
         }
@@ -435,6 +594,20 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Persists the artifacts related to a Vulkan device fault and generates a summary string.
+    /// </summary>
+    /// <param name="description">The description of the device fault.</param>
+    /// <param name="counts">The counts of various device fault artifacts.</param>
+    /// <param name="addressInfos">The array of address information related to the device fault.</param>
+    /// <param name="vendorInfos">The array of vendor-specific information related to the device fault.</param>
+    /// <param name="vendorBinary">The vendor binary data associated with the device fault, if any.</param>
+    /// <param name="countsResult">The result of querying the counts of device fault artifacts.</param>
+    /// <param name="infoResult">The result of querying the detailed device fault information.</param>
+    /// <param name="incomplete">Indicates whether the device fault information is incomplete.</param>
+    /// <param name="vendorBinaryStatus">The status of the vendor binary data.</param>
+    /// <param name="khrExposed">Indicates whether the KHR device fault extension is exposed.</param>
+    /// <returns>A summary string describing the persisted device fault artifacts.</returns>
     private string PersistDeviceFaultArtifacts(
         string description,
         in DeviceFaultCountsEXT counts,
@@ -511,6 +684,11 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Appends the header information of the vendor binary to the device fault report.
+    /// </summary>
+    /// <param name="report">The StringBuilder to which the vendor binary header information will be appended.</param>
+    /// <param name="vendorBinary">The vendor binary data containing the header information.</param>
     private static void AppendVendorBinaryHeader(StringBuilder report, byte[] vendorBinary)
     {
         if (vendorBinary.Length < sizeof(DeviceFaultVendorBinaryHeaderVersionOneEXT))
@@ -530,6 +708,10 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Appends a detailed summary of NVIDIA diagnostic checkpoints to the device fault report.
+    /// </summary>
+    /// <param name="builder">The StringBuilder to which the NVIDIA checkpoint summary will be appended.</param>
     private void AppendNvCheckpointSummaryDetailed(StringBuilder builder)
     {
         if (!_diagnosticOptions.RequestNvDiagnosticCheckpoints)
@@ -557,6 +739,12 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Appends detailed NVIDIA checkpoint data for a specific Vulkan queue to the given section of the device fault report.
+    /// </summary>
+    /// <param name="section">The StringBuilder section to which the checkpoint data will be appended.</param>
+    /// <param name="queue">The Vulkan queue for which checkpoint data will be retrieved.</param>
+    /// <param name="queueName">The name of the Vulkan queue (e.g., "graphics", "present", "transfer").</param>
     private void AppendNvQueueCheckpointData(StringBuilder section, Queue queue, string queueName)
     {
         if (queue.Handle == 0 || _nvDeviceDiagnosticCheckpoints is null)
@@ -594,6 +782,12 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    /// <summary>
+    /// Reads a null-terminated UTF-8 string from the specified byte pointer, up to a maximum number of bytes.
+    /// </summary>
+    /// <param name="bytes">A pointer to the byte array containing the UTF-8 string.</param>
+    /// <param name="maxBytes">The maximum number of bytes to read from the byte array.</param>
+    /// <returns>The decoded string, or an empty string if the byte pointer is null or the maximum number of bytes is zero.</returns>
     private static string ReadNullTerminatedUtf8(byte* bytes, int maxBytes)
     {
         if (bytes is null || maxBytes <= 0)
@@ -608,6 +802,12 @@ public unsafe partial class VulkanRenderer
             : Encoding.UTF8.GetString(new ReadOnlySpan<byte>(bytes, length));
     }
 
+    /// <summary>
+    /// Summarizes a string for inline logging by truncating it to a specified maximum length and replacing line breaks with spaces.
+    /// </summary>
+    /// <param name="value">The string value to summarize for inline logging.</param>
+    /// <param name="maxLength">The maximum length of the summarized string. Defaults to 96 characters.</param>
+    /// <returns>A summarized version of the input string suitable for inline logging.</returns>
     private static string SummarizeForInlineLog(string value, int maxLength = 96)
     {
         if (string.IsNullOrWhiteSpace(value))

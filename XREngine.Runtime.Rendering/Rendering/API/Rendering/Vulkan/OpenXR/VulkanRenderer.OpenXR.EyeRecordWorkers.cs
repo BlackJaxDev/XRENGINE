@@ -125,6 +125,12 @@ public unsafe partial class VulkanRenderer
         in OpenXrPreparedEyeCommandBufferInput leftEye,
         in OpenXrPreparedEyeCommandBufferInput rightEye)
     {
+        if (!IsDeviceOperational)
+            return new OpenXrEyeRecordWorkerBatchResult(
+                new(false, default, Environment.CurrentManagedThreadId, TimeSpan.Zero, $"Vulkan device state is {DeviceState}"),
+                new(false, default, Environment.CurrentManagedThreadId, TimeSpan.Zero, $"Vulkan device state is {DeviceState}"),
+                TimeSpan.Zero);
+
         OpenXrEyeRecordWorkerScheduler scheduler = EnsureOpenXrEyeRecordWorkerScheduler();
         return scheduler.Record(this, leftEye, rightEye);
     }
@@ -137,6 +143,12 @@ public unsafe partial class VulkanRenderer
         in OpenXrPreparedEyeCommandBufferInput prepared,
         out OpenXrRecordedEyeCommandBuffer recorded)
     {
+        if (!IsDeviceOperational)
+        {
+            recorded = default;
+            return false;
+        }
+
         if (OpenXrVulkanTraceEnabled)
         {
             Debug.Vulkan(

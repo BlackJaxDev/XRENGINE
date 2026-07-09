@@ -862,7 +862,7 @@ namespace XREngine.Rendering.Vulkan
                         }
 
                         if (!TryUpdateDescriptorSetsWithTemplates(state, frameIndex, writeArray))
-                            Api!.UpdateDescriptorSets(Device, (uint)writeArray.Length, writePtr, 0, null);
+                            Renderer.UpdateDescriptorSetsTracked((uint)writeArray.Length, writePtr);
                         Renderer.RecordVulkanDescriptorTableGeneration("MaterialDescriptorSets.Update");
                     }
                 }

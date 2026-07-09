@@ -142,10 +142,8 @@ namespace XREngine.Rendering.Vulkan
                 else
                 {
                     // Fence creation failed â€” fall back to QueueWaitIdle.
-                    Result waitResult = Api!.QueueWaitIdle(submitQueue);
+                    Result waitResult = WaitForQueueIdleTracked(submitQueue);
                     waitSucceeded = waitResult == Result.Success;
-                    if (waitResult == Result.ErrorDeviceLost)
-                        MarkDeviceLost();
                     if (!waitSucceeded)
                         Debug.VulkanWarning($"[Vulkan] QueueWaitIdle fallback failed (result={waitResult}). Command buffer will not be freed.");
                 }

@@ -3,14 +3,20 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Text;
+using System.Threading;
 using Silk.NET.Vulkan;
+using XREngine.Rendering.DLSS;
 
 namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    private const int VulkanQueueOperationHistoryCapacity = 64;
     private EVulkanSynchronizationBackend _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
     private readonly Dictionary<VulkanTrackedImageSubresource, ImageLayout> _trackedImageSubresourceLayouts = new();
+    private readonly VulkanQueueOperationRecord[] _vulkanQueueOperationHistory = new VulkanQueueOperationRecord[VulkanQueueOperationHistoryCapacity];
+    private long _vulkanQueueOperationSerial;
 
     private bool UsesSynchronization2
         => _activeSynchronizationBackend == EVulkanSynchronizationBackend.Sync2;
@@ -20,6 +26,16 @@ public unsafe partial class VulkanRenderer
         uint MipLevel,
         uint ArrayLayer,
         ImageAspectFlags Aspect);
+
+    internal readonly record struct VulkanQueueOperationRecord(
+        ulong Serial,
+        string Operation,
+        ulong QueueHandle,
+        Result Result,
+        EVulkanDeviceState DeviceState,
+        ulong SubmissionSerial,
+        int ThreadId,
+        string? Caller);
 
     private sealed class VulkanImageLayoutStateSnapshot(
         VulkanTrackedImageLayoutEntry[] trackedLayouts,
@@ -116,6 +132,15 @@ public unsafe partial class VulkanRenderer
         VulkanSubmissionDiagnosticContext diagnosticContext = default,
         [CallerMemberName] string? caller = null)
     {
+        using VulkanQueueOperationLease queueOperation =
+            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
+        if (!queueOperation.Acquired)
+        {
+            lock (_oneTimeSubmitLock)
+                RecordVulkanQueueOperation("submit-rejected", queue, Result.ErrorDeviceLost, 0, caller);
+            return Result.ErrorDeviceLost;
+        }
+
         diagnosticContext = CompleteSubmissionDiagnosticContext(queue, ref submitInfo, fence, diagnosticContext, caller);
         RecordLastVulkanSubmissionDiagnosticContext(diagnosticContext);
 
@@ -123,6 +148,7 @@ public unsafe partial class VulkanRenderer
             ? SubmitToQueueSync2(queue, ref submitInfo, fence)
             : Api!.QueueSubmit(queue, 1, ref submitInfo, fence);
 
+        RecordVulkanQueueOperation("submit", queue, result, diagnosticContext.SubmissionSerial, caller);
         if (result == Result.Success)
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanQueueSubmit();
         else if (result == Result.ErrorDeviceLost)
@@ -134,6 +160,128 @@ public unsafe partial class VulkanRenderer
         }
 
         return result;
+    }
+
+    internal Result WaitForQueueIdleTracked(Queue queue, [CallerMemberName] string? caller = null)
+    {
+        using VulkanQueueOperationLease queueOperation =
+            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
+        if (!queueOperation.Acquired)
+        {
+            lock (_oneTimeSubmitLock)
+                RecordVulkanQueueOperation("wait-idle-rejected", queue, Result.ErrorDeviceLost, 0, caller);
+            return Result.ErrorDeviceLost;
+        }
+
+        Result result = Api!.QueueWaitIdle(queue);
+        RecordVulkanQueueOperation("wait-idle", queue, result, 0, caller);
+        if (result == Result.ErrorDeviceLost)
+        {
+            RecordFirstFailingVulkanApi($"vkQueueWaitIdle:{caller ?? "<unknown>"}:{result}");
+            MarkDeviceLost($"QueueWaitIdle returned ErrorDeviceLost in {caller ?? "<unknown>"}");
+        }
+
+        return result;
+    }
+
+    private bool TryPresentToQueueTracked(
+        Queue queue,
+        ref PresentInfoKHR presentInfo,
+        out Result result,
+        out string failureReason,
+        [CallerMemberName] string? caller = null)
+    {
+        using VulkanQueueOperationLease queueOperation =
+            VulkanQueueOperationLease.TryEnter(_oneTimeSubmitLock, _deviceStateMachine);
+        if (!queueOperation.Acquired)
+        {
+            result = Result.ErrorDeviceLost;
+            failureReason = "Vulkan device is not operational";
+            lock (_oneTimeSubmitLock)
+                RecordVulkanQueueOperation("present-rejected", queue, result, 0, caller);
+            return false;
+        }
+
+        bool dispatched;
+        if (_streamlineFrameGenerationSwapchainActive)
+        {
+            dispatched = NvidiaDlssManager.Native.TryQueueProxyPresent(
+                this,
+                queue,
+                ref presentInfo,
+                out result,
+                out failureReason);
+        }
+        else
+        {
+            result = khrSwapChain!.QueuePresent(queue, ref presentInfo);
+            failureReason = string.Empty;
+            dispatched = true;
+        }
+
+        RecordVulkanQueueOperation("present", queue, result, 0, caller);
+        if (result == Result.ErrorDeviceLost)
+        {
+            RecordFirstFailingVulkanApi($"vkQueuePresentKHR:{caller ?? "<unknown>"}:{result}");
+            MarkDeviceLost($"QueuePresent returned ErrorDeviceLost in {caller ?? "<unknown>"}");
+        }
+
+        return dispatched;
+    }
+
+    private void RecordVulkanQueueOperation(
+        string operation,
+        Queue queue,
+        Result result,
+        ulong submissionSerial,
+        string? caller)
+    {
+        long serial = Interlocked.Increment(ref _vulkanQueueOperationSerial);
+        int index = unchecked((int)((serial - 1) % VulkanQueueOperationHistoryCapacity));
+        _vulkanQueueOperationHistory[index] = new VulkanQueueOperationRecord(
+            unchecked((ulong)serial),
+            operation,
+            unchecked((ulong)queue.Handle),
+            result,
+            DeviceState,
+            submissionSerial,
+            Environment.CurrentManagedThreadId,
+            caller);
+    }
+
+    private string DescribeVulkanQueueOperationTail(int maxEntries = 8)
+    {
+        lock (_oneTimeSubmitLock)
+        {
+            long latestSerial = Volatile.Read(ref _vulkanQueueOperationSerial);
+            if (latestSerial <= 0)
+                return string.Empty;
+
+            int available = (int)Math.Min(latestSerial, VulkanQueueOperationHistoryCapacity);
+            int emitted = 0;
+            StringBuilder builder = new("QueueOperationTail");
+            for (long serial = latestSerial; serial > 0 && emitted < maxEntries && latestSerial - serial < available; serial--)
+            {
+                int index = unchecked((int)((serial - 1) % VulkanQueueOperationHistoryCapacity));
+                VulkanQueueOperationRecord operation = _vulkanQueueOperationHistory[index];
+                if (operation.Serial != unchecked((ulong)serial))
+                    continue;
+
+                builder
+                    .Append(" [#").Append(operation.Serial)
+                    .Append(' ').Append(operation.Operation)
+                    .Append(" queue=0x").Append(operation.QueueHandle.ToString("X"))
+                    .Append(" result=").Append(operation.Result)
+                    .Append(" state=").Append(operation.DeviceState)
+                    .Append(" submit=").Append(operation.SubmissionSerial)
+                    .Append(" thread=").Append(operation.ThreadId)
+                    .Append(" caller=").Append(operation.Caller ?? "<unknown>")
+                    .Append(']');
+                emitted++;
+            }
+
+            return emitted == 0 ? string.Empty : builder.ToString();
+        }
     }
 
     private unsafe Result SubmitToQueueSync2(Queue queue, ref SubmitInfo submitInfo, Fence fence)
@@ -237,7 +385,7 @@ public unsafe partial class VulkanRenderer
         [CallerMemberName] string? caller = null)
     {
         WarnBroadBarrierStages(srcStageMask, dstStageMask, caller);
-        RecordVulkanImageLayoutTransitionBreadcrumb(imageBarrierCount, imageBarriers, caller);
+        RecordVulkanImageLayoutTransitionBreadcrumb(commandBuffer, imageBarrierCount, imageBarriers, caller);
 
         if (!UsesSynchronization2)
         {

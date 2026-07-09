@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "captured_at_utc": "2026-07-09T22:25:27.7294738Z",
+  "scope": "Vulkan core hardening Phase 2.1",
+  "source": {
+    "branch": "rendering-vulkan-core-hardening",
+    "commit": "84e43039a52564513ab32dc03aa65b28b57c6b38",
+    "dirty_worktree": true,
+    "dirty_path_count_before_manifest": 61
+  },
+  "machine": {
+    "os": "Microsoft Windows 11 Pro",
+    "os_version": "10.0.26200",
+    "dotnet_sdk": "10.0.301",
+    "vulkan_instance_version": "1.4.328",
+    "vulkan_validation_layer": "VK_LAYER_KHRONOS_validation 1.4.328",
+    "gpus": [
+      {
+        "name": "NVIDIA GeForce RTX 4070 Laptop GPU",
+        "driver_version": "581.57",
+        "windows_driver_version": "32.0.15.8157",
+        "vulkan_api_version": "1.4.312",
+        "selected_for_openxr": true
+      },
+      {
+        "name": "Intel Arc Graphics",
+        "driver_version": "101.8132",
+        "windows_driver_version": "32.0.101.8132",
+        "vulkan_api_version": "1.4.325",
+        "selected_for_openxr": false
+      }
+    ]
+  },
+  "settings": {
+    "path": "Assets/UnitTestingWorldSettings.jsonc",
+    "sha256_before_and_after_temporary_probe_override": "80401328FE54F72B7D2B35E422BA0586252B9F909E5B588B1BF7E5E8F925E551",
+    "renderer": "Vulkan",
+    "vr_runtime": "MonadoOpenXR",
+    "view_render_mode": "SinglePassStereo",
+    "light_probe_grid": "4x3x3",
+    "light_probe_count": 36,
+    "light_probe_resolution": 128,
+    "light_probe_capture_for_stress_runs": "Realtime",
+    "stop_realtime_capture_seconds": 5.0
+  },
+  "diagnostics": {
+    "preset": "SyncValidation",
+    "environment": {
+      "XRE_VULKAN_DIAGNOSTIC_PRESET": "SyncValidation",
+      "XRE_VULKAN_CRASH_BREADCRUMBS": "1"
+    },
+    "device_fault": {
+      "requested_by_preset": false,
+      "khr_available_on_selected_device": false,
+      "ext_available_on_selected_device": true,
+      "active_path": "unavailable-not-requested"
+    }
+  },
+  "openxr": {
+    "runtime_name": "Monado",
+    "runtime_manifest": "Build/Deps/Monado/openxr_monado.json",
+    "loader": "Build/Dependencies/vcpkg/installed/x64-windows/bin/openxr_loader.dll",
+    "enabled_extensions": [
+      "XR_KHR_vulkan_enable2",
+      "XR_KHR_win32_convert_performance_counter_time",
+      "XR_EXT_debug_utils"
+    ],
+    "view_extent": "896x1007",
+    "swapchain_image_count_per_eye": 3,
+    "desktop_mirror": true
+  },
+  "builds_and_tests": [
+    {
+      "name": "runtime-rendering-build",
+      "command": "dotnet build .\\XREngine.Runtime.Rendering\\XREngine.Runtime.Rendering.csproj --no-restore",
+      "passed": true,
+      "warnings": 108,
+      "errors": 0,
+      "raw_log": "Build/_AgentValidation/20260709-1435-vulkan-phase21/logs/runtime-build-final.log"
+    },
+    {
+      "name": "editor-build",
+      "command": "dotnet build .\\XREngine.Editor\\XREngine.Editor.csproj --no-restore",
+      "passed": true,
+      "warnings": 216,
+      "errors": 0,
+      "raw_log": "Build/_AgentValidation/20260709-1435-vulkan-phase21/logs/editor-build-final.log"
+    },
+    {
+      "name": "phase0-through-phase21-focused-tests",
+      "passed": true,
+      "passed_count": 93,
+      "failed_count": 0,
+      "raw_log": "Build/_AgentValidation/20260709-1435-vulkan-phase21/logs/phase0-21-focused-tests-final.log"
+    },
+    {
+      "name": "vulkan-planner-openxr-contract-suite",
+      "passed": true,
+      "passed_count": 71,
+      "failed_count": 0,
+      "raw_log": "Build/_AgentValidation/20260709-1435-vulkan-phase21/logs/vulkan-command-chain-contract-tests-final.log"
+    },
+    {
+      "name": "vulkan-phase3-regression",
+      "passed": true,
+      "passed_count": 96,
+      "failed_count": 0,
+      "repaired_stale_source_contracts": [
+        "VR_Vulkan_ParallelSecondaryCommands_NoRenderThreadBlock",
+        "Vulkan_ImGuiOverlay_UsesExplicitSwapchainLayoutHandoff"
+      ],
+      "raw_log": "Build/_AgentValidation/20260709-1435-vulkan-phase21/logs/vulkan-phase3-regression.log"
+    }
+  ],
+  "runs": [
+    {
+      "name": "openxr-eye-mirror-syncvalidation",
+      "command": "Tools/OpenXR/Run-OpenXrMonadoSmoke.ps1 -Renderer Vulkan -SmokeFrames 120 -NoBuild -StartService -SkipAllocationAudit",
+      "submitted_frames": 118,
+      "no_layer_frames": 2,
+      "eye_acquire_wait_release_counts": [118, 118],
+      "per_frame_allocations_bytes": 0,
+      "teardown_completed": true,
+      "device_lost": false,
+      "smoke_failures": 0,
+      "smoke_warnings": 0,
+      "validation_clean": false,
+      "engine_log_retained": false,
+      "summary": "Build/_AgentValidation/20260709-1435-vulkan-phase21/openxr-syncvalidation-final/reports/openxr-smoke-summary.normalized.json"
+    },
+    {
+      "name": "openxr-36-light-probe-syncvalidation-before-eye-order-fix",
+      "command": "Tools/OpenXR/Run-OpenXrMonadoSmoke.ps1 -Renderer Vulkan -SmokeFrames 120 -NoBuild -StartService -SkipAllocationAudit",
+      "submitted_frames": 110,
+      "no_layer_frames": 10,
+      "eye_acquire_wait_release_counts": [126, 126],
+      "per_frame_allocations_bytes": 0,
+      "teardown_completed": true,
+      "probe_position_payload_count": 36,
+      "device_lost": false,
+      "planner_assertions": 0,
+      "validation_clean": false,
+      "validation_error_lines": 60,
+      "invalid_recorded_command_buffer_reports": 9,
+      "engine_log": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_14-59-05_pid42476",
+      "summary": "Build/_AgentValidation/20260709-1435-vulkan-phase21/openxr-lightprobe-syncvalidation-rerun/reports/openxr-smoke-summary.normalized.json"
+    },
+    {
+      "name": "desktop-syncvalidation",
+      "command": "dotnet Build/Editor/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.Editor.dll --unit-testing",
+      "duration_seconds": 96.83,
+      "shutdown": "editor close request did not terminate within 20 seconds; process was stopped by the harness",
+      "device_lost": false,
+      "validation_clean": false,
+      "validation_error_lines": 38,
+      "engine_log": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_15-03-36_pid47780",
+      "summary": "Build/_AgentValidation/20260709-1435-vulkan-phase21/desktop-syncvalidation/reports/desktop-run.json"
+    },
+    {
+      "name": "openxr-light-probe-eye-order-regression",
+      "command": "Tools/OpenXR/Run-OpenXrMonadoSmoke.ps1 -Renderer Vulkan -SmokeFrames 40 -TimeoutSeconds 180 -NoBuild -StartService -SkipAllocationAudit",
+      "completed_frames": 40,
+      "requested_frames": 40,
+      "probe_position_payload_count": 5,
+      "device_lost": false,
+      "planner_assertions": 0,
+      "invalid_recorded_command_buffer_reports": 0,
+      "validation_clean": false,
+      "validation_error_lines": 62,
+      "remaining_validation_classes": [
+        "dynamic-rendering layout transition hazards",
+        "query begun but not ended before vkCmdEndRendering",
+        "cube image-view compatibility",
+        "submitted image layout mismatch",
+        "duplicate descriptor-set-layout destruction during shutdown"
+      ],
+      "harness_result": "nonzero-after-engine-completed-because-output-capture-did-not-close",
+      "engine_log": "Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-07-09_15-16-30_pid44016",
+      "raw_run_root": "Build/_AgentValidation/20260709-1435-vulkan-phase21/openxr-lightprobe-syncvalidation-eye-order-fix"
+    }
+  ],
+  "conclusion": {
+    "phase21_source_implementation_complete": true,
+    "phase21_device_loss_reproduced": false,
+    "cross_eye_descriptor_invalidation_reproduced_after_fix": false,
+    "validation_clean_acceptance_met": false,
+    "remaining_work": "Resolve the recorded synchronization, query lifecycle, cube-view, and teardown validation errors before checking the final live validation acceptance item."
+  }
+}

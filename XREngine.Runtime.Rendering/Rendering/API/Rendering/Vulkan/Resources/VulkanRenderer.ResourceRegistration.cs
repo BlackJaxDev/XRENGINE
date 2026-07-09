@@ -76,6 +76,12 @@ public unsafe partial class VulkanRenderer
         out string failureReason)
     {
         failureReason = string.Empty;
+        if (!IsDeviceOperational)
+        {
+            failureReason = $"Vulkan device state is {DeviceState}";
+            return false;
+        }
+
         if (image.Handle != 0)
             return true;
 
@@ -267,6 +273,9 @@ public unsafe partial class VulkanRenderer
 
     internal void AllocatePhysicalBuffer(VulkanPhysicalBufferGroup group, ref Buffer buffer, ref DeviceMemory memory)
     {
+        if (!IsDeviceOperational)
+            throw new InvalidOperationException($"Cannot allocate a Vulkan physical buffer while device state is {DeviceState}.");
+
         if (buffer.Handle != 0)
             return;
 

@@ -977,7 +977,7 @@ public unsafe partial class VulkanRenderer
             PImageInfo = &imageInfo
         };
 
-        Api.UpdateDescriptorSets(device, 1, &write, 0, null);
+        UpdateDescriptorSetsTracked(1, &write);
         RecordVulkanDescriptorTableGeneration("ImGui.FontDescriptorSet.Update");
         UpdateImGuiDescriptorHeapPayload((nint)1, imageInfo);
     }
@@ -2135,7 +2135,7 @@ public unsafe partial class VulkanRenderer
             PImageInfo = &imageInfo,
         };
 
-        Api!.UpdateDescriptorSets(device, 1, &write, 0, null);
+        UpdateDescriptorSetsTracked(1, &write);
         RecordVulkanDescriptorTableGeneration("ImGui.TextureDescriptorSet.Update");
     }
 

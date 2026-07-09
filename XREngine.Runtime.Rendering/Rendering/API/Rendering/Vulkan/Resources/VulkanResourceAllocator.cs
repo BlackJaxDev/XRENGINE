@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Text;
+using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
@@ -17,6 +18,9 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanResourceAllocator
 {
+    private static long _nextOwnershipId;
+    private int _retired;
+
     private readonly Dictionary<string, VulkanImageAllocation> _logicalTextureAllocations = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<VulkanAliasGroupKey, VulkanImageAliasGroup> _aliasGroups = new();
     private readonly Dictionary<VulkanAliasGroupKey, VulkanPhysicalImageGroup> _physicalGroups = new();
@@ -35,6 +39,8 @@ internal sealed class VulkanResourceAllocator
     public IEnumerable<VulkanPhysicalImageGroup> EnumeratePhysicalGroups() => _physicalGroups.Values;
     public IEnumerable<VulkanBufferAliasGroup> EnumerateBufferAliasGroups() => _bufferAliasGroups.Values;
     public IEnumerable<VulkanPhysicalBufferGroup> EnumeratePhysicalBufferGroups() => _physicalBufferGroups.Values;
+    public long OwnershipId { get; } = Interlocked.Increment(ref _nextOwnershipId);
+    public bool IsRetired => Volatile.Read(ref _retired) != 0;
 
     public IEnumerable<VulkanImageAllocation> EnumeratePersistentAllocations()
     {
@@ -52,6 +58,7 @@ internal sealed class VulkanResourceAllocator
 
     public void UpdatePlan(VulkanResourcePlan plan)
     {
+        ObjectDisposedException.ThrowIf(IsRetired, this);
         _logicalTextureAllocations.Clear();
         _aliasGroups.Clear();
         _physicalGroups.Clear();
@@ -353,6 +360,29 @@ internal sealed class VulkanResourceAllocator
     {
         foreach (VulkanPhysicalBufferGroup group in _physicalBufferGroups.Values)
             group.DestroyImmediate(renderer);
+    }
+
+    public bool TryRetirePhysicalResources(
+        VulkanRenderer renderer,
+        VulkanPhysicalImageGroup? exceptImageGroup = null,
+        IReadOnlySet<VulkanPhysicalImageGroup>? exceptImageGroups = null,
+        bool immediate = false)
+    {
+        if (Interlocked.Exchange(ref _retired, 1) != 0)
+            return false;
+
+        if (immediate)
+        {
+            DestroyPhysicalImagesImmediate(renderer, exceptImageGroups);
+            DestroyPhysicalBuffersImmediate(renderer);
+        }
+        else
+        {
+            DestroyPhysicalImages(renderer, exceptImageGroup, exceptImageGroups);
+            DestroyPhysicalBuffers(renderer);
+        }
+
+        return true;
     }
 
     internal static int ComputePhysicalPlanUsageSignature(

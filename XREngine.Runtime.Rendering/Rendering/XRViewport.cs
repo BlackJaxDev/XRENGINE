@@ -104,6 +104,12 @@ namespace XREngine.Rendering
         private bool _useDirectFboTargetCommandsWhenRenderingToFbo;
 
         /// <summary>
+        /// Explicit offscreen-capture behavior for this viewport. The default value
+        /// identifies an ordinary viewport and leaves all pipeline behavior unchanged.
+        /// </summary>
+        private RenderCapturePolicy _capturePolicy;
+
+        /// <summary>
         /// Optional per-viewport mesh submission override. Small offscreen scene
         /// captures can use this to avoid inheriting the main viewport's GPU-driven
         /// submission policy while still using the normal render pipeline.
@@ -485,8 +491,43 @@ namespace XREngine.Rendering
         /// </summary>
         public bool UseDirectFboTargetCommandsWhenRenderingToFbo
         {
-            get => _useDirectFboTargetCommandsWhenRenderingToFbo;
+            get => _useDirectFboTargetCommandsWhenRenderingToFbo || _capturePolicy.UseDirectFboTargetCommands;
             set => SetField(ref _useDirectFboTargetCommandsWhenRenderingToFbo, value);
+        }
+
+        /// <summary>
+        /// Gets the explicit offscreen-capture policy applied to this viewport.
+        /// </summary>
+        public RenderCapturePolicy CapturePolicy
+        {
+            get => _capturePolicy;
+            private set => SetField(ref _capturePolicy, value);
+        }
+
+        /// <summary>
+        /// Applies a capture policy and its viewport/camera invariants atomically.
+        /// </summary>
+        public void ApplyCapturePolicy(RenderCapturePolicy policy)
+        {
+            bool changed = _capturePolicy != policy;
+            CapturePolicy = policy;
+
+            if (!policy.IsCapture)
+                return;
+
+            AllowAutomaticInternalResolution = false;
+            AllowUIRender = policy.RenderScreenSpaceUI;
+            if (ActiveCamera is { } camera)
+                policy.ApplyCameraOverrides(camera);
+
+            if (changed)
+            {
+                RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.Current.CurrentRenderBackend;
+                Debug.Rendering(
+                    "[CapturePolicy] VP[{0}] {1}",
+                    Index,
+                    policy.DescribeEffective(backend));
+            }
         }
 
         public EMeshSubmissionStrategy? MeshSubmissionStrategyOverride

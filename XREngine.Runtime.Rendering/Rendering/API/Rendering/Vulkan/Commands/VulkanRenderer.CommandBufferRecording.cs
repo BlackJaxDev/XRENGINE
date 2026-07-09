@@ -54,6 +54,12 @@ namespace XREngine.Rendering.Vulkan
             swapchainLayoutAfterCommandBuffer = ImageLayout.PresentSrcKhr;
             commandBufferDirtyGenerationAfterRecord = SnapshotCommandBufferDirtyGeneration();
 
+            if (!IsDeviceOperational)
+            {
+                recordingDeferredReason = $"Vulkan device state is {DeviceState}";
+                return default;
+            }
+
             if (!TryEnsureCommandBuffersForSwapchain())
                 throw new InvalidOperationException("Command buffers are unavailable because swapchain framebuffers are not initialised.");
 
@@ -146,6 +152,10 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
+            FrameOp[] plannerPreparationOps = ops.Length > 0 ? ops : dynamicUiBatchTextOps;
+            using FrameOpResourcePlannerPreparationScope frameOpResourcePlannerPreparationScope =
+                new(this, plannerPreparationOps);
+
             bool hasStaticFrameOps = ops.Length > 0;
             bool hasQueryFrameOps = HasQueryFrameOps(ops) || HasQueryFrameOps(dynamicUiBatchTextOps);
             bool delayDynamicUiBatchTextOverlayRecording =
@@ -211,6 +221,7 @@ namespace XREngine.Rendering.Vulkan
                     }
                 }
 
+                frameOpResourcePlannerPreparationScope.PublishCurrentState();
                 plannerRevision = hasStaticFrameOps
                     ? PrepareFrameOpResourcePlannerStatesForFrameOps(ops)
                     : dynamicUiBatchTextOps.Length > 0
@@ -689,6 +700,8 @@ namespace XREngine.Rendering.Vulkan
             variant.PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
             variant.RecordedFrameOpContextFingerprint = frameOpContextFingerprint;
             variant.RecordedFrameOpContextId = frameOpContextId;
+            variant.RecordedResourceGeneration = commandBufferFallbackContext.ResourceGeneration;
+            variant.RecordedDescriptorGeneration = commandBufferFallbackContext.DescriptorGeneration;
             variant.RecordedSwapchainImageEverPresented = swapchainImageEverPresentedAtRecord;
             variant.RecordedSwapchainFinalLayout = swapchainLayoutAfterCommandBuffer;
             variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
@@ -845,6 +858,8 @@ namespace XREngine.Rendering.Vulkan
             variant.PreserveSwapchainForOverlay = false;
             variant.RecordedFrameOpContextFingerprint = ulong.MaxValue;
             variant.RecordedFrameOpContextId = 0;
+            variant.RecordedResourceGeneration = 0;
+            variant.RecordedDescriptorGeneration = 0;
             variant.RecordedSwapchainImageEverPresented = false;
             variant.RecordedSwapchainFinalLayout = ImageLayout.PresentSrcKhr;
             variant.RecordedSwapchainWriteCount = 0;

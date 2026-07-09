@@ -225,7 +225,9 @@ public sealed class VulkanCommandChainDataModelTests
         openXrSource.ShouldContain("private readonly Dictionary<OpenXrViewResourcePlannerContextKey, ResourcePlannerRuntimeState> _openXrResourcePlannerStates = new();");
         openXrSource.ShouldContain("private readonly object _openXrResourcePlannerStatesLock = new();");
         openXrSource.ShouldContain("EnterOpenXrResourcePlannerThreadScope(OpenXrViewResourcePlannerContextKey.FromTarget(in targetContext))");
-        openXrSource.ShouldContain("private OpenXrResourcePlannerThreadScope EnterOpenXrResourcePlannerThreadScope(int stateIndex)");
+        openXrSource.ShouldContain("EOpenXrResourcePlannerPurpose purpose");
+        openXrSource.ShouldContain("CreateLegacyOpenXrResourcePlannerContextKey(stateIndex, purpose)");
+        openXrSource.ShouldContain("purpose={key.Purpose}");
         openXrSource.ShouldContain("target.FoveationResourceKey");
         openXrSource.ShouldContain("target.FoveationAttachmentKind");
         openXrSource.ShouldContain("target.FoveationAttachmentOwnedByResourcePlanner");
@@ -275,7 +277,7 @@ public sealed class VulkanCommandChainDataModelTests
 
         openXrSource.ShouldContain("[ThreadStatic]");
         openXrSource.ShouldContain("private static VulkanRenderer? _threadOpenXrExternalSwapchainRenderer;");
-        openXrSource.ShouldContain("IsThreadOpenXrExternalSwapchainTarget ||");
+        openXrSource.ShouldContain("public override bool IsRenderingExternalSwapchainTarget => IsThreadOpenXrExternalSwapchainTarget;");
         openXrSource.ShouldContain("private bool IsThreadOpenXrExternalSwapchainTarget");
         openXrSource.ShouldContain("_threadOpenXrExternalSwapchainTargetRegion");
         openXrSource.ShouldContain("using IDisposable externalScope = EnterOpenXrExternalSwapchainRenderScope(");
@@ -397,9 +399,11 @@ public sealed class VulkanCommandChainDataModelTests
         string openXrSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
 
         openXrSource.ShouldContain("ClearOpenXrEyeRecordedTextureUploads();");
-        openXrSource.ShouldContain("hasFirst = TryRecordOpenXrEyeSwapchainCommandBuffer(firstEye, out firstRecorded);");
+        openXrSource.ShouldContain("TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out firstPrepared)");
+        openXrSource.ShouldContain("TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out secondPrepared)");
+        openXrSource.ShouldContain("hasFirst = TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in firstPrepared, out firstRecorded);");
         openXrSource.ShouldContain("if (!hasFirst)");
-        openXrSource.ShouldContain("hasSecond = TryRecordOpenXrEyeSwapchainCommandBuffer(secondEye, out secondRecorded);");
+        openXrSource.ShouldContain("hasSecond = TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in secondPrepared, out secondRecorded);");
         openXrSource.ShouldContain("if (!hasSecond)");
         openXrSource.ShouldContain("PublishOpenXrEyeRecordedTextureUploadsAfterCompletedSubmit(\"OpenXR eye batch\")");
         openXrSource.ShouldContain("CancelOpenXrEyeRecordedTextureUploads(\"OpenXR eye batch command buffers did not complete\")");
@@ -503,8 +507,8 @@ public sealed class VulkanCommandChainDataModelTests
         string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
 
         textureSource.ShouldContain("private readonly object _imageStateLock = new();");
-        textureSource.ShouldContain("private void RefreshPhysicalGroupImageIfStaleNoLock()");
-        textureSource.ShouldContain("lock (_imageStateLock)\n                RefreshPhysicalGroupImageIfStaleNoLock();");
+        textureSource.ShouldContain("private bool RefreshPhysicalGroupImageIfStaleNoLock()");
+        textureSource.ShouldContain("lock (_imageStateLock)\n                return RefreshPhysicalGroupImageIfStaleNoLock();");
 
         int attachmentViewStart = textureSource.IndexOf("public ImageView GetAttachmentView(", StringComparison.Ordinal);
         int attachmentExtentStart = textureSource.IndexOf("bool IVkFrameBufferAttachmentSource.TryGetAttachmentExtent(", StringComparison.Ordinal);
@@ -588,6 +592,27 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     [Test]
+    public void OpenXrEyeBatch_PreparesBothContextsBeforeRecordingEitherCommandBuffer()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+        int methodStart = source.IndexOf("internal bool TryRenderOpenXrEyeSwapchains(", StringComparison.Ordinal);
+        int methodEnd = source.IndexOf("internal bool TryRenderOpenXrEyeSwapchainsSinglePassStereo(", methodStart, StringComparison.Ordinal);
+        methodStart.ShouldBeGreaterThanOrEqualTo(0);
+        methodEnd.ShouldBeGreaterThan(methodStart);
+
+        string method = source[methodStart..methodEnd];
+        int prepareFirst = method.IndexOf("TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out firstPrepared)", StringComparison.Ordinal);
+        int prepareSecond = method.IndexOf("TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out secondPrepared)", StringComparison.Ordinal);
+        int recordFirst = method.IndexOf("TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in firstPrepared, out firstRecorded)", StringComparison.Ordinal);
+        int recordSecond = method.IndexOf("TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(in secondPrepared, out secondRecorded)", StringComparison.Ordinal);
+
+        prepareFirst.ShouldBeGreaterThanOrEqualTo(0);
+        prepareSecond.ShouldBeGreaterThan(prepareFirst);
+        recordFirst.ShouldBeGreaterThan(prepareSecond);
+        recordSecond.ShouldBeGreaterThan(recordFirst);
+    }
+
+    [Test]
     public void OpenXrVulkanViewRenderModes_DispatchToDistinctRendererPaths()
     {
         string openXrApiSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
@@ -606,12 +631,25 @@ public sealed class VulkanCommandChainDataModelTests
     }
 
     [Test]
+    public void VulkanUpscaleSidecarQueueSubmits_UseItsPerDeviceTerminalGateway()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeSidecar.cs");
+
+        source.ShouldContain("private Result SubmitToGraphicsQueue(ref SubmitInfo submitInfo, Fence fence)");
+        source.ShouldContain("VulkanQueueOperationLease.TryEnter(");
+        source.ShouldContain("_graphicsQueueOperationGate");
+        source.ShouldContain("_deviceState");
+        source.ShouldContain("ObserveDeviceResult(result);");
+        source.Split("_api.QueueSubmit(", StringSplitOptions.None).Length.ShouldBe(2);
+    }
+
+    [Test]
     public void OpenXrExternalSwapchainTargets_DisableHistoryBasedAaAndTsrScaling()
     {
-        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
-        string postProcessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
-        string postProcess2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
+        string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
+        string pipeline2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.cs").Replace("\r\n", "\n");
+        string postProcessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
+        string postProcess2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.PostProcessing.cs").Replace("\r\n", "\n");
         string temporalSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs").Replace("\r\n", "\n");
 
         foreach (string source in new[] { pipelineSource, pipeline2Source })
@@ -639,10 +677,10 @@ public sealed class VulkanCommandChainDataModelTests
     public void OpenXrStereoTemporalHistory_UsesPerViewStateAndArrayShaders()
     {
         string temporalSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs").Replace("\r\n", "\n");
-        string texturesSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.Textures.cs").Replace("\r\n", "\n");
-        string textures2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.Textures.cs").Replace("\r\n", "\n");
-        string fboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.FBOs.cs").Replace("\r\n", "\n");
-        string fbo2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.FBOs.cs").Replace("\r\n", "\n");
+        string texturesSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.Textures.cs").Replace("\r\n", "\n");
+        string textures2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.Textures.cs").Replace("\r\n", "\n");
+        string fboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs").Replace("\r\n", "\n");
+        string fbo2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.FBOs.cs").Replace("\r\n", "\n");
         string temporalStereoShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/TemporalAccumulationStereo.fs").Replace("\r\n", "\n");
         string tsrStereoShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/TemporalSuperResolutionStereo.fs").Replace("\r\n", "\n");
         string motionVectorStereoShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/MotionVectorsStereo.fs").Replace("\r\n", "\n");
@@ -736,8 +774,8 @@ public sealed class VulkanCommandChainDataModelTests
 
         framebufferSource.ShouldContain("public uint MultiviewViewMask { get; private set; }");
         framebufferSource.ShouldContain("ResolveFramebufferMultiviewViewMask(attachments)");
-        framebufferSource.ShouldContain("OVRMultiViewParameters is { NumViews: > 1u }");
-        framebufferSource.ShouldContain("BuildMultiviewViewMask(ovr, layerCount)");
+        framebufferSource.ShouldContain("return multiview is { NumViews: > 1u };");
+        framebufferSource.ShouldContain("BuildMultiviewViewMask(ovr.Offset, ovr.NumViews, layerCount)");
         framebufferSource.ShouldContain("MultiviewViewMask = state.MultiviewViewMask;");
 
         commandBufferSource.ShouldContain("DynamicRenderingFormatSignature targetDynamicRenderingFormats = CreateDynamicRenderingFormatSignature(");

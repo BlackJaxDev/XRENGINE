@@ -980,14 +980,20 @@ namespace XREngine.Rendering.Vulkan
 
         public void DeviceWaitIdle()
         {
-            Result result = Api!.DeviceWaitIdle(device);
-            if (result == Result.ErrorDeviceLost)
+            lock (_oneTimeSubmitLock)
             {
-                MarkDeviceLost();
-                Debug.VulkanWarning("[Vulkan] DeviceWaitIdle returned ErrorDeviceLost. Device state is irrecoverable.");
+                if (!IsDeviceOperational)
+                    return;
+
+                Result result = Api!.DeviceWaitIdle(device);
+                if (result == Result.ErrorDeviceLost)
+                {
+                    MarkDeviceLost("DeviceWaitIdle returned ErrorDeviceLost");
+                    Debug.VulkanWarning("[Vulkan] DeviceWaitIdle returned ErrorDeviceLost. Device state is irrecoverable.");
                 // Don't throw — allow callers (e.g. RecreateSwapChain) to proceed with
                 // teardown/recreation even after the device is lost, rather than getting
                 // stuck in an infinite exception loop.
+                }
             }
         }
 

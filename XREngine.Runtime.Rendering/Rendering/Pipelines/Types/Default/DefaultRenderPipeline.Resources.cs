@@ -27,6 +27,7 @@ public partial class DefaultRenderPipeline
         AmbientOcclusionResourcesEnabled = 1UL << 13,
         BloomResourcesEnabled = 1UL << 14,
         TemporalResourcesEnabled = 1UL << 15,
+        MinimalDirectCapture = 1UL << 16,
     }
 
     private const RenderPipelineResourceUsage SampledColorAttachment =
@@ -57,6 +58,10 @@ public partial class DefaultRenderPipeline
     internal override ulong BuildResourceFeatureMaskForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
     {
         DefaultPipelineResourceFeature mask = DefaultPipelineResourceFeature.None;
+
+        if (viewport?.CapturePolicy.UsesMinimalDirectFboPath == true)
+            return (ulong)DefaultPipelineResourceFeature.MinimalDirectCapture;
+
         bool useOpenXrVulkanSafePath = UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport);
 
         if (EnableDeferredMsaa && !useOpenXrVulkanSafePath)
@@ -112,6 +117,9 @@ public partial class DefaultRenderPipeline
 
     protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {
+        if ((((DefaultPipelineResourceFeature)builder.Profile.FeatureMask) & DefaultPipelineResourceFeature.MinimalDirectCapture) != 0)
+            return;
+
         DeclareCoreTextures(builder);
         DeclareAmbientOcclusionResources(builder);
         DeclareTextureViews(builder);

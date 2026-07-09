@@ -70,6 +70,7 @@ public unsafe partial class VulkanRenderer
         DestroyCanonicalImmutableSamplers();
         DestroyRemainingTrackedSamplers();
         ReleaseVulkanDiagnosticStorage();
+        MarkDeviceDisposed();
         Api!.DestroyDevice(device, null);
         device = default;
         graphicsQueue = default;
