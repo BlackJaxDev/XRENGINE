@@ -57,7 +57,13 @@ namespace XREngine.Rendering.Vulkan
             uint MipLevels,
             string Format,
             string Usage,
-            string Samples);
+            string Samples,
+            string AllocationClass,
+            uint MemoryTypeIndex,
+            string MemoryTypeFlags,
+            uint MemoryHeapIndex,
+            ulong MemoryHeapSize,
+            string MemoryHeapFlags);
 
         internal void TrackImageAllocation(
             Image image,
@@ -76,6 +82,13 @@ namespace XREngine.Rendering.Vulkan
             if (image.Handle == 0)
                 return;
 
+            ResolveImageAllocationDiagnosticFields(
+                allocation,
+                out uint heapIndex,
+                out ulong heapSize,
+                out MemoryHeapFlags heapFlags,
+                out MemoryPropertyFlags memoryTypeFlags);
+            string allocationClass = ClassifyVulkanAllocation(allocation.Properties, allocation.Properties);
             _imageAllocationDebugInfo[image.Handle] = new VulkanImageAllocationDebugInfo(
                 image.Handle,
                 string.IsNullOrWhiteSpace(name) ? "<unnamed>" : name!,
@@ -88,7 +101,32 @@ namespace XREngine.Rendering.Vulkan
                 Math.Max(1u, mipLevels),
                 format.ToString(),
                 usage.ToString(),
-                samples.ToString());
+                samples.ToString(),
+                allocationClass,
+                allocation.MemoryTypeIndex,
+                memoryTypeFlags.ToString(),
+                heapIndex,
+                heapSize,
+                heapFlags.ToString());
+
+            RecordImageAllocationDiagnostics(
+                image,
+                allocation,
+                string.IsNullOrWhiteSpace(name) ? "<unnamed>" : name!,
+                source,
+                width,
+                height,
+                depth,
+                layers,
+                mipLevels,
+                format,
+                usage,
+                samples,
+                allocationClass,
+                heapIndex,
+                heapSize,
+                heapFlags,
+                memoryTypeFlags);
         }
 
         internal void UntrackImageAllocation(Image image)
@@ -125,7 +163,13 @@ namespace XREngine.Rendering.Vulkan
                     entry.MipLevels,
                     entry.Format,
                     entry.Usage,
-                    entry.Samples
+                    entry.Samples,
+                    entry.AllocationClass,
+                    entry.MemoryTypeIndex,
+                    entry.MemoryTypeFlags,
+                    entry.MemoryHeapIndex,
+                    entry.MemoryHeapSize,
+                    entry.MemoryHeapFlags
                 })
                 .ToArray();
 
@@ -138,6 +182,85 @@ namespace XREngine.Rendering.Vulkan
                 knownImageAllocationMiB = knownBytes / (1024.0 * 1024.0),
                 largest
             };
+        }
+
+        private void ResolveImageAllocationDiagnosticFields(
+            VulkanMemoryAllocation allocation,
+            out uint heapIndex,
+            out ulong heapSize,
+            out MemoryHeapFlags heapFlags,
+            out MemoryPropertyFlags memoryTypeFlags)
+        {
+            heapIndex = uint.MaxValue;
+            heapSize = 0UL;
+            heapFlags = 0;
+            memoryTypeFlags = 0;
+
+            if (Api is null || _physicalDevice.Handle == 0)
+                return;
+
+            Api.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memoryProperties);
+            if (allocation.MemoryTypeIndex >= memoryProperties.MemoryTypeCount)
+                return;
+
+            MemoryType memoryType = memoryProperties.MemoryTypes[(int)allocation.MemoryTypeIndex];
+            heapIndex = memoryType.HeapIndex;
+            memoryTypeFlags = memoryType.PropertyFlags;
+            if (heapIndex >= memoryProperties.MemoryHeapCount)
+                return;
+
+            MemoryHeap heap = memoryProperties.MemoryHeaps[(int)heapIndex];
+            heapSize = heap.Size;
+            heapFlags = heap.Flags;
+        }
+
+        private void RecordImageAllocationDiagnostics(
+            Image image,
+            VulkanMemoryAllocation allocation,
+            string name,
+            string source,
+            uint width,
+            uint height,
+            uint depth,
+            uint layers,
+            uint mipLevels,
+            Format format,
+            ImageUsageFlags usage,
+            SampleCountFlags samples,
+            string allocationClass,
+            uint heapIndex,
+            ulong heapSize,
+            MemoryHeapFlags heapFlags,
+            MemoryPropertyFlags memoryTypeFlags)
+        {
+            if (!RenderDiagnosticsFlags.UploadStageLogging &&
+                !RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+            {
+                return;
+            }
+
+            Debug.Vulkan(
+                "[VkImageAllocation] image=0x{0:X} name='{1}' source={2} allocationClass={3} memoryHeap={4} heapSize={5} heapFlags={6} memoryType={7} memoryTypeFlags={8} size={9} extent={10}x{11}x{12} layers={13} mips={14} format={15} usage={16} samples={17} activeVkAllocations={18} allocatorBytes={19}.",
+                image.Handle,
+                name,
+                source,
+                allocationClass,
+                heapIndex,
+                heapSize,
+                heapFlags,
+                allocation.MemoryTypeIndex,
+                memoryTypeFlags,
+                allocation.Size,
+                width,
+                height,
+                depth,
+                layers,
+                Math.Max(1u, mipLevels),
+                format,
+                usage,
+                samples,
+                MemoryAllocator.ActiveVkAllocationCount,
+                MemoryAllocator.TotalAllocatedBytes);
         }
 
         /// <summary>
@@ -596,9 +719,8 @@ namespace XREngine.Rendering.Vulkan
                         Renderer.MarkOpenXrPrimaryCommandBufferVariantsDirty();
                     }
 
-                    // Track VRAM allocation only when the backing allocation is recreated.
-                    _allocatedVRAMBytes = (long)_bufferSize;
-                    RuntimeEngine.Rendering.Stats.Vram.AddBufferAllocation(_allocatedVRAMBytes);
+                    // Track VRAM allocation only when the actual backing allocation is device-local.
+                    TrackCurrentBufferVramAllocation();
                 }
                 else
                 {
@@ -616,6 +738,28 @@ namespace XREngine.Rendering.Vulkan
                 if (ShouldDisposeAfterUpload())
                     Data.Dispose();
             }
+
+            private void TrackCurrentBufferVramAllocation()
+            {
+                if (_allocatedVRAMBytes > 0)
+                {
+                    RuntimeEngine.Rendering.Stats.Vram.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+
+                if (!_vkBuffer.HasValue ||
+                    !Renderer.TryGetTrackedBufferAllocation(_vkBuffer.Value, out VulkanMemoryAllocation allocation) ||
+                    !IsDeviceLocalVramAllocation(allocation.Properties))
+                {
+                    return;
+                }
+
+                _allocatedVRAMBytes = ClampToTrackedVramBytes(allocation.Size);
+                RuntimeEngine.Rendering.Stats.Vram.AddBufferAllocation(_allocatedVRAMBytes);
+            }
+
+            private static long ClampToTrackedVramBytes(ulong bytes)
+                => bytes > (ulong)long.MaxValue ? long.MaxValue : (long)bytes;
 
             /// <summary>
             /// Pushes a subrange of data to the GPU. Uses staging if device-local.
@@ -1882,6 +2026,18 @@ namespace XREngine.Rendering.Vulkan
             return (buffer, allocation.Memory);
         }
 
+        internal bool TryGetTrackedBufferAllocation(Buffer buffer, out VulkanMemoryAllocation allocation)
+        {
+            if (buffer.Handle != 0 && _bufferAllocations.TryGetValue(buffer.Handle, out allocation))
+                return true;
+
+            if (buffer.Handle != 0 && _legacyBufferAllocations.TryGetValue(buffer.Handle, out allocation))
+                return true;
+
+            allocation = VulkanMemoryAllocation.Null;
+            return false;
+        }
+
         /// <summary>
         /// Creates a buffer backed by a dedicated <c>vkAllocateMemory</c> allocation.
         /// Use this for persistently mapped renderer-owned buffers whose map lifetime
@@ -2431,17 +2587,21 @@ namespace XREngine.Rendering.Vulkan
                 out MemoryPropertyFlags memoryTypeFlags);
 
             long trackedVramBytes = RuntimeRenderingHostServices.Current.TrackedVramBytes;
+            string allocationClass = ClassifyVulkanAllocation(properties, allocation.Properties);
             RuntimeEngine.Rendering.Stats.Vram.CanAllocateVram(
-                (long)Math.Min(requestedSize, (ulong)long.MaxValue),
+                IsDeviceLocalVramAllocation(allocation.Properties)
+                    ? (long)Math.Min(requestedSize, (ulong)long.MaxValue)
+                    : 0L,
                 0L,
                 out long projectedTrackedVramBytes,
                 out long trackedVramBudgetBytes);
 
             Debug.Vulkan(
-                "[VkBufferAllocation] buffer=0x{0:X} backend={1} placement={2} memoryHeap={3} heapSize={4} heapFlags={5} memoryType={6} memoryTypeFlags={7} blockId={8} offset={9} size={10} requested={11} requirementsSize={12} alignment={13} usage={14} properties={15} deviceAddress={16} activeVkAllocations={17} allocatorBytes={18} trackedVramBytes={19} trackedVramBudgetBytes={20} projectedTrackedVramBytes={21}.",
+                "[VkBufferAllocation] buffer=0x{0:X} backend={1} placement={2} allocationClass={3} memoryHeap={4} heapSize={5} heapFlags={6} memoryType={7} memoryTypeFlags={8} blockId={9} offset={10} size={11} requested={12} requirementsSize={13} alignment={14} usage={15} requestedProperties={16} allocationProperties={17} deviceAddress={18} activeVkAllocations={19} allocatorBytes={20} trackedVramBytes={21} trackedVramBudgetBytes={22} projectedTrackedVramBytes={23}.",
                 buffer.Handle,
                 backend,
                 placement,
+                allocationClass,
                 heapIndex,
                 heapSize,
                 heapFlags,
@@ -2455,6 +2615,7 @@ namespace XREngine.Rendering.Vulkan
                 alignment,
                 usage,
                 properties,
+                allocation.Properties,
                 enableDeviceAddress,
                 MemoryAllocator.ActiveVkAllocationCount,
                 MemoryAllocator.TotalAllocatedBytes,
@@ -2503,6 +2664,31 @@ namespace XREngine.Rendering.Vulkan
             MemoryHeap heap = memoryProperties.MemoryHeaps[(int)heapIndex];
             heapSize = heap.Size;
             heapFlags = heap.Flags;
+        }
+
+        private static bool IsDeviceLocalVramAllocation(MemoryPropertyFlags properties)
+            => (properties & MemoryPropertyFlags.DeviceLocalBit) != 0;
+
+        private static string ClassifyVulkanAllocation(
+            MemoryPropertyFlags requestedProperties,
+            MemoryPropertyFlags allocationProperties)
+        {
+            bool deviceLocal = (allocationProperties & MemoryPropertyFlags.DeviceLocalBit) != 0;
+            bool hostVisible = (allocationProperties & MemoryPropertyFlags.HostVisibleBit) != 0;
+            bool hostCached = (allocationProperties & MemoryPropertyFlags.HostCachedBit) != 0;
+
+            if (deviceLocal && hostVisible)
+                return "DeviceLocalHostVisible";
+            if (deviceLocal)
+                return "DeviceLocal";
+            if (hostVisible && hostCached)
+                return "Readback";
+            if (hostVisible)
+                return (requestedProperties & MemoryPropertyFlags.DeviceLocalBit) != 0
+                    ? "UploadFallback"
+                    : "Upload";
+
+            return "Other";
         }
 
         private static void RecordTransferQueuePolicyDiagnostics(

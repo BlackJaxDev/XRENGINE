@@ -8,7 +8,6 @@ using XREngine.Data.Vectors;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine;
@@ -199,34 +198,19 @@ namespace XREngine.Components.Lights
 
         protected static void SynchronizeCaptureTextureWrites()
         {
-            if (AbstractRenderer.Current is OpenGLRenderer renderer)
-            {
-                if (!RuntimeEngine.IsRenderThread)
-                {
-                    RuntimeEngine.EnqueueMainThreadTask(
-                        () => renderer.MemoryBarrier(
-                            EMemoryBarrierMask.Framebuffer |
-                            EMemoryBarrierMask.TextureFetch |
-                            EMemoryBarrierMask.TextureUpdate),
-                        "SceneCapture.SyncCaptureTextureWrites");
-                    return;
-                }
-
-                renderer.MemoryBarrier(
-                    EMemoryBarrierMask.Framebuffer |
-                    EMemoryBarrierMask.TextureFetch |
-                    EMemoryBarrierMask.TextureUpdate);
-                return;
-            }
+            const EMemoryBarrierMask captureTextureBarrier =
+                EMemoryBarrierMask.Framebuffer |
+                EMemoryBarrierMask.TextureFetch |
+                EMemoryBarrierMask.TextureUpdate;
 
             if (RuntimeEngine.IsRenderThread)
             {
-                AbstractRenderer.Current?.WaitForGpu();
+                AbstractRenderer.Current?.MemoryBarrier(captureTextureBarrier);
                 return;
             }
 
             RuntimeEngine.EnqueueMainThreadTask(
-                () => AbstractRenderer.Current?.WaitForGpu(),
+                () => AbstractRenderer.Current?.MemoryBarrier(captureTextureBarrier),
                 "SceneCapture.SyncCaptureTextureWrites");
         }
 
@@ -657,7 +641,7 @@ namespace XREngine.Components.Lights
             if (_octahedralFBO is null || _environmentTextureOctahedral is null || _environmentTextureCubemap is null)
                 return;
 
-            // OpenGL only needs an explicit visibility barrier here; a full GPU drain causes large probe stalls.
+            // The capture target must be visible to the fullscreen encoder without draining the whole GPU.
             SynchronizeCaptureTextureWrites();
 
             int width = (int)Math.Max(1u, _environmentTextureOctahedral.Width);

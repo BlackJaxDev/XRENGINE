@@ -2,6 +2,7 @@ using ImageMagick;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Components;
 using XREngine.Core;
 using XREngine.Data.Core;
@@ -26,12 +27,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private const int MaxRetiredResourceGenerations = 3;
     private const double ResizeGenerationDebounceMilliseconds = 125.0;
     private const double ResizeGenerationMaxCoalesceMilliseconds = 300.0;
+    private const double FailedGenerationRetryBackoffMilliseconds = 1000.0;
     private const double IncrementalGenerationSliceMilliseconds = 2.0;
     private const int IncrementalGenerationMaxSpecsPerSlice = 4;
     private readonly RenderPipelineResourceManager _resourceManager = new();
     private readonly Queue<RenderResourceGeneration> _retiredGenerations = new();
     private readonly RenderResourceRegistry _legacyResources = new();
     private ResourceBuildContext? _resourceBuildContext;
+    private bool _requiresManagedResourceGeneration;
 
     /// <summary>
     /// Stable, monotonically increasing identifier assigned at construction. Used by
@@ -85,6 +88,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private int _lastDescriptorParityGeneration = -1;
     private long _pendingGenerationReadyAfterTimestamp;
     private long _pendingGenerationFirstResizeRequestTimestamp;
+    private ResourceGenerationKey? _lastFailedGenerationKey;
+    private long _failedGenerationRetryAfterTimestamp;
     private ulong _resizeCatchUpSkippedFrameId = ulong.MaxValue;
 
     /// <summary>
@@ -144,19 +149,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     internal uint? ResourceDisplayHeight
         => _resourceBuildContext?.Key.DisplayHeight
             ?? ActiveGeneration?.Key.DisplayHeight;
-
-    internal sealed class ResourceBuildContext
-    {
-        public ResourceBuildContext(RenderResourceGeneration generation, int managedThreadId)
-        {
-            Generation = generation;
-            ManagedThreadId = managedThreadId;
-        }
-
-        public RenderResourceGeneration Generation { get; }
-        public int ManagedThreadId { get; }
-        public ResourceGenerationKey Key => Generation.Key;
-    }
 
     internal IDisposable PushResourceBuildContext(RenderResourceGeneration generation)
     {
@@ -333,6 +325,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
     }
 
+    /// <summary>
+    /// Called when a property is about to change. 
+    /// This method can be overridden to perform custom logic before the property value is updated.
+    /// </summary>
+    /// <typeparam name="T">The type of the property.</typeparam>
+    /// <param name="propName">The name of the property that is changing.</param>
+    /// <param name="field">The current value of the property.</param>
+    /// <param name="new">The new value of the property.</param>
+    /// <returns>True if the property value should be changed; otherwise, false.</returns>
     protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
     {
         bool change = base.OnPropertyChanging(propName, field, @new);
@@ -347,6 +348,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
         return change;
     }
+
+    /// <summary>
+    /// Called when a property has changed. 
+    /// This method can be overridden to perform custom logic after the property value has been updated.
+    /// </summary>
+    /// <typeparam name="T">The type of the property.</typeparam>
+    /// <param name="propName">The name of the property that has changed.</param>
+    /// <param name="prev">The previous value of the property.</param>
+    /// <param name="field">The current value of the property.</param>
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
         base.OnPropertyChanged(propName, prev, field);
@@ -366,18 +376,33 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
     }
     
+    /// <summary>
+    /// Collects the visible state of the scene for rendering. 
+    /// This state is used to determine which objects are visible and should be rendered in the current frame.
+    /// </summary>
     public RenderingState CollectVisibleState { get; } = new();
+    /// <summary>
+    /// Holds the current rendering state, including information about the scene, camera, viewport, and other rendering parameters.
+    /// </summary>
     public RenderingState RenderState { get; } = new();
+    /// <summary>
+    /// Gets or sets the material to use when an invalid material is encountered during rendering.
+    /// </summary>
     public XRMaterial? InvalidMaterial { get; set; }
 
     /// <summary>
     /// Renders the scene to the viewport or framebuffer.
     /// </summary>
-    /// <param name="scene"></param>
-    /// <param name="camera"></param>
-    /// <param name="viewport"></param>
-    /// <param name="targetFBO"></param>
-    /// <param name="shadowPass"></param>
+    /// <param name="scene">The scene to be rendered.</param>
+    /// <param name="camera">The camera through which the scene is viewed.</param>
+    /// <param name="stereoRightEyeCamera">The camera for the right eye in stereo rendering.</param>
+    /// <param name="viewport">The viewport defining the rendering area.</param>
+    /// <param name="targetFBO">The target framebuffer object for rendering.</param>
+    /// <param name="userInterface">The user interface to be rendered on top of the scene.</param>
+    /// <param name="shadowPass">Indicates whether this is a shadow pass.</param>
+    /// <param name="stereoPass">Indicates whether this is a stereo rendering pass.</param>
+    /// <param name="shadowMaterial">The material to use for shadow rendering.</param>
+    /// <param name="meshRenderCommandsOverride">An optional override for the mesh render commands to be used during rendering.</param>
     public void Render(
         VisualScene scene,
         XRCamera? camera,
@@ -537,6 +562,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     //    }
     //}
 
+    /// <summary>
+    /// Enqueues a resource mutation action to be executed on the render thread if the current thread is not the render thread.
+    /// </summary>
+    /// <param name="action">The action to execute on the render thread.</param>
+    /// <param name="reason">The reason for enqueuing the action.</param>
+    /// <param name="renderThreadKind">The kind of render thread job.</param>
+    /// <returns>True if the action was enqueued; false if it was executed immediately on the render thread.</returns>
     private bool EnqueueResourceMutationIfOffRenderThread(
         Action action,
         string reason,
@@ -549,6 +581,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return true;
     }
 
+    /// <summary>
+    /// Ensures that the necessary resources for the current frame are generated and ready for use. If resources are not ready, it may request resource generation or prepare pending generations as needed.
+    /// </summary>
+    /// <param name="viewport">The viewport for which to ensure resource generation.</param>
+    /// <returns>True if resource generation is ensured; false otherwise.</returns>
     private bool EnsureResourceGenerationForCurrentFrame(XRViewport? viewport)
     {
         if (Pipeline is null || viewport is null)
@@ -598,8 +635,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         {
             // Pipelines without a declared resource layout still use the legacy
             // command path. Do not starve UI/shadow/specialized passes just
-            // because they have no active managed generation.
-            return PendingGeneration is null;
+            // because they have no active managed generation. Pipelines that do
+            // declare a managed layout must fail closed here; otherwise a stale
+            // or discarded initial generation can render one frame against the
+            // partial legacy registry while still carrying full pass metadata.
+            return PendingGeneration is null && !_requiresManagedResourceGeneration;
         }
 
         if (ActiveGeneration.Key == key)
@@ -608,6 +648,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return !IsResizeOnlyGenerationDelta(ActiveGeneration.Key, key);
     }
 
+    /// <summary>
+    /// Ensures that the necessary resources for the current frame are generated and ready for use when rendering to an external swapchain target. If resources are not ready, it may request resource generation or prepare pending generations as needed. This method is specifically designed to handle the requirements of external swapchain rendering, ensuring that the active generation matches the required resource generation key.
+    /// </summary>
+    /// <param name="viewport">The viewport for which to ensure resource generation.</param>
+    /// <param name="key">The resource generation key that must be satisfied.</param>
+    /// <returns>True if resource generation is ensured; false otherwise.</returns>
+    /// <exception cref="InvalidOperationException"></exception>
     private bool EnsureExternalSwapchainResourceGenerationForCurrentFrame(
         XRViewport viewport,
         ResourceGenerationKey key)
@@ -650,6 +697,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             $"Viewport={viewport.Width}x{viewport.Height} internal={viewport.InternalWidth}x{viewport.InternalHeight}.");
     }
 
+    /// <summary>
+    /// Determines whether the difference between two resource generation keys is solely due to a change in viewport dimensions (resize) while all other properties remain the same. This is used to identify cases where only the size of the resources has changed, allowing for optimized handling of resource regeneration.
+    /// </summary>
+    /// <param name="oldKey">The original resource generation key.</param>
+    /// <param name="newKey">The new resource generation key to compare against.</param>
+    /// <returns>True if the only difference between the keys is a change in viewport dimensions; false otherwise.</returns>
     private static bool IsResizeOnlyGenerationDelta(ResourceGenerationKey oldKey, ResourceGenerationKey newKey)
         => string.Equals(oldKey.PipelineName, newKey.PipelineName, StringComparison.Ordinal) &&
            oldKey.OutputHDR == newKey.OutputHDR &&
@@ -664,6 +717,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             oldKey.InternalWidth != newKey.InternalWidth ||
             oldKey.InternalHeight != newKey.InternalHeight);
 
+    /// <summary>
+    /// Resolves the display and internal dimensions for a given viewport, ensuring that they are valid and non-zero. This method takes into account the viewport's properties and any external swapchain targets to determine the appropriate dimensions for resource generation.
+    /// </summary>
+    /// <param name="viewport">The viewport for which to resolve resource dimensions.</param>
+    /// <returns>A tuple containing the resolved display and internal widths and heights.</returns>
     internal static (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight) ResolveViewportResourceDimensions(XRViewport viewport)
         => ResolveViewportResizeResourceDimensions(
             viewport,
@@ -672,6 +730,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             viewport.InternalWidth,
             viewport.InternalHeight);
 
+    /// <summary>
+    /// Resolves the display and internal dimensions for a given viewport, ensuring that they are valid and non-zero. This method takes into account the viewport's properties and any external swapchain targets to determine the appropriate dimensions for resource generation. It guarantees that the returned dimensions are at least 1x1, preventing invalid resource sizes.
+    /// </summary>
+    /// <param name="viewport">The viewport for which to resolve resource dimensions.</param>
+    /// <param name="displayWidth">The requested display width of the viewport.</param>
+    /// <param name="displayHeight">The requested display height of the viewport.</param>
+    /// <param name="internalWidth">The requested internal width of the viewport.</param>
+    /// <param name="internalHeight">The requested internal height of the viewport.</param>
+    /// <returns>A tuple containing the resolved display and internal widths and heights.</returns>
     internal static (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight) ResolveViewportResizeResourceDimensions(
         XRViewport? viewport,
         int displayWidth,
@@ -694,22 +761,46 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             resolvedInternalHeight);
     }
 
+    /// <summary>
+    /// Determines whether resource generation should be deferred during an interactive window resize operation. This is used to avoid unnecessary resource regeneration while the user is actively resizing the window, which can lead to performance issues or visual artifacts. The method checks if the viewport does not render to an external swapchain target and if the associated window is currently undergoing an interactive resize.
+    /// </summary>
+    /// <param name="viewport">The viewport to check for interactive window resize.</param>
+    /// <returns>True if resource generation should be deferred; otherwise, false.</returns>
     private static bool ShouldDeferResourceGenerationForInteractiveWindowResize(XRViewport viewport)
         => !viewport.RendersToExternalSwapchainTarget &&
            viewport.Window?.IsInteractiveResizeInProgress == true;
 
+    /// <summary>
+    /// Requests the generation of rendering resources based on the specified display and internal dimensions, along with an optional viewport. This method constructs a resource generation key from the provided parameters and delegates to the internal resource generation request method. It allows for forcing the generation even if the requested key matches the active or pending generation.
+    /// </summary>
+    /// <param name="displayWidth">The requested display width of the viewport.</param>
+    /// <param name="displayHeight">The requested display height of the viewport.</param>
+    /// <param name="internalWidth">The requested internal width of the viewport.</param>
+    /// <param name="internalHeight">The requested internal height of the viewport.</param>
+    /// <param name="reason">The reason for requesting resource generation.</param>
+    /// <param name="force">Whether to force resource generation even if the key matches the active or pending generation.</param>
+    /// <param name="viewport">The viewport for which to generate resources.</param>
+    /// <returns>True if the resource generation request was successfully enqueued or processed; otherwise, false.</returns>
     internal bool RequestResourceGeneration(
         int displayWidth,
         int displayHeight,
         int internalWidth,
         int internalHeight,
         string reason,
-        bool force = false)
+        bool force = false,
+        XRViewport? viewport = null)
         => RequestResourceGeneration(
-            BuildResourceGenerationKey(displayWidth, displayHeight, internalWidth, internalHeight),
+            BuildResourceGenerationKey(displayWidth, displayHeight, internalWidth, internalHeight, viewport),
             reason,
             force);
 
+    /// <summary>
+    /// Requests the generation of rendering resources based on the specified resource generation key. If the requested key matches the active or pending generation, it may skip redundant generation. If a backoff is active due to previous failed generations, it will delay the request. Otherwise, it will build a new resource layout and enqueue a pending generation if necessary.
+    /// </summary>
+    /// <param name="key"></param>
+    /// <param name="reason"></param>
+    /// <param name="force"></param>
+    /// <returns>True if the resource generation request was successfully enqueued or processed; otherwise, false.</returns>
     private bool RequestResourceGeneration(ResourceGenerationKey key, string reason, bool force = false)
     {
         RenderPipeline? pipeline = _pipeline;
@@ -724,6 +815,19 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         if (!force && PendingGeneration?.Key == key)
             return true;
+
+        if (IsGenerationRetryBackoffActive(key, out double retryBackoffRemainingMilliseconds))
+        {
+            Debug.RenderingEvery(
+                $"RenderResources.FailedGenerationBackoff.{ProfilerKey}",
+                TimeSpan.FromMilliseconds(250),
+                "[RenderResources] Generation request delayed after failed materialization. Pipeline={0} Reason={1} Target={2} RemainingMs={3:F0}",
+                ProfilerKey,
+                reason,
+                key,
+                retryBackoffRemainingMilliseconds);
+            return false;
+        }
 
         RenderPipelineResourceLayout layout;
         try
@@ -741,7 +845,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
 
         if (layout.OrderedSpecs.Count == 0)
+        {
+            _requiresManagedResourceGeneration = false;
             return false;
+        }
+
+        _requiresManagedResourceGeneration = true;
 
         if (ActiveGeneration?.Key == key && ActiveGeneration.Layout.IsStructurallyEquivalentTo(layout))
         {
@@ -753,6 +862,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ActiveGeneration.Key,
                 layout.OrderedSpecs.Count);
             return true;
+        }
+        else if (ActiveGeneration?.Key == key)
+        {
+            Debug.RenderingWarning(
+                "[RenderResources] Same-key generation request has different layout. Pipeline={0} Reason={1} Key={2} Difference={3}",
+                ProfilerKey,
+                reason,
+                key,
+                ActiveGeneration.Layout.DescribeStructuralDifferenceTo(layout));
         }
 
         if (PendingGeneration?.Key == key && PendingGeneration.Layout.IsStructurallyEquivalentTo(layout))
@@ -785,6 +903,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return true;
     }
 
+    /// <summary>
+    /// Configures the debounce timing for a pending resource generation request. 
+    /// This method determines whether the pending generation should be delayed 
+    /// based on the current active generation and the reason for the request. 
+    /// If debouncing is necessary, it calculates the appropriate timestamps 
+    /// to ensure that resource generation is not triggered too frequently, 
+    /// allowing for coalescing of multiple requests within a specified time window.
+    /// </summary>
+    /// <param name="key">The resource generation key for the pending generation.</param>
+    /// <param name="reason">The reason for requesting the pending generation.</param>
     private void ConfigurePendingGenerationDebounce(ResourceGenerationKey key, string reason)
     {
         if (!ShouldDebouncePendingGeneration(key, reason))
@@ -805,6 +933,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         _pendingGenerationReadyAfterTimestamp = Math.Min(debounceUntil, maxUntil);
     }
 
+    /// <summary>
+    /// Determines whether the pending resource generation request should be debounced based on the current active generation and the reason for the request.
+    /// </summary>
+    /// <param name="key">The resource generation key for the pending generation.</param>
+    /// <param name="reason">The reason for requesting the pending generation.</param>
+    /// <returns>True if the pending generation should be debounced; otherwise, false.</returns>
     private bool ShouldDebouncePendingGeneration(ResourceGenerationKey key, string reason)
     {
         if (ActiveGeneration is null)
@@ -820,6 +954,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             || activeKey.InternalHeight != key.InternalHeight;
     }
 
+    /// <summary>
+    /// Describes the differences between two resource generation keys, highlighting the specific properties that have changed. 
+    /// This method is useful for logging and debugging purposes, allowing developers to understand 
+    /// what aspects of the resource generation have been modified between the old and new keys.
+    /// </summary>
+    /// <param name="oldKey">The previous resource generation key, or null if there was no previous key.</param>
+    /// <param name="newKey">The new resource generation key to compare against the old key.</param>
+    /// <returns>A string describing the differences between the old and new keys, or "initial" if there was no old key.</returns>
     private static string DescribeResourceGenerationKeyDelta(ResourceGenerationKey? oldKey, ResourceGenerationKey newKey)
     {
         if (!oldKey.HasValue)
@@ -852,6 +994,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return deltas.Count == 0 ? "none" : string.Join(", ", deltas);
     }
 
+    /// <summary>
+    /// Calculates the remaining time in milliseconds before a pending resource generation request is considered ready to be processed. This method checks the current timestamp against the configured debounce timestamp for the pending generation, returning the remaining time until the generation can proceed. If there is no pending generation or if the debounce period has already elapsed, it returns 0.0 milliseconds.
+    /// </summary>
+    /// <returns>The remaining time in milliseconds before the pending generation can proceed, or 0.0 if there is no pending generation or if the debounce period has elapsed.</returns>
     private double PendingGenerationDebounceRemainingMilliseconds()
     {
         long due = _pendingGenerationReadyAfterTimestamp;
@@ -865,9 +1011,23 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return (due - now) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
     }
 
+    /// <summary>
+    /// Converts a duration in milliseconds to the equivalent number of ticks used by the System.Diagnostics.Stopwatch class. This is useful for timing and scheduling operations based on high-resolution timestamps, allowing for precise control over time-based events in the rendering pipeline.
+    /// </summary>
+    /// <param name="milliseconds">The duration in milliseconds to convert to stopwatch ticks.</param>
+    /// <returns>The equivalent number of stopwatch ticks for the given duration in milliseconds.</returns>
     private static long StopwatchTicksFromMilliseconds(double milliseconds)
         => (long)(milliseconds * System.Diagnostics.Stopwatch.Frequency / 1000.0);
 
+    /// <summary>
+    /// Builds a resource generation key based on the specified display and internal dimensions, along with an optional viewport. This key encapsulates the necessary parameters for generating rendering resources, including display size, internal resolution, HDR output, anti-aliasing mode, MSAA sample count, stereo rendering, and any additional feature flags. The generated key is used to determine whether existing resources can be reused or if new resources need to be generated for the current frame.
+    /// </summary>
+    /// <param name="displayWidth">The width of the display in pixels.</param>
+    /// <param name="displayHeight">The height of the display in pixels.</param>
+    /// <param name="internalWidth">The internal width used for rendering, which may differ from the display width for performance or quality reasons.</param>
+    /// <param name="internalHeight">The internal height used for rendering, which may differ from the display height for performance or quality reasons.</param>
+    /// <param name="viewport">An optional viewport defining the portion of the render target to use.</param>
+    /// <returns>A ResourceGenerationKey encapsulating the specified rendering parameters.</returns>
     private ResourceGenerationKey BuildResourceGenerationKey(
         int displayWidth,
         int displayHeight,
@@ -877,12 +1037,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         RenderPipeline? pipeline = _pipeline;
 
-        bool stereo = pipeline switch
-        {
-            DefaultRenderPipeline defaultPipeline => defaultPipeline.Stereo,
-            DefaultRenderPipeline2 defaultPipeline2 => defaultPipeline2.Stereo,
-            _ => RenderState.StereoPass
-        };
+        bool stereo = pipeline?.UsesStereoResources(this, viewport) ?? RenderState.StereoPass;
 
         bool outputHdr = EffectiveOutputHDRThisFrame
             ?? LastSceneCamera?.OutputHDROverride
@@ -900,11 +1055,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ?? LastRenderingCamera?.MsaaSampleCountOverride
                 ?? RuntimeRenderingHostServices.Current.DefaultMsaaSampleCount);
 
-        ulong featureMask = pipeline switch
-        {
-            DefaultRenderPipeline defaultPipeline => defaultPipeline.BuildResourceFeatureMaskForGenerationKey(viewport ?? RenderState.WindowViewport ?? LastWindowViewport),
-            _ => 0UL
-        };
+        ulong featureMask = pipeline?.BuildResourceFeatureMaskForGenerationKey(
+            this,
+            viewport ?? RenderState.WindowViewport ?? LastWindowViewport) ?? 0UL;
 
         uint reservedViewCount = stereo ? 2u : 1u;
         uint reservedEyeIndex = 0u;
@@ -924,6 +1077,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             reservedEyeIndex);
     }
 
+    /// <summary>
+    /// Attempts to prepare the pending resource generation for execution, checking if it is due based on the configured debounce timing. If the pending generation is ready and valid, it will be committed; otherwise, it may be deferred or discarded based on its state and the current active generation. This method provides a simplified interface for preparing pending generations without specifying additional parameters for force execution or catch-up behavior.
+    /// </summary>
+    /// <param name="reason">The reason for attempting to prepare the pending generation, used for logging and debugging purposes.</param>
+    /// <returns>True if the pending generation was successfully prepared and committed; otherwise, false.</returns>
     private bool TryPreparePendingGeneration(string reason)
         => TryPreparePendingGeneration(
             reason,
@@ -931,6 +1089,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             catchUpMaxDuration: TimeSpan.Zero,
             catchUpMaxSpecsPerSlice: 0);
 
+    /// <summary>
+    /// Attempts to prepare the pending resource generation for execution, checking if it is due based on the configured debounce timing. If the pending generation is ready and valid, it will be committed; otherwise, it may be deferred or discarded based on its state and the current active generation. This method allows for specifying whether to force execution of the pending generation, as well as parameters for catch-up behavior in case of incremental materialization.
+    /// </summary>
+    /// <param name="reason">The reason for attempting to prepare the pending generation, used for logging and debugging purposes.</param>
+    /// <param name="forceDue">Whether to force execution of the pending generation regardless of debounce timing.</param>
+    /// <param name="catchUpMaxDuration">The maximum duration allowed for catch-up execution of incremental materialization.</param>
+    /// <param name="catchUpMaxSpecsPerSlice">The maximum number of specifications to process per slice during catch-up execution.</param>
+    /// <returns>True if the pending generation was successfully prepared and committed; otherwise, false.</returns>
     private bool TryPreparePendingGeneration(
         string reason,
         bool forceDue,
@@ -963,6 +1129,20 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return true;
         }
 
+        if (TryBuildCurrentViewportGenerationKey(out ResourceGenerationKey currentKey) &&
+            pending.Key != currentKey)
+        {
+            Debug.RenderingWarning(
+                "[RenderResources] Pending generation is stale before materialization. Pipeline={0} Reason={1} Pending={2} Current={3} Delta={4}",
+                ProfilerKey,
+                reason,
+                pending.Key,
+                currentKey,
+                DescribeResourceGenerationKeyDelta(pending.Key, currentKey));
+            DiscardPendingGeneration($"StaleBeforeMaterialize:{reason}");
+            return false;
+        }
+
         bool immediate = ActiveGeneration is null;
         TimeSpan maxDuration = immediate
             ? TimeSpan.MaxValue
@@ -977,6 +1157,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         if (!_resourceManager.MaterializeIncremental(this, pending, maxDuration, maxSpecsPerSlice, out bool completed))
         {
+            RegisterPendingGenerationFailure(pending.Key, reason);
             PendingGeneration = null;
             ClearPendingGenerationDebounce();
             pending.Dispose();
@@ -1001,18 +1182,91 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return true;
     }
 
+    /// <summary>
+    /// Determines whether the pending resource generation is due for execution based on the configured debounce timing. 
+    /// This method checks the current timestamp against the timestamp indicating when the pending generation is ready to be processed. 
+    /// If the pending generation is due, it returns true; otherwise, it returns false, indicating that the generation should be deferred until the appropriate time.
+    /// </summary>
+    /// <returns>True if the pending generation is due for execution; otherwise, false.</returns>
     private bool IsPendingGenerationDue()
     {
         long due = _pendingGenerationReadyAfterTimestamp;
         return due == 0 || System.Diagnostics.Stopwatch.GetTimestamp() >= due;
     }
 
+    /// <summary>
+    /// Clears the debounce timestamps for the pending resource generation, effectively resetting the timing for when the pending generation can be processed. 
+    /// This method is called when a pending generation is either committed or discarded, ensuring that any previous debounce state does not affect future resource generation requests.
+    /// </summary>
     private void ClearPendingGenerationDebounce()
     {
         _pendingGenerationReadyAfterTimestamp = 0;
         _pendingGenerationFirstResizeRequestTimestamp = 0;
     }
 
+    /// <summary>
+    /// Determines whether a backoff is currently active for retrying resource generation after a previous failure. If a backoff is active, it calculates the remaining time in milliseconds before the next retry attempt can be made. This method is used to prevent rapid successive attempts to generate resources after a failure, allowing for a controlled retry mechanism.
+    /// </summary>
+    /// <param name="key">The key identifying the resource generation request.</param>
+    /// <param name="remainingMilliseconds">The remaining time in milliseconds before the next retry attempt can be made if a backoff is active.</param>
+    /// <returns>True if a backoff is currently active; otherwise, false.</returns>
+    private bool IsGenerationRetryBackoffActive(ResourceGenerationKey key, out double remainingMilliseconds)
+    {
+        remainingMilliseconds = 0.0;
+        if (!_lastFailedGenerationKey.HasValue || _lastFailedGenerationKey.Value != key)
+            return false;
+
+        long retryAfter = _failedGenerationRetryAfterTimestamp;
+        if (retryAfter == 0)
+            return false;
+
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (now >= retryAfter)
+        {
+            ClearFailedGenerationBackoff(key);
+            return false;
+        }
+
+        remainingMilliseconds = (retryAfter - now) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        return true;
+    }
+
+    /// <summary>
+    /// Registers a failure in the pending resource generation process, setting up a backoff period before the next retry attempt can be made. This method records the key of the failed generation and calculates the timestamp after which a retry can be attempted, based on a predefined backoff duration. It also logs a warning message indicating that a retry backoff has been armed, providing details about the pipeline, reason for failure, target key, and the duration of the backoff.
+    /// </summary>
+    /// <param name="key">The key identifying the resource generation request that failed.</param>
+    /// <param name="reason">The reason for the failure.</param>
+    private void RegisterPendingGenerationFailure(ResourceGenerationKey key, string reason)
+    {
+        _lastFailedGenerationKey = key;
+        _failedGenerationRetryAfterTimestamp = System.Diagnostics.Stopwatch.GetTimestamp()
+            + StopwatchTicksFromMilliseconds(FailedGenerationRetryBackoffMilliseconds);
+
+        Debug.RenderingWarning(
+            "[RenderResources] Generation retry backoff armed. Pipeline={0} Reason={1} Target={2} RetryAfterMs={3:F0}",
+            ProfilerKey,
+            reason,
+            key,
+            FailedGenerationRetryBackoffMilliseconds);
+    }
+
+    /// <summary>
+    /// Clears the backoff state for a previously failed resource generation request, allowing for immediate retry attempts. This method resets the last failed generation key and the associated retry timestamp, effectively removing any restrictions on when the next generation request can be made for the specified key. It is typically called after a successful generation or when the backoff period has elapsed.
+    /// </summary>
+    /// <param name="key">The key identifying the resource generation request for which the backoff should be cleared.</param>
+    private void ClearFailedGenerationBackoff(ResourceGenerationKey key)
+    {
+        if (!_lastFailedGenerationKey.HasValue || _lastFailedGenerationKey.Value != key)
+            return;
+
+        _lastFailedGenerationKey = null;
+        _failedGenerationRetryAfterTimestamp = 0;
+    }
+
+    /// <summary>
+    /// Discards the currently pending resource generation, if any, marking it as superseded and disposing of its resources. This method is called when a new generation request is made that supersedes the existing pending generation, or when the pending generation is no longer valid due to changes in the rendering context. It logs a message indicating that the pending generation has been discarded, along with details about the pipeline, reason for discarding, and the keys of the pending and active generations.
+    /// </summary>
+    /// <param name="reason">The reason for discarding the pending generation.</param>
     private void DiscardPendingGeneration(string reason)
     {
         RenderResourceGeneration? pending = PendingGeneration;
@@ -1032,6 +1286,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         pending.Dispose();
     }
 
+    /// <summary>
+    /// Commits the currently pending resource generation, making it the active generation and retiring any previous active generation. This method checks if the pending generation is ready and valid, and if so, it updates the active generation reference, clears the pending generation, and notifies any listeners of the change in render resources. It also logs detailed information about the committed generation, including its key, resource counts, and build duration.
+    /// </summary>
+    /// <param name="reason">The reason for committing the pending generation.</param>
     private void CommitPendingGeneration(string reason)
     {
         RenderResourceGeneration? pending = PendingGeneration;
@@ -1056,6 +1314,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         ActiveGeneration = pending;
         PendingGeneration = null;
         ClearPendingGenerationDebounce();
+        ClearFailedGenerationBackoff(ActiveGeneration.Key);
         ActiveGeneration.MarkActive(reason);
         ResourceGeneration++;
 
@@ -1080,6 +1339,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             ActiveGeneration.BuildDuration.TotalMilliseconds);
     }
 
+    /// <summary>
+    /// Attempts to build the current resource generation key based on the active or last known viewport. If a valid viewport is available, it resolves the necessary dimensions and constructs a resource generation key that encapsulates the rendering parameters for the current frame. This method is used to determine whether existing resources can be reused or if new resources need to be generated.
+    /// </summary>
+    /// <param name="key">The constructed resource generation key if a valid viewport is available; otherwise, the default value.</param>
+    /// <returns>True if a valid resource generation key was built; otherwise, false.</returns>
     private bool TryBuildCurrentViewportGenerationKey(out ResourceGenerationKey key)
     {
         XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
@@ -1099,6 +1363,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return true;
     }
 
+    /// <summary>
+    /// Retires a previously active resource generation, marking it as retired and enqueueing it for disposal. This method is called when a new resource generation is committed, and the old generation is no longer needed. It logs detailed information about the retired generation, including its key, resource counts, and the current size of the retired generations queue. If the queue exceeds the maximum allowed size, it will dispose of the oldest retired generation to free up resources.
+    /// </summary>
+    /// <param name="generation">The resource generation to retire.</param>
+    /// <param name="reason">The reason for retiring the generation.</param>
     private void RetireGeneration(RenderResourceGeneration generation, string reason)
     {
         generation.MarkRetired(reason);
@@ -1127,6 +1396,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
     }
 
+    /// <summary>
+    /// Destroys all cached GPU resources and resets the resource generation state. 
+    /// This method ensures that all active, pending, and retired resource generations are disposed of, 
+    /// and that any legacy resources are also destroyed. 
+    /// It is typically called when the rendering context is being reset 
+    /// or when a significant change in rendering parameters requires a complete rebuild of resources. 
+    /// If called from a non-render thread, it enqueues the destruction to be performed on the render thread to ensure thread safety.
+    /// </summary>
     public void DestroyCache()
     {
         if (!RuntimeEngine.IsRenderThread)
@@ -1138,6 +1415,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         DestroyCacheOnRenderThread();
     }
 
+    /// <summary>
+    /// Destroys the cached GPU resources if any tracked resources exist. 
+    /// This method checks for the presence of active, pending, or retired resource generations,
+    /// and only destroys the cache if such resources exist.
+    /// </summary>
     private void DestroyCacheIfResourcesExist()
     {
         if (!HasAnyTrackedResources())
@@ -1146,6 +1428,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         DestroyCache();
     }
 
+    /// <summary>
+    /// Enqueues a task to destroy cached GPU resources on the render thread. 
+    /// This method ensures that the destruction of resources is performed in a thread-safe manner.
+    /// </summary>
     private void EnqueueDestroyCache()
     {
         if (System.Threading.Interlocked.Exchange(ref _destroyCacheQueued, 1) != 0)
@@ -1164,12 +1450,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }, "XRRenderPipelineInstance.DestroyCache", RenderThreadJobKind.RenderPipelineResource);
     }
 
+    /// <summary>
+    /// Destroys cached GPU resources on the render thread, ensuring that all active, pending, and retired resource generations are disposed of.
+    /// It also destroys any legacy resources that may still be present. 
+    /// This method is called from the render thread to ensure that resource destruction is performed safely and without interfering with ongoing rendering operations.
+    /// </summary>
     private void DestroyCacheOnRenderThread()
     {
         if (!HasAnyTrackedResources())
             return;
 
-        LogDefaultRenderPipelineResourceDestruction("DestroyCache");
+        NotifyPipelineResourcesDestroyed("DestroyCache");
         WaitForGpuBeforePhysicalResourceDestruction("DestroyCache");
         PendingGeneration?.Dispose();
         PendingGeneration = null;
@@ -1203,18 +1494,23 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 dimensions.InternalWidth,
                 dimensions.InternalHeight,
                 "InvalidatePhysicalResources",
-                force: true))
+                force: true,
+                viewport: viewport))
             {
                 return;
             }
         }
 
-        LogDefaultRenderPipelineResourceDestruction($"InvalidatePhysicalResources (generation {ResourceGeneration} -> {ResourceGeneration + 1})");
+        NotifyPipelineResourcesDestroyed($"InvalidatePhysicalResources (generation {ResourceGeneration} -> {ResourceGeneration + 1})");
         WaitForGpuBeforePhysicalResourceDestruction("InvalidatePhysicalResources");
         Resources.DestroyAllPhysicalResources(retainDescriptors: true);
         ResourceGeneration++;
     }
 
+    /// <summary>
+    /// Checks if there are any tracked resources in the render pipeline instance, including active, pending, retired generations, and legacy resources.
+    /// </summary>
+    /// <returns>True if there are any tracked resources; otherwise, false.</returns>
     private bool HasAnyTrackedResources()
         => ActiveGeneration is not null
         || PendingGeneration is not null
@@ -1224,38 +1520,47 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         || _legacyResources.BufferRecords.Count != 0
         || _legacyResources.RenderBufferRecords.Count != 0;
 
+    /// <summary>
+    /// Removes a texture resource by name, ensuring that any associated GPU resources are properly destroyed and that the render pipeline is notified of the destruction.
+    /// </summary>
+    /// <param name="name">The name of the texture resource to remove.</param>
+    /// <param name="reason">The reason for removing the texture resource.</param>
     internal void RemoveTextureResource(string name, string reason)
     {
         if (EnqueueResourceMutationIfOffRenderThread(() => RemoveTextureResource(name, reason), $"XRRenderPipelineInstance.RemoveTextureResource[{name}]"))
             return;
 
-        if (_pipeline is DefaultRenderPipeline pipeline
-            && Resources.TryGetTexture(name, out XRTexture? texture)
-            && texture is not null)
-        {
-            pipeline.LogTextureDestroy(this, name, texture, reason);
-        }
+        if (Resources.TryGetTexture(name, out XRTexture? texture) && texture is not null)
+            _pipeline?.OnTextureDestroyed(this, name, texture, reason);
 
         WaitForGpuBeforePhysicalResourceDestruction($"RemoveTextureResource[{name}]");
         Resources.RemoveTexture(name);
     }
 
+    /// <summary>
+    /// Removes a framebuffer resource by name, ensuring that any associated GPU resources are properly destroyed and that the render pipeline is notified of the destruction.
+    /// </summary>
+    /// <param name="name">The name of the framebuffer resource to remove.</param>
+    /// <param name="reason">The reason for removing the framebuffer resource.</param>
     internal void RemoveFrameBufferResource(string name, string reason)
     {
         if (EnqueueResourceMutationIfOffRenderThread(() => RemoveFrameBufferResource(name, reason), $"XRRenderPipelineInstance.RemoveFrameBufferResource[{name}]"))
             return;
 
-        if (_pipeline is DefaultRenderPipeline pipeline
-            && Resources.TryGetFrameBuffer(name, out XRFrameBuffer? frameBuffer)
-            && frameBuffer is not null)
-        {
-            pipeline.LogFrameBufferDestroy(this, name, frameBuffer, reason);
-        }
+        if (Resources.TryGetFrameBuffer(name, out XRFrameBuffer? frameBuffer) && frameBuffer is not null)
+            _pipeline?.OnFrameBufferDestroyed(this, name, frameBuffer, reason);
 
         WaitForGpuBeforePhysicalResourceDestruction($"RemoveFrameBufferResource[{name}]");
         Resources.RemoveFrameBuffer(name);
     }
 
+    /// <summary>
+    /// Waits for the GPU to finish all work before destroying physical resources. 
+    /// This is necessary to avoid destroying resources that are still in use by the GPU, 
+    /// which can lead to undefined behavior or crashes. 
+    /// The reason parameter is used for logging purposes to indicate why the wait is being performed.
+    /// </summary>
+    /// <param name="reason">The reason for waiting for the GPU.</param>
     private static void WaitForGpuBeforePhysicalResourceDestruction(string reason)
     {
         if (AbstractRenderer.Current is not VulkanRenderer renderer)
@@ -1280,22 +1585,30 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             reason);
     }
 
-    public void ViewportResized(Vector2 size)
-    {
-        ViewportResized((int)size.X, (int)size.Y);
-    }
+    /// <summary>
+    /// Called when the viewport is resized. 
+    /// This method updates the render pipeline instance to handle the new viewport size.
+    /// </summary>
+    /// <param name="size">The new size of the viewport.</param>
+    public void ViewportResized(Vector2 size) 
+        => ViewportResized((int)size.X, (int)size.Y);
+    /// <summary>
+    /// Called when the viewport is resized.
+    /// This method updates the render pipeline instance to handle the new viewport size.
+    /// </summary>
+    /// <param name="width">The new width of the viewport.</param>
+    /// <param name="height">The new height of the viewport.</param>
     public void ViewportResized(int width, int height)
     {
-        switch (_pipeline)
-        {
-            case DefaultRenderPipeline pipeline:
-                pipeline.HandleViewportResized(this, width, height);
-                break;
-            case DefaultRenderPipeline2 pipeline:
-                pipeline.HandleViewportResized(this, width, height);
-                break;
-        }
+        _pipeline?.HandleViewportResized(this, width, height);
     }
+
+    /// <summary>
+    /// Called when the internal resolution is resized.
+    /// This method updates the render pipeline instance to handle the new internal resolution.
+    /// </summary>
+    /// <param name="internalWidth">The new internal width.</param>
+    /// <param name="internalHeight">The new internal height.</param>
     public void InternalResolutionResized(int internalWidth, int internalHeight)
     {
         XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
@@ -1311,14 +1624,19 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             dimensions.DisplayHeight,
             dimensions.InternalWidth,
             dimensions.InternalHeight,
-            "InternalResolutionResized"))
-        {
+            "InternalResolutionResized",
+            viewport: viewport))
             return;
-        }
 
         InvalidatePhysicalResources();
     }
 
+    /// <summary>
+    /// Gets a texture resource by name and casts it to the specified type T.
+    /// </summary>
+    /// <typeparam name="T">The type of the texture resource.</typeparam>
+    /// <param name="name">The name of the texture resource.</param>
+    /// <returns>The texture resource cast to the specified type, or null if not found.</returns>
     public T? GetTexture<T>(string name) where T : XRTexture
     {
         if (TryGetTexture(name, out XRTexture? value))
@@ -1326,12 +1644,24 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return null;
     }
 
+    /// <summary>
+    /// Tries to get a texture resource by name.
+    /// If found, it outputs the texture and returns true; otherwise, it returns false.
+    /// </summary>
+    /// <param name="name">The name of the texture resource.</param>
+    /// <param name="texture">The output texture resource if found.</param>
+    /// <returns>True if the texture resource is found; otherwise, false.</returns>
     public bool TryGetTexture(string name, out XRTexture? texture)
     {
         return Resources.TryGetTexture(name, out texture)
             || Variables.TryResolveTexture(Resources, name, out texture);
     }
 
+    /// <summary>
+    /// Sets a texture resource in the render pipeline instance.
+    /// </summary>
+    /// <param name="texture">The texture resource to set.</param>
+    /// <param name="descriptor">An optional descriptor for the texture resource.</param>
     public void SetTexture(XRTexture texture, TextureResourceDescriptor? descriptor = null)
     {
         string? name = texture.Name;
@@ -1351,8 +1681,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
         }
 
-        if (!ReferenceEquals(existingTexture, texture) && _pipeline is DefaultRenderPipeline pipeline)
-            pipeline.LogTextureBinding(this, name, texture, existingTexture);
+        if (!ReferenceEquals(existingTexture, texture))
+            _pipeline?.OnTextureBound(this, name, texture, existingTexture);
 
         bool bindingChanged = !ReferenceEquals(existingTexture, texture);
         Resources.BindTexture(texture, descriptor);
@@ -1360,6 +1690,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             NotifyRenderResourcesChanged();
     }
 
+    /// <summary>
+    /// Gets a data buffer resource by name.
+    /// </summary>
+    /// <param name="name">The name of the data buffer resource.</param>
+    /// <returns>The data buffer resource if found; otherwise, null.</returns>
     public XRDataBuffer? GetBuffer(string name)
     {
         if (TryGetBuffer(name, out XRDataBuffer? value))
@@ -1367,12 +1702,22 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return null;
     }
 
-    public bool TryGetBuffer(string name, out XRDataBuffer? buffer)
-    {
-        return Resources.TryGetBuffer(name, out buffer)
+    /// <summary>
+    /// Tries to get a data buffer resource by name.
+    /// If found, it outputs the buffer and returns true; otherwise, it returns false.
+    /// </summary>
+    /// <param name="name">The name of the data buffer resource.</param>
+    /// <param name="buffer">The output data buffer resource if found.</param>
+    /// <returns>True if the data buffer resource is found; otherwise, false.</returns>
+    public bool TryGetBuffer(string name, out XRDataBuffer? buffer) 
+        => Resources.TryGetBuffer(name, out buffer)
             || Variables.TryResolveBuffer(Resources, name, out buffer);
-    }
 
+    /// <summary>
+    /// Sets a data buffer resource in the render pipeline instance.
+    /// </summary>
+    /// <param name="buffer">The data buffer resource to set.</param>
+    /// <param name="descriptor">An optional descriptor for the data buffer resource.</param>
     public void SetBuffer(XRDataBuffer buffer, BufferResourceDescriptor? descriptor = null)
     {
         string name = buffer.AttributeName;
@@ -1398,19 +1743,31 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             NotifyRenderResourcesChanged();
     }
 
-    public T? GetFBO<T>(string name) where T : XRFrameBuffer
-    {
-        if (TryGetFBO(name, out XRFrameBuffer? value))
-            return value as T;
-        return null;
-    }
+    /// <summary>
+    /// Gets a frame buffer resource by name and casts it to the specified type T.
+    /// </summary>
+    /// <typeparam name="T">The type to cast the frame buffer resource to.</typeparam>
+    /// <param name="name">The name of the frame buffer resource.</param>
+    /// <returns>The frame buffer resource cast to the specified type, or null if not found or cast fails.</returns>
+    public T? GetFBO<T>(string name) where T : XRFrameBuffer 
+        => TryGetFBO(name, out XRFrameBuffer? value) ? value as T : null;
 
+    /// <summary>
+    /// Tries to get a frame buffer resource by name.
+    /// If found, it outputs the frame buffer and returns true; otherwise, it returns false
+    /// </summary>
+    /// <param name="name">The name of the frame buffer resource.</param>
+    /// <param name="fbo">The output frame buffer resource if found; otherwise, null.</param>
+    /// <returns>True if the frame buffer resource is found; otherwise, false.</returns>
     public bool TryGetFBO(string name, out XRFrameBuffer? fbo)
-    {
-        return Resources.TryGetFrameBuffer(name, out fbo)
+        => Resources.TryGetFrameBuffer(name, out fbo)
             || Variables.TryResolveFrameBuffer(Resources, name, out fbo);
-    }
 
+    /// <summary>
+    /// Sets a frame buffer resource in the render pipeline instance.
+    /// </summary>
+    /// <param name="fbo">The frame buffer resource to set.</param>
+    /// <param name="descriptor">An optional descriptor for the frame buffer resource.</param>
     public void SetFBO(XRFrameBuffer fbo, FrameBufferResourceDescriptor? descriptor = null)
     {
         string? name = fbo.Name;
@@ -1430,8 +1787,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
         }
 
-        if (!ReferenceEquals(existingFbo, fbo) && _pipeline is DefaultRenderPipeline pipeline)
-            pipeline.LogFrameBufferBinding(this, name, fbo, existingFbo);
+        if (!ReferenceEquals(existingFbo, fbo))
+            _pipeline?.OnFrameBufferBound(this, name, fbo, existingFbo);
 
         bool bindingChanged = !ReferenceEquals(existingFbo, fbo);
         Resources.BindFrameBuffer(fbo, descriptor);
@@ -1439,12 +1796,39 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             NotifyRenderResourcesChanged();
     }
 
-    internal void NotifyRenderResourcesChanged()
-        => AbstractRenderer.Current?.NotifyRenderResourcesChanged();
+    /// <summary>
+    /// Notifies the current renderer that the render resources have changed, prompting it to update its state accordingly.
+    /// </summary>
+    internal void NotifyRenderResourcesChanged([CallerMemberName] string? reason = null)
+        => AbstractRenderer.Current?.NotifyRenderResourcesChanged(DescribeRenderResourceChangeReason(reason));
 
-    private void LogDefaultRenderPipelineResourceDestruction(string reason)
+    /// <summary>
+    /// Provides a human-readable description of the reason for a render resource change, based on the caller member name. 
+    /// This method maps specific method names to more descriptive strings for logging and debugging purposes. 
+    /// If the reason is null or empty, it defaults to the name of the NotifyRenderResourcesChanged method.
+    /// </summary>
+    /// <param name="reason">The caller member name indicating the reason for the render resource change.</param>
+    /// <returns>A human-readable description of the reason for the render resource change.</returns>
+    private static string DescribeRenderResourceChangeReason(string? reason)
+        => reason switch
+        {
+            nameof(CommitPendingGeneration) => "XRRenderPipelineInstance.CommitPendingGeneration",
+            nameof(SetTexture) => "XRRenderPipelineInstance.SetTexture",
+            nameof(SetBuffer) => "XRRenderPipelineInstance.SetBuffer",
+            nameof(SetFBO) => "XRRenderPipelineInstance.SetFBO",
+            nameof(SetRenderBuffer) => "XRRenderPipelineInstance.SetRenderBuffer",
+            null or "" => nameof(NotifyRenderResourcesChanged),
+            _ => reason
+        };
+
+    /// <summary>
+    /// Notifies the active render pipeline before destroying resources, including textures, frame buffers, buffers, and render buffers.
+    /// </summary>
+    /// <param name="reason">The reason for the destruction of the resources.</param>
+    private void NotifyPipelineResourcesDestroyed(string reason)
     {
-        if (_pipeline is not DefaultRenderPipeline pipeline)
+        RenderPipeline? pipeline = _pipeline;
+        if (pipeline is null)
             return;
 
         int liveTextureCount = 0;
@@ -1458,7 +1842,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 continue;
 
             liveTextureCount++;
-            pipeline.LogTextureDestroy(this, texture.Name ?? "<unnamed>", texture, reason);
+            pipeline.OnTextureDestroyed(this, texture.Name ?? "<unnamed>", texture, reason);
         }
 
         foreach (var record in Resources.FrameBufferRecords.Values)
@@ -1467,7 +1851,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 continue;
 
             liveFrameBufferCount++;
-            pipeline.LogFrameBufferDestroy(this, frameBuffer.Name ?? "<unnamed>", frameBuffer, reason);
+            pipeline.OnFrameBufferDestroyed(this, frameBuffer.Name ?? "<unnamed>", frameBuffer, reason);
         }
 
         foreach (var record in Resources.BufferRecords.Values)
@@ -1499,19 +1883,29 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 */
     }
 
+    /// <summary>
+    /// Gets a render buffer resource by name.
+    /// </summary>
+    /// <param name="name">The name of the render buffer resource.</param>
+    /// <returns>The render buffer resource if found; otherwise, null.</returns>
     public XRRenderBuffer? GetRenderBuffer(string name)
-    {
-        if (TryGetRenderBuffer(name, out XRRenderBuffer? value))
-            return value;
-        return null;
-    }
+        => TryGetRenderBuffer(name, out XRRenderBuffer? value) ? value : null;
 
+    /// <summary>
+    /// Tries to get a render buffer resource by name.
+    /// </summary>
+    /// <param name="name">The name of the render buffer resource.</param>
+    /// <param name="renderBuffer">When this method returns, contains the render buffer resource if found; otherwise, null.</param>
+    /// <returns>True if the render buffer resource was found; otherwise, false.</returns>
     public bool TryGetRenderBuffer(string name, out XRRenderBuffer? renderBuffer)
-    {
-        return Resources.TryGetRenderBuffer(name, out renderBuffer)
+        => Resources.TryGetRenderBuffer(name, out renderBuffer)
             || Variables.TryResolveRenderBuffer(Resources, name, out renderBuffer);
-    }
 
+    /// <summary>
+    /// Sets a render buffer resource in the render pipeline instance.
+    /// </summary>
+    /// <param name="renderBuffer">The render buffer resource to set.</param>
+    /// <param name="descriptor">An optional descriptor for the render buffer resource.</param>
     public void SetRenderBuffer(XRRenderBuffer renderBuffer, RenderBufferResourceDescriptor? descriptor = null)
     {
         string? name = renderBuffer.Name;
@@ -1537,6 +1931,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             NotifyRenderResourcesChanged();
     }
 
+    /// <summary>
+    /// Validates that the descriptors of the active generation match the expected specifications.
+    /// </summary>
     private void ValidateActiveGenerationDescriptorParity()
     {
         RenderResourceGeneration? generation = ActiveGeneration;
@@ -1569,6 +1966,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
     }
 
+    /// <summary>
+    /// Validates that the texture descriptor for a given texture specification matches the actual descriptor in the registry.
+    /// </summary>
+    /// <param name="generation">The render resource generation.</param>
+    /// <param name="registry">The render resource registry.</param>
+    /// <param name="spec">The texture specification.</param>
     private void ValidateTextureDescriptorParity(
         RenderResourceGeneration generation,
         RenderResourceRegistry registry,
@@ -1589,11 +1992,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             || expected.ArrayLayers != actual.ArrayLayers
             || expected.SupportsAliasing != actual.SupportsAliasing
             || expected.RequiresStorageUsage != actual.RequiresStorageUsage)
-        {
             WarnDescriptorMismatch(generation, spec.Name, "texture", DescribeTextureDescriptor(expected), DescribeTextureDescriptor(actual));
-        }
     }
 
+    /// <summary>
+    /// Validates that the texture view descriptor for a given texture view specification matches the actual descriptor in the registry.
+    /// </summary>
+    /// <param name="generation">The render resource generation.</param>
+    /// <param name="registry">The render resource registry.</param>
+    /// <param name="spec">The texture view specification.</param>
     private void ValidateTextureDescriptorParity(
         RenderResourceGeneration generation,
         RenderResourceRegistry registry,
@@ -1612,11 +2019,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             || !string.Equals(expected.FormatLabel, actual.FormatLabel, StringComparison.Ordinal)
             || expected.StereoCompatible != actual.StereoCompatible
             || expected.ArrayLayers != actual.ArrayLayers)
-        {
             WarnDescriptorMismatch(generation, spec.Name, "texture view", DescribeTextureDescriptor(expected), DescribeTextureDescriptor(actual));
-        }
     }
 
+    /// <summary>
+    /// Validates that the frame buffer descriptor for a given frame buffer specification matches the actual descriptor in the registry.
+    /// </summary>
+    /// <param name="generation">The render resource generation.</param>
+    /// <param name="registry">The render resource registry.</param>
+    /// <param name="spec">The frame buffer specification.</param>
     private void ValidateFrameBufferDescriptorParity(
         RenderResourceGeneration generation,
         RenderResourceRegistry registry,
@@ -1633,11 +2044,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (expected.Lifetime != actual.Lifetime
             || expected.SizePolicy != actual.SizePolicy
             || !AttachmentDescriptorsEqual(expected.Attachments, actual.Attachments))
-        {
             WarnDescriptorMismatch(generation, spec.Name, "framebuffer", DescribeFrameBufferDescriptor(expected), DescribeFrameBufferDescriptor(actual));
-        }
     }
 
+    /// <summary>
+    /// Validates that the render buffer descriptor for a given render buffer specification matches the actual descriptor in the registry.
+    /// </summary>
+    /// <param name="generation">The render resource generation.</param>
+    /// <param name="registry">The render resource registry.</param>
+    /// <param name="spec">The render buffer specification.</param>
     private void ValidateRenderBufferDescriptorParity(
         RenderResourceGeneration generation,
         RenderResourceRegistry registry,
@@ -1656,11 +2071,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             || expected.StorageFormat != actual.StorageFormat
             || expected.MultisampleCount != actual.MultisampleCount
             || expected.DefaultAttachment != actual.DefaultAttachment)
-        {
             WarnDescriptorMismatch(generation, spec.Name, "renderbuffer", expected.ToString(), actual.ToString());
-        }
     }
 
+    /// <summary>
+    /// Validates that the buffer descriptor for a given buffer specification matches the actual descriptor in the registry.
+    /// </summary>
+    /// <param name="generation">The render resource generation.</param>
+    /// <param name="registry">The render resource registry.</param>
+    /// <param name="spec">The buffer specification.</param>
     private void ValidateBufferDescriptorParity(
         RenderResourceGeneration generation,
         RenderResourceRegistry registry,
@@ -1682,11 +2101,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             || expected.ElementStride != actual.ElementStride
             || expected.ElementCount != actual.ElementCount
             || expected.AccessPattern != actual.AccessPattern)
-        {
             WarnDescriptorMismatch(generation, spec.Name, "buffer", expected.ToString(), actual.ToString());
-        }
     }
 
+    /// <summary>
+    /// Logs a warning if a declared resource is missing after frame execution. This is used to notify developers that a required resource was not created or bound as expected, which may lead to rendering issues.
+    /// </summary>
+    /// <param name="generation">The render resource generation.</param>
+    /// <param name="spec">The resource specification.</param>
     private void WarnMissingDeclaredResource(RenderResourceGeneration generation, RenderPipelineResourceSpec spec)
     {
         if (!spec.Required)
@@ -1700,6 +2122,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             spec.Kind);
     }
 
+    /// <summary>
+    /// Logs a warning if there is a mismatch between the expected and actual descriptors for a resource. This helps identify issues where the resource was created or bound with different parameters than what was declared in the pipeline specification.
+    /// </summary>
+    /// <param name="generation">The render resource generation.</param>
+    /// <param name="name">The name of the resource.</param>
+    /// <param name="kind">The kind of the resource.</param>
+    /// <param name="expected">The expected descriptor.</param>
+    /// <param name="actual">The actual descriptor.</param>
     private void WarnDescriptorMismatch(
         RenderResourceGeneration generation,
         string name,
@@ -1715,12 +2145,27 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             expected ?? "<null>",
             actual ?? "<null>");
 
+    /// <summary>
+    /// Describes a texture resource descriptor in a human-readable format for logging and debugging purposes. This method constructs a string representation of the descriptor's properties, including lifetime, size policy, format label, stereo compatibility, array layers, aliasing support, and storage usage requirements.
+    /// </summary>
+    /// <param name="descriptor">The texture resource descriptor.</param>
+    /// <returns>A string representation of the texture resource descriptor.</returns>
     private static string DescribeTextureDescriptor(TextureResourceDescriptor descriptor)
         => $"lifetime={descriptor.Lifetime},size={descriptor.SizePolicy},format={descriptor.FormatLabel},stereo={descriptor.StereoCompatible},layers={descriptor.ArrayLayers},alias={descriptor.SupportsAliasing},storage={descriptor.RequiresStorageUsage}";
 
+    /// <summary>
+    /// Describes a frame buffer resource descriptor in a human-readable format for logging and debugging purposes. This method constructs a string representation of the descriptor's properties, including lifetime, size policy, and attachments.
+    /// </summary>
+    /// <param name="descriptor">The frame buffer resource descriptor.</param>
+    /// <returns>A string representation of the frame buffer resource descriptor.</returns>
     private static string DescribeFrameBufferDescriptor(FrameBufferResourceDescriptor descriptor)
         => $"lifetime={descriptor.Lifetime},size={descriptor.SizePolicy},attachments={DescribeAttachments(descriptor.Attachments)}";
 
+    /// <summary>
+    /// Describes a list of frame buffer attachment descriptors in a human-readable format for logging and debugging purposes. This method constructs a string representation of each attachment's properties, including attachment type, resource name, mip level, and layer index, and combines them into a single string.
+    /// </summary>
+    /// <param name="attachments">The list of frame buffer attachment descriptors.</param>
+    /// <returns>A string representation of the list of frame buffer attachment descriptors.</returns>
     private static string DescribeAttachments(IReadOnlyList<FrameBufferAttachmentDescriptor> attachments)
     {
         if (attachments.Count == 0)
@@ -1735,6 +2180,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return "[" + string.Join(",", parts) + "]";
     }
 
+    /// <summary>
+    /// Compares two lists of frame buffer attachment descriptors for equality. This method checks if the two lists have the same count and if each corresponding attachment descriptor is equal. It is used to validate that the expected and actual frame buffer attachments match in the render pipeline.
+    /// </summary>
+    /// <param name="left">The first list of frame buffer attachment descriptors.</param>
+    /// <param name="right">The second list of frame buffer attachment descriptors.</param>
+    /// <returns>True if the lists are equal; otherwise, false.</returns>
     private static bool AttachmentDescriptorsEqual(
         IReadOnlyList<FrameBufferAttachmentDescriptor> left,
         IReadOnlyList<FrameBufferAttachmentDescriptor> right)
@@ -1749,6 +2200,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         return true;
     }
 
+    /// <summary>
+    /// Logs a warning if a screen-space UI is provided to the render pipeline but no corresponding render command exists in the command chain. This indicates that the UI will not be rendered through the pipeline, which may lead to unexpected behavior or missing UI elements.
+    /// </summary>
+    /// <param name="userInterface">The screen-space UI instance.</param>
+    /// <param name="viewport">The viewport associated with the UI.</param>
     private void WarnIfScreenSpaceUiHasNoRenderCommand(IRuntimeScreenSpaceUserInterface? userInterface, XRViewport? viewport)
     {
         if (Pipeline?.CommandChain is null || userInterface is null)
@@ -1769,40 +2225,49 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             viewport?.Index ?? -1);
     }
 
+    /// <summary>
+    /// Checks if the given viewport render command container contains a command for rendering screen-space UI. This method recursively checks through the command chain, including any conditional or switch commands, to determine if a VPRC_RenderScreenSpaceUI command is present.
+    /// </summary>
+    /// <param name="container">The viewport render command container to check.</param>
+    /// <returns>True if a VPRC_RenderScreenSpaceUI command is found; otherwise, false.</returns>
     internal static bool ContainsScreenSpaceUiRenderCommand(ViewportRenderCommandContainer container)
     {
         foreach (var cmd in container)
         {
-            if (cmd is VPRC_RenderScreenSpaceUI)
-                return true;
-
-            if (cmd is VPRC_IfElse ifElse)
+            switch (cmd)
             {
-                if (ifElse.TrueCommands is not null && ContainsScreenSpaceUiRenderCommand(ifElse.TrueCommands))
+                case VPRC_RenderScreenSpaceUI:
                     return true;
-                if (ifElse.FalseCommands is not null && ContainsScreenSpaceUiRenderCommand(ifElse.FalseCommands))
-                    return true;
-            }
-
-            if (cmd is VPRC_Switch switchCmd)
-            {
-                if (switchCmd.Cases is not null)
+                case VPRC_IfElse ifElse:
                 {
-                    foreach (var caseContainer in switchCmd.Cases.Values)
-                    {
-                        if (ContainsScreenSpaceUiRenderCommand(caseContainer))
-                            return true;
-                    }
+                    if (ifElse.TrueCommands is not null && ContainsScreenSpaceUiRenderCommand(ifElse.TrueCommands))
+                        return true;
+                    if (ifElse.FalseCommands is not null && ContainsScreenSpaceUiRenderCommand(ifElse.FalseCommands))
+                        return true;
+                    break;
                 }
+                case VPRC_Switch switchCmd:
+                {
+                    if (switchCmd.Cases is not null)
+                        foreach (var caseContainer in switchCmd.Cases.Values)
+                            if (ContainsScreenSpaceUiRenderCommand(caseContainer))
+                                return true;
 
-                if (switchCmd.DefaultCase is not null && ContainsScreenSpaceUiRenderCommand(switchCmd.DefaultCase))
-                    return true;
+                    if (switchCmd.DefaultCase is not null && ContainsScreenSpaceUiRenderCommand(switchCmd.DefaultCase))
+                        return true;
+
+                    break;
+                }
             }
         }
 
         return false;
     }
 
+    /// <summary>
+    /// Registers the index of a render graph pass that has been executed during the current frame. This method is used for validation purposes to ensure that all executed passes have corresponding metadata in the render pipeline. If the pass index is valid (not int.MinValue), it adds the index to the set of executed pass indices and, if within a branch scope, also adds it to the set of branch-executed pass indices.
+    /// </summary>
+    /// <param name="passIndex">The index of the render graph pass that has been executed.</param>
     internal void RegisterExecutedRenderGraphPass(int passIndex)
     {
         if (passIndex == int.MinValue)
@@ -1816,6 +2281,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
     }
 
+    /// <summary>
+    /// Pushes a new render graph branch scope onto the stack, incrementing the active branch depth. This is used to track nested branches in the render graph for validation purposes. When the returned StateObject is disposed, it will decrement the active branch depth, ensuring proper tracking of nested scopes.
+    /// </summary>
+    /// <returns>A StateObject representing the branch scope. Disposing this object will decrement the active branch depth.</returns>
     internal StateObject PushRenderGraphBranchScope()
     {
         lock (_renderGraphValidationLock)
@@ -1831,6 +2300,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         });
     }
 
+    /// <summary>
+    /// Begins a new frame for render graph validation, 
+    /// clearing the sets of executed pass indices and 
+    /// resetting the active branch depth to zero. 
+    /// This method is called at the start of each frame 
+    /// to prepare for tracking executed render graph passes 
+    /// and their corresponding metadata validation.
+    /// </summary>
     private void BeginRenderGraphValidationFrame()
     {
         lock (_renderGraphValidationLock)

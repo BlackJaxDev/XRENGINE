@@ -463,6 +463,9 @@ namespace XREngine.Rendering.Vulkan
             if (!TryGetOpenXrVulkanImageAllocationPressureSnapshot(
                     out long trackedVramBytes,
                     out long trackedVramDeferLimitBytes,
+                    out long allocatorBytes,
+                    out long allocatorDeferLimitBytes,
+                    out long allocatorLargestHeapBytes,
                     out int activeAllocationCount))
             {
                 return false;
@@ -473,6 +476,9 @@ namespace XREngine.Rendering.Vulkan
                     requiredProperties,
                     trackedVramBytes,
                     trackedVramDeferLimitBytes,
+                    allocatorBytes,
+                    allocatorDeferLimitBytes,
+                    allocatorLargestHeapBytes,
                     activeAllocationCount,
                     out reason))
             {
@@ -493,6 +499,9 @@ namespace XREngine.Rendering.Vulkan
             if (!TryGetOpenXrVulkanImageAllocationPressureSnapshot(
                     out long trackedVramBytes,
                     out long trackedVramDeferLimitBytes,
+                    out long allocatorBytes,
+                    out long allocatorDeferLimitBytes,
+                    out long allocatorLargestHeapBytes,
                     out int activeAllocationCount))
             {
                 return false;
@@ -503,6 +512,9 @@ namespace XREngine.Rendering.Vulkan
                 MemoryPropertyFlags.DeviceLocalBit,
                 trackedVramBytes,
                 trackedVramDeferLimitBytes,
+                allocatorBytes,
+                allocatorDeferLimitBytes,
+                allocatorLargestHeapBytes,
                 activeAllocationCount,
                 out reason);
         }
@@ -510,10 +522,16 @@ namespace XREngine.Rendering.Vulkan
         private bool TryGetOpenXrVulkanImageAllocationPressureSnapshot(
             out long trackedVramBytes,
             out long trackedVramDeferLimitBytes,
+            out long allocatorBytes,
+            out long allocatorDeferLimitBytes,
+            out long allocatorLargestHeapBytes,
             out int activeAllocationCount)
         {
             trackedVramBytes = 0L;
             trackedVramDeferLimitBytes = long.MaxValue;
+            allocatorBytes = 0L;
+            allocatorDeferLimitBytes = long.MaxValue;
+            allocatorLargestHeapBytes = 0L;
             activeAllocationCount = 0;
 
             try
@@ -528,6 +546,22 @@ namespace XREngine.Rendering.Vulkan
             IRuntimeRenderingHostServices host = RuntimeRenderingHostServices.Current;
             trackedVramBytes = Math.Max(0L, host.TrackedVramBytes);
             trackedVramDeferLimitBytes = ResolveOpenXrVulkanImageAllocationTrackedVramLimit(host.TrackedVramBudgetBytes);
+            if (TryGetVulkanAllocatorBudgetSnapshot(
+                    OpenXrVulkanImageAllocationPressurePreflightRatio,
+                    OpenXrVulkanImageAllocationPressureReserveBytes,
+                    out long currentAllocatorBytes,
+                    out long currentAllocatorDeferLimitBytes,
+                    out long currentAllocatorLargestHeapBytes,
+                    out int currentActiveAllocationCount))
+            {
+                allocatorBytes = Math.Max(0L, currentAllocatorBytes);
+                allocatorDeferLimitBytes = currentAllocatorDeferLimitBytes > 0L
+                    ? currentAllocatorDeferLimitBytes
+                    : long.MaxValue;
+                allocatorLargestHeapBytes = Math.Max(0L, currentAllocatorLargestHeapBytes);
+                activeAllocationCount = currentActiveAllocationCount;
+            }
+
             return true;
         }
 
@@ -549,10 +583,26 @@ namespace XREngine.Rendering.Vulkan
             MemoryPropertyFlags requiredProperties,
             long trackedVramBytes,
             long trackedVramDeferLimitBytes,
+            long allocatorBytes,
+            long allocatorDeferLimitBytes,
+            long allocatorLargestHeapBytes,
             int activeAllocationCount,
             out string reason)
         {
             reason = string.Empty;
+
+            if (allocatorDeferLimitBytes != long.MaxValue)
+            {
+                long projectedAllocatorBytes = allocatorBytes > long.MaxValue - requestedBytes
+                    ? long.MaxValue
+                    : allocatorBytes + requestedBytes;
+                if (projectedAllocatorBytes >= allocatorDeferLimitBytes)
+                {
+                    reason =
+                        $"Vulkan image allocation deferred under allocator pressure. requested={requestedBytes}, allocated={allocatorBytes}, projectedAllocated={projectedAllocatorBytes}, largestHeap={allocatorLargestHeapBytes}, deferLimit={allocatorDeferLimitBytes}, activeVkAllocations={activeAllocationCount}, requestedProperties={requiredProperties}";
+                    return true;
+                }
+            }
 
             if (trackedVramDeferLimitBytes != long.MaxValue)
             {

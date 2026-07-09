@@ -940,6 +940,25 @@ namespace XREngine.Rendering.Vulkan
             _acquireTimelineValue = _graphicsTimelineValue;
             bool acquireSemaphoreConsumed = false;
             Semaphore presentSemaphore = presentBridgeSemaphores![imageIndex];
+            CommandBuffer textureUploadCommandBuffer = default;
+            CommandPool textureUploadCommandPool = default;
+            bool textureUploadCommandBufferSubmitted = false;
+
+            void ReleaseUnsubmittedTextureUploadCommandBuffer(string reason)
+            {
+                CancelRecordedTextureUploadSubmitBatch(reason);
+
+                if (textureUploadCommandBuffer.Handle == 0 || textureUploadCommandBufferSubmitted)
+                    return;
+
+                CommandBuffer uploadCommandBuffer = textureUploadCommandBuffer;
+                if (textureUploadCommandPool.Handle != 0 && !_deviceLost)
+                    Api!.FreeCommandBuffers(device, textureUploadCommandPool, 1, ref uploadCommandBuffer);
+
+                RemoveCommandBufferBindState(textureUploadCommandBuffer);
+                textureUploadCommandBuffer = default;
+                textureUploadCommandPool = default;
+            }
 
             void ConsumeAcquireSemaphoreForAbortedFrame(string reason)
             {
@@ -975,7 +994,7 @@ namespace XREngine.Rendering.Vulkan
                 if (acquireSemaphoreConsumed || acquireSemaphore.Handle == 0 || _deviceLost)
                     return false;
 
-                CancelRecordedTextureUploadSubmitBatch("command buffer dirtied before submit");
+                ReleaseUnsubmittedTextureUploadCommandBuffer("command buffer dirtied before submit");
 
                 bool imageWasEverPresented = IsSwapchainImageEverPresented(imageIndex);
                 int clearedLayoutCount = ClearAllTrackedImageLayouts();
@@ -1238,6 +1257,8 @@ namespace XREngine.Rendering.Vulkan
                         out dynamicUiBatchTextOverlayOps,
                         out dynamicUiBatchTextOverlaySignature,
                         out dynamicUiBatchTextOverlayVariant,
+                        out textureUploadCommandBuffer,
+                        out textureUploadCommandPool,
                         out swapchainLayoutAfterScene,
                         out sceneCommandBufferDirtyGeneration);
 
@@ -1273,6 +1294,7 @@ namespace XREngine.Rendering.Vulkan
                 // acquired image to the presentation engine and resets semaphore state.
                     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
+                    ReleaseUnsubmittedTextureUploadCommandBuffer("command buffer recording failed");
                     ConsumeAcquireSemaphoreForAbortedFrame("RecordFailed");
 
                     Debug.VulkanWarningEvery(
@@ -1315,6 +1337,7 @@ namespace XREngine.Rendering.Vulkan
                     recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
                     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
+                    ReleaseUnsubmittedTextureUploadCommandBuffer("ImGui overlay command buffer recording failed");
                     ConsumeAcquireSemaphoreForAbortedFrame("RecordImGuiOverlayFailed");
 
                     Debug.VulkanWarningEvery(
@@ -1375,6 +1398,7 @@ namespace XREngine.Rendering.Vulkan
                         recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
                         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
+                        ReleaseUnsubmittedTextureUploadCommandBuffer("dynamic UI text overlay command buffer recording failed");
                         ConsumeAcquireSemaphoreForAbortedFrame("RecordDynamicUiTextOverlayFailed");
 
                         Debug.VulkanWarningEvery(
@@ -1441,9 +1465,11 @@ namespace XREngine.Rendering.Vulkan
             ulong* signalTimelineValues = stackalloc ulong[2] { graphicsSignalValue, 0UL };
             Semaphore* waitSemaphores = stackalloc Semaphore[1] { acquireSemaphore };
             var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
-            CommandBuffer* submitCommandBuffers = stackalloc CommandBuffer[3];
-            submitCommandBuffers[0] = submitCommandBuffer;
-            uint submitCommandBufferCount = 1;
+            CommandBuffer* submitCommandBuffers = stackalloc CommandBuffer[4];
+            uint submitCommandBufferCount = 0;
+            if (textureUploadCommandBuffer.Handle != 0)
+                submitCommandBuffers[submitCommandBufferCount++] = textureUploadCommandBuffer;
+            submitCommandBuffers[submitCommandBufferCount++] = submitCommandBuffer;
             if (hasImGuiOverlayCommandBuffer && imguiOverlayCommandBuffer.Handle != 0)
                 submitCommandBuffers[submitCommandBufferCount++] = imguiOverlayCommandBuffer;
             if (hasDynamicUiBatchTextOverlayCommandBuffer && dynamicUiBatchTextOverlayCommandBuffer.Handle != 0)
@@ -1495,7 +1521,7 @@ namespace XREngine.Rendering.Vulkan
             if (submitResult != Result.Success)
             {
                 if (submitResult != Result.ErrorDeviceLost)
-                    CancelRecordedTextureUploadSubmitBatch($"graphics frame submit failed with {submitResult}");
+                    ReleaseUnsubmittedTextureUploadCommandBuffer($"graphics frame submit failed with {submitResult}");
 
                 if (submitResult == Result.ErrorDeviceLost)
                     throw CreateDeviceLostException("Draw QueueSubmit", submitResult);
@@ -1510,6 +1536,13 @@ namespace XREngine.Rendering.Vulkan
             if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
                 _swapchainImageTimelineValues[imageIndex] = graphicsSignalValue;
             QueueRecordedTextureUploadsForTimeline(graphicsSignalValue, "graphics frame");
+            if (textureUploadCommandBuffer.Handle != 0)
+            {
+                textureUploadCommandBufferSubmitted = true;
+                DeferSecondaryCommandBufferFree(imageIndex, textureUploadCommandPool, textureUploadCommandBuffer);
+                textureUploadCommandBuffer = default;
+                textureUploadCommandPool = default;
+            }
 
             // QueuePresent can block on desktop swapchain pacing. The submitted commands have
             // consumed this frame's render buffers, so release CollectVisible before that wait.

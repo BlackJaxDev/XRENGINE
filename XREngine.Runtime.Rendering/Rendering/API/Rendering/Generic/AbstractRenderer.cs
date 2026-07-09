@@ -152,6 +152,9 @@ namespace XREngine.Rendering
         {
         }
 
+        internal virtual void NotifyRenderResourcesChanged(string? reason)
+            => NotifyRenderResourcesChanged();
+
         protected bool _frameBufferInvalidated = false;
         #endregion
 

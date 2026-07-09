@@ -32,7 +32,7 @@ namespace XREngine.Scene
         private const uint ForwardPlusLocalLightsBinding = 20;
         private const uint ForwardPlusVisibleIndicesBinding = 21;
         private const int ForwardPlusFallbackTileSize = 16;
-        private const int ForwardPlusFallbackMaxLightsPerTile = 1024;
+        private const int ForwardPlusFallbackMaxLightsPerTile = 256;
 
         private XRDataBuffer? _forwardDirectionalLightsBuffer;
         private XRDataBuffer? _forwardPointLightsBuffer;

@@ -11,7 +11,7 @@ public sealed class LightProbeCapturePipelineTests
     [Test]
     public void SceneCaptureComponent_ReusesOneSharedCaptureViewportAcrossProbeFaces()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Capture/SceneCaptureComponent.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/SceneCaptureComponent.cs");
 
         source.ShouldContain("private static XRViewport? s_sharedCaptureViewport;");
         source.ShouldContain("XRViewport sharedViewport = GetOrCreateSharedCaptureViewport();");
@@ -21,20 +21,35 @@ public sealed class LightProbeCapturePipelineTests
     }
 
     [Test]
+    public void SceneCaptureComponent_SynchronizesCaptureWritesWithRendererMemoryBarrier()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/SceneCaptureComponent.cs");
+
+        source.ShouldContain("const EMemoryBarrierMask captureTextureBarrier");
+        source.ShouldContain("EMemoryBarrierMask.Framebuffer |");
+        source.ShouldContain("EMemoryBarrierMask.TextureFetch |");
+        source.ShouldContain("EMemoryBarrierMask.TextureUpdate;");
+        source.ShouldContain("AbstractRenderer.Current?.MemoryBarrier(captureTextureBarrier);");
+        source.ShouldContain("() => AbstractRenderer.Current?.MemoryBarrier(captureTextureBarrier)");
+        source.ShouldNotContain("WaitForGpu");
+        source.ShouldNotContain("OpenGLRenderer");
+    }
+
+    [Test]
     public void LightProbeComponent_ConfiguresTheSharedCaptureViewportForProbeRendering()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Capture/LightProbeComponent.IBL.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/LightProbeComponent.IBL.cs");
 
         source.ShouldContain("viewport.Camera.OutputHDROverride = true;");
         source.ShouldContain("viewport.Camera.AntiAliasingModeOverride = EAntiAliasingMode.None;");
-        source.ShouldContain("viewport.RenderPipeline ??= Engine.Rendering.NewRenderPipeline();");
+        source.ShouldContain("viewport.RenderPipeline ??= RuntimeEngine.Rendering.NewRenderPipeline();");
         source.ShouldContain("viewport.SetRenderPipelineFromCamera = false;");
     }
 
     [Test]
     public void LightProbeComponent_RendersFullPrefilterMipChain()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Capture/LightProbeComponent.IBL.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Capture/LightProbeComponent.IBL.cs");
 
         source.ShouldContain("int maxMipLevels = PrefilterTexture.SmallestMipmapLevel + 1;");
         source.ShouldContain("for (int mip = 0; mip < maxMipLevels; ++mip)");

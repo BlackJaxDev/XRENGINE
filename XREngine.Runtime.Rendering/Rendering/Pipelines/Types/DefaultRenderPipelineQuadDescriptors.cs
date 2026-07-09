@@ -3,6 +3,9 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering;
 
+/// <summary>
+/// Contains the default render pipeline quad descriptors for the render graph.
+/// </summary>
 internal static class DefaultRenderPipelineQuadDescriptors
 {
     public const string AmbientOcclusionResolveVariantHBAOPlus = "HBAOPlus";
@@ -17,6 +20,10 @@ internal static class DefaultRenderPipelineQuadDescriptors
     private const string LightProbeGridCellBufferName = "LightProbeGridCells";
     private const string LightProbeGridIndexBufferName = "LightProbeGridIndices";
 
+    /// <summary>
+    /// Generates the descriptor for the deferred light combine pass.
+    /// </summary>
+    /// <returns>The render graph resource descriptor for the deferred light combine pass.</returns>
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor DeferredLightCombine()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(DefaultRenderPipeline.AlbedoOpacityTextureName)
@@ -37,6 +44,12 @@ internal static class DefaultRenderPipelineQuadDescriptors
             .MakePassDependOnThis((int)EDefaultRenderPass.Background, EDefaultRenderPass.Background.ToString())
             .UseDestinationDepthStencilAttachments();
 
+    /// <summary>
+    /// Generates the descriptor for the ambient occlusion generation pass.
+    /// </summary>
+    /// <param name="outputTextureName">The name of the output texture.</param>
+    /// <param name="disabled">Indicates whether the ambient occlusion pass is disabled.</param>
+    /// <returns>The render graph resource descriptor for the ambient occlusion generation pass.</returns>
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor AmbientOcclusionGenerate(
         string outputTextureName,
         bool disabled = false)
@@ -55,6 +68,13 @@ internal static class DefaultRenderPipelineQuadDescriptors
         return descriptor;
     }
 
+    /// <summary>
+    /// Generates the descriptor for the final ambient occlusion pass.
+    /// </summary>
+    /// <param name="inputTextureName">The name of the input texture.</param>
+    /// <param name="variant">The variant of the ambient occlusion pass.</param>
+    /// <param name="disabled">Indicates whether the ambient occlusion pass is disabled.</param>
+    /// <returns>The render graph resource descriptor for the final ambient occlusion pass.</returns>
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor AmbientOcclusionFinal(
         string inputTextureName,
         string? variant,
@@ -73,6 +93,13 @@ internal static class DefaultRenderPipelineQuadDescriptors
         return descriptor;
     }
 
+    /// <summary>
+    /// Generates the descriptor for the intermediate blur pass of the ambient occlusion.
+    /// </summary>
+    /// <param name="inputTextureName">The name of the input texture.</param>
+    /// <param name="outputTextureName">The name of the output texture.</param>
+    /// <param name="variant">The variant of the ambient occlusion pass.</param>
+    /// <returns>The render graph resource descriptor for the intermediate blur pass of the ambient occlusion.</returns>
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor AmbientOcclusionIntermediateBlur(
         string inputTextureName,
         string outputTextureName,
@@ -87,6 +114,13 @@ internal static class DefaultRenderPipelineQuadDescriptors
                 DefaultRenderPipeline.AmbientOcclusionBlurFBOName,
                 variant);
 
+    /// <summary>
+    /// Generates the descriptor for the final blur pass of the ambient occlusion.
+    /// </summary>
+    /// <param name="inputTextureName">The name of the input texture.</param>
+    /// <param name="intermediateFboName">The name of the intermediate framebuffer object.</param>
+    /// <param name="variant">The variant of the ambient occlusion pass.</param>
+    /// <returns>The render graph resource descriptor for the final blur pass of the ambient occlusion.</returns>
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor AmbientOcclusionFinalBlur(
         string inputTextureName,
         string intermediateFboName,
@@ -101,6 +135,10 @@ internal static class DefaultRenderPipelineQuadDescriptors
                 intermediateFboName,
                 variant);
 
+    /// <summary>
+    /// Generates the descriptor for the post-processing pass.
+    /// </summary>
+    /// <returns>The render graph resource descriptor for the post-processing pass.</returns>
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor PostProcess()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(DefaultRenderPipeline.HDRSceneTextureName)
@@ -111,13 +149,25 @@ internal static class DefaultRenderPipelineQuadDescriptors
             .SampleTexture(DefaultRenderPipeline.AtmosphereColorTextureName)
             .SampleTexture(DefaultRenderPipeline.VolumetricFogColorTextureName);
 
+    /// <summary>
+    /// Generates the descriptor for the final post-processing pass.
+    /// </summary>
+    /// <returns>The render graph resource descriptor for the final post-processing pass.</returns>
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor FinalPostProcess()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(DefaultRenderPipeline.PostProcessOutputTextureName);
 
+    /// <summary>
+    /// Generates the descriptor for the final post-processing pass to the output target.
+    /// </summary>
+    /// <returns>The render graph resource descriptor for the final post-processing pass to the output target.</returns>
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor FinalPostProcessToOutputTarget()
         => FinalPostProcess();
 
+    /// <summary>
+    /// Generates the descriptor for the temporal super-resolution (TSR) upscale pass.
+    /// </summary>
+    /// <returns>The render graph resource descriptor for the temporal super-resolution (TSR) upscale pass.</returns>
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor TsrUpscale()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(DefaultRenderPipeline.FinalPostProcessOutputTextureName)
@@ -127,12 +177,20 @@ internal static class DefaultRenderPipelineQuadDescriptors
             .SampleTexture(DefaultRenderPipeline.TsrHistoryColorTextureName)
             .SampleTexture(DefaultRenderPipeline.StencilViewTextureName);
 
+    /// <summary>
+    /// Generates the descriptor for the motion blur pass.
+    /// </summary>
+    /// <returns>The render graph resource descriptor for the motion blur pass.</returns>
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor MotionBlur()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(DefaultRenderPipeline.MotionBlurTextureName)
             .SampleTexture(DefaultRenderPipeline.VelocityTextureName)
             .SampleTexture(DefaultRenderPipeline.DepthViewTextureName);
 
+    /// <summary>
+    /// Generates the descriptor for the depth of field pass.
+    /// </summary>
+    /// <returns>The render graph resource descriptor for the depth of field pass.</returns>
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor DepthOfField()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(DefaultRenderPipeline.DepthOfFieldTextureName)

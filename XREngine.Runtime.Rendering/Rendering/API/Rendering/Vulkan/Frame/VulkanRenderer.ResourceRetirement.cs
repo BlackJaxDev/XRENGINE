@@ -741,6 +741,21 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        internal void ForceFlushAllRetiredResourcesAfterWaiting(string reason)
+        {
+            if (IsDeviceLost)
+                return;
+
+            Debug.VulkanEvery(
+                $"Vulkan.RetiredResources.ForceFlushAfterWait.{GetHashCode()}.{reason}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Waiting for in-flight work before force-flushing retired resources: reason={0}.",
+                reason);
+
+            WaitForAllInFlightWork();
+            ForceFlushAllRetiredResources();
+        }
+
         /// <summary>
         /// Immediately destroys completed non-image resources across all frame slots.
         /// Images stay on the normal frame-slot drain path because descriptors can

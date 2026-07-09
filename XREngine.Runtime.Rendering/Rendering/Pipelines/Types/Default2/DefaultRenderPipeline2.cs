@@ -1383,6 +1383,9 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     /// </summary>
     public bool Stereo { get; }
 
+    internal override bool UsesStereoResources(XRRenderPipelineInstance instance, XRViewport? viewport)
+        => Stereo;
+
     protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
         => new()
         {
@@ -1745,7 +1748,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     private static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance)
         => RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);
 
-    internal void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)
+    internal override void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)
     {
         if (IsDestroyed || width <= 0 || height <= 0)
             return;

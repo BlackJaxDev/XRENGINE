@@ -36,6 +36,8 @@ namespace XREngine.Rendering.Vulkan
             out FrameOp[] dynamicUiBatchTextOverlayOps,
             out ulong dynamicUiBatchTextOverlaySignature,
             out CommandBufferCacheVariant? dynamicUiBatchTextOverlayVariant,
+            out CommandBuffer textureUploadCommandBuffer,
+            out CommandPool textureUploadCommandPool,
             out ImageLayout swapchainLayoutAfterCommandBuffer,
             out long commandBufferDirtyGenerationAfterRecord)
         {
@@ -46,6 +48,8 @@ namespace XREngine.Rendering.Vulkan
             dynamicUiBatchTextOverlayOps = Array.Empty<FrameOp>();
             dynamicUiBatchTextOverlaySignature = 0;
             dynamicUiBatchTextOverlayVariant = null;
+            textureUploadCommandBuffer = default;
+            textureUploadCommandPool = default;
             swapchainLayoutAfterCommandBuffer = ImageLayout.PresentSrcKhr;
             commandBufferDirtyGenerationAfterRecord = SnapshotCommandBufferDirtyGeneration();
 
@@ -77,6 +81,7 @@ namespace XREngine.Rendering.Vulkan
             bool swapchainLifecycleDirty = false;
             bool commandChainPrimaryDirty = false;
             bool primaryFrameStateDirty = false;
+            string? primaryFrameStateDirtyReason = null;
             PrimaryCommandBufferDirtyReason commandChainPrimaryDirtyReason = PrimaryCommandBufferDirtyReason.None;
             int commandBufferImageSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
             bool swapchainImageEverPresentedAtRecord = IsSwapchainImageEverPresented(imageIndex);
@@ -97,7 +102,7 @@ namespace XREngine.Rendering.Vulkan
             ulong rawFrameOpsSignature;
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.DrainFrameOps"))
             {
-                ops = DrainFrameOps(
+                ops = DrainFrameOpsExcludingTextureUploads(
                     out rawFrameOpsSignature,
                     computeSignature: FrameOpSignatureDiffDiagnosticsEnabled);
                 ops = FilterDiagnosticSkippedFrameOps(ops);
@@ -214,6 +219,24 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordingDeferredReason = frameOpPlannerFailureReason;
                     return default;
+                }
+            }
+
+            BeginRecordedTextureUploadSubmitBatch();
+            FrameOp[] textureUploadOps = DrainTextureUploadFrameOps();
+            if (textureUploadOps.Length > 0)
+            {
+                using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordTextureUploads"))
+                {
+                    if (!TryRecordTextureUploadCommandBuffer(
+                            imageIndex,
+                            textureUploadOps,
+                            out textureUploadCommandBuffer,
+                            out textureUploadCommandPool))
+                    {
+                        textureUploadCommandBuffer = default;
+                        textureUploadCommandPool = default;
+                    }
                 }
             }
 
@@ -349,6 +372,9 @@ namespace XREngine.Rendering.Vulkan
                 {
                     dirty = true;
                     primaryFrameStateDirty = true;
+                    primaryFrameStateDirtyReason = hasQueryFrameOps
+                        ? "query-ops"
+                        : "reuse-disabled";
                 }
 
                 if (gpuProfilerCommandBufferStateDirty)
@@ -378,6 +404,9 @@ namespace XREngine.Rendering.Vulkan
                 {
                     dirty = true;
                     primaryFrameStateDirty = true;
+                    primaryFrameStateDirtyReason = variant.RecordedImageLayoutEndState is null
+                        ? "missing-layout-state"
+                        : "image-layout-start";
                 }
 
                 if (!dirty && variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresentedAtRecord)
@@ -492,6 +521,7 @@ namespace XREngine.Rendering.Vulkan
                         variant.LastUsedFrameId = VulkanFrameCounter;
                         variant.DirtyReason = null;
                         SetActiveCommandBufferVariant(imageIndex, variant);
+                        RestoreRecordedImageLayoutEndState(variant);
                         PrepareVulkanGpuProfilerReusableSubmission(
                             commandBufferImageSlot,
                             variant,
@@ -549,7 +579,9 @@ namespace XREngine.Rendering.Vulkan
                         : commandChainPrimaryDirty
                             ? $"command-chain-primary:{commandChainPrimaryDirtyReason}"
                         : primaryFrameStateDirty
-                            ? "primary-frame-state"
+                            ? string.IsNullOrEmpty(primaryFrameStateDirtyReason)
+                                ? "primary-frame-state"
+                                : $"primary-frame-state:{primaryFrameStateDirtyReason}"
                             : "unknown";
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
@@ -575,8 +607,6 @@ namespace XREngine.Rendering.Vulkan
             int recordedSwapchainWriteCount = 0;
             try
             {
-                BeginRecordedTextureUploadSubmitBatch();
-
                 if (!delayDynamicUiBatchTextOverlayRecording)
                 {
                     using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordCommandBuffer.RecordDynamicUiSecondary"))
@@ -627,7 +657,7 @@ namespace XREngine.Rendering.Vulkan
                 requiresTrackedPresentSourceRefresh &&
                 recordedSwapchainWriteCount > 0;
             variant.RecordedImageLayoutStartSignature = imageLayoutStartSignature;
-            variant.RecordedImageLayoutEndSignature = ComputeImageLayoutStateSignature();
+            CaptureCommandBufferVariantImageLayoutEndState(variant);
             variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
             variant.CommandChainPrimaryGroupSignature = commandChainSchedule is null || commandChainCache is null
                 ? ulong.MaxValue
@@ -645,7 +675,7 @@ namespace XREngine.Rendering.Vulkan
                 gpuPipelineProfilingActive,
                 commandBufferImageSlot);
             if (hasTextureUploadFrameOps)
-                MarkCommandBufferVariantTransientAfterTextureUpload(variant);
+                MarkCommandBufferVariantTransient(variant, "transient texture upload");
             if (recordedDynamicUiSecondaryReady)
             {
                 dynamicUiBatchTextSecondaryCommandBuffer = variant.DynamicUiSecondaryCommandBuffer;
@@ -710,6 +740,7 @@ namespace XREngine.Rendering.Vulkan
             best.LastUsedFrameId = VulkanFrameCounter;
             best.DirtyReason = null;
             SetActiveCommandBufferVariant(imageIndex, best);
+            RestoreRecordedImageLayoutEndState(best);
             PrepareVulkanGpuProfilerReusableSubmission(
                 commandBufferImageSlot,
                 best,
@@ -744,10 +775,10 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
-        private static void MarkCommandBufferVariantTransientAfterTextureUpload(CommandBufferCacheVariant variant)
+        private static void MarkCommandBufferVariantTransient(CommandBufferCacheVariant variant, string reason)
         {
             variant.Dirty = true;
-            variant.DirtyReason = "transient texture upload";
+            variant.DirtyReason = reason;
             variant.FrameOpsSignature = ulong.MaxValue;
             variant.DynamicUiSignature = ulong.MaxValue;
             variant.DynamicUiOpCount = -1;
@@ -759,6 +790,7 @@ namespace XREngine.Rendering.Vulkan
             variant.RecordedSwapchainRefreshFromLastPresentSource = false;
             variant.RecordedImageLayoutStartSignature = ulong.MaxValue;
             variant.RecordedImageLayoutEndSignature = ulong.MaxValue;
+            variant.RecordedImageLayoutEndState = null;
             variant.CommandChainScheduleSignature = ulong.MaxValue;
             variant.CommandChainPrimaryGroupSignature = ulong.MaxValue;
             variant.CommandChainPrimaryGroupCount = -1;
@@ -900,6 +932,7 @@ namespace XREngine.Rendering.Vulkan
                 variant.DirtyReason = null;
                 StoreFrameOpSignatureDebugParts(variant, ops);
                 SetActiveCommandBufferVariant(imageIndex, variant);
+                RestoreRecordedImageLayoutEndState(variant);
                 PrepareVulkanGpuProfilerReusableSubmission(
                     commandBufferImageSlot,
                     variant,
@@ -1092,6 +1125,105 @@ namespace XREngine.Rendering.Vulkan
             => _swapchainImageEverPresented is not null &&
                imageIndex < _swapchainImageEverPresented.Length &&
                _swapchainImageEverPresented[imageIndex];
+
+        private bool TryRecordTextureUploadCommandBuffer(
+            uint imageIndex,
+            FrameOp[] textureUploadOps,
+            out CommandBuffer commandBuffer,
+            out CommandPool commandPool)
+        {
+            commandBuffer = default;
+            commandPool = default;
+            if (textureUploadOps.Length == 0)
+                return false;
+
+            bool commandBufferBegun = false;
+            try
+            {
+                commandPool = GetThreadCommandPool();
+                commandBuffer = AllocateCommandBuffer(
+                    CommandBufferLevel.Primary,
+                    "texture upload command buffer",
+                    commandPool);
+                RegisterCommandBufferImageIndex(commandBuffer, imageIndex);
+
+                CommandBufferBeginInfo beginInfo = new()
+                {
+                    SType = StructureType.CommandBufferBeginInfo,
+                    Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+                };
+
+                if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
+                    throw new Exception("Failed to begin texture upload command buffer.");
+
+                commandBufferBegun = true;
+                ResetCommandBufferBindState(commandBuffer);
+
+                bool uploadBatchLabelActive = CmdBeginLabel(commandBuffer, "TextureUploads");
+                int queuedBefore = _recordedTextureUploadsForSubmit.Count;
+                try
+                {
+                    for (int i = 0; i < textureUploadOps.Length; i++)
+                    {
+                        if (textureUploadOps[i] is not TextureUploadFrameOp textureUploadOp)
+                            continue;
+
+                        bool uploadLabelActive = CmdBeginLabel(commandBuffer, "TextureUpload");
+                        try
+                        {
+                            RecordTextureUploadOp(commandBuffer, textureUploadOp.Upload);
+                        }
+                        finally
+                        {
+                            if (uploadLabelActive)
+                                CmdEndLabel(commandBuffer);
+                        }
+                    }
+                }
+                finally
+                {
+                    if (uploadBatchLabelActive)
+                        CmdEndLabel(commandBuffer);
+                }
+
+                if (Api.EndCommandBuffer(commandBuffer) != Result.Success)
+                    throw new Exception("Failed to end texture upload command buffer.");
+
+                if (_recordedTextureUploadsForSubmit.Count == queuedBefore)
+                {
+                    Api.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+                    RemoveCommandBufferBindState(commandBuffer);
+                    commandBuffer = default;
+                    commandPool = default;
+                    return false;
+                }
+
+                return true;
+            }
+            catch
+            {
+                CancelRecordedTextureUploadSubmitBatch("texture upload command buffer recording failed");
+
+                if (commandBuffer.Handle != 0 && commandPool.Handle != 0 && !_deviceLost)
+                {
+                    if (!commandBufferBegun)
+                    {
+                        Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+                    }
+                    else
+                    {
+                        Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+                    }
+                }
+
+                if (commandBuffer.Handle != 0)
+                    RemoveCommandBufferBindState(commandBuffer);
+
+                commandBuffer = default;
+                commandPool = default;
+                throw;
+            }
+        }
 
         private void RecordTextureUploadOp(CommandBuffer commandBuffer, VulkanImportedTexturePendingUpload upload)
         {

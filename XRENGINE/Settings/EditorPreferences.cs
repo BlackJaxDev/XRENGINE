@@ -1525,6 +1525,7 @@ namespace XREngine
         private bool _vkTraceDraw = XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw;
         private bool _vkSkipUiPipeline = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiPipeline;
         private bool _vkSkipUiBatchText = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipUiBatchText;
+        private bool _vkSkipOcclusionQueryOps = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipOcclusionQueryOps;
         private bool _vkForceSwapchainMagenta = XREngine.Rendering.RenderDiagnosticsFlags.VkForceSwapchainMagenta;
         private bool _vkSkipImGui = XREngine.Rendering.RenderDiagnosticsFlags.VkSkipImGui;
         private bool _vkAsyncTextureUpload = XREngine.Rendering.RenderDiagnosticsFlags.VkAsyncTextureUpload;
@@ -2371,6 +2372,21 @@ namespace XREngine
         }
 
         [Category("Diagnostics (Vulkan)")]
+        [DisplayName("Skip Occlusion Query Ops")]
+        [Description("Skip Vulkan occlusion QueryOp begin/end enqueue to measure the command-chain ceiling. Diagnostic only; query results remain stale/conservative. Seed env: XRE_VK_SKIP_OCCLUSION_QUERY_OPS.")]
+        [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkSkipOcclusionQueryOps)]
+        [DefaultValue(false)]
+        public bool VkSkipOcclusionQueryOps
+        {
+            get => _vkSkipOcclusionQueryOps;
+            set
+            {
+                if (SetField(ref _vkSkipOcclusionQueryOps, value))
+                    XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipOcclusionQueryOps(value);
+            }
+        }
+
+        [Category("Diagnostics (Vulkan)")]
         [DisplayName("Force Swapchain Magenta")]
         [Description("Force-clear the Vulkan swapchain to magenta after main composition. Confirms the present path is reaching the swapchain. Seed env: XRE_FORCE_SWAPCHAIN_MAGENTA.")]
         [EnvironmentVariablePreference(XREngineEnvironmentVariables.VkForceSwapchainMagenta)]
@@ -3176,6 +3192,7 @@ namespace XREngine
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkTraceDraw(_vkTraceDraw);
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipUiPipeline(_vkSkipUiPipeline);
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipUiBatchText(_vkSkipUiBatchText);
+            XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipOcclusionQueryOps(_vkSkipOcclusionQueryOps);
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkForceSwapchainMagenta(_vkForceSwapchainMagenta);
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkSkipImGui(_vkSkipImGui);
             XREngine.Rendering.RenderDiagnosticsFlags.SetVkAsyncTextureUpload(_vkAsyncTextureUpload);
@@ -3247,6 +3264,7 @@ namespace XREngine
             VkTraceDraw = source.VkTraceDraw;
             VkSkipUiPipeline = source.VkSkipUiPipeline;
             VkSkipUiBatchText = source.VkSkipUiBatchText;
+            VkSkipOcclusionQueryOps = source.VkSkipOcclusionQueryOps;
             VkForceSwapchainMagenta = source.VkForceSwapchainMagenta;
             VkSkipImGui = source.VkSkipImGui;
             VkAsyncTextureUpload = source.VkAsyncTextureUpload;

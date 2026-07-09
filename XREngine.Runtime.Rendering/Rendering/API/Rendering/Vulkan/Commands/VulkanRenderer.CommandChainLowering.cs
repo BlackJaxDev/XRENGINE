@@ -21,6 +21,7 @@ public unsafe partial class VulkanRenderer
     internal const string DisableParallelChainRecordingEnvVar = XREngineEnvironmentVariables.VulkanDisableParallelChainRecording;
     internal const string ParallelPacketBuildEnvVar = XREngineEnvironmentVariables.VulkanParallelPacketBuild;
     internal const string CommandChainMultiQueueEnvVar = XREngineEnvironmentVariables.VulkanCommandChainMultiQueue;
+    internal const string CommandChainStabilityGuardEnvVar = XREngineEnvironmentVariables.VulkanCommandChainStabilityGuard;
     internal const int CommandChainLeftEyeViewIndex = 0;
     internal const int CommandChainRightEyeViewIndex = 1;
     internal const int CommandChainStereoMultiviewViewIndex = -1;
@@ -32,8 +33,12 @@ public unsafe partial class VulkanRenderer
     private readonly List<RenderPacket> _commandChainPacketScratch = [];
     private readonly List<RenderPassChainGroup> _commandChainGroupScratch = [];
     private readonly List<CommandChainKey> _commandChainGroupKeyScratch = [];
+    private readonly Dictionary<uint, CommandChainStabilityGuardState> _commandChainStabilityGuardStates = [];
+    private CommandChainStabilityGuardState _commandChainGlobalStabilityGuardState;
     private int _commandChainTraceDumped;
     private long _commandChainTraceLastDumpTimestamp;
+    private const int CommandChainZeroReuseBackoffThreshold = 1;
+    private const int CommandChainZeroReuseProbeInterval = 120;
 
     private static bool CommandChainsEnabled => IsCommandChainFlagEnabled(CommandChainsEnvVar);
     private static bool CommandChainsSingleThread => IsCommandChainFlagEnabled(CommandChainsSingleThreadEnvVar);
@@ -42,6 +47,10 @@ public unsafe partial class VulkanRenderer
     private static bool ParallelCommandChainRecordingDisabled => IsCommandChainFlagEnabled(DisableParallelChainRecordingEnvVar);
     private static bool ParallelPacketBuildEnabled => IsCommandChainFlagEnabled(ParallelPacketBuildEnvVar);
     private static bool CommandChainMultiQueueEnabled => IsCommandChainFlagEnabled(CommandChainMultiQueueEnvVar);
+    private static bool CommandChainStabilityGuardEnabled =>
+        !CommandChainTraceEnabled &&
+        !CommandChainValidationEnabled &&
+        !IsCommandChainFlagDisabled(CommandChainStabilityGuardEnvVar);
     private bool CommandChainsEnabledForCurrentRecording =>
         IsRenderingExternalSwapchainTarget ||
         (CommandChainsEnabled && !ShouldBypassCommandChainsForOpenXrIndependentDesktop) ||
@@ -89,12 +98,38 @@ public unsafe partial class VulkanRenderer
         string? FirstDescriptorGenerationMismatch,
         string? FirstResourcePlanRevisionMismatch);
 
+    private enum CommandChainStabilityBypassReason
+    {
+        None,
+        ResourcePlanRevisionChanged,
+        RecentZeroReuse,
+        GlobalRecentZeroReuse,
+    }
+
+    private struct CommandChainStabilityGuardState
+    {
+        public ulong ResourcePlanRevision;
+        public int StableObservations;
+        public int ScheduledAttemptsForRevision;
+        public int ConsecutiveRecordedWithoutReuse;
+        public int ConsecutiveBypasses;
+    }
+
     private static bool IsCommandChainFlagEnabled(string name)
     {
         string? value = Environment.GetEnvironmentVariable(name);
         return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCommandChainFlagDisabled(string name)
+    {
+        string? value = Environment.GetEnvironmentVariable(name);
+        return string.Equals(value, "0", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(value, "no", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool ContainsQueryFrameOp(FrameOp[] ops)
@@ -158,7 +193,21 @@ public unsafe partial class VulkanRenderer
                 out CommandChainSchedule? cachedSchedule,
                 out stats))
         {
+            ObserveCommandChainScheduleForStabilityGuard(imageIndex, resourcePlanRevision, in stats);
             return cachedSchedule;
+        }
+
+        if (ShouldBypassCommandChainScheduleForStabilityGuard(
+                imageIndex,
+                resourcePlanRevision,
+                out CommandChainStabilityBypassReason bypassReason))
+        {
+            LogCommandChainStabilityGuardBypass(
+                imageIndex,
+                resourcePlanRevision,
+                staticOps.Length + volatileOps.Length,
+                bypassReason);
+            return null;
         }
 
         long start = Stopwatch.GetTimestamp();
@@ -172,6 +221,7 @@ public unsafe partial class VulkanRenderer
             stats = new CommandChainLoweringStats(0, 0, 0, 0, 0, 0, 0, 0, Stopwatch.GetElapsedTime(start), TimeSpan.Zero, null, null, null);
             CommandChainSchedule emptySchedule = new(0, resourcePlanRevision, ReadOnlyMemory<RenderPassChainGroup>.Empty);
             CacheCommandChainSchedule(imageIndex, fastScheduleSignature, emptySchedule);
+            ObserveCommandChainScheduleForStabilityGuard(imageIndex, resourcePlanRevision, in stats);
             return emptySchedule;
         }
 
@@ -340,6 +390,7 @@ public unsafe partial class VulkanRenderer
             firstDescriptorMismatch,
             firstResourcePlanMismatch);
         CacheCommandChainSchedule(imageIndex, fastScheduleSignature, schedule);
+        ObserveCommandChainScheduleForStabilityGuard(imageIndex, resourcePlanRevision, in stats);
         return schedule;
 
         void AddCurrentGroup()
@@ -356,6 +407,170 @@ public unsafe partial class VulkanRenderer
                 supportsSecondaryCommandBuffers: true,
                 dynamicOverlay: currentDynamicOverlay));
         }
+    }
+
+    private bool ShouldBypassCommandChainScheduleForStabilityGuard(
+        uint imageIndex,
+        ulong resourcePlanRevision,
+        out CommandChainStabilityBypassReason reason)
+    {
+        reason = CommandChainStabilityBypassReason.None;
+        if (!CommandChainStabilityGuardEnabled)
+            return false;
+
+        CommandChainStabilityGuardState globalState = _commandChainGlobalStabilityGuardState;
+        if (globalState.ConsecutiveRecordedWithoutReuse >= CommandChainZeroReuseBackoffThreshold)
+        {
+            globalState.ResourcePlanRevision = resourcePlanRevision;
+            globalState.StableObservations++;
+            globalState.ConsecutiveBypasses++;
+            if (globalState.ConsecutiveBypasses < CommandChainZeroReuseProbeInterval)
+            {
+                _commandChainGlobalStabilityGuardState = globalState;
+                reason = CommandChainStabilityBypassReason.GlobalRecentZeroReuse;
+                return true;
+            }
+
+            globalState.ConsecutiveBypasses = 0;
+            _commandChainGlobalStabilityGuardState = globalState;
+        }
+
+        if (!_commandChainStabilityGuardStates.TryGetValue(imageIndex, out CommandChainStabilityGuardState state))
+        {
+            _commandChainStabilityGuardStates[imageIndex] = new CommandChainStabilityGuardState
+            {
+                ResourcePlanRevision = resourcePlanRevision,
+                StableObservations = 1,
+            };
+            return false;
+        }
+
+        if (state.ResourcePlanRevision == 0 && resourcePlanRevision != 0)
+        {
+            state.ResourcePlanRevision = resourcePlanRevision;
+        }
+        else if (state.ResourcePlanRevision != 0 &&
+                 resourcePlanRevision != 0 &&
+                 state.ResourcePlanRevision != resourcePlanRevision)
+        {
+            state.ResourcePlanRevision = resourcePlanRevision;
+            state.StableObservations = 1;
+            state.ScheduledAttemptsForRevision = 0;
+            state.ConsecutiveRecordedWithoutReuse = 0;
+            state.ConsecutiveBypasses++;
+            _commandChainStabilityGuardStates[imageIndex] = state;
+            reason = CommandChainStabilityBypassReason.ResourcePlanRevisionChanged;
+            return true;
+        }
+
+        state.StableObservations++;
+        if (state.ConsecutiveRecordedWithoutReuse >= CommandChainZeroReuseBackoffThreshold)
+        {
+            state.ConsecutiveBypasses++;
+            if (state.ConsecutiveBypasses < CommandChainZeroReuseProbeInterval)
+            {
+                _commandChainStabilityGuardStates[imageIndex] = state;
+                reason = CommandChainStabilityBypassReason.RecentZeroReuse;
+                return true;
+            }
+
+            state.ConsecutiveBypasses = 0;
+        }
+
+        _commandChainStabilityGuardStates[imageIndex] = state;
+        return false;
+    }
+
+    private void ObserveCommandChainScheduleForStabilityGuard(
+        uint imageIndex,
+        ulong resourcePlanRevision,
+        in CommandChainLoweringStats stats)
+    {
+        if (!CommandChainStabilityGuardEnabled || stats.ChainsScheduled == 0)
+            return;
+
+        ObserveGlobalCommandChainScheduleForStabilityGuard(resourcePlanRevision, in stats);
+
+        if (!_commandChainStabilityGuardStates.TryGetValue(imageIndex, out CommandChainStabilityGuardState state) ||
+            state.ResourcePlanRevision != resourcePlanRevision)
+        {
+            state = new CommandChainStabilityGuardState
+            {
+                ResourcePlanRevision = resourcePlanRevision,
+                StableObservations = 1,
+            };
+        }
+
+        state.ScheduledAttemptsForRevision++;
+        if (stats.ChainsRecorded > 0 &&
+            stats.ChainsReused == 0 &&
+            stats.ChainsFrameDataRefreshed == 0 &&
+            state.ScheduledAttemptsForRevision > 1)
+        {
+            state.ConsecutiveRecordedWithoutReuse++;
+        }
+        else if (stats.ChainsReused != 0 || stats.ChainsFrameDataRefreshed != 0)
+        {
+            state.ConsecutiveRecordedWithoutReuse = 0;
+        }
+
+        state.ConsecutiveBypasses = 0;
+        _commandChainStabilityGuardStates[imageIndex] = state;
+    }
+
+    private void ObserveGlobalCommandChainScheduleForStabilityGuard(
+        ulong resourcePlanRevision,
+        in CommandChainLoweringStats stats)
+    {
+        CommandChainStabilityGuardState state = _commandChainGlobalStabilityGuardState;
+        state.ResourcePlanRevision = resourcePlanRevision;
+        state.StableObservations++;
+        state.ScheduledAttemptsForRevision++;
+
+        if (stats.ChainsRecorded > 0 &&
+            stats.ChainsReused == 0 &&
+            stats.ChainsFrameDataRefreshed == 0 &&
+            state.ScheduledAttemptsForRevision > 1)
+        {
+            state.ConsecutiveRecordedWithoutReuse++;
+        }
+        else if (stats.ChainsReused != 0 || stats.ChainsFrameDataRefreshed != 0)
+        {
+            state.ConsecutiveRecordedWithoutReuse = 0;
+        }
+
+        state.ConsecutiveBypasses = 0;
+        _commandChainGlobalStabilityGuardState = state;
+    }
+
+    private void LogCommandChainStabilityGuardBypass(
+        uint imageIndex,
+        ulong resourcePlanRevision,
+        int opCount,
+        CommandChainStabilityBypassReason reason)
+    {
+        CommandChainStabilityGuardState state;
+        if (reason == CommandChainStabilityBypassReason.GlobalRecentZeroReuse)
+        {
+            state = _commandChainGlobalStabilityGuardState;
+        }
+        else if (!_commandChainStabilityGuardStates.TryGetValue(imageIndex, out state))
+        {
+            state = default;
+        }
+
+        Debug.VulkanEvery(
+            $"Vulkan.CommandChains.StabilityGuard.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[Vulkan.CommandChains] Stability guard recording inline. reason={0} image={1} revision={2} stableObservations={3} noReuse={4} bypasses={5} ops={6}. Set {7}=0 to disable.",
+            reason,
+            imageIndex,
+            resourcePlanRevision,
+            state.StableObservations,
+            state.ConsecutiveRecordedWithoutReuse,
+            state.ConsecutiveBypasses,
+            opCount,
+            CommandChainStabilityGuardEnvVar);
     }
 
     private bool TryGetCachedCommandChainSchedule(
@@ -414,8 +629,10 @@ public unsafe partial class VulkanRenderer
             return;
 
         EnsureCommandChainScheduleCache();
-        _commandChainScheduleCache[slot] = schedule;
-        _commandChainScheduleFastSignatures![slot] = fastScheduleSignature;
+        CommandChainSchedule?[] scheduleCache = _commandChainScheduleCache!;
+        ulong[] fastSignatures = _commandChainScheduleFastSignatures!;
+        scheduleCache[slot] = schedule;
+        fastSignatures[slot] = fastScheduleSignature;
     }
 
     private void EnsureCommandChainScheduleCache()
@@ -660,6 +877,27 @@ public unsafe partial class VulkanRenderer
         _commandChainCaches = new Dictionary<CommandChainKey, CommandChain>[count];
         for (int i = 0; i < count; i++)
             _commandChainCaches[i] = new Dictionary<CommandChainKey, CommandChain>();
+    }
+
+    internal void NotifyTextureDescriptorPublished(string reason)
+    {
+        bool commandChainsAvailable =
+            _commandChainCaches is not null ||
+            _externalCommandChainCaches is not null ||
+            CommandChainsEnabledForCurrentRecording;
+        if (!commandChainsAvailable)
+        {
+            MarkCommandBuffersDirty(reason);
+            return;
+        }
+
+        // Descriptor generations are validated while rebuilding the command-chain
+        // schedule. Clearing the fast schedule cache prevents stale primary reuse
+        // while still letting unchanged chains survive texture streaming.
+        if (_commandChainScheduleFastSignatures is not null)
+            Array.Clear(_commandChainScheduleFastSignatures);
+        if (_commandChainScheduleCache is not null)
+            Array.Clear(_commandChainScheduleCache);
     }
 
     private Dictionary<CommandChainKey, CommandChain> GetExternalCommandChainCache(uint imageIndex)

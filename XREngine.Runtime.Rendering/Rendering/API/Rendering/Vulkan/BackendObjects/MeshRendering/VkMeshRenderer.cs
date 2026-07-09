@@ -23,6 +23,7 @@ public unsafe partial class VulkanRenderer
     private readonly Lock _frameOpsLock = new();
     private readonly List<FrameOp> _frameOps = [];
     private FrameOp[] _drainedFrameOpsBuffer = Array.Empty<FrameOp>();
+    private FrameOp[] _drainedTextureUploadFrameOpsBuffer = Array.Empty<FrameOp>();
     [ThreadStatic]
     private static FrameOpCapture? t_frameOpCapture;
     [ThreadStatic]
@@ -203,7 +204,9 @@ public unsafe partial class VulkanRenderer
 
     private static bool IsFrameSourceSamplerName(string? name)
         => string.Equals(name, "SourceTexture", StringComparison.Ordinal) ||
-            string.Equals(name, "SourceTex", StringComparison.Ordinal);
+            string.Equals(name, "SourceTex", StringComparison.Ordinal) ||
+            string.Equals(name, "SourceTexture0", StringComparison.Ordinal) ||
+            string.Equals(name, "SourceTexture1", StringComparison.Ordinal);
 
     private static bool IsMutableFrameSourceSamplerName(string? name, XRRenderPipelineInstance? pipeline)
     {
@@ -313,6 +316,18 @@ public unsafe partial class VulkanRenderer
     {
         if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline is null)
             return false;
+
+        if (RenderDiagnosticsFlags.VkSkipOcclusionQueryOps &&
+            (operation == EVulkanQueryFrameOpKind.Begin || t_occlusionQueryBracketDepth == 0))
+        {
+            Debug.VulkanWarningEvery(
+                "Vulkan.OcclusionQueryOpsSkipped",
+                TimeSpan.FromSeconds(5),
+                "[Vulkan] Skipping occlusion QueryOp {0} for command-chain ceiling diagnostics ({1}=1). Query results remain stale/conservative.",
+                operation,
+                XREngineEnvironmentVariables.VkSkipOcclusionQueryOps);
+            return false;
+        }
 
         VkRenderQuery? vkQuery = GenericToAPI<VkRenderQuery>(query);
         if (vkQuery is null)
@@ -527,7 +542,116 @@ public unsafe partial class VulkanRenderer
         }
     }
 
-    internal FrameOp[] DrainFrameOpsExcludingTextureUploads(out ulong signature)
+    internal FrameOp[] DrainFrameOpsSplitTextureUploads(
+        out FrameOp[] textureUploadOps,
+        out ulong signature,
+        bool computeSignature)
+    {
+        using (_frameOpsLock.EnterScope())
+        {
+            if (_frameOps.Count == 0)
+            {
+                textureUploadOps = Array.Empty<FrameOp>();
+                signature = 0;
+                return Array.Empty<FrameOp>();
+            }
+
+            int opCount = _frameOps.Count;
+            int uploadCount = 0;
+            for (int i = 0; i < opCount; i++)
+            {
+                if (_frameOps[i] is TextureUploadFrameOp)
+                    uploadCount++;
+            }
+
+            if (uploadCount == 0)
+            {
+                if (_drainedFrameOpsBuffer.Length != opCount)
+                    _drainedFrameOpsBuffer = new FrameOp[opCount];
+
+                _frameOps.CopyTo(_drainedFrameOpsBuffer);
+                _frameOps.Clear();
+                textureUploadOps = Array.Empty<FrameOp>();
+                signature = computeSignature ? ComputeFrameOpsSignature(_drainedFrameOpsBuffer) : 0;
+                return _drainedFrameOpsBuffer;
+            }
+
+            int staticCount = opCount - uploadCount;
+            if (_drainedTextureUploadFrameOpsBuffer.Length != uploadCount)
+                _drainedTextureUploadFrameOpsBuffer = new FrameOp[uploadCount];
+
+            if (staticCount == 0)
+            {
+                for (int i = 0; i < opCount; i++)
+                    _drainedTextureUploadFrameOpsBuffer[i] = _frameOps[i];
+
+                _frameOps.Clear();
+                textureUploadOps = _drainedTextureUploadFrameOpsBuffer;
+                signature = 0;
+                return Array.Empty<FrameOp>();
+            }
+
+            if (_drainedFrameOpsBuffer.Length != staticCount)
+                _drainedFrameOpsBuffer = new FrameOp[staticCount];
+
+            int staticIndex = 0;
+            int uploadIndex = 0;
+            for (int i = 0; i < opCount; i++)
+            {
+                FrameOp op = _frameOps[i];
+                if (op is TextureUploadFrameOp)
+                    _drainedTextureUploadFrameOpsBuffer[uploadIndex++] = op;
+                else
+                    _drainedFrameOpsBuffer[staticIndex++] = op;
+            }
+
+            _frameOps.Clear();
+            textureUploadOps = _drainedTextureUploadFrameOpsBuffer;
+            signature = computeSignature ? ComputeFrameOpsSignature(_drainedFrameOpsBuffer) : 0;
+            return _drainedFrameOpsBuffer;
+        }
+    }
+
+    internal FrameOp[] DrainTextureUploadFrameOps()
+    {
+        using (_frameOpsLock.EnterScope())
+        {
+            if (_frameOps.Count == 0)
+                return Array.Empty<FrameOp>();
+
+            int opCount = _frameOps.Count;
+            int uploadCount = 0;
+            for (int i = 0; i < opCount; i++)
+            {
+                if (_frameOps[i] is TextureUploadFrameOp)
+                    uploadCount++;
+            }
+
+            if (uploadCount == 0)
+                return Array.Empty<FrameOp>();
+
+            if (_drainedTextureUploadFrameOpsBuffer.Length != uploadCount)
+                _drainedTextureUploadFrameOpsBuffer = new FrameOp[uploadCount];
+
+            int retainedIndex = 0;
+            int uploadIndex = 0;
+            for (int i = 0; i < opCount; i++)
+            {
+                FrameOp op = _frameOps[i];
+                if (op is TextureUploadFrameOp)
+                    _drainedTextureUploadFrameOpsBuffer[uploadIndex++] = op;
+                else
+                    _frameOps[retainedIndex++] = op;
+            }
+
+            if (retainedIndex < _frameOps.Count)
+                _frameOps.RemoveRange(retainedIndex, _frameOps.Count - retainedIndex);
+
+            return _drainedTextureUploadFrameOpsBuffer;
+        }
+    }
+
+    internal FrameOp[] DrainFrameOpsExcludingTextureUploads(out ulong signature, bool computeSignature = true)
     {
         using (_frameOpsLock.EnterScope())
         {
@@ -552,7 +676,7 @@ public unsafe partial class VulkanRenderer
 
                 _frameOps.CopyTo(_drainedFrameOpsBuffer);
                 _frameOps.Clear();
-                signature = ComputeFrameOpsSignature(_drainedFrameOpsBuffer);
+                signature = computeSignature ? ComputeFrameOpsSignature(_drainedFrameOpsBuffer) : 0;
                 return _drainedFrameOpsBuffer;
             }
 
@@ -584,7 +708,7 @@ public unsafe partial class VulkanRenderer
             if (retainedIndex < _frameOps.Count)
                 _frameOps.RemoveRange(retainedIndex, _frameOps.Count - retainedIndex);
 
-            signature = ComputeFrameOpsSignature(_drainedFrameOpsBuffer);
+            signature = computeSignature ? ComputeFrameOpsSignature(_drainedFrameOpsBuffer) : 0;
             return _drainedFrameOpsBuffer;
         }
     }
@@ -675,7 +799,7 @@ public unsafe partial class VulkanRenderer
                     hash.Add(meshDraw.Draw.IsStereoPass);
                     hash.Add(meshDraw.Draw.UseUnjitteredProjection);
                     hash.Add(meshDraw.Draw.PreparedProgramIdentity);
-                    HashProgramBindingSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot, meshDraw.Context.PipelineInstance);
+                    HashProgramBindingLayoutSnapshot(ref hash, meshDraw.Draw.ProgramBindingSnapshot);
                     break;
                 case QueryOp query:
                     hash.Add(query.Query.GetHashCode());
@@ -768,7 +892,7 @@ public unsafe partial class VulkanRenderer
                     hash.Add(compute.GroupsX);
                     hash.Add(compute.GroupsY);
                     hash.Add(compute.GroupsZ);
-                    HashProgramBindingSnapshot(ref hash, compute.Snapshot, compute.Context.PipelineInstance);
+                    HashProgramBindingLayoutSnapshot(ref hash, compute.Snapshot);
                     break;
                 case TextureUploadFrameOp upload:
                     hash.Add(upload.Upload.PublicationToken);
@@ -889,6 +1013,22 @@ public unsafe partial class VulkanRenderer
         hash.Add(HashSamplerNameBindings(snapshot.SamplersByName, pipeline, includeMutableFrameSourceDescriptors));
         hash.Add(HashImageBindings(snapshot.Images));
         hash.Add(HashBufferBindings(snapshot.Buffers));
+    }
+
+    private static void HashProgramBindingLayoutSnapshot(ref FrameOpSignatureHasher hash, ComputeDispatchSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            hash.Add(0);
+            return;
+        }
+
+        hash.Add(1);
+        hash.Add(HashUniformBindingLayout(snapshot.Uniforms));
+        hash.Add(HashSamplerUnitBindingLayout(snapshot.Samplers, snapshot.SamplerNamesByUnit));
+        hash.Add(HashSamplerNameBindingLayout(snapshot.SamplersByName));
+        hash.Add(HashImageBindingLayout(snapshot.Images));
+        hash.Add(HashBufferBindingLayout(snapshot.Buffers));
     }
 
     private static ulong HashUniformBindingLayout(Dictionary<string, ProgramUniformValue> uniforms)

@@ -80,6 +80,27 @@ public sealed class RenderPipelineResourceLayout
         return true;
     }
 
+    public string DescribeStructuralDifferenceTo(RenderPipelineResourceLayout? other)
+    {
+        if (other is null)
+            return "other layout is null";
+        if (Profile != other.Profile)
+            return $"profile differs: {Profile} -> {other.Profile}";
+        if (OrderedSpecs.Count != other.OrderedSpecs.Count)
+            return $"spec count differs: {OrderedSpecs.Count} -> {other.OrderedSpecs.Count}";
+
+        for (int i = 0; i < OrderedSpecs.Count; i++)
+        {
+            RenderPipelineResourceSpec left = OrderedSpecs[i];
+            RenderPipelineResourceSpec right = other.OrderedSpecs[i];
+            string? difference = DescribeSpecStructuralDifference(left, right);
+            if (difference is not null)
+                return $"spec[{i}] '{left.Name}' -> '{right.Name}': {difference}";
+        }
+
+        return "none";
+    }
+
     /// <summary>
     /// Gets the descriptors for all texture resources in the render pipeline.
     /// </summary>
@@ -144,6 +165,152 @@ public sealed class RenderPipelineResourceLayout
             _ => left.GetType() == right.GetType(),
         };
     }
+
+    private static string? DescribeSpecStructuralDifference(RenderPipelineResourceSpec left, RenderPipelineResourceSpec right)
+    {
+        string? baseDifference = DescribeBaseSpecFieldDifference(left, right);
+        if (baseDifference is not null)
+            return baseDifference;
+
+        if (left.GetType() != right.GetType())
+            return $"type differs: {left.GetType().Name} -> {right.GetType().Name}";
+
+        return left switch
+        {
+            TextureSpec leftTexture when right is TextureSpec rightTexture => DescribeTextureSpecDifference(leftTexture, rightTexture),
+            TextureViewSpec leftView when right is TextureViewSpec rightView => DescribeTextureViewSpecDifference(leftView, rightView),
+            RenderBufferSpec leftRenderBuffer when right is RenderBufferSpec rightRenderBuffer => DescribeRenderBufferSpecDifference(leftRenderBuffer, rightRenderBuffer),
+            BufferSpec leftBuffer when right is BufferSpec rightBuffer => DescribeBufferSpecDifference(leftBuffer, rightBuffer),
+            FrameBufferSpec leftFrameBuffer when right is FrameBufferSpec rightFrameBuffer => DescribeFrameBufferSpecDifference(leftFrameBuffer, rightFrameBuffer),
+            _ => null,
+        };
+    }
+
+    private static string? DescribeBaseSpecFieldDifference(RenderPipelineResourceSpec left, RenderPipelineResourceSpec right)
+    {
+        if (!string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase))
+            return $"name differs: {left.Name} -> {right.Name}";
+        if (left.Kind != right.Kind)
+            return $"kind differs: {left.Kind} -> {right.Kind}";
+        if (left.Lifetime != right.Lifetime)
+            return $"lifetime differs: {left.Lifetime} -> {right.Lifetime}";
+        if (left.SizePolicy != right.SizePolicy)
+            return $"size policy differs: {left.SizePolicy} -> {right.SizePolicy}";
+        if (left.Usage != right.Usage)
+            return $"usage differs: {left.Usage} -> {right.Usage}";
+        if (left.HistoryPolicy != right.HistoryPolicy)
+            return $"history policy differs: {left.HistoryPolicy} -> {right.HistoryPolicy}";
+        if (left.Required != right.Required)
+            return $"required differs: {left.Required} -> {right.Required}";
+        if (!string.Equals(left.DebugLabel, right.DebugLabel, StringComparison.Ordinal))
+            return $"debug label differs: {left.DebugLabel ?? "<null>"} -> {right.DebugLabel ?? "<null>"}";
+        if (!AreStringListsEquivalent(left.Dependencies, right.Dependencies))
+            return $"dependencies differ: {string.Join("|", left.Dependencies)} -> {string.Join("|", right.Dependencies)}";
+
+        return null;
+    }
+
+    private static string? DescribeTextureSpecDifference(TextureSpec left, TextureSpec right)
+    {
+        if (left.InternalFormat != right.InternalFormat)
+            return $"internal format differs: {left.InternalFormat} -> {right.InternalFormat}";
+        if (left.PixelFormat != right.PixelFormat)
+            return $"pixel format differs: {left.PixelFormat} -> {right.PixelFormat}";
+        if (left.PixelType != right.PixelType)
+            return $"pixel type differs: {left.PixelType} -> {right.PixelType}";
+        if (left.SizedInternalFormat != right.SizedInternalFormat)
+            return $"sized format differs: {left.SizedInternalFormat} -> {right.SizedInternalFormat}";
+        if (left.Samples != right.Samples)
+            return $"samples differ: {left.Samples} -> {right.Samples}";
+        if (left.Layers != right.Layers)
+            return $"layers differ: {left.Layers} -> {right.Layers}";
+        if (left.MipPolicy != right.MipPolicy)
+            return $"mip policy differs: {left.MipPolicy} -> {right.MipPolicy}";
+        if (left.StereoCompatible != right.StereoCompatible)
+            return $"stereo compatible differs: {left.StereoCompatible} -> {right.StereoCompatible}";
+        if (left.RequiresStorageUsage != right.RequiresStorageUsage)
+            return $"storage usage differs: {left.RequiresStorageUsage} -> {right.RequiresStorageUsage}";
+
+        return null;
+    }
+
+    private static string? DescribeTextureViewSpecDifference(TextureViewSpec left, TextureViewSpec right)
+    {
+        if (!string.Equals(left.SourceTextureName, right.SourceTextureName, StringComparison.OrdinalIgnoreCase))
+            return $"source texture differs: {left.SourceTextureName} -> {right.SourceTextureName}";
+        if (left.BaseMipLevel != right.BaseMipLevel)
+            return $"base mip differs: {left.BaseMipLevel} -> {right.BaseMipLevel}";
+        if (left.MipLevelCount != right.MipLevelCount)
+            return $"mip count differs: {left.MipLevelCount} -> {right.MipLevelCount}";
+        if (left.BaseLayer != right.BaseLayer)
+            return $"base layer differs: {left.BaseLayer} -> {right.BaseLayer}";
+        if (left.LayerCount != right.LayerCount)
+            return $"layer count differs: {left.LayerCount} -> {right.LayerCount}";
+        if (left.SizedInternalFormat != right.SizedInternalFormat)
+            return $"sized format differs: {left.SizedInternalFormat} -> {right.SizedInternalFormat}";
+        if (left.DepthStencilAspect != right.DepthStencilAspect)
+            return $"depth/stencil aspect differs: {left.DepthStencilAspect} -> {right.DepthStencilAspect}";
+        if (left.ArrayTarget != right.ArrayTarget)
+            return $"array target differs: {left.ArrayTarget} -> {right.ArrayTarget}";
+        if (left.Multisample != right.Multisample)
+            return $"multisample differs: {left.Multisample} -> {right.Multisample}";
+
+        return null;
+    }
+
+    private static string? DescribeRenderBufferSpecDifference(RenderBufferSpec left, RenderBufferSpec right)
+    {
+        if (left.StorageFormat != right.StorageFormat)
+            return $"storage format differs: {left.StorageFormat} -> {right.StorageFormat}";
+        if (left.Samples != right.Samples)
+            return $"samples differ: {left.Samples} -> {right.Samples}";
+        if (left.DefaultAttachment != right.DefaultAttachment)
+            return $"default attachment differs: {left.DefaultAttachment} -> {right.DefaultAttachment}";
+
+        return null;
+    }
+
+    private static string? DescribeBufferSpecDifference(BufferSpec left, BufferSpec right)
+    {
+        if (left.SizeInBytes != right.SizeInBytes)
+            return $"size differs: {left.SizeInBytes} -> {right.SizeInBytes}";
+        if (left.Target != right.Target)
+            return $"target differs: {left.Target} -> {right.Target}";
+        if (left.BufferUsage != right.BufferUsage)
+            return $"buffer usage differs: {left.BufferUsage} -> {right.BufferUsage}";
+        if (left.ElementStride != right.ElementStride)
+            return $"element stride differs: {left.ElementStride} -> {right.ElementStride}";
+        if (left.ElementCount != right.ElementCount)
+            return $"element count differs: {left.ElementCount} -> {right.ElementCount}";
+        if (left.AccessPattern != right.AccessPattern)
+            return $"access pattern differs: {left.AccessPattern} -> {right.AccessPattern}";
+
+        return null;
+    }
+
+    private static string? DescribeFrameBufferSpecDifference(FrameBufferSpec left, FrameBufferSpec right)
+    {
+        if (left.Attachments.Count != right.Attachments.Count)
+            return $"attachment count differs: {left.Attachments.Count} -> {right.Attachments.Count}";
+
+        for (int i = 0; i < left.Attachments.Count; i++)
+        {
+            FrameBufferAttachmentDescriptor leftAttachment = left.Attachments[i];
+            FrameBufferAttachmentDescriptor rightAttachment = right.Attachments[i];
+            if (!string.Equals(leftAttachment.ResourceName, rightAttachment.ResourceName, StringComparison.OrdinalIgnoreCase) ||
+                leftAttachment.Attachment != rightAttachment.Attachment ||
+                leftAttachment.MipLevel != rightAttachment.MipLevel ||
+                leftAttachment.LayerIndex != rightAttachment.LayerIndex)
+            {
+                return $"attachment[{i}] differs: {DescribeAttachment(leftAttachment)} -> {DescribeAttachment(rightAttachment)}";
+            }
+        }
+
+        return null;
+    }
+
+    private static string DescribeAttachment(FrameBufferAttachmentDescriptor attachment)
+        => $"{attachment.Attachment}:{attachment.ResourceName}:mip={attachment.MipLevel}:layer={attachment.LayerIndex}";
 
     private static bool AreBaseSpecFieldsEquivalent(RenderPipelineResourceSpec left, RenderPipelineResourceSpec right)
     {

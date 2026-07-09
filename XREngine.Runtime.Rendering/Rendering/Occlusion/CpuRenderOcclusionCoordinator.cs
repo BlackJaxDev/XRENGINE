@@ -309,6 +309,16 @@ namespace XREngine.Rendering.Occlusion
                     return;
                 }
 
+                // Vulkan primaries containing query brackets must re-record every frame.
+                // Rotate probe issuance so at most one pipeline instance (desktop, an eye,
+                // a preview capture) submits hardware queries per frame; the others keep
+                // culling from their existing per-instance state and probe on later frames.
+                if (!TryAcquireProbeSlotForCurrentInstance())
+                {
+                    OcclusionTelemetry.RecordCpuBudgetSkipped(ECpuOcclusionQueryReason.StaleStateRefresh, candidates.Count);
+                    return;
+                }
+
                 RefreshBudgets(state);
                 int maxQueries = RuntimeEngine.EffectiveSettings.CpuQueryOcclusionMaxQueriesPerFrame;
                 if (maxQueries <= 0)
@@ -448,34 +458,37 @@ namespace XREngine.Rendering.Occlusion
             IRuntimeRenderCommandExecutionState? renderState = host.ActiveRenderCommandExecutionState;
             bool stereoPass = renderState?.StereoPass == true || RuntimeEngine.Rendering.State.IsStereoPass;
             bool eyeCamera = camera?.StereoEyeLeft.HasValue == true;
+            // Occlusion state is isolated per render pipeline instance: desktop, each VR
+            // eye, and capture/preview cameras run completely independent query state.
+            int pipelineInstanceId = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InstanceId ?? 0;
 
             if (stereoPass)
             {
                 if (host.EnableVrFoveatedViewSet)
-                    return new OcclusionViewKey(renderPass, EOcclusionViewScope.VrFoveatedView);
+                    return new OcclusionViewKey(renderPass, EOcclusionViewScope.VrFoveatedView, 0, pipelineInstanceId);
                 if (host.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo)
-                    return new OcclusionViewKey(renderPass, EOcclusionViewScope.VrSinglePassStereo);
-                return new OcclusionViewKey(renderPass, EOcclusionViewScope.VrStereoPair);
+                    return new OcclusionViewKey(renderPass, EOcclusionViewScope.VrSinglePassStereo, 0, pipelineInstanceId);
+                return new OcclusionViewKey(renderPass, EOcclusionViewScope.VrStereoPair, 0, pipelineInstanceId);
             }
 
             if (eyeCamera)
             {
                 if (RuntimeEngine.EffectiveSettings.CpuQueryOcclusionStereoMode == ECpuQueryStereoMode.StereoPairShared)
-                    return new OcclusionViewKey(renderPass, EOcclusionViewScope.VrStereoPair);
+                    return new OcclusionViewKey(renderPass, EOcclusionViewScope.VrStereoPair, 0, pipelineInstanceId);
 
                 bool left = camera!.StereoEyeLeft.GetValueOrDefault();
-                return new OcclusionViewKey(renderPass, left ? EOcclusionViewScope.VrLeftEye : EOcclusionViewScope.VrRightEye, left ? 0 : 1);
+                return new OcclusionViewKey(renderPass, left ? EOcclusionViewScope.VrLeftEye : EOcclusionViewScope.VrRightEye, left ? 0 : 1, pipelineInstanceId);
             }
 
             if (host.IsInVR)
             {
                 if (host.VrMirrorComposeFromEyeTextures)
-                    return new OcclusionViewKey(renderPass, EOcclusionViewScope.MirrorOnly);
+                    return new OcclusionViewKey(renderPass, EOcclusionViewScope.MirrorOnly, 0, pipelineInstanceId);
                 if (host.RenderWindowsWhileInVR)
-                    return new OcclusionViewKey(renderPass, EOcclusionViewScope.EditorDesktopWhileVr);
+                    return new OcclusionViewKey(renderPass, EOcclusionViewScope.EditorDesktopWhileVr, 0, pipelineInstanceId);
             }
 
-            return new OcclusionViewKey(renderPass, EOcclusionViewScope.MonoDesktop);
+            return new OcclusionViewKey(renderPass, EOcclusionViewScope.MonoDesktop, 0, pipelineInstanceId);
         }
 
         private static bool IsUnsupportedSharedStereoScope(OcclusionViewKey key)
@@ -484,6 +497,48 @@ namespace XREngine.Rendering.Occlusion
 
         private static bool IsHardwareQueryBackendSupported()
             => AbstractRenderer.Current is OpenGLRenderer or VulkanRenderer;
+
+        // Per-frame probe-slot rotation state. Guarded by _lock (coordinator is a singleton).
+        private ulong _probeSlotFrameId = ulong.MaxValue;
+        private int _probeSlotOwnerInstanceId = int.MinValue;
+        private readonly List<int> _probeRequestersPreviousFrame = new(8);
+        private readonly List<int> _probeRequestersThisFrame = new(8);
+
+        /// <summary>
+        /// Grants the per-frame hardware-query probe slot to exactly one render pipeline
+        /// instance, rotating fairly across every instance that requested probes on the
+        /// previous frame. Must be called under <see cref="_lock"/>.
+        /// </summary>
+        private bool TryAcquireProbeSlotForCurrentInstance()
+        {
+            int instanceId = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InstanceId ?? 0;
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+
+            if (_probeSlotFrameId != frameId)
+            {
+                _probeSlotFrameId = frameId;
+                _probeRequestersPreviousFrame.Clear();
+                for (int i = 0; i < _probeRequestersThisFrame.Count; i++)
+                    _probeRequestersPreviousFrame.Add(_probeRequestersThisFrame[i]);
+                _probeRequestersThisFrame.Clear();
+
+                if (_probeRequestersPreviousFrame.Count > 1)
+                {
+                    _probeRequestersPreviousFrame.Sort();
+                    _probeSlotOwnerInstanceId = _probeRequestersPreviousFrame[(int)(frameId % (ulong)_probeRequestersPreviousFrame.Count)];
+                }
+                else
+                {
+                    // Single (or first-seen) requester owns the frame outright.
+                    _probeSlotOwnerInstanceId = instanceId;
+                }
+            }
+
+            if (!_probeRequestersThisFrame.Contains(instanceId))
+                _probeRequestersThisFrame.Add(instanceId);
+
+            return _probeSlotOwnerInstanceId == instanceId;
+        }
 
         private QueryState GetOrCreateQueryState(PassState state, uint sourceCommandIndex)
         {

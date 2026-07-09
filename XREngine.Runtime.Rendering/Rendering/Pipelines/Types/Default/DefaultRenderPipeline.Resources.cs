@@ -54,7 +54,7 @@ public partial class DefaultRenderPipeline
 
     private const int BloomMaxMipmapLevel = 4;
 
-    internal ulong BuildResourceFeatureMaskForGenerationKey(XRViewport? viewport = null)
+    internal override ulong BuildResourceFeatureMaskForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
     {
         DefaultPipelineResourceFeature mask = DefaultPipelineResourceFeature.None;
         bool useOpenXrVulkanSafePath = UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport);
@@ -79,9 +79,9 @@ public partial class DefaultRenderPipeline
 
         if (useOpenXrVulkanSafePath)
         {
+            // This path renders directly into external per-eye OpenXR Vulkan swapchains,
+            // where the command graph disables history-based temporal effects.
             mask |= DefaultPipelineResourceFeature.OpenXrVulkanDesktopSafePath;
-            if (RuntimeNeedsTemporalAaResources)
-                mask |= DefaultPipelineResourceFeature.TemporalResourcesEnabled;
         }
         else
         {
@@ -200,7 +200,7 @@ public partial class DefaultRenderPipeline
             .RequiresStorageUsage()
             .Add();
 
-        uint brdfLutSize = ResolveBrdfLutSize();
+        uint brdfLutSize = ResolveBrdfLutSize(builder.Profile);
         Texture(builder, BRDFTextureName, RenderResourceSizePolicy.Absolute(brdfLutSize, brdfLutSize), PrecomputedColorTexture,
             EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f,
             CreateBRDFTexture)
@@ -1296,6 +1296,11 @@ public partial class DefaultRenderPipeline
 
     private static bool UsesOpenXrVulkanDesktopSafePath(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.OpenXrVulkanDesktopSafePath) != 0;
+
+    private static uint ResolveBrdfLutSize(RenderPipelineResourceProfile profile)
+        => UsesOpenXrVulkanDesktopSafePath(profile)
+            ? OpenXrVulkanSafePathBrdfLutSize
+            : DefaultBrdfLutSize;
 
     private static bool UsesAmbientOcclusionResources(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & (ulong)DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled) != 0;

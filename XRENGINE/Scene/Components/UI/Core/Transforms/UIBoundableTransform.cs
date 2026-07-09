@@ -634,6 +634,10 @@ namespace XREngine.Rendering.UI
 
             AxisAlignedRegion = BoundingRectangleF.FromMinMaxSides(min.X, max.X, min.Y, max.Y, 0.0f, 0.0f);
         }
+
+        internal void RefreshAxisAlignedRegion()
+            => RemakeAxisAlignedRegion(ActualSize, WorldMatrix);
+
         public UITransform? FindDeepestComponent(Vector2 worldPoint, bool includeThis)
         {
             using var profiler = Engine.Profiler.Start("UIBoundableTransform.FindDeepestComponent");

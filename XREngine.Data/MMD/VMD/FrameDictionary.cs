@@ -4,6 +4,10 @@ using XREngine.Data.Core;
 
 namespace XREngine.Data.MMD
 {
+    /// <summary>
+    /// A dictionary that maps frame numbers to frame data of type T.
+    /// </summary>
+    /// <typeparam name="T">The type of the frame data.</typeparam>
     public class FrameDictionary<T> : XRBase, IReadOnlyDictionary<uint, T> where T : class, IBinaryDataSource, IFramesKey, new()
     {
         private readonly SortedDictionary<uint, T> _dict = [];
@@ -20,7 +24,7 @@ namespace XREngine.Data.MMD
         public void Add(T frameKey)
         {
             if (_dict.TryGetValue(frameKey.FrameNumber, out T? value))
-                Merge(value, frameKey);
+                FrameDictionary<T>.Merge(value, frameKey);
             else
             {
                 _dict.Add(frameKey.FrameNumber, frameKey);
@@ -28,9 +32,9 @@ namespace XREngine.Data.MMD
             }
         }
 
-        private void Merge(T existingFrame, T newFrame)
+        private static void Merge(T existingFrame, T newFrame)
         {
-
+            
         }
 
         public void Remove(T frameKey)

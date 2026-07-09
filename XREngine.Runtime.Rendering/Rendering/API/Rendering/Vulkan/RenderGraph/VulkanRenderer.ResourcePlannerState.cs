@@ -18,6 +18,9 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    private const int MaxFrameOpResourcePlannerSwitchingStates = 12;
+    private static bool FrameOpResourcePlannerSwitchingEnabled => MaxFrameOpResourcePlannerSwitchingStates > 1;
+
     private void OnSwapchainExtentChanged(Extent2D extent)
     {
         ActiveState.SetSwapchainExtent(extent);
@@ -88,8 +91,8 @@ public unsafe partial class VulkanRenderer
         }
 
         FrameOpContext context = new(
-            pipeline?.GetHashCode() ?? 0,
-            viewport?.GetHashCode() ?? 0,
+            pipeline?.InstanceId ?? 0,
+            viewport is null ? 0 : RuntimeHelpers.GetHashCode(viewport),
             pipeline,
             pipeline?.Resources,
             pipeline?.Pipeline?.PassMetadata,
@@ -220,8 +223,10 @@ public unsafe partial class VulkanRenderer
         }
 
         FrameOpContext context = new(
-            pipeline.GetHashCode(),
-            viewport?.GetHashCode() ?? pipeline.LastWindowViewport?.GetHashCode() ?? 0,
+            pipeline.InstanceId,
+            viewport is null
+                ? (pipeline.LastWindowViewport is null ? 0 : RuntimeHelpers.GetHashCode(pipeline.LastWindowViewport))
+                : RuntimeHelpers.GetHashCode(viewport),
             pipeline,
             pipeline.Resources,
             pipeline.Pipeline?.PassMetadata,
@@ -253,7 +258,8 @@ public unsafe partial class VulkanRenderer
         {
             _renderer = renderer;
             _previousState = renderer.CaptureResourcePlannerRuntimeState();
-            _active = FrameOpContextHasPlannerResources(context);
+            _active = FrameOpResourcePlannerSwitchingEnabled &&
+                FrameOpContextHasPlannerResources(context);
 
             if (!_active)
             {
@@ -266,19 +272,26 @@ public unsafe partial class VulkanRenderer
             if (TryFindBestCompatibleFrameOpPlannerState(context, switchingState, out _key, out ResourcePlannerRuntimeState state))
             {
                 renderer.RestoreResourcePlannerRuntimeState(state);
+                renderer.MarkFrameOpResourcePlannerStateUsed(switchingState, _key);
                 return;
             }
 
             _key = requestedKey;
             renderer.UpdateResourcePlannerFromContext(context);
             switchingState.States[_key] = renderer.CaptureResourcePlannerRuntimeState();
+            renderer.MarkFrameOpResourcePlannerStateUsed(switchingState, _key);
         }
 
         public void Dispose()
         {
             if (_active)
+            {
                 _renderer.ActiveFrameOpResourcePlannerSwitchingState.States[_key] =
                     _renderer.CaptureResourcePlannerRuntimeState();
+                _renderer.MarkFrameOpResourcePlannerStateUsed(
+                    _renderer.ActiveFrameOpResourcePlannerSwitchingState,
+                    _key);
+            }
 
             _renderer.RestoreResourcePlannerRuntimeState(_previousState);
         }
@@ -318,11 +331,6 @@ public unsafe partial class VulkanRenderer
         in ResourcePlannerRuntimeState state)
     {
         int score = 0;
-        if (key.ActivePassSetSignature != 0)
-            score += 1_000_000;
-        if (key.ActiveResourceSetSignature != 0)
-            score += 1_000_000;
-
         if (state.ResourcePlannerRevision != 0)
             score += 10_000;
         if (state.ResourcePlannerSignature != ulong.MaxValue)
@@ -438,21 +446,18 @@ public unsafe partial class VulkanRenderer
             : primary with { ResourceRegistry = mergedRegistry };
 
         plannerContext = RefreshPlannerExtentsFromLiveContext(plannerContext, ops);
-        FrameOpPlannerStateKey stateKey = BuildFrameOpPlannerStateKey(
-            plannerContext,
-            activePassSetSignature,
-            activeResourceSetSignature);
-        bool cachePlannerState = FrameOpContextHasPlannerResources(plannerContext);
-        if (cachePlannerState)
-            ActivateCachedFrameOpResourcePlannerState(stateKey);
 
+        // The merged planner is a transient all-frame plan used before per-context
+        // recording. Do not store it in the switching cache: the cache key
+        // intentionally omits registry shape, so a merged registry can otherwise
+        // overwrite the stable viewport/eye/capture state and force physical-plan
+        // rebuilds every frame.
         UpdateResourcePlannerFromContext(
             plannerContext,
             activePassIndices,
             activeFrameBufferNames,
-            activeResourceSetSignature);
-        if (cachePlannerState)
-            StoreCachedFrameOpResourcePlannerState(stateKey);
+            activeResourceSetSignature,
+            constrainToActivePassSet: true);
 
         return plannerContext;
     }
@@ -465,14 +470,49 @@ public unsafe partial class VulkanRenderer
         switchingState.HasActiveKey = false;
         switchingState.ActiveKeys.Clear();
 
+        if (!FrameOpResourcePlannerSwitchingEnabled)
+        {
+            DestroyFrameOpResourcePlannerStates();
+            return ResourcePlannerRevision;
+        }
+
         if (ops.Length == 0)
             return ResourcePlannerRevision;
 
         List<FrameOpPlannerStateKey> keys = _frameOpPlannerStateKeyScratch;
         keys.Clear();
         CollectFrameOpPlannerStateKeys(ops, keys);
-        if (keys.Count <= 1)
+        if (keys.Count == 0)
+        {
+            keys.Clear();
+            PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
             return ResourcePlannerRevision;
+        }
+
+        if (keys.Count == 1)
+        {
+            FrameOpPlannerStateKey key = keys[0];
+            switchingState.States[key] = CaptureResourcePlannerRuntimeState();
+            switchingState.ActiveKeys.Add(key);
+            MarkFrameOpResourcePlannerStateUsed(switchingState, key);
+            keys.Clear();
+            PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
+            return ResourcePlannerRevision;
+        }
+
+        if (keys.Count > MaxFrameOpResourcePlannerSwitchingStates)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.ResourcePlanner.FrameOpContextStateCap.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[VulkanResourcePlanner] Collapsing {0} frame-op planner contexts into the merged planner to avoid duplicating physical render resources. Cap={1} Revision={2}",
+                keys.Count,
+                MaxFrameOpResourcePlannerSwitchingStates,
+                ResourcePlannerRevision);
+            DestroyFrameOpResourcePlannerStates();
+            keys.Clear();
+            return ResourcePlannerRevision;
+        }
 
         ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
         try
@@ -490,6 +530,7 @@ public unsafe partial class VulkanRenderer
                 _ = PrepareResourcePlannerForFrameOps(ops, key);
                 switchingState.States[key] = CaptureResourcePlannerRuntimeState();
                 switchingState.ActiveKeys.Add(key);
+                MarkFrameOpResourcePlannerStateUsed(switchingState, key);
             }
         }
         finally
@@ -501,7 +542,12 @@ public unsafe partial class VulkanRenderer
         keys.Clear();
         switchingState.SwitchingActive = switchingState.ActiveKeys.Count > 1;
         if (!switchingState.SwitchingActive)
+        {
+            PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
             return ResourcePlannerRevision;
+        }
+
+        PruneFrameOpResourcePlannerStatesToCapacity(switchingState);
 
         ulong signature = ComputeActiveFrameOpResourcePlannerStatesSignature();
         if (VulkanFrameDiagnosticsTraceEnabled)
@@ -524,41 +570,14 @@ public unsafe partial class VulkanRenderer
         int activePassSetSignature = ComputeActivePassSetSignature(activePassIndices);
         FrameOpContext plannerContext = SelectPrimaryPlannerContext(ops, key);
         plannerContext = RefreshPlannerExtentsFromLiveContext(plannerContext, ops, filterByPlannerKey: true, plannerKey: key);
-        FrameOpPlannerStateKey stateKey = BuildFrameOpPlannerStateKey(
-            plannerContext,
-            activePassSetSignature,
-            activeResourceSetSignature);
-        bool cachePlannerState = FrameOpContextHasPlannerResources(plannerContext);
-        if (cachePlannerState)
-            ActivateCachedFrameOpResourcePlannerState(stateKey);
-
         UpdateResourcePlannerFromContext(
             plannerContext,
             activePassIndices,
             activeFrameBufferNames,
-            activeResourceSetSignature);
-        if (cachePlannerState)
-            StoreCachedFrameOpResourcePlannerState(stateKey);
+            activeResourceSetSignature,
+            constrainToActivePassSet: true);
 
         return plannerContext;
-    }
-
-    private void ActivateCachedFrameOpResourcePlannerState(in FrameOpPlannerStateKey key)
-    {
-        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
-        if (switchingState.HasActiveKey && key.Equals(switchingState.ActiveKey))
-            return;
-
-        if (switchingState.HasActiveKey && switchingState.RecordingScopeActive)
-            switchingState.States[switchingState.ActiveKey] = CaptureResourcePlannerRuntimeState();
-
-        ResourcePlannerRuntimeState state = switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState existingState)
-            ? existingState
-            : ResourcePlannerRuntimeState.CreateEmpty();
-
-        RestoreResourcePlannerRuntimeState(state);
-        switchingState.ActiveKey = key;
-        switchingState.HasActiveKey = true;
     }
 
     private static void ResetActiveFrameOpResourcePlannerState(FrameOpResourcePlannerSwitchingState switchingState)
@@ -567,12 +586,108 @@ public unsafe partial class VulkanRenderer
         switchingState.ActiveKey = default;
     }
 
-    private void StoreCachedFrameOpResourcePlannerState(in FrameOpPlannerStateKey key)
+    private void MarkFrameOpResourcePlannerStateUsed(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        in FrameOpPlannerStateKey key)
     {
-        FrameOpResourcePlannerSwitchingState switchingState = ActiveFrameOpResourcePlannerSwitchingState;
-        switchingState.States[key] = CaptureResourcePlannerRuntimeState();
-        switchingState.ActiveKey = key;
-        switchingState.HasActiveKey = true;
+        switchingState.LastUsedSerials[key] = ++switchingState.UsageSerial;
+    }
+
+    private void PruneFrameOpResourcePlannerStatesToCapacity(FrameOpResourcePlannerSwitchingState switchingState)
+    {
+        if (switchingState.States.Count <= MaxFrameOpResourcePlannerSwitchingStates)
+            return;
+
+        List<FrameOpPlannerStateKey> staleKeys = _frameOpPlannerStateEvictionScratch;
+        staleKeys.Clear();
+        foreach (FrameOpPlannerStateKey key in switchingState.States.Keys)
+        {
+            if (switchingState.ActiveKeys.Contains(key))
+                continue;
+
+            staleKeys.Add(key);
+        }
+
+        int pruneCount = Math.Min(
+            staleKeys.Count,
+            switchingState.States.Count - MaxFrameOpResourcePlannerSwitchingStates);
+        if (pruneCount <= 0)
+        {
+            staleKeys.Clear();
+            return;
+        }
+
+        ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
+        WaitForAllInFlightWork();
+        int prunedCount = 0;
+        for (int i = 0; i < pruneCount; i++)
+        {
+            if (!TryPopOldestFrameOpResourcePlannerStateKey(switchingState, staleKeys, out FrameOpPlannerStateKey key))
+                break;
+
+            if (!switchingState.States.Remove(key, out ResourcePlannerRuntimeState state))
+                continue;
+
+            switchingState.LastUsedSerials.Remove(key);
+            RestoreResourcePlannerRuntimeState(state);
+            ReleaseDescriptorReferencesForPhysicalResourceDestruction(
+                $"FrameOpResourcePlannerStatePrune.pipe{key.PipelineIdentity}.vp{key.ViewportIdentity}");
+            DrainAllRetiredDescriptorPools();
+            ResourceAllocator.DestroyPhysicalImages(this);
+            ResourceAllocator.DestroyPhysicalBuffers(this);
+            prunedCount++;
+        }
+
+        RestoreResourcePlannerRuntimeState(previousState);
+        if (prunedCount > 0 && !IsDeviceLost)
+            ForceFlushAllRetiredResourcesAfterWaiting("FrameOpResourcePlannerStatePrune");
+
+        staleKeys.Clear();
+        if (prunedCount == 0)
+            return;
+
+        Debug.VulkanEvery(
+            $"Vulkan.ResourcePlanner.FrameOpContextStatePruned.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[VulkanResourcePlanner] Pruned {0} cached frame-op planner state(s) to stay under capacity. Remaining={1} Cap={2}",
+            prunedCount,
+            switchingState.States.Count,
+            MaxFrameOpResourcePlannerSwitchingStates);
+    }
+
+    private static ulong GetFrameOpResourcePlannerStateLastUsedSerial(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        in FrameOpPlannerStateKey key)
+        => switchingState.LastUsedSerials.TryGetValue(key, out ulong serial)
+            ? serial
+            : 0UL;
+
+    private static bool TryPopOldestFrameOpResourcePlannerStateKey(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        List<FrameOpPlannerStateKey> keys,
+        out FrameOpPlannerStateKey key)
+    {
+        int oldestIndex = -1;
+        ulong oldestSerial = ulong.MaxValue;
+        for (int i = 0; i < keys.Count; i++)
+        {
+            ulong serial = GetFrameOpResourcePlannerStateLastUsedSerial(switchingState, keys[i]);
+            if (oldestIndex >= 0 && serial >= oldestSerial)
+                continue;
+
+            oldestIndex = i;
+            oldestSerial = serial;
+        }
+
+        if (oldestIndex < 0)
+        {
+            key = default;
+            return false;
+        }
+
+        key = keys[oldestIndex];
+        keys.RemoveAt(oldestIndex);
+        return true;
     }
 
     private void CollectFrameOpPlannerStateKeys(FrameOp[] ops, List<FrameOpPlannerStateKey> keys)
@@ -588,18 +703,6 @@ public unsafe partial class VulkanRenderer
                 keys.Add(key);
         }
 
-        for (int i = 0; i < keys.Count; i++)
-        {
-            FrameOpPlannerStateKey key = keys[i];
-            HashSet<int>? activePassIndices = BuildActiveFrameOpPassSet(ops, key);
-            HashSet<string>? activeFrameBufferNames = BuildActiveFrameOpFrameBufferSet(ops, key);
-            keys[i] = key with
-            {
-                ActivePassSetSignature = ComputeActivePassSetSignature(activePassIndices),
-                ActiveResourceSetSignature = ComputeActiveFrameBufferSetSignature(activeFrameBufferNames)
-            };
-        }
-
         keys.Sort(static (left, right) =>
         {
             int compare = left.PipelineIdentity.CompareTo(right.PipelineIdentity);
@@ -607,14 +710,6 @@ public unsafe partial class VulkanRenderer
                 return compare;
 
             compare = left.ViewportIdentity.CompareTo(right.ViewportIdentity);
-            if (compare != 0)
-                return compare;
-
-            compare = left.ResourceRegistryIdentity.CompareTo(right.ResourceRegistryIdentity);
-            if (compare != 0)
-                return compare;
-
-            compare = left.PassMetadataIdentity.CompareTo(right.PassMetadataIdentity);
             if (compare != 0)
                 return compare;
 
@@ -635,14 +730,7 @@ public unsafe partial class VulkanRenderer
                 return compare;
 
             compare = left.OutputFrameBufferIdentity.CompareTo(right.OutputFrameBufferIdentity);
-            if (compare != 0)
-                return compare;
-
-            compare = left.ActivePassSetSignature.CompareTo(right.ActivePassSetSignature);
-            if (compare != 0)
-                return compare;
-
-            return left.ActiveResourceSetSignature.CompareTo(right.ActiveResourceSetSignature);
+            return compare;
         });
     }
 
@@ -664,14 +752,6 @@ public unsafe partial class VulkanRenderer
             if (compare != 0)
                 return compare;
 
-            compare = left.ResourceRegistryIdentity.CompareTo(right.ResourceRegistryIdentity);
-            if (compare != 0)
-                return compare;
-
-            compare = left.PassMetadataIdentity.CompareTo(right.PassMetadataIdentity);
-            if (compare != 0)
-                return compare;
-
             compare = left.DisplayWidth.CompareTo(right.DisplayWidth);
             if (compare != 0)
                 return compare;
@@ -689,14 +769,7 @@ public unsafe partial class VulkanRenderer
                 return compare;
 
             compare = left.OutputFrameBufferIdentity.CompareTo(right.OutputFrameBufferIdentity);
-            if (compare != 0)
-                return compare;
-
-            compare = left.ActivePassSetSignature.CompareTo(right.ActivePassSetSignature);
-            if (compare != 0)
-                return compare;
-
-            return left.ActiveResourceSetSignature.CompareTo(right.ActiveResourceSetSignature);
+            return compare;
         });
 
         hash.Add(keys.Count);
@@ -706,15 +779,11 @@ public unsafe partial class VulkanRenderer
             FrameOpPlannerStateKey key = keys[i];
             hash.Add(key.PipelineIdentity);
             hash.Add(key.ViewportIdentity);
-            hash.Add(key.ResourceRegistryIdentity);
-            hash.Add(key.PassMetadataIdentity);
             hash.Add(key.DisplayWidth);
             hash.Add(key.DisplayHeight);
             hash.Add(key.InternalWidth);
             hash.Add(key.InternalHeight);
             hash.Add(key.OutputFrameBufferIdentity);
-            hash.Add(key.ActivePassSetSignature);
-            hash.Add(key.ActiveResourceSetSignature);
 
             if (!switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state))
             {
@@ -749,6 +818,7 @@ public unsafe partial class VulkanRenderer
         if (switchingState.HasActiveKey &&
             key.Equals(switchingState.ActiveKey))
         {
+            MarkFrameOpResourcePlannerStateUsed(switchingState, key);
             return true;
         }
 
@@ -760,6 +830,7 @@ public unsafe partial class VulkanRenderer
         RestoreResourcePlannerRuntimeState(state);
         switchingState.ActiveKey = key;
         switchingState.HasActiveKey = true;
+        MarkFrameOpResourcePlannerStateUsed(switchingState, key);
         return true;
     }
 
@@ -791,6 +862,7 @@ public unsafe partial class VulkanRenderer
         }
 
         switchingState.States[switchingState.ActiveKey] = CaptureResourcePlannerRuntimeState();
+        MarkFrameOpResourcePlannerStateUsed(switchingState, switchingState.ActiveKey);
     }
 
     private void DestroyFrameOpResourcePlannerStates()
@@ -812,11 +884,14 @@ public unsafe partial class VulkanRenderer
         }
 
         switchingState.States.Clear();
+        switchingState.LastUsedSerials.Clear();
         switchingState.ActiveKeys.Clear();
         switchingState.SwitchingActive = false;
         switchingState.RecordingScopeActive = false;
         switchingState.HasActiveKey = false;
         RestoreResourcePlannerRuntimeState(previousState);
+        if (!IsDeviceLost)
+            ForceFlushAllRetiredResourcesAfterWaiting("FrameOpResourcePlannerStateDestroy");
     }
 
     private static HashSet<int>? BuildActiveFrameOpPassSet(FrameOp[] ops)
@@ -895,24 +970,14 @@ public unsafe partial class VulkanRenderer
             context.PassMetadata is { Count: > 0 };
 
     private static FrameOpPlannerStateKey BuildFrameOpPlannerStateKey(in FrameOpContext context)
-        => BuildFrameOpPlannerStateKey(context, 0, 0);
-
-    private static FrameOpPlannerStateKey BuildFrameOpPlannerStateKey(
-        in FrameOpContext context,
-        int activePassSetSignature,
-        int activeResourceSetSignature)
         => new(
             context.PipelineIdentity,
             context.ViewportIdentity,
-            context.ResourceRegistry is null ? 0 : RuntimeHelpers.GetHashCode(context.ResourceRegistry),
-            context.PassMetadata is null ? 0 : RuntimeHelpers.GetHashCode(context.PassMetadata),
             context.DisplayWidth,
             context.DisplayHeight,
             context.InternalWidth,
             context.InternalHeight,
-            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
-            activePassSetSignature,
-            activeResourceSetSignature);
+            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName));
 
     private static bool FrameOpMatchesPlannerStateKey(FrameOp op, in FrameOpPlannerStateKey key)
         => FrameOpContextHasPlannerResources(op.Context) &&
@@ -921,8 +986,6 @@ public unsafe partial class VulkanRenderer
     private static bool FrameOpContextMatchesPlannerStateKey(in FrameOpContext context, in FrameOpPlannerStateKey key)
         => context.PipelineIdentity == key.PipelineIdentity &&
             context.ViewportIdentity == key.ViewportIdentity &&
-            (context.ResourceRegistry is null ? 0 : RuntimeHelpers.GetHashCode(context.ResourceRegistry)) == key.ResourceRegistryIdentity &&
-            (context.PassMetadata is null ? 0 : RuntimeHelpers.GetHashCode(context.PassMetadata)) == key.PassMetadataIdentity &&
             context.DisplayWidth == key.DisplayWidth &&
             context.DisplayHeight == key.DisplayHeight &&
             context.InternalWidth == key.InternalWidth &&
@@ -1540,7 +1603,8 @@ public unsafe partial class VulkanRenderer
         in FrameOpContext context,
         HashSet<int>? activePassIndices = null,
         HashSet<string>? activeFrameBufferNames = null,
-        int activeResourceSetSignature = 0)
+        int activeResourceSetSignature = 0,
+        bool constrainToActivePassSet = false)
     {
         if (IsCommandChainResourcePlanFrozen)
         {
@@ -1554,7 +1618,8 @@ public unsafe partial class VulkanRenderer
             activePassIndices,
             activePassSetSignature,
             activeFrameBufferNames,
-            activeResourceSetSignature);
+            activeResourceSetSignature,
+            constrainToActivePassSet);
 
         if (CanReuseResourcePlannerFastPath(planningInputs.FastPathKey))
             return;
@@ -1653,14 +1718,18 @@ public unsafe partial class VulkanRenderer
         HashSet<int>? activePassIndices,
         int activePassSetSignature,
         HashSet<string>? activeFrameBufferNames,
-        int activeResourceSetSignature)
+        int activeResourceSetSignature,
+        bool constrainToActivePassSet)
     {
         IReadOnlyCollection<RenderPassMetadata>? activePassMetadata = FilterActivePassMetadata(
             context.PassMetadata,
+            context.ResourceRegistry,
+            context.ResourceRegistry?.DescriptorRevision ?? 0,
             activePassIndices,
             activePassSetSignature,
             activeFrameBufferNames,
-            activeResourceSetSignature);
+            activeResourceSetSignature,
+            constrainToActivePassSet);
         VulkanCompiledRenderGraph compiledGraph = _renderGraphCompiler.Compile(activePassMetadata);
         VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership = BuildQueueOwnershipConfig(activePassMetadata);
         ResourcePlannerFastPathKey fastPathKey = new(
@@ -1985,6 +2054,8 @@ public unsafe partial class VulkanRenderer
 
         oldAllocator.DestroyPhysicalImages(this, retainedAutoExposureGroup, reusedImageGroups);
         oldAllocator.DestroyPhysicalBuffers(this);
+        if (retiredImageCount > 0 || retiredBufferCount > 0)
+            ForceFlushAllRetiredResourcesAfterWaiting("ResourcePlanReplacement");
     }
 
     private VulkanPhysicalImageGroup? PreserveAutoExposureHistory(VulkanResourceAllocator oldAllocator)
@@ -2251,32 +2322,54 @@ public unsafe partial class VulkanRenderer
 
     private IReadOnlyCollection<RenderPassMetadata>? FilterActivePassMetadata(
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        RenderResourceRegistry? resourceRegistry,
+        int resourceRegistryRevision,
         HashSet<int>? activePassIndices,
         int activePassSetSignature,
         HashSet<string>? activeFrameBufferNames,
-        int activeResourceSetSignature)
+        int activeResourceSetSignature,
+        bool constrainToActivePassSet)
     {
-        if (passMetadata is null || passMetadata.Count == 0 || activePassIndices is not { Count: > 0 })
+        if (passMetadata is null || passMetadata.Count == 0)
             return passMetadata;
 
+        if (activePassIndices is null)
+        {
+            if (constrainToActivePassSet)
+                return Array.Empty<RenderPassMetadata>();
+
+            if (resourceRegistry is null)
+                return passMetadata;
+        }
+
+        if (activePassIndices is { Count: 0 })
+            return Array.Empty<RenderPassMetadata>();
+
         if (ReferenceEquals(passMetadata, _lastActiveFilterSourcePassMetadata) &&
+            ReferenceEquals(resourceRegistry, _lastActiveFilterResourceRegistry) &&
+            resourceRegistryRevision == _lastActiveFilterResourceRegistryRevision &&
             activePassSetSignature == _lastActiveFilterPassSetSignature &&
-            activeResourceSetSignature == _lastActiveFilterResourceSetSignature)
+            activeResourceSetSignature == _lastActiveFilterResourceSetSignature &&
+            constrainToActivePassSet == _lastActiveFilterConstrainToActivePassSet)
         {
             return _lastActiveFilterResult;
         }
 
-        List<RenderPassMetadata> filtered = new(Math.Min(passMetadata.Count, activePassIndices.Count));
+        int filteredCapacity = activePassIndices is null
+            ? passMetadata.Count
+            : Math.Min(passMetadata.Count, activePassIndices.Count);
+        List<RenderPassMetadata> filtered = new(filteredCapacity);
         bool removedResourceUsages = false;
         foreach (RenderPassMetadata pass in passMetadata)
         {
-            if (!activePassIndices.Contains(pass.PassIndex))
+            if (activePassIndices is not null && !activePassIndices.Contains(pass.PassIndex))
                 continue;
 
             RenderPassMetadata activePass = FilterActivePassResourceUsages(
                 pass,
                 activePassIndices,
                 activeFrameBufferNames,
+                resourceRegistry,
                 ref removedResourceUsages);
             filtered.Add(activePass);
         }
@@ -2297,26 +2390,33 @@ public unsafe partial class VulkanRenderer
         }
 
         _lastActiveFilterSourcePassMetadata = passMetadata;
+        _lastActiveFilterResourceRegistry = resourceRegistry;
+        _lastActiveFilterResourceRegistryRevision = resourceRegistryRevision;
         _lastActiveFilterPassSetSignature = activePassSetSignature;
         _lastActiveFilterResourceSetSignature = activeResourceSetSignature;
+        _lastActiveFilterConstrainToActivePassSet = constrainToActivePassSet;
         _lastActiveFilterResult = result;
         return result;
     }
 
     private static RenderPassMetadata FilterActivePassResourceUsages(
         RenderPassMetadata pass,
-        HashSet<int> activePassIndices,
+        HashSet<int>? activePassIndices,
         HashSet<string>? activeFrameBufferNames,
+        RenderResourceRegistry? resourceRegistry,
         ref bool removedResourceUsages)
     {
-        if (activeFrameBufferNames is not { Count: > 0 })
+        bool hasActiveFrameBufferSet = activeFrameBufferNames is { Count: > 0 };
+        bool hasResourceRegistry = resourceRegistry is not null;
+        if (!hasActiveFrameBufferSet && !hasResourceRegistry)
             return pass;
 
         List<RenderPassResourceUsage>? activeUsages = null;
         for (int i = 0; i < pass.ResourceUsages.Count; i++)
         {
             RenderPassResourceUsage usage = pass.ResourceUsages[i];
-            if (IsInactiveFrameBufferUsage(usage, activeFrameBufferNames))
+            if ((hasActiveFrameBufferSet && IsInactiveFrameBufferUsage(usage, activeFrameBufferNames!)) ||
+                (hasResourceRegistry && IsMissingDeclaredResourceUsage(usage, resourceRegistry!)))
             {
                 removedResourceUsages = true;
                 if (activeUsages is null)
@@ -2339,7 +2439,7 @@ public unsafe partial class VulkanRenderer
             filtered.AddUsage(usage);
 
         foreach (int dependency in pass.ExplicitDependencies)
-            if (activePassIndices.Contains(dependency))
+            if (activePassIndices is null || activePassIndices.Contains(dependency))
                 filtered.AddDependency(dependency);
 
         foreach (string schema in pass.DescriptorSchemas)
@@ -2348,20 +2448,71 @@ public unsafe partial class VulkanRenderer
         return filtered;
     }
 
+    private static bool IsMissingDeclaredResourceUsage(
+        RenderPassResourceUsage usage,
+        RenderResourceRegistry resourceRegistry)
+    {
+        string resourceName = usage.ResourceName;
+        if (string.IsNullOrWhiteSpace(resourceName) ||
+            resourceName.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (TryExtractRenderGraphResourceName(resourceName, "fbo::", out string frameBufferName))
+        {
+            return !IsVulkanExternalOutputName(frameBufferName) &&
+                !resourceRegistry.FrameBufferRecords.ContainsKey(frameBufferName);
+        }
+
+        if (TryExtractRenderGraphResourceName(resourceName, "tex::", out string textureName))
+        {
+            return !resourceRegistry.TextureRecords.ContainsKey(textureName);
+        }
+
+        if (TryExtractRenderGraphResourceName(resourceName, "buf::", out string bufferName))
+        {
+            return !resourceRegistry.BufferRecords.ContainsKey(bufferName);
+        }
+
+        return false;
+    }
+
     private static bool IsInactiveFrameBufferUsage(
         RenderPassResourceUsage usage,
         HashSet<string> activeFrameBufferNames)
     {
-        if (!usage.ResourceName.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase))
+        if (!TryExtractRenderGraphResourceName(usage.ResourceName, "fbo::", out string frameBufferName))
             return false;
 
-        string[] segments = usage.ResourceName.Split("::", StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length < 2)
-            return false;
-
-        string frameBufferName = segments[1];
         return !IsVulkanExternalOutputName(frameBufferName) &&
             !activeFrameBufferNames.Contains(frameBufferName);
+    }
+
+    private static bool TryExtractRenderGraphResourceName(
+        string resourceName,
+        string prefix,
+        out string name)
+    {
+        if (!resourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            name = string.Empty;
+            return false;
+        }
+
+        int start = prefix.Length;
+        int end = resourceName.IndexOf("::", start, StringComparison.Ordinal);
+        if (end < 0)
+            end = resourceName.Length;
+
+        if (end <= start)
+        {
+            name = string.Empty;
+            return false;
+        }
+
+        name = resourceName[start..end];
+        return true;
     }
 
     private static int ComputeActivePassSetSignature(HashSet<int>? activePassIndices)

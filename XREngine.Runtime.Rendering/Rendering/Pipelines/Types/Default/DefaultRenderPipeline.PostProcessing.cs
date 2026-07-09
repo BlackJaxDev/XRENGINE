@@ -1774,10 +1774,30 @@ public partial class DefaultRenderPipeline
         && GetDepthOfFieldSettings() is { Enabled: true };
 
     private static bool ShouldUseBloom()
-        => !DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath
-        && !IsLightProbePass
-        && !RuntimeEngine.Rendering.State.IsSceneCapturePass
-        && GetBloomSettings() is not { Enabled: false };
+    {
+        bool safePath = DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath;
+        bool lightProbe = IsLightProbePass;
+        bool sceneCapture = RuntimeEngine.Rendering.State.IsSceneCapturePass;
+        bool settingsDisabled = GetBloomSettings() is { Enabled: false };
+        bool result = !safePath && !lightProbe && !sceneCapture && !settingsDisabled;
+
+        if (RenderDiagnosticsFlags.DiagPostProcess)
+        {
+            Debug.RenderingEvery(
+                $"Bloom.ShouldUse.{result}.{safePath}.{sceneCapture}",
+                TimeSpan.FromSeconds(1),
+                "[BloomDiag] ShouldUseBloom={0} safePath={1} lightProbe={2} sceneCapture={3} settingsDisabled={4} vp='{5}' external={6}",
+                result,
+                safePath,
+                lightProbe,
+                sceneCapture,
+                settingsDisabled,
+                RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport?.Index.ToString() ?? "<null>",
+                RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport?.RendersToExternalSwapchainTarget.ToString() ?? "<null>");
+        }
+
+        return result;
+    }
 
     private static TSettings? GetSettings<TSettings>(PipelinePostProcessState? state) where TSettings : class
         => state?.GetStage<TSettings>()?.TryGetBacking(out TSettings? settings) == true ? settings : null;

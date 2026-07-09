@@ -472,18 +472,17 @@ namespace XREngine.Components
             // running every frame on the update thread.
             EnsureTimerHooksInstalled();
 
-            // Keep layout authoritative for screen-space: if invalidated, run measure/arrange
-            // before collecting render commands so anchored elements are in the correct place.
+            EnsureScreenCanvasSize(viewport);
+
+            // Keep layout authoritative for screen-space: first ensure the canvas has the
+            // viewport-backed size, then run measure/arrange before collecting commands.
             if (CanvasTransform.IsLayoutInvalidated)
                 UpdateLayout();
-
-            EnsureScreenCanvasSize(viewport);
 
             // Ensure batch collector is wired to the pipeline
             EnsureBatchCollectorWired();
 
-            // Layout has already been applied during PostUpdateFrame by UpdateLayout().
-            // Just collect the rendered items from the quadtree.
+            // Layout is current at this point; just collect the rendered items from the quadtree.
             // Components that support batching will register with BatchCollector
             // instead of adding individual render commands.
             if (_renderPipeline.Pipeline is not null)

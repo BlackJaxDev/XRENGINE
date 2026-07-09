@@ -1,6 +1,6 @@
 #version 430
 #define TILE_SIZE 16
-#define MAX_LIGHTS_PER_TILE 1024
+#define MAX_LIGHTS_PER_TILE 256
 
 // Matches the forward shader's LocalLight layout.
 // Everything is world-space; compute shader transforms into view-space for frustum testing.

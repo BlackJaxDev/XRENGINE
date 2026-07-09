@@ -17,13 +17,32 @@ using static XREngine.Rendering.XRRenderPipelineInstance;
 
 namespace XREngine.Rendering;
 
+/// <summary>
+/// Base class for all render pipelines. 
+/// A render pipeline is a collection of rendering commands and resources 
+/// that define how a scene is rendered to a viewport. 
+/// Render pipelines can be customized and extended 
+/// to support different rendering techniques, post-processing effects, 
+/// and resource management strategies.
+/// </summary>
 [XRAssetInspector("XREngine.Editor.AssetEditors.RenderPipelineInspector, XREngine.Editor")]
 [MemoryPackable(GenerateType.NoGenerate)]
 public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHost
 {
+    /// <summary>
+    /// Synchronization object for OpenXR pipeline factory registration and creation.
+    /// </summary>
     private static readonly object OpenXrFactorySync = new();
+    /// <summary>
+    /// Mapping of source pipeline types to factory functions that create OpenXR-compatible pipelines.
+    /// </summary>
     private static readonly Dictionary<Type, Func<RenderPipeline, RenderPipeline>> OpenXrPipelineFactories = [];
 
+    /// <summary>
+    /// Registers a factory function that creates an OpenXR-compatible render pipeline from a source pipeline type.
+    /// </summary>
+    /// <typeparam name="TPipeline">The type of the source pipeline.</typeparam>
+    /// <param name="factory">The factory function that creates the OpenXR-compatible pipeline.</param>
     public static void RegisterOpenXrPipelineFactory<TPipeline>(Func<TPipeline, RenderPipeline> factory)
         where TPipeline : RenderPipeline
     {
@@ -31,6 +50,12 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         RegisterOpenXrPipelineFactory(typeof(TPipeline), source => factory((TPipeline)source));
     }
 
+    /// <summary>
+    /// Registers a factory function that creates an OpenXR-compatible render pipeline from a source pipeline type.
+    /// </summary>
+    /// <param name="pipelineType">The type of the source pipeline.</param>
+    /// <param name="factory">The factory function that creates the OpenXR-compatible pipeline.</param>
+    /// <exception cref="ArgumentException">Thrown if the pipelineType does not derive from RenderPipeline.</exception>
     public static void RegisterOpenXrPipelineFactory(Type pipelineType, Func<RenderPipeline, RenderPipeline> factory)
     {
         ArgumentNullException.ThrowIfNull(pipelineType);
@@ -43,6 +68,12 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
             OpenXrPipelineFactories[pipelineType] = factory;
     }
 
+    /// <summary>
+    /// Attempts to create an OpenXR-compatible render pipeline from a source pipeline instance.
+    /// </summary>
+    /// <param name="sourcePipeline">The source pipeline instance.</param>
+    /// <param name="pipeline">The created OpenXR-compatible pipeline, if successful.</param>
+    /// <returns>True if the OpenXR-compatible pipeline was created successfully; otherwise, false.</returns>
     public static bool TryCreateOpenXrPipeline(RenderPipeline sourcePipeline, out RenderPipeline? pipeline)
     {
         ArgumentNullException.ThrowIfNull(sourcePipeline);
@@ -55,6 +86,9 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         return pipeline is not null;
     }
 
+    /// <summary>
+    /// Gets the list of active render pipeline instances that are currently using this pipeline.
+    /// </summary>
     [Browsable(false)]
     [YamlIgnore]
     public List<XRRenderPipelineInstance> Instances { get; } = [];
@@ -67,8 +101,15 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     [Browsable(false)]
     public bool OverrideProtected { get; set; }
 
+    /// <summary>
+    /// Gets the invalid material for this pipeline.
+    /// </summary>
     protected abstract Lazy<XRMaterial> InvalidMaterialFactory { get; }
 
+    /// <summary>
+    /// Gets the invalid material for this pipeline.
+    /// This material is used when a render command references a missing or invalid material.
+    /// </summary>
     [Browsable(false)]
     [YamlIgnore]
     public XRMaterial InvalidMaterial
@@ -92,6 +133,11 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     public virtual string DebugName => GetType().Name;
 
     private bool _isShadowPass;
+    /// <summary>
+    /// Indicates whether the current render pass is a shadow pass. 
+    /// This property can be used by derived pipelines to adjust rendering behavior for shadow passes, 
+    /// such as using different shaders or render states.
+    /// </summary>
     public bool IsShadowPass
     {
         get => _isShadowPass;
@@ -99,6 +145,10 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     private ViewportRenderCommandContainer _commandChain = [];
+    /// <summary>
+    /// Gets the command chain for this pipeline.
+    /// The command chain represents the sequence of render commands that will be executed by this pipeline.
+    /// </summary>
     public ViewportRenderCommandContainer CommandChain
     {
         get => _commandChain;
@@ -118,13 +168,26 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
                 });
         }
     }
+
+    /// <summary>
+    /// Gets the mapping of render pass indices to their corresponding sorters.
+    /// This dictionary allows the pipeline to determine the order in which render commands should be executed for each pass.
+    /// </summary>
     [YamlIgnore]
     public Dictionary<int, IComparer<RenderCommand>?> PassIndicesAndSorters { get; protected set; }
 
+    /// <summary>
+    /// Gets the metadata for each render pass in this pipeline.
+    /// This collection provides information about the configuration and characteristics of each render pass.
+    /// </summary>
     [Browsable(false)]
     [YamlIgnore]
     public IReadOnlyCollection<RenderPassMetadata> PassMetadata { get; private set; } = Array.Empty<RenderPassMetadata>();
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="RenderPipeline"/> class.
+    /// </summary>
+    /// <param name="deferCommandChainGeneration"></param>
     protected RenderPipeline(bool deferCommandChainGeneration = false)
     {
         if (!deferCommandChainGeneration)
@@ -132,15 +195,30 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         PassIndicesAndSorters = GetPassIndicesAndSorters();
     }
 
+    /// <summary>
+    /// Generates the command chain for this pipeline.
+    /// </summary>
+    /// <returns>The generated command chain.</returns>
     protected abstract ViewportRenderCommandContainer GenerateCommandChain();
+
+    /// <summary>
+    /// Gets the mapping of render pass indices to their corresponding sorters for this pipeline.
+    /// </summary>
+    /// <returns>The dictionary mapping render pass indices to their corresponding sorters.</returns>
     protected abstract Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters();
 
+    /// <summary>
+    /// Initializes the command chain for this pipeline.
+    /// </summary>
     protected void InitializeCommandChain()
     {
         using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
             CommandChain = GenerateCommandChain();
     }
 
+    /// <summary>
+    /// Rebuilds the command chain for this pipeline.
+    /// </summary>
     protected void RebuildCommandChain()
     {
         using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
@@ -149,10 +227,107 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         NotifyCommandChainStructureChanged();
     }
 
+    /// <summary>
+    /// Allows derived pipelines to describe the resources they require via the resource layout builder.
+    /// </summary>
+    /// <param name="builder">The resource layout builder used to describe the resources.</param>
     protected virtual void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {
+        // Derived pipelines can override this method to describe their required resources.
     }
 
+    /// <summary>
+    /// Determines whether this pipeline uses stereo resources for the given instance and viewport.
+    /// </summary>
+    /// <param name="instance">The render pipeline instance.</param>
+    /// <param name="viewport">The viewport.</param>
+    /// <returns>True if the pipeline uses stereo resources; otherwise, false.</returns>
+    internal virtual bool UsesStereoResources(XRRenderPipelineInstance instance, XRViewport? viewport)
+        => instance.RenderState.StereoPass;
+
+    /// <summary>
+    /// Builds a resource feature mask for the given render pipeline instance and viewport.
+    /// </summary>
+    /// <param name="instance">The render pipeline instance.</param>
+    /// <param name="viewport">The viewport.</param>
+    /// <returns>The resource feature mask.</returns>
+    internal virtual ulong BuildResourceFeatureMaskForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
+        => 0UL;
+
+    /// <summary>
+    /// Handles the event when the viewport is resized. 
+    /// Derived pipelines can override this method to respond to viewport size changes, 
+    /// such as updating internal resources or adjusting rendering parameters.
+    /// </summary>
+    /// <param name="instance">The render pipeline instance.</param>
+    /// <param name="width">The new width of the viewport.</param>
+    /// <param name="height">The new height of the viewport.</param>
+    internal virtual void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)
+    {
+        // Derived pipelines can override this method to handle viewport resizing events.
+    }
+
+    /// <summary>
+    /// Handles the event when a texture is bound to the pipeline. 
+    /// Derived pipelines can override this method to respond to texture binding events, 
+    /// such as updating internal state or performing additional processing.
+    /// </summary>
+    /// <param name="instance">The render pipeline instance.</param>
+    /// <param name="name">The name of the texture.</param>
+    /// <param name="texture">The texture being bound.</param>
+    /// <param name="replacedTexture">The texture being replaced, if any.</param>
+    internal virtual void OnTextureBound(XRRenderPipelineInstance instance, string name, XRTexture texture, XRTexture? replacedTexture)
+    {
+        // Derived pipelines can override this method to handle texture binding events.
+    }
+
+    /// <summary>
+    /// Handles the event when a frame buffer is bound to the pipeline.
+    /// Derived pipelines can override this method to respond to frame buffer binding events, 
+    /// such as updating internal state or performing additional processing.
+    /// </summary>
+    /// <param name="instance">The render pipeline instance.</param>
+    /// <param name="name">The name of the frame buffer.</param>
+    /// <param name="frameBuffer">The frame buffer being bound.</param>
+    /// <param name="replacedFrameBuffer">The frame buffer being replaced, if any.</param>
+    internal virtual void OnFrameBufferBound(XRRenderPipelineInstance instance, string name, XRFrameBuffer frameBuffer, XRFrameBuffer? replacedFrameBuffer)
+    {
+        // Derived pipelines can override this method to handle frame buffer binding events.
+    }
+
+    /// <summary>
+    /// Handles the event when a texture is destroyed.
+    /// Derived pipelines can override this method to respond to texture destruction events, 
+    /// such as updating internal state or performing additional processing.
+    /// </summary>
+    /// <param name="instance">The render pipeline instance.</param>
+    /// <param name="name">The name of the texture.</param>
+    /// <param name="texture">The texture being destroyed.</param>
+    /// <param name="reason">The reason for the texture destruction.</param>
+    internal virtual void OnTextureDestroyed(XRRenderPipelineInstance instance, string name, XRTexture texture, string reason)
+    {
+        // Derived pipelines can override this method to handle texture destruction events.
+    }
+
+    /// <summary>
+    /// Handles the event when a frame buffer is destroyed.
+    /// Derived pipelines can override this method to respond to frame buffer destruction events,
+    /// such as updating internal state or performing additional processing.
+    /// </summary>
+    /// <param name="instance">The render pipeline instance.</param>
+    /// <param name="name">The name of the frame buffer.</param>
+    /// <param name="frameBuffer">The frame buffer being destroyed.</param>
+    /// <param name="reason">The reason for the frame buffer destruction.</param>
+    internal virtual void OnFrameBufferDestroyed(XRRenderPipelineInstance instance, string name, XRFrameBuffer frameBuffer, string reason)
+    {
+        // Derived pipelines can override this method to handle frame buffer destruction events.
+    }
+
+    /// <summary>
+    /// Builds a resource layout for this pipeline based on the provided resource profile.
+    /// </summary>
+    /// <param name="profile">The resource profile to use for building the layout.</param>
+    /// <returns>The constructed resource layout.</returns>
     internal RenderPipelineResourceLayout BuildResourceLayout(RenderPipelineResourceProfile profile)
     {
         RenderPipelineResourceLayoutBuilder builder = new(profile);
@@ -172,10 +347,19 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     protected ViewportRenderCommandContainer CompileScript(string script)
         => RenderPipelineScript.Compile(this, script);
 
+    /// <summary>
+    /// Allows derived pipelines to describe their render passes and associated metadata.
+    /// </summary>
+    /// <param name="metadata">The collection to which render pass metadata should be added.</param>
     protected virtual void DescribeRenderPasses(RenderPassMetadataCollection metadata)
     {
+        // Derived pipelines can override this method to describe their render passes and associated metadata.
     }
 
+    /// <summary>
+    /// Generates the metadata for each render pass in this pipeline.
+    /// </summary>
+    /// <returns>A read-only collection of render pass metadata.</returns>
     protected virtual IReadOnlyCollection<RenderPassMetadata> GeneratePassMetadata()
     {
         if (CommandChain is null)
@@ -206,12 +390,18 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         _postProcessSchema = schema ?? RenderPipelinePostProcessSchema.Empty;
     }
 
+    /// <summary>
+    /// Called when the command chain structure changes, allowing derived pipelines to respond to the change.
+    /// </summary>
     protected virtual void OnCommandChainChanged()
     {
         PassMetadata = GeneratePassMetadata();
         RefreshPostProcessSchema();
     }
 
+    /// <summary>
+    /// Notifies the pipeline that the command chain structure has changed, triggering updates to metadata and post-process schema.
+    /// </summary>
     internal void NotifyCommandChainStructureChanged()
     {
         OnCommandChainChanged();
@@ -237,6 +427,10 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
             MarkDirty();
     }
 
+    /// <summary>
+    /// Builds the post-process schema for the pipeline.
+    /// </summary>
+    /// <returns>The constructed post-process schema.</returns>
     protected virtual RenderPipelinePostProcessSchema BuildPostProcessSchema()
     {
         RenderPipelinePostProcessSchemaBuilder builder = new(this);
@@ -250,18 +444,32 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// <param name="builder">Builder to populate with stages, uniforms, and categories.</param>
     protected virtual void DescribePostProcessSchema(RenderPipelinePostProcessSchemaBuilder builder)
     {
+        // Derived pipelines can override this method to describe their post-processing stages and categories.
     }
 
+    /// <summary>
+    /// Attempts to retrieve the current render pipeline instance from the runtime rendering host services.
+    /// </summary>
     private static XRRenderPipelineInstance? TryCurrentPipeline
         => RuntimeRenderingHostServices.Current.CurrentRenderPipelineContext as XRRenderPipelineInstance
             ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
 
+    /// <summary>
+    /// Attempts to retrieve the current rendering state from the current render pipeline instance.
+    /// </summary>
     private static RenderingState? TryState
         => TryCurrentPipeline?.RenderState;
 
+    /// <summary>
+    /// Gets the current rendering state, throwing an exception if it is not available.
+    /// </summary>
     public static RenderingState State
         => TryState ?? throw new InvalidOperationException("Rendering pipeline state is not available.");
 
+    /// <summary>
+    /// Resolves the effective camera for the current frame, considering the current render pipeline instance and rendering state.
+    /// </summary>
+    /// <returns>The effective camera for the current frame, or null if none is available.</returns>
     private static XRCamera? ResolveEffectiveCameraForFrame()
     {
         XRRenderPipelineInstance? pipeline = TryCurrentPipeline;
@@ -278,6 +486,10 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
             ?? renderState?.RenderingCamera as XRCamera;
     }
 
+    /// <summary>
+    /// Resolves the effective anti-aliasing mode for the current frame, considering the current render pipeline instance and rendering state.
+    /// </summary>
+    /// <returns>The effective anti-aliasing mode for the current frame.</returns>
     internal static EAntiAliasingMode ResolveEffectiveAntiAliasingModeForFrame()
     {
         if (TryCurrentPipeline?.EffectiveAntiAliasingModeThisFrame is EAntiAliasingMode latched)
@@ -287,15 +499,20 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
             ?? RuntimeRenderingHostServices.Current.DefaultAntiAliasingMode;
     }
 
-    internal static uint ResolveEffectiveMsaaSampleCountForFrame()
-    {
-        if (TryCurrentPipeline?.EffectiveMsaaSampleCountThisFrame is uint latched)
-            return Math.Max(1u, latched);
+    /// <summary>
+    /// Resolves the effective MSAA sample count for the current frame, considering the current render pipeline instance and rendering state.
+    /// </summary>
+    /// <returns>The effective MSAA sample count for the current frame.</returns>
+    internal static uint ResolveEffectiveMsaaSampleCountForFrame() 
+        => TryCurrentPipeline?.EffectiveMsaaSampleCountThisFrame is uint latched
+            ? Math.Max(1u, latched)
+            : Math.Max(1u,
+                ResolveEffectiveCameraForFrame()?.MsaaSampleCountOverride ?? RuntimeRenderingHostServices.Current.DefaultMsaaSampleCount);
 
-        return Math.Max(1u,
-            ResolveEffectiveCameraForFrame()?.MsaaSampleCountOverride ?? RuntimeRenderingHostServices.Current.DefaultMsaaSampleCount);
-    }
-
+    /// <summary>
+    /// Resolves the effective TSR render scale for the current frame, considering the current render pipeline instance and rendering state.
+    /// </summary>
+    /// <returns>The effective TSR render scale for the current frame.</returns>
     internal static float ResolveEffectiveTsrRenderScaleForFrame()
     {
         if (TryCurrentPipeline?.EffectiveTsrRenderScaleThisFrame is float latched)
@@ -307,9 +524,21 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
             1.0f);
     }
 
+    /// <summary>
+    /// Attempts to retrieve a texture of the specified type and name from the current render pipeline instance.
+    /// </summary>
+    /// <typeparam name="T">The type of the texture to retrieve.</typeparam>
+    /// <param name="name">The name of the texture to retrieve.</param>
+    /// <returns>The texture if found; otherwise, null.</returns>
     public static T? GetTexture<T>(string name) where T : XRTexture
         => TryCurrentPipeline?.GetTexture<T>(name);
 
+    /// <summary>
+    /// Attempts to retrieve a texture by name from the current render pipeline instance.
+    /// </summary>
+    /// <param name="name">The name of the texture to retrieve.</param>
+    /// <param name="texture">The retrieved texture if found; otherwise, null.</param>
+    /// <returns>True if the texture was found; otherwise, false.</returns>
     public static bool TryGetTexture(string name, out XRTexture? texture)
     {
         XRRenderPipelineInstance? pipeline = TryCurrentPipeline;
@@ -322,12 +551,29 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         return pipeline.TryGetTexture(name, out texture);
     }
 
+    /// <summary>
+    /// Sets a texture in the current render pipeline instance, optionally providing a descriptor for the texture resource.
+    /// </summary>
+    /// <param name="texture">The texture to set in the render pipeline.</param>
+    /// <param name="descriptor">An optional descriptor for the texture resource.</param>
     public static void SetTexture(XRTexture texture, TextureResourceDescriptor? descriptor = null)
         => TryCurrentPipeline?.SetTexture(texture, descriptor);
 
+    /// <summary>
+    /// Attempts to retrieve a frame buffer of the specified type and name from the current render pipeline instance.
+    /// </summary>
+    /// <typeparam name="T">The type of the frame buffer to retrieve.</typeparam>
+    /// <param name="name">The name of the frame buffer to retrieve.</param>
+    /// <returns>The frame buffer if found; otherwise, null.</returns>
     public static T? GetFBO<T>(string name) where T : XRFrameBuffer
         => TryCurrentPipeline?.GetFBO<T>(name);
 
+    /// <summary>
+    /// Attempts to retrieve a frame buffer by name from the current render pipeline instance.
+    /// </summary>
+    /// <param name="name">The name of the frame buffer to retrieve.</param>
+    /// <param name="fbo">The retrieved frame buffer if found; otherwise, null.</param>
+    /// <returns>True if the frame buffer was found; otherwise, false.</returns>
     public static bool TryGetFBO(string name, out XRFrameBuffer? fbo)
     {
         XRRenderPipelineInstance? pipeline = TryCurrentPipeline;
@@ -340,24 +586,45 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         return pipeline.TryGetFBO(name, out fbo);
     }
 
+    /// <summary>
+    /// Sets a frame buffer in the current render pipeline instance, optionally providing a descriptor for the frame buffer resource.
+    /// </summary>
+    /// <param name="fbo">The frame buffer to set.</param>
+    /// <param name="descriptor">An optional descriptor for the frame buffer resource.</param>
     public static void SetFBO(XRFrameBuffer fbo, FrameBufferResourceDescriptor? descriptor = null)
         => TryCurrentPipeline?.SetFBO(fbo, descriptor);
 
     // OpenGL (and most GPU APIs) disallow 0-sized textures. During startup or when a window is
     // minimized, the viewport can temporarily report 0; clamp to 1 to avoid invalid allocations.
+    
+    /// <summary>
+    /// Gets the internal width of the current render pipeline instance or the window viewport, clamped to a minimum of 1.
+    /// </summary>
     protected static uint InternalWidth
         => TryCurrentPipeline?.ResourceInternalWidth
             ?? (uint)Math.Max(1, TryState?.WindowViewport?.InternalWidth ?? 0);
+    /// <summary>
+    /// Gets the internal height of the current render pipeline instance or the window viewport, clamped to a minimum of 1.
+    /// </summary>
     protected static uint InternalHeight
         => TryCurrentPipeline?.ResourceInternalHeight
             ?? (uint)Math.Max(1, TryState?.WindowViewport?.InternalHeight ?? 0);
+    /// <summary>
+    /// Gets the full width of the current render pipeline instance or the window viewport, clamped to a minimum of 1.
+    /// </summary>
     protected static uint FullWidth
         => TryCurrentPipeline?.ResourceDisplayWidth
             ?? (uint)Math.Max(1, TryState?.WindowViewport?.Width ?? 0);
+    /// <summary>
+    /// Gets the full height of the current render pipeline instance or the window viewport, clamped to a minimum of 1.
+    /// </summary>
     protected static uint FullHeight
         => TryCurrentPipeline?.ResourceDisplayHeight
             ?? (uint)Math.Max(1, TryState?.WindowViewport?.Height ?? 0);
-
+    
+    /// <summary>
+    /// Checks if a texture needs to be recreated based on the internal size of the current render pipeline instance or the window viewport.
+    /// </summary>
     protected static bool NeedsRecreateTextureInternalSize(XRTexture t)
     {
         uint w = InternalWidth;
@@ -385,6 +652,12 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         }
     }
 
+    /// <summary>
+    /// Checks if a texture needs to be recreated based on the full size of the current render pipeline instance or the window viewport.
+    /// </summary>
+    /// <param name="t">The texture to check for recreation.</param>
+    /// <returns>True if the texture needs to be recreated, false otherwise.</returns>
+    /// <returns></returns>
     protected static bool NeedsRecreateTextureFullSize(XRTexture t)
     {
         uint w = FullWidth;
@@ -410,6 +683,10 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         }
     }
 
+    /// <summary>
+    /// Resizes a texture to match the internal size of the current render pipeline instance or the window viewport.
+    /// </summary>
+    /// <param name="t">The texture to resize.</param>
     protected static void ResizeTextureInternalSize(XRTexture t)
     {
         switch (t)
@@ -428,6 +705,10 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
                 break;
         }
     }
+    /// <summary>
+    /// Resizes a texture to match the full size of the current render pipeline instance or the window viewport.
+    /// </summary>
+    /// <param name="t">The texture to resize.</param>
     protected static void ResizeTextureFullSize(XRTexture t)
     {
         switch (t)
@@ -447,8 +728,16 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
         }
     }
 
+    /// <summary>
+    /// Gets the desired frame buffer object (FBO) size based on the internal resolution of the current render pipeline instance or the window viewport.
+    /// </summary>
+    /// <returns>The desired FBO size as a tuple (width, height).</returns>
     protected static (uint x, uint y) GetDesiredFBOSizeInternal()
         => (InternalWidth, InternalHeight);
+    /// <summary>
+    /// Gets the desired frame buffer object (FBO) size based on the full resolution of the current render pipeline instance or the window viewport.
+    /// </summary>
+    /// <returns>The desired FBO size as a tuple (width, height).</returns>
     protected static (uint x, uint y) GetDesiredFBOSizeFull()
         => (FullWidth, FullHeight);
 
@@ -478,7 +767,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// <param name="width"></param>
     /// <param name="height"></param>
     /// <returns></returns>
-    public static XRTexture2D PrecomputeBRDF(uint width = 2048, uint height = 2048)
+    public static XRTexture2D PrecomputeBRDF(uint width = 256u, uint height = 256u)
     {
         XRTexture2D brdf = new(
             width, height,

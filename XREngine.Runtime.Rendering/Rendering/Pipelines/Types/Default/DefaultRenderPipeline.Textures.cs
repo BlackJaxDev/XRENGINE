@@ -5,13 +5,20 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering;
 
-public partial class DefaultRenderPipeline2
+public partial class DefaultRenderPipeline
 {
-    private const uint DefaultBrdfLutSize = 2048u;
+    private const uint DefaultBrdfLutSize = 512u;
     private const uint OpenXrVulkanSafePathBrdfLutSize = 256u;
 
     private static uint ResolveBrdfLutSize()
-        => UseOpenXrVulkanDesktopStartupSafePath
+    {
+        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        XRViewport? viewport = pipeline?.RenderState.WindowViewport ?? pipeline?.LastWindowViewport;
+        return ResolveBrdfLutSize(viewport);
+    }
+
+    private static uint ResolveBrdfLutSize(XRViewport? viewport)
+        => UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport)
             ? OpenXrVulkanSafePathBrdfLutSize
             : DefaultBrdfLutSize;
 
@@ -344,6 +351,8 @@ public partial class DefaultRenderPipeline2
         // Albedo is bounded [0,1] and opacity is also [0,1]; storing as
         // sRGB8Alpha8 with GL_FRAMEBUFFER_SRGB enabled gives perceptually
         // uniform 8-bit precision on RGB while halving bandwidth vs RGBA16F.
+        // The hardware decodes sRGB->linear on sample and encodes
+        // linear->sRGB on write, so deferred shader code stays unchanged.
         if (Stereo)
         {
             var t = XRTexture2DArray.CreateFrameBufferTexture(
@@ -569,6 +578,7 @@ public partial class DefaultRenderPipeline2
         // covers the full HDR range needed for direct lighting + emissive.
         // MSAA variant keeps Rgb16f because R11fG11fB10f MSAA support is
         // less reliable across drivers.
+        XRTexture texture;
         if (Stereo)
         {
             var t = XRTexture2DArray.CreateFrameBufferTexture(
@@ -582,7 +592,7 @@ public partial class DefaultRenderPipeline2
             t.SizedInternalFormat = ESizedInternalFormat.R11fG11fB10f;
             t.Name = textureName;
             t.SamplerName = samplerName;
-            return t;
+            texture = t;
         }
         else
         {
@@ -594,8 +604,13 @@ public partial class DefaultRenderPipeline2
             t.SizedInternalFormat = ESizedInternalFormat.R11fG11fB10f;
             t.Name = textureName;
             t.SamplerName = samplerName;
-            return t;
+            texture = t;
         }
+
+        LogDeferredLightingDiagnostic(
+            "CreateLightingTexture " +
+            $"textureName='{textureName}' samplerName='{samplerName}' texture={DescribeTexture(texture)}");
+        return texture;
     }
 
     // --- MSAA GBuffer texture creation (non-Stereo only) ---
@@ -1315,6 +1330,253 @@ public partial class DefaultRenderPipeline2
         return texture;
     }
 
+    /// <summary>
+    /// RGBA16F full-internal-resolution texture that the atmospheric upscale writes
+    /// and PostProcess.fs composites from. rgb = in-scattered radiance, a = transmittance.
+    /// </summary>
+    private XRTexture CreateAtmosphereColorTexture()
+    {
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        t.MinFilter = ETexMinFilter.Linear;
+        t.MagFilter = ETexMagFilter.Linear;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = AtmosphereColorTextureName;
+        t.Name = AtmosphereColorTextureName;
+        return t;
+    }
+
+    /// <summary>
+    /// R32F half-internal-resolution depth view used by the atmospheric aerial-perspective pass.
+    /// </summary>
+    private XRTexture CreateAtmosphereHalfDepthTexture()
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            w, h,
+            EPixelInternalFormat.R32f,
+            EPixelFormat.Red,
+            EPixelType.Float,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.R32f;
+        t.MinFilter = ETexMinFilter.Nearest;
+        t.MagFilter = ETexMagFilter.Nearest;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = AtmosphereHalfDepthTextureName;
+        t.Name = AtmosphereHalfDepthTextureName;
+        return t;
+    }
+
+    /// <summary>
+    /// RGBA16F half-internal-resolution target that the aerial-perspective raymarch writes.
+    /// </summary>
+    private XRTexture CreateAtmosphereHalfScatterTexture()
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            w, h,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        t.MinFilter = ETexMinFilter.Linear;
+        t.MagFilter = ETexMagFilter.Linear;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = AtmosphereHalfScatterTextureName;
+        t.Name = AtmosphereHalfScatterTextureName;
+        return t;
+    }
+
+    private XRTexture CreateAtmosphereHalfTemporalTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            width, height,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = false;
+        texture.SamplerName = AtmosphereHalfTemporalTextureName;
+        texture.Name = AtmosphereHalfTemporalTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateAtmosphereHalfHistoryTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            width, height,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = false;
+        texture.SamplerName = AtmosphereHalfHistoryTextureName;
+        texture.Name = AtmosphereHalfHistoryTextureName;
+        return texture;
+    }
+
+    /// <summary>
+    /// RGBA16F full-internal-resolution texture that the bilateral upscale writes
+    /// and PostProcess.fs composites from (sampler name <c>VolumetricFogColor</c>).
+    /// rgb = in-scattered radiance, a = transmittance. Mono only in Phase 2;
+    /// stereo skips the scatter chain.
+    /// </summary>
+    private XRTexture CreateVolumetricFogColorTexture()
+    {
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        t.MinFilter = ETexMinFilter.Linear;
+        t.MagFilter = ETexMagFilter.Linear;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = VolumetricFogColorTextureName;
+        t.Name = VolumetricFogColorTextureName;
+        return t;
+    }
+
+    /// <summary>
+    /// R32F half-internal-resolution depth view used by the half-res scatter
+    /// pass. Stores raw (un-resolved) depth so <c>XRENGINE_ResolveDepth</c>
+    /// works identically to the full-res path.
+    /// </summary>
+    private XRTexture CreateVolumetricFogHalfDepthTexture()
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            w, h,
+            EPixelInternalFormat.R32f,
+            EPixelFormat.Red,
+            EPixelType.Float,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.R32f;
+        // Nearest sampling keeps per-pixel depth crisp for bilateral weighting.
+        t.MinFilter = ETexMinFilter.Nearest;
+        t.MagFilter = ETexMagFilter.Nearest;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = VolumetricFogHalfDepthTextureName;
+        t.Name = VolumetricFogHalfDepthTextureName;
+        return t;
+    }
+
+    /// <summary>
+    /// RGBA16F half-internal-resolution target that the scatter raymarch writes
+    /// into. Read by the bilateral upscale shader alongside the full-res
+    /// <see cref="DepthViewTextureName"/> to produce <see cref="VolumetricFogColorTextureName"/>.
+    /// </summary>
+    private XRTexture CreateVolumetricFogHalfScatterTexture()
+    {
+        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            w, h,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        // Linear filtering keeps the bilateral upscale's intra-tap interpolation
+        // well-behaved when depth weights fall back to pure spatial taps.
+        t.MinFilter = ETexMinFilter.Linear;
+        t.MagFilter = ETexMagFilter.Linear;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.AutoGenerateMipmaps = false;
+        t.SamplerName = VolumetricFogHalfScatterTextureName;
+        t.Name = VolumetricFogHalfScatterTextureName;
+        return t;
+    }
+
+    /// <summary>
+    /// RGBA16F half-internal-resolution target containing the temporally
+    /// reprojected fog result for the current frame. Read by the full-res
+    /// bilateral upscale shader.
+    /// </summary>
+    private XRTexture CreateVolumetricFogHalfTemporalTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            width, height,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = false;
+        texture.SamplerName = VolumetricFogHalfTemporalTextureName;
+        texture.Name = VolumetricFogHalfTemporalTextureName;
+        return texture;
+    }
+
+    /// <summary>
+    /// RGBA16F half-internal-resolution history texture sampled by
+    /// VolumetricFogReproject.fs. The current temporal output is copied into
+    /// this target after the upscale consumes it.
+    /// </summary>
+    private XRTexture CreateVolumetricFogHalfHistoryTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            width, height,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = false;
+        texture.SamplerName = VolumetricFogHalfHistoryTextureName;
+        texture.Name = VolumetricFogHalfHistoryTextureName;
+        return texture;
+    }
+
     private XRTexture CreatePostProcessOutputTexture()
     {
         // Use internal resolution. The late final-post pass and optional AA/upscale
@@ -1446,6 +1708,73 @@ public partial class DefaultRenderPipeline2
         texture.VWrap = ETexWrapMode.ClampToEdge;
         texture.SamplerName = FxaaOutputTextureName;
         texture.Name = FxaaOutputTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateSmaaEdgeTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeFull();
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba,
+            EPixelType.UnsignedByte,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = SmaaEdgeTextureName;
+        texture.Name = SmaaEdgeTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateSmaaBlendTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeFull();
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba,
+            EPixelType.UnsignedByte,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = SmaaBlendTextureName;
+        texture.Name = SmaaBlendTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateSmaaOutputTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeFull();
+        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
+        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
+        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
+
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            internalFormat,
+            EPixelFormat.Rgba,
+            pixelType,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = sized;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = SmaaOutputTextureName;
+        texture.Name = SmaaOutputTextureName;
         return texture;
     }
 
@@ -1610,250 +1939,5 @@ public partial class DefaultRenderPipeline2
             t.Name = SurfelGITextureName;
             return t;
         }
-    }
-
-    /// <summary>
-    /// RGBA16F full-internal-resolution texture that the atmospheric upscale writes
-    /// and PostProcess.fs composites from. rgb = in-scattered radiance, a = transmittance.
-    /// </summary>
-    private XRTexture CreateAtmosphereColorTexture()
-    {
-        var t = XRTexture2D.CreateFrameBufferTexture(
-            InternalWidth, InternalHeight,
-            EPixelInternalFormat.Rgba16f,
-            EPixelFormat.Rgba,
-            EPixelType.HalfFloat,
-            EFrameBufferAttachment.ColorAttachment0);
-        t.Resizable = false;
-        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
-        t.MinFilter = ETexMinFilter.Linear;
-        t.MagFilter = ETexMagFilter.Linear;
-        t.UWrap = ETexWrapMode.ClampToEdge;
-        t.VWrap = ETexWrapMode.ClampToEdge;
-        t.AutoGenerateMipmaps = false;
-        t.SamplerName = AtmosphereColorTextureName;
-        t.Name = AtmosphereColorTextureName;
-        return t;
-    }
-
-    /// <summary>
-    /// R32F half-internal-resolution depth view used by the atmospheric aerial-perspective pass.
-    /// </summary>
-    private XRTexture CreateAtmosphereHalfDepthTexture()
-    {
-        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
-        var t = XRTexture2D.CreateFrameBufferTexture(
-            w, h,
-            EPixelInternalFormat.R32f,
-            EPixelFormat.Red,
-            EPixelType.Float,
-            EFrameBufferAttachment.ColorAttachment0);
-        t.Resizable = false;
-        t.SizedInternalFormat = ESizedInternalFormat.R32f;
-        t.MinFilter = ETexMinFilter.Nearest;
-        t.MagFilter = ETexMagFilter.Nearest;
-        t.UWrap = ETexWrapMode.ClampToEdge;
-        t.VWrap = ETexWrapMode.ClampToEdge;
-        t.AutoGenerateMipmaps = false;
-        t.SamplerName = AtmosphereHalfDepthTextureName;
-        t.Name = AtmosphereHalfDepthTextureName;
-        return t;
-    }
-
-    /// <summary>
-    /// RGBA16F half-internal-resolution target that the aerial-perspective raymarch writes.
-    /// </summary>
-    private XRTexture CreateAtmosphereHalfScatterTexture()
-    {
-        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
-        var t = XRTexture2D.CreateFrameBufferTexture(
-            w, h,
-            EPixelInternalFormat.Rgba16f,
-            EPixelFormat.Rgba,
-            EPixelType.HalfFloat,
-            EFrameBufferAttachment.ColorAttachment0);
-        t.Resizable = false;
-        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
-        t.MinFilter = ETexMinFilter.Linear;
-        t.MagFilter = ETexMagFilter.Linear;
-        t.UWrap = ETexWrapMode.ClampToEdge;
-        t.VWrap = ETexWrapMode.ClampToEdge;
-        t.AutoGenerateMipmaps = false;
-        t.SamplerName = AtmosphereHalfScatterTextureName;
-        t.Name = AtmosphereHalfScatterTextureName;
-        return t;
-    }
-
-    private XRTexture CreateAtmosphereHalfTemporalTexture()
-    {
-        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
-        var texture = XRTexture2D.CreateFrameBufferTexture(
-            width, height,
-            EPixelInternalFormat.Rgba16f,
-            EPixelFormat.Rgba,
-            EPixelType.HalfFloat,
-            EFrameBufferAttachment.ColorAttachment0);
-        texture.Resizable = false;
-        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
-        texture.MinFilter = ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
-        texture.UWrap = ETexWrapMode.ClampToEdge;
-        texture.VWrap = ETexWrapMode.ClampToEdge;
-        texture.AutoGenerateMipmaps = false;
-        texture.SamplerName = AtmosphereHalfTemporalTextureName;
-        texture.Name = AtmosphereHalfTemporalTextureName;
-        return texture;
-    }
-
-    private XRTexture CreateAtmosphereHalfHistoryTexture()
-    {
-        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
-        var texture = XRTexture2D.CreateFrameBufferTexture(
-            width, height,
-            EPixelInternalFormat.Rgba16f,
-            EPixelFormat.Rgba,
-            EPixelType.HalfFloat,
-            EFrameBufferAttachment.ColorAttachment0);
-        texture.Resizable = false;
-        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
-        texture.MinFilter = ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
-        texture.UWrap = ETexWrapMode.ClampToEdge;
-        texture.VWrap = ETexWrapMode.ClampToEdge;
-        texture.AutoGenerateMipmaps = false;
-        texture.SamplerName = AtmosphereHalfHistoryTextureName;
-        texture.Name = AtmosphereHalfHistoryTextureName;
-        return texture;
-    }
-
-    /// <summary>
-    /// RGBA16F full-internal-resolution texture that the bilateral upscale writes
-    /// and PostProcess.fs composites from (sampler name <c>VolumetricFogColor</c>).
-    /// rgb = in-scattered radiance, a = transmittance. Mono only; stereo skips the
-    /// scatter chain.
-    /// </summary>
-    private XRTexture CreateVolumetricFogColorTexture()
-    {
-        var t = XRTexture2D.CreateFrameBufferTexture(
-            InternalWidth, InternalHeight,
-            EPixelInternalFormat.Rgba16f,
-            EPixelFormat.Rgba,
-            EPixelType.HalfFloat,
-            EFrameBufferAttachment.ColorAttachment0);
-        t.Resizable = false;
-        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
-        t.MinFilter = ETexMinFilter.Linear;
-        t.MagFilter = ETexMagFilter.Linear;
-        t.UWrap = ETexWrapMode.ClampToEdge;
-        t.VWrap = ETexWrapMode.ClampToEdge;
-        t.AutoGenerateMipmaps = false;
-        t.SamplerName = VolumetricFogColorTextureName;
-        t.Name = VolumetricFogColorTextureName;
-        return t;
-    }
-
-    /// <summary>
-    /// R32F half-internal-resolution depth view used by the half-res scatter
-    /// pass. Stores raw (un-resolved) depth so <c>XRENGINE_ResolveDepth</c>
-    /// works identically to the full-res path.
-    /// </summary>
-    private XRTexture CreateVolumetricFogHalfDepthTexture()
-    {
-        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
-        var t = XRTexture2D.CreateFrameBufferTexture(
-            w, h,
-            EPixelInternalFormat.R32f,
-            EPixelFormat.Red,
-            EPixelType.Float,
-            EFrameBufferAttachment.ColorAttachment0);
-        t.Resizable = false;
-        t.SizedInternalFormat = ESizedInternalFormat.R32f;
-        // Nearest sampling keeps per-pixel depth crisp for bilateral weighting.
-        t.MinFilter = ETexMinFilter.Nearest;
-        t.MagFilter = ETexMagFilter.Nearest;
-        t.UWrap = ETexWrapMode.ClampToEdge;
-        t.VWrap = ETexWrapMode.ClampToEdge;
-        t.AutoGenerateMipmaps = false;
-        t.SamplerName = VolumetricFogHalfDepthTextureName;
-        t.Name = VolumetricFogHalfDepthTextureName;
-        return t;
-    }
-
-    /// <summary>
-    /// RGBA16F half-internal-resolution target that the scatter raymarch writes
-    /// into. Read by the bilateral upscale shader alongside the full-res
-    /// <see cref="DepthViewTextureName"/> to produce <see cref="VolumetricFogColorTextureName"/>.
-    /// </summary>
-    private XRTexture CreateVolumetricFogHalfScatterTexture()
-    {
-        (uint w, uint h) = GetDesiredFBOSizeHalfInternal();
-        var t = XRTexture2D.CreateFrameBufferTexture(
-            w, h,
-            EPixelInternalFormat.Rgba16f,
-            EPixelFormat.Rgba,
-            EPixelType.HalfFloat,
-            EFrameBufferAttachment.ColorAttachment0);
-        t.Resizable = false;
-        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
-        t.MinFilter = ETexMinFilter.Linear;
-        t.MagFilter = ETexMagFilter.Linear;
-        t.UWrap = ETexWrapMode.ClampToEdge;
-        t.VWrap = ETexWrapMode.ClampToEdge;
-        t.AutoGenerateMipmaps = false;
-        t.SamplerName = VolumetricFogHalfScatterTextureName;
-        t.Name = VolumetricFogHalfScatterTextureName;
-        return t;
-    }
-
-    /// <summary>
-    /// RGBA16F half-internal-resolution target containing the temporally
-    /// reprojected fog result for the current frame. Read by the full-res
-    /// bilateral upscale shader.
-    /// </summary>
-    private XRTexture CreateVolumetricFogHalfTemporalTexture()
-    {
-        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
-        var texture = XRTexture2D.CreateFrameBufferTexture(
-            width, height,
-            EPixelInternalFormat.Rgba16f,
-            EPixelFormat.Rgba,
-            EPixelType.HalfFloat,
-            EFrameBufferAttachment.ColorAttachment0);
-        texture.Resizable = false;
-        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
-        texture.MinFilter = ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
-        texture.UWrap = ETexWrapMode.ClampToEdge;
-        texture.VWrap = ETexWrapMode.ClampToEdge;
-        texture.AutoGenerateMipmaps = false;
-        texture.SamplerName = VolumetricFogHalfTemporalTextureName;
-        texture.Name = VolumetricFogHalfTemporalTextureName;
-        return texture;
-    }
-
-    /// <summary>
-    /// RGBA16F half-internal-resolution history texture sampled by
-    /// VolumetricFogReproject.fs. The current temporal output is copied into
-    /// this target after the upscale consumes it.
-    /// </summary>
-    private XRTexture CreateVolumetricFogHalfHistoryTexture()
-    {
-        (uint width, uint height) = GetDesiredFBOSizeHalfInternal();
-        var texture = XRTexture2D.CreateFrameBufferTexture(
-            width, height,
-            EPixelInternalFormat.Rgba16f,
-            EPixelFormat.Rgba,
-            EPixelType.HalfFloat,
-            EFrameBufferAttachment.ColorAttachment0);
-        texture.Resizable = false;
-        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
-        texture.MinFilter = ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
-        texture.UWrap = ETexWrapMode.ClampToEdge;
-        texture.VWrap = ETexWrapMode.ClampToEdge;
-        texture.AutoGenerateMipmaps = false;
-        texture.SamplerName = VolumetricFogHalfHistoryTextureName;
-        texture.Name = VolumetricFogHalfHistoryTextureName;
-        return texture;
     }
 }

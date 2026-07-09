@@ -967,7 +967,8 @@ public unsafe partial class VulkanRenderer
         commandBuffer = default;
         if (!OpenXrVulkanPrimaryReuseEnabled)
         {
-            RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:disabled");
+            if (OpenXrVulkanTraceEnabled)
+                RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:disabled");
             return false;
         }
 
@@ -976,7 +977,10 @@ public unsafe partial class VulkanRenderer
         {
             if (!_openXrPrimaryCommandBufferVariants.TryGetValue(cacheKey, out List<CommandBufferCacheVariant>? variants))
             {
-                RecordOpenXrPrimaryReuseMiss($"openxr-primary-miss:no-variants key=0x{cacheKey:X16}");
+                if (OpenXrVulkanTraceEnabled)
+                    RecordOpenXrPrimaryReuseMiss($"openxr-primary-miss:no-variants key=0x{cacheKey:X16}");
+                else
+                    RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:no-variants");
                 return false;
             }
 
@@ -995,8 +999,15 @@ public unsafe partial class VulkanRenderer
                     out commandChainPrimaryGroupSignature,
                     out commandChainPrimaryGroupCount))
             {
-                RecordOpenXrPrimaryReuseMiss(
-                    $"openxr-primary-miss:chains-not-reusable key=0x{cacheKey:X16} {DescribeOpenXrPrimaryReusableChainMiss(commandChainImageIndex, commandChainSchedule)}");
+                if (OpenXrVulkanTraceEnabled)
+                {
+                    RecordOpenXrPrimaryReuseMiss(
+                        $"openxr-primary-miss:chains-not-reusable key=0x{cacheKey:X16} {DescribeOpenXrPrimaryReusableChainMiss(commandChainImageIndex, commandChainSchedule)}");
+                }
+                else
+                {
+                    RecordOpenXrPrimaryReuseMiss("openxr-primary-miss:chains-not-reusable");
+                }
                 return false;
             }
 
@@ -1029,6 +1040,7 @@ public unsafe partial class VulkanRenderer
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
                 variant.LastUsedFrameId = VulkanFrameCounter;
                 StoreFrameOpSignatureDebugParts(variant, ops);
+                RestoreRecordedImageLayoutEndState(variant);
                 PrepareVulkanGpuProfilerReusableSubmission(
                     commandBufferImageSlot,
                     variant,
@@ -1063,18 +1075,44 @@ public unsafe partial class VulkanRenderer
                 return true;
             }
 
-            RecordOpenXrPrimaryReuseMiss(
-                $"openxr-primary-miss:no-matching-variant key=0x{cacheKey:X16} variants={variants.Count} first={DescribeOpenXrPrimaryVariantMismatch(
-                    variants,
-                    requiresExactFrameOps,
-                    usingCommandChains,
-                    frameOpsSignature,
-                    plannerRevision,
-                    commandChainSchedule,
-                    commandChainPrimaryGroupSignature,
-                    commandChainPrimaryGroupCount,
-                    gpuPipelineProfilingActive,
-                    commandBufferImageSlot)}");
+            string compactMissReason = ClassifyOpenXrPrimaryVariantMismatch(
+                variants,
+                false,
+                requiresExactFrameOps,
+                usingCommandChains,
+                frameOpsSignature,
+                plannerRevision,
+                imageLayoutStartSignature,
+                ContainsQueryFrameOp(ops),
+                true,
+                swapchainImageEverPresented,
+                commandChainSchedule,
+                commandChainPrimaryGroupSignature,
+                commandChainPrimaryGroupCount,
+                gpuPipelineProfilingActive,
+                commandBufferImageSlot);
+            if (OpenXrVulkanTraceEnabled)
+            {
+                RecordOpenXrPrimaryReuseMiss(
+                    $"openxr-primary-miss:no-matching-variant key=0x{cacheKey:X16} variants={variants.Count} first={DescribeOpenXrPrimaryVariantMismatch(
+                        variants,
+                        requiresExactFrameOps,
+                        usingCommandChains,
+                        frameOpsSignature,
+                        plannerRevision,
+                        imageLayoutStartSignature,
+                        true,
+                        swapchainImageEverPresented,
+                        commandChainSchedule,
+                        commandChainPrimaryGroupSignature,
+                        commandChainPrimaryGroupCount,
+                        gpuPipelineProfilingActive,
+                        commandBufferImageSlot)}");
+            }
+            else
+            {
+                RecordOpenXrPrimaryReuseMiss(compactMissReason);
+            }
             return false;
         }
     }
@@ -1166,7 +1204,7 @@ public unsafe partial class VulkanRenderer
         variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
         variant.RecordedSwapchainRefreshFromLastPresentSource = false;
         variant.RecordedImageLayoutStartSignature = imageLayoutStartSignature;
-        variant.RecordedImageLayoutEndSignature = ComputeImageLayoutStateSignature();
+        CaptureCommandBufferVariantImageLayoutEndState(variant);
         variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
         if (!TryComputeOpenXrPrimaryCommandBufferGroupSignature(
                 commandChainImageIndex,
@@ -1387,7 +1425,7 @@ public unsafe partial class VulkanRenderer
 
     private void RecordOpenXrPrimaryReuseMiss(string reason)
     {
-        if (!OpenXrVulkanTraceEnabled)
+        if (string.IsNullOrWhiteSpace(reason))
             return;
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandBufferCacheOutcome(
@@ -1431,12 +1469,72 @@ public unsafe partial class VulkanRenderer
         return "all-reusable";
     }
 
+    private static string ClassifyOpenXrPrimaryVariantMismatch(
+        List<CommandBufferCacheVariant> variants,
+        bool mirror,
+        bool requiresExactFrameOps,
+        bool usingCommandChains,
+        ulong frameOpsSignature,
+        ulong plannerRevision,
+        ulong imageLayoutStartSignature,
+        bool hasQueryFrameOps,
+        bool compareSwapchainImageEverPresented,
+        bool swapchainImageEverPresented,
+        CommandChainSchedule? commandChainSchedule,
+        ulong commandChainPrimaryGroupSignature,
+        int commandChainPrimaryGroupCount,
+        bool gpuPipelineProfilingActive,
+        int commandBufferImageSlot)
+    {
+        if (variants.Count == 0)
+            return mirror ? "openxr-mirror-primary-miss:no-variants" : "openxr-primary-miss:no-variants";
+
+        CommandBufferCacheVariant variant = variants[0];
+        if (variant.Dirty)
+            return mirror ? "openxr-mirror-primary-miss:dirty" : "openxr-primary-miss:dirty";
+        if (variant.PrimaryCommandBuffer.Handle == 0)
+            return mirror ? "openxr-mirror-primary-miss:empty-handle" : "openxr-primary-miss:empty-handle";
+        if (requiresExactFrameOps && variant.FrameOpsSignature != frameOpsSignature)
+        {
+            if (hasQueryFrameOps)
+                return mirror ? "openxr-mirror-primary-miss:frame-ops-query" : "openxr-primary-miss:frame-ops-query";
+
+            return mirror ? "openxr-mirror-primary-miss:frame-ops" : "openxr-primary-miss:frame-ops";
+        }
+        if (!usingCommandChains && variant.PlannerRevision != plannerRevision)
+            return mirror ? "openxr-mirror-primary-miss:planner" : "openxr-primary-miss:planner";
+        if (IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature))
+            return mirror ? "openxr-mirror-primary-miss:image-layout" : "openxr-primary-miss:image-layout";
+        if (compareSwapchainImageEverPresented && variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented)
+            return mirror ? "openxr-mirror-primary-miss:swapchain-presented" : "openxr-primary-miss:swapchain-presented";
+
+        ulong scheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
+        ulong groupSignature = commandChainSchedule is null ? ulong.MaxValue : commandChainPrimaryGroupSignature;
+        int groupCount = commandChainSchedule is null ? -1 : commandChainPrimaryGroupCount;
+        if (variant.CommandChainScheduleSignature != scheduleSignature)
+            return mirror ? "openxr-mirror-primary-miss:schedule" : "openxr-primary-miss:schedule";
+        if (variant.CommandChainPrimaryGroupSignature != groupSignature)
+            return mirror ? "openxr-mirror-primary-miss:group" : "openxr-primary-miss:group";
+        if (variant.CommandChainPrimaryGroupCount != groupCount)
+            return mirror ? "openxr-mirror-primary-miss:group-count" : "openxr-primary-miss:group-count";
+        if (variant.GpuProfilerActive != gpuPipelineProfilingActive ||
+            (gpuPipelineProfilingActive && variant.GpuProfilerFrameSlot != commandBufferImageSlot))
+        {
+            return mirror ? "openxr-mirror-primary-miss:profiler" : "openxr-primary-miss:profiler";
+        }
+
+        return mirror ? "openxr-mirror-primary-miss:unknown" : "openxr-primary-miss:unknown";
+    }
+
     private static string DescribeOpenXrPrimaryVariantMismatch(
         List<CommandBufferCacheVariant> variants,
         bool requiresExactFrameOps,
         bool usingCommandChains,
         ulong frameOpsSignature,
         ulong plannerRevision,
+        ulong imageLayoutStartSignature,
+        bool compareSwapchainImageEverPresented,
+        bool swapchainImageEverPresented,
         CommandChainSchedule? commandChainSchedule,
         ulong commandChainPrimaryGroupSignature,
         int commandChainPrimaryGroupCount,
@@ -1455,6 +1553,10 @@ public unsafe partial class VulkanRenderer
             return $"frame-ops recorded=0x{variant.FrameOpsSignature:X16} current=0x{frameOpsSignature:X16}";
         if (!usingCommandChains && variant.PlannerRevision != plannerRevision)
             return $"planner recorded={variant.PlannerRevision} current={plannerRevision}";
+        if (IsCommandBufferVariantImageLayoutStateDirty(variant, imageLayoutStartSignature))
+            return $"image-layout recorded=0x{variant.RecordedImageLayoutStartSignature:X16} current=0x{imageLayoutStartSignature:X16} hasEnd={variant.RecordedImageLayoutEndState is not null}";
+        if (compareSwapchainImageEverPresented && variant.RecordedSwapchainImageEverPresented != swapchainImageEverPresented)
+            return $"swapchain-presented recorded={variant.RecordedSwapchainImageEverPresented} current={swapchainImageEverPresented}";
 
         ulong scheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
         ulong groupSignature = commandChainSchedule is null ? ulong.MaxValue : commandChainPrimaryGroupSignature;
@@ -2013,7 +2115,8 @@ public unsafe partial class VulkanRenderer
         commandBuffer = default;
         if (!OpenXrVulkanPrimaryReuseEnabled)
         {
-            RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:disabled");
+            if (OpenXrVulkanTraceEnabled)
+                RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:disabled");
             return false;
         }
 
@@ -2022,7 +2125,10 @@ public unsafe partial class VulkanRenderer
         {
             if (!_openXrPrimaryCommandBufferVariants.TryGetValue(cacheKey, out List<CommandBufferCacheVariant>? variants))
             {
-                RecordOpenXrPrimaryReuseMiss($"openxr-mirror-primary-miss:no-variants key=0x{cacheKey:X16}");
+                if (OpenXrVulkanTraceEnabled)
+                    RecordOpenXrPrimaryReuseMiss($"openxr-mirror-primary-miss:no-variants key=0x{cacheKey:X16}");
+                else
+                    RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:no-variants");
                 return false;
             }
 
@@ -2041,8 +2147,15 @@ public unsafe partial class VulkanRenderer
                     out commandChainPrimaryGroupSignature,
                     out commandChainPrimaryGroupCount))
             {
-                RecordOpenXrPrimaryReuseMiss(
-                    $"openxr-mirror-primary-miss:chains-not-reusable key=0x{cacheKey:X16} {DescribeOpenXrPrimaryReusableChainMiss(commandChainImageIndex, commandChainSchedule)}");
+                if (OpenXrVulkanTraceEnabled)
+                {
+                    RecordOpenXrPrimaryReuseMiss(
+                        $"openxr-mirror-primary-miss:chains-not-reusable key=0x{cacheKey:X16} {DescribeOpenXrPrimaryReusableChainMiss(commandChainImageIndex, commandChainSchedule)}");
+                }
+                else
+                {
+                    RecordOpenXrPrimaryReuseMiss("openxr-mirror-primary-miss:chains-not-reusable");
+                }
                 return false;
             }
 
@@ -2073,6 +2186,7 @@ public unsafe partial class VulkanRenderer
                 variant.GpuProfilerFrameSlot = gpuPipelineProfilingActive ? commandBufferImageSlot : -1;
                 variant.LastUsedFrameId = VulkanFrameCounter;
                 StoreFrameOpSignatureDebugParts(variant, ops);
+                RestoreRecordedImageLayoutEndState(variant);
                 PrepareVulkanGpuProfilerReusableSubmission(
                     commandBufferImageSlot,
                     variant,
@@ -2108,18 +2222,44 @@ public unsafe partial class VulkanRenderer
                 return true;
             }
 
-            RecordOpenXrPrimaryReuseMiss(
-                $"openxr-mirror-primary-miss:no-matching-variant key=0x{cacheKey:X16} variants={variants.Count} first={DescribeOpenXrPrimaryVariantMismatch(
-                    variants,
-                    requiresExactFrameOps,
-                    usingCommandChains,
-                    frameOpsSignature,
-                    plannerRevision,
-                    commandChainSchedule,
-                    commandChainPrimaryGroupSignature,
-                    commandChainPrimaryGroupCount,
-                    gpuPipelineProfilingActive,
-                    commandBufferImageSlot)}");
+            string compactMissReason = ClassifyOpenXrPrimaryVariantMismatch(
+                variants,
+                true,
+                requiresExactFrameOps,
+                usingCommandChains,
+                frameOpsSignature,
+                plannerRevision,
+                imageLayoutStartSignature,
+                ContainsQueryFrameOp(ops),
+                false,
+                false,
+                commandChainSchedule,
+                commandChainPrimaryGroupSignature,
+                commandChainPrimaryGroupCount,
+                gpuPipelineProfilingActive,
+                commandBufferImageSlot);
+            if (OpenXrVulkanTraceEnabled)
+            {
+                RecordOpenXrPrimaryReuseMiss(
+                    $"openxr-mirror-primary-miss:no-matching-variant key=0x{cacheKey:X16} variants={variants.Count} first={DescribeOpenXrPrimaryVariantMismatch(
+                        variants,
+                        requiresExactFrameOps,
+                        usingCommandChains,
+                        frameOpsSignature,
+                        plannerRevision,
+                        imageLayoutStartSignature,
+                        false,
+                        false,
+                        commandChainSchedule,
+                        commandChainPrimaryGroupSignature,
+                        commandChainPrimaryGroupCount,
+                        gpuPipelineProfilingActive,
+                        commandBufferImageSlot)}");
+            }
+            else
+            {
+                RecordOpenXrPrimaryReuseMiss(compactMissReason);
+            }
             return false;
         }
     }
@@ -2198,7 +2338,7 @@ public unsafe partial class VulkanRenderer
             variant.RecordedSwapchainWriteCount = recordedSwapchainWriteCount;
             variant.RecordedSwapchainRefreshFromLastPresentSource = false;
             variant.RecordedImageLayoutStartSignature = imageLayoutStartSignature;
-            variant.RecordedImageLayoutEndSignature = ComputeImageLayoutStateSignature();
+            CaptureCommandBufferVariantImageLayoutEndState(variant);
             variant.CommandChainScheduleSignature = commandChainSchedule?.StructuralSignature ?? ulong.MaxValue;
             if (!TryComputeOpenXrPrimaryCommandBufferGroupSignature(
                     commandChainImageIndex,

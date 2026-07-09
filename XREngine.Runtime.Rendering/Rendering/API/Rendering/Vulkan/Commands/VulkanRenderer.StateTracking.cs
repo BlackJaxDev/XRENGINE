@@ -379,10 +379,14 @@ public unsafe partial class VulkanRenderer
     private double _queueOverlapModeStartFrameDeltaMs = -1.0;
     private readonly List<MergedFrameOpRegistryCacheEntry> _mergedFrameOpRegistryCache = new(MaxMergedFrameOpRegistryCacheEntries);
     private readonly List<FrameOpPlannerStateKey> _frameOpPlannerStateKeyScratch = [];
+    private readonly List<FrameOpPlannerStateKey> _frameOpPlannerStateEvictionScratch = [];
     private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterSourcePassMetadata;
     private IReadOnlyCollection<RenderPassMetadata>? _lastActiveFilterResult;
+    private RenderResourceRegistry? _lastActiveFilterResourceRegistry;
+    private int _lastActiveFilterResourceRegistryRevision = int.MinValue;
     private int _lastActiveFilterPassSetSignature = int.MinValue;
     private int _lastActiveFilterResourceSetSignature = int.MinValue;
+    private bool _lastActiveFilterConstrainToActivePassSet;
     private static readonly TimeSpan ResourceAllocationFailureRetryDelay = TimeSpan.FromMilliseconds(750);
     private static readonly TimeSpan OpenXrResourceAllocationFailureRetryDelay = TimeSpan.FromSeconds(10);
 
@@ -427,7 +431,9 @@ public unsafe partial class VulkanRenderer
     private sealed class FrameOpResourcePlannerSwitchingState
     {
         public Dictionary<FrameOpPlannerStateKey, ResourcePlannerRuntimeState> States { get; } = new();
+        public Dictionary<FrameOpPlannerStateKey, ulong> LastUsedSerials { get; } = new();
         public HashSet<FrameOpPlannerStateKey> ActiveKeys { get; } = new();
+        public ulong UsageSerial;
         public bool SwitchingActive;
         public bool RecordingScopeActive;
         public bool HasActiveKey;
@@ -593,15 +599,11 @@ public unsafe partial class VulkanRenderer
     private readonly record struct FrameOpPlannerStateKey(
         int PipelineIdentity,
         int ViewportIdentity,
-        int ResourceRegistryIdentity,
-        int PassMetadataIdentity,
         uint DisplayWidth,
         uint DisplayHeight,
         uint InternalWidth,
         uint InternalHeight,
-        int OutputFrameBufferIdentity,
-        int ActivePassSetSignature,
-        int ActiveResourceSetSignature);
+        int OutputFrameBufferIdentity);
 
     private readonly record struct ResourcePlannerSignatureBreakdown(
         int Registry,

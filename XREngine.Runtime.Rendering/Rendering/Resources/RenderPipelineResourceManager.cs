@@ -60,6 +60,20 @@ public sealed class RenderPipelineResourceManager
         catch (Exception ex) when (VulkanRenderer.IsExpectedVulkanImageAllocationDeferral(ex))
         {
             generation.AddDiagnostic(ex.Message);
+            if (instance.ActiveGeneration is not null)
+            {
+                generation.MarkFailed(ex.Message);
+                Debug.RenderingWarning(
+                    "[RenderResources] Pending generation rolled back under Vulkan allocator pressure. Pipeline={0} Target={1} Progress={2}/{3} Reason={4}. Active generation remains {5}.",
+                    instance.ProfilerKey,
+                    generation.Key,
+                    generation.MaterializedSpecCount,
+                    generation.Layout.OrderedSpecs.Count,
+                    ex.Message,
+                    instance.ActiveGeneration.Key);
+                return false;
+            }
+
             Debug.RenderingEvery(
                 $"RenderResources.PendingGenerationDeferred.{instance.ProfilerKey}",
                 TimeSpan.FromSeconds(1),
@@ -265,6 +279,13 @@ public sealed class RenderPipelineResourceManager
         frameBuffer.Name = spec.Name;
         ValidateFrameBufferInstance(generation, spec, frameBuffer);
         instance.SetFBO(frameBuffer, descriptor);
+        PreGenerateVulkanFrameBuffer(frameBuffer);
+    }
+
+    private static void PreGenerateVulkanFrameBuffer(XRFrameBuffer frameBuffer)
+    {
+        if (XREngine.Rendering.AbstractRenderer.Current is VulkanRenderer renderer)
+            renderer.GetOrCreateAPIRenderObject(frameBuffer, generateNow: true);
     }
 
     private static void ValidateRequiredResources(RenderResourceGeneration generation)

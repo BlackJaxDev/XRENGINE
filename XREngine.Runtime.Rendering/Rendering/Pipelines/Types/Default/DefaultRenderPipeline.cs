@@ -142,10 +142,15 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
         if (explicitViewport?.RendersToExternalSwapchainTarget == true)
             return true;
 
+        // Only trust the viewport of the pass that is actively rendering. Falling back to
+        // LastWindowViewport let eye-viewport state leak into desktop-context evaluation
+        // (and into command-chain bakes), permanently stripping bloom/exposure/temporal
+        // passes from the shared chain. With no active viewport (e.g. chain generation),
+        // evaluate false so the baked chain is the full superset and runtime
+        // ConditionEvaluators decide per context.
         XRViewport? viewport = explicitViewport ??
             RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport ??
-            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport ??
-            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastWindowViewport;
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport;
 
         return viewport?.RendersToExternalSwapchainTarget == true &&
             !RuntimeEngine.Rendering.State.IsSceneCapturePass &&
@@ -1435,6 +1440,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     /// </summary>
     public bool Stereo { get; }
 
+    internal override bool UsesStereoResources(XRRenderPipelineInstance instance, XRViewport? viewport)
+        => Stereo;
+
     protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
         => new()
         {
@@ -1819,7 +1827,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     private static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance)
         => RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);
 
-    internal void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)
+    internal override void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)
     {
         if (IsDestroyed || width <= 0 || height <= 0)
             return;
@@ -1837,7 +1845,8 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
                 dimensions.DisplayHeight,
                 dimensions.InternalWidth,
                 dimensions.InternalHeight,
-                "ViewportResized"))
+                "ViewportResized",
+                viewport: viewport))
         {
             // Compatibility fallback for pipelines without a declared layout.
             RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);

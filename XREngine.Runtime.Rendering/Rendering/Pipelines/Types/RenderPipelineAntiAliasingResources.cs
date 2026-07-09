@@ -2,8 +2,14 @@ using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering;
 
+/// <summary>
+/// Contains the resources used by the anti-aliasing passes of the default render pipeline.
+/// </summary>
 internal static class RenderPipelineAntiAliasingResources
 {
+    /// <summary>
+    /// Contains the names of the textures used by the anti-aliasing passes of the default render pipeline.
+    /// </summary>
     internal static readonly string[] AntiAliasingTextureDependencies =
     [
         DefaultRenderPipeline.PostProcessOutputTextureName,
@@ -31,6 +37,9 @@ internal static class RenderPipelineAntiAliasingResources
         DefaultRenderPipeline.ForwardPassMsaaDepthViewTextureName,
     ];
 
+    /// <summary>
+    /// Contains the names of the frame buffers used by the anti-aliasing passes of the default render pipeline.
+    /// </summary>
     internal static readonly string[] AntiAliasingFrameBufferDependencies =
     [
         // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
@@ -69,6 +78,9 @@ internal static class RenderPipelineAntiAliasingResources
         DefaultRenderPipeline.MsaaDeferredResolveRmseFBOName,
     ];
 
+    /// <summary>
+    /// Contains the names of the textures used by the anti-aliasing passes of the default render pipeline.
+    /// </summary>
     internal static readonly string[] ResizeRecoveryTextureDependencies =
     [
         DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
@@ -83,6 +95,9 @@ internal static class RenderPipelineAntiAliasingResources
         DefaultRenderPipeline.TransparentRevealageTextureName,
     ];
 
+    /// <summary>
+    /// Contains the names of the frame buffers used by the anti-aliasing passes of the default render pipeline.
+    /// </summary>
     internal static readonly string[] ResizeRecoveryFrameBufferDependencies =
     [
         // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
@@ -94,6 +109,11 @@ internal static class RenderPipelineAntiAliasingResources
         DefaultRenderPipeline.TransparentResolveFBOName,
     ];
 
+    /// <summary>
+    /// Invalidates the anti-aliasing resources of the default render pipeline, forcing them to be recreated on the next frame.
+    /// </summary>
+    /// <param name="instance">The render pipeline instance.</param>
+    /// <param name="reason">The reason for invalidation.</param>
     internal static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance, string reason = "AntiAliasingSettingsChanged")
     {
         VPRC_TemporalAccumulationPass.ResetHistory(instance);
@@ -107,6 +127,10 @@ internal static class RenderPipelineAntiAliasingResources
             instance.RemoveTextureResource(name, reason);
     }
 
+    /// <summary>
+    /// Invalidates the anti-aliasing resources of the default render pipeline, forcing them to be recreated on the next frame due to a viewport resize.
+    /// </summary>
+    /// <param name="instance">The render pipeline instance.</param>
     internal static void InvalidateViewportResizeResources(XRRenderPipelineInstance instance)
     {
         const string reason = "ViewportResized";
