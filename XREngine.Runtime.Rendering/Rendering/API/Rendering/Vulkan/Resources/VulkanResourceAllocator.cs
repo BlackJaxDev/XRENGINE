@@ -1173,6 +1173,16 @@ internal sealed class VulkanPhysicalImageGroup
                 pair.Value);
         }
 
+        Array.Sort(
+            subresources,
+            static (left, right) =>
+            {
+                int mipCompare = left.MipLevel.CompareTo(right.MipLevel);
+                return mipCompare != 0
+                    ? mipCompare
+                    : left.ArrayLayer.CompareTo(right.ArrayLayer);
+            });
+
         return new LayoutSnapshot(_lastKnownLayout, subresources);
     }
 

@@ -839,6 +839,7 @@ namespace XREngine
                             return;
 
                         Volatile.Write(ref _useSpotShadowAtlas, value);
+                        MarkShadowAtlasRenderResourcesChanged(nameof(UseSpotShadowAtlas));
                     }
                 }
 
@@ -862,6 +863,8 @@ namespace XREngine
                                 Engine.Rendering.State.RenderFrameId,
                                 value);
                         }
+
+                        MarkShadowAtlasRenderResourcesChanged(nameof(UseDirectionalShadowAtlas));
                     }
                 }
 
@@ -876,8 +879,12 @@ namespace XREngine
                             return;
 
                         Volatile.Write(ref _usePointShadowAtlas, value);
+                        MarkShadowAtlasRenderResourcesChanged(nameof(UsePointShadowAtlas));
                     }
                 }
+
+                private static void MarkShadowAtlasRenderResourcesChanged(string settingName)
+                    => global::XREngine.Rendering.AbstractRenderer.Current?.NotifyRenderResourcesChanged(settingName);
 
                 [Category("Shadows")]
                 [Description("Width and height of each dynamic shadow atlas page in texels.")]

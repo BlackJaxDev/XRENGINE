@@ -954,6 +954,8 @@ public unsafe partial class OpenXRAPI
 
             XRViewport collectViewport = _openXrLeftViewport!;
             RenderPipeline collectPipeline;
+            RenderPipeline leftEyePipeline;
+            RenderPipeline rightEyePipeline;
             RenderCommandCollection collectMeshCommands;
 
             if (useTrueSinglePassStereo)
@@ -970,6 +972,8 @@ public unsafe partial class OpenXRAPI
 
                 collectViewport = _openXrStereoViewport;
                 collectPipeline = GetOrCreateOpenXrStereoPipeline(sourcePipeline);
+                leftEyePipeline = collectPipeline;
+                rightEyePipeline = collectPipeline;
                 collectViewport.WorldInstanceOverride = resolvedWorld;
                 collectViewport.Camera = _openXrLeftEyeCamera;
                 collectViewport.MeshRenderCommandsOverride = null;
@@ -983,14 +987,15 @@ public unsafe partial class OpenXRAPI
             }
             else
             {
-                RenderPipeline desiredPipeline = GetOrCreateOpenXrPipeline(sourcePipeline);
-                collectPipeline = desiredPipeline;
-                if (!ReferenceEquals(_openXrLeftViewport!.RenderPipeline, desiredPipeline))
-                    _openXrLeftViewport.RenderPipeline = desiredPipeline;
-                if (!ReferenceEquals(_openXrRightViewport!.RenderPipeline, desiredPipeline))
-                    _openXrRightViewport.RenderPipeline = desiredPipeline;
+                leftEyePipeline = GetOrCreateOpenXrPipeline(sourcePipeline, eyeIndex: 0);
+                rightEyePipeline = GetOrCreateOpenXrPipeline(sourcePipeline, eyeIndex: 1);
+                collectPipeline = leftEyePipeline;
+                if (!ReferenceEquals(_openXrLeftViewport!.RenderPipeline, leftEyePipeline))
+                    _openXrLeftViewport.RenderPipeline = leftEyePipeline;
+                if (!ReferenceEquals(_openXrRightViewport!.RenderPipeline, rightEyePipeline))
+                    _openXrRightViewport.RenderPipeline = rightEyePipeline;
 
-                RenderCommandCollection sharedMeshCommands = EnsureOpenXrSharedMeshRenderCommands(desiredPipeline);
+                RenderCommandCollection sharedMeshCommands = EnsureOpenXrSharedMeshRenderCommands(leftEyePipeline);
                 sharedMeshCommands.SetOwnerPipeline(_openXrLeftViewport.RenderPipelineInstance);
                 _openXrLeftViewport.MeshRenderCommandsOverride = sharedMeshCommands;
                 _openXrRightViewport.MeshRenderCommandsOverride = sharedMeshCommands;
@@ -999,8 +1004,8 @@ public unsafe partial class OpenXRAPI
 
             Volatile.Write(ref _pendingXrFrameUsesTrueSinglePassStereo, useTrueSinglePassStereo ? 1 : 0);
 
-            _openXrLeftEyeCamera!.RenderPipeline = collectPipeline;
-            _openXrRightEyeCamera!.RenderPipeline = collectPipeline;
+            _openXrLeftEyeCamera!.RenderPipeline = leftEyePipeline;
+            _openXrRightEyeCamera!.RenderPipeline = rightEyePipeline;
 
             float leftFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0);
             float rightFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1);

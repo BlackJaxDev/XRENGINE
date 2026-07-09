@@ -155,6 +155,11 @@ namespace XREngine.Rendering
         internal virtual void NotifyRenderResourcesChanged(string? reason)
             => NotifyRenderResourcesChanged();
 
+        internal virtual IDisposable? EnterRenderPipelineFrameResourceScope(
+            XRRenderPipelineInstance pipeline,
+            XRViewport? viewport)
+            => null;
+
         protected bool _frameBufferInvalidated = false;
         #endregion
 
@@ -168,6 +173,12 @@ namespace XREngine.Rendering
 
         public abstract void CropRenderArea(BoundingRectangle region);
         public abstract void SetRenderArea(BoundingRectangle region);
+        public virtual void ClearRenderArea()
+        {
+            var size = Window.Size;
+            if (size.X > 0 && size.Y > 0)
+                SetRenderArea(new BoundingRectangle(0, 0, size.X, size.Y));
+        }
         public abstract void SetCroppingEnabled(bool enabled);
         public virtual bool SetIndexedViewportScissors(
             ReadOnlySpan<BoundingRectangle> viewports,

@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -1598,6 +1599,7 @@ namespace XREngine.Rendering.Vulkan
             ImageView DepthView,
             Format DepthFormat,
             ImageAspectFlags DepthAspect,
+            ImageLayout InitialColorLayout,
             bool ImageEverPresentedAtRecordStart)
         {
             public bool IsValid =>
@@ -1609,12 +1611,32 @@ namespace XREngine.Rendering.Vulkan
                 DepthView.Handle != 0;
         }
 
+        private ImageLayout ResolveTrackedSwapchainTargetColorLayout(Image image)
+        {
+            if (image.Handle == 0)
+                return ImageLayout.Undefined;
+
+            ImageSubresourceRange colorRange = new()
+            {
+                AspectMask = ImageAspectFlags.ColorBit,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1
+            };
+
+            return TryGetTrackedImageLayout(image, colorRange, out ImageLayout trackedLayout)
+                ? trackedLayout
+                : ImageLayout.Undefined;
+        }
+
         private SwapchainRecordingTarget ResolveSwapchainRecordingTarget(
             uint imageIndex,
             OpenXrEyeRenderTargetContext? openXrTargetContext)
         {
             if (openXrTargetContext is { } openXrTarget && openXrTarget.IsValid)
             {
+                ImageLayout initialColorLayout = ResolveTrackedSwapchainTargetColorLayout(openXrTarget.Image);
                 return new SwapchainRecordingTarget(
                     openXrTarget.Image,
                     openXrTarget.ImageView,
@@ -1624,6 +1646,7 @@ namespace XREngine.Rendering.Vulkan
                     openXrTarget.DepthView,
                     openXrTarget.DepthFormat,
                     openXrTarget.DepthAspect,
+                    initialColorLayout,
                     ImageEverPresentedAtRecordStart: false);
             }
 
@@ -1635,8 +1658,14 @@ namespace XREngine.Rendering.Vulkan
                 return default;
             }
 
+            Image swapchainImage = swapChainImages[imageIndex];
+            bool imageEverPresented = IsSwapchainImageEverPresented(imageIndex);
+            ImageLayout initialSwapchainLayout = ResolveTrackedSwapchainTargetColorLayout(swapchainImage);
+            if (initialSwapchainLayout == ImageLayout.Undefined && imageEverPresented)
+                initialSwapchainLayout = ImageLayout.PresentSrcKhr;
+
             return new SwapchainRecordingTarget(
-                swapChainImages[imageIndex],
+                swapchainImage,
                 swapChainImageViews[imageIndex],
                 swapChainImageFormat,
                 swapChainExtent,
@@ -1644,7 +1673,8 @@ namespace XREngine.Rendering.Vulkan
                 _swapchainDepthView,
                 _swapchainDepthFormat,
                 _swapchainDepthAspect,
-                IsSwapchainImageEverPresented(imageIndex));
+                initialSwapchainLayout,
+                imageEverPresented);
         }
 
         private ImageLayout RecordCommandBuffer(
@@ -1670,6 +1700,9 @@ namespace XREngine.Rendering.Vulkan
             SwapchainRecordingTarget swapchainTarget = ResolveSwapchainRecordingTarget(imageIndex, openXrTargetContext);
             Extent2D swapchainRecordExtent = swapchainTarget.IsValid ? swapchainTarget.Extent : swapChainExtent;
             bool imageWasEverPresentedAtRecordStart = swapchainTarget.ImageEverPresentedAtRecordStart;
+            ImageLayout initialSwapchainColorLayout = swapchainTarget.IsValid
+                ? swapchainTarget.InitialColorLayout
+                : ImageLayout.Undefined;
             CommandBufferRecordingScratch recordingScratch = _commandBufferRecordingScratch.Value!;
             HashSet<nint> executedCommandChainSecondaryHandles = recordingScratch.ExecutedCommandChainSecondaryHandles;
             executedCommandChainSecondaryHandles.Clear();
@@ -1748,8 +1781,11 @@ namespace XREngine.Rendering.Vulkan
                 if (commandChainSchedule is not null &&
                     TryGetCommandChainScheduleFrameSlot(commandChainSchedule, out int commandChainScheduleFrameSlot))
                 {
-                    scheduledCommandChainKeysByOpIndex = BuildCommandChainKeysByFrameOpIndex(commandChainSchedule, ops.Length);
                     scheduledCommandChainCache = GetCommandChainCache(unchecked((uint)commandChainScheduleFrameSlot));
+                    scheduledCommandChainKeysByOpIndex = BuildCommandChainKeysByFrameOpIndex(
+                        commandChainSchedule,
+                        scheduledCommandChainCache,
+                        ops.Length);
                 }
             }
 
@@ -1772,9 +1808,7 @@ namespace XREngine.Rendering.Vulkan
             ImageLayout swapchainFinalTargetLayout = transitionSwapchainToPresent
                 ? ImageLayout.PresentSrcKhr
                 : ImageLayout.ColorAttachmentOptimal;
-            ImageLayout swapchainFinalLayout = imageWasEverPresentedAtRecordStart
-                ? ImageLayout.PresentSrcKhr
-                : ImageLayout.Undefined;
+            ImageLayout swapchainFinalLayout = initialSwapchainColorLayout;
 
             // Ensure swapchain resources are transitioned appropriately before any rendering.
             using (RuntimeRenderingHostServices.Current.StartProfileScope("Vulkan.RecordPrimary.FrameStartBarriers"))
@@ -2366,7 +2400,8 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                if (imageWasEverPresentedAtRecordStart)
+                ImageLayout oldLayout = ResolveCurrentSwapchainColorLayout();
+                if (oldLayout == ImageLayout.PresentSrcKhr)
                 {
                     swapchainFinalLayout = ImageLayout.PresentSrcKhr;
                     return;
@@ -2375,9 +2410,9 @@ namespace XREngine.Rendering.Vulkan
                 ImageMemoryBarrier presentBarrier = new()
                 {
                     SType = StructureType.ImageMemoryBarrier,
-                    SrcAccessMask = 0,
+                    SrcAccessMask = ResolveSwapchainLayoutAccess(oldLayout),
                     DstAccessMask = 0,
-                    OldLayout = ImageLayout.Undefined,
+                    OldLayout = oldLayout,
                     NewLayout = ImageLayout.PresentSrcKhr,
                     SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                     DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
@@ -2394,7 +2429,7 @@ namespace XREngine.Rendering.Vulkan
 
                 CmdPipelineBarrierTracked(
                     commandBuffer,
-                    PipelineStageFlags.TopOfPipeBit,
+                    ResolveSwapchainLayoutStage(oldLayout),
                     PipelineStageFlags.BottomOfPipeBit,
                     0,
                     0,
@@ -2477,7 +2512,8 @@ namespace XREngine.Rendering.Vulkan
                         wantDepth: false,
                         wantStencil: false,
                         out _,
-                        isSource: false);
+                        isSource: false,
+                        in swapchainTarget);
                     if (!canResolveRefreshSource || !canResolveRefreshDestination)
                     {
                         Debug.VulkanEvery(
@@ -2491,7 +2527,7 @@ namespace XREngine.Rendering.Vulkan
                             imageIndex);
                     }
 
-                    blitRecorded = RecordBlitOp(commandBuffer, imageIndex, replayBlit);
+                    blitRecorded = RecordBlitOp(commandBuffer, imageIndex, replayBlit, in swapchainTarget);
                 }
                 CmdEndLabel(commandBuffer);
                 if (!blitRecorded)
@@ -3987,6 +4023,9 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 key = scheduledCommandChainKeysByOpIndex[opIndex];
+                if (key.ChainOrdinal < 0)
+                    return false;
+
                 if (!scheduledCommandChainCache.TryGetValue(key, out CommandChain? scheduledChain))
                     return false;
 
@@ -4979,7 +5018,7 @@ namespace XREngine.Rendering.Vulkan
                         if (blit.ColorBit && (blit.InFbo is null || blit.OutFbo is null))
                             EnsureSwapchainColorAttachmentLayoutForBlit();
                         CmdBeginLabel(commandBuffer, "Blit");
-                        bool blitRecorded = RecordBlitOp(commandBuffer, imageIndex, blit);
+                        bool blitRecorded = RecordBlitOp(commandBuffer, imageIndex, blit, in swapchainTarget);
                         CmdEndLabel(commandBuffer);
                         if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit) && blitRecorded)
                         {
@@ -5780,8 +5819,10 @@ namespace XREngine.Rendering.Vulkan
         private void RecordPublishFramebufferForSamplingOp(CommandBuffer commandBuffer, PublishFramebufferForSamplingOp op)
         {
             XRFrameBuffer fbo = op.FrameBuffer;
-            EnsureFrameBufferRegistered(fbo);
-            EnsureFrameBufferAttachmentsRegistered(fbo);
+            RenderResourceRegistry? publishRegistry =
+                op.Context.ResourceRegistry ?? RuntimeEngine.Rendering.State.CurrentResourceRegistry;
+            EnsureFrameBufferRegistered(fbo, publishRegistry);
+            EnsureFrameBufferAttachmentsRegistered(fbo, publishRegistry);
 
             if (GetOrCreateAPIRenderObject(fbo, generateNow: true) is not VkFrameBuffer vkFbo)
                 return;
@@ -5978,6 +6019,16 @@ namespace XREngine.Rendering.Vulkan
 
         private bool RecordBlitOp(CommandBuffer commandBuffer, uint imageIndex, BlitOp op)
         {
+            SwapchainRecordingTarget swapchainTarget = default;
+            return RecordBlitOp(commandBuffer, imageIndex, op, in swapchainTarget);
+        }
+
+        private bool RecordBlitOp(
+            CommandBuffer commandBuffer,
+            uint imageIndex,
+            BlitOp op,
+            in SwapchainRecordingTarget swapchainTarget)
+        {
             bool ExecuteSingleBlit(in BlitImageInfo source, in BlitImageInfo destination, Filter filter)
             {
                 if (!TryResolveLiveBlitImage(source, out BlitImageInfo resolvedSource) ||
@@ -6153,15 +6204,15 @@ namespace XREngine.Rendering.Vulkan
             bool copiedAny = false;
 
             if (op.ColorBit &&
-                TryResolveBlitImage(op.InFbo, imageIndex, op.ReadBufferMode, wantColor: true, wantDepth: false, wantStencil: false, out var colorSource, isSource: true) &&
-                TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.ColorAttachment0, wantColor: true, wantDepth: false, wantStencil: false, out var colorDestination, isSource: false))
+                TryResolveBlitImage(op.InFbo, imageIndex, op.ReadBufferMode, wantColor: true, wantDepth: false, wantStencil: false, out var colorSource, isSource: true, in swapchainTarget) &&
+                TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.ColorAttachment0, wantColor: true, wantDepth: false, wantStencil: false, out var colorDestination, isSource: false, in swapchainTarget))
             {
                 copiedAny |= ExecuteSingleBlit(colorSource, colorDestination, op.LinearFilter ? Filter.Linear : Filter.Nearest);
             }
 
             if ((op.DepthBit || op.StencilBit) &&
-                TryResolveBlitImage(op.InFbo, imageIndex, op.ReadBufferMode, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthSource, isSource: true) &&
-                TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.None, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthDestination, isSource: false))
+                TryResolveBlitImage(op.InFbo, imageIndex, op.ReadBufferMode, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthSource, isSource: true, in swapchainTarget) &&
+                TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.None, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthDestination, isSource: false, in swapchainTarget))
             {
                 // Vulkan only supports nearest filtering for depth/stencil blits.
                 copiedAny |= ExecuteSingleBlit(depthSource, depthDestination, Filter.Nearest);
@@ -6998,15 +7049,21 @@ namespace XREngine.Rendering.Vulkan
                         BaseArrayLayer = imageLayer,
                         LayerCount = 1
                     };
-                    ImageLayout oldLayout = beginRendering && requestedOldLayout == ImageLayout.Undefined
-                        ? ImageLayout.Undefined
-                        : TryGetTrackedImageLayout(transitionImage, transitionRange, out ImageLayout trackedImageLayout)
-                            ? NormalizeFboAttachmentLayout(signature, trackedImageLayout)
-                            : beginRendering
-                                ? ImageLayout.Undefined
-                                : NormalizeFboAttachmentLayout(
-                                    signature,
-                                    ResolveFboAttachmentOldLayout(target, mipLevel, trackedLayer, requestedOldLayout));
+                    ImageLayout oldLayout;
+                    if (beginRendering && requestedOldLayout == ImageLayout.Undefined)
+                    {
+                        oldLayout = ImageLayout.Undefined;
+                    }
+                    else if (TryGetTrackedImageLayout(transitionImage, transitionRange, out ImageLayout trackedImageLayout))
+                    {
+                        oldLayout = NormalizeFboAttachmentLayout(signature, trackedImageLayout);
+                    }
+                    else
+                    {
+                        oldLayout = NormalizeFboAttachmentLayout(
+                            signature,
+                            ResolveFboAttachmentOldLayout(target, mipLevel, trackedLayer, requestedOldLayout));
+                    }
                     if (oldLayout == newLayout)
                         continue;
 
@@ -7446,7 +7503,7 @@ namespace XREngine.Rendering.Vulkan
                     layerIndex,
                     out ImageLayout layout)
                     ? layout
-                    : ImageLayout.Undefined;
+                    : ResolveFboAttachmentOldLayout(target, mipLevel, layerIndex, ImageLayout.Undefined);
             }
 
             return layouts;

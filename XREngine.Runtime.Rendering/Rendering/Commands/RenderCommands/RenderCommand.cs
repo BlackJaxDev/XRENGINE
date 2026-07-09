@@ -69,9 +69,9 @@ namespace XREngine.Rendering.Commands
         // _dirty: any property change marks this true via OnPropertyChanged. Cleared at the end of
         // SwapBuffers() once the per-command publish has run. The render-side snapshot fields
         // (RenderEnabled / per-derived-class snapshot copies) are owned by the command instance.
-        // Collections that share commands with an independent authoritative viewport should set
-        // RenderCommandCollection.IsRenderCommandSnapshotAuthority=false so they do not clear
-        // _dirty before that viewport publishes the shared snapshot.
+        // Collections that are passive consumers of an already-swapped authoritative collection can
+        // set RenderCommandCollection.IsRenderCommandSnapshotAuthority=false. Do not use that mode for
+        // independently scheduled VR/desktop views, because their swap order can vary frame-to-frame.
         //
         // RenderCommandCollection keeps dirty-queue membership per collection. Do not keep a global
         // queue-membership bit here: desktop, OpenXR eye, shadow, and capture viewports can collect

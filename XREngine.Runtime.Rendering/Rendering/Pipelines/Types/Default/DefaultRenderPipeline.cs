@@ -1827,12 +1827,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, IForwardDepthNormal
     private static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance)
         => RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);
 
-    internal override void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)
+    internal override void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height, XRViewport? viewport = null)
     {
         if (IsDestroyed || width <= 0 || height <= 0)
             return;
 
-        XRViewport? viewport = instance.RenderState.WindowViewport ?? instance.LastWindowViewport;
+        viewport ??= instance.RenderState.WindowViewport ?? instance.LastWindowViewport;
         var dimensions = XRRenderPipelineInstance.ResolveViewportResizeResourceDimensions(
             viewport,
             width,

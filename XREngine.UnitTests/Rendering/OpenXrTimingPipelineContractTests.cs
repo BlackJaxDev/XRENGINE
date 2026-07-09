@@ -63,14 +63,15 @@ public sealed class OpenXrTimingPipelineContractTests
         string vkDataBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
         string vulkanComputeDescriptors = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.ComputeDescriptors.cs");
         string vulkanDynamicUniformRingBuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs");
+        string vulkanResourceRetirement = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
         string vulkanFrameLoop = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.cs");
         string renderPipelineGpuProfiler = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/RenderPipelineGpuProfiler.cs");
         string vulkanInitialization = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
         string vulkanSwapchain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
         string unitTestUi = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs");
-        string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.CommandChain.cs");
-        string defaultPipelineMain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
-        string defaultPipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs");
+        string defaultPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
+        string defaultPipelineMain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
+        string defaultPipeline2 = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default2/DefaultRenderPipeline2.CommandChain.cs");
 
         frameLifecycle.ShouldContain("StartProfileScope(\"OpenXR.RenderFrame.TryRenderVulkanEyesBatch\")");
         frameLifecycle.ShouldContain("TryRenderVulkanEyesBatch(projectionViews, out vulkanBatchHandled)");
@@ -185,6 +186,10 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanCommandBufferState.ShouldContain("DestroyTrackedCommandChainSecondaryPools();");
         vulkanCommandBufferState.ShouldContain("DiscardDeferredSecondaryCommandBuffersForPool(pool);");
         vulkanCommandBufferState.ShouldContain("UntrackOwnedCommandChainSecondaryCommandBuffer(entry.Pool, entry.CommandBuffer);");
+        vulkanCommandBufferState.ShouldContain("public bool PendingDestroy { get; set; }");
+        vulkanCommandBufferState.ShouldContain("private void MarkOwnedCommandChainSecondaryPoolPendingDestroy");
+        vulkanCommandBufferState.ShouldContain("private void DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty");
+        vulkanCommandBufferState.ShouldContain("DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(entry.Pool);");
         string trackedSecondaryPoolTeardown = SliceMethod(
             vulkanCommandBufferState,
             "private void DestroyTrackedCommandChainSecondaryPools",
@@ -197,14 +202,26 @@ public sealed class OpenXrTimingPipelineContractTests
             "private int InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease");
         commandChainCache.ShouldContain("DestroyCommandChainCaches();");
         commandChainCache.ShouldContain("MarkOpenXrPrimaryCommandBufferVariantsDirty();");
+        string resourceRelease = SliceMethod(
+            vulkanResourceRetirement,
+            "internal void ReleaseDescriptorReferencesForPhysicalResourceDestruction",
+            "/// <summary>");
+        resourceRelease.ShouldContain("InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease();");
+        resourceRelease.ShouldContain("MarkOpenXrPrimaryCommandBufferVariantsDirty();");
+        resourceRelease.IndexOf("InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease();", StringComparison.Ordinal)
+            .ShouldBeLessThan(resourceRelease.IndexOf("MarkOpenXrPrimaryCommandBufferVariantsDirty();", StringComparison.Ordinal));
         vulkanCommandChainLowering.ShouldContain("TrackOwnedCommandChainSecondaryCommandBuffer(pool, secondary);");
         vulkanCommandChainLowering.ShouldContain("TrackOwnedCommandChainSecondaryCommandBuffer(pool, replacement);");
-        vulkanCommandChainLowering.ShouldContain("UntrackOwnedCommandChainSecondaryPool(pool);");
         string commandChainSecondaryTeardown = SliceMethod(
             vulkanCommandChainLowering,
             "private void DestroyCommandChainSecondaryCommandBuffer",
             "internal static CommandChainDirtyReason EvaluateCommandChainDirtyReason");
-        commandChainSecondaryTeardown.ShouldContain("Api!.DestroyCommandPool(device, pool, null);");
+        commandChainSecondaryTeardown.ShouldContain("MarkOwnedCommandChainSecondaryPoolPendingDestroy(pool);");
+        commandChainSecondaryTeardown.ShouldContain("ResolveCommandBufferImageIndex(secondary);");
+        commandChainSecondaryTeardown.ShouldContain("DeferSecondaryCommandBufferFree(unchecked((uint)imageIndex), pool, secondary);");
+        commandChainSecondaryTeardown.ShouldContain("DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(pool);");
+        commandChainSecondaryTeardown.ShouldNotContain("DiscardDeferredSecondaryCommandBuffersForPool(pool);");
+        commandChainSecondaryTeardown.ShouldNotContain("Api!.DestroyCommandPool(device, pool, null);");
         commandChainSecondaryTeardown.ShouldNotContain("ownsPool && pool.Handle != 0 && !_deviceLost");
         string commandChainWorkerPoolTeardown = SliceMethod(
             ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandChainWorkers.cs"),
@@ -227,10 +244,14 @@ public sealed class OpenXrTimingPipelineContractTests
         renderPipelineGpuProfiler.ShouldContain("RemoveFramesOlderThanNoLock(best.FrameId, LiveSnapshotMergeWindowFrames);");
         renderPipelineGpuProfiler.ShouldContain("!IsWithinLiveSnapshotMergeWindow(best.FrameId, frameId)");
 
-        const string viewportTargetCondition =
-            "State.WindowViewport is not null\n        && (RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null\n            || RuntimeEngine.Rendering.State.IsStereoPass)";
-        defaultPipeline.ShouldContain(viewportTargetCondition);
-        defaultPipeline2.ShouldContain(viewportTargetCondition);
+        defaultPipeline.ShouldContain("private static bool ShouldUseViewportTargetCommands()");
+        defaultPipeline.ShouldContain("if (viewport is null)");
+        defaultPipeline.ShouldContain("if (RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null)");
+        defaultPipeline.ShouldContain("return RuntimeEngine.Rendering.State.IsStereoPass");
+        defaultPipeline2.ShouldContain("private static bool ShouldUseViewportTargetCommands()");
+        defaultPipeline2.ShouldContain("if (viewport is null)");
+        defaultPipeline2.ShouldContain("if (RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null)");
+        defaultPipeline2.ShouldContain("return RuntimeEngine.Rendering.State.IsStereoPass");
 
         string defaultPipelineFinalOutput = SliceMethod(
             defaultPipeline,
@@ -256,7 +277,7 @@ public sealed class OpenXrTimingPipelineContractTests
         defaultPipelineMain.ShouldContain("internal static bool RuntimeEnableMsaaDeferred");
         defaultPipelineMain.ShouldContain("&& !UseOpenXrVulkanDesktopStartupSafePath\n        && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;");
 
-        string defaultPipelineResources = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/DefaultRenderPipeline.Resources.cs").Replace("\r\n", "\n");
+        string defaultPipelineResources = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.Resources.cs").Replace("\r\n", "\n");
         defaultPipelineResources.ShouldContain("profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;");
         defaultPipelineResources.ShouldContain("profile.AntiAliasingMode == EAntiAliasingMode.Smaa;");
         defaultPipelineResources.ShouldContain("Texture(builder, SmaaEdgeTextureName");
@@ -264,7 +285,8 @@ public sealed class OpenXrTimingPipelineContractTests
         defaultPipelineResources.ShouldContain("Texture(builder, SmaaOutputTextureName");
         defaultPipelineResources.ShouldContain("builder.FrameBuffer(SmaaFBOName)");
         defaultPipelineResources.ShouldNotContain("!UsesOpenXrVulkanDesktopSafePath(profile) && profile.AntiAliasingMode == EAntiAliasingMode.Fxaa;");
-        defaultPipelineResources.ShouldContain("if (EnableDeferredMsaa && !UseOpenXrVulkanDesktopStartupSafePath)");
+        defaultPipelineResources.ShouldContain("bool useOpenXrVulkanSafePath = UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport);");
+        defaultPipelineResources.ShouldContain("if (EnableDeferredMsaa && !useOpenXrVulkanSafePath)");
         defaultPipelineResources.ShouldContain("&& !UsesOpenXrVulkanDesktopSafePath(profile)\n        && profile.AntiAliasingMode == EAntiAliasingMode.Msaa");
 
         unitTestUi.ShouldContain("ShouldFlipOpenXrVulkanStereoPreviewUv");
@@ -292,6 +314,214 @@ public sealed class OpenXrTimingPipelineContractTests
             "private static int ResolveOpenXrFrameDataSlotCount");
         mirrorPrimaryRecord.ShouldContain("OpenXrExternalSwapchainTargetImageIndex");
         mirrorPrimaryRecord.ShouldContain("frameDataImageIndexOverride: recordImageIndex");
+    }
+
+    [Test]
+    public void VulkanOpenXr_EyePreviewCopyUpdatesReadyTargetsDuringAllocatorPressure()
+    {
+        string vulkanRendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+
+        string copyMethod = SliceMethod(
+            vulkanRendererOpenXr,
+            "internal bool TryCopyOpenXrEyeSwapchainImageToTexture",
+            "private bool TryPrepareOpenXrEyeSwapchainPreviewCopy");
+
+        copyMethod.ShouldContain("ShouldDeferOpenXrEyePreviewCopyWork");
+        copyMethod.ShouldContain("allowDestinationGeneration: false");
+        copyMethod.ShouldContain("allowDestinationGeneration: true");
+        copyMethod.ShouldContain("RecordOpenXrEyeSwapchainPreviewCopy(scope.CommandBuffer, in plan)");
+        copyMethod.IndexOf("allowDestinationGeneration: false", StringComparison.Ordinal)
+            .ShouldBeLessThan(copyMethod.IndexOf("Debug.VulkanWarningEvery", StringComparison.Ordinal));
+
+        string prepareMethod = SliceMethod(
+            vulkanRendererOpenXr,
+            "private bool TryPrepareOpenXrEyeSwapchainPreviewCopy",
+            "private void RecordOpenXrEyeSwapchainPreviewCopy");
+
+        prepareMethod.ShouldContain("bool allowDestinationGeneration");
+        prepareMethod.ShouldContain("GetOrCreateAPIRenderObject(destinationTexture, generateNow: true)");
+        prepareMethod.ShouldContain("TryGetAPIRenderObject(destinationTexture, out destinationObject)");
+        prepareMethod.ShouldContain("!destinationObject.IsGenerated");
+    }
+
+    [Test]
+    public void VulkanOpenXr_PreviewTargetFormatFallbackDoesNotRecurse()
+    {
+        string vulkanOpenXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs");
+
+        string previewTargets = SliceMethod(
+            vulkanOpenXrApi,
+            "private void EnsureVulkanOpenXrPreviewTargets",
+            "private void LogOpenXrViewRenderModeResolution");
+
+        previewTargets.ShouldContain("EnsureOpenXrPreviewTargets(renderer, width, height);");
+        previewTargets.ShouldNotContain("EnsureVulkanOpenXrPreviewTargets(renderer, width, height);");
+    }
+
+    [Test]
+    public void VulkanOpenXr_EyeRenderingGateDoesNotInheritDesktopAllocationBackoff()
+    {
+        string vulkanRendererOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+
+        string eyeRenderingGate = SliceMethod(
+            vulkanRendererOpenXr,
+            "internal bool ShouldDeferOpenXrEyeRenderingWork",
+            "internal bool ShouldDeferTextureUploadPreparationForOpenXrPriority");
+
+        eyeRenderingGate.ShouldContain("TryDescribeBlockingOpenXrEyeTextureWork");
+        eyeRenderingGate.ShouldNotContain("TryDescribeRecentResourceAllocationFailure");
+
+        string directEyePrepare = SliceMethod(
+            vulkanRendererOpenXr,
+            "private bool TryPrepareOpenXrEyeSwapchainCommandBuffer",
+            "private bool TryRecordPreparedOpenXrEyeSwapchainCommandBuffer");
+
+        directEyePrepare.IndexOf("EnterOpenXrResourcePlannerThreadScope", StringComparison.Ordinal)
+            .ShouldBeLessThan(directEyePrepare.IndexOf("TryDescribeRecentResourceAllocationFailure", StringComparison.Ordinal));
+        directEyePrepare.ShouldContain("PrepareResourcePlannerForFrameOps(ops)");
+
+        string textureUploadGate = SliceMethod(
+            vulkanRendererOpenXr,
+            "internal bool ShouldDeferTextureUploadPreparationForOpenXrPriority",
+            "private bool TryDescribeOpenXrVulkanAllocatorPressure");
+
+        textureUploadGate.ShouldContain("TryDescribeRecentResourceAllocationFailure");
+    }
+
+    [Test]
+    public void VulkanOpenXr_SafeEyePassDoesNotReplacePostProcessFallbacksWithAtmosphereFogOutputs()
+    {
+        string commandChain = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
+        string resources = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.Resources.cs");
+
+        string atmosphereGate = SliceMethod(
+            commandChain,
+            "private static bool ShouldRunAtmosphericScattering()",
+            "private static bool ShouldRunVolumetricFog()");
+        atmosphereGate.ShouldContain("if (UseOpenXrVulkanDesktopStartupSafePath)\n            return false;");
+        atmosphereGate.IndexOf("UseOpenXrVulkanDesktopStartupSafePath", StringComparison.Ordinal)
+            .ShouldBeLessThan(atmosphereGate.IndexOf("GetActivePostProcessState", StringComparison.Ordinal));
+
+        string fogGate = SliceMethod(
+            commandChain,
+            "private static bool ShouldRunVolumetricFog()",
+            "private void AppendVoxelConeTracingPass");
+        fogGate.ShouldContain("if (UseOpenXrVulkanDesktopStartupSafePath)\n            return false;");
+        fogGate.IndexOf("UseOpenXrVulkanDesktopStartupSafePath", StringComparison.Ordinal)
+            .ShouldBeLessThan(fogGate.IndexOf("GetActivePostProcessState", StringComparison.Ordinal));
+
+        commandChain.ShouldContain("AtmosphereColorTextureName,\n            CreateAtmosphereColorTexture");
+        commandChain.ShouldContain("VolumetricFogColorTextureName,\n            CreateVolumetricFogColorTexture");
+        resources.ShouldContain("Texture(builder, AtmosphereColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture");
+        resources.ShouldContain("Texture(builder, VolumetricFogColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), RenderPipelineResourceUsage.SampledTexture");
+        resources.ShouldContain("CreateAtmosphereColorFallbackTexture");
+        resources.ShouldContain("CreateVolumetricFogColorFallbackTexture");
+    }
+
+    [Test]
+    public void VulkanFboLayoutQuery_FallsBackToAttachmentSourceTrackedLayout()
+    {
+        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+
+        string queryCurrentLayouts = SliceMethod(
+            commandRecording,
+            "private ImageLayout[]? QueryCurrentAttachmentLayouts",
+            "private bool TryGetExactTrackedFboAttachmentLayout");
+
+        queryCurrentLayouts.ShouldContain("TryGetExactTrackedFboAttachmentLayout");
+        queryCurrentLayouts.ShouldContain("ResolveFboAttachmentOldLayout(target, mipLevel, layerIndex, ImageLayout.Undefined)");
+        queryCurrentLayouts.IndexOf("TryGetExactTrackedFboAttachmentLayout", StringComparison.Ordinal)
+            .ShouldBeLessThan(queryCurrentLayouts.IndexOf("ResolveFboAttachmentOldLayout", StringComparison.Ordinal));
+
+        string beginRenderingForTarget = SliceMethod(
+            commandRecording,
+            "void BeginRenderingForTarget(XRFrameBuffer? target",
+            "void RecordMeshDrawIntoCommandBuffer");
+
+        beginRenderingForTarget.ShouldContain("QueryCurrentAttachmentLayouts(target, vkFrameBuffer)");
+        beginRenderingForTarget.ShouldContain("ResolveAttachmentSignatureForPass(");
+        beginRenderingForTarget.IndexOf("QueryCurrentAttachmentLayouts(target, vkFrameBuffer)", StringComparison.Ordinal)
+            .ShouldBeLessThan(beginRenderingForTarget.IndexOf("ResolveAttachmentSignatureForPass(", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void VulkanDynamicRenderingFboTransition_UsesQueriedAttachmentOldLayoutFallback()
+    {
+        string commandRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.CommandBufferRecording.cs");
+
+        string transition = SliceMethod(
+            commandRecording,
+            "private void TransitionFboAttachmentsForDynamicRendering",
+            "private static ImageLayout NormalizeFboAttachmentLayout");
+
+        transition.ShouldContain("else if (TryGetTrackedImageLayout(transitionImage, transitionRange, out ImageLayout trackedImageLayout))");
+        transition.ShouldContain("ResolveFboAttachmentOldLayout(target, mipLevel, trackedLayer, requestedOldLayout)");
+        transition.IndexOf("TryGetTrackedImageLayout(transitionImage, transitionRange, out ImageLayout trackedImageLayout)", StringComparison.Ordinal)
+            .ShouldBeLessThan(transition.IndexOf("ResolveFboAttachmentOldLayout(target, mipLevel, trackedLayer, requestedOldLayout)", StringComparison.Ordinal));
+        transition.ShouldNotContain(": beginRendering\n                                ? ImageLayout.Undefined");
+    }
+
+    [Test]
+    public void VulkanImageLayoutReuseSignature_IncludesPhysicalSubresourceLayouts()
+    {
+        string synchronization = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        string allocator = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Resources/VulkanResourceAllocator.cs");
+
+        synchronization.ShouldContain("VulkanPhysicalImageGroup.LayoutSnapshot layoutSnapshot = group.CaptureLayoutSnapshot();");
+        synchronization.ShouldContain("VulkanPhysicalImageGroup.SubresourceLayoutSnapshot[] subresources = layoutSnapshot.Subresources;");
+        synchronization.ShouldContain("hash.Add(subresource.MipLevel);");
+        synchronization.ShouldContain("hash.Add(subresource.ArrayLayer);");
+        synchronization.ShouldContain("hash.Add((int)subresource.Layout);");
+
+        string captureSnapshot = SliceMethod(
+            allocator,
+            "internal LayoutSnapshot CaptureLayoutSnapshot()",
+            "internal void RestoreLayoutSnapshot");
+
+        captureSnapshot.ShouldContain("Array.Sort(");
+        captureSnapshot.ShouldContain("left.MipLevel.CompareTo(right.MipLevel)");
+        captureSnapshot.ShouldContain("left.ArrayLayer.CompareTo(right.ArrayLayer)");
+    }
+
+    [Test]
+    public void ShadowAtlasSettings_DirtyRendererResourcesForOpenXrPrimaryReuse()
+    {
+        string engineSettings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs");
+        string resourceRetirement = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+
+        string spotAtlasSetter = SliceMethod(
+            engineSettings,
+            "public bool UseSpotShadowAtlas",
+            "public bool UseDirectionalShadowAtlas");
+        spotAtlasSetter.ShouldContain("MarkShadowAtlasRenderResourcesChanged(nameof(UseSpotShadowAtlas));");
+
+        string directionalAtlasSetter = SliceMethod(
+            engineSettings,
+            "public bool UseDirectionalShadowAtlas",
+            "public bool UsePointShadowAtlas");
+        directionalAtlasSetter.ShouldContain("MarkShadowAtlasRenderResourcesChanged(nameof(UseDirectionalShadowAtlas));");
+
+        string pointAtlasSetter = SliceMethod(
+            engineSettings,
+            "public bool UsePointShadowAtlas",
+            "private static void MarkShadowAtlasRenderResourcesChanged");
+        pointAtlasSetter.ShouldContain("MarkShadowAtlasRenderResourcesChanged(nameof(UsePointShadowAtlas));");
+
+        string helper = SliceMethod(
+            engineSettings,
+            "private static void MarkShadowAtlasRenderResourcesChanged",
+            "[Category(\"Shadows\")]\n                [Description(\"Width and height");
+        helper.ShouldContain("AbstractRenderer.Current?.NotifyRenderResourcesChanged(settingName)");
+
+        string descriptorRelease = SliceMethod(
+            resourceRetirement,
+            "internal void ReleaseDescriptorReferencesForPhysicalResourceDestruction",
+            "/// <summary>");
+        descriptorRelease.ShouldContain("ClearAllTrackedImageLayouts()");
+        descriptorRelease.ShouldContain("InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease();");
+        descriptorRelease.ShouldContain("MarkOpenXrPrimaryCommandBufferVariantsDirty();");
+        descriptorRelease.IndexOf("MarkOpenXrPrimaryCommandBufferVariantsDirty();", StringComparison.Ordinal)
+            .ShouldBeLessThan(descriptorRelease.IndexOf("MarkCommandBuffersDirty();", StringComparison.Ordinal));
     }
 
     [Test]
@@ -980,14 +1210,15 @@ public sealed class OpenXrTimingPipelineContractTests
         vrState.ShouldContain("desktopViewport.MeshRenderCommandsOverride = null");
         vrState.ShouldContain("desktopViewport.AutomaticallyCollectVisible = true");
         vrState.ShouldContain("desktopViewport.AutomaticallySwapBuffers = true");
-        vrState.ShouldContain("_sharedMeshRenderCommands.IsRenderCommandSnapshotAuthority = !independentDesktopView;");
+        vrState.ShouldContain("_sharedMeshRenderCommands.IsRenderCommandSnapshotAuthority = true;");
+        vrState.ShouldNotContain("bool independentDesktopView = RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR && !shareStereoCommands;");
         vrDeviceTransform.ShouldContain("RuntimeVrStateServices.IsOpenXRActive && this is XREngine.Scene.Transforms.VRHeadsetTransform");
         vrDeviceTransform.ShouldContain("SetRenderMatrix(renderMatrix, recalcAllChildRenderMatrices: !isOpenXrHeadset)");
         vrDeviceTransform.ShouldNotContain("PropagateOpenXrHeadsetRenderMatrixToNonEyeChildren");
         vrDeviceTransform.ShouldNotContain("child.LocalMatrix * parentRenderMatrix");
         openXrApi.ShouldContain("camera.Transform.SetRenderMatrix(localPose * rootRender, recalcAllChildRenderMatrices: false);");
-        openXrState.ShouldContain("commands.IsRenderCommandSnapshotAuthority = !HasIndependentDesktopVrView();");
-        openXrState.ShouldContain("return hostServices.RenderWindowsWhileInVR && !hostServices.VrMirrorComposeFromEyeTextures;");
+        openXrState.ShouldContain("commands.IsRenderCommandSnapshotAuthority = true;");
+        openXrState.ShouldNotContain("HasIndependentDesktopVrView");
         string editorUnitTestingWorld = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.cs");
         editorUnitTestingWorld.ShouldContain("s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR || requiresIndependentDesktopWindow || usesRuntimeDesktopCamera;");
         editorUnitTestingPawns.ShouldContain("firstPersonViewNode.SetTransform<Transform>();");
@@ -1107,6 +1338,9 @@ public sealed class OpenXrTimingPipelineContractTests
         string uiMaterial = ReadWorkspaceFile("XREngine/Scene/Components/UI/Core/UIMaterialComponent.cs");
         string uiViewport = ReadWorkspaceFile("XREngine/Scene/Components/UI/Core/UIViewportComponent.cs");
         string editorUnitTestingUi = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.UserInterface.cs");
+        string xrViewport = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/XRViewport.cs");
+        string xrPipelineInstance = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
+        string cameraComponent = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Camera/CameraComponent.cs");
 
         string postRender = SliceMethod(
             editorPawn,
@@ -1124,6 +1358,17 @@ public sealed class OpenXrTimingPipelineContractTests
         uiMaterial.ShouldContain("return !DisableBatching &&");
         uiViewport.ShouldContain("DisableBatching = true;");
         uiViewport.ShouldContain("SetBlendModeAllDrawBuffers(BlendMode.Disabled());");
+        uiViewport.ShouldContain("Viewport.AllowAutomaticInternalResolution = false;");
+        uiViewport.ShouldNotContain("Viewport.UseDirectFboTargetCommandsWhenRenderingToFbo = true;");
+        editorUnitTestingUi.ShouldNotContain("preview.Viewport.UseDirectFboTargetCommandsWhenRenderingToFbo = true;");
+        xrViewport.ShouldContain("public bool AllowAutomaticInternalResolution");
+        xrViewport.ShouldContain("_renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight, this);");
+        xrViewport.ShouldContain("_renderPipeline.ViewportResized(Width, Height, this);");
+        xrPipelineInstance.ShouldContain("public void InternalResolutionResized(int internalWidth, int internalHeight, XRViewport? viewport)");
+        xrPipelineInstance.ShouldContain("viewport ??= RenderState.WindowViewport ?? LastWindowViewport;");
+        xrPipelineInstance.ShouldContain("if (viewport.AllowAutomaticInternalResolution)");
+        cameraComponent.ShouldContain("if (!viewport.AllowAutomaticInternalResolution)");
+        cameraComponent.ShouldContain("return;");
         editorUnitTestingUi.ShouldContain("private const int PreviewOverlayZIndex = int.MaxValue;");
         editorUnitTestingUi.ShouldContain("private const int FpsOverlayZIndex = int.MaxValue - 100;");
         editorUnitTestingUi.ShouldContain("text.RenderCommand2D.ZIndex = FpsOverlayZIndex;");
@@ -1618,6 +1863,34 @@ public sealed class OpenXrTimingPipelineContractTests
         // PaddedFrustum is the only branch that returns a non-zero padding.
         cameraUpdate.ShouldContain("OpenXrCollectVisiblePosePolicy.PaddedFrustum");
         cameraUpdate.ShouldContain("OpenXrCollectFrustumPaddingDegrees");
+    }
+
+    [Test]
+    public void VulkanOpenXr_DirectEyeSwapchainsUsePerEyeDepthTargets()
+    {
+        string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+
+        vulkanOpenXr.ShouldContain("private readonly OpenXrDepthTarget[] _openXrCachedDepthTargets = new OpenXrDepthTarget[OpenXrEyeResourcePlannerStateCount];");
+        vulkanOpenXr.ShouldContain("private readonly Extent2D[] _openXrCachedDepthExtents = new Extent2D[OpenXrEyeResourcePlannerStateCount];");
+        vulkanOpenXr.ShouldContain("GetOrCreateOpenXrDepthTarget(request.OpenXrViewIndex, request.Extent)");
+        vulkanOpenXr.ShouldNotContain("private OpenXrDepthTarget _openXrCachedDepthTarget;");
+        vulkanOpenXr.ShouldNotContain("private Extent2D _openXrCachedDepthExtent;");
+
+        string getDepthTarget = SliceMethod(
+            vulkanOpenXr,
+            "private OpenXrDepthTarget GetOrCreateOpenXrDepthTarget",
+            "private OpenXrDepthTarget CreateOpenXrDepthTarget");
+        getDepthTarget.ShouldContain("ResolveOpenXrEyeUploadPublicationBufferIndex(openXrViewIndex)");
+        getDepthTarget.ShouldContain("ref OpenXrDepthTarget cachedTarget = ref _openXrCachedDepthTargets[targetIndex];");
+        getDepthTarget.ShouldContain("ref Extent2D cachedExtent = ref _openXrCachedDepthExtents[targetIndex];");
+
+        string destroyResources = SliceMethod(
+            vulkanOpenXr,
+            "private void DestroyOpenXrRenderingResources",
+            "internal void ResetOpenXrRenderingResourcesForRuntimeRecreate");
+        destroyResources.ShouldContain("for (int i = 0; i < _openXrCachedDepthTargets.Length; i++)");
+        destroyResources.ShouldContain("DestroyOpenXrDepthTarget(_openXrCachedDepthTargets[i]);");
+        destroyResources.ShouldContain("_openXrCachedDepthExtents[i] = default;");
     }
 
     [Test]

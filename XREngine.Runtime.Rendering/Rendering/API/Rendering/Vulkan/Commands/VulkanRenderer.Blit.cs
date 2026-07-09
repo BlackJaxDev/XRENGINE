@@ -140,10 +140,31 @@ namespace XREngine.Rendering.Vulkan
             bool wantStencil,
             out BlitImageInfo info,
             bool isSource)
+            => TryResolveBlitImage(
+                frameBuffer,
+                swapchainImageIndex,
+                readBufferMode,
+                wantColor,
+                wantDepth,
+                wantStencil,
+                out info,
+                isSource,
+                default);
+
+        private bool TryResolveBlitImage(
+            XRFrameBuffer? frameBuffer,
+            uint swapchainImageIndex,
+            EReadBufferMode readBufferMode,
+            bool wantColor,
+            bool wantDepth,
+            bool wantStencil,
+            out BlitImageInfo info,
+            bool isSource,
+            in SwapchainRecordingTarget swapchainTarget)
         {
             if (frameBuffer is null)
             {
-                info = ResolveSwapchainBlitImage(swapchainImageIndex, wantColor, wantDepth, wantStencil);
+                info = ResolveSwapchainBlitImage(swapchainImageIndex, wantColor, wantDepth, wantStencil, in swapchainTarget);
                 return info.IsValid;
             }
 
@@ -537,8 +558,66 @@ namespace XREngine.Rendering.Vulkan
 
         // =========== Swapchain Image Resolution ===========
 
-        private BlitImageInfo ResolveSwapchainBlitImage(uint swapchainImageIndex, bool wantColor, bool wantDepth, bool wantStencil)
+        private BlitImageInfo ResolveSwapchainBlitImage(
+            uint swapchainImageIndex,
+            bool wantColor,
+            bool wantDepth,
+            bool wantStencil)
+            => ResolveSwapchainBlitImage(swapchainImageIndex, wantColor, wantDepth, wantStencil, default);
+
+        private BlitImageInfo ResolveSwapchainBlitImage(
+            uint swapchainImageIndex,
+            bool wantColor,
+            bool wantDepth,
+            bool wantStencil,
+            in SwapchainRecordingTarget recordingTarget)
         {
+            if (recordingTarget.IsValid)
+            {
+                if (wantColor)
+                {
+                    return new BlitImageInfo(
+                        recordingTarget.Image,
+                        recordingTarget.ImageFormat,
+                        ImageAspectFlags.ColorBit,
+                        0,
+                        1,
+                        0,
+                        recordingTarget.Extent,
+                        ImageLayout.ColorAttachmentOptimal,
+                        PipelineStageFlags.ColorAttachmentOutputBit,
+                        AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
+                }
+
+                if (wantDepth || wantStencil)
+                {
+                    ImageAspectFlags depthAspect = (wantDepth, wantStencil) switch
+                    {
+                        (true, true) => recordingTarget.DepthAspect,
+                        (true, false) => ImageAspectFlags.DepthBit,
+                        (false, true) => recordingTarget.DepthAspect.HasFlag(ImageAspectFlags.StencilBit)
+                            ? ImageAspectFlags.StencilBit
+                            : ImageAspectFlags.None,
+                        _ => ImageAspectFlags.None
+                    };
+
+                    if (depthAspect != ImageAspectFlags.None)
+                    {
+                        return new BlitImageInfo(
+                            recordingTarget.DepthImage,
+                            recordingTarget.DepthFormat,
+                            depthAspect,
+                            0,
+                            1,
+                            0,
+                            recordingTarget.Extent,
+                            ImageLayout.DepthStencilAttachmentOptimal,
+                            PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
+                            AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit);
+                    }
+                }
+            }
+
             if (wantColor && swapChainImages is not null && swapchainImageIndex < swapChainImages.Length)
             {
                 return new BlitImageInfo(

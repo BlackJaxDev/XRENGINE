@@ -125,9 +125,17 @@ namespace XREngine.Components.Capture.Lights.Types
             protected set => SetField(ref _meshCenterAdjustMatrix, value);
         }
 
+        /// <summary>
+        /// Gets the transformation matrix for the light mesh.
+        /// This matrix combines the mesh center adjustment with the render matrix to position the light mesh correctly.
+        /// </summary>
         [Browsable(false)]
         public Matrix4x4 LightMeshMatrix => _lightMatrix;
 
+        /// <summary>
+        /// Updates the light's transformation matrix based on the provided render matrix.
+        /// </summary>
+        /// <param name="renderMatrix">The render matrix to update the light's transformation with.</param>
         private void UpdateLightMatrix(Matrix4x4 renderMatrix)
         {
             _lightMatrix = MeshCenterAdjustMatrix * renderMatrix;
@@ -136,6 +144,13 @@ namespace XREngine.Components.Capture.Lights.Types
                 _shadowVolumeRC.WorldMatrix = _lightMatrix;
         }
 
+        /// <summary>
+        /// Called when a property of the light component changes.
+        /// </summary>
+        /// <typeparam name="T">The type of the property that changed.</typeparam>
+        /// <param name="propName">The name of the property that changed.</param>
+        /// <param name="prev">The previous value of the property.</param>
+        /// <param name="field">The new value of the property.</param>
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -188,6 +203,10 @@ namespace XREngine.Components.Capture.Lights.Types
             }
         }
 
+        /// <summary>
+        /// Called when the light component is activated in the scene.
+        /// Ensures that the shadow map is set up for active dynamic lights and synchronizes the dynamic world registration.
+        /// </summary>
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
@@ -195,8 +214,16 @@ namespace XREngine.Components.Capture.Lights.Types
             SyncDynamicWorldRegistration();
         }
 
+        /// <summary>
+        /// Determines whether the light component uses only the atlas-based shadow map resource.
+        /// </summary>
+        /// <returns>True if the light component uses only the atlas-based shadow map resource; otherwise, false.</returns>
         protected virtual bool UsesAtlasOnlyShadowMapResource => false;
 
+        /// <summary>
+        /// Ensures that the shadow map is allocated and set up for the active dynamic light.
+        /// If the light is not dynamic, does not cast shadows, already has a shadow map, or uses only the atlas-based shadow map resource, this method does nothing.
+        /// </summary>
         protected void EnsureShadowMapForActiveDynamicLight()
         {
             if (Type != ELightType.Dynamic || !CastsShadows || ShadowMap is not null || UsesAtlasOnlyShadowMapResource)
@@ -207,14 +234,29 @@ namespace XREngine.Components.Capture.Lights.Types
                 Math.Max(1u, ShadowMapResolutionHeight));
         }
 
+        /// <summary>
+        /// Registers the dynamic light with the specified render world.
+        /// </summary>
+        /// <param name="world">The render world with which to register the dynamic light.</param>
         protected virtual void RegisterDynamicLight(IRuntimeRenderWorld world)
         {
+            // Base implementation does nothing. Override this method to register the dynamic light with the render world.
         }
 
+        /// <summary>
+        /// Unregisters the dynamic light from the specified render world.
+        /// </summary>
+        /// <param name="world">The render world from which to unregister the dynamic light.</param>
         protected virtual void UnregisterDynamicLight(IRuntimeRenderWorld world)
         {
+            // Base implementation does nothing. Override this method to unregister the dynamic light from the render world.
         }
 
+        /// <summary>
+        /// Synchronizes the dynamic light's registration with the current render world.
+        /// If the light is no longer active or the render world has changed,
+        /// it will unregister the light from the previous world and register it with the current one if applicable.
+        /// </summary>
         private void SyncDynamicWorldRegistration()
         {
             IRuntimeRenderWorld? currentWorld = WorldAs<IRuntimeRenderWorld>();
@@ -233,6 +275,9 @@ namespace XREngine.Components.Capture.Lights.Types
             _registeredDynamicWorld = currentWorld;
         }
 
+        /// <summary>
+        /// Clears the dynamic light's registration from the current render world, if it is registered.
+        /// </summary>
         private void ClearDynamicWorldRegistration()
         {
             if (_registeredDynamicWorld is null)
@@ -245,10 +290,17 @@ namespace XREngine.Components.Capture.Lights.Types
         /// <summary>
         /// Override this method to set any additional uniforms needed for the shadow map material.
         /// </summary>
-        /// <param name="base"></param>
-        /// <param name="program"></param>
-        protected virtual void SetShadowMapUniforms(XRMaterialBase @base, XRRenderProgram program) { }
+        /// <param name="base">The base material for the shadow map.</param>
+        /// <param name="program">The render program used for the shadow map.</param>
+        protected virtual void SetShadowMapUniforms(XRMaterialBase @base, XRRenderProgram program)
+        {
+            // Base implementation does nothing. Override this method in derived classes to set additional uniforms for the shadow map material.
+        }
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="LightComponent"/> class with the specified shadow map storage format.
+        /// </summary>
+        /// <param name="shadowMapStorageFormat">The storage format to use for the shadow map.</param>
         protected LightComponent(EShadowMapStorageFormat shadowMapStorageFormat) : base()
         {
             _shadowMapStorageFormat = shadowMapStorageFormat;
@@ -265,6 +317,9 @@ namespace XREngine.Components.Capture.Lights.Types
         public LightComponent()
             : this(EShadowMapStorageFormat.R16Float) { }
 
+        /// <summary>
+        /// Ensures that the preview volume mesh is created and assigned to the shadow volume renderer.
+        /// </summary>
         private void EnsurePreviewVolumeMesh()
         {
             if (_shadowVolumeRC.Mesh is not null)
@@ -276,8 +331,17 @@ namespace XREngine.Components.Capture.Lights.Types
             _shadowVolumeRC.Mesh = new XRMeshRenderer(GetWireframeMesh(), mat);
         }
 
+        /// <summary>
+        /// Gets the wireframe mesh used for the preview volume.
+        /// </summary>
+        /// <returns>The wireframe mesh.</returns>
         protected abstract XRMesh GetWireframeMesh();
 
+        /// <summary>
+        /// Called when the transform's render world matrix has changed. Updates the light's internal state accordingly.
+        /// </summary>
+        /// <param name="transform">The transform whose render world matrix has changed.</param>
+        /// <param name="renderMatrix">The new render world matrix of the transform.</param>
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
             if (World is not null)
@@ -287,6 +351,10 @@ namespace XREngine.Components.Capture.Lights.Types
             base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
         }
 
+        /// <summary>
+        /// Gets or sets the shadow map associated with this light.
+        /// This is the render target used for shadow mapping.
+        /// </summary>
         public XRMaterialFrameBuffer? ShadowMap
         {
             get => _shadowMap;
@@ -299,9 +367,22 @@ namespace XREngine.Components.Capture.Lights.Types
         [Browsable(false)]
         public ShadowRequestDiagnostic ShadowAtlasDiagnostic => _shadowAtlasDiagnostic;
 
+        /// <summary>
+        /// Sets the latest atlas allocation diagnostics for this light's shadow request.
+        /// </summary>
+        /// <param name="diagnostic">The diagnostic information to set for the shadow atlas allocation.</param>
         internal void SetShadowAtlasDiagnostic(ShadowRequestDiagnostic diagnostic)
             => SetField(ref _shadowAtlasDiagnostic, diagnostic, nameof(ShadowAtlasDiagnostic));
 
+        /// <summary>
+        /// Creates a key for requesting a shadow map for this light with the specified parameters.
+        /// </summary>
+        /// <param name="projectionType">The type of shadow projection to use.</param>
+        /// <param name="faceOrCascadeIndex">The index of the face or cascade for the shadow map.</param>
+        /// <param name="encoding">The encoding format for the shadow map.</param>
+        /// <param name="domain">The domain of the shadow request.</param>
+        /// <param name="source">The source of the shadow request.</param>
+        /// <returns>A key representing the shadow request for this light.</returns>
         public ShadowRequestKey CreateShadowRequestKey(
             EShadowProjectionType projectionType,
             int faceOrCascadeIndex,
@@ -320,6 +401,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _castsShadows, value);
         }
 
+        /// <summary>
+        /// Gets or sets the GPU storage format used by this light's sampled shadow map.
+        /// </summary>
         [Category("Shadows")]
         [DisplayName("Shadow Map Format")]
         [Description("GPU storage format used by this light's sampled shadow map.")]
@@ -329,6 +413,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMapStorageFormat, NormalizeShadowMapStorageFormat(value));
         }
 
+        /// <summary>
+        /// Gets or sets the encoding format for this light's shadow map.
+        /// </summary>
         [Category("Shadow Filtering")]
         [DisplayName("Shadow Map Encoding")]
         [Description("Controls what the sampled shadow map stores. Depth preserves the existing depth-compare filter path; VSM/EVSM moment encodings use moment filtering settings.")]
@@ -338,6 +425,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMapEncoding, value);
         }
 
+        /// <summary>
+        /// Gets or sets the minimum variance used by VSM/EVSM moment visibility to reduce shadow acne.
+        /// </summary>
         [Category("Shadow Filtering")]
         [DisplayName("Moment Min Variance")]
         [Description("Minimum variance floor used by VSM/EVSM moment visibility to reduce acne.")]
@@ -347,6 +437,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMomentMinVariance, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the light bleed reduction factor used by VSM/EVSM moment visibility.
+        /// </summary>
         [Category("Shadow Filtering")]
         [DisplayName("Moment Light Bleed Reduction")]
         [Description("Reduces VSM/EVSM light bleeding by remapping low Chebyshev probabilities toward shadow.")]
@@ -356,6 +449,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMomentLightBleedReduction, Math.Clamp(value, 0.0f, 0.999f));
         }
 
+        /// <summary>
+        /// Gets or sets the positive exponent used by EVSM moment visibility.
+        /// </summary>
         [Category("Shadow Filtering")]
         [DisplayName("Moment Positive Exponent")]
         [Description("Positive EVSM exponent. It is clamped by the selected moment texture format.")]
@@ -365,15 +461,21 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMomentPositiveExponent, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the negative exponent used by EVSM moment visibility.
+        /// </summary>
         [Category("Shadow Filtering")]
         [DisplayName("Moment Negative Exponent")]
-        [Description("Negative EVSM exponent used by EVSM4. It is clamped by the selected moment texture format.")]
+        [Description("Negative EVSM exponent. It is clamped by the selected moment texture format.")]
         public float ShadowMomentNegativeExponent
         {
             get => _shadowMomentNegativeExponent;
             set => SetField(ref _shadowMomentNegativeExponent, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the approximate moment prefilter radius in texels.
+        /// </summary>
         [Category("Shadow Filtering")]
         [DisplayName("Moment Blur Radius Texels")]
         [Description("Approximate moment prefilter radius in texels. Standalone mipmapped spot moment maps convert this to an explicit mip-level contribution; separable blur passes are planned separately.")]
@@ -383,6 +485,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMomentBlurRadiusTexels, Math.Clamp(value, 0, 64));
         }
 
+        /// <summary>
+        /// Gets or sets the number of separable moment blur passes.
+        /// </summary>
         [Category("Shadow Filtering")]
         [DisplayName("Moment Blur Passes")]
         [Description("Reserved for separable moment blur pass pairs. The current standalone spot path uses mipmapped prefiltering.")]
@@ -392,6 +497,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMomentBlurPasses, Math.Clamp(value, 0, 8));
         }
 
+        /// <summary>
+        /// Gets or sets the additional explicit mip level used when sampling standalone mipmapped moment maps.
+        /// </summary>
         [Category("Shadow Filtering")]
         [DisplayName("Moment Mip Level")]
         [Description("Additional explicit mip level used when sampling standalone mipmapped moment maps. Higher values select wider prefiltered mips.")]
@@ -401,6 +509,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMomentMipBias, float.IsFinite(value) ? value : 0.0f);
         }
 
+        /// <summary>
+        /// Gets or sets a value indicating whether explicit mipmapped sampling is used for standalone moment maps.
+        /// </summary>
         [Category("Shadow Filtering")]
         [DisplayName("Moment Use Mipmaps")]
         [Description("Enables explicit mipmapped sampling for standalone moment maps. Spot moment maps regenerate mips after each shadow render; atlas moment mips remain disabled until gutters are implemented.")]
@@ -410,14 +521,20 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMomentUseMipmaps, value);
         }
 
+        /// <summary>
+        /// Gets or sets the base exponent used for shadow EVSM calculations.
+        /// </summary>
         [Category("Shadows")]
         [Browsable(false)]
-        public float ShadowExponentBase 
+        public float ShadowExponentBase
         {
             get => _shadowExponentBase;
             set => SetField(ref _shadowExponentBase, value);
         }
 
+        /// <summary>
+        /// Gets or sets the exponent used for shadow EVSM calculations.
+        /// </summary>
         [Category("Shadows")]
         [Browsable(false)]
         public float ShadowExponent
@@ -426,6 +543,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowExponent, value);
         }
 
+        /// <summary>
+        /// Gets or sets the minimum shadow bias.
+        /// </summary>
         [Category("Shadows")]
         [Browsable(false)]
         public float ShadowMinBias
@@ -434,6 +554,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMinBias, value);
         }
 
+        /// <summary>
+        /// Gets or sets the maximum shadow bias.
+        /// </summary>
         [Category("Shadows")]
         [Browsable(false)]
         public float ShadowMaxBias
@@ -442,6 +565,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMaxBias, value);
         }
 
+        /// <summary>
+        /// Gets or sets the shadow depth bias in texels.
+        /// </summary>
         [Category("Shadows")]
         [DisplayName("Shadow Depth Bias Texels")]
         [Description("Constant compare-bias floor expressed in shadow-map texels. Live forward/deferred shadow receivers convert this to the active map's depth scale.")]
@@ -451,6 +577,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowDepthBiasTexels, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the shadow slope bias in texels.
+        /// </summary>
         [Category("Shadows")]
         [DisplayName("Shadow Slope Bias Texels")]
         [Description("Receiver-plane slope bias scale, in shadow-map texels. Higher values reduce grazing-angle acne at the cost of more separation.")]
@@ -460,6 +589,9 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowSlopeBiasTexels, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the shadow normal offset bias in texels.
+        /// </summary>
         [Category("Shadows")]
         [DisplayName("Shadow Normal Offset Texels")]
         [Description("Normal-offset distance expressed in shadow-map texels. The live renderer scales this by the active map's world-space texel footprint.")]
@@ -469,13 +601,26 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowNormalBiasTexels, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets the shadow bias parameters as a Vector4, containing depth, slope, and normal bias values.
+        /// </summary>
         [Browsable(false)]
         public Vector4 ShadowBiasParameters
             => new(ShadowDepthBiasTexels, ShadowSlopeBiasTexels, ShadowNormalBiasTexels, 0.0f);
 
+        /// <summary>
+        /// Gets the shadow bias projection parameters as a Vector4.
+        /// </summary>
         [Browsable(false)]
         public virtual Vector4 ShadowBiasProjectionParameters => Vector4.Zero;
 
+        /// <summary>
+        /// Gets the desired shadow atlas resolution for this light.
+        /// </summary>
+        /// <remarks>
+        /// The desired resolution is clamped between the minimum and maximum shadow atlas tile resolutions,
+        /// and cannot exceed the shadow atlas page size.
+        /// </remarks>
         internal uint GetDesiredShadowAtlasResolution()
         {
             uint desired = Math.Max(ShadowMapResolutionWidth, ShadowMapResolutionHeight);
@@ -485,14 +630,19 @@ namespace XREngine.Components.Capture.Lights.Types
             return Math.Max(1u, desired);
         }
 
+        /// <summary>
+        /// Gets the scale factor between the desired shadow atlas resolution and the provided sample resolution.
+        /// </summary>
+        /// <param name="sampleResolution">The sample resolution to compare against the desired shadow atlas resolution.</param>
+        /// <returns>The scale factor between the desired shadow atlas resolution and the provided sample resolution.</returns>
         internal float GetShadowAtlasResolutionScale(uint sampleResolution)
-        {
-            if (sampleResolution == 0u)
-                return 1.0f;
+            => sampleResolution == 0u ? 1.0f : MathF.Max(1.0f, GetDesiredShadowAtlasResolution() / (float)sampleResolution);
 
-            return MathF.Max(1.0f, GetDesiredShadowAtlasResolution() / (float)sampleResolution);
-        }
-
+        /// <summary>
+        /// Gets the sample resolution for the shadow atlas based on the provided allocation.
+        /// </summary>
+        /// <param name="allocation">The shadow atlas allocation to determine the sample resolution for.</param>
+        /// <returns>The sample resolution for the shadow atlas based on the provided allocation.</returns>
         internal static uint GetShadowAtlasSampleResolution(in ShadowAtlasAllocation allocation)
         {
             int width = allocation.InnerPixelRect.Width > 0 ? allocation.InnerPixelRect.Width : (int)allocation.Resolution;
@@ -501,7 +651,6 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         private uint _shadowMapResolutionWidth = 1024u;
-
         /// <summary>
         /// Width of this light's standalone shadow map. Cubemap lights use the larger width/height as the face size.
         /// </summary>
@@ -513,7 +662,6 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         private uint _shadowMapResolutionHeight = 1024u;
-
         /// <summary>
         /// Height of this light's standalone shadow map. Cubemap lights use the larger width/height as the face size.
         /// </summary>
@@ -527,6 +675,7 @@ namespace XREngine.Components.Capture.Lights.Types
         /// <summary>
         /// Linear RGB light color applied before intensity.
         /// </summary>
+        [Category("Lighting")]
         public ColorF3 Color
         {
             get => _color;
@@ -536,6 +685,7 @@ namespace XREngine.Components.Capture.Lights.Types
         /// <summary>
         /// Diffuse lighting multiplier used by forward/deferred light shaders.
         /// </summary>
+        [Category("Lighting")]
         public float DiffuseIntensity
         {
             get => _diffuseIntensity;
@@ -545,6 +695,7 @@ namespace XREngine.Components.Capture.Lights.Types
         /// <summary>
         /// Controls whether the light is registered as live dynamic lighting or treated as cacheable/static.
         /// </summary>
+        [Category("Lighting")]
         public ELightType Type
         {
             get => _type;
@@ -554,11 +705,13 @@ namespace XREngine.Components.Capture.Lights.Types
         /// <summary>
         /// Render info for the optional wireframe preview volume.
         /// </summary>
+        [Category("Debug")]
         public RenderInfo3D RenderInfo { get; }
 
         /// <summary>
         /// IRenderable payload containing only the preview-volume render info.
         /// </summary>
+        [Category("Debug")]
         public RenderInfo[] RenderedObjects { get; }
 
         /// <summary>
@@ -582,11 +735,13 @@ namespace XREngine.Components.Capture.Lights.Types
         /// <summary>
         /// Most recent intersections between the active player camera frustum and this light's shadow frusta.
         /// </summary>
+        [Category("Debug")]
         public IReadOnlyList<FrustumIntersectionAabb> CameraIntersections => _cameraIntersections;
 
         /// <summary>
         /// True when the active player camera intersects at least one of this light's shadow frusta.
         /// </summary>
+        [Category("Debug")]
         public bool IntersectsActiveCamera => _cameraIntersections.Count > 0;
 
         /// <summary>
@@ -608,6 +763,9 @@ namespace XREngine.Components.Capture.Lights.Types
                 ShadowMap.Resize(width, height);
         }
 
+        /// <summary>
+        /// Gets the default storage format for the light's shadow map.
+        /// </summary>
         protected virtual EShadowMapStorageFormat DefaultShadowMapStorageFormat => EShadowMapStorageFormat.R16Float;
 
         /// <summary>
@@ -616,9 +774,17 @@ namespace XREngine.Components.Capture.Lights.Types
         public virtual bool SupportsShadowMapStorageFormat(EShadowMapStorageFormat format)
             => IsColorShadowMapStorageFormat(format) || IsMomentShadowMapStorageFormat(format);
 
+        /// <summary>
+        /// Determines whether the light supports the specified shadow-map storage format.
+        /// </summary>
+        /// <param name="format">The shadow-map storage format to check for support.</param>
+        /// <returns>True if the light supports the specified shadow-map storage format; otherwise, false.</returns>
         protected EShadowMapStorageFormat NormalizeShadowMapStorageFormat(EShadowMapStorageFormat format)
             => SupportsShadowMapStorageFormat(format) ? format : DefaultShadowMapStorageFormat;
 
+        /// <summary>
+        /// Recreates the light's shadow map by destroying the existing one and allocating a new one with the current resolution.
+        /// </summary>
         protected virtual void RecreateShadowMap()
         {
             ShadowMap?.Destroy();
@@ -628,6 +794,9 @@ namespace XREngine.Components.Capture.Lights.Types
                 Math.Max(1u, ShadowMapResolutionHeight));
         }
 
+        /// <summary>
+        /// Called when the light component is deactivated, performing cleanup tasks such as clearing dynamic world registration and destroying the shadow map.
+        /// </summary>
         protected override void OnComponentDeactivated()
         {
             ClearDynamicWorldRegistration();
@@ -636,6 +805,10 @@ namespace XREngine.Components.Capture.Lights.Types
             ShadowMap = null;
         }
 
+        /// <summary>
+        /// Gets or sets the number of samples used for the light's shadow filtering.
+        /// </summary>
+        [Category("Shadows")]
         public int Samples
         {
             get => FilterSamples;
@@ -643,8 +816,9 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         /// <summary>
-        /// Number of filter taps used by soft-shadow sampling paths.
+        /// Gets or sets the number of filter taps used by soft-shadow sampling paths.
         /// </summary>
+        [Category("Shadows")]
         public int FilterSamples
         {
             get => _filterSamples;
@@ -652,8 +826,9 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         /// <summary>
-        /// Number of blocker-search taps used by contact-hardening PCSS.
+        /// Gets or sets the number of blocker-search taps used by contact-hardening PCSS.
         /// </summary>
+        [Category("Shadows")]
         public int BlockerSamples
         {
             get => _blockerSamples;
@@ -661,7 +836,7 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         /// <summary>
-        /// Tap count used by <see cref="ESoftShadowMode.VogelDisk"/>.
+        /// Gets or sets the tap count used by <see cref="ESoftShadowMode.VogelDisk"/>.
         /// </summary>
         [Category("Shadows")]
         public int VogelTapCount
@@ -670,6 +845,10 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _vogelTapCount, Math.Clamp(value, 1, MaxVogelTapCount));
         }
 
+        /// <summary>
+        /// Gets or sets the radius used for filtering soft shadows.
+        /// </summary>
+        [Category("Shadows")]
         public float FilterRadius
         {
             get => _filterRadius;
@@ -677,20 +856,29 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         /// <summary>
-        /// Search radius used while estimating blockers for PCSS shadows.
+        /// Gets or sets the search radius used while estimating blockers for PCSS shadows.
         /// </summary>
+        [Category("Shadows")]
         public float BlockerSearchRadius
         {
             get => _blockerSearchRadius;
             set => SetField(ref _blockerSearchRadius, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the minimum penumbra size for contact-hardening shadows.
+        /// </summary>
+        [Category("Shadows")]
         public float MinPenumbra
         {
             get => _minPenumbra;
             set => SetField(ref _minPenumbra, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the maximum penumbra size for contact-hardening shadows.
+        /// </summary>
+        [Category("Shadows")]
         public float MaxPenumbra
         {
             get => _maxPenumbra;
@@ -701,33 +889,46 @@ namespace XREngine.Components.Capture.Lights.Types
         /// Selects the soft shadow technique: Hard (PCF fallback), FixedPoisson (fixed-radius Poisson disk),
         /// VogelDisk (fixed-radius Vogel disk), or ContactHardeningPcss (blocker-search variable penumbra).
         /// </summary>
+        [Category("Shadows")]
         public ESoftShadowMode SoftShadowMode
         {
             get => _softShadowMode;
             set => SetField(ref _softShadowMode, value);
         }
 
+        /// <summary>
+        /// Indicates whether the light supports using its radius for contact-hardening shadows.
+        /// </summary>
         [Browsable(false)]
         public virtual bool SupportsLightRadiusContactHardening => false;
 
+        /// <summary>
+        /// Gets the effective light radius used for contact-hardening shadows.
+        /// </summary>
         [Browsable(false)]
         protected virtual float ContactHardeningLightRadius => LightSourceRadius;
 
+        /// <summary>
+        /// Gets the effective light source radius, taking into account whether the light radius is used for contact-hardening shadows.
+        /// </summary>
         [Browsable(false)]
         public float EffectiveLightSourceRadius
             => UseLightRadiusForContactHardening
                 ? ClampedAutomaticContactHardeningLightRadius()
                 : LightSourceRadius;
 
+        /// <summary>
+        /// Clamps the automatic contact-hardening light radius to a valid range.
+        /// </summary>
         private float ClampedAutomaticContactHardeningLightRadius()
         {
             float radius = ContactHardeningLightRadius;
-            if (!float.IsFinite(radius))
-                return 0.0f;
-
-            return Math.Clamp(radius, 0.0f, MaxAutomaticContactHardeningLightRadius);
+            return !float.IsFinite(radius) ? 0.0f : Math.Clamp(radius, 0.0f, MaxAutomaticContactHardeningLightRadius);
         }
 
+        /// <summary>
+        /// Gets or sets a value indicating whether the light should use its radius for contact-hardening shadows.
+        /// </summary>
         [Category("Shadows")]
         [DisplayName("Use Light Radius For Contact Hardening")]
         [Description("Uses a capped light-derived source radius instead of the manual source radius for PCSS/contact-hardening shadows.")]
@@ -742,60 +943,99 @@ namespace XREngine.Components.Capture.Lights.Types
         /// to compute the penumbra width. Larger values produce wider, softer penumbrae.
         /// </summary>
         [Category("Shadows")]
+        [DisplayName("Light Source Radius")]
+        [Description("Physical radius of the light source in world units. Used by contact-hardening shadows to compute the penumbra width. Larger values produce wider, softer penumbrae.")]
         public float LightSourceRadius
         {
             get => _lightSourceRadius;
             set => SetField(ref _lightSourceRadius, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets a value indicating whether cascaded shadows are enabled for the light.
+        /// </summary>
+        [Category("Shadows")]
         public bool EnableCascadedShadows
         {
             get => _enableCascadedShadows;
             set => SetField(ref _enableCascadedShadows, value);
         }
 
+        /// <summary>
+        /// Gets or sets a value indicating whether contact shadows are enabled for the light.
+        /// </summary>
+        [Category("Shadows")]
         public bool EnableContactShadows
         {
             get => _enableContactShadows;
             set => SetField(ref _enableContactShadows, value);
         }
 
+        /// <summary>
+        /// Gets or sets the maximum distance at which contact shadows are visible for the light.
+        /// </summary>
+        [Category("Shadows")]
         public float ContactShadowDistance
         {
             get => _contactShadowDistance;
             set => SetField(ref _contactShadowDistance, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the number of samples used for contact shadows.
+        /// Higher values produce smoother shadows but may impact performance.
+        /// </summary>
+        [Category("Shadows")]
         public int ContactShadowSamples
         {
             get => _contactShadowSamples;
             set => SetField(ref _contactShadowSamples, Math.Clamp(value, 1, 32));
         }
 
+        /// <summary>
+        /// Gets or sets the thickness of the contact shadows for the light.
+        /// </summary>
+        [Category("Shadows")]
         public float ContactShadowThickness
         {
             get => _contactShadowThickness;
             set => SetField(ref _contactShadowThickness, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the distance at which contact shadows start to fade for the light.
+        /// </summary>
+        [Category("Shadows")]
         public float ContactShadowFadeStart
         {
             get => _contactShadowFadeStart;
             set => SetField(ref _contactShadowFadeStart, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the distance at which contact shadows completely fade for the light.
+        /// </summary>
+        [Category("Shadows")]
         public float ContactShadowFadeEnd
         {
             get => _contactShadowFadeEnd;
             set => SetField(ref _contactShadowFadeEnd, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the normal offset for contact shadows for the light.
+        /// </summary>
+        [Category("Shadows")]
         public float ContactShadowNormalOffset
         {
             get => _contactShadowNormalOffset;
             set => SetField(ref _contactShadowNormalOffset, MathF.Max(0.0f, value));
         }
 
+        /// <summary>
+        /// Gets or sets the contact shadow jitter strength for the light.
+        /// </summary>
+        [Category("Shadows")]
         public float ContactShadowJitterStrength
         {
             get => _contactShadowJitterStrength;
@@ -803,7 +1043,8 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         /// <summary>
-        /// Shadow debug visualisation mode: 0 = off, 1 = shadow-only, 2 = margin heatmap.
+        /// Gets or sets the shadow debug visualisation mode for the light.
+        /// 0 = off, 1 = shadow-only, 2 = margin heatmap.
         /// </summary>
         [Category("Shadows")]
         [DisplayName("Shadow Debug Mode")]

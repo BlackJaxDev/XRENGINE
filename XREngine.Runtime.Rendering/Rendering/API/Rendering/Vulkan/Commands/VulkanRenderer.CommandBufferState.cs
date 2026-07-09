@@ -241,6 +241,7 @@ namespace XREngine.Rendering.Vulkan
         {
             public CommandPool Pool { get; } = pool;
             public HashSet<ulong> CommandBuffers { get; } = [];
+            public bool PendingDestroy { get; set; }
         }
 
         private struct CommandBufferBindState
@@ -877,6 +878,54 @@ namespace XREngine.Rendering.Vulkan
                 _ownedCommandChainSecondaryPools.Remove(pool.Handle);
         }
 
+        private void MarkOwnedCommandChainSecondaryPoolPendingDestroy(CommandPool pool)
+        {
+            if (pool.Handle == 0)
+                return;
+
+            bool destroyNow = false;
+            lock (_ownedCommandChainSecondaryPoolsLock)
+            {
+                if (_ownedCommandChainSecondaryPools.TryGetValue(pool.Handle, out OwnedCommandChainSecondaryPool? ownedPool))
+                {
+                    ownedPool.PendingDestroy = true;
+                    if (ownedPool.CommandBuffers.Count == 0)
+                    {
+                        _ownedCommandChainSecondaryPools.Remove(pool.Handle);
+                        destroyNow = true;
+                    }
+                }
+                else
+                {
+                    destroyNow = true;
+                }
+            }
+
+            if (destroyNow)
+                Api!.DestroyCommandPool(device, pool, null);
+        }
+
+        private void DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(CommandPool pool)
+        {
+            if (pool.Handle == 0)
+                return;
+
+            bool destroyNow = false;
+            lock (_ownedCommandChainSecondaryPoolsLock)
+            {
+                if (_ownedCommandChainSecondaryPools.TryGetValue(pool.Handle, out OwnedCommandChainSecondaryPool? ownedPool) &&
+                    ownedPool.PendingDestroy &&
+                    ownedPool.CommandBuffers.Count == 0)
+                {
+                    _ownedCommandChainSecondaryPools.Remove(pool.Handle);
+                    destroyNow = true;
+                }
+            }
+
+            if (destroyNow)
+                Api!.DestroyCommandPool(device, pool, null);
+        }
+
         private void ClearTrackedCommandChainSecondaryPools()
         {
             lock (_ownedCommandChainSecondaryPoolsLock)
@@ -1072,12 +1121,14 @@ namespace XREngine.Rendering.Vulkan
                 {
                     RemoveCommandBufferBindState(secondary);
                     UntrackOwnedCommandChainSecondaryCommandBuffer(entry.Pool, secondary);
+                    DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(entry.Pool);
                     continue;
                 }
 
                 Api!.FreeCommandBuffers(device, entry.Pool, 1, ref secondary);
                 RemoveCommandBufferBindState(secondary);
                 UntrackOwnedCommandChainSecondaryCommandBuffer(entry.Pool, entry.CommandBuffer);
+                DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(entry.Pool);
             }
 
             deferred.Clear();
@@ -1093,6 +1144,7 @@ namespace XREngine.Rendering.Vulkan
                 Api!.FreeCommandBuffers(device, pool, 1, ref commandBuffer);
                 RemoveCommandBufferBindState(commandBuffer);
                 UntrackOwnedCommandChainSecondaryCommandBuffer(pool, commandBuffer);
+                DestroyPendingOwnedCommandChainSecondaryPoolIfEmpty(pool);
                 return;
             }
 

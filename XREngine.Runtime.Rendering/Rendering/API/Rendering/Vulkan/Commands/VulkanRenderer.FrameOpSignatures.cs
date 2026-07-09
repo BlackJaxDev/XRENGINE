@@ -154,16 +154,17 @@ namespace XREngine.Rendering.Vulkan
             HashCode hash = new();
             hash.Add(op.GetType().Name, StringComparer.Ordinal);
             hash.Add(op.PassIndex);
-            hash.Add(op.Target?.GetHashCode() ?? 0);
+            hash.Add(ResolveCommandChainTargetIdentity(op));
             hash.Add(op.Context.PipelineIdentity);
             hash.Add(op.Context.ViewportIdentity);
+            hash.Add(op.Context.OutputTargetIdentity);
             AddSignaturePart(
                 parts,
                 opIndex,
                 opType,
                 "base",
                 hash,
-                $"pass={op.PassIndex} target='{op.Target?.Name ?? "<swapchain/null>"}' pipe={op.Context.PipelineIdentity} vp={op.Context.ViewportIdentity} sched={op.Context.SchedulingIdentity}");
+                $"pass={op.PassIndex} target='{ResolveCommandChainTargetName(op)}' targetId={ResolveCommandChainTargetIdentity(op)} pipe={op.Context.PipelineIdentity} vp={op.Context.ViewportIdentity} sched={op.Context.SchedulingIdentity}");
         }
 
         private static void AddClearSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, ClearOp clear)

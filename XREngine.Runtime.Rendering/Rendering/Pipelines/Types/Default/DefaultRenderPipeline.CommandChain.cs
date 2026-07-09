@@ -196,6 +196,9 @@ public partial class DefaultRenderPipeline
 
     private static bool ShouldRunAtmosphericScattering()
     {
+        if (UseOpenXrVulkanDesktopStartupSafePath)
+            return false;
+
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         var settings = GetSettings<AtmosphericScatteringSettings>(state) ?? AtmosphericScatteringSettings.Default;
         bool wantsAerialPerspective = settings.AerialPerspective ||
@@ -210,6 +213,9 @@ public partial class DefaultRenderPipeline
 
     private static bool ShouldRunVolumetricFog()
     {
+        if (UseOpenXrVulkanDesktopStartupSafePath)
+            return false;
+
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         var settings = GetSettings<VolumetricFogSettings>(state);
         var world = RuntimeEngine.Rendering.State.RenderingWorld;

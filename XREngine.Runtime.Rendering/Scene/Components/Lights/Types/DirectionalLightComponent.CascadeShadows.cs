@@ -424,6 +424,10 @@ namespace XREngine.Components.Lights
             if (!CanRenderDirectionalCascadesForCurrentBackend())
                 return null;
 
+            int requiredCascades = Math.Clamp(_cascadeCount, 1, MaxCascadeRenderCount);
+            if (ShouldUseVulkanAtlasCascadeTargets(requiredCascades))
+                return null;
+
             DirectionalCascadeSourceState state = GetCascadeSourceState(source);
             bool needsRasterDepth = ShouldUseVulkanRasterDepthReceiverTexture();
             if (CastsShadows &&
@@ -450,6 +454,10 @@ namespace XREngine.Components.Lights
                 : ShouldUseVulkanRasterDepthReceiverTexture()
                 ? state.RasterDepthTexture
                 : state.ShadowMapTexture;
+
+        private bool ShouldUseVulkanAtlasCascadeTargets(int cascadeCount)
+            => RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan &&
+               CanUseDirectionalCascadeShadowAtlasForCurrentBackend(cascadeCount);
 
         private static bool CanRenderDirectionalCascadesForCurrentBackend()
         {
@@ -2197,6 +2205,16 @@ namespace XREngine.Components.Lights
             int requiredCascades = Math.Clamp(_cascadeCount, 1, MaxCascadeRenderCount);
             uint width = Math.Max(1u, ShadowMapResolutionWidth);
             uint height = Math.Max(1u, ShadowMapResolutionHeight);
+            if (ShouldUseVulkanAtlasCascadeTargets(requiredCascades))
+            {
+                ReleaseCascadeReceiverResources(state);
+                if (CascadeViewportSlotsMatch(state, requiredCascades, width, height))
+                    return;
+
+                EnsureCascadeCameraViewportSlots(state, requiredCascades, width, height, createFrameBuffers: false);
+                return;
+            }
+
             ShadowMapFormatSelection selection = ResolveDirectionalSamplingShadowMapFormat();
             bool momentEncoding = selection.Encoding != EShadowMapEncoding.Depth;
             ShadowMapTextureFormat shadowFormat = GetShadowMapTextureFormat(selection.Format.StorageFormat);
@@ -2290,6 +2308,38 @@ namespace XREngine.Components.Lights
             if (state.FrameBuffers.Length == requiredCascades && !recreateTexture)
                 return;
 
+            EnsureCascadeCameraViewportSlots(state, requiredCascades, width, height, createFrameBuffers: true);
+        }
+
+        private static bool CascadeViewportSlotsMatch(
+            DirectionalCascadeSourceState state,
+            int requiredCascades,
+            uint width,
+            uint height)
+        {
+            if (state.Viewports.Length != requiredCascades ||
+                state.Cameras.Length != requiredCascades ||
+                state.Transforms.Length != requiredCascades)
+            {
+                return false;
+            }
+
+            if (requiredCascades == 0)
+                return true;
+
+            int expectedWidth = checked((int)Math.Min(width, (uint)int.MaxValue));
+            int expectedHeight = checked((int)Math.Min(height, (uint)int.MaxValue));
+            XRViewport viewport = state.Viewports[0];
+            return viewport.Width == expectedWidth && viewport.Height == expectedHeight;
+        }
+
+        private void EnsureCascadeCameraViewportSlots(
+            DirectionalCascadeSourceState state,
+            int requiredCascades,
+            uint width,
+            uint height,
+            bool createFrameBuffers)
+        {
             IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
 
             // Build fully-populated arrays in locals first, then publish the field
@@ -2329,24 +2379,27 @@ namespace XREngine.Components.Lights
                 transforms[i] = transform;
                 cameras[i] = camera;
                 viewports[i] = viewport;
-                frameBuffers[i] = state.ShadowMapTexture is not null
-                    ? new XRFrameBuffer(
-                        (state.ShadowMapTexture, EFrameBufferAttachment.ColorAttachment0, 0, i),
-                        (state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, i))
-                    {
-                        Name = GetCascadeShadowResourceName(source, $"Layer{i}Fbo"),
-                    }
-                    : new XRFrameBuffer(
-                        (state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, i))
-                    {
-                        Name = GetCascadeShadowResourceName(source, $"Layer{i}Fbo"),
-                    };
+                if (createFrameBuffers)
+                {
+                    frameBuffers[i] = state.ShadowMapTexture is not null
+                        ? new XRFrameBuffer(
+                            (state.ShadowMapTexture, EFrameBufferAttachment.ColorAttachment0, 0, i),
+                            (state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, i))
+                        {
+                            Name = GetCascadeShadowResourceName(state.Source, $"Layer{i}Fbo"),
+                        }
+                        : new XRFrameBuffer(
+                            (state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment, 0, i))
+                        {
+                            Name = GetCascadeShadowResourceName(state.Source, $"Layer{i}Fbo"),
+                        };
+                }
             }
 
             state.Transforms = transforms;
             state.Cameras = cameras;
             state.Viewports = viewports;
-            state.FrameBuffers = frameBuffers;
+            state.FrameBuffers = createFrameBuffers ? frameBuffers : [];
         }
 
         private string GetCascadeShadowResourceName(string suffix)
@@ -2391,6 +2444,14 @@ namespace XREngine.Components.Lights
                 state.Viewports[i].Camera = null;
             }
 
+            ReleaseCascadeReceiverResources(state);
+            state.Viewports = [];
+            state.Transforms = [];
+            state.Cameras = [];
+        }
+
+        private static void ReleaseCascadeReceiverResources(DirectionalCascadeSourceState state)
+        {
             state.ShadowMapTexture?.Destroy();
             state.ShadowMapTexture = null;
             state.RasterDepthTexture?.Destroy();
@@ -2398,9 +2459,6 @@ namespace XREngine.Components.Lights
             state.LayeredFrameBuffer?.Destroy();
             state.LayeredFrameBuffer = null;
             state.FrameBuffers = [];
-            state.Viewports = [];
-            state.Transforms = [];
-            state.Cameras = [];
         }
 
         private static void UpdateCascadeShadowCamera(Transform transform, XRCamera camera, Vector3 center, Vector3 halfExtents, Quaternion orientation, Vector3 lightDirection, float nearZ)
@@ -2594,10 +2652,12 @@ namespace XREngine.Components.Lights
             return true;
         }
 
-        private uint GetCascadeFitResolution(ShadowRequestSource source, int cascadeIndex, XRTexture2DArray cascadeTexture)
+        private uint GetCascadeFitResolution(ShadowRequestSource source, int cascadeIndex, XRTexture2DArray? cascadeTexture)
         {
             if (!UsesDirectionalShadowAtlasForCurrentEncoding)
-                return Math.Max(cascadeTexture.Width, cascadeTexture.Height);
+                return cascadeTexture is not null
+                    ? Math.Max(cascadeTexture.Width, cascadeTexture.Height)
+                    : Math.Max(ShadowMapResolutionWidth, ShadowMapResolutionHeight);
 
             lock (_cascadeDataLock)
             {
@@ -2672,7 +2732,10 @@ namespace XREngine.Components.Lights
             Transform[] transformsSnapshot = state.Transforms;
             XRCamera[] camerasSnapshot = state.Cameras;
             XRTexture2DArray? cascadeTexture = SelectCascadeReceiverTexture(state);
-            if (cascadeTexture is null || camerasSnapshot.Length == 0 || transformsSnapshot.Length != camerasSnapshot.Length)
+            bool usesVulkanAtlasTargets = ShouldUseVulkanAtlasCascadeTargets(Math.Clamp(_cascadeCount, 1, MaxCascadeRenderCount));
+            if ((!usesVulkanAtlasTargets && cascadeTexture is null) ||
+                camerasSnapshot.Length == 0 ||
+                transformsSnapshot.Length != camerasSnapshot.Length)
             {
                 LogCascadeClearReason($"invalid-resources texture={cascadeTexture is not null} cameras={camerasSnapshot.Length} transforms={transformsSnapshot.Length}");
                 ClearCascadeShadows(source);

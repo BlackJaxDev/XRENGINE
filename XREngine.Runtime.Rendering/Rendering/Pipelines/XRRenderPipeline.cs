@@ -262,7 +262,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// <param name="instance">The render pipeline instance.</param>
     /// <param name="width">The new width of the viewport.</param>
     /// <param name="height">The new height of the viewport.</param>
-    internal virtual void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)
+    internal virtual void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height, XRViewport? viewport = null)
     {
         // Derived pipelines can override this method to handle viewport resizing events.
     }

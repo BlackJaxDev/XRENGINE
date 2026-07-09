@@ -249,7 +249,7 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         cascadeSource.ShouldContain("(state.RasterDepthTexture!, EFrameBufferAttachment.DepthAttachment");
         cascadeSource.ShouldContain("GetCascadeShadowResourceName(source, \"ColorArray\")");
         cascadeSource.ShouldContain("GetCascadeShadowResourceName(source, \"RasterDepthArray\")");
-        cascadeSource.ShouldContain("GetCascadeShadowResourceName(source, $\"Layer{i}Fbo\")");
+        cascadeSource.ShouldContain("GetCascadeShadowResourceName(state.Source, $\"Layer{i}Fbo\")");
         cascadeSource.ShouldContain("GenerateCascadeMomentShadowMipmapsIfNeeded(source);");
         forEachCascadeSource.ShouldContain("light.GetCascadedShadowReceiverTexture(source)");
         forEachCascadeSource.ShouldNotContain("light.CascadedShadowMapTexture");
@@ -288,7 +288,7 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
     }
 
     [Test]
-    public void DirectionalDepthCascadeAtlasFallbacks_KeepReceiverArrayBound()
+    public void DirectionalDepthCascadeAtlasFallbacks_KeepReceiverArrayBoundOutsideVulkanAtlas()
     {
         string directionalSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
         string cascadeSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.CascadeShadows.cs"));
@@ -311,6 +311,11 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         cascadeSource.ShouldNotContain("CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)\r\n                return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.VulkanLayeredRenderingDisabled);");
         cascadeSource.ShouldContain("private void RenderCascadeShadowMaps(");
         cascadeSource.ShouldContain("DirectionalCascadeShadowRenderPlan plan = CreateLegacyCascadeShadowRenderPlan(source, cascadeCount);");
+        cascadeSource.ShouldContain("ShouldUseVulkanAtlasCascadeTargets(requiredCascades)");
+        cascadeSource.ShouldContain("ReleaseCascadeReceiverResources(state);");
+        cascadeSource.ShouldContain("EnsureCascadeCameraViewportSlots(state, requiredCascades, width, height, createFrameBuffers: false);");
+        cascadeSource.ShouldContain("if (ShouldUseVulkanAtlasCascadeTargets(requiredCascades))");
+        cascadeSource.ShouldContain("return null;");
         cascadeSource.IndexOf("requestedMode == EDirectionalCascadeShadowRenderMode.Sequential", StringComparison.Ordinal)
             .ShouldBeLessThan(cascadeSource.IndexOf("DirectionalCascadeShadowFallbackReason.UnsupportedLayeredFramebuffer", StringComparison.Ordinal));
 

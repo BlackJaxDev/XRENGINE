@@ -133,6 +133,9 @@ namespace XREngine.Components
         /// </summary>
         public void ApplyInternalResolutionToViewport(XRViewport viewport)
         {
+            if (!viewport.AllowAutomaticInternalResolution)
+                return;
+
             switch (_internalResolutionMode)
             {
                 case EInternalResolutionMode.FullResolution:

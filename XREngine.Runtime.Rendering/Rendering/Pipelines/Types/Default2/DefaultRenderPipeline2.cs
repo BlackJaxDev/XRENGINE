@@ -1748,7 +1748,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
     private static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance)
         => RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);
 
-    internal override void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height)
+    internal override void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height, XRViewport? viewport = null)
     {
         if (IsDestroyed || width <= 0 || height <= 0)
             return;
@@ -1759,7 +1759,7 @@ public partial class DefaultRenderPipeline2 : RenderPipeline, IForwardDepthNorma
         // attachments from the pre-resize generation.
         RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);
 
-        XRViewport? viewport = instance.RenderState.WindowViewport ?? instance.LastWindowViewport;
+        viewport ??= instance.RenderState.WindowViewport ?? instance.LastWindowViewport;
         if (viewport?.RendersToExternalSwapchainTarget != true)
             viewport?.Window?.RequestRenderStateRecheck(resetCircuitBreaker: true);
     }

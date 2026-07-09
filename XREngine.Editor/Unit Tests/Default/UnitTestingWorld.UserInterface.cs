@@ -63,8 +63,8 @@ public static partial class EditorUnitTests
         private const float VRStereoPreviewGap = 8.0f;
         private const float VRStereoPreviewTopMargin = 12.0f;
         private const int PreviewOverlayRenderPass = (int)EDefaultRenderPass.OnTopForward;
-        private const int PreviewOverlayZIndex = 20_000;
-        private const int FpsOverlayZIndex = 19_000;
+        private const int PreviewOverlayZIndex = int.MaxValue;
+        private const int FpsOverlayZIndex = int.MaxValue - 100;
         private const float CameraPreviewWidth = 300.0f;
         private const float CameraPreviewHeight = 170.0f;
         private const float CameraPreviewBottomMargin = 12.0f;

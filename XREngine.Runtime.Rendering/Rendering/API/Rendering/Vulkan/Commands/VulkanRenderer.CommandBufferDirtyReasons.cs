@@ -84,7 +84,7 @@ public unsafe partial class VulkanRenderer
 
     internal void MarkCommandBuffersDirtyForLegacyMeshState([CallerMemberName] string? reason = null)
     {
-        if (CommandChainsEnabledForCurrentRecording)
+        if (CommandChainsEnabledForCurrentRecording || t_frameOpCapture is not null)
             return;
 
         MarkCommandBuffersDirty(reason);

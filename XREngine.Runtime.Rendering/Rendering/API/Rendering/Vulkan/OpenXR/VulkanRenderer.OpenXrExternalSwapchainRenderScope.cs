@@ -10,17 +10,23 @@ public unsafe partial class VulkanRenderer
         private readonly VulkanRenderer? _previousThreadRenderer;
         private readonly int _previousThreadDepth;
         private readonly BoundingRectangle _previousThreadRegion;
+        private readonly int _previousThreadTargetIdentity;
+        private readonly string? _previousThreadTargetName;
         private readonly BoundingRectangle _previousGlobalRegion;
         private bool _disposed;
 
         public OpenXrExternalSwapchainRenderScope(
             VulkanRenderer renderer,
-            BoundingRectangle region)
+            BoundingRectangle region,
+            int targetIdentity,
+            string? targetName)
         {
             _renderer = renderer;
             _previousThreadRenderer = _threadOpenXrExternalSwapchainRenderer;
             _previousThreadDepth = _threadOpenXrExternalSwapchainRenderDepth;
             _previousThreadRegion = _threadOpenXrExternalSwapchainTargetRegion;
+            _previousThreadTargetIdentity = _threadOpenXrExternalSwapchainTargetIdentity;
+            _previousThreadTargetName = _threadOpenXrExternalSwapchainTargetName;
             _previousGlobalRegion = renderer._openXrExternalSwapchainTargetRegion;
 
             _threadOpenXrExternalSwapchainRenderer = renderer;
@@ -29,6 +35,8 @@ public unsafe partial class VulkanRenderer
                     ? _previousThreadDepth + 1
                     : 1;
             _threadOpenXrExternalSwapchainTargetRegion = region;
+            _threadOpenXrExternalSwapchainTargetIdentity = targetIdentity;
+            _threadOpenXrExternalSwapchainTargetName = targetName;
 
             Interlocked.Increment(ref renderer._openXrExternalSwapchainRenderDepth);
             renderer._openXrExternalSwapchainTargetRegion = region;
@@ -43,6 +51,8 @@ public unsafe partial class VulkanRenderer
             _threadOpenXrExternalSwapchainRenderer = _previousThreadRenderer;
             _threadOpenXrExternalSwapchainRenderDepth = _previousThreadDepth;
             _threadOpenXrExternalSwapchainTargetRegion = _previousThreadRegion;
+            _threadOpenXrExternalSwapchainTargetIdentity = _previousThreadTargetIdentity;
+            _threadOpenXrExternalSwapchainTargetName = _previousThreadTargetName;
 
             if (Interlocked.Decrement(ref _renderer._openXrExternalSwapchainRenderDepth) <= 0)
             {

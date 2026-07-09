@@ -800,6 +800,7 @@ public unsafe partial class OpenXRAPI
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
             SetRenderPipelineFromCamera = false,
+            AllowAutomaticInternalResolution = false,
             RendersToExternalSwapchainTarget = true
         };
         _openXrRightViewport ??= new XRViewport(null)
@@ -808,6 +809,7 @@ public unsafe partial class OpenXRAPI
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
             SetRenderPipelineFromCamera = false,
+            AllowAutomaticInternalResolution = false,
             RendersToExternalSwapchainTarget = true
         };
 
@@ -839,6 +841,7 @@ public unsafe partial class OpenXRAPI
         int heightInt = (int)height;
 
         viewport.Window = null;
+        viewport.AllowAutomaticInternalResolution = false;
         viewport.SetFullScreen();
         if (viewport.Width != widthInt || viewport.Height != heightInt)
         {

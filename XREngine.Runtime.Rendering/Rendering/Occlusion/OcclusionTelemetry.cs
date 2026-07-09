@@ -672,6 +672,7 @@ namespace XREngine.Rendering.Occlusion
         NoDepthTexture,
         UnsupportedDepthView,
         MissingBuffers,
+        ExternalVrSharedVisibility,
         Count,
     }
 }

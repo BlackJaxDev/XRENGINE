@@ -24,7 +24,7 @@ public unsafe partial class VulkanRenderer
     private void OnSwapchainExtentChanged(Extent2D extent)
     {
         ActiveState.SetSwapchainExtent(extent);
-        if (_boundDrawFrameBuffer is null)
+        if (ActiveBoundDrawFrameBuffer is null)
             ActiveState.SetCurrentTargetExtent(extent);
         MarkCommandBuffersDirty();
     }
@@ -45,9 +45,13 @@ public unsafe partial class VulkanRenderer
         uint InternalWidth = 1u,
         uint InternalHeight = 1u,
         string? OutputFrameBufferName = null,
-        bool PreserveSubmissionOrderBlock = false)
+        bool PreserveSubmissionOrderBlock = false,
+        int OutputTargetIdentity = 0,
+        string? OutputTargetName = null)
     {
-        public int SchedulingIdentity => HashCode.Combine(PipelineIdentity, ViewportIdentity);
+        public int SchedulingIdentity => OutputTargetIdentity == 0
+            ? HashCode.Combine(PipelineIdentity, ViewportIdentity)
+            : HashCode.Combine(PipelineIdentity, ViewportIdentity, OutputTargetIdentity);
     }
 
     internal FrameOpContext CaptureFrameOpContext()
@@ -58,12 +62,15 @@ public unsafe partial class VulkanRenderer
         uint displayHeight;
         uint internalWidth;
         uint internalHeight;
+        int outputTargetIdentity = 0;
+        string? outputTargetName = null;
         if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
         {
             displayWidth = externalExtent.Width;
             displayHeight = externalExtent.Height;
             internalWidth = externalExtent.Width;
             internalHeight = externalExtent.Height;
+            TryGetExternalSwapchainTargetIdentity(out outputTargetIdentity, out outputTargetName);
         }
         else
         {
@@ -90,6 +97,10 @@ public unsafe partial class VulkanRenderer
                 1u);
         }
 
+        XRFrameBuffer? outputFrameBuffer = ResolveFrameOpOutputFrameBuffer(pipeline, viewport);
+        RegisterFrameOpOutputFrameBuffer(outputFrameBuffer, pipeline?.Resources);
+        ApplyOutputFrameBufferTargetIdentity(outputFrameBuffer, ref outputTargetIdentity, ref outputTargetName);
+
         FrameOpContext context = new(
             pipeline?.InstanceId ?? 0,
             viewport is null ? 0 : RuntimeHelpers.GetHashCode(viewport),
@@ -100,8 +111,10 @@ public unsafe partial class VulkanRenderer
             displayHeight,
             internalWidth,
             internalHeight,
-            pipeline?.RenderState.OutputFBO?.Name,
-            ShouldPreserveSubmissionOrderBlock());
+            outputFrameBuffer?.Name,
+            ShouldPreserveSubmissionOrderBlock(),
+            outputTargetIdentity,
+            outputTargetName);
         context = ApplyInteractiveResizePlannerFreeze(context);
 
         if (pipeline is not null)
@@ -179,6 +192,20 @@ public unsafe partial class VulkanRenderer
         return new ExternalResourcePlannerReadbackScope(this, context);
     }
 
+    internal override IDisposable? EnterRenderPipelineFrameResourceScope(
+        XRRenderPipelineInstance pipeline,
+        XRViewport? viewport)
+    {
+        if (pipeline is null)
+            return null;
+
+        FrameOpContext context = CreateFrameOpContext(pipeline, viewport);
+        if (!FrameOpContextHasPlannerResources(context))
+            return null;
+
+        return new ExternalResourcePlannerReadbackScope(this, context);
+    }
+
     internal IDisposable EnterFrameOpResourcePlannerReadbackScope(in FrameOpContext context)
         => new ExternalResourcePlannerReadbackScope(this, context);
 
@@ -190,12 +217,15 @@ public unsafe partial class VulkanRenderer
         uint displayHeight;
         uint internalWidth;
         uint internalHeight;
+        int outputTargetIdentity = 0;
+        string? outputTargetName = null;
         if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
         {
             displayWidth = externalExtent.Width;
             displayHeight = externalExtent.Height;
             internalWidth = externalExtent.Width;
             internalHeight = externalExtent.Height;
+            TryGetExternalSwapchainTargetIdentity(out outputTargetIdentity, out outputTargetName);
         }
         else
         {
@@ -222,6 +252,10 @@ public unsafe partial class VulkanRenderer
                 1u);
         }
 
+        XRFrameBuffer? outputFrameBuffer = ResolveFrameOpOutputFrameBuffer(pipeline, viewport);
+        RegisterFrameOpOutputFrameBuffer(outputFrameBuffer, pipeline.Resources);
+        ApplyOutputFrameBufferTargetIdentity(outputFrameBuffer, ref outputTargetIdentity, ref outputTargetName);
+
         FrameOpContext context = new(
             pipeline.InstanceId,
             viewport is null
@@ -234,10 +268,119 @@ public unsafe partial class VulkanRenderer
             displayHeight,
             internalWidth,
             internalHeight,
-            pipeline.RenderState.OutputFBO?.Name,
-            ShouldPreserveSubmissionOrderBlock());
+            outputFrameBuffer?.Name,
+            ShouldPreserveSubmissionOrderBlock(),
+            outputTargetIdentity,
+            outputTargetName);
 
         return ApplyInteractiveResizePlannerFreeze(context);
+    }
+
+    private static XRFrameBuffer? ResolveFrameOpOutputFrameBuffer(
+        XRRenderPipelineInstance? pipeline,
+        XRViewport? viewport)
+    {
+        XRRenderPipelineInstance? activePipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        if (pipeline is null || ReferenceEquals(activePipeline, pipeline))
+        {
+            XRFrameBuffer? activeOutput = RuntimeEngine.Rendering.State.RenderingTargetOutputFBO;
+            if (activeOutput is not null)
+                return activeOutput;
+        }
+
+        return pipeline?.RenderState.OutputFBO ?? viewport?.LastRenderedTargetFBO;
+    }
+
+    private void RegisterFrameOpOutputFrameBuffer(XRFrameBuffer? frameBuffer, RenderResourceRegistry? registry)
+    {
+        if (frameBuffer is null || registry is null)
+            return;
+
+        if (IsFrameOpOutputFrameBufferRegistered(frameBuffer, registry))
+            return;
+
+        EnsureFrameBufferRegistered(frameBuffer, registry);
+        EnsureFrameBufferAttachmentsRegistered(frameBuffer, registry);
+    }
+
+    private static bool IsFrameOpOutputFrameBufferRegistered(
+        XRFrameBuffer frameBuffer,
+        RenderResourceRegistry registry)
+    {
+        string? name = frameBuffer.Name;
+        if (string.IsNullOrWhiteSpace(name) ||
+            !registry.FrameBufferRecords.TryGetValue(name, out RenderFrameBufferResource? record) ||
+            !ReferenceEquals(record.Instance, frameBuffer))
+        {
+            return false;
+        }
+
+        FrameBufferResourceDescriptor descriptor = record.Descriptor;
+        uint width = Math.Max(frameBuffer.Width, 1u);
+        uint height = Math.Max(frameBuffer.Height, 1u);
+        if (descriptor.SizePolicy.SizeClass != RenderResourceSizeClass.AbsolutePixels ||
+            descriptor.SizePolicy.Width != width ||
+            descriptor.SizePolicy.Height != height)
+        {
+            return false;
+        }
+
+        var targets = frameBuffer.Targets;
+        if (targets is null)
+            return descriptor.Attachments.Count == 0;
+
+        if (descriptor.Attachments.Count != targets.Length)
+            return false;
+
+        for (int i = 0; i < targets.Length; i++)
+        {
+            var (target, attachment, mipLevel, layerIndex) = targets[i];
+            if (target is not XRTexture texture)
+                return false;
+
+            string? textureName = texture.Name;
+            if (string.IsNullOrWhiteSpace(textureName) ||
+                !registry.TextureRecords.TryGetValue(textureName, out RenderTextureResource? textureRecord) ||
+                !ReferenceEquals(textureRecord.Instance, texture))
+            {
+                return false;
+            }
+
+            FrameBufferAttachmentDescriptor attachmentDescriptor = descriptor.Attachments[i];
+            if (!string.Equals(attachmentDescriptor.ResourceName, textureName, StringComparison.OrdinalIgnoreCase) ||
+                attachmentDescriptor.Attachment != attachment ||
+                attachmentDescriptor.MipLevel != mipLevel ||
+                attachmentDescriptor.LayerIndex != layerIndex)
+            {
+                return false;
+            }
+
+            if (texture is XRTextureViewBase view)
+            {
+                XRTexture viewedTexture = view.GetViewedTexture();
+                string? viewedTextureName = viewedTexture.Name;
+                if (string.IsNullOrWhiteSpace(viewedTextureName) ||
+                    !registry.TextureRecords.TryGetValue(viewedTextureName, out RenderTextureResource? viewedTextureRecord) ||
+                    !ReferenceEquals(viewedTextureRecord.Instance, viewedTexture))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static void ApplyOutputFrameBufferTargetIdentity(
+        XRFrameBuffer? frameBuffer,
+        ref int outputTargetIdentity,
+        ref string? outputTargetName)
+    {
+        if (frameBuffer is null || outputTargetIdentity != 0)
+            return;
+
+        outputTargetIdentity = RuntimeHelpers.GetHashCode(frameBuffer);
+        outputTargetName = frameBuffer.Name;
     }
 
     private static bool ShouldPreserveSubmissionOrderBlock()
@@ -435,10 +578,6 @@ public unsafe partial class VulkanRenderer
             return context;
         }
 
-        HashSet<int>? activePassIndices = BuildActiveFrameOpPassSet(ops);
-        HashSet<string>? activeFrameBufferNames = BuildActiveFrameOpFrameBufferSet(ops);
-        int activeResourceSetSignature = ComputeActiveFrameBufferSetSignature(activeFrameBufferNames);
-        int activePassSetSignature = ComputeActivePassSetSignature(activePassIndices);
         FrameOpContext primary = SelectPrimaryPlannerContext(ops);
         RenderResourceRegistry? mergedRegistry = BuildMergedFrameOpRegistry(ops, primary.ResourceRegistry);
         FrameOpContext plannerContext = mergedRegistry is null
@@ -447,17 +586,11 @@ public unsafe partial class VulkanRenderer
 
         plannerContext = RefreshPlannerExtentsFromLiveContext(plannerContext, ops);
 
-        // The merged planner is a transient all-frame plan used before per-context
-        // recording. Do not store it in the switching cache: the cache key
-        // intentionally omits registry shape, so a merged registry can otherwise
-        // overwrite the stable viewport/eye/capture state and force physical-plan
-        // rebuilds every frame.
-        UpdateResourcePlannerFromContext(
-            plannerContext,
-            activePassIndices,
-            activeFrameBufferNames,
-            activeResourceSetSignature,
-            constrainToActivePassSet: true);
+        // Descriptor snapshots are captured against the full pipeline resource
+        // plan before the command buffer is recorded. Keep frame-op recording on
+        // that same plan so FBO writes, sampled descriptors, and readback all
+        // resolve the same physical image groups.
+        UpdateResourcePlannerFromContext(plannerContext);
 
         return plannerContext;
     }
@@ -564,18 +697,9 @@ public unsafe partial class VulkanRenderer
 
     private FrameOpContext PrepareResourcePlannerForFrameOps(FrameOp[] ops, in FrameOpPlannerStateKey key)
     {
-        HashSet<int>? activePassIndices = BuildActiveFrameOpPassSet(ops, key);
-        HashSet<string>? activeFrameBufferNames = BuildActiveFrameOpFrameBufferSet(ops, key);
-        int activeResourceSetSignature = ComputeActiveFrameBufferSetSignature(activeFrameBufferNames);
-        int activePassSetSignature = ComputeActivePassSetSignature(activePassIndices);
         FrameOpContext plannerContext = SelectPrimaryPlannerContext(ops, key);
         plannerContext = RefreshPlannerExtentsFromLiveContext(plannerContext, ops, filterByPlannerKey: true, plannerKey: key);
-        UpdateResourcePlannerFromContext(
-            plannerContext,
-            activePassIndices,
-            activeFrameBufferNames,
-            activeResourceSetSignature,
-            constrainToActivePassSet: true);
+        UpdateResourcePlannerFromContext(plannerContext);
 
         return plannerContext;
     }
@@ -730,6 +854,10 @@ public unsafe partial class VulkanRenderer
                 return compare;
 
             compare = left.OutputFrameBufferIdentity.CompareTo(right.OutputFrameBufferIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = left.OutputTargetIdentity.CompareTo(right.OutputTargetIdentity);
             return compare;
         });
     }
@@ -769,6 +897,10 @@ public unsafe partial class VulkanRenderer
                 return compare;
 
             compare = left.OutputFrameBufferIdentity.CompareTo(right.OutputFrameBufferIdentity);
+            if (compare != 0)
+                return compare;
+
+            compare = left.OutputTargetIdentity.CompareTo(right.OutputTargetIdentity);
             return compare;
         });
 
@@ -784,6 +916,7 @@ public unsafe partial class VulkanRenderer
             hash.Add(key.InternalWidth);
             hash.Add(key.InternalHeight);
             hash.Add(key.OutputFrameBufferIdentity);
+            hash.Add(key.OutputTargetIdentity);
 
             if (!switchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state))
             {
@@ -977,7 +1110,8 @@ public unsafe partial class VulkanRenderer
             context.DisplayHeight,
             context.InternalWidth,
             context.InternalHeight,
-            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName));
+            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
+            context.OutputTargetIdentity);
 
     private static bool FrameOpMatchesPlannerStateKey(FrameOp op, in FrameOpPlannerStateKey key)
         => FrameOpContextHasPlannerResources(op.Context) &&
@@ -990,7 +1124,8 @@ public unsafe partial class VulkanRenderer
             context.DisplayHeight == key.DisplayHeight &&
             context.InternalWidth == key.InternalWidth &&
             context.InternalHeight == key.InternalHeight &&
-            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName) == key.OutputFrameBufferIdentity;
+            ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName) == key.OutputFrameBufferIdentity &&
+            context.OutputTargetIdentity == key.OutputTargetIdentity;
 
     private static int ComputeOutputFrameBufferIdentity(string? outputFrameBufferName)
         => string.IsNullOrWhiteSpace(outputFrameBufferName)
@@ -1218,6 +1353,10 @@ public unsafe partial class VulkanRenderer
 
         compare = ComputeOutputFrameBufferIdentity(left.OutputFrameBufferName)
             .CompareTo(ComputeOutputFrameBufferIdentity(right.OutputFrameBufferName));
+        if (compare != 0)
+            return compare;
+
+        compare = left.OutputTargetIdentity.CompareTo(right.OutputTargetIdentity);
         if (compare != 0)
             return compare;
 
@@ -1740,6 +1879,7 @@ public unsafe partial class VulkanRenderer
             activePassSetSignature,
             activeResourceSetSignature,
             ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
+            context.OutputTargetIdentity,
             context.DisplayWidth,
             context.DisplayHeight,
             context.InternalWidth,
@@ -2782,6 +2922,7 @@ public unsafe partial class VulkanRenderer
         HashCode hash = new();
         hash.Add(ComputeResourceRegistrySignature(context.ResourceRegistry));
         hash.Add(ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName));
+        hash.Add(context.OutputTargetIdentity);
 
         hash.Add(context.DisplayWidth);
         hash.Add(context.DisplayHeight);
@@ -2833,6 +2974,7 @@ public unsafe partial class VulkanRenderer
         => new(
             ComputeResourceRegistrySignature(context.ResourceRegistry),
             ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
+            context.OutputTargetIdentity,
             context.DisplayWidth,
             context.DisplayHeight,
             context.InternalWidth,
